@@ -20,7 +20,8 @@ migrate launch ("leave Harvest in one command").
 
 ## v1.x — demand-ordered
 Payments (checkout + Mercury reconciliation — blocked on API verification) ·
-webhooks · contractor surfaces · portal polish · agent REPL · mobile · extension.
+webhooks · contractor surfaces · portal polish · agent REPL.
+(Native mobile app and Chrome extension are commercial surfaces — not in this repo.)
 
 ## Build order rule
 Bottom-up, no stubs: db → core → api → surfaces. The migration is the test
