@@ -385,6 +385,32 @@ describe('runExtract when the account moves under it', () => {
 
   // An invoice deleted between the parent sweep and the fan-out is a routine race,
   // not a reason to abandon every step after it.
+  // Found by the live account, not by a fixture: Harvest answers
+  // /v2/users/{id}/teammates with 422 "User must be a Manager to have teammates"
+  // for every non-manager. Handling only 403/404 killed a full extract 34s in.
+  it('[unit] a 422 saying the parent cannot have these rows is a refusal, not a failure', async () => {
+    await start({
+      '/v2/users/{id}/teammates': (url) =>
+        url.pathname.endsWith('/1/teammates')
+          ? { body: envelope('teammates', [row(900)]) }
+          : {
+              status: 422,
+              body: { message: 'User must be a Manager to have teammates' },
+            },
+    })
+
+    const result = await extract(dir, logs)
+
+    const teammates = result.resources.teammates as ManifestResource
+    // the manager's row is kept, the non-manager is recorded as refused
+    expect(teammates.count).toBe(1)
+    expect(teammates.complete).toBe(true)
+    expect(teammates.skipped_reason).toContain('422 for 1 of 2 users')
+    // and the refusal still cost a request — the budget record must not read as free
+    expect(teammates.requests).toBe(2)
+    expect(manifestOnDisk().finished_at).not.toBeNull()
+  })
+
   it('[unit] a 404 on one parent is recorded as missing and the run carries on', async () => {
     await start({
       '/v2/invoices/{id}/messages': (url) =>

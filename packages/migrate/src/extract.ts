@@ -59,6 +59,13 @@ const isApiError = (err: unknown): err is HarvestApiError =>
  * re-run will do to it. `status` is carried through, because the caller classifies
  * on it after this wrapping.
  */
+/**
+ * Statuses that answer "this parent has none of these", rather than "your request
+ * was wrong", on a step marked `optional`. 403 and 404 are the documented shapes;
+ * 422 is what the live account actually returns for teammates.
+ */
+const INAPPLICABLE_STATUSES = new Set([403, 404, 422])
+
 const inContext = (
   resource: string,
   path: string,
@@ -285,7 +292,7 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
       )
       let parents = 0
       let refused = 0
-      let refusedStatus = 0
+      const refusedStatuses = new Set<number>()
       let missing = 0
       let lastParentId = 0
       for await (const parentId of readIds(snapshotDir, step.parent)) {
@@ -328,10 +335,18 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
           // §0.3), so one refusal is an answer about one parent. The fan-out
           // continues; only a refusal from every parent says anything about the
           // account, and that is decided after the loop.
-          if (step.optional && (err.status === 403 || err.status === 404)) {
+          //
+          // 422 is in that set on the evidence of the live account, not the docs:
+          // Harvest answers /v2/users/{id}/teammates with
+          // `422 {"message":"User must be a Manager to have teammates"}` for every
+          // non-manager. That is the same kind of answer as the 403 — a statement
+          // about this parent, not a complaint about the request — and no
+          // documented error schema exists to tell the two apart (research §0.3,
+          // §15.5: "no formal error-body schema, no example error JSON").
+          if (step.optional && INAPPLICABLE_STATUSES.has(err.status)) {
             record.requests += 1
             refused += 1
-            refusedStatus = err.status
+            refusedStatuses.add(err.status)
             continue
           }
           // A 404 on a child endpoint means the parent row is gone. extract runs
@@ -367,10 +382,11 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
         record.missing_parents = missing
       }
       if (refused > 0) {
+        const statuses = [...refusedStatuses].sort((a, b) => a - b).join('/')
         record.skipped_reason =
           refused === parents
-            ? `Harvest returned ${refusedStatus} for all ${parents} ${step.parent} — ${step.name} is not enabled on this account`
-            : `Harvest returned ${refusedStatus} for ${refused} of ${parents} ${step.parent} — those ${step.name} are not in this snapshot`
+            ? `Harvest returned ${statuses} for all ${parents} ${step.parent} — ${step.name} is not enabled on this account`
+            : `Harvest returned ${statuses} for ${refused} of ${parents} ${step.parent} — those ${step.name} are not in this snapshot`
         log(`${step.name}: ${record.skipped_reason}`)
       }
     }
