@@ -36,6 +36,13 @@ Tenancy: **one organization = one database**; no `org_id` columns exist.
 3. `docs/migration-spec.md` — the wedge; M3/M4 are the acceptance test for the model.
 4. `docs/architecture.md` — runtime, data, seams, compat strategy.
 5. `PROCESS.md` — the build discipline (issue → branch → PR → review → merge).
+6. `.claude/workflows/story-sdlc.js` + `build-wave.js` — the **agentic SDLC
+   scaffolding**: triage → research → plan → build → test → adversarial →
+   review → PR → (merge → validate → close). Model-routed (haiku ceremony,
+   sonnet standard, opus hard, xhigh on money/auth/migration labels; fable
+   never auto-routed). Contract: umbrella `knowledge/docs/agentic-sdlc.md`.
+   Fires only on groomed stories — acceptance checkboxes are the success
+   condition.
 
 ## Hard rules
 
