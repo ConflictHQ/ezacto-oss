@@ -6,12 +6,14 @@
 ACCESS_TEAM_DOMAIN=https://<team>.cloudflareaccess.com
 ACCESS_POLICY_AUD=
 
-# --- Mailer seam: SES implementation (D14) ---
-AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=
-AWS_SECRET_ACCESS_KEY=
-SES_CONFIGURATION_SET=
-MAIL_FROM_DOMAIN=
+# --- Mailer seam: Mailgun implementation (D14) ---
+# HTTP-first, which is what the Worker target requires (Workers cannot SMTP).
+# Sending domain is a subdomain so app mail and human mail do not share one
+# DKIM/DMARC surface: go.<domain> sends, the apex is Google Workspace.
+MAILGUN_API_KEY=
+MAILGUN_SENDING_DOMAIN=go.ezacto.com
+MAILGUN_REGION=us
+MAIL_FROM_DOMAIN=go.ezacto.com
 
 # --- App ---
 APP_BASE_URL=http://localhost:8787
