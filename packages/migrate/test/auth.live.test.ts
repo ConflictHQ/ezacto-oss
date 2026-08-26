@@ -3,7 +3,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { runAuth } from '../src/auth.js'
+import { loadDevVars } from '../src/env.js'
 
+// The CLI loads .dev.vars itself; a test process does not. Without this the
+// documented setup — copy .dev.vars.example, fill it in — leaves this suite
+// skipping forever, and a [manual] acceptance box that silently never runs is
+// worse than one that fails.
+loadDevVars()
 const hasLiveCreds = Boolean(process.env.HARVEST_PAT && process.env.HARVEST_ACCOUNT_ID)
 
 describe.skipIf(!hasLiveCreds)('runAuth [manual/api] against the live CONFLICT account', () => {
