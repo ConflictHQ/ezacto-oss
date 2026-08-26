@@ -16,10 +16,14 @@
 
 import { parseUserMe, scopeChangeBetween, visibilityWarning } from './auth.js'
 import type { HarvestEnv } from './env.js'
-import { harvestFetch, type HarvestApiError, type HarvestClientConfig } from './harvest-client.js'
+import {
+  DEFAULT_BASE_URL,
+  type HarvestApiError,
+  type HarvestClientConfig,
+} from './harvest-client.js'
 import { appendPage, readIds, startResource } from './jsonl.js'
 import { readManifestIfExists, writeManifest, type ManifestResource } from './manifest.js'
-import { paginate, type PaginateDeps } from './paginator.js'
+import { fetchWithPolicy, paginate, RESUME_GUIDANCE, type PaginateDeps } from './paginator.js'
 import { createRateLimiter, RATE_LIMIT, RATE_WINDOW_MS } from './rate-limiter.js'
 import { RESOURCES, type ResourceStep } from './resources.js'
 
@@ -51,16 +55,21 @@ const isApiError = (err: unknown): err is HarvestApiError =>
 /**
  * The same refusal, said somewhere it can be acted on. `Harvest API error: 404
  * {"message":"Not Found"}` reaching a user names no resource, no path and no
- * parent, and omits the one fact that matters — the snapshot on disk is intact and
- * the run can be continued. `status` is carried through, because the caller
- * classifies on it after this wrapping.
+ * parent, and says nothing about what the snapshot on disk now holds or what a
+ * re-run will do to it. `status` is carried through, because the caller classifies
+ * on it after this wrapping.
  */
-const inContext = (resource: string, path: string, err: HarvestApiError): HarvestApiError => {
+const inContext = (
+  resource: string,
+  path: string,
+  err: HarvestApiError,
+  guidance: string = RESUME_GUIDANCE,
+): HarvestApiError => {
   const contextual = new Error(
-    `${resource}: request to ${path} failed — ${err.message}. Everything extracted so far is ` +
-      'already on disk and the manifest records where this resource stopped — re-run ' +
-      '`ezacto-migrate extract` against the same --snapshot-dir to continue.',
-    { cause: err },
+    `${resource}: request to ${path} failed — ${err.message}. ${guidance}`,
+    {
+      cause: err,
+    },
   ) as HarvestApiError
   contextual.status = err.status
   contextual.fix = err.fix
@@ -104,8 +113,26 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
   // fraction of the account, prints no warning (the manifest still says
   // administrator), stamps finished_at and exits 0 — the one delta reconcile
   // cannot explain afterwards (§6). One request out of thousands closes it.
-  await limiter.acquire()
-  const me = parseUserMe(await harvestFetch('/v2/users/me', config))
+  //
+  // Through fetchWithPolicy, not a bare fetch: this is the first request of every
+  // run, and 429 is the condition the story exists to survive. A bare call would
+  // put the one request most likely to meet a warm rate-limit window outside
+  // Retry-After, outside the 5xx backoff, and outside the error wrapping (AC #2).
+  const identityPath = '/v2/users/me'
+  const identityUrl = `${config.baseUrl ?? DEFAULT_BASE_URL}${identityPath}`
+  const me = parseUserMe(
+    await fetchWithPolicy(identityUrl, 'identity check', config, deps)
+      .then((fetched) => fetched.body)
+      .catch((err: unknown) => {
+        if (!isApiError(err)) throw err
+        throw inContext(
+          'identity check',
+          identityPath,
+          err,
+          `Nothing was swept: ${snapshotDir} is exactly as the run before this one left it.`,
+        )
+      }),
+  )
   const scopeChange = scopeChangeBetween(manifest.preflight.user, me)
   if (scopeChange) {
     throw new Error(
@@ -200,7 +227,7 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
     ): Promise<void> => {
       // Every page of one sweep repeats the same tally, so it is taken once and
       // added to the resource's — a resource is one sweep per pass, per parent.
-      let sweepTotal: number | null = null
+      let tallied = false
       try {
         for await (const page of paginate(
           { resource: step.name, path, collection: step.collection, params },
@@ -215,16 +242,24 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
           record.next_url = page.nextUrl
           record.parent_id = parentId
           record.pass = pass
-          if (sweepTotal === null) sweepTotal = page.totalEntries
+          // Folded in on the first page of the sweep, not after its last. Page 1's
+          // rows are already in `count` by the time page 2 can fail, and if the
+          // tally were only added at the end, a sweep that died mid-way would keep
+          // the rows and drop the one number that says how many there should have
+          // been — leaving total_entries reading *lower* than count, i.e. the only
+          // outside witness against truncation pointing away from it.
+          if (!tallied) {
+            tallied = true
+            if (page.totalEntries !== null) {
+              record.total_entries = (record.total_entries ?? 0) + page.totalEntries
+            }
+          }
           await persist()
         }
       } catch (err) {
         // A bare `Harvest API error: 404 {...}` names nothing the reader can act on.
         if (isApiError(err)) throw inContext(step.name, path, err)
         throw err
-      }
-      if (sweepTotal !== null) {
-        record.total_entries = (record.total_entries ?? 0) + sweepTotal
       }
     }
 
@@ -247,10 +282,33 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
       for await (const parentId of readIds(snapshotDir, step.parent)) {
         parents += 1
         lastParentId = parentId
+        const pagesBefore = record.pages
         try {
           await sweep(step.path(parentId), undefined, 0, parentId)
         } catch (err) {
           if (!isApiError(err)) throw err
+
+          // Neither refusal below is available once this parent has yielded a page.
+          // Both continue the fan-out and let the step finish `complete: true`, and
+          // both are statements about a parent that gave us *nothing* — "it is gone",
+          // "the feature is off for it". A failure partway through a parent's own
+          // pagination is neither: its page 1 is already in raw/<resource>.jsonl and
+          // in `count`. Swallowing that would keep the partial rows, record the
+          // resource as a complete sweep, and — because the step then stamps
+          // updated_since — put the missing rows out of reach of every later
+          // incremental pass. The truncation is permanent; the run must stop.
+          if (record.pages > pagesBefore) {
+            throw new Error(
+              `${step.name}: ${step.parent} ${parentId} answered ${err.status} on page ` +
+                `${record.pages - pagesBefore + 1} of its own pagination, after ` +
+                `${record.pages - pagesBefore} page(s) of it were already written to ` +
+                `raw/${step.name}.jsonl. That is a truncated ${step.parent}, not a missing one: ` +
+                `continuing would count the partial rows and record ${step.name} as complete. ` +
+                RESUME_GUIDANCE,
+              { cause: err },
+            )
+          }
+
           // Both refusals below cost a request against the budget even though they
           // yielded no page — the manifest's cost record has to say so.
           //

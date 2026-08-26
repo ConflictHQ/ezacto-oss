@@ -12,7 +12,7 @@ import { runAuth } from '../src/auth.js'
 import { loadDevVars } from '../src/env.js'
 import { runExtract } from '../src/extract.js'
 import { readManifest } from '../src/manifest.js'
-import { RATE_LIMIT, RATE_WINDOW_MS } from '../src/rate-limiter.js'
+import { minElapsedMs } from '../src/rate-limiter.js'
 import { RESOURCES } from '../src/resources.js'
 
 loadDevVars()
@@ -65,11 +65,14 @@ describe.skipIf(!hasLiveCreds)('runExtract [api] against the live CONFLICT accou
 
     expect(manifest.finished_at).not.toBeNull()
 
-    // The run stayed inside the budget it declared (§2.2).
+    // The run was paced by the budget it declared (§2.2): past the first window,
+    // every further RATE_LIMIT requests cost a full window, so a run of this many
+    // requests cannot have finished sooner than this. Not an average rate — the
+    // limiter spends its first window at once by design, so the average of a
+    // correctly-paced run sits above the sustained figure and converges down to it.
+    // See minElapsedMs; the per-grant window property is rate-limiter.test.ts's.
     const elapsedS = result.durationMs / 1000
-    expect(result.requests / Math.max(elapsedS, 1)).toBeLessThanOrEqual(
-      RATE_LIMIT / (RATE_WINDOW_MS / 1000),
-    )
+    expect(result.durationMs).toBeGreaterThanOrEqual(minElapsedMs(result.requests))
 
     // Printed so it can be pasted into the PR as this AC's evidence.
     const width = Math.max(...Object.keys(manifest.resources).map((n) => n.length))

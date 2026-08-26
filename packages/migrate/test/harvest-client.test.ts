@@ -220,3 +220,68 @@ describe('harvestFetch deadlines and retry [unit]', () => {
     expect(err.message).toContain('could not reach Harvest')
   })
 })
+
+// The origin allow-list runs on the URL *before* the request goes out. Redirect
+// following happens inside fetch(), after it — so with the default `redirect:
+// 'follow'` a single 302 from the API takes the request to any host reachable from
+// the operator's machine (RFC1918, 169.254.169.254, a port on localhost) and hands
+// the caller the attacker's JSON as though Harvest had said it. The Fetch spec
+// strips Authorization cross-origin, but nothing here rests on that, and the
+// account id and the operator's email in the User-Agent are sent regardless.
+describe('harvestFetchUrl refuses a redirect off the API origin [unit]', () => {
+  let api: Server | undefined
+  let target: Server | undefined
+
+  const listen = async (handler: Parameters<typeof createServer>[1]): Promise<[Server, string]> => {
+    const started = createServer(handler)
+    await new Promise<void>((resolve) => started.listen(0, '127.0.0.1', resolve))
+    return [started, `http://127.0.0.1:${(started.address() as AddressInfo).port}`]
+  }
+
+  const shut = async (s: Server | undefined): Promise<void> => {
+    if (!s) return
+    s.closeAllConnections()
+    await new Promise<void>((resolve) => s.close(() => resolve()))
+  }
+
+  afterEach(async () => {
+    await shut(api)
+    await shut(target)
+    api = undefined
+    target = undefined
+  })
+
+  it('[unit] does not follow a 302, and sends the target nothing at all', async () => {
+    const received: Record<string, string | string[] | undefined>[] = []
+    const [targetServer, targetUrl] = await listen((req, res) => {
+      received.push({ url: req.url, ...req.headers })
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ users: [{ id: 999999, first_name: 'INJECTED' }] }))
+    })
+    target = targetServer
+
+    const evil = `${targetUrl}/latest/meta-data/`
+    const [apiServer, baseUrl] = await listen((_req, res) => {
+      res.writeHead(302, { location: evil })
+      res.end('moved')
+    })
+    api = apiServer
+
+    const err = (await harvestFetchUrl(`${baseUrl}/v2/users`, {
+      pat: 'p',
+      userAgentEmail: 'e@x.com',
+      accountId: '42',
+      baseUrl,
+      timeoutMs: 2_000,
+    }).catch((e: unknown) => e)) as HarvestApiError
+
+    // Nothing reached the redirect target — not the account id, not the User-Agent
+    // carrying the operator's email, not a connection.
+    expect(received).toEqual([])
+    expect(err.status).toBe(302)
+    expect(err.message).toContain('refusing to follow the 302 redirect')
+    expect(err.message).toContain(`${baseUrl}/v2/users`)
+    expect(err.message).toContain(evil)
+    expect(err.message).toContain('the Harvest API does not redirect')
+  })
+})

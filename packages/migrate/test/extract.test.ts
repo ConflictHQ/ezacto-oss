@@ -5,6 +5,8 @@
 // account's shape matches what we assumed.
 
 import { readFileSync } from 'node:fs'
+import { createServer, type Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -127,7 +129,7 @@ const seedManifest = async (target: string): Promise<void> =>
     updated_since: {},
   })
 
-const extract = (target: string, logs?: string[]): Promise<ExtractResult> =>
+const extract = (target: string, logs?: string[], sleeps?: number[]): Promise<ExtractResult> =>
   runExtract({
     env: { pat: 'p', accountId: '42', userAgentEmail: 'e@x.com' },
     snapshotDir: target,
@@ -135,7 +137,12 @@ const extract = (target: string, logs?: string[]): Promise<ExtractResult> =>
     timeoutMs: 5_000,
     now: tickingClock(),
     log: (line) => logs?.push(line),
-    sleep: () => Promise.resolve(),
+    // Recorded rather than waited: what a backoff *decided* is the assertion, and
+    // no test should spend the seconds it decided on.
+    sleep: (ms) => {
+      sleeps?.push(ms)
+      return Promise.resolve()
+    },
   })
 
 /** A clock that advances a second per read, so watermarks are distinguishable. */
@@ -328,6 +335,7 @@ describe('runExtract preconditions', () => {
  */
 describe('runExtract when the account moves under it', () => {
   let logs: string[]
+  let sleeps: number[]
   const mid: MidRun = { usersWatermarkBeforeFirstRequest: undefined, invoicePage2: undefined }
 
   /** Starts a fake account whose routes differ from the happy path where stated. */
@@ -338,6 +346,7 @@ describe('runExtract when the account moves under it', () => {
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'ezacto-migrate-extract-moving-'))
     logs = []
+    sleeps = []
     await seedManifest(dir)
   })
 
@@ -348,6 +357,7 @@ describe('runExtract when the account moves under it', () => {
   })
 
   const userId = (url: URL): number => Number(url.pathname.split('/')[3])
+  const requestPaths = (): string[] => (server?.requests ?? []).map((r) => r.split('?')[0])
 
   // Harvest's 403 is scoped to the object asked for (research §0.3: "the object you
   // requested was found but you don't have authorization"), so one user's refusal
@@ -394,6 +404,81 @@ describe('runExtract when the account moves under it', () => {
     expect(result.resources.time_entries.count).toBe(2)
     expect(result.resources.expenses.count).toBe(1)
     expect(logs.join('\n')).toContain('invoices 101 returned 404')
+  })
+
+  // A 404 partway through one parent's *own* pagination is not that parent
+  // vanishing — page 1 of it is already on disk and already counted. Classifying it
+  // as "deleted since the parent sweep" keeps the partial rows, marks the resource
+  // complete, and stamps updated_since over the rows it dropped, so no later
+  // incremental pass ever re-reads them. The loss is permanent and the run exits 0.
+  it('[unit] a 404 partway through one parent is a truncation, not a missing parent', async () => {
+    await start({
+      '/v2/invoices/{id}/messages': (url, hit) => {
+        if (userId(url) !== 100) return { body: envelope('invoice_messages', [row(1101)]) }
+        return hit === 1
+          ? {
+              body: {
+                ...envelope(
+                  'invoice_messages',
+                  [row(1001), row(1002), row(1003)],
+                  `${server?.baseUrl ?? ''}/v2/invoices/100/messages?cursor=PAGE2`,
+                ),
+                total_entries: 6,
+              },
+            }
+          : { status: 404, body: { message: 'Not Found' } }
+      },
+    })
+
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+
+    expect(err.message).toContain('invoices 100 answered 404 on page 2 of its own pagination')
+    expect(err.message).toContain('raw/invoice_messages.jsonl')
+    expect(err.message).toContain('truncated invoices, not a missing one')
+
+    const manifest = manifestOnDisk()
+    // Not counted as missing: invoice 100 was found, and partly extracted.
+    expect(manifest.resources.invoice_messages).toMatchObject({
+      count: 3,
+      missing_parents: 0,
+      complete: false,
+    })
+    // The only outside witness has to point *at* the loss. Folding the tally in
+    // after the last page instead of the first left this at 1 against a count of 4
+    // — a snapshot 3 rows short, described as 3 rows long.
+    expect(manifest.resources.invoice_messages.total_entries).toBe(6)
+    expect(linesOnDisk('invoice_messages')).toHaveLength(3)
+
+    // Nothing downstream may treat this snapshot as usable, and nothing may step
+    // over the dropped rows next time.
+    expect(manifest.finished_at).toBeNull()
+    expect(manifest.updated_since.invoice_messages).toBeUndefined()
+    expect(requestPaths()).not.toContain('/v2/invoices/101/messages')
+  })
+
+  // The same misclassification with a single parent used to reach the guess-guard
+  // below and abort with a message that was flatly false — "refusing to record an
+  // empty billable_rates" while raw/billable_rates.jsonl held rows.
+  it('[unit] a truncated lone parent is not reported as an empty resource', async () => {
+    await start({
+      '/v2/users': () => ({ body: envelope('users', [row(1)]) }),
+      '/v2/users/{id}/billable_rates': (_url, hit) =>
+        hit === 1
+          ? {
+              body: envelope(
+                'billable_rates',
+                [row(10), row(11)],
+                `${server?.baseUrl ?? ''}/v2/users/1/billable_rates?cursor=PAGE2`,
+              ),
+            }
+          : { status: 404, body: { message: 'Not Found' } },
+    })
+
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+
+    expect(err.message).not.toContain('refusing to record an empty')
+    expect(err.message).toContain('users 1 answered 404 on page 2')
+    expect(linesOnDisk('billable_rates')).toHaveLength(2)
   })
 
   // …but a path that 404s for *every* parent is not a race, and an empty resource
@@ -481,5 +566,122 @@ describe('runExtract when the account moves under it', () => {
     // Nothing was swept, so nothing on disk was overwritten by the wrong identity.
     expect(server?.requests).toEqual(['/v2/users/me'])
     expect(manifestOnDisk().resources).toEqual({})
+  })
+
+  // The identity check is the first request of every run and the one most likely to
+  // meet a rate-limit window left warm by the run before it. Issued outside the
+  // paginator's policy it took the whole run down at request #1 on a 429, with no
+  // Retry-After honored and no retry — the exact condition AC #2 exists for.
+  it('[unit] a 429 on the identity check honors Retry-After and retries, like every other request', async () => {
+    await start({
+      '/v2/users/me': (_url, hit) =>
+        hit === 1
+          ? { status: 429, headers: { 'retry-after': '2' }, body: { message: 'throttled' } }
+          : { body: ADMIN_USER },
+    })
+
+    const result = await extract(dir, logs, sleeps)
+
+    expect(requestPaths().filter((p) => p === '/v2/users/me')).toHaveLength(2)
+    expect(sleeps[0]).toBe(2_000)
+    expect(logs.join('\n')).toContain('identity check: throttled by Harvest (429), waiting 2s')
+    // …and the run it would have killed went on to sweep the account.
+    expect(result.resources.users.count).toBe(2)
+    expect(manifestOnDisk().finished_at).not.toBeNull()
+  })
+
+  it('[unit] an identity-check failure a retry cannot fix says what it was and what is on disk', async () => {
+    await start({ '/v2/users/me': () => ({ status: 422, body: { message: 'nope' } }) })
+
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+
+    // Not the bare `Harvest API error: 422 {...}` this call used to surface.
+    expect(err.message).toContain('identity check: request to /v2/users/me failed')
+    expect(err.message).toContain('Nothing was swept')
+    expect(err.message).toContain(dir)
+  })
+
+  // The CLI called extract "resumable" and every failure message said "re-run to
+  // continue". Nothing reads manifest.resources[*].next_url back, and startResource
+  // truncates each raw file at the top of its step — so "continue" named a command
+  // that begins by deleting the rows the sentence promised were safe.
+  it('[unit] a failed run says a re-run re-sweeps from page 1, and a re-run does exactly that', async () => {
+    await start({
+      '/v2/expenses': (_url, hit) =>
+        hit === 1
+          ? { status: 422, body: { message: 'Unprocessable' } }
+          : { body: envelope('expenses', [row(600)]) },
+    })
+
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+    expect(err.message).toContain('does not yet resume mid-resource')
+    expect(err.message).toContain('re-sweeps every resource from page 1')
+
+    const afterFirstRun = server?.requests.length ?? 0
+    await extract(dir, logs)
+    const second = (server?.requests ?? []).slice(afterFirstRun).map((r) => r.split('?')[0])
+
+    // A run that had resumed would have issued one request. This is the whole
+    // account again, from the top — which is what the message now promises.
+    expect(second[0]).toBe('/v2/users/me')
+    expect(second).toContain('/v2/users')
+    expect(second.length).toBeGreaterThan(10)
+  })
+})
+
+/**
+ * The allow-list that keeps `links.next` on the API origin inspects the URL before
+ * the request goes out; a 3xx moves the request after that check, inside fetch().
+ * What answered would be appended to raw/<resource>.jsonl verbatim, counted in the
+ * manifest, and stamped complete — a row that never came from Harvest, in the
+ * snapshot `load` consumes, described as a consistent sweep.
+ */
+describe('runExtract refuses a redirect off the API origin', () => {
+  let elsewhere: Server | undefined
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'ezacto-migrate-extract-redirect-'))
+    await seedManifest(dir)
+  })
+
+  afterEach(async () => {
+    await server?.close()
+    server = undefined
+    if (elsewhere) {
+      const closing = elsewhere
+      elsewhere = undefined
+      closing.closeAllConnections()
+      await new Promise<void>((resolve) => closing.close(() => resolve()))
+    }
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('[unit] a 302 on a sweep never reaches the snapshot, and the run does not finish', async () => {
+    const hits: string[] = []
+    const started = createServer((req, res) => {
+      hits.push(req.url ?? '')
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(envelope('users', [row(999999, { email: 'attacker@evil.test' })])))
+    })
+    elsewhere = started
+    await new Promise<void>((resolve) => started.listen(0, '127.0.0.1', resolve))
+    const evil = `http://127.0.0.1:${(started.address() as AddressInfo).port}/v2/users`
+
+    const mid: MidRun = { usersWatermarkBeforeFirstRequest: undefined, invoicePage2: undefined }
+    server = await startFakeHarvest(
+      listRoutes(mid, {
+        '/v2/users': () => ({ status: 302, headers: { location: evil }, body: 'moved' }),
+      }),
+    )
+
+    const err = (await extract(dir).catch((e: unknown) => e)) as Error
+
+    expect(hits).toEqual([])
+    expect(err.message).toContain('users: request to /v2/users failed')
+    expect(err.message).toContain('refusing to follow the 302 redirect')
+    // Nothing the off-origin host would have said is on disk or in the manifest.
+    expect(linesOnDisk('users')).toEqual([])
+    expect(manifestOnDisk().resources.users).toMatchObject({ count: 0, complete: false })
+    expect(manifestOnDisk().finished_at).toBeNull()
   })
 })

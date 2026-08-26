@@ -89,19 +89,36 @@ const asRecord = (raw: unknown, resource: string, url: string): Record<string, u
 const isApiError = (err: unknown): err is HarvestApiError =>
   err instanceof Error && typeof (err as HarvestApiError).status === 'number'
 
+/**
+ * What a failed run actually leaves behind, said without promising a resume that
+ * does not exist yet. `manifest.resources[*].next_url` is written but nothing reads
+ * it back, and every step re-runs through `startResource`, which truncates — so
+ * "re-run to continue" would send the reader to a command that first deletes the
+ * rows the sentence just told them were safe. When resume lands, this is the one
+ * string that changes.
+ */
+export const RESUME_GUIDANCE =
+  'The rows written so far are on disk and manifest.json records where this run stopped, but ' +
+  'extract does not yet resume mid-resource: re-running it against the same --snapshot-dir ' +
+  're-sweeps every resource from page 1, replacing each raw/<resource>.jsonl rather than ' +
+  'continuing it.'
+
 const exhausted = (resource: string, url: string, attempts: number, why: string): Error =>
   new Error(
-    `${resource}: gave up on ${url} after ${attempts} attempts (${why}). Everything extracted so ` +
-      'far is already on disk and the manifest records where this resource stopped — re-run ' +
-      '`ezacto-migrate extract` against the same --snapshot-dir to continue.',
+    `${resource}: gave up on ${url} after ${attempts} attempts (${why}). ${RESUME_GUIDANCE}`,
   )
 
 /**
  * One request, with the policy the story's AC #2 asks for: honor `Retry-After` on
  * 429, exponential backoff on 5xx, and rethrow anything that a retry cannot fix
  * (401/403/404/422 are answers, not weather).
+ *
+ * Exported because it is the policy, not a pagination detail: every request extract
+ * makes has to go through it, including the one that is not a page (the `/v2/users/me`
+ * identity check). A second call site issuing a bare fetch would be outside the
+ * budget, outside Retry-After, and outside AC #2.
  */
-const fetchPage = async (
+export const fetchWithPolicy = async (
   url: string,
   resource: string,
   config: HarvestClientConfig,
@@ -162,7 +179,7 @@ export async function* paginate(
 
   while (url !== null) {
     const requested: string = url
-    const fetched = await fetchPage(requested, start.resource, config, deps)
+    const fetched = await fetchWithPolicy(requested, start.resource, config, deps)
     const body = asRecord(fetched.body, start.resource, requested)
 
     const objects = body[start.collection]

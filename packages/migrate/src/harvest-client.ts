@@ -98,6 +98,8 @@ interface Attempt {
   status: number
   ok: boolean
   body: string
+  /** `Location` off a 3xx, so the refusal can name where it was being sent. */
+  location: string | null
   retryAfterSeconds: number | null
 }
 
@@ -106,6 +108,10 @@ interface Attempt {
  * read here on purpose: a server that sends headers and then stalls the body
  * would otherwise hang forever, because clearing the timer when fetch() resolves
  * leaves the body read undeadlined.
+ *
+ * `redirect: 'manual'` because the default is `follow`, and following happens
+ * inside fetch() — after the origin allow-list has already passed on the URL we
+ * handed in. The caller turns the 3xx into a refusal; see harvestFetchUrl.
  */
 const doFetch = async (
   url: string,
@@ -119,12 +125,13 @@ const doFetch = async (
     controller.abort()
   }, timeoutMs)
   try {
-    const response = await fetch(url, { headers, signal: controller.signal })
+    const response = await fetch(url, { headers, redirect: 'manual', signal: controller.signal })
     const body = await response.text()
     return {
       status: response.status,
       ok: response.ok,
       body,
+      location: response.headers.get('location'),
       retryAfterSeconds: parseRetryAfter(response.headers.get('retry-after')),
     }
   } catch (err) {
@@ -153,6 +160,39 @@ export const isApiOrigin = (url: string, config: HarvestClientConfig): boolean =
   } catch {
     return false
   }
+}
+
+/**
+ * A 3xx is the allow-list's blind spot, so it is refused rather than followed.
+ *
+ * `isApiOrigin` — here and on `links.next` in the paginator — inspects the URL
+ * before the request goes out. A redirect moves the request *after* that check,
+ * inside fetch(), to any host the response names: RFC1918, 169.254.169.254, a
+ * port on localhost. What comes back would then be appended to
+ * raw/<resource>.jsonl verbatim and counted in the manifest as Harvest's own
+ * answer. The Fetch spec strips `Authorization` cross-origin, but that is one
+ * client's behaviour and nothing here rests on it; `Harvest-Account-Id` and the
+ * operator's email in the User-Agent are sent either way.
+ */
+const makeRedirectError = (
+  url: string,
+  config: HarvestClientConfig,
+  attempt: Attempt,
+): HarvestApiError => {
+  const fix =
+    'the Harvest API does not redirect — check the base URL, and any proxy or TLS interception ' +
+    'between this machine and the API'
+  const err = new Error(
+    `refusing to follow the ${attempt.status} redirect from ${url} to ` +
+      `${attempt.location ?? '(no Location header)'}: it leaves ${apiOrigin(config)}, which is ` +
+      'the only origin this client may send the account id, the operator email and the PAT to — ' +
+      `and whatever answered would be written into the snapshot as Harvest's own reply. ${fix}.`,
+  ) as HarvestApiError
+  err.status = attempt.status
+  err.fix = fix
+  err.body = attempt.body
+  err.retryAfterSeconds = attempt.retryAfterSeconds
+  return err
 }
 
 /**
@@ -200,6 +240,11 @@ export const harvestFetchUrl = async (
     }
   }
 
+  // Before the generic !ok branch: a 3xx is not an answer about the account, it is
+  // the request being pointed somewhere the allow-list above never saw.
+  if (attempt.status >= 300 && attempt.status < 400) {
+    throw makeRedirectError(url, config, attempt)
+  }
   if (!attempt.ok) {
     throw makeApiError(attempt.status, attempt.body, attempt.retryAfterSeconds)
   }

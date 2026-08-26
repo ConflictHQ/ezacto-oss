@@ -19,6 +19,22 @@
 export const RATE_LIMIT = 100
 export const RATE_WINDOW_MS = 15_000
 
+/**
+ * The soonest `requests` grants can be issued, in ms — a floor this limiter cannot
+ * beat, and the only budget claim a whole-run measurement can honestly make.
+ *
+ * The *average* rate over a run is not that claim. The window starts empty, so the
+ * first RATE_LIMIT grants are spent immediately and deliberately (see the note
+ * above, and the "spends the first window immediately" test); the average therefore
+ * begins above the sustained 6.7/s and only converges down to it, and asserting
+ * `requests / elapsed <= 6.7` fails every correctly-paced run at real API latency.
+ * Averages cannot see a window violation either — 200 requests in one second
+ * followed by a minute of idle averages 3.3/s. The per-grant window property is the
+ * real one, and it is asserted directly, on a fake clock, in rate-limiter.test.ts.
+ */
+export const minElapsedMs = (requests: number): number =>
+  Math.floor(Math.max(requests - 1, 0) / RATE_LIMIT) * RATE_WINDOW_MS
+
 export interface RateLimiter {
   /** Resolves once a request may be issued, sleeping if the window is full. */
   acquire: () => Promise<void>
