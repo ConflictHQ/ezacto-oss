@@ -136,6 +136,13 @@ const rawLines = (
   })
 }
 
+/**
+ * Statuses that answer "this parent has none of these", rather than "your request
+ * was wrong", on a step marked `optional`. 403 and 404 are the documented shapes;
+ * 422 is what the live account actually returns for teammates.
+ */
+const INAPPLICABLE_STATUSES = new Set([403, 404, 422])
+
 const inContext = (
   resource: string,
   path: string,
@@ -622,13 +629,15 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
       // finishing a parent (next_url back to null) leaves nothing to resume in
       // it — the fan-out just has to skip past an id it already fully swept.
       let parents = 0
-      // Inherited on a resume, both of them: a resumed fan-out skips past the
+      // Inherited on a resume, all of them: a resumed fan-out skips past the
       // parents the dead run already dealt with, so a refusal it observed is one
       // this run will never see again. Re-deriving these from what this run
       // happens to meet is how a resource whose children are missing came to
       // report full coverage.
       let refused = resuming ? (record.refused_parents ?? 0) : 0
-      let refusedStatus = resuming ? (record.refused_status ?? 0) : 0
+      const refusedStatuses = new Set<number>(
+        resuming && record.refused_status ? [record.refused_status] : [],
+      )
       let missing = resuming ? record.missing_parents : 0
       let lastParentId = 0
       let resumePending = resuming
@@ -702,10 +711,17 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
           // and the position were a crash away from being lost — and a resume that
           // rewound to the last *swept* parent would count every refusal in between
           // a second time.
-          if (step.optional && (err.status === 403 || err.status === 404)) {
+          //
+          // 422 is in the set on the evidence of the live account, not the docs:
+          // Harvest answers /v2/users/{id}/teammates with
+          // `422 {"message":"User must be a Manager to have teammates"}` for every
+          // non-manager — a statement about this parent, not a complaint about the
+          // request, and no documented error schema tells the two apart
+          // (research §0.3, §15.5).
+          if (step.optional && INAPPLICABLE_STATUSES.has(err.status)) {
             record.requests += 1
             refused += 1
-            refusedStatus = err.status
+            refusedStatuses.add(err.status)
             record.refused_parents = refused
             record.refused_status = err.status
             record.parent_id = parentId
@@ -784,10 +800,11 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
         )
       }
       if (refused > 0) {
+        const statuses = [...refusedStatuses].sort((a, b) => a - b).join('/')
         record.skipped_reason =
           refused === parents
-            ? `Harvest returned ${refusedStatus} for all ${parents} ${step.parent} — ${step.name} is not enabled on this account`
-            : `Harvest returned ${refusedStatus} for ${refused} of ${parents} ${step.parent} — those ${step.name} are not in this snapshot`
+            ? `Harvest returned ${statuses} for all ${parents} ${step.parent} — ${step.name} is not enabled on this account`
+            : `Harvest returned ${statuses} for ${refused} of ${parents} ${step.parent} — those ${step.name} are not in this snapshot`
         log(`${step.name}: ${record.skipped_reason}`)
       }
     }
