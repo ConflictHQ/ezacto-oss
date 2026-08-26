@@ -7,7 +7,13 @@ import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { appendPage, mergeIncremental, reconcileToCount, startResource } from '../src/jsonl.js'
+import {
+  appendPage,
+  mergeIncremental,
+  reconcileToCount,
+  reconcileToFile,
+  startResource,
+} from '../src/jsonl.js'
 
 let dir: string
 
@@ -127,6 +133,58 @@ describe('reconcileToCount over a file larger than one read chunk', () => {
     const cut = await readFile(rawPath('time_entries'), 'utf8')
     expect(cut.split('\n').slice(0, -1)).toHaveLength(3999)
     expect(cut).toBe(whole.slice(0, cut.length))
+  })
+})
+
+describe('reconcileToFile', () => {
+  // The incremental half of the same window. mergeIncremental commits the merged
+  // file with a rename and the record claims its length at the manifest write
+  // after it, so a kill in between leaves rows on disk that `count` does not know
+  // about. Unlike a full sweep's unclaimed page there is no cursor left to
+  // re-fetch them from — they are merged and durable — so the manifest is the
+  // side that gets corrected.
+  it('[unit] adopts merged rows the manifest never claimed, without cutting them', async () => {
+    await startResource(dir, 'clients')
+    await appendPage(dir, 'clients', [{ id: 1 }])
+    await appendPage(dir, 'clients', [{ id: 2 }])
+
+    expect(await reconcileToFile(dir, 'clients', 1)).toBe(2)
+
+    expect(await readFile(rawPath('clients'), 'utf8')).toBe('{"id":1}\n{"id":2}\n')
+  })
+
+  it('[unit] counts committed lines only, never a torn trailing write', async () => {
+    await startResource(dir, 'tasks')
+    await appendPage(dir, 'tasks', [{ id: 1 }])
+    await writeFile(rawPath('tasks'), '{"id":2}', { flag: 'a' })
+
+    expect(await reconcileToFile(dir, 'tasks', 1)).toBe(1)
+  })
+
+  // Nothing here removes a row, so a file short of what the manifest claims is
+  // rows lost after an fsync promised them. Adopting the smaller number would
+  // leave the snapshot agreeing with itself about an account it no longer holds.
+  it('[unit] refuses a file holding fewer committed rows than the manifest claims', async () => {
+    await startResource(dir, 'projects')
+    await appendPage(dir, 'projects', [{ id: 1 }])
+
+    const outcome = await reconcileToFile(dir, 'projects', 2).catch((e: unknown) => e as Error)
+
+    expect(outcome).toBeInstanceOf(Error)
+    expect((outcome as Error).message).toContain(
+      'holds 1 committed line(s) but manifest.json claims 2',
+    )
+  })
+
+  // Same reason reconcileToCount scans: the resource whose merge is most likely
+  // to be interrupted is the one whose file is too big to be a JS string at all.
+  it('[unit] counts by scanning, across chunk boundaries', async () => {
+    await startResource(dir, 'time_entries')
+    const rows = Array.from({ length: 4000 }, (_, i) => ({ id: i, notes: 'x'.repeat(60) }))
+    await appendPage(dir, 'time_entries', rows)
+    expect((await readFile(rawPath('time_entries'), 'utf8')).length).toBeGreaterThan(1 << 16)
+
+    expect(await reconcileToFile(dir, 'time_entries', 3999)).toBe(4000)
   })
 })
 

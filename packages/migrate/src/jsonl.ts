@@ -138,6 +138,62 @@ export const reconcileToCount = async (
 }
 
 /**
+ * The same reconciliation the other way round, for the incremental path: returns
+ * what raw/<resource>.jsonl actually holds so the manifest can be corrected to it.
+ *
+ * `mergeIncremental` commits the merged file with a rename below, and the record
+ * only claims its length at the manifest write that follows — the same
+ * one-manifest-write window `appendPage`/`reconcileToCount` close a level down.
+ * A crash inside it leaves the file holding merged rows `count` does not claim,
+ * and the pass that gets re-run cannot correct it whenever it stages nothing
+ * (nothing to merge, so no merged length to report). Cutting the file back to
+ * `count` would be wrong here: unlike a full sweep's unclaimed page, which has a
+ * live cursor to re-fetch it from, these rows are merged, fsynced and gone from
+ * upstream's changed set — the manifest is the side that is behind.
+ *
+ * Refuses, as reconcileToCount does, when the file holds *fewer* committed lines
+ * than the manifest claims. No path here removes a row, so that is rows lost
+ * after an fsync promised them, and adopting the smaller number would leave the
+ * snapshot agreeing with itself about an account it no longer holds.
+ *
+ * Counted by scanning for newline bytes, never by reading the file in: same
+ * reason as above — the resource most likely to be interrupted is also the one
+ * whose file is too big to be a JS string.
+ */
+export const reconcileToFile = async (
+  dir: string,
+  resource: string,
+  claimed: number,
+): Promise<number> => {
+  const path = rawPath(dir, resource)
+  const handle = await open(path, 'r')
+  try {
+    const chunk = Buffer.allocUnsafe(CHUNK)
+    let bytes = 0
+    let lines = 0
+    for (;;) {
+      const { bytesRead } = await handle.read(chunk, 0, CHUNK, bytes)
+      if (bytesRead === 0) break
+      for (let i = 0; i < bytesRead; i += 1) {
+        if (chunk[i] === NEWLINE) lines += 1
+      }
+      bytes += bytesRead
+    }
+    if (lines < claimed) {
+      throw new Error(
+        `${path} holds ${lines} committed line(s) but manifest.json claims ${claimed} — ` +
+          'the file is missing rows fsync should have made durable. This snapshot cannot be ' +
+          'resumed safely; re-run extract without --snapshot-dir pointed at it, or restore the ' +
+          'file from backup before resuming.',
+      )
+    }
+    return lines
+  } finally {
+    await handle.close()
+  }
+}
+
+/**
  * Streams one jsonl file as {line, id} pairs, skipping blank lines. `whyId` says
  * what the id was needed for, so a row without one names the caller it broke.
  */

@@ -34,6 +34,7 @@ import {
   mergeIncremental,
   readIds,
   reconcileToCount,
+  reconcileToFile,
   startResource,
 } from './jsonl.js'
 import { readManifestIfExists, writeManifest, type ManifestResource } from './manifest.js'
@@ -388,6 +389,19 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
       // rows of an interrupted pass being re-run here are discarded, before it
       // fetches them again.
       await startResource(snapshotDir, step.name, true)
+      if (reRunIncremental) {
+        // The merge has the page loop's ordering hazard one level up: it commits
+        // raw/<resource>.jsonl with a rename, and `count` is only durable at the
+        // manifest write several statements below it. A run killed in between
+        // leaves the file holding merged rows the manifest does not claim — and
+        // the re-run of the pass cannot correct that whenever it stages nothing
+        // (the rows the dead pass fetched were deleted upstream in the
+        // meantime): the merge reports no length, and the record then gets
+        // stamped `complete` with the snapshot's `finished_at` over the
+        // discrepancy. So the count is reconciled to the file before the pass
+        // runs, exactly as a resumed full sweep reconciles the file to the count.
+        record.count = await reconcileToFile(snapshotDir, step.name, record.count)
+      }
     } else {
       await startResource(snapshotDir, step.name)
       // The rows a child fan-out checkpoint indexes into are gone; so is the
@@ -522,6 +536,15 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
           startUrl = resumeUrl
         }
         const pagesBefore = record.pages
+        // `pagesBefore` is captured fresh each run, so it cannot see the pages a
+        // *previous* run already wrote for the parent it was checkpointed inside.
+        // `startUrl` is that checkpoint: it is set only when this parent is being
+        // resumed mid-pagination, which is to say only when raw/<resource>.jsonl
+        // already holds page(s) of it. Without this, a resumed parent whose very
+        // first request — its stored cursor — answers 404 or 403 leaves
+        // `record.pages` where it started and reads as a parent that gave us
+        // nothing, i.e. as the missing/refused case below.
+        const resumedMidParent = startUrl !== undefined
         try {
           await sweep(step.path(parentId), undefined, 0, parentId, startUrl, startUrl !== undefined)
         } catch (err) {
@@ -536,13 +559,18 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
           // resource as a complete sweep, and — because the step then stamps
           // updated_since — put the missing rows out of reach of every later
           // incremental pass. The truncation is permanent; the run must stop.
-          if (record.pages > pagesBefore) {
+          if (record.pages > pagesBefore || resumedMidParent) {
+            const written = record.pages - pagesBefore
             throw new Error(
-              `${step.name}: ${step.parent} ${parentId} answered ${err.status} on page ` +
-                `${record.pages - pagesBefore + 1} of its own pagination, after ` +
-                `${record.pages - pagesBefore} page(s) of it were already written to ` +
-                `raw/${step.name}.jsonl. That is a truncated ${step.parent}, not a missing one: ` +
-                `continuing would count the partial rows and record ${step.name} as complete. ` +
+              `${step.name}: ${step.parent} ${parentId} answered ${err.status} ` +
+                (resumedMidParent
+                  ? `partway through its own pagination — this run resumed it at the cursor a ` +
+                    `previous run checkpointed inside it, so page(s) of it are already in ` +
+                    `raw/${step.name}.jsonl`
+                  : `on page ${written + 1} of its own pagination, after ${written} page(s) of ` +
+                    `it were already written to raw/${step.name}.jsonl`) +
+                `. That is a truncated ${step.parent}, not a missing one: continuing would count ` +
+                `the partial rows and record ${step.name} as complete. ` +
                 RESUME_GUIDANCE,
               { cause: err },
             )
@@ -623,11 +651,27 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
       // not exist for this account. Recording an empty resource as complete is
       // exactly the silent-data-loss failure the registry's guess-guard exists for.
       if (missing > 0 && missing === parents) {
+        // The checkpoint goes before the throw, exactly as the stale-checkpoint
+        // case above does it — and for the same reason. Every one of those 404s
+        // checkpointed itself, so the record still says `interrupted` at the last
+        // parent: left standing, the next run resumes into it, skips every parent
+        // looking for that id, `continue`s past it (its next_url is null), issues
+        // no request at all, inherits this tally and throws this same error —
+        // forever, even once the path answers again. Both the usage text and
+        // RESUME_GUIDANCE promise a re-run resumes; the only way out was editing
+        // manifest.json by hand.
+        record.interrupted = false
+        record.next_url = null
+        record.parent_id = null
+        record.missing_parents = 0
+        await persist()
         throw new Error(
           `${step.name}: Harvest returned 404 for every one of the ${parents} ${step.parent} this ` +
             `step fanned out over (last: ${step.path(lastParentId)}). Either that path is wrong for ` +
             `this account or the whole ${step.parent} collection was deleted mid-run — refusing to ` +
-            `record an empty ${step.name} as a complete resource.`,
+            `record an empty ${step.name} as a complete resource. The checkpoints those 404s left ` +
+            `behind have been dropped: re-run to sweep ${step.name} over the whole ${step.parent} ` +
+            `list again.`,
         )
       }
       if (refused > 0) {

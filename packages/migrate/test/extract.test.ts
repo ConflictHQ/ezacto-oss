@@ -7,7 +7,7 @@
 import { readFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { appendFile, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -28,6 +28,19 @@ const row = (id: number, extra: Record<string, unknown> = {}): Record<string, un
   created_at: '2026-01-01T00:00:00Z',
   ...extra,
 })
+
+/**
+ * The same page with its `total_entries` removed. Harvest publishes no body for
+ * any of the nested endpoints — resources.ts calls their envelope shape an
+ * informed guess — so a child page that states no tally is a shape extract has to
+ * be correct without: there is no outside witness to catch a truncation after
+ * the fact.
+ */
+const untallied = (body: Record<string, unknown>): Record<string, unknown> => {
+  const page = { ...body }
+  delete page.total_entries
+  return page
+}
 
 const USERS = [row(1), row(2)]
 const INVOICES = [row(100), row(101)]
@@ -526,6 +539,72 @@ describe('runExtract when the account moves under it', () => {
     expect(linesOnDisk('billable_rates')).toHaveLength(2)
   })
 
+  // The same misclassification across a *resume*, which the guard above could not
+  // see: `pagesBefore` is captured fresh each run, so a parent picked up at its
+  // stored cursor starts level with it. A 404 on that first request then left
+  // `record.pages` where it began and read as a parent that gave us nothing — it
+  // was recorded missing, the checkpoint moved past it, its page 1 stayed in
+  // raw/invoice_messages.jsonl and in `count`, and the step finished
+  // `complete: true` with updated_since stamped over the rows it never got. With
+  // no total_entries on the page (the nested endpoints publish no body) there is
+  // no second witness either: the run exits 0 and the loss is permanent.
+  it('[unit] a parent resumed at its cursor and then 404d is a truncation, not a missing parent', async () => {
+    let cursorGone = false
+    await start({
+      '/v2/invoices/{id}/messages': (url) => {
+        if (userId(url) !== 100) return { body: envelope('invoice_messages', [row(1101)]) }
+        if (url.searchParams.get('cursor') === 'NEXT') {
+          return cursorGone
+            ? { status: 404, body: { message: 'Not Found' } }
+            : { status: 500, body: { message: 'boom' } }
+        }
+        return {
+          body: untallied(
+            envelope(
+              'invoice_messages',
+              [row(1001)],
+              `${server?.baseUrl ?? ''}/v2/invoices/100/messages?cursor=NEXT`,
+            ),
+          ),
+        }
+      },
+    })
+
+    const crashed = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+    expect(crashed.message).toContain('invoice_messages')
+    expect(manifestOnDisk().resources.invoice_messages).toMatchObject({
+      count: 1,
+      pages: 1,
+      parent_id: 100,
+      interrupted: true,
+    })
+    expect(manifestOnDisk().resources.invoice_messages.next_url).toContain('cursor=NEXT')
+
+    // Invoice 100 is deleted between the crash and the resume, so the cursor the
+    // checkpoint names — the resumed parent's first request — now 404s.
+    cursorGone = true
+    const requestsBefore = server?.requests.length ?? 0
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+    const resumed = (server?.requests ?? []).slice(requestsBefore).map((r) => r.split('?')[0])
+
+    expect(err.message).toContain('invoices 100 answered 404')
+    expect(err.message).toContain('truncated invoices, not a missing one')
+    expect(err.message).toContain('raw/invoice_messages.jsonl')
+
+    const manifest = manifestOnDisk()
+    expect(manifest.resources.invoice_messages).toMatchObject({
+      count: 1,
+      missing_parents: 0,
+      complete: false,
+    })
+    // Page 1 of invoice 100 is still on disk — and nothing may describe the file
+    // holding it as a complete sweep, or step over the rest of it next time.
+    expect(linesOnDisk('invoice_messages')).toHaveLength(1)
+    expect(manifest.finished_at).toBeNull()
+    expect(manifest.updated_since.invoice_messages).toBeUndefined()
+    expect(resumed).not.toContain('/v2/invoices/101/messages')
+  })
+
   // …but a path that 404s for *every* parent is not a race, and an empty resource
   // recorded as complete is the silent data loss the registry's guess-guard exists for.
   it('[unit] every parent 404ing stops the run and names the path that answered', async () => {
@@ -538,6 +617,54 @@ describe('runExtract when the account moves under it', () => {
     expect(err.message).toContain('every one of the 2 invoices')
     expect(err.message).toContain('/v2/invoices/101/messages')
     expect(err.message).toContain('refusing to record an empty invoice_messages')
+  })
+
+  // …and it has to be a stop the snapshot can come back from. Every one of those
+  // 404s checkpointed itself, so the record was left `interrupted` at the last
+  // invoice: the next run resumed into it, skipped every parent looking for that
+  // id, issued no request to the child endpoint at all, inherited the dead run's
+  // missing_parents and threw the byte-identical error — forever, however long
+  // ago Harvest recovered. The usage text and RESUME_GUIDANCE both promise a
+  // re-run resumes; the only way out was editing manifest.json by hand.
+  it('[unit] a fan-out that 404d for every parent is swept again once the path answers', async () => {
+    let gone = true
+    await start({
+      '/v2/invoices/{id}/messages': (url) =>
+        gone
+          ? { status: 404, body: { message: 'Not Found' } }
+          : { body: envelope('invoice_messages', [row(userId(url) + 1000)]) },
+    })
+
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+    expect(err.message).toContain('every one of the 2 invoices')
+    // Not resumable: nothing is left for a re-run to pick up mid-fan-out, and the
+    // dead run's tally does not carry into the run that sweeps this again.
+    expect(manifestOnDisk().resources.invoice_messages).toMatchObject({
+      interrupted: false,
+      parent_id: null,
+      next_url: null,
+      missing_parents: 0,
+      complete: false,
+    })
+
+    gone = false
+    const requestsBefore = server?.requests.length ?? 0
+    const result = await extract(dir, logs)
+    const resumed = (server?.requests ?? []).slice(requestsBefore).map((r) => r.split('?')[0])
+
+    // Every invoice asked again, once each — the requests the stuck record made
+    // impossible.
+    expect(resumed.filter((p) => /^\/v2\/invoices\/\d+\/messages$/.test(p))).toEqual([
+      '/v2/invoices/100/messages',
+      '/v2/invoices/101/messages',
+    ])
+    expect(result.resources.invoice_messages).toMatchObject({
+      count: 2,
+      missing_parents: 0,
+      complete: true,
+    })
+    expect(linesOnDisk('invoice_messages')).toHaveLength(2)
+    expect(manifestOnDisk().finished_at).not.toBeNull()
   })
 
   // `Harvest API error: 422 {"message":"…"}` names no resource, no path, and none of
@@ -1334,6 +1461,63 @@ describe('runExtract when the account moves under it', () => {
     expect(resumed[0]).toContain(`updated_since=${encodeURIComponent(watermark)}`)
     expect(result.resources.clients).toMatchObject({ count: 1, complete: true, incremental: true })
     expect(linesOnDisk('clients')).toHaveLength(result.resources.clients.count)
+    expect(manifestOnDisk().finished_at).not.toBeNull()
+  })
+
+  // The same window one level up, and the same lie the other way round. The merge
+  // commits raw/clients.jsonl with a rename and the manifest claims its length at
+  // the write several statements later — a kill in between leaves the file holding
+  // a merged row `count` does not know about. The re-run of the pass is the only
+  // thing that could correct it, and it cannot whenever it stages nothing: the
+  // merge reports no length, and the record gets stamped complete, with the
+  // snapshot's finished_at over it, still under-claiming the file `load` reads.
+  it('[unit] a kill between the incremental merge and the manifest is reconciled, not stamped over', async () => {
+    let deletedUpstream = false
+    await start({
+      '/v2/clients': (url) => {
+        // Cursor first: `links.next` carries the cursor and nothing else, so the
+        // second page of the pass arrives without the filter that started it.
+        if (url.searchParams.get('cursor') === 'C2') {
+          return { status: 500, body: { message: 'boom' } }
+        }
+        if (url.searchParams.get('updated_since') === null) {
+          return { body: envelope('clients', [row(30)]) }
+        }
+        if (deletedUpstream) return { body: envelope('clients', []) }
+        return {
+          body: envelope('clients', [row(31)], `${server?.baseUrl ?? ''}/v2/clients?cursor=C2`),
+        }
+      },
+    })
+
+    await extract(dir, logs)
+    expect(linesOnDisk('clients')).toHaveLength(1)
+
+    // The pass dies on its second page, its first page staged in .incoming.
+    const failed = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+    expect(failed.message).toContain('clients')
+    expect(manifestOnDisk().resources.clients).toMatchObject({
+      count: 1,
+      incremental: true,
+      interrupted: true,
+      complete: false,
+    })
+
+    // Exactly what a completed merge does to the filesystem, and nothing else:
+    // the merged file in place, the staging file gone, the manifest untouched —
+    // the state a kill between the rename and the manifest write leaves behind.
+    await appendFile(join(dir, 'raw', 'clients.jsonl'), `${JSON.stringify(row(31))}\n`)
+    await rm(join(dir, 'raw', 'clients.jsonl.incoming'), { force: true })
+
+    // Client 31 is deleted upstream before the re-run, so the pass stages nothing
+    // and there is no merged length for the record to be corrected by.
+    deletedUpstream = true
+    const result = await extract(dir, logs)
+
+    // The manifest describes the file it names again: two rows on disk, two rows
+    // claimed — not a snapshot stamped finished over a count one row behind it.
+    expect(linesOnDisk('clients')).toHaveLength(2)
+    expect(result.resources.clients).toMatchObject({ count: 2, complete: true })
     expect(manifestOnDisk().finished_at).not.toBeNull()
   })
 
