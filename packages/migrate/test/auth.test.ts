@@ -80,6 +80,26 @@ describe('runAuth', () => {
     expect(manifest.account.id).toBe('999')
   })
 
+  it('[unit] preflight persists clock, timer mode, and feature flags into the snapshot manifest', async () => {
+    usersMeResponse = { id: 1, access_roles: ['administrator'] }
+
+    await runAuth({
+      env: { pat: 'p', accountId: undefined, userAgentEmail: 'e@x.com' },
+      toolVersion: '0.0.0',
+      snapshotDir: dir,
+    })
+
+    const manifest = await readManifest(dir)
+    expect(manifest.preflight).toEqual({
+      clock: COMPANY.clock,
+      wants_timestamp_timers: COMPANY.wants_timestamp_timers,
+      expense_feature: COMPANY.expense_feature,
+      invoice_feature: COMPANY.invoice_feature,
+      estimate_feature: COMPANY.estimate_feature,
+      approval_feature: COMPANY.approval_feature,
+    })
+  })
+
   it('[unit] administrator PAT: no warning is emitted', async () => {
     usersMeResponse = { id: 1, access_roles: ['administrator'] }
     const logs: string[] = []
