@@ -41,17 +41,61 @@ describe('.dev.vars discovery', () => {
     expect(findDevVars(join(dir, 'no', 'such', 'place'))).toBeNull()
   })
 
-  it('[unit] loadDevVars reads the file it found into the environment', async () => {
-    const key = 'EZACTO_MIGRATE_ENV_TEST'
-    await writeFile(join(dir, '.dev.vars'), `${key}=loaded\n`)
-    const before = process.env[key]
+  it('[unit] loadDevVars reads the Harvest variables it found into the environment', async () => {
+    await writeFile(join(dir, '.dev.vars'), 'HARVEST_USER_AGENT_EMAIL=loaded@example.com\n')
+    const before = process.env.HARVEST_USER_AGENT_EMAIL
+    delete process.env.HARVEST_USER_AGENT_EMAIL
 
     try {
       expect(loadDevVars(dir)).toBe(join(dir, '.dev.vars'))
-      expect(process.env[key]).toBe('loaded')
+      expect(process.env.HARVEST_USER_AGENT_EMAIL).toBe('loaded@example.com')
     } finally {
-      if (before === undefined) delete process.env[key]
-      else process.env[key] = before
+      if (before === undefined) delete process.env.HARVEST_USER_AGENT_EMAIL
+      else process.env.HARVEST_USER_AGENT_EMAIL = before
+    }
+  })
+
+  // The search walks up to `/`, so the file it finds is not necessarily one this
+  // user wrote: a cloned repo, an unpacked tarball, a shared working tree or a
+  // planted ~/.dev.vars all sit on the path of an ordinary `extract`. Handed to
+  // process.loadEnvFile the whole file became this process's environment, and Node
+  // reads some of its own variables lazily — `NODE_TLS_REJECT_UNAUTHORIZED=0` in a
+  // directory above the user turned off certificate verification for every request
+  // the CLI then made, each of which carries the account's PAT by construction.
+  it('[unit] a .dev.vars cannot set anything but the Harvest variables', async () => {
+    await writeFile(
+      join(dir, '.dev.vars'),
+      'HARVEST_PAT=from-file\nNODE_TLS_REJECT_UNAUTHORIZED=0\nEZACTO_MIGRATE_ENV_TEST=loaded\n',
+    )
+    const beforePat = process.env.HARVEST_PAT
+    delete process.env.HARVEST_PAT
+
+    try {
+      expect(loadDevVars(dir)).toBe(join(dir, '.dev.vars'))
+      // the key it exists to carry, and nothing beside it
+      expect(process.env.HARVEST_PAT).toBe('from-file')
+      expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).toBeUndefined()
+      expect(process.env.EZACTO_MIGRATE_ENV_TEST).toBeUndefined()
+    } finally {
+      if (beforePat === undefined) delete process.env.HARVEST_PAT
+      else process.env.HARVEST_PAT = beforePat
+    }
+  })
+
+  // process.loadEnvFile left an already-exported variable alone, and the error
+  // surface below still names .dev.vars as the place to put a missing one — so a
+  // shell export must keep winning over the file.
+  it('[unit] a shell-exported value still wins over the file', async () => {
+    await writeFile(join(dir, '.dev.vars'), 'HARVEST_ACCOUNT_ID=from-file\n')
+    const before = process.env.HARVEST_ACCOUNT_ID
+    process.env.HARVEST_ACCOUNT_ID = 'from-shell'
+
+    try {
+      loadDevVars(dir)
+      expect(process.env.HARVEST_ACCOUNT_ID).toBe('from-shell')
+    } finally {
+      if (before === undefined) delete process.env.HARVEST_ACCOUNT_ID
+      else process.env.HARVEST_ACCOUNT_ID = before
     }
   })
 })

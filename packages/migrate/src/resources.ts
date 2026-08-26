@@ -41,6 +41,17 @@ export interface ListStep extends StepCommon {
    * only for the assignment sweeps, where one pass cannot see the whole account.
    */
   passes?: Record<string, string>[]
+  /**
+   * Harvest does not implement `updated_since` on this endpoint, so a re-run has
+   * to sweep it in full rather than asking for what changed (§2.4). Research §13:
+   * "Every list endpoint except `roles`, `billable_rates`, `cost_rates`, and
+   * `teammates` supports `updated_since`" — the other three are `child` steps,
+   * which are never incremental anyway. Harvest ignores query params it does not
+   * know, so an incremental pass here would ask for a filter, be handed the whole
+   * collection back, and merge it in as if it were the changed rows: unbounded
+   * re-fetching of an endpoint that is already cheap to sweep whole.
+   */
+  noUpdatedSince?: true
 }
 
 export interface ChildStep extends StepCommon {
@@ -86,7 +97,8 @@ export const RESOURCES: readonly ResourceStep[] = [
     parent: 'users',
     optional: true,
   },
-  { kind: 'list', name: 'roles', path: '/v2/roles', collection: 'roles' },
+  // /v2/roles takes only `page` (deprecated) and `per_page` — research §7.
+  { kind: 'list', name: 'roles', path: '/v2/roles', collection: 'roles', noUpdatedSince: true },
   { kind: 'list', name: 'clients', path: '/v2/clients', collection: 'clients' },
   { kind: 'list', name: 'contacts', path: '/v2/contacts', collection: 'contacts' },
   { kind: 'list', name: 'tasks', path: '/v2/tasks', collection: 'tasks' },

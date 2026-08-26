@@ -323,7 +323,7 @@ describe('paginate throttle and backoff policy [unit]', () => {
 
     expect(err.message).toContain('expenses: gave up on')
     expect(err.message).toContain('could not reach Harvest')
-    expect(err.message).toContain('re-sweeps every resource from page 1')
+    expect(err.message).toContain('resumes this resource from its last checkpoint')
   })
 
   it('[unit] five consecutive 429s give up with a message naming the resource and the resume path', async () => {

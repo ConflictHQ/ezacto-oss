@@ -75,16 +75,10 @@ describe('ezacto-migrate CLI entrypoint', () => {
     expect(stdout).toContain('extract')
   })
 
-  // The usage text called extract "resumable". Nothing reads
-  // manifest.resources[*].next_url back and every step re-runs through
-  // startResource, which truncates that resource's raw file — so a user who read
-  // "resumable" and re-ran after an hour-three failure got a full re-sweep that
-  // began by deleting what the first run had collected.
-  it('[unit] does not advertise a resume it has not implemented', async () => {
+  it('[unit] advertises the resume and incremental behavior extract now has', async () => {
     const { stdout } = await runNode(cliPath)
 
-    expect(stdout).not.toMatch(/resumable/i)
-    expect(stdout).toContain('it does not resume')
+    expect(stdout).toContain('resumes an interrupted resource from its last checkpoint')
   })
 
   it('[unit] extract refuses a snapshot dir auth has never stamped', async () => {
@@ -194,5 +188,45 @@ describe('the extract counts table', () => {
     const lines = table.split('\n')
     expect(lines[0]).toContain('Harvest reported 4000')
     expect(lines[1]).toContain('2 parents missing')
+  })
+
+  // `total_entries` freezes at the last full sweep's tally while `count` keeps
+  // growing across `updated_since` passes, so comparing the two after a re-run
+  // reported a Harvest discrepancy for every resource with any activity at all —
+  // extract itself says nothing, because it guards the same comparison. A table
+  // that cries wolf on every row is how a real shortfall stops being visible.
+  it('[unit] an incremental pass is measured against its own tally, not the last full sweep', () => {
+    const table = formatCounts(
+      {
+        resources: {
+          // two rows from the full sweep, two more merged in by the pass that
+          // followed it — and the pass got every changed row it was told about
+          time_entries: resourceProgress({
+            count: 4,
+            pages: 1,
+            total_entries: 2,
+            staged_count: 2,
+            staged_total_entries: 2,
+            incremental: true,
+          }),
+          // the pass that did not: five changed rows stated, two handed over
+          expenses: resourceProgress({
+            count: 4,
+            pages: 1,
+            total_entries: 2,
+            staged_count: 2,
+            staged_total_entries: 5,
+            incremental: true,
+          }),
+        },
+        requests: 2,
+        durationMs: 1_000,
+      },
+      '/snap/manifest.json',
+    )
+
+    const lines = table.split('\n')
+    expect(lines[0]).toBe('time_entries        4 rows     1 pages')
+    expect(lines[1]).toContain('Harvest reported 5 changed, this pass staged 2')
   })
 })

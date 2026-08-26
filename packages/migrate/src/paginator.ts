@@ -19,6 +19,7 @@ import {
   type HarvestClientConfig,
 } from './harvest-client.js'
 import { describe } from './response.js'
+import { sliceCollection } from './raw-slices.js'
 import { RATE_WINDOW_MS } from './rate-limiter.js'
 import type { RateLimiter } from './rate-limiter.js'
 
@@ -46,6 +47,14 @@ export interface PaginateStart {
   /** Envelope key holding the records. */
   collection: string
   params?: Record<string, string>
+  /**
+   * Resume a sweep already in progress: the exact `links.next` a previous run
+   * recorded in `manifest.resources[*].next_url`, used verbatim as the first
+   * request instead of building one from `path`/`params`. Still the doc mandate
+   * (research §0.4) — the URL was never constructed here, only replayed from
+   * where the last one left off.
+   */
+  startUrl?: string
 }
 
 export interface PaginateDeps {
@@ -58,6 +67,16 @@ export interface Page {
   /** The URL that produced this page, exactly as requested. */
   url: string
   objects: unknown[]
+  /**
+   * The wire bytes of each record, cut from the response body (§2.3 "raw means
+   * raw"). `objects` stays for anything that needs to *read* a field — ids for a
+   * fan-out, `updated_at` for a watermark — but only these strings are written to
+   * raw/<resource>.jsonl. Null when the body could not be sliced, which the
+   * caller must record rather than silently re-serialise.
+   */
+  rawObjects: string[] | null
+  /** The server's own clock at this response — the only sound watermark source. */
+  serverDate: string | null
   /** `links.next` verbatim, or null at the end of the collection. */
   nextUrl: string | null
   totalEntries: number | null
@@ -98,18 +117,16 @@ const isApiError = (err: unknown): err is HarvestApiError =>
   err instanceof Error && typeof (err as HarvestApiError).status === 'number'
 
 /**
- * What a failed run actually leaves behind, said without promising a resume that
- * does not exist yet. `manifest.resources[*].next_url` is written but nothing reads
- * it back, and every step re-runs through `startResource`, which truncates — so
- * "re-run to continue" would send the reader to a command that first deletes the
- * rows the sentence just told them were safe. When resume lands, this is the one
- * string that changes.
+ * What a failed run actually leaves behind. The rows already on disk are fsynced
+ * and the manifest's per-resource cursor was never rewritten ahead of them
+ * (§2.4), so a re-run reads that cursor back and continues the interrupted
+ * resource from its last page rather than re-sweeping it from page 1 —
+ * `manifest.resources[*].next_url` exists for exactly this.
  */
 export const RESUME_GUIDANCE =
-  'The rows written so far are on disk and manifest.json records where this run stopped, but ' +
-  'extract does not yet resume mid-resource: re-running it against the same --snapshot-dir ' +
-  're-sweeps every resource from page 1, replacing each raw/<resource>.jsonl rather than ' +
-  'continuing it.'
+  'The rows written so far are on disk and manifest.json records where this run stopped. ' +
+  're-running extract against the same --snapshot-dir resumes this resource from its last ' +
+  'checkpoint instead of re-sweeping it from page 1.'
 
 const exhausted = (resource: string, url: string, attempts: number, why: string): Error =>
   new Error(
@@ -131,7 +148,7 @@ export const fetchWithPolicy = async (
   resource: string,
   config: HarvestClientConfig,
   deps: PaginateDeps,
-): Promise<{ body: unknown; requests: number }> => {
+): Promise<{ body: unknown; raw: string; serverDate: string | null; requests: number }> => {
   let throttles = 0
   let serverErrors = 0
   let requests = 0
@@ -141,7 +158,8 @@ export const fetchWithPolicy = async (
     try {
       // transportAttempts: 1 — the backoff below is this call path's retry policy,
       // and the limiter granted exactly one request for this attempt.
-      return { body: await harvestFetchUrl(url, { ...config, transportAttempts: 1 }), requests }
+      const res = await harvestFetchUrl(url, { ...config, transportAttempts: 1 })
+      return { body: res.parsed, raw: res.raw, serverDate: res.serverDate, requests }
     } catch (err) {
       // A connection that dropped or a body that stalled is weather, and the
       // policy has to treat it as such: it carries no `status`, so without this
@@ -203,7 +221,7 @@ export async function* paginate(
 ): AsyncGenerator<Page> {
   const query = new URLSearchParams({ per_page: PER_PAGE, ...start.params })
   const baseUrl = config.baseUrl ?? DEFAULT_BASE_URL
-  let url: string | null = `${baseUrl}${start.path}?${query.toString()}`
+  let url: string | null = start.startUrl ?? `${baseUrl}${start.path}?${query.toString()}`
 
   while (url !== null) {
     const requested: string = url
@@ -245,6 +263,8 @@ export async function* paginate(
     yield {
       url: requested,
       objects,
+      rawObjects: sliceCollection(fetched.raw, start.collection),
+      serverDate: fetched.serverDate,
       nextUrl: next,
       totalEntries: typeof totalEntries === 'number' ? totalEntries : null,
       requests: fetched.requests,
