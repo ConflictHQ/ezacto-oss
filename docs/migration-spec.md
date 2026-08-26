@@ -184,7 +184,7 @@ the gate is zero UNEXPLAINED.
 
 | Gap | Handling |
 | --- | --- |
-| **Retainers: no API.** Invoices reference dangling `retainer.id`s. | Create stub `retainer` rows from the distinct ids found on invoices; balances unknowable via API. `migrate finish-retainers` prints a worksheet (client, linked invoices) for manual balance entry from the Harvest UI (we have exactly 1 ongoing retainer: TeamOne, $24,000 — five minutes of typing). Ledger opens with a manual `adjustment` entry. |
+| **Retainers: no API.** Invoices reference dangling `retainer.id`s. | Create stub `retainer` rows from the distinct ids found on invoices; balances unknowable via API. `migrate finish-retainers` prints a worksheet (client, linked invoices) for manual balance entry from the Harvest UI (a small account will have one or two — minutes of typing). Ledger opens with a manual `adjustment` entry. |
 | **Recurring invoices: no API.** `recurring_invoice_id` dangles. | Same: stub rows + worksheet from the UI's 3 visible definitions (subject template, cadence, amount are all on screen — HRVST20/15). |
 | **Estimates/approval/activity-log modules disabled** on our account | Nothing to extract; extractor skips per company feature flags and says so. |
 | Report-only fields (utilization) | Derived, not stored — recomputed by ezacto; reconciled in A. |
