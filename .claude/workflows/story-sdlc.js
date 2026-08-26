@@ -9,7 +9,9 @@ export const meta = {
   ],
 }
 
-// ---- routing (knowledge/docs/agentic-sdlc.md is the contract) ----
+// ---- routing: MIRRORS agents/sdlc-routing.json (the provider-neutral source of truth).
+// Workflow scripts cannot read files, so the Claude column is inlined here — when the
+// routing JSON changes, update these constants to match. Codex adapter: .codex/sdlc-playbook.md ----
 const MENIAL = { model: 'haiku', effort: 'low' }
 const STANDARD = { model: 'sonnet', effort: 'medium' }
 const HARD = { model: 'opus', effort: 'high' }

@@ -40,7 +40,9 @@ Tenancy: **one organization = one database**; no `org_id` columns exist.
    scaffolding**: triage → research → plan → build → test → adversarial →
    review → PR → (merge → validate → close). Model-routed (haiku ceremony,
    sonnet standard, opus hard, xhigh on money/auth/migration labels; fable
-   never auto-routed). Contract: umbrella `knowledge/docs/agentic-sdlc.md`.
+   never auto-routed). Contract: umbrella `knowledge/docs/agentic-sdlc.md`. Provider-neutral
+   routing: `agents/sdlc-routing.json` (Claude + OpenAI/Codex columns);
+   Codex adapter: `.codex/sdlc-playbook.md` — the flow is harness-portable.
    Fires only on groomed stories — acceptance checkboxes are the success
    condition.
 

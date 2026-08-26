@@ -1,0 +1,21 @@
+{
+  "$comment": "Provider-neutral SDLC routing — THE single source of truth. Harness adapters (.claude/workflows/story-sdlc.js constants, .codex/sdlc-playbook.md) mirror this file; when provider model names change, update HERE first, then the mirrors. Contract: umbrella knowledge/docs/agentic-sdlc.md.",
+  "version": 1,
+  "verified": { "anthropic": "2026-08-26", "openai": "2026-08-26 — VERIFY names before each wave; they age fast" },
+  "tiers": {
+    "MENIAL":   { "anthropic": { "model": "haiku",  "effort": "low" },    "openai": { "model": "gpt-5-nano",  "reasoning": "minimal", "alt": "codex-mini" } },
+    "STANDARD": { "anthropic": { "model": "sonnet", "effort": "medium" }, "openai": { "model": "gpt-5-mini",  "reasoning": "medium",  "alt": "gpt-5-codex" } },
+    "HARD":     { "anthropic": { "model": "opus",   "effort": "high" },   "openai": { "model": "gpt-5",       "reasoning": "high",    "alt": "gpt-5-codex" } },
+    "CRITICAL": { "anthropic": { "model": "opus",   "effort": "xhigh" },  "openai": { "model": "gpt-5",       "reasoning": "high",    "redundancy": "independent second pass required" } },
+    "APEX":     { "manual_only": true, "anthropic": { "model": "fable" }, "openai": { "model": "gpt-5-pro" }, "$comment": "never auto-routed on any provider" }
+  },
+  "stage_tiers": {
+    "triage": "MENIAL", "research": "STANDARD", "plan": "by_estimate",
+    "build": "by_estimate", "unit_test": "STANDARD", "adversarial": "HARD_or_CRITICAL",
+    "review": "HARD_or_CRITICAL", "ship": "MENIAL", "merge": "MENIAL",
+    "validate": "STANDARD", "close": "MENIAL"
+  },
+  "by_estimate": { "S": "STANDARD", "M": "STANDARD", "L": "HARD", "XL": "HARD", "XXL": "HARD" },
+  "critical_labels": ["money", "auth", "migration", "invariants"],
+  "escalation": { "retries_before_tier_up": 2, "tier_ups_max": 1, "then": "park story: status blocked + open question; never lower the bar" }
+}
