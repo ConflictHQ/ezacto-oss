@@ -9,7 +9,12 @@ import {
   writeManifest,
   type Manifest,
 } from '../src/manifest.js'
-import { COMPANY_RESPONSE as COMPANY, COMPANY_SETTINGS, preflight } from './fixtures.js'
+import {
+  COMPANY_RESPONSE as COMPANY,
+  COMPANY_SETTINGS,
+  preflight,
+  resourceProgress,
+} from './fixtures.js'
 
 const jsonResponse = (body: unknown): Response =>
   new Response(JSON.stringify(body), { status: 200 })
@@ -129,7 +134,15 @@ describe('runAuth', () => {
       finished_at: null,
       tool_version: '0.0.0',
       preflight: preflight({ clock: '24h', wants_timestamp_timers: false }),
-      resources: { time_entries: { count: 48213, pages: 25, cursor: 'eyJhZnRlciI6MTIzfQ' } },
+      resources: {
+        time_entries: resourceProgress({
+          count: 48213,
+          pages: 25,
+          next_url: 'https://api.harvestapp.com/v2/time_entries?cursor=eyJhZnRlciI6MTIzfQ',
+          complete: false,
+          finished_at: null,
+        }),
+      },
       updated_since: { time_entries: '2026-08-20T10:00:00Z' },
     }
     await writeManifest(dir, half)
@@ -241,7 +254,7 @@ describe('runAuth', () => {
     usersMeResponse = { id: 1, access_roles: ['administrator'] }
     await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir })
     const stamped = await readManifest(dir)
-    await writeManifest(dir, { ...stamped, resources: { clients: { count: 12, pages: 1 } } })
+    await writeManifest(dir, { ...stamped, resources: { clients: resourceProgress({ count: 12, pages: 1 }) } })
 
     usersMeResponse = { id: 2, access_roles: ['administrator'] }
     const err = await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir }).catch(
@@ -259,7 +272,7 @@ describe('runAuth', () => {
     usersMeResponse = { id: 1, access_roles: ['administrator'] }
     await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir })
     const stamped = await readManifest(dir)
-    await writeManifest(dir, { ...stamped, resources: { clients: { count: 12, pages: 1 } } })
+    await writeManifest(dir, { ...stamped, resources: { clients: resourceProgress({ count: 12, pages: 1 }) } })
 
     usersMeResponse = { id: 1, access_roles: ['member'] }
     const err = await runAuth({
@@ -293,7 +306,7 @@ describe('runAuth', () => {
     usersMeResponse = { id: 1, access_roles: ['administrator'] }
     await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir })
     const stamped = await readManifest(dir)
-    await writeManifest(dir, { ...stamped, resources: { clients: { count: 12, pages: 1 } } })
+    await writeManifest(dir, { ...stamped, resources: { clients: resourceProgress({ count: 12, pages: 1 }) } })
 
     usersMeResponse = { id: 2, access_roles: ['administrator'] }
     const logs: string[] = []

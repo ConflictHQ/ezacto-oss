@@ -1,6 +1,7 @@
 // `ezacto-migrate auth` — PAT + account discovery + preflight (migration-spec §1).
 
 import { harvestFetch } from './harvest-client.js'
+import { describe } from './response.js'
 import {
   COMPANY_SETTING_KEYS,
   readManifestIfExists,
@@ -232,13 +233,6 @@ const resolveAccount = (
 interface CompanyPreflight {
   name: string
   settings: ManifestCompanySettings
-}
-
-const describe = (value: unknown): string => {
-  if (value === undefined) return 'missing'
-  if (value === null) return 'null'
-  if (Array.isArray(value)) return 'an array'
-  return `a ${typeof value}`
 }
 
 const badResponse = (endpoint: string, detail: string): Error =>

@@ -17,6 +17,13 @@ export interface HarvestApiError extends Error {
   status: number
   fix: string
   body: string
+  /**
+   * `Retry-After` in seconds, or null when the header is absent or not an integer.
+   * Harvest documents seconds-until-reset only (research §0.2, RFC 2616), so the
+   * HTTP-date form is deliberately not parsed — a value we cannot read is null,
+   * and the caller falls back to its own default rather than to a wrong wait.
+   */
+  retryAfterSeconds: number | null
 }
 
 export interface HarvestTransportError extends Error {
@@ -25,7 +32,18 @@ export interface HarvestTransportError extends Error {
   timedOut: boolean
 }
 
-const makeApiError = (status: number, body: string): HarvestApiError => {
+/** Seconds from a `Retry-After` header, or null when absent/unparseable. */
+const parseRetryAfter = (raw: string | null): number | null => {
+  if (raw === null) return null
+  const seconds = Number(raw.trim())
+  return Number.isInteger(seconds) && seconds >= 0 ? seconds : null
+}
+
+const makeApiError = (
+  status: number,
+  body: string,
+  retryAfterSeconds: number | null,
+): HarvestApiError => {
   let message: string
   let fix: string
   if (status === 401) {
@@ -45,6 +63,7 @@ const makeApiError = (status: number, body: string): HarvestApiError => {
   err.status = status
   err.fix = fix
   err.body = body
+  err.retryAfterSeconds = retryAfterSeconds
   return err
 }
 
@@ -76,6 +95,7 @@ interface Attempt {
   status: number
   ok: boolean
   body: string
+  retryAfterSeconds: number | null
 }
 
 /**
@@ -98,7 +118,12 @@ const doFetch = async (
   try {
     const response = await fetch(url, { headers, signal: controller.signal })
     const body = await response.text()
-    return { status: response.status, ok: response.ok, body }
+    return {
+      status: response.status,
+      ok: response.ok,
+      body,
+      retryAfterSeconds: parseRetryAfter(response.headers.get('retry-after')),
+    }
   } catch (err) {
     throw timedOut ? new TimeoutSignal() : err
   } finally {
@@ -107,14 +132,19 @@ const doFetch = async (
 }
 
 /**
- * Issues a GET against the Harvest API (or the id.getharvest.com auth host).
- * `accountId` is required for every endpoint except id.getharvest.com/api/v2/accounts,
- * which needs no account id — pass config.accountId as undefined for that call only.
+ * Issues a GET against an already-built absolute URL.
+ *
+ * This is the entry point pagination uses: the doc mandate is to follow the
+ * response `links` verbatim (research §0.4), so the paginator must be able to
+ * hand a URL back to the client untouched — a path-plus-base signature would
+ * force it to take that URL apart and rebuild it, which is exactly the bug the
+ * mandate exists to prevent.
  */
-export const harvestFetch = async (path: string, config: HarvestClientConfig): Promise<unknown> => {
-  const baseUrl = config.baseUrl ?? 'https://api.harvestapp.com'
+export const harvestFetchUrl = async (
+  url: string,
+  config: HarvestClientConfig,
+): Promise<unknown> => {
   const timeoutMs = config.timeoutMs ?? TIMEOUT_MS
-  const url = `${baseUrl}${path}`
   const headers: Record<string, string> = {
     Authorization: `Bearer ${config.pat}`,
     'User-Agent': `ezacto-migrate (${config.userAgentEmail})`,
@@ -136,7 +166,15 @@ export const harvestFetch = async (path: string, config: HarvestClientConfig): P
   }
 
   if (!attempt.ok) {
-    throw makeApiError(attempt.status, attempt.body)
+    throw makeApiError(attempt.status, attempt.body, attempt.retryAfterSeconds)
   }
   return attempt.body ? JSON.parse(attempt.body) : undefined
 }
+
+/**
+ * Issues a GET against the Harvest API (or the id.getharvest.com auth host).
+ * `accountId` is required for every endpoint except id.getharvest.com/api/v2/accounts,
+ * which needs no account id — pass config.accountId as undefined for that call only.
+ */
+export const harvestFetch = (path: string, config: HarvestClientConfig): Promise<unknown> =>
+  harvestFetchUrl(`${config.baseUrl ?? 'https://api.harvestapp.com'}${path}`, config)

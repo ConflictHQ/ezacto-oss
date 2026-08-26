@@ -69,6 +69,37 @@ export interface ManifestPreflight extends ManifestCompanySettings {
   user: ManifestPreflightUser
 }
 
+/**
+ * Per-resource extract progress — the resume record §2.4 rests on. Rewritten
+ * after every page, so a crash or a 429 storm leaves a snapshot that describes
+ * itself accurately rather than one that has to be re-derived from raw/.
+ */
+export interface ManifestResource {
+  /** Objects appended to raw/<resource>.jsonl so far. */
+  count: number
+  /** Pages consumed; with `requests`, the cost record §2.2 asks extract to print. */
+  pages: number
+  requests: number
+  /**
+   * The next page URL exactly as Harvest returned it in `links.next`, or null at
+   * the end of the collection. A *URL*, never a bare cursor: the doc mandate is to
+   * follow `links` verbatim (research §0.4), and a resume that rebuilt a URL from a
+   * stored cursor would be constructing pagination links by hand at the one moment
+   * it matters most.
+   */
+  next_url: string | null
+  /** For child steps (per-user rates, per-invoice messages), the parent id in flight. */
+  parent_id: number | null
+  /** Index into the step's `passes` — which sweep of a multi-pass step is in flight. */
+  pass: number
+  complete: boolean
+  /** Why this resource holds nothing: a disabled feature, or a 403 on an optional step. */
+  skipped_reason: string | null
+  /** Captured before the step's first request — the watermark a later incremental run reads. */
+  started_at: string
+  finished_at: string | null
+}
+
 export interface Manifest {
   account: { id: string; name: string }
   company_name: string
@@ -76,8 +107,9 @@ export interface Manifest {
   finished_at: string | null
   tool_version: string
   preflight: ManifestPreflight
-  resources: Record<string, unknown>
-  updated_since: Record<string, unknown>
+  resources: Record<string, ManifestResource>
+  /** ISO watermark per resource: the time extract started sweeping it. */
+  updated_since: Record<string, string>
 }
 
 const MANIFEST_FILE = 'manifest.json'
