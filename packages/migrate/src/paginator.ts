@@ -14,10 +14,12 @@ import {
   DEFAULT_BASE_URL,
   harvestFetchUrl,
   isApiOrigin,
+  isTransportError,
   type HarvestApiError,
   type HarvestClientConfig,
 } from './harvest-client.js'
 import { describe } from './response.js'
+import { RATE_WINDOW_MS } from './rate-limiter.js'
 import type { RateLimiter } from './rate-limiter.js'
 
 /** Research §0.4: default and maximum alike. */
@@ -29,6 +31,12 @@ const MAX_RETRY_AFTER_S = 120
 const DEFAULT_RETRY_AFTER_S = 15
 const MAX_THROTTLE_ATTEMPTS = 5
 const MAX_SERVER_ERROR_ATTEMPTS = 4
+/**
+ * Never honor a wait shorter than this. `Retry-After: 0` is legal (RFC 9110) and
+ * a blank header is common, but a zero-length wait plus a window reset is not
+ * backoff — it is a tight loop against a server that has already said stop.
+ */
+const MIN_RETRY_AFTER_S = 1
 
 export interface PaginateStart {
   /** Resource name, for error messages and logs. */
@@ -131,22 +139,42 @@ export const fetchWithPolicy = async (
     await deps.limiter.acquire()
     requests += 1
     try {
-      return { body: await harvestFetchUrl(url, config), requests }
+      // transportAttempts: 1 — the backoff below is this call path's retry policy,
+      // and the limiter granted exactly one request for this attempt.
+      return { body: await harvestFetchUrl(url, { ...config, transportAttempts: 1 }), requests }
     } catch (err) {
+      // A connection that dropped or a body that stalled is weather, and the
+      // policy has to treat it as such: it carries no `status`, so without this
+      // branch it falls straight through to the rethrow below and one blip ends a
+      // multi-hour sweep that cannot resume mid-resource.
+      if (isTransportError(err)) {
+        serverErrors += 1
+        if (serverErrors >= MAX_SERVER_ERROR_ATTEMPTS) {
+          throw exhausted(resource, url, serverErrors, err.fix)
+        }
+        const waitMs = 1000 * 2 ** (serverErrors - 1)
+        deps.log(`${resource}: ${err.fix} — retrying ${url} in ${waitMs}ms`)
+        await deps.sleep(waitMs)
+        continue
+      }
       if (!isApiError(err)) throw err
       if (err.status === 429) {
         throttles += 1
         if (throttles >= MAX_THROTTLE_ATTEMPTS) {
           throw exhausted(resource, url, throttles, 'Harvest kept throttling the request')
         }
-        const seconds = Math.min(err.retryAfterSeconds ?? DEFAULT_RETRY_AFTER_S, MAX_RETRY_AFTER_S)
+        const seconds = Math.min(
+          Math.max(err.retryAfterSeconds ?? DEFAULT_RETRY_AFTER_S, MIN_RETRY_AFTER_S),
+          MAX_RETRY_AFTER_S,
+        )
         deps.log(
           `${resource}: throttled by Harvest (429), waiting ${seconds}s before retrying ${url}`,
         )
         await deps.sleep(seconds * 1000)
-        // Harvest's window has rolled by the time it tells us to come back, so
-        // ours must too — otherwise we sit out a budget nobody is spending.
-        deps.limiter.reset()
+        // Only a wait that actually covers our window means Harvest's has rolled
+        // too. Forgetting the window after a one-second nap would hand back a
+        // budget nothing has aged out of — a 429 would *raise* our request rate.
+        if (seconds * 1000 >= RATE_WINDOW_MS) deps.limiter.reset()
         continue
       }
       if (err.status >= 500) {

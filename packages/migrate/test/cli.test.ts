@@ -123,6 +123,20 @@ describe('ezacto-migrate CLI entrypoint', () => {
     expect(code).toBe(1)
   })
 
+  // A page of 2000 time entries carries fully embedded assignment objects, so the
+  // ten-second default is tight on a slow link — and before this flag the only
+  // remedy for a page that would not finish in time was not running extract.
+  it('[unit] --request-timeout is rejected when it is not a positive number of seconds', async () => {
+    await writeFile(join(dir, '.dev.vars'), 'HARVEST_PAT=t\n')
+
+    const { code, stderr } = await runNode(cliPath, ['extract', '--request-timeout', 'soon'], {
+      cwd: dir,
+    })
+
+    expect(stderr).toContain('--request-timeout must be a positive number of seconds, got "soon"')
+    expect(code).toBe(1)
+  })
+
   it('[unit] loads .dev.vars from the working directory, not from the installed module', async () => {
     // no HARVEST_PAT in it: the error proves which file was read, without a token
     const devVars = join(dir, '.dev.vars')

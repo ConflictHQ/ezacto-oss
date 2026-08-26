@@ -18,6 +18,8 @@ Options:
   --account-id <id>    Harvest account id to use (skips auto-pick/prompt)
   --snapshot-dir <dir> Snapshot directory to write manifest.json into (default: ./snapshot)
   --force              Re-stamp a snapshot dir that holds a different account
+  --request-timeout <s> Seconds to allow one request, headers and body (default: 10).
+                       Raise it when a page of 2000 rows will not finish in time.
 `
 
 /**
@@ -59,12 +61,29 @@ const readToolVersion = async (): Promise<string> => {
   return (JSON.parse(raw) as { version: string }).version
 }
 
+/**
+ * `--request-timeout` in seconds. A page of 2000 time entries carries fully
+ * embedded user_assignment and task_assignment objects (research §15.4), so the
+ * ten-second default is generous on a fast link and tight on a slow one — and
+ * without a way to raise it the only remedy for a too-slow page is not running
+ * extract at all.
+ */
+const parseRequestTimeout = (raw: string | undefined): number | undefined => {
+  if (raw === undefined) return undefined
+  const seconds = Number(raw)
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    throw new Error(`--request-timeout must be a positive number of seconds, got "${raw}"`)
+  }
+  return Math.round(seconds * 1000)
+}
+
 const main = async (): Promise<number> => {
   const { positionals, values } = parseArgs({
     allowPositionals: true,
     options: {
       'account-id': { type: 'string' },
       'snapshot-dir': { type: 'string' },
+      'request-timeout': { type: 'string' },
       force: { type: 'boolean' },
     },
   })
@@ -78,6 +97,7 @@ const main = async (): Promise<number> => {
   const devVarsPath = loadDevVars()
   const env = readHarvestEnv(devVarsPath)
   const snapshotDir = values['snapshot-dir'] ?? './snapshot'
+  const timeoutMs = parseRequestTimeout(values['request-timeout'])
 
   if (command === 'auth') {
     const result = await runAuth({
@@ -95,7 +115,7 @@ const main = async (): Promise<number> => {
     return 0
   }
 
-  const result = await runExtract({ env, snapshotDir })
+  const result = await runExtract({ env, snapshotDir, timeoutMs })
   console.log(formatCounts(result, `${snapshotDir}/manifest.json`))
   return 0
 }

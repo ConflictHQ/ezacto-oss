@@ -13,6 +13,11 @@ export interface Reply {
   headers?: Record<string, string>
   /** Serialized as JSON unless it is already a string. */
   body?: unknown
+  /**
+   * Kill the socket instead of answering — the transport failure a status code
+   * cannot express, and the one the retry policy used to fall straight through.
+   */
+  destroy?: boolean
 }
 
 /** `hit` is 1 for the first request to this route, 2 for the second, and so on. */
@@ -51,6 +56,10 @@ export const startFakeHarvest = async (
     const hit = (hits.get(url.pathname) ?? 0) + 1
     hits.set(url.pathname, hit)
     const reply = match.handler(url, hit)
+    if (reply.destroy) {
+      req.destroy()
+      return
+    }
     res.writeHead(reply.status ?? 200, {
       'content-type': 'application/json',
       ...reply.headers,

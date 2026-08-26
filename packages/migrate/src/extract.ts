@@ -182,6 +182,15 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
     const startedAt = now().toISOString()
 
     if (!enabled(step)) {
+      // `count: 0` is a claim about raw/<resource>.jsonl, so the file has to be
+      // made to match it. A feature switched off between runs would otherwise
+      // leave the previous run's rows on disk under a manifest that denies they
+      // exist — `load` reads raw/ (§3) and would import them, `verify` compares
+      // manifest counts and would see none. Same for the watermark: keeping it
+      // would let a later incremental pass step over rows this snapshot no
+      // longer holds.
+      await startResource(snapshotDir, step.name)
+      delete manifest.updated_since[step.name]
       resources[step.name] = {
         count: 0,
         total_entries: null,
@@ -372,25 +381,68 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
     // or stopped at the first `links.next: null` that should not have been null.
     // Recorded for `verify` (§6) either way, and said out loud when they disagree.
     if (record.total_entries !== null && record.total_entries !== record.count) {
+      const gap = record.total_entries - record.count
+      // Rows created or deleted *while* the sweep ran move the tally either way by
+      // a little, and that is the only benign reading. A shortfall past that is the
+      // sweep having stopped early — the same permanent truncation this file
+      // refuses to accept from a child parent, and refusing it there while logging
+      // it here would be an inconsistency, not a judgement call. Marking the step
+      // complete stamps updated_since, which puts the missing rows out of reach of
+      // every later incremental pass.
       log(
         `WARNING: ${step.name} — Harvest reported ${record.total_entries} entries and the snapshot ` +
-          `holds ${record.count} rows. Rows created or deleted while the sweep was running explain a ` +
-          `small gap; a large one means the sweep stopped early — check raw/${step.name}.jsonl before loading.`,
+          `holds ${record.count} rows (${gap > 0 ? `${gap} short` : `${-gap} over`}). Rows created or ` +
+          `deleted while the sweep was running explain a small difference; a large one means the ` +
+          `sweep stopped early — check raw/${step.name}.jsonl before loading.`,
       )
     }
 
-    record.complete = true
+    // Harvest's own tally is the only witness to this sweep from outside it:
+    // `count` agrees with itself whether the sweep ran to the end of the
+    // collection or stopped at the first `links.next: null` that should not have
+    // been null. Where the two disagree we do not know which happened, and
+    // `complete` is not the field to guess in — stamping it would also stamp
+    // `updated_since`, and a watermark is what puts the rows a sweep missed out of
+    // reach of every later incremental pass. So the step stays open, the run
+    // carries on through the remaining resources, and the summary below refuses to
+    // call the snapshot finished.
+    // Only a *shortfall* can hide rows. Writing more than Harvest's page-1 tally
+    // means rows were created while the sweep ran — surprising enough to log, but
+    // it cannot conceal a truncation, and failing a run over it would fail every
+    // extract of an account somebody is still using.
+    const short = record.total_entries !== null && record.count < record.total_entries
+
+    record.complete = !short
     record.finished_at = now().toISOString()
-    // The watermark is the time *before* this step's first request, never after:
-    // a row updated while the sweep was running must be re-read next time, not
-    // stepped over because the clock had already moved past it.
-    manifest.updated_since[step.name] = startedAt
+    if (record.complete) {
+      // The watermark is the time *before* this step's first request, never after:
+      // a row updated while the sweep was running must be re-read next time, not
+      // stepped over because the clock had already moved past it.
+      manifest.updated_since[step.name] = startedAt
+    }
     await persist()
 
     log(
       `${step.name}: ${record.count} rows, ${record.pages} pages, ${record.requests} requests` +
         (record.missing_parents > 0 ? `, ${record.missing_parents} missing parents` : '') +
         (record.skipped_reason ? ` (${record.skipped_reason})` : ''),
+    )
+  }
+
+  // `finished_at` is the top-level completeness signal every consumer keys on, so
+  // it is stamped only when every resource actually finished. A run that swept 30
+  // resources and came up short on one is not a finished snapshot, and exiting 0
+  // over it would hand `load` a truncated account with nothing to notice it by.
+  const incomplete = Object.entries(resources).filter(([, r]) => !r.complete)
+  if (incomplete.length > 0) {
+    throw new Error(
+      `extract did not complete: ${incomplete.map(([name]) => name).join(', ')} — ` +
+        incomplete
+          .map(([name, r]) => `${name} holds ${r.count} of ${String(r.total_entries)} entries`)
+          .join('; ') +
+        `. Every other resource is on disk and manifest.json records which ones fell short; ` +
+        `finished_at is left null and their watermarks unstamped, so a re-run sweeps them again. ` +
+        RESUME_GUIDANCE,
     )
   }
 

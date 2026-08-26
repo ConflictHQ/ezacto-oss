@@ -81,6 +81,14 @@ describe('harvestFetch', () => {
     expect((await call()).retryAfterSeconds).toBeNull()
     // Harvest documents seconds only; the HTTP-date form is deliberately not parsed.
     expect((await call('Wed, 21 Oct 2026 07:28:00 GMT')).retryAfterSeconds).toBeNull()
+    // `Number('')` and `Number('   ')` are both 0, so a blank header read as
+    // "come back immediately" and was indistinguishable from a parsed value. A
+    // CDN error page or a proxy emitting `retry-after: ${undefined}` sends one.
+    expect((await call('')).retryAfterSeconds).toBeNull()
+    expect((await call('   ')).retryAfterSeconds).toBeNull()
+    // A literal 0 is legal (RFC 9110) and readable — carried as-is; the wait floor
+    // that keeps it from becoming a tight loop belongs to the retry policy.
+    expect((await call('0')).retryAfterSeconds).toBe(0)
   })
 
   it('[unit] harvestFetchUrl sends an absolute URL through untouched, with the same headers', async () => {

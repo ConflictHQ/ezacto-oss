@@ -533,7 +533,12 @@ describe('runExtract when the account moves under it', () => {
 
   // count == jsonl line count is true of any truncation. Harvest's own tally is the
   // only witness from outside the sweep, and it is what `verify` will gate on.
-  it('[unit] a sweep that stops short of Harvest total_entries records it and warns', async () => {
+  // Harvest's own tally is the only witness to a sweep from outside it, and a
+  // sweep that comes up short of it is the same permanent truncation this file
+  // refuses to accept from a child parent. Recording it `complete: true` would
+  // stamp updated_since and put the 3999 missing rows out of reach of every later
+  // incremental pass — the loss would be silent and unrecoverable.
+  it('[unit] a sweep that stops short of Harvest total_entries is not a complete sweep', async () => {
     await start({
       '/v2/time_entries': () => ({
         // one row, a stated four thousand, and links.next already null
@@ -541,13 +546,76 @@ describe('runExtract when the account moves under it', () => {
       }),
     })
 
-    const result = await extract(dir, logs)
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
 
-    expect(result.resources.time_entries).toMatchObject({ count: 1, total_entries: 4000 })
-    expect(manifestOnDisk().resources.time_entries.total_entries).toBe(4000)
+    expect(err.message).toContain('extract did not complete: time_entries')
+    expect(err.message).toContain('time_entries holds 1 of 4000 entries')
     expect(logs.join('\n')).toContain(
       'WARNING: time_entries — Harvest reported 4000 entries and the snapshot holds 1 rows',
     )
+
+    const manifest = manifestOnDisk()
+    // recorded, not complete, and no watermark to step over the missing rows with
+    expect(manifest.resources.time_entries).toMatchObject({
+      count: 1,
+      total_entries: 4000,
+      complete: false,
+    })
+    expect(manifest.updated_since.time_entries).toBeUndefined()
+    // and the snapshot as a whole does not claim to be finished
+    expect(manifest.finished_at).toBeNull()
+    // every other resource still swept — one short resource does not throw the run away
+    expect(manifest.resources.clients).toMatchObject({ complete: true })
+  })
+
+  // Writing *more* than the stated tally is rows created while the sweep ran. It
+  // cannot conceal a truncation, so it warns and completes — failing here would
+  // fail every extract of an account somebody is still working in.
+  it('[unit] a sweep that overshoots total_entries warns but still completes', async () => {
+    await start({
+      '/v2/time_entries': () => ({
+        body: { ...envelope('time_entries', [row(500), row(501)]), total_entries: 1 },
+      }),
+    })
+
+    const result = await extract(dir, logs)
+
+    expect(result.resources.time_entries).toMatchObject({ count: 2, complete: true })
+    expect(logs.join('\n')).toContain('(1 over)')
+    expect(manifestOnDisk().finished_at).not.toBeNull()
+  })
+
+  // `count: 0` is a claim about raw/<resource>.jsonl. A feature switched off
+  // between runs used to leave the previous run's rows sitting there under a
+  // manifest that denied they existed: `load` reads raw/ (§3) and would have
+  // imported them, `verify` compares manifest counts and would have seen none —
+  // and the run stamped finished_at and exited 0 over the disagreement.
+  it('[unit] a resource gated off since the last run has its rows cleared, not orphaned', async () => {
+    await start({})
+    await extract(dir, logs)
+    expect(linesOnDisk('invoices')).toHaveLength(2)
+
+    // what `auth` writes after the customer turns invoicing off
+    const manifest = manifestOnDisk()
+    await writeManifest(dir, {
+      ...manifest,
+      preflight: { ...manifest.preflight, invoice_feature: false },
+    })
+    await server?.close()
+    await start({})
+
+    await extract(dir, logs)
+
+    const after = manifestOnDisk()
+    expect(after.resources.invoices).toMatchObject({
+      count: 0,
+      complete: true,
+      skipped_reason: 'invoice_feature is false',
+    })
+    // the file agrees with the count that describes it
+    expect(linesOnDisk('invoices')).toEqual([])
+    // and no watermark is left standing for an incremental pass to step over
+    expect(after.updated_since.invoices).toBeUndefined()
   })
 
   // The manifest describes the PAT `auth` ran with; this process re-read HARVEST_PAT.

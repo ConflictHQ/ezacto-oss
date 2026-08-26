@@ -14,6 +14,15 @@ export interface HarvestClientConfig {
   baseUrl?: string
   /** Per-attempt deadline, headers *and* body. Injectable so tests are fast. */
   timeoutMs?: number
+  /**
+   * HTTP attempts per call when the transport fails outright. Two by default, so a
+   * caller with no retry policy of its own still survives a dropped connection
+   * (E14). `fetchWithPolicy` sets it to 1: it does its own backoff, and every
+   * attempt it makes is one the rate limiter granted — a second, ungranted request
+   * inside one grant would put the account over a budget the limiter believes it
+   * is holding.
+   */
+  transportAttempts?: number
 }
 
 export interface HarvestApiError extends Error {
@@ -35,10 +44,29 @@ export interface HarvestTransportError extends Error {
   timedOut: boolean
 }
 
-/** Seconds from a `Retry-After` header, or null when absent/unparseable. */
+/**
+ * A connection that never opened or a body that never finished — weather, not an
+ * answer. It carries no `status`, so the retry policy has to recognise it by
+ * shape or it falls through to the rethrow and a blip kills a multi-hour run.
+ */
+export const isTransportError = (err: unknown): err is HarvestTransportError =>
+  err instanceof Error && 'timedOut' in err && 'attempts' in err
+
+/**
+ * Seconds from a `Retry-After` header, or null when absent/unparseable.
+ *
+ * The blank check is not defensive noise: `Number('')` and `Number('   ')` are
+ * both `0`, so an empty header — which a CDN error page, a load balancer, or a
+ * proxy emitting `retry-after: ${undefined}` will hand us — would otherwise read
+ * as "come back immediately" and be indistinguishable from a header we could
+ * actually parse. Null is the honest answer; the caller then falls back to its
+ * own default rather than to a wrong wait.
+ */
 const parseRetryAfter = (raw: string | null): number | null => {
   if (raw === null) return null
-  const seconds = Number(raw.trim())
+  const trimmed = raw.trim()
+  if (trimmed === '') return null
+  const seconds = Number(trimmed)
   return Number.isInteger(seconds) && seconds >= 0 ? seconds : null
 }
 
@@ -82,7 +110,8 @@ const makeTransportError = (
   cause: unknown,
 ): HarvestTransportError => {
   const fix = timedOut
-    ? `Harvest did not complete the response within ${timeoutMs}ms — retry, or check https://www.harveststatus.com`
+    ? `Harvest did not complete the response within ${timeoutMs}ms — raise it with ` +
+      `--request-timeout <seconds>, or check https://www.harveststatus.com`
     : `could not reach Harvest (${cause instanceof Error ? cause.message : String(cause)}) — check your network, or https://www.harveststatus.com`
   const err = new Error(`${url} failed after ${attempts} attempts: ${fix}`) as HarvestTransportError
   err.fix = fix
@@ -228,17 +257,20 @@ export const harvestFetchUrl = async (
     headers['Harvest-Account-Id'] = config.accountId
   }
 
-  let attempt: Attempt
-  try {
-    attempt = await doFetch(url, headers, timeoutMs)
-  } catch {
-    // single retry on timeout or network failure (E14)
+  const attempts = Math.max(config.transportAttempts ?? 2, 1)
+  let attempt: Attempt | undefined
+  for (let n = 1; n <= attempts; n += 1) {
     try {
       attempt = await doFetch(url, headers, timeoutMs)
+      break
     } catch (err) {
-      throw makeTransportError(url, 2, timeoutMs, err instanceof TimeoutSignal, err)
+      if (n === attempts) {
+        throw makeTransportError(url, attempts, timeoutMs, err instanceof TimeoutSignal, err)
+      }
     }
   }
+  /* c8 ignore next */
+  if (attempt === undefined) throw new Error('unreachable: no attempt and no error')
 
   // Before the generic !ok branch: a 3xx is not an answer about the account, it is
   // the request being pointed somewhere the allow-list above never saw.

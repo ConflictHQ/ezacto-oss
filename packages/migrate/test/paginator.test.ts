@@ -263,6 +263,69 @@ describe('paginate throttle and backoff policy [unit]', () => {
     expect(pages[0].objects).toEqual([{ id: 3 }])
   })
 
+  // A 429 that is honored with a zero wait *and* a forgotten window is not
+  // backoff — it is a tight loop against a server that has already said stop, at
+  // whatever rate the network allows. `Retry-After: 0` is legal and a blank header
+  // is common, so both have to land on the floor rather than on 0.
+  it('[unit] a 429 telling us to come back immediately still waits, and keeps the window', async () => {
+    for (const header of ['', '0', '   ']) {
+      const h = harness()
+      const before = h.deps.limiter.granted
+      await collect(
+        {
+          '/v2/clients': (_url, hit) =>
+            hit === 1
+              ? { status: 429, headers: { 'retry-after': header }, body: {} }
+              : { body: envelope('clients', []) },
+        },
+        { resource: 'clients', path: '/v2/clients', collection: 'clients' },
+        h,
+      )
+
+      // never zero, whatever the header said
+      expect(h.sleeps.every((ms) => ms >= 1_000)).toBe(true)
+      // and the window was not wiped: a one-second nap does not roll Harvest's
+      // 15s window, so forgetting ours would hand back a budget nothing aged out
+      // of — a 429 would *raise* our request rate instead of lowering it
+      expect(h.deps.limiter.granted).toBe(before + 2)
+      await server?.close()
+      server = undefined
+    }
+  })
+
+  // A connection that drops or a body that stalls carries no `status`, so it fell
+  // past the 429 and 5xx branches to the rethrow: no backoff, no retry, and a
+  // message naming no resource. One blip ended a multi-hour sweep that cannot
+  // resume mid-resource.
+  it('[unit] a dropped connection is retried with backoff, not rethrown on the first failure', async () => {
+    const h = harness()
+    const pages = await collect(
+      {
+        '/v2/projects': (_url, hit) =>
+          hit <= 2 ? { destroy: true } : { body: envelope('projects', [{ id: 3 }]) },
+      },
+      { resource: 'projects', path: '/v2/projects', collection: 'projects' },
+      h,
+    )
+
+    expect(pages[0].objects).toEqual([{ id: 3 }])
+    expect(h.sleeps).toEqual([1_000, 2_000])
+    expect(h.logs.join('\n')).toContain('projects: could not reach Harvest')
+  })
+
+  it('[unit] a connection that never recovers gives up naming the resource and the resume path', async () => {
+    const h = harness()
+    const err = (await collect(
+      { '/v2/expenses': () => ({ destroy: true }) },
+      { resource: 'expenses', path: '/v2/expenses', collection: 'expenses' },
+      h,
+    ).catch((e: unknown) => e)) as Error
+
+    expect(err.message).toContain('expenses: gave up on')
+    expect(err.message).toContain('could not reach Harvest')
+    expect(err.message).toContain('re-sweeps every resource from page 1')
+  })
+
   it('[unit] five consecutive 429s give up with a message naming the resource and the resume path', async () => {
     const h = harness()
     const err = await collect(
