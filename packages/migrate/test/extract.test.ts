@@ -255,14 +255,23 @@ describe('runExtract against a fake Harvest account', () => {
     expect(result.resources.invoices).toMatchObject({ count: 2, pages: 2, requests: 2 })
   })
 
-  it('[unit] the updated_since watermark is captured before the first request, not after', async () => {
+  // Harvest evaluates updated_since against ITS clock, not ours. This suite's
+  // clock is a fixed fake starting at 2026-08-26T00:00:00Z — years off the fake
+  // server's real Date header — so if the watermark still came from `now()` it
+  // would read 2026-08-26T00:00:0Xz and this fails.
+  it('[unit] the updated_since watermark comes from the server clock, not the local one', async () => {
     const manifest = manifestOnDisk()
-    expect(mid.usersWatermarkBeforeFirstRequest).toBeDefined()
-    expect(manifest.updated_since.users).toBe(mid.usersWatermarkBeforeFirstRequest)
-    // …and strictly before the step finished, so a row edited mid-sweep is re-read.
-    expect(Date.parse(manifest.updated_since.users)).toBeLessThan(
-      Date.parse(manifest.resources.users.finished_at as string),
-    )
+    const stamped = Date.parse(manifest.updated_since.users)
+    const localClock = Date.parse(manifest.resources.users.finished_at as string)
+
+    expect(Number.isFinite(stamped)).toBe(true)
+    // not the local clock, which is what the defect stamped
+    expect(Math.abs(stamped - localClock)).toBeGreaterThan(60_000)
+    // and it is behind the server's own Date, never ahead: a watermark that runs
+    // ahead of the server puts every row updated in the gap permanently out of
+    // reach of updated_since, and nothing downstream can see that it happened
+    expect(stamped).toBeLessThanOrEqual(Date.now())
+    expect(manifest.resources.users.watermark_source).toBe(manifest.updated_since.users)
   })
 
   it('[unit] a feature-gated step is recorded as skipped and issues no requests', () => {
@@ -443,6 +452,73 @@ describe('runExtract when the account moves under it', () => {
 
   // An invoice deleted between the parent sweep and the fan-out is a routine race,
   // not a reason to abandon every step after it.
+  // The exact payload the adversarial pass used to prove the old writer corrupted
+  // data: every value here is changed by JSON.parse -> JSON.stringify, and the id
+  // is a bigint (research §15.5 flags time_entry.id specifically), so the old
+  // path silently changed a primary key.
+  it('[unit] record bytes reach raw/ unchanged, including a bigint id and money scale', async () => {
+    const wire =
+      '{"id":9007199254740993,"hours":8.00,"billable_rate":1e2,' +
+      '"notes":"caf\u00e9","rounding":0.1000000000000000055511151231257827}'
+    await start({
+      '/v2/time_entries': () => ({
+        body:
+          '{"time_entries":[' +
+          wire +
+          '],"page":1,"total_pages":1,"total_entries":1,"links":{"next":null}}',
+      }),
+    })
+
+    await extract(dir, logs)
+
+    const onDisk = readFileSync(join(dir, 'raw', 'time_entries.jsonl'), 'utf8')
+    expect(onDisk).toBe(`${wire}\n`)
+    // and nothing was quietly re-serialised on the way
+    expect(manifestOnDisk().resources.time_entries).toMatchObject({
+      reserialized: 0,
+      reflowed: 0,
+    })
+  })
+
+  // The defect: the watermark was `now().toISOString()` from THIS machine. Harvest
+  // filters updated_since against its own clock, so a host running fast stamped a
+  // watermark in Harvest's future and every row updated in that window became
+  // unreachable by any later incremental pass — permanently, and invisibly,
+  // because the pass's own witness pair (0 fetched / 0 expected) agrees with
+  // itself and the resource is marked complete.
+  it('[unit] a host clock running fast cannot push the watermark past the server', async () => {
+    await start({})
+    await extract(dir, logs)
+
+    const manifest = manifestOnDisk()
+    const stamped = Date.parse(manifest.updated_since.clients)
+    // the suite's injected clock is a fixed fake, years from real time; the
+    // watermark must not have come from it
+    const hostClock = Date.parse(manifest.resources.clients.finished_at as string)
+    expect(Math.abs(stamped - hostClock)).toBeGreaterThan(60_000)
+    // and it must sit at or behind real now, never ahead
+    expect(stamped).toBeLessThanOrEqual(Date.now())
+  })
+
+  // Without a Date header there is no sound watermark, and inventing one from the
+  // local clock is the defect above. Stamping nothing costs a full re-sweep next
+  // run; stamping a guess costs rows.
+  it('[unit] no server Date means no watermark, and the run says so', async () => {
+    await start({
+      '/v2/clients': () => ({
+        headers: { date: '' },
+        body: envelope('clients', [row(1)]),
+      }),
+    })
+
+    await extract(dir, logs)
+
+    const manifest = manifestOnDisk()
+    expect(manifest.resources.clients.watermark_source).toBeNull()
+    expect(manifest.updated_since.clients).toBeUndefined()
+    expect(logs.join('\n')).toContain('no updated_since')
+  })
+
   it('[unit] a 404 on one parent is recorded as missing and the run carries on', async () => {
     await start({
       '/v2/invoices/{id}/messages': (url) =>
@@ -805,7 +881,9 @@ describe('runExtract when the account moves under it', () => {
     honest = true
     const before = server?.requests.length ?? 0
     const result = await extract(dir, logs)
-    const second = (server?.requests ?? []).slice(before).filter((r) => r.startsWith('/v2/clients?'))
+    const second = (server?.requests ?? [])
+      .slice(before)
+      .filter((r) => r.startsWith('/v2/clients?'))
 
     // Asked again, from page 1 — not an incremental pass over a file known to be
     // missing rows, which would leave the gap in place behind a watermark.
@@ -848,9 +926,7 @@ describe('runExtract when the account moves under it', () => {
 
     expect(err.message).toContain('extract did not complete: clients')
     expect(err.message).toContain('clients staged 1 of the 5 entries Harvest reported changed')
-    expect(logs.join('\n')).toContain(
-      'WARNING: clients — Harvest reported 5 entries changed since',
-    )
+    expect(logs.join('\n')).toContain('WARNING: clients — Harvest reported 5 entries changed since')
     const manifest = manifestOnDisk()
     expect(manifest.resources.clients).toMatchObject({
       staged_count: 1,
@@ -928,7 +1004,10 @@ describe('runExtract when the account moves under it', () => {
   it('[unit] an incremental parent pass does not duplicate rows or fan its children out twice', async () => {
     await start({
       '/v2/invoices': (url) => ({
-        body: envelope('invoices', url.searchParams.get('updated_since') ? [INVOICES[0]] : INVOICES),
+        body: envelope(
+          'invoices',
+          url.searchParams.get('updated_since') ? [INVOICES[0]] : INVOICES,
+        ),
       }),
     })
 

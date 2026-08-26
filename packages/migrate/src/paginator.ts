@@ -19,6 +19,7 @@ import {
   type HarvestClientConfig,
 } from './harvest-client.js'
 import { describe } from './response.js'
+import { sliceCollection } from './raw-slices.js'
 import { RATE_WINDOW_MS } from './rate-limiter.js'
 import type { RateLimiter } from './rate-limiter.js'
 
@@ -66,6 +67,16 @@ export interface Page {
   /** The URL that produced this page, exactly as requested. */
   url: string
   objects: unknown[]
+  /**
+   * The wire bytes of each record, cut from the response body (§2.3 "raw means
+   * raw"). `objects` stays for anything that needs to *read* a field — ids for a
+   * fan-out, `updated_at` for a watermark — but only these strings are written to
+   * raw/<resource>.jsonl. Null when the body could not be sliced, which the
+   * caller must record rather than silently re-serialise.
+   */
+  rawObjects: string[] | null
+  /** The server's own clock at this response — the only sound watermark source. */
+  serverDate: string | null
   /** `links.next` verbatim, or null at the end of the collection. */
   nextUrl: string | null
   totalEntries: number | null
@@ -137,7 +148,7 @@ export const fetchWithPolicy = async (
   resource: string,
   config: HarvestClientConfig,
   deps: PaginateDeps,
-): Promise<{ body: unknown; requests: number }> => {
+): Promise<{ body: unknown; raw: string; serverDate: string | null; requests: number }> => {
   let throttles = 0
   let serverErrors = 0
   let requests = 0
@@ -147,7 +158,8 @@ export const fetchWithPolicy = async (
     try {
       // transportAttempts: 1 — the backoff below is this call path's retry policy,
       // and the limiter granted exactly one request for this attempt.
-      return { body: await harvestFetchUrl(url, { ...config, transportAttempts: 1 }), requests }
+      const res = await harvestFetchUrl(url, { ...config, transportAttempts: 1 })
+      return { body: res.parsed, raw: res.raw, serverDate: res.serverDate, requests }
     } catch (err) {
       // A connection that dropped or a body that stalled is weather, and the
       // policy has to treat it as such: it carries no `status`, so without this
@@ -251,6 +263,8 @@ export async function* paginate(
     yield {
       url: requested,
       objects,
+      rawObjects: sliceCollection(fetched.raw, start.collection),
+      serverDate: fetched.serverDate,
       nextUrl: next,
       totalEntries: typeof totalEntries === 'number' ? totalEntries : null,
       requests: fetched.requests,

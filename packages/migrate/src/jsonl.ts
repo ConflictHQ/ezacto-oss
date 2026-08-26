@@ -20,8 +20,7 @@ const rawPath = (dir: string, resource: string): string => join(dir, 'raw', `${r
  * *fresher copies* of rows raw/<resource>.jsonl already holds, so appending them
  * straight onto it would leave the snapshot with two of each (see mergeIncremental).
  */
-const stagePath = (dir: string, resource: string): string =>
-  `${rawPath(dir, resource)}.incoming`
+const stagePath = (dir: string, resource: string): string => `${rawPath(dir, resource)}.incoming`
 
 const pathFor = (dir: string, resource: string, staged: boolean): string =>
   staged ? stagePath(dir, resource) : rawPath(dir, resource)
@@ -52,21 +51,23 @@ export const startResource = async (
 }
 
 /**
- * Appends one page and fsyncs it (§2.4). The sync is per page, not per object:
+ * Appends one page and fsyncs it (§2.4). `lines` are the records' own wire bytes
+ * (raw-slices.ts) — this writer never serialises, so nothing it touches can
+ * change a number literal or an id. The sync is per page, not per object:
  * a page is the unit a resumed run re-fetches, so it is the unit that has to be
  * on the platter before the manifest claims it.
  */
 export const appendPage = async (
   dir: string,
   resource: string,
-  objects: unknown[],
+  lines: string[],
   staged = false,
 ): Promise<void> => {
   await mkdir(join(dir, 'raw'), { recursive: true })
   const handle = await open(pathFor(dir, resource, staged), 'a')
   try {
-    if (objects.length > 0) {
-      await handle.writeFile(objects.map((o) => `${JSON.stringify(o)}\n`).join(''), 'utf8')
+    if (lines.length > 0) {
+      await handle.writeFile(lines.map((l) => `${l}\n`).join(''), 'utf8')
     }
     await handle.sync()
   } finally {
@@ -197,10 +198,7 @@ export const reconcileToFile = async (
  * Streams one jsonl file as {line, id} pairs, skipping blank lines. `whyId` says
  * what the id was needed for, so a row without one names the caller it broke.
  */
-async function* jsonlRows(
-  path: string,
-  whyId = '',
-): AsyncGenerator<{ line: string; id: number }> {
+async function* jsonlRows(path: string, whyId = ''): AsyncGenerator<{ line: string; id: number }> {
   const handle = await open(path, 'r')
   const lines = createInterface({ input: handle.createReadStream(), crlfDelay: Infinity })
   try {

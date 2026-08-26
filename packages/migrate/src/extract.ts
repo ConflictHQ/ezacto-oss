@@ -38,7 +38,14 @@ import {
   startResource,
 } from './jsonl.js'
 import { readManifestIfExists, writeManifest, type ManifestResource } from './manifest.js'
-import { fetchWithPolicy, paginate, RESUME_GUIDANCE, type PaginateDeps } from './paginator.js'
+import {
+  fetchWithPolicy,
+  paginate,
+  RESUME_GUIDANCE,
+  type PaginateDeps,
+  type Page,
+} from './paginator.js'
+import { collapseBetweenTokens, spansLines } from './raw-slices.js'
 import { createRateLimiter, RATE_LIMIT, RATE_WINDOW_MS } from './rate-limiter.js'
 import { RESOURCES, type ResourceStep } from './resources.js'
 
@@ -74,6 +81,61 @@ const isApiError = (err: unknown): err is HarvestApiError =>
  * re-run will do to it. `status` is carried through, because the caller classifies
  * on it after this wrapping.
  */
+/**
+ * How far behind the server's clock a watermark is stamped. Overlap is free — a
+ * re-read row upserts by `harvest_id` and changes nothing (E13) — while a gap is
+ * permanent, because `updated_since` can never reach back past it. The bias is
+ * deliberate and one-directional.
+ *
+ * The `Date` header is when the *response* was written, already after the query
+ * ran; without the lag a row updated in between falls in the gap.
+ */
+const WATERMARK_LAG_MS = 60_000
+
+/**
+ * Harvest's own clock, as an ISO string lagged by the margin above, or null when
+ * the response carried no readable `Date`.
+ */
+export const watermarkFrom = (serverDate: string | null): string | null => {
+  if (serverDate === null) return null
+  const at = Date.parse(serverDate)
+  if (!Number.isFinite(at)) return null
+  return new Date(at - WATERMARK_LAG_MS).toISOString()
+}
+
+/**
+ * The lines to write for this page: the records' own wire bytes.
+ *
+ * When the body could not be sliced, or a record spans lines and so cannot be a
+ * JSONL row, the manifest says so instead of quietly re-serialising — quiet
+ * re-serialisation is what rewrote ids and money literals before (raw-slices.ts
+ * has the worked example).
+ */
+const rawLines = (
+  page: Page,
+  resource: string,
+  record: ManifestResource,
+  log: (line: string) => void,
+): string[] => {
+  if (page.rawObjects === null || page.rawObjects.length !== page.objects.length) {
+    const first = record.reserialized === 0
+    record.reserialized += page.objects.length
+    if (first) {
+      log(
+        `WARNING: ${resource} — could not read record bytes out of the response body, so rows are ` +
+          're-serialised from the parsed form. Large ids and number literals may not survive ' +
+          'verbatim (migration-spec §2.3); the manifest records how many.',
+      )
+    }
+    return page.objects.map((o) => JSON.stringify(o))
+  }
+  return page.rawObjects.map((slice) => {
+    if (!spansLines(slice)) return slice
+    record.reflowed += 1
+    return collapseBetweenTokens(slice)
+  })
+}
+
 const inContext = (
   resource: string,
   path: string,
@@ -266,6 +328,9 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
         incremental: false,
         skipped_reason: `${step.requires ?? 'feature'} is false`,
         started_at: startedAt,
+        watermark_source: null,
+        reserialized: 0,
+        reflowed: 0,
         finished_at: startedAt,
       }
       await persist()
@@ -278,10 +343,7 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
     // end of its cursor and came up short of `total_entries`, which has nothing
     // left to fetch where it stopped and has to be swept again from page 1.
     const interrupted =
-      prior !== undefined &&
-      prior.interrupted &&
-      !prior.complete &&
-      prior.skipped_reason === null
+      prior !== undefined && prior.interrupted && !prior.complete && prior.skipped_reason === null
 
     // The watermark an `updated_since` pass filters on: the time the run that
     // last completed this resource started sweeping it. Read here rather than
@@ -362,6 +424,9 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
             incremental: true,
             interrupted: true,
             started_at: startedAt,
+            watermark_source: null,
+            reserialized: 0,
+            reflowed: 0,
             finished_at: null,
           }
         : {
@@ -382,6 +447,9 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
             interrupted: true,
             skipped_reason: null,
             started_at: startedAt,
+            watermark_source: null,
+            reserialized: 0,
+            reflowed: 0,
             finished_at: null,
           }
     resources[step.name] = record
@@ -448,8 +516,22 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
           config,
           deps,
         )) {
+          // Harvest evaluates `updated_since` against its own clock, so the
+          // watermark comes from the server's Date header, never from `now()`.
+          // A host clock running fast would otherwise stamp a watermark ahead of
+          // the server's time and put every row updated in that window out of
+          // reach of every later incremental pass — silently, because the pass's
+          // own witness pair agrees with itself. Taken from the first response of
+          // the pass and kept: a later page's Date is further ahead.
+          record.watermark_source ??= watermarkFrom(page.serverDate)
+
           // Append first, then claim it. A crash between the two re-fetches one page.
-          await appendPage(snapshotDir, step.name, page.objects, record.incremental)
+          await appendPage(
+            snapshotDir,
+            step.name,
+            rawLines(page, step.name, record, log),
+            record.incremental,
+          )
           // `count` describes raw/<resource>.jsonl, and an incremental pass writes
           // to raw/<resource>.jsonl.incoming — counting its rows here claims rows
           // the file it names does not hold. The merge below is the only writer of
@@ -791,7 +873,14 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
 
     record.complete = !short
     record.finished_at = now().toISOString()
-    if (record.complete) {
+    if (record.complete && record.watermark_source === null) {
+      log(
+        `WARNING: ${step.name} — no readable Date header on any response, so no updated_since ` +
+          'watermark is stamped. The next run re-sweeps this resource in full, which is slower ' +
+          'than an incremental pass but cannot step over a row.',
+      )
+    }
+    if (record.complete && record.watermark_source !== null) {
       // The watermark is the time *before* this pass's first request, never
       // after: a row updated while the sweep was running must be re-read next
       // time, not stepped over because the clock had already moved past it.
@@ -799,7 +888,7 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
       // pass keeps the *original* pre-crash timestamp there (see above), and a
       // watermark stamped from the later resume time would step over any row
       // updated in the gap between the crash and the resume.
-      manifest.updated_since[step.name] = record.started_at
+      manifest.updated_since[step.name] = record.watermark_source
     }
     await persist()
 

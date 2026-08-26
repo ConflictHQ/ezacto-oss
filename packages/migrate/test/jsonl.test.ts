@@ -34,25 +34,36 @@ const exists = async (path: string): Promise<boolean> =>
   )
 
 describe('appendPage', () => {
-  it('[unit] writes each object verbatim — no JSON.parse/stringify round trip', async () => {
+  // The old version of this test asserted `JSON.stringify` of its own input, so it
+  // could not fail for the property it named. appendPage now takes wire bytes, and
+  // this asserts them: bytes in, same bytes out.
+  it('[unit] writes the record bytes exactly as given, byte for byte', async () => {
     await startResource(dir, 'invoices')
-    // Deliberately non-canonical: reversed key order and irregular whitespace, the
-    // shape a round trip through JSON.parse → JSON.stringify would normalize away.
-    const objects: unknown[] = [{ z: 1, a: 2 }]
-    await appendPage(dir, 'invoices', objects)
+    // every value here is destroyed by a JSON.parse -> JSON.stringify round trip
+    const wire = [
+      '{"id":9007199254740993,"hours":8.00,"rate":1e2,"x":0.1000000000000000055511151231257827}',
+      '{"z":1,"a":2}',
+    ]
+    await appendPage(dir, 'invoices', wire)
 
     const raw = await readFile(rawPath('invoices'), 'utf8')
-    // appendPage receives already-parsed objects (the paginator has to read
-    // `links`/`total_entries` off the same body), so "verbatim" here means what
-    // JSON.stringify on that exact object produces — key order preserved, no
-    // field added, removed or reinterpreted — not the original wire bytes.
-    expect(raw).toBe('{"z":1,"a":2}\n')
+    expect(raw).toBe(`${wire[0]}\n${wire[1]}\n`)
+    // and the id really would not have survived the other way
+    expect(String(JSON.parse(wire[0]).id)).toBe('9007199254740992')
   })
 
   it('[unit] appends onto an existing file rather than replacing it', async () => {
     await startResource(dir, 'users')
-    await appendPage(dir, 'users', [{ id: 1 }])
-    await appendPage(dir, 'users', [{ id: 2 }])
+    await appendPage(
+      dir,
+      'users',
+      [{ id: 1 }].map((o) => JSON.stringify(o)),
+    )
+    await appendPage(
+      dir,
+      'users',
+      [{ id: 2 }].map((o) => JSON.stringify(o)),
+    )
 
     expect(await readFile(rawPath('users'), 'utf8')).toBe('{"id":1}\n{"id":2}\n')
   })
@@ -61,7 +72,11 @@ describe('appendPage', () => {
 describe('reconcileToCount', () => {
   it('[unit] leaves a file alone when it already matches the manifest', async () => {
     await startResource(dir, 'roles')
-    await appendPage(dir, 'roles', [{ id: 1 }, { id: 2 }])
+    await appendPage(
+      dir,
+      'roles',
+      [{ id: 1 }, { id: 2 }].map((o) => JSON.stringify(o)),
+    )
 
     await reconcileToCount(dir, 'roles', 2)
 
@@ -73,8 +88,16 @@ describe('reconcileToCount', () => {
     // disk and was fsynced, but the crash landed before manifest.json's rename
     // claimed it. The manifest's own count (1) is the source of truth.
     await startResource(dir, 'clients')
-    await appendPage(dir, 'clients', [{ id: 1 }])
-    await appendPage(dir, 'clients', [{ id: 2 }])
+    await appendPage(
+      dir,
+      'clients',
+      [{ id: 1 }].map((o) => JSON.stringify(o)),
+    )
+    await appendPage(
+      dir,
+      'clients',
+      [{ id: 2 }].map((o) => JSON.stringify(o)),
+    )
 
     await reconcileToCount(dir, 'clients', 1)
 
@@ -86,7 +109,11 @@ describe('reconcileToCount', () => {
     // process is gone), but the on-disk signature of a kill mid-write, and the
     // one truncateToCount exists to clean up before a resume trusts the file.
     await startResource(dir, 'tasks')
-    await appendPage(dir, 'tasks', [{ id: 1 }])
+    await appendPage(
+      dir,
+      'tasks',
+      [{ id: 1 }].map((o) => JSON.stringify(o)),
+    )
     await writeFile(rawPath('tasks'), '{"id":2}', { flag: 'a' })
 
     await reconcileToCount(dir, 'tasks', 1)
@@ -96,7 +123,11 @@ describe('reconcileToCount', () => {
 
   it('[unit] refuses to resume a file that holds fewer committed rows than the manifest claims', async () => {
     await startResource(dir, 'projects')
-    await appendPage(dir, 'projects', [{ id: 1 }])
+    await appendPage(
+      dir,
+      'projects',
+      [{ id: 1 }].map((o) => JSON.stringify(o)),
+    )
 
     const err = await reconcileToCount(dir, 'projects', 2).catch((e: unknown) => e as Error)
 
@@ -106,7 +137,11 @@ describe('reconcileToCount', () => {
 
   it('[unit] truncating to zero empties the file', async () => {
     await startResource(dir, 'contacts')
-    await appendPage(dir, 'contacts', [{ id: 1 }])
+    await appendPage(
+      dir,
+      'contacts',
+      [{ id: 1 }].map((o) => JSON.stringify(o)),
+    )
 
     await reconcileToCount(dir, 'contacts', 0)
 
@@ -123,7 +158,9 @@ describe('reconcileToCount over a file larger than one read chunk', () => {
   // 64 KiB reads: enough to walk the chunk boundaries the scan now works in.
   it('[unit] counts and cuts by scanning, across chunk boundaries', async () => {
     await startResource(dir, 'time_entries')
-    const rows = Array.from({ length: 4000 }, (_, i) => ({ id: i, notes: 'x'.repeat(60) }))
+    const rows = Array.from({ length: 4000 }, (_, i) =>
+      JSON.stringify({ id: i, notes: 'x'.repeat(60) }),
+    )
     await appendPage(dir, 'time_entries', rows)
     const whole = await readFile(rawPath('time_entries'), 'utf8')
     expect(whole.length).toBeGreaterThan(1 << 16)
@@ -145,8 +182,16 @@ describe('reconcileToFile', () => {
   // side that gets corrected.
   it('[unit] adopts merged rows the manifest never claimed, without cutting them', async () => {
     await startResource(dir, 'clients')
-    await appendPage(dir, 'clients', [{ id: 1 }])
-    await appendPage(dir, 'clients', [{ id: 2 }])
+    await appendPage(
+      dir,
+      'clients',
+      [{ id: 1 }].map((o) => JSON.stringify(o)),
+    )
+    await appendPage(
+      dir,
+      'clients',
+      [{ id: 2 }].map((o) => JSON.stringify(o)),
+    )
 
     expect(await reconcileToFile(dir, 'clients', 1)).toBe(2)
 
@@ -155,7 +200,11 @@ describe('reconcileToFile', () => {
 
   it('[unit] counts committed lines only, never a torn trailing write', async () => {
     await startResource(dir, 'tasks')
-    await appendPage(dir, 'tasks', [{ id: 1 }])
+    await appendPage(
+      dir,
+      'tasks',
+      [{ id: 1 }].map((o) => JSON.stringify(o)),
+    )
     await writeFile(rawPath('tasks'), '{"id":2}', { flag: 'a' })
 
     expect(await reconcileToFile(dir, 'tasks', 1)).toBe(1)
@@ -166,7 +215,11 @@ describe('reconcileToFile', () => {
   // leave the snapshot agreeing with itself about an account it no longer holds.
   it('[unit] refuses a file holding fewer committed rows than the manifest claims', async () => {
     await startResource(dir, 'projects')
-    await appendPage(dir, 'projects', [{ id: 1 }])
+    await appendPage(
+      dir,
+      'projects',
+      [{ id: 1 }].map((o) => JSON.stringify(o)),
+    )
 
     const outcome = await reconcileToFile(dir, 'projects', 2).catch((e: unknown) => e as Error)
 
@@ -180,7 +233,9 @@ describe('reconcileToFile', () => {
   // to be interrupted is the one whose file is too big to be a JS string at all.
   it('[unit] counts by scanning, across chunk boundaries', async () => {
     await startResource(dir, 'time_entries')
-    const rows = Array.from({ length: 4000 }, (_, i) => ({ id: i, notes: 'x'.repeat(60) }))
+    const rows = Array.from({ length: 4000 }, (_, i) =>
+      JSON.stringify({ id: i, notes: 'x'.repeat(60) }),
+    )
     await appendPage(dir, 'time_entries', rows)
     expect((await readFile(rawPath('time_entries'), 'utf8')).length).toBeGreaterThan(1 << 16)
 
@@ -194,8 +249,23 @@ describe('mergeIncremental', () => {
   // id for any child step fanning out over the resource.
   it('[unit] a changed row replaces its older copy in place, and a new row lands at the end', async () => {
     await startResource(dir, 'invoices')
-    await appendPage(dir, 'invoices', [{ id: 1, n: 'old' }, { id: 2, n: 'two' }])
-    await appendPage(dir, 'invoices', [{ id: 1, n: 'new' }, { id: 3, n: 'three' }], true)
+    await appendPage(
+      dir,
+      'invoices',
+      [
+        { id: 1, n: 'old' },
+        { id: 2, n: 'two' },
+      ].map((o) => JSON.stringify(o)),
+    )
+    await appendPage(
+      dir,
+      'invoices',
+      [
+        { id: 1, n: 'new' },
+        { id: 3, n: 'three' },
+      ].map((o) => JSON.stringify(o)),
+      true,
+    )
 
     expect(await mergeIncremental(dir, 'invoices')).toBe(3)
 
@@ -213,7 +283,11 @@ describe('mergeIncremental', () => {
 
   it('[unit] a pass that staged nothing leaves the file untouched', async () => {
     await startResource(dir, 'users')
-    await appendPage(dir, 'users', [{ id: 1 }])
+    await appendPage(
+      dir,
+      'users',
+      [{ id: 1 }].map((o) => JSON.stringify(o)),
+    )
     await startResource(dir, 'users', true)
 
     expect(await mergeIncremental(dir, 'users')).toBeNull()
@@ -224,8 +298,17 @@ describe('mergeIncremental', () => {
 
   it('[unit] a full sweep discards rows staged by an incremental pass that never merged', async () => {
     await startResource(dir, 'clients')
-    await appendPage(dir, 'clients', [{ id: 1 }])
-    await appendPage(dir, 'clients', [{ id: 1, n: 'half a pass' }], true)
+    await appendPage(
+      dir,
+      'clients',
+      [{ id: 1 }].map((o) => JSON.stringify(o)),
+    )
+    await appendPage(
+      dir,
+      'clients',
+      [{ id: 1, n: 'half a pass' }].map((o) => JSON.stringify(o)),
+      true,
+    )
 
     // What the step does when it decides to sweep the resource in full instead.
     await startResource(dir, 'clients')

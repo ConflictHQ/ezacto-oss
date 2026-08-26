@@ -127,6 +127,13 @@ interface Attempt {
   status: number
   ok: boolean
   body: string
+  /**
+   * The response `Date` header. Harvest evaluates `updated_since` against its own
+   * clock, so this is the only trustworthy source for a watermark — see
+   * extract.ts. HTTP requires it on every response, but a proxy can strip it, so
+   * it is nullable and the caller must cope.
+   */
+  serverDate: string | null
   /** `Location` off a 3xx, so the refusal can name where it was being sent. */
   location: string | null
   retryAfterSeconds: number | null
@@ -162,6 +169,7 @@ const doFetch = async (
       body,
       location: response.headers.get('location'),
       retryAfterSeconds: parseRetryAfter(response.headers.get('retry-after')),
+      serverDate: response.headers.get('date'),
     }
   } catch (err) {
     throw timedOut ? new TimeoutSignal() : err
@@ -233,10 +241,21 @@ const makeRedirectError = (
  * force it to take that URL apart and rebuild it, which is exactly the bug the
  * mandate exists to prevent.
  */
+/**
+ * A successful response, kept whole: the parsed envelope for `links`/`total_entries`,
+ * the untouched source text so records can be cut from it byte-for-byte
+ * (raw-slices.ts), and the server's clock for watermarks.
+ */
+export interface HarvestResponse {
+  parsed: unknown
+  raw: string
+  serverDate: string | null
+}
+
 export const harvestFetchUrl = async (
   url: string,
   config: HarvestClientConfig,
-): Promise<unknown> => {
+): Promise<HarvestResponse> => {
   // The URL is an argument, and for pagination it is an argument that came out of a
   // response body — while the Authorization header below goes on unconditionally. So
   // the host is checked here, in the one place that attaches the token: a `links.next`
@@ -280,7 +299,11 @@ export const harvestFetchUrl = async (
   if (!attempt.ok) {
     throw makeApiError(attempt.status, attempt.body, attempt.retryAfterSeconds)
   }
-  return attempt.body ? JSON.parse(attempt.body) : undefined
+  return {
+    parsed: attempt.body ? JSON.parse(attempt.body) : undefined,
+    raw: attempt.body,
+    serverDate: attempt.serverDate,
+  }
 }
 
 /**
@@ -288,5 +311,5 @@ export const harvestFetchUrl = async (
  * `accountId` is required for every endpoint except id.getharvest.com/api/v2/accounts,
  * which needs no account id — pass config.accountId as undefined for that call only.
  */
-export const harvestFetch = (path: string, config: HarvestClientConfig): Promise<unknown> =>
-  harvestFetchUrl(`${config.baseUrl ?? DEFAULT_BASE_URL}${path}`, config)
+export const harvestFetch = async (path: string, config: HarvestClientConfig): Promise<unknown> =>
+  (await harvestFetchUrl(`${config.baseUrl ?? DEFAULT_BASE_URL}${path}`, config)).parsed

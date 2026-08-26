@@ -200,6 +200,18 @@ export interface ManifestResource {
   skipped_reason: string | null
   /** Captured before the step's first request — the watermark a later incremental run reads. */
   started_at: string
+  /**
+   * The time this pass's `updated_since` watermark will be stamped from, taken
+   * from Harvest's own `Date` response header rather than this machine's clock.
+   * Null until the first response arrives, and null forever if no response
+   * carried a Date — in which case no watermark is stamped at all and the next
+   * run re-sweeps, which is slow but cannot lose a row.
+   */
+  watermark_source: string | null
+  /** Records whose wire bytes could not be preserved — see extract.rawLines. */
+  reserialized: number
+  /** Records that were pretty-printed and had inter-token whitespace collapsed. */
+  reflowed: number
   finished_at: string | null
 }
 
