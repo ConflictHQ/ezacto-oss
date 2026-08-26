@@ -90,8 +90,32 @@ export interface ManifestResource {
    * should not have been null leaves both numbers agreeing on a snapshot that is
    * missing most of the account. Recorded here because re-asking Harvest costs the
    * extract budget again, and `verify` runs later (migration-spec §6).
+   *
+   * It describes the last *full* sweep, and nothing later: an `updated_since` pass
+   * merges rows into the file `count` describes without ever re-tallying the
+   * collection, so once `incremental` is true this number and `count` are no longer
+   * a pair. The pass's own witness is the pair below — read that one instead.
    */
   total_entries: number | null
+  /**
+   * The same pair, scoped to one `updated_since` pass: the rows it staged into
+   * raw/<resource>.jsonl.incoming, and Harvest's `total_entries` for the *filtered*
+   * query, summed over the pass's sweeps.
+   *
+   * A filtered pass needs a witness of its own, and had none: `total_entries` above
+   * counts the collection rather than the changed rows, and `count` describes a file
+   * the pass has not merged into yet, so comparing either to the other reads every
+   * ordinary pass as a truncation. Left with no comparison at all, a filtered sweep
+   * that stopped at a `links.next: null` that should not have been null was stamped
+   * `complete`, given a fresh watermark, and the rows it never fetched went behind
+   * that watermark permanently — the same silent loss the full-sweep path refuses.
+   * These two are self-contained: both count only what this pass asked for and got.
+   *
+   * Reset at the start of every pass — one is always re-run from page 1, never
+   * resumed from a cursor — and 0/null on a full-sweep record.
+   */
+  staged_count: number
+  staged_total_entries: number | null
   /** Pages consumed; with `requests`, the cost record §2.2 asks extract to print. */
   pages: number
   requests: number
@@ -161,8 +185,8 @@ export interface ManifestResource {
    * True while `count`/`pages`/`next_url` describe an `updated_since`-filtered
    * pass over an already-complete resource, rather than the original full sweep.
    * Read back on resume so a killed incremental pass is re-run as one — with
-   * `updated_since` still applied and without re-imposing the full-sweep
-   * `total_entries` shortfall check a filtered query cannot satisfy — instead of
+   * `updated_since` still applied and measured against the pass's own witness pair
+   * rather than the full-sweep tally a filtered query cannot satisfy — instead of
    * being mistaken for an interrupted first sweep and re-sweeping the account.
    *
    * The pass's rows live in raw/<resource>.jsonl.incoming until it finishes, so

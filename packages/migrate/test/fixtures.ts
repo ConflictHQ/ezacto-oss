@@ -43,6 +43,8 @@ export const preflight = (overrides: Partial<ManifestPreflight> = {}): ManifestP
 export const resourceProgress = (overrides: Partial<ManifestResource> = {}): ManifestResource => ({
   count: 0,
   total_entries: null,
+  staged_count: 0,
+  staged_total_entries: null,
   pages: 0,
   requests: 0,
   missing_parents: 0,

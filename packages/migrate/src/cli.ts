@@ -31,8 +31,9 @@ Options:
  * silently came back empty.
  *
  * So do the two ways a row count can be short of the account: a sweep that ended
- * before Harvest's own `total_entries`, and child parents that vanished mid-run.
- * Without them a truncated resource prints as a perfectly ordinary number.
+ * before Harvest's own `total_entries` — the collection's for a full sweep, the
+ * filtered query's for an `updated_since` pass — and child parents that vanished
+ * mid-run. Without them a truncated resource prints as a perfectly ordinary number.
  */
 export const formatCounts = (result: ExtractResult, manifestPath: string): string => {
   const names = Object.keys(result.resources)
@@ -40,7 +41,19 @@ export const formatCounts = (result: ExtractResult, manifestPath: string): strin
   const lines = names.map((name) => {
     const r = result.resources[name]
     const notes: string[] = []
-    if (r.total_entries !== null && r.total_entries !== r.count) {
+    // Which witness is comparable depends on what this record describes, exactly
+    // as it does in extract. `total_entries` is the last *full* sweep's tally; an
+    // incremental pass merges rows into the file `count` describes and never
+    // re-tallies the collection, so comparing the two after one printed a Harvest
+    // discrepancy for every resource with any activity — and a table that cries
+    // wolf on every row is how a real shortfall stops being visible.
+    if (r.incremental) {
+      if (r.staged_total_entries !== null && r.staged_total_entries !== r.staged_count) {
+        notes.push(
+          `Harvest reported ${r.staged_total_entries} changed, this pass staged ${r.staged_count}`,
+        )
+      }
+    } else if (r.total_entries !== null && r.total_entries !== r.count) {
       notes.push(`Harvest reported ${r.total_entries}`)
     }
     if (r.missing_parents > 0) notes.push(`${r.missing_parents} parents missing`)

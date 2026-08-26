@@ -251,6 +251,8 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
       resources[step.name] = {
         count: 0,
         total_entries: null,
+        staged_count: 0,
+        staged_total_entries: null,
         pages: 0,
         requests: 0,
         missing_parents: 0,
@@ -346,7 +348,11 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
             // raw/<resource>.jsonl, which an incremental pass does not touch
             // until it merges. Everything else describes the pass in flight, and
             // inheriting it is what made a pass that never got a page look like
-            // one that had run to the end of its cursor.
+            // one that had run to the end of its cursor — including the pass's
+            // own witness pair, which starts empty because the pass always starts
+            // at page 1.
+            staged_count: 0,
+            staged_total_entries: null,
             pages: 0,
             requests: 0,
             next_url: null,
@@ -361,6 +367,8 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
         : {
             count: 0,
             total_entries: null,
+            staged_count: 0,
+            staged_total_entries: null,
             pages: 0,
             requests: 0,
             missing_parents: 0,
@@ -389,19 +397,26 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
       // rows of an interrupted pass being re-run here are discarded, before it
       // fetches them again.
       await startResource(snapshotDir, step.name, true)
-      if (reRunIncremental) {
-        // The merge has the page loop's ordering hazard one level up: it commits
-        // raw/<resource>.jsonl with a rename, and `count` is only durable at the
-        // manifest write several statements below it. A run killed in between
-        // leaves the file holding merged rows the manifest does not claim — and
-        // the re-run of the pass cannot correct that whenever it stages nothing
-        // (the rows the dead pass fetched were deleted upstream in the
-        // meantime): the merge reports no length, and the record then gets
-        // stamped `complete` with the snapshot's `finished_at` over the
-        // discrepancy. So the count is reconciled to the file before the pass
-        // runs, exactly as a resumed full sweep reconciles the file to the count.
-        record.count = await reconcileToFile(snapshotDir, step.name, record.count)
-      }
+      // Then check the file this pass is going to merge into against the `count`
+      // that claims to describe it — every incremental pass, not only a re-run,
+      // because both directions of the disagreement end in a stamped snapshot:
+      //
+      //  - the file *ahead* of `count` is the merge's ordering hazard, the page
+      //    loop's one level up: mergeIncremental commits raw/<resource>.jsonl with
+      //    a rename and `count` is only durable at the manifest write several
+      //    statements below it. A run killed in between leaves the file holding
+      //    merged rows the manifest does not claim, and the re-run of the pass
+      //    cannot correct that whenever it stages nothing (the rows the dead pass
+      //    fetched were deleted upstream in the meantime): the merge reports no
+      //    length, and the record gets stamped `complete` over the discrepancy.
+      //  - the file *behind* `count` is rows an fsync promised and the disk no
+      //    longer has — a restored or half-copied snapshot dir, a kill inside the
+      //    feature-gate skip branch's truncate above with the flag switched back on
+      //    afterwards. reconcileToFile refuses that, exactly as reconcileToCount
+      //    does for a resumed full sweep: adopting the shorter file would let the
+      //    merge below rewrite the resource around it and record the loss as
+      //    `complete`, with a fresh watermark over the rows that went missing.
+      record.count = await reconcileToFile(snapshotDir, step.name, record.count)
     } else {
       await startResource(snapshotDir, step.name)
       // The rows a child fan-out checkpoint indexes into are gone; so is the
@@ -444,7 +459,12 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
           // which is exactly what a re-run of a crashed pass finds when the rows
           // the dead pass fetched were deleted upstream in between. The inflated
           // count then survives into a snapshot stamped complete.
-          if (!record.incremental) record.count += page.objects.length
+          //
+          // The pass's rows are counted all the same, into the field that names
+          // the file they are actually in: `staged_count` is one half of the only
+          // witness a filtered sweep has against its own truncation.
+          if (record.incremental) record.staged_count += page.objects.length
+          else record.count += page.objects.length
           record.pages += 1
           record.requests += page.requests
           record.next_url = page.nextUrl
@@ -457,14 +477,21 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
           // been — leaving total_entries reading *lower* than count, i.e. the only
           // outside witness against truncation pointing away from it.
           //
-          // Skipped entirely for an incremental pass: total_entries there counts
-          // rows matching `updated_since`, not the collection, and comparing it to
-          // the file's cumulative count would read every incremental pass as a
-          // truncation.
+          // An incremental pass tallies into its own pair rather than this one:
+          // total_entries for a filtered query counts the rows matching
+          // `updated_since`, not the collection, so folding it into the resource's
+          // tally and comparing that to the file's cumulative count would read
+          // every incremental pass as a truncation. Against `staged_count` — the
+          // rows this pass wrote, which is exactly the population Harvest just
+          // counted — it is an exact comparison, and the only one such a pass has.
           if (!tallied) {
             tallied = true
-            if (!record.incremental && page.totalEntries !== null) {
-              record.total_entries = (record.total_entries ?? 0) + page.totalEntries
+            if (page.totalEntries !== null) {
+              if (record.incremental) {
+                record.staged_total_entries = (record.staged_total_entries ?? 0) + page.totalEntries
+              } else {
+                record.total_entries = (record.total_entries ?? 0) + page.totalEntries
+              }
             }
           }
           await persist()
@@ -710,17 +737,18 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
     // which agrees with itself whether the sweep ran to the end of the collection
     // or stopped at the first `links.next: null` that should not have been null.
     // Recorded for `verify` (§6) either way, and said out loud when they disagree.
-    // None of this applies to an incremental pass — `sweep` never tallies
-    // total_entries for one (see above), so `record.total_entries` here is still
-    // whatever the last full sweep left it at, and comparing it to a `count` the
-    // merge above has just folded new rows into would misread every incremental
-    // pass as a truncation.
-    if (
-      !record.incremental &&
-      record.total_entries !== null &&
-      record.total_entries !== record.count
-    ) {
-      const gap = record.total_entries - record.count
+    //
+    // An incremental pass is witnessed the same way, by the pair scoped to it.
+    // Harvest states a `total_entries` for a filtered query too — the rows matching
+    // it — and what the pass staged is exactly the population that tally counts, so
+    // the two compare exactly. The resource-level pair says nothing about a pass:
+    // `total_entries` is the last full sweep's and `count` is a file the merge above
+    // has just folded new rows into. Reading that one was why a truncated filtered
+    // sweep had no witness at all.
+    const witness = record.incremental ? record.staged_total_entries : record.total_entries
+    const written = record.incremental ? record.staged_count : record.count
+    if (witness !== null && witness !== written) {
+      const gap = witness - written
       // Rows created or deleted *while* the sweep ran move the tally either way by
       // a little, and that is the only benign reading. A shortfall past that is the
       // sweep having stopped early — the same permanent truncation this file
@@ -729,8 +757,11 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
       // complete stamps updated_since, which puts the missing rows out of reach of
       // every later incremental pass.
       log(
-        `WARNING: ${step.name} — Harvest reported ${record.total_entries} entries and the snapshot ` +
-          `holds ${record.count} rows (${gap > 0 ? `${gap} short` : `${-gap} over`}). Rows created or ` +
+        `WARNING: ${step.name} — Harvest reported ${witness} ` +
+          (record.incremental
+            ? `entries changed since ${record.started_at} and this pass staged ${written} rows`
+            : `entries and the snapshot holds ${written} rows`) +
+          ` (${gap > 0 ? `${gap} short` : `${-gap} over`}). Rows created or ` +
           `deleted while the sweep was running explain a small difference; a large one means the ` +
           `sweep stopped early — check raw/${step.name}.jsonl before loading.`,
       )
@@ -749,10 +780,14 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
     // means rows were created while the sweep ran — surprising enough to log, but
     // it cannot conceal a truncation, and failing a run over it would fail every
     // extract of an account somebody is still using.
-    // An incremental pass has no total_entries to fall short of — exhausting its
-    // (filtered) cursor is the whole of what "complete" means for one.
-    const short =
-      !record.incremental && record.total_entries !== null && record.count < record.total_entries
+    //
+    // A filtered pass is held to the same rule against its own witness, and has to
+    // be: it is the path that carries the volume on every re-run, and it is the one
+    // that stamps a watermark. A pass handed fewer rows than Harvest said matched
+    // its filter, completing, would move the watermark past the changed rows it
+    // never fetched — out of reach of this pass and of every later one, which is
+    // the loss the full-sweep path calls permanent and refuses.
+    const short = witness !== null && written < witness
 
     record.complete = !short
     record.finished_at = now().toISOString()
@@ -784,7 +819,12 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
     throw new Error(
       `extract did not complete: ${incomplete.map(([name]) => name).join(', ')} — ` +
         incomplete
-          .map(([name, r]) => `${name} holds ${r.count} of ${String(r.total_entries)} entries`)
+          .map(([name, r]) =>
+            r.incremental
+              ? `${name} staged ${r.staged_count} of the ${String(r.staged_total_entries)} entries ` +
+                `Harvest reported changed`
+              : `${name} holds ${r.count} of ${String(r.total_entries)} entries`,
+          )
           .join('; ') +
         `. Every other resource is on disk and manifest.json records which ones fell short; ` +
         `finished_at is left null and their watermarks unstamped. A sweep that ran out of pages ` +

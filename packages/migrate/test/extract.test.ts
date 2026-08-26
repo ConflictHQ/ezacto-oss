@@ -7,7 +7,7 @@
 import { readFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { appendFile, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { appendFile, mkdtemp, readFile, rm, truncate } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -818,6 +818,106 @@ describe('runExtract when the account moves under it', () => {
       complete: true,
     })
     expect(manifestOnDisk().finished_at).not.toBeNull()
+  })
+
+  // The same truncation on the path that carries the volume on every re-run, and
+  // the path that stamps the watermark. A filtered pass had no witness at all:
+  // `total_entries` was discarded for one and the shortfall gate was suppressed, so
+  // a `links.next: null` that should not have been null was merged, stamped
+  // `complete`, given a fresh watermark and exited 0 — and the changed rows the pass
+  // never fetched were behind that watermark for good. Harvest states total_entries
+  // for a filtered query too, and it counts exactly the rows the pass staged.
+  it('[unit] an incremental pass that stops short of the changed rows is not a complete pass', async () => {
+    let honest = false
+    await start({
+      '/v2/clients': (url) =>
+        url.searchParams.get('updated_since') === null
+          ? { body: envelope('clients', [row(30)]) }
+          : honest
+            ? { body: envelope('clients', [row(31)]) }
+            : // Harvest states five rows match the filter, hands back one, and
+              // calls it the last page.
+              { body: { ...envelope('clients', [row(31)]), total_entries: 5 } },
+    })
+
+    await extract(dir, logs)
+    const watermark = manifestOnDisk().updated_since.clients
+    expect(watermark).toBeDefined()
+
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+
+    expect(err.message).toContain('extract did not complete: clients')
+    expect(err.message).toContain('clients staged 1 of the 5 entries Harvest reported changed')
+    expect(logs.join('\n')).toContain(
+      'WARNING: clients — Harvest reported 5 entries changed since',
+    )
+    const manifest = manifestOnDisk()
+    expect(manifest.resources.clients).toMatchObject({
+      staged_count: 1,
+      staged_total_entries: 5,
+      complete: false,
+      incremental: true,
+    })
+    // The watermark is what would put the four rows this pass never got out of
+    // reach of every later pass, so it stays exactly where the last complete
+    // sweep left it — and the snapshot does not claim to be finished.
+    expect(manifest.updated_since.clients).toBe(watermark)
+    expect(manifest.finished_at).toBeNull()
+
+    // …and the resource is not stuck: a pass that fell short has no page left to
+    // continue from, so the next run sweeps it again from page 1.
+    honest = true
+    const before = server?.requests.length ?? 0
+    const result = await extract(dir, logs)
+    const swept = (server?.requests ?? []).slice(before).filter((r) => r.startsWith('/v2/clients?'))
+
+    expect(swept).toHaveLength(1)
+    expect(swept[0]).not.toContain('updated_since')
+    expect(result.resources.clients).toMatchObject({ count: 1, complete: true })
+    expect(manifestOnDisk().finished_at).not.toBeNull()
+  })
+
+  // The ordinary re-run path — a complete snapshot, a fresh incremental pass — was
+  // the one resume path that took `count` on trust. The other two reconcile it
+  // against the file first and refuse a file holding fewer rows than the manifest
+  // claims; this one went straight to staging, and let the merge rewrite the
+  // resource around whatever was on disk. The rows an fsync had promised were gone,
+  // the shorter file became the new `count`, and the record was stamped complete
+  // with a fresh watermark over the loss.
+  it('[unit] a fresh incremental pass refuses a file that lost rows the manifest claims', async () => {
+    await start({
+      '/v2/clients': (url) => ({
+        body: envelope(
+          'clients',
+          url.searchParams.get('updated_since') ? [row(31)] : [row(30), row(32), row(33)],
+        ),
+      }),
+    })
+
+    await extract(dir, logs)
+    expect(manifestOnDisk().resources.clients).toMatchObject({ count: 3, complete: true })
+
+    // A restored or half-copied snapshot dir, a partial restore, a disk error —
+    // anything that moves the file out from under a manifest the page loop is not
+    // running inside of.
+    await truncate(join(dir, 'raw', 'clients.jsonl'), 0)
+
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+
+    expect(err.message).toContain('holds 0 committed line(s) but manifest.json claims 3')
+    expect(err.message).toContain('This snapshot cannot be resumed safely')
+    const manifest = manifestOnDisk()
+    expect(manifest.finished_at).toBeNull()
+    // The refusal comes before the pass writes anything, so nothing adopted the
+    // shorter file: `count` still says what the snapshot is supposed to hold, and
+    // the merge that would have rewritten the resource around the loss never ran.
+    expect(manifest.resources.clients.count).toBe(3)
+    expect(linesOnDisk('clients')).toEqual([])
+
+    // And it stays refused rather than healing itself into a smaller account —
+    // this is the one state extract asks for a restore from backup.
+    const again = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+    expect(again.message).toContain('manifest.json claims 3')
   })
 
   // An incremental pass returns fresher copies of rows the snapshot already
