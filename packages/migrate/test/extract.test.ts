@@ -1117,6 +1117,307 @@ describe('runExtract when the account moves under it', () => {
     expect(result.resources.invoice_messages).toMatchObject({ count: 3, complete: true })
     expect(manifestOnDisk().finished_at).not.toBeNull()
   })
+
+  // A fan-out checkpoint is positional — "every invoice before this one in
+  // raw/invoices.jsonl was swept" — so it only describes the invoices file it was
+  // taken over. The parent is swept again from page 1 whenever it ended
+  // `complete: false`, which the ordinary short-sweep path reaches on any account
+  // rows are being created in, and the list that comes back can be reordered, be
+  // missing the checkpointed id, or carry rows in front of it. Resuming into it
+  // skipped every invoice ahead of the checkpoint, then inherited the pre-crash
+  // tallies — which agree with each other — and stamped the step complete.
+  it('[unit] a parent swept again from page 1 drops the fan-out checkpoint taken over it', async () => {
+    let invoices = INVOICES // 100, 101
+    let statedEntries = 3 // one more than the two rows served: a short sweep
+    let messagesDown = true
+    await start({
+      '/v2/invoices': () => ({
+        body: { ...envelope('invoices', invoices), total_entries: statedEntries },
+      }),
+      '/v2/invoices/{id}/messages': (url) =>
+        userId(url) === 101 && messagesDown
+          ? { status: 500, body: { message: 'boom' } }
+          : { body: envelope('invoice_messages', [row(userId(url) + 1000)]) },
+    })
+
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+    expect(err.message).toContain('invoice_messages')
+    expect(manifestOnDisk().resources.invoice_messages).toMatchObject({
+      count: 1,
+      parent_id: 100,
+      interrupted: true,
+      complete: false,
+    })
+    expect(manifestOnDisk().resources.invoices.complete).toBe(false)
+
+    // Between the runs: invoice 100 was deleted and invoice 102 created, which
+    // Harvest lists first. The checkpoint now names a row the file does not hold,
+    // and the row that replaced it sits in front of an invoice never swept.
+    invoices = [row(102), INVOICES[1]]
+    statedEntries = 2
+    messagesDown = false
+    const requestsBefore = server?.requests.length ?? 0
+
+    const result = await extract(dir, logs)
+    const resumed = (server?.requests ?? []).slice(requestsBefore).map((r) => r.split('?')[0])
+
+    expect(logs.join('\n')).toContain('invoice_messages: its fan-out checkpoint (invoices 100)')
+    // Every invoice in the snapshot was asked, exactly once — including the new
+    // one in front of the checkpoint, which the resume used to skip.
+    expect(resumed.filter((p) => p === '/v2/invoices/102/messages')).toHaveLength(1)
+    expect(resumed.filter((p) => p === '/v2/invoices/101/messages')).toHaveLength(1)
+    // …and the messages of the deleted invoice 100 are not in the file: children
+    // of a parent this snapshot no longer holds are exactly the FK-unsafe rows
+    // the fan-out order exists to prevent.
+    expect(linesOnDisk('invoice_messages').map((l) => JSON.parse(l) as unknown)).toEqual([
+      row(1102),
+      row(1101),
+    ])
+    expect(result.resources.invoice_messages).toMatchObject({ count: 2, complete: true })
+    expect(linesOnDisk('invoice_messages')).toHaveLength(result.resources.invoice_messages.count)
+    expect(manifestOnDisk().finished_at).not.toBeNull()
+  })
+
+  // The same stale checkpoint the other way round: the checkpointed invoice is
+  // still there, further down the re-swept list. Resuming skipped forward to it,
+  // which swept every invoice now in front of it a second time and appended their
+  // messages to a file that was never truncated. The shortfall guard cannot see it
+  // — a re-swept parent adds one row *and* one total_entries tally, so `count` and
+  // `total_entries` stay in lockstep.
+  it('[unit] a parent re-swept in a new order does not double-sweep parents into duplicate rows', async () => {
+    let invoices = [INVOICES[0], INVOICES[1], row(102)]
+    let statedEntries = 4 // short, so invoices is swept again from page 1 next run
+    let cursorRecovered = false
+    await start({
+      '/v2/invoices': () => ({
+        body: { ...envelope('invoices', invoices), total_entries: statedEntries },
+      }),
+      '/v2/invoices/{id}/messages': (url) => {
+        const id = userId(url)
+        if (id !== 102) return { body: envelope('invoice_messages', [row(id + 1000)]) }
+        if (url.searchParams.get('cursor') === 'PAGE2') {
+          return cursorRecovered
+            ? { body: envelope('invoice_messages', [row(1022)]) }
+            : { status: 500, body: { message: 'boom' } }
+        }
+        return {
+          body: envelope(
+            'invoice_messages',
+            [row(1021)],
+            `${server?.baseUrl ?? ''}/v2/invoices/102/messages?cursor=PAGE2`,
+          ),
+        }
+      },
+    })
+
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+    expect(err.message).toContain('invoice_messages')
+    expect(manifestOnDisk().resources.invoice_messages).toMatchObject({
+      count: 3,
+      parent_id: 102,
+      interrupted: true,
+    })
+
+    // Harvest lists newest first, and the sweep that comes up short is re-run
+    // whole: the same three invoices come back in a different order.
+    invoices = [row(102), INVOICES[0], INVOICES[1]]
+    statedEntries = 3
+    cursorRecovered = true
+
+    const result = await extract(dir, logs)
+
+    const written = linesOnDisk('invoice_messages').map((l) => JSON.parse(l) as unknown)
+    expect(written).toEqual([row(1021), row(1022), row(1100), row(1101)])
+    expect(new Set(written.map((o) => (o as { id: number }).id)).size).toBe(written.length)
+    expect(result.resources.invoice_messages).toMatchObject({ count: 4, complete: true })
+    expect(linesOnDisk('invoice_messages')).toHaveLength(result.resources.invoice_messages.count)
+    expect(manifestOnDisk().finished_at).not.toBeNull()
+  })
+
+  // The residual case the invalidation above cannot reach: a checkpoint whose
+  // parent id is not in raw/<parent>.jsonl at all, over a parent file this run did
+  // not rewrite (a crash between truncating the parent file and committing the
+  // manifest leaves exactly this). The scan then skips every parent looking for a
+  // row that is not there, issues no request, and used to inherit the dead run's
+  // tallies straight into `complete: true`.
+  it('[unit] a fan-out resumed at a parent the file no longer holds fails instead of finishing', async () => {
+    await start({})
+    await extract(dir, logs)
+    expect(manifestOnDisk().finished_at).not.toBeNull()
+
+    const seeded = manifestOnDisk()
+    seeded.resources.invoice_messages = {
+      ...seeded.resources.invoice_messages,
+      parent_id: 999,
+      next_url: null,
+      interrupted: true,
+      complete: false,
+      finished_at: null,
+    }
+    await writeManifest(dir, seeded)
+
+    const requestsBefore = server?.requests.length ?? 0
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+    const resumed = (server?.requests ?? []).slice(requestsBefore).map((r) => r.split('?')[0])
+
+    expect(err.message).toContain('invoice_messages: resumed at invoices 999')
+    expect(err.message).toContain('raw/invoices.jsonl does not hold')
+    expect(resumed.filter((p) => /^\/v2\/invoices\/\d+\/messages$/.test(p))).toEqual([])
+    // Not complete, and not resumable either: the next run sweeps it from the
+    // first invoice rather than meeting the same missing checkpoint forever.
+    expect(manifestOnDisk().resources.invoice_messages).toMatchObject({
+      complete: false,
+      interrupted: false,
+      parent_id: null,
+    })
+    expect(manifestOnDisk().finished_at).toBeNull()
+
+    const healed = await extract(dir, logs)
+    expect(healed.resources.invoice_messages).toMatchObject({ count: 2, complete: true })
+    expect(linesOnDisk('invoice_messages').map((l) => JSON.parse(l) as unknown)).toEqual([
+      row(1100),
+      row(1101),
+    ])
+    expect(manifestOnDisk().finished_at).not.toBeNull()
+  })
+
+  // `count` describes raw/<resource>.jsonl; an incremental pass writes to
+  // raw/<resource>.jsonl.incoming until it merges. Counting its pages as they were
+  // staged left the manifest claiming rows the file it names does not hold — a
+  // crash mid-pass froze that over-claim, and the merge that normally corrects it
+  // does nothing when the re-run stages nothing at all.
+  it('[unit] an incremental pass never claims rows the file it describes does not hold', async () => {
+    let deletedUpstream = false
+    await start({
+      '/v2/clients': (url) => {
+        if (url.searchParams.get('cursor') === 'NEXT') {
+          return { status: 500, body: { message: 'boom' } }
+        }
+        if (url.searchParams.get('updated_since') === null) {
+          return { body: envelope('clients', [row(30)]) }
+        }
+        return deletedUpstream
+          ? { body: envelope('clients', []) }
+          : {
+              body: envelope(
+                'clients',
+                [row(31)],
+                `${server?.baseUrl ?? ''}/v2/clients?cursor=NEXT`,
+              ),
+            }
+      },
+    })
+
+    await extract(dir, logs)
+    const watermark = manifestOnDisk().updated_since.clients
+
+    // The pass dies after its first page, which is sitting in .incoming.
+    const failed = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+    expect(failed.message).toContain('clients')
+    const crashed = manifestOnDisk().resources.clients
+    expect(crashed).toMatchObject({ incremental: true, interrupted: true, complete: false })
+    expect(crashed.count).toBe(linesOnDisk('clients').length)
+    expect(crashed.count).toBe(1)
+
+    // Client 31 is deleted before the re-run, so the same watermark now matches
+    // nothing: the pass stages no rows and there is no merge to correct a count.
+    deletedUpstream = true
+    const requestsBefore = server?.requests.length ?? 0
+    const result = await extract(dir, logs)
+    const resumed = (server?.requests ?? [])
+      .slice(requestsBefore)
+      .filter((r) => r.startsWith('/v2/clients?'))
+
+    // The pass really re-ran, on the watermark it never got past — it just had
+    // nothing to stage, which is the case that leaves the merge no count to fix.
+    expect(resumed).toHaveLength(1)
+    expect(resumed[0]).toContain(`updated_since=${encodeURIComponent(watermark)}`)
+    expect(result.resources.clients).toMatchObject({ count: 1, complete: true, incremental: true })
+    expect(linesOnDisk('clients')).toHaveLength(result.resources.clients.count)
+    expect(manifestOnDisk().finished_at).not.toBeNull()
+  })
+
+  // A 404 parent is dealt with, not swept: the resume skips past it, so the run
+  // that meets it is the only one that can record it. Tallied in a local and
+  // written back after the last parent, a crash erased it — and the resumed run
+  // reported full coverage of a fan-out whose children are demonstrably absent.
+  it('[unit] a parent 404 recorded before a crash survives into the resumed run', async () => {
+    let messagesDown = true
+    await start({
+      '/v2/invoices': () => ({ body: envelope('invoices', [...INVOICES, row(102)]) }),
+      '/v2/invoices/{id}/messages': (url) => {
+        const id = userId(url)
+        if (id === 100) return { status: 404, body: { message: 'Not Found' } }
+        if (id === 102 && messagesDown) return { status: 500, body: { message: 'boom' } }
+        return { body: envelope('invoice_messages', [row(id + 1000)]) }
+      },
+    })
+
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+    expect(err.message).toContain('invoice_messages')
+    expect(manifestOnDisk().resources.invoice_messages).toMatchObject({
+      missing_parents: 1,
+      parent_id: 101,
+      interrupted: true,
+    })
+
+    messagesDown = false
+    const requestsBefore = server?.requests.length ?? 0
+    const result = await extract(dir, logs)
+    const resumed = (server?.requests ?? []).slice(requestsBefore).map((r) => r.split('?')[0])
+
+    // The resume picks up where it stopped — invoice 100 is not asked again — and
+    // the manifest still says why its messages are missing.
+    expect(resumed.filter((p) => /^\/v2\/invoices\/\d+\/messages$/.test(p))).toEqual([
+      '/v2/invoices/102/messages',
+    ])
+    expect(result.resources.invoice_messages).toMatchObject({
+      count: 2,
+      missing_parents: 1,
+      complete: true,
+    })
+    expect(manifestOnDisk().finished_at).not.toBeNull()
+  })
+
+  // Same for an optional step's refusals, whose only trace is `skipped_reason` —
+  // composed after the last parent, from a tally the crash took with it. The
+  // resumed run claimed teammates had been swept for every user, including the one
+  // Harvest refused.
+  it('[unit] an optional step refusal recorded before a crash survives into the resumed run', async () => {
+    let teammatesDown = true
+    await start({
+      '/v2/users': () => ({ body: envelope('users', [...USERS, row(3)]) }),
+      '/v2/users/{id}/teammates': (url) => {
+        const id = userId(url)
+        if (id === 1) return { status: 403, body: { message: 'not authorized' } }
+        if (id === 3 && teammatesDown) return { status: 500, body: { message: 'boom' } }
+        return { body: envelope('teammates', [row(id + 1000)]) }
+      },
+    })
+
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+    expect(err.message).toContain('teammates')
+    expect(manifestOnDisk().resources.teammates).toMatchObject({
+      refused_parents: 1,
+      refused_status: 403,
+      parent_id: 2,
+      interrupted: true,
+    })
+
+    teammatesDown = false
+    const requestsBefore = server?.requests.length ?? 0
+    const result = await extract(dir, logs)
+    const resumed = (server?.requests ?? []).slice(requestsBefore).map((r) => r.split('?')[0])
+
+    expect(resumed.filter((p) => /^\/v2\/users\/\d+\/teammates$/.test(p))).toEqual([
+      '/v2/users/3/teammates',
+    ])
+    expect(result.resources.teammates).toMatchObject({ count: 2, complete: true })
+    expect(result.resources.teammates.skipped_reason).toBe(
+      'Harvest returned 403 for 1 of 3 users — those teammates are not in this snapshot',
+    )
+    expect(manifestOnDisk().finished_at).not.toBeNull()
+  })
 })
 
 /**

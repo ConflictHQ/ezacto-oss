@@ -46,6 +46,8 @@ export const resourceProgress = (overrides: Partial<ManifestResource> = {}): Man
   pages: 0,
   requests: 0,
   missing_parents: 0,
+  refused_parents: 0,
+  refused_status: null,
   next_url: null,
   parent_id: null,
   pass: 0,

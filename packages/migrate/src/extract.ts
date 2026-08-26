@@ -15,6 +15,12 @@
 // that finished is refreshed with an `updated_since` pass whose rows are staged
 // and merged, never appended blindly; anything else — including a sweep that ran
 // out of cursor short of Harvest's own tally — is swept again from page 1.
+//
+// A child fan-out's checkpoint is positional in raw/<parent>.jsonl ("every parent
+// before this one was dealt with"), so it describes one *generation* of that file.
+// Sweeping the parent again from page 1 replaces the list the checkpoint indexes
+// into, and the checkpoint goes with it: the fan-out starts over rather than
+// resuming into a list that reordered under it.
 
 import { parseUserMe, scopeChangeBetween, visibilityWarning } from './auth.js'
 import type { HarvestEnv } from './env.js'
@@ -179,6 +185,44 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
     await writeManifest(snapshotDir, manifest)
   }
 
+  /**
+   * Emptying raw/<parent>.jsonl invalidates every fan-out checkpoint taken over it.
+   *
+   * A child checkpoint is positional (manifest.parent_id): "every parent before
+   * this one in raw/<parent>.jsonl was dealt with". Sweeping the parent again from
+   * page 1 rewrites that list — Harvest lists newest first, rows are created and
+   * deleted while a run is not looking — and resuming into the new one means one of
+   * three things, all of which end `complete: true` because the inherited tallies
+   * still agree with each other: a parent now in front of the checkpoint is never
+   * swept (a gap), a parent now behind it is swept twice (duplicate child rows), or
+   * the checkpointed id is gone entirely and the scan skips every parent looking
+   * for it (zero requests, and children left in the file whose parents the snapshot
+   * no longer holds).
+   *
+   * Dropped where the file is emptied, rather than detected where the checkpoint is
+   * read: the run that empties the parent file may not be the run that later reads
+   * the checkpoint, and by then nothing on disk says the two describe different
+   * sweeps. `interrupted: false` with `complete: false` is the record extract
+   * already reads as "nothing left to continue from" — the child is swept again
+   * from its first parent, which is the only reading that can neither gap nor
+   * duplicate.
+   */
+  const dropChildCheckpoints = (parent: string, why: string): void => {
+    for (const child of RESOURCES) {
+      if (child.kind !== 'child' || child.parent !== parent) continue
+      const stale = resources[child.name]
+      if (stale === undefined || !stale.interrupted) continue
+      log(
+        `${child.name}: its fan-out checkpoint (${parent} ${String(stale.parent_id)}) was taken ` +
+          `over a raw/${parent}.jsonl this run has ${why} — dropping it, and sweeping ` +
+          `${child.name} over the whole ${parent} list instead`,
+      )
+      stale.interrupted = false
+      stale.next_url = null
+      stale.parent_id = null
+    }
+  }
+
   // A run in flight is not a finished snapshot. `finished_at` is the top-level
   // completeness signal every consumer keys on, and startResource is about to
   // truncate the first raw file — so a re-run that dies three steps in must not
@@ -201,6 +245,7 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
       // would let a later incremental pass step over rows this snapshot no
       // longer holds.
       await startResource(snapshotDir, step.name)
+      dropChildCheckpoints(step.name, 'emptied')
       delete manifest.updated_since[step.name]
       resources[step.name] = {
         count: 0,
@@ -208,6 +253,8 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
         pages: 0,
         requests: 0,
         missing_parents: 0,
+        refused_parents: 0,
+        refused_status: null,
         next_url: null,
         parent_id: null,
         pass: 0,
@@ -316,6 +363,8 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
             pages: 0,
             requests: 0,
             missing_parents: 0,
+            refused_parents: 0,
+            refused_status: null,
             next_url: null,
             parent_id: null,
             pass: 0,
@@ -341,6 +390,10 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
       await startResource(snapshotDir, step.name, true)
     } else {
       await startResource(snapshotDir, step.name)
+      // The rows a child fan-out checkpoint indexes into are gone; so is the
+      // checkpoint. Persisted by the write below, before the sweep that replaces
+      // them starts, so a crash cannot leave the checkpoint standing over them.
+      dropChildCheckpoints(step.name, 'swept again from page 1')
     }
     await persist()
 
@@ -368,7 +421,16 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
         )) {
           // Append first, then claim it. A crash between the two re-fetches one page.
           await appendPage(snapshotDir, step.name, page.objects, record.incremental)
-          record.count += page.objects.length
+          // `count` describes raw/<resource>.jsonl, and an incremental pass writes
+          // to raw/<resource>.jsonl.incoming — counting its rows here claims rows
+          // the file it names does not hold. The merge below is the only writer of
+          // `count` for such a pass, and it usually papered this over by returning
+          // the merged file's real length; not when the pass ends up staging
+          // nothing (mergeIncremental returns null and never gets to correct it),
+          // which is exactly what a re-run of a crashed pass finds when the rows
+          // the dead pass fetched were deleted upstream in between. The inflated
+          // count then survives into a snapshot stamped complete.
+          if (!record.incremental) record.count += page.objects.length
           record.pages += 1
           record.requests += page.requests
           record.next_url = page.nextUrl
@@ -437,8 +499,13 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
       // finishing a parent (next_url back to null) leaves nothing to resume in
       // it — the fan-out just has to skip past an id it already fully swept.
       let parents = 0
-      let refused = 0
-      let refusedStatus = 0
+      // Inherited on a resume, both of them: a resumed fan-out skips past the
+      // parents the dead run already dealt with, so a refusal it observed is one
+      // this run will never see again. Re-deriving these from what this run
+      // happens to meet is how a resource whose children are missing came to
+      // report full coverage.
+      let refused = resuming ? (record.refused_parents ?? 0) : 0
+      let refusedStatus = resuming ? (record.refused_status ?? 0) : 0
       let missing = resuming ? record.missing_parents : 0
       let lastParentId = 0
       let resumePending = resuming
@@ -491,10 +558,22 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
           // §0.3), so one refusal is an answer about one parent. The fan-out
           // continues; only a refusal from every parent says anything about the
           // account, and that is decided after the loop.
+          //
+          // Checkpointed here rather than after the loop, and the checkpoint moved
+          // past this parent with it: a refusal is this fan-out dealing with a
+          // parent, exactly like a sweep of one. Left to the end, both the tally
+          // and the position were a crash away from being lost — and a resume that
+          // rewound to the last *swept* parent would count every refusal in between
+          // a second time.
           if (step.optional && (err.status === 403 || err.status === 404)) {
             record.requests += 1
             refused += 1
             refusedStatus = err.status
+            record.refused_parents = refused
+            record.refused_status = err.status
+            record.parent_id = parentId
+            record.next_url = null
+            await persist()
             continue
           }
           // A 404 on a child endpoint means the parent row is gone. extract runs
@@ -505,6 +584,10 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
           if (err.status === 404) {
             record.requests += 1
             missing += 1
+            record.missing_parents = missing
+            record.parent_id = parentId
+            record.next_url = null
+            await persist()
             log(
               `${step.name}: ${step.parent} ${parentId} returned 404 — deleted since the ` +
                 `${step.parent} sweep; recording it as missing and continuing`,
@@ -513,6 +596,27 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
           }
           throw err
         }
+      }
+
+      // The scan ran off the end of raw/<parent>.jsonl without ever meeting the
+      // parent it was resuming at, so it skipped every parent in the file looking
+      // for one that is not in it — no requests issued, and the tallies below are
+      // the dead run's, which agree with each other and would stamp the step
+      // complete over children that were never fetched. The checkpoint is stale:
+      // dropping it (and saying so) is what makes the re-run sweep this step from
+      // its first parent instead of reproducing this forever.
+      if (resumePending) {
+        record.interrupted = false
+        record.next_url = null
+        record.parent_id = null
+        await persist()
+        throw new Error(
+          `${step.name}: resumed at ${step.parent} ${String(resumeParentId)}, which ` +
+            `raw/${step.parent}.jsonl does not hold — the checkpoint describes a ${step.parent} ` +
+            `sweep this snapshot has since replaced, and all ${parents} ${step.parent} in the file ` +
+            `now were skipped looking for it. The checkpoint has been dropped: re-run to sweep ` +
+            `${step.name} over the whole ${step.parent} list again.`,
+        )
       }
 
       // …unless *every* parent 404s, which is not a race — it is a path that does
@@ -525,9 +629,6 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
             `this account or the whole ${step.parent} collection was deleted mid-run — refusing to ` +
             `record an empty ${step.name} as a complete resource.`,
         )
-      }
-      if (missing > 0) {
-        record.missing_parents = missing
       }
       if (refused > 0) {
         record.skipped_reason =

@@ -100,8 +100,23 @@ export interface ManifestResource {
    * fan-out. Extract runs against an account people are still using (§5), so this is
    * a race rather than a failure — but their children are absent from the snapshot
    * and will not turn up on a re-read, so a consumer comparing counts has to know.
+   *
+   * Written at the refusal, not after the last parent: a fan-out is resumed from a
+   * checkpoint, and a tally only added up at the end of the loop is a tally a crash
+   * erases — leaving the resumed run to report full coverage of a resource whose
+   * children are demonstrably absent.
    */
   missing_parents: number
+  /**
+   * Parents an `optional` step was refused for, and the status they were refused
+   * with (403 "not authorized for this object", 404). Checkpointed per refusal for
+   * the same reason as `missing_parents`: `skipped_reason` below is composed after
+   * the last parent, so without these a crash mid-fan-out loses every refusal the
+   * dead run observed, and the resumed run — which skips past those parents — has
+   * nothing left to compose it from.
+   */
+  refused_parents: number
+  refused_status: number | null
   /**
    * The next page URL exactly as Harvest returned it in `links.next`, or null at
    * the end of the collection. A *URL*, never a bare cursor: the doc mandate is to
@@ -110,7 +125,18 @@ export interface ManifestResource {
    * it matters most.
    */
   next_url: string | null
-  /** For child steps (per-user rates, per-invoice messages), the parent id in flight. */
+  /**
+   * For child steps (per-user rates, per-invoice messages), the parent the fan-out
+   * last dealt with — swept, or recorded missing/refused.
+   *
+   * Read back *positionally*: it means "every parent before this one in
+   * raw/<parent>.jsonl was dealt with, and this one up to `next_url`". So it
+   * describes the parent file as that run left it, not a set of ids — and a parent
+   * file emptied and swept again from page 1 is a different file, over which the
+   * checkpoint means nothing. extract drops it there rather than resuming into a
+   * list that may have reordered, dropped the checkpointed id, or grown rows in
+   * front of it.
+   */
   parent_id: number | null
   /** Index into the step's `passes` — which sweep of a multi-pass step is in flight. */
   pass: number
