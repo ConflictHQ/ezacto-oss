@@ -19,13 +19,53 @@ export interface ManifestPreflightUser {
   is_administrator: boolean
 }
 
-export interface ManifestPreflight {
+/**
+ * Everything `/v2/company` tells us that a later command needs, recorded once at
+ * preflight because extract is the expensive, rate-limited step and none of the
+ * commands after it call `/v2/company` again (migration-spec §1 step 2, §2.1).
+ *
+ * Two groups, and the distinction matters when this drifts between runs:
+ *  - *parse inputs* — `clock` decides how `started_time`/`ended_time` strings are
+ *    read back, `wants_timestamp_timers` which time-entry shape to expect, and the
+ *    four `*_feature` flags which resource trees exist at all.
+ *  - *display settings* — carried verbatim into the `organization` row at load.
+ */
+export interface ManifestCompanySettings {
   clock: string
   wants_timestamp_timers: boolean
   expense_feature: boolean
   invoice_feature: boolean
   estimate_feature: boolean
   approval_feature: boolean
+  week_start_day: string
+  time_format: string
+  date_format: string
+  currency_code_display: string
+  currency_symbol_display: string
+  decimal_symbol: string
+  thousands_separator: string
+  weekly_capacity: number
+}
+
+/** The scalar keys of ManifestCompanySettings, for drift reporting on a re-run. */
+export const COMPANY_SETTING_KEYS = [
+  'clock',
+  'wants_timestamp_timers',
+  'expense_feature',
+  'invoice_feature',
+  'estimate_feature',
+  'approval_feature',
+  'week_start_day',
+  'time_format',
+  'date_format',
+  'currency_code_display',
+  'currency_symbol_display',
+  'decimal_symbol',
+  'thousands_separator',
+  'weekly_capacity',
+] as const satisfies readonly (keyof ManifestCompanySettings)[]
+
+export interface ManifestPreflight extends ManifestCompanySettings {
   user: ManifestPreflightUser
 }
 

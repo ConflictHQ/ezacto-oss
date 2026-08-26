@@ -9,6 +9,7 @@ import {
   writeManifest,
   type Manifest,
 } from '../src/manifest.js'
+import { COMPANY_RESPONSE as COMPANY, COMPANY_SETTINGS, preflight } from './fixtures.js'
 
 const jsonResponse = (body: unknown): Response =>
   new Response(JSON.stringify(body), { status: 200 })
@@ -16,15 +17,6 @@ const jsonResponse = (body: unknown): Response =>
 const ACCOUNTS = {
   user: { id: 1, first_name: 'A', last_name: 'B', email: 'a@b.com' },
   accounts: [{ id: 999, name: 'CONFLICT', product: 'harvest' }],
-}
-const COMPANY = {
-  name: 'CONFLICT',
-  clock: '12h',
-  wants_timestamp_timers: true,
-  expense_feature: true,
-  invoice_feature: true,
-  estimate_feature: true,
-  approval_feature: true,
 }
 
 const baseEnv = { pat: 'p', accountId: undefined, userAgentEmail: 'e@x.com' }
@@ -101,7 +93,7 @@ describe('runAuth', () => {
     })
 
     const manifest = await readManifest(dir)
-    expect(manifest.preflight).toEqual({
+    expect(manifest.preflight).toMatchObject({
       clock: COMPANY.clock,
       wants_timestamp_timers: COMPANY.wants_timestamp_timers,
       expense_feature: COMPANY.expense_feature,
@@ -136,15 +128,7 @@ describe('runAuth', () => {
       started_at: '2026-08-01T00:00:00.000Z',
       finished_at: null,
       tool_version: '0.0.0',
-      preflight: {
-        clock: '24h',
-        wants_timestamp_timers: false,
-        expense_feature: false,
-        invoice_feature: false,
-        estimate_feature: false,
-        approval_feature: false,
-        user: { id: 1, access_roles: ['administrator'], is_administrator: true },
-      },
+      preflight: preflight({ clock: '24h', wants_timestamp_timers: false }),
       resources: { time_entries: { count: 48213, pages: 25, cursor: 'eyJhZnRlciI6MTIzfQ' } },
       updated_since: { time_entries: '2026-08-20T10:00:00Z' },
     }
@@ -234,6 +218,114 @@ describe('runAuth', () => {
     })
     // and the warning extract must raise is reproducible from the manifest alone
     expect(visibilityWarning(manifest.preflight.user)).toContain('not an administrator')
+  })
+
+  // migration-spec §1 step 2 records the display settings too: they become the
+  // `organization` row at load, and extract is the expensive, rate-limited step —
+  // dropping them here means re-running it to get them back.
+  it('[unit] preflight persists the /v2/company display settings, not just the parse inputs', async () => {
+    usersMeResponse = { id: 1, access_roles: ['administrator'] }
+
+    await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir })
+
+    expect((await readManifest(dir)).preflight).toEqual({
+      ...COMPANY_SETTINGS,
+      user: { id: 1, access_roles: ['administrator'], is_administrator: true },
+    })
+  })
+
+  // A snapshot's rows are only ever what the authenticating PAT could see, so
+  // re-stamping carried progress with a different identity leaves a manifest that
+  // misdescribes the raw/ files underneath it (migration-spec §6).
+  it('[unit] refuses to re-stamp progress gathered as a different user', async () => {
+    usersMeResponse = { id: 1, access_roles: ['administrator'] }
+    await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir })
+    const stamped = await readManifest(dir)
+    await writeManifest(dir, { ...stamped, resources: { clients: { count: 12, pages: 1 } } })
+
+    usersMeResponse = { id: 2, access_roles: ['administrator'] }
+    const err = await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir }).catch(
+      (e: unknown) => e as Error,
+    )
+
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toContain('was 1, is now 2')
+    expect((err as Error).message).toContain('--force')
+    // and it left the snapshot exactly as it found it
+    expect((await readManifest(dir)).preflight.user.id).toBe(1)
+  })
+
+  it('[unit] refuses to re-stamp progress after the same user loses administrator access', async () => {
+    usersMeResponse = { id: 1, access_roles: ['administrator'] }
+    await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir })
+    const stamped = await readManifest(dir)
+    await writeManifest(dir, { ...stamped, resources: { clients: { count: 12, pages: 1 } } })
+
+    usersMeResponse = { id: 1, access_roles: ['member'] }
+    const err = await runAuth({
+      env: baseEnv,
+      toolVersion: '0.0.0',
+      snapshotDir: dir,
+      log: () => {},
+    }).catch((e: unknown) => e as Error)
+
+    expect((err as Error).message).toContain('was administrator, is now member-scoped')
+  })
+
+  it('[unit] an identity change on a snapshot with no progress yet is not an error', async () => {
+    usersMeResponse = { id: 1, access_roles: ['administrator'] }
+    await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir })
+
+    usersMeResponse = { id: 2, access_roles: ['administrator'] }
+    const logs: string[] = []
+    await runAuth({
+      env: baseEnv,
+      toolVersion: '0.0.0',
+      snapshotDir: dir,
+      log: (l) => logs.push(l),
+    })
+
+    expect((await readManifest(dir)).preflight.user.id).toBe(2)
+    expect(logs.some((l) => l.includes('identity changed'))).toBe(true)
+  })
+
+  it('[unit] --force overwrites the preflight and warns that raw/ keeps the old visibility', async () => {
+    usersMeResponse = { id: 1, access_roles: ['administrator'] }
+    await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir })
+    const stamped = await readManifest(dir)
+    await writeManifest(dir, { ...stamped, resources: { clients: { count: 12, pages: 1 } } })
+
+    usersMeResponse = { id: 2, access_roles: ['administrator'] }
+    const logs: string[] = []
+    await runAuth({
+      env: baseEnv,
+      toolVersion: '0.0.0',
+      snapshotDir: dir,
+      force: true,
+      log: (l) => logs.push(l),
+    })
+
+    expect((await readManifest(dir)).preflight.user.id).toBe(2)
+    expect(logs.some((l) => l.includes('identity changed'))).toBe(true)
+  })
+
+  it('[unit] a company setting changed since the snapshot was stamped is named in a warning', async () => {
+    usersMeResponse = { id: 1, access_roles: ['administrator'] }
+    await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir })
+
+    companyResponse = { ...COMPANY, clock: '24h', estimate_feature: false }
+    const logs: string[] = []
+    await runAuth({
+      env: baseEnv,
+      toolVersion: '0.0.0',
+      snapshotDir: dir,
+      log: (l) => logs.push(l),
+    })
+
+    const warning = logs.find((l) => l.includes('company settings changed'))
+    expect(warning).toContain('clock: 12h -> 24h')
+    expect(warning).toContain('estimate_feature: true -> false')
+    expect((await readManifest(dir)).preflight.clock).toBe('24h')
   })
 
   it('[unit] an administrator manifest is distinguishable from a member one', async () => {

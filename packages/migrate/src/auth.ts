@@ -2,9 +2,12 @@
 
 import { harvestFetch } from './harvest-client.js'
 import {
+  COMPANY_SETTING_KEYS,
   readManifestIfExists,
   writeManifest,
   type Manifest,
+  type ManifestCompanySettings,
+  type ManifestPreflight,
   type ManifestPreflightUser,
 } from './manifest.js'
 import type { HarvestEnv } from './env.js'
@@ -48,6 +51,36 @@ export const visibilityWarning = (user: ManifestPreflightUser): string | null =>
     "extract will only see this user's own time entries/projects, not the full account"
   )
 }
+
+/**
+ * Describes an identity change between two preflights, or null when the snapshot
+ * is still being written by the same user at the same access level. Both halves
+ * matter: a different `id` sees a different slice of the account, and the same id
+ * demoted from administrator stops seeing most of it.
+ */
+export const scopeChangeBetween = (
+  previous: ManifestPreflightUser,
+  next: ManifestPreflightUser,
+): string | null => {
+  if (previous.id !== next.id) {
+    return `authenticating user was ${previous.id}, is now ${next.id}`
+  }
+  if (previous.is_administrator !== next.is_administrator) {
+    const was = previous.is_administrator ? 'administrator' : 'member-scoped'
+    const now = next.is_administrator ? 'administrator' : 'member-scoped'
+    return `user ${next.id} was ${was}, is now ${now} (access_roles: ${next.access_roles.join(', ')})`
+  }
+  return null
+}
+
+/** `field: old -> new` for every company setting that changed between two runs. */
+export const settingsDrift = (
+  previous: ManifestCompanySettings,
+  next: ManifestCompanySettings,
+): string[] =>
+  COMPANY_SETTING_KEYS.filter((key) => previous[key] !== next[key]).map(
+    (key) => `${key}: ${String(previous[key])} -> ${String(next[key])}`,
+  )
 
 /**
  * Resolves the account, preflights company + user, warns on non-administrator
@@ -114,21 +147,43 @@ export const runAuth = async (options: RunAuthOptions): Promise<AuthResult> => {
     )
   }
   const carried = sameAccount ? existing : null
+  const preflight: ManifestPreflight = { ...company.settings, user: me }
+
+  // 5 — the account matching is not enough: a snapshot's rows are only ever what
+  // the authenticating PAT could see. Re-stamping carried progress with a
+  // different user's preflight would leave a manifest that describes visibility
+  // the raw/ files were never gathered under — the one delta reconcile cannot
+  // explain afterwards (migration-spec §6).
+  if (carried) {
+    const scopeChange = scopeChangeBetween(carried.preflight.user, me)
+    const carriedProgress = Object.keys(carried.resources).length > 0
+    if (scopeChange && carriedProgress && !force) {
+      throw new Error(
+        `snapshot dir ${snapshotDir} holds extract progress gathered as a different identity — ${scopeChange}. ` +
+          "Its raw/ files show that user's visibility, so re-stamping them with this preflight would " +
+          'misdescribe them. Use a different --snapshot-dir, or pass --force to overwrite the preflight ' +
+          '(the existing raw/ data keeps the old visibility and must be re-extracted).',
+      )
+    }
+    if (scopeChange) {
+      log(`WARNING: preflight identity changed — ${scopeChange}`)
+    }
+    const drift = settingsDrift(carried.preflight, preflight)
+    if (drift.length > 0) {
+      log(
+        `WARNING: company settings changed since this snapshot was stamped (${drift.join(', ')}) — ` +
+          'rows already in raw/ were extracted under the previous settings',
+      )
+    }
+  }
+
   const manifest: Manifest = {
     account: { id: accountId, name: resolved.name },
     company_name: company.name,
     started_at: carried?.started_at ?? now().toISOString(),
     finished_at: carried?.finished_at ?? null,
     tool_version: toolVersion,
-    preflight: {
-      clock: company.clock,
-      wants_timestamp_timers: company.wants_timestamp_timers,
-      expense_feature: company.expense_feature,
-      invoice_feature: company.invoice_feature,
-      estimate_feature: company.estimate_feature,
-      approval_feature: company.approval_feature,
-      user: me,
-    },
+    preflight,
     resources: carried?.resources ?? {},
     updated_since: carried?.updated_since ?? {},
   }
@@ -176,12 +231,7 @@ const resolveAccount = (
 
 interface CompanyPreflight {
   name: string
-  clock: string
-  wants_timestamp_timers: boolean
-  expense_feature: boolean
-  invoice_feature: boolean
-  estimate_feature: boolean
-  approval_feature: boolean
+  settings: ManifestCompanySettings
 }
 
 const describe = (value: unknown): string => {
@@ -250,12 +300,24 @@ const parseCompany = (raw: unknown): CompanyPreflight => {
   const body = asRecord(raw, endpoint)
   return {
     name: requireString(body, 'name', endpoint),
-    clock: requireString(body, 'clock', endpoint),
-    wants_timestamp_timers: requireBoolean(body, 'wants_timestamp_timers', endpoint),
-    expense_feature: requireBoolean(body, 'expense_feature', endpoint),
-    invoice_feature: requireBoolean(body, 'invoice_feature', endpoint),
-    estimate_feature: requireBoolean(body, 'estimate_feature', endpoint),
-    approval_feature: requireBoolean(body, 'approval_feature', endpoint),
+    settings: {
+      clock: requireString(body, 'clock', endpoint),
+      wants_timestamp_timers: requireBoolean(body, 'wants_timestamp_timers', endpoint),
+      expense_feature: requireBoolean(body, 'expense_feature', endpoint),
+      invoice_feature: requireBoolean(body, 'invoice_feature', endpoint),
+      estimate_feature: requireBoolean(body, 'estimate_feature', endpoint),
+      approval_feature: requireBoolean(body, 'approval_feature', endpoint),
+      // Display settings: not parse inputs, but the `organization` row is built
+      // from them at load, and re-fetching means re-running the rate-limited step.
+      week_start_day: requireString(body, 'week_start_day', endpoint),
+      time_format: requireString(body, 'time_format', endpoint),
+      date_format: requireString(body, 'date_format', endpoint),
+      currency_code_display: requireString(body, 'currency_code_display', endpoint),
+      currency_symbol_display: requireString(body, 'currency_symbol_display', endpoint),
+      decimal_symbol: requireString(body, 'decimal_symbol', endpoint),
+      thousands_separator: requireString(body, 'thousands_separator', endpoint),
+      weekly_capacity: requireNumber(body, 'weekly_capacity', endpoint),
+    },
   }
 }
 

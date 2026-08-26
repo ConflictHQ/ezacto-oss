@@ -8,6 +8,7 @@ import {
   writeManifest,
   type Manifest,
 } from '../src/manifest.js'
+import { preflight } from './fixtures.js'
 
 describe('manifest', () => {
   let dir: string
@@ -26,15 +27,11 @@ describe('manifest', () => {
       started_at: '2026-08-26T00:00:00.000Z',
       finished_at: null,
       tool_version: '0.0.0',
-      preflight: {
-        clock: '12h',
-        wants_timestamp_timers: true,
-        expense_feature: true,
+      preflight: preflight({
         invoice_feature: false,
-        estimate_feature: true,
         approval_feature: false,
         user: { id: 9, access_roles: ['administrator'], is_administrator: true },
-      },
+      }),
       resources: {},
       updated_since: {},
     }
@@ -65,15 +62,10 @@ describe('manifest', () => {
       started_at: 'now',
       finished_at: null,
       tool_version: '0.0.0',
-      preflight: {
+      preflight: preflight({
         clock: '24h',
-        wants_timestamp_timers: false,
-        expense_feature: false,
-        invoice_feature: false,
-        estimate_feature: false,
-        approval_feature: false,
         user: { id: 9, access_roles: ['member'], is_administrator: false },
-      },
+      }),
       resources: {},
       updated_since: {},
     }
@@ -90,15 +82,10 @@ describe('manifest', () => {
       started_at: '2026-08-26T00:00:00.000Z',
       finished_at: null,
       tool_version: '0.0.0',
-      preflight: {
+      preflight: preflight({
         clock: '24h',
-        wants_timestamp_timers: false,
-        expense_feature: false,
-        invoice_feature: false,
-        estimate_feature: false,
-        approval_feature: false,
         user: { id: 9, access_roles: ['member'], is_administrator: false },
-      },
+      }),
       resources: {},
       updated_since: {},
     }
