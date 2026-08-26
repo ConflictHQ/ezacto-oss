@@ -26,5 +26,9 @@ id = "harvest-pat-assignment"
 description = "HARVEST_PAT assigned a literal value"
 # Format-independent backstop: any non-empty HARVEST_PAT value in the tree.
 # `.dev.vars.example` ships the key with an empty value, which does not match.
-regex = '''(?i)\bharvest_pat\b\s*[:=]\s*['"]?([A-Za-z0-9._\-]{16,})['"]?'''
+# [ \t]* not \s*: \s matches newlines, so `HARVEST_PAT=` followed by a blank value
+# and then any long variable name on the next line matched the "value" group. That
+# made .dev.vars.example — which ships the key deliberately empty — a permanent
+# false positive, and a gate that cries wolf gets switched off.
+regex = '''(?i)\bharvest_pat\b[ \t]*[:=][ \t]*['"]?([A-Za-z0-9._\-]{16,})['"]?'''
 keywords = ["harvest_pat"]
