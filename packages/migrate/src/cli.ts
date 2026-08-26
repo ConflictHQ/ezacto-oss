@@ -5,17 +5,42 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { loadDevVars, readHarvestEnv } from './env.js'
 import { runAuth } from './auth.js'
+import { runExtract, type ExtractResult } from './extract.js'
 
 const USAGE = `ezacto-migrate <command> [options]
 
 Commands:
-  auth    Authenticate with Harvest, resolve the account, and preflight settings
+  auth     Authenticate with Harvest, resolve the account, and preflight settings
+  extract  Sweep the account into the snapshot dir (run auth first; resumable)
 
 Options:
   --account-id <id>    Harvest account id to use (skips auto-pick/prompt)
   --snapshot-dir <dir> Snapshot directory to write manifest.json into (default: ./snapshot)
   --force              Re-stamp a snapshot dir that holds a different account
 `
+
+/**
+ * The per-resource counts table §2.2 asks extract to leave behind — the thing a
+ * Harvest UI spot-check is compared against. Skipped steps print too: a resource
+ * that is absent because a feature is off has to be distinguishable from one that
+ * silently came back empty.
+ */
+export const formatCounts = (result: ExtractResult, manifestPath: string): string => {
+  const names = Object.keys(result.resources)
+  const width = Math.max(...names.map((n) => n.length), 8)
+  const lines = names.map((name) => {
+    const r = result.resources[name]
+    const note = r.skipped_reason ? `  skipped: ${r.skipped_reason}` : ''
+    return `${name.padEnd(width)}  ${String(r.count).padStart(7)} rows  ${String(r.pages).padStart(4)} pages${note}`
+  })
+  const rows = names.reduce((sum, name) => sum + result.resources[name].count, 0)
+  lines.push('')
+  lines.push(
+    `total: ${rows} rows, ${result.requests} requests, ${Math.round(result.durationMs / 1000)}s`,
+  )
+  lines.push(`manifest: ${manifestPath}`)
+  return lines.join('\n')
+}
 
 const readToolVersion = async (): Promise<string> => {
   const pkgPath = new URL('../package.json', import.meta.url)
@@ -34,28 +59,33 @@ const main = async (): Promise<number> => {
   })
   const command = positionals[0]
 
-  if (command !== 'auth') {
+  if (command !== 'auth' && command !== 'extract') {
     process.stdout.write(USAGE)
     return 1
   }
 
   const devVarsPath = loadDevVars()
   const env = readHarvestEnv(devVarsPath)
-  const toolVersion = await readToolVersion()
   const snapshotDir = values['snapshot-dir'] ?? './snapshot'
 
-  const result = await runAuth({
-    env,
-    toolVersion,
-    snapshotDir,
-    accountIdFlag: values['account-id'],
-    force: values.force,
-  })
+  if (command === 'auth') {
+    const result = await runAuth({
+      env,
+      toolVersion: await readToolVersion(),
+      snapshotDir,
+      accountIdFlag: values['account-id'],
+      force: values.force,
+    })
 
-  console.log(`account:       ${result.account.name} (${result.account.id})`)
-  console.log(`company:       ${result.companyName}`)
-  console.log(`administrator: ${result.isAdministrator ? 'yes' : 'no'}`)
-  console.log(`manifest:      ${result.manifestDir}/manifest.json`)
+    console.log(`account:       ${result.account.name} (${result.account.id})`)
+    console.log(`company:       ${result.companyName}`)
+    console.log(`administrator: ${result.isAdministrator ? 'yes' : 'no'}`)
+    console.log(`manifest:      ${result.manifestDir}/manifest.json`)
+    return 0
+  }
+
+  const result = await runExtract({ env, snapshotDir })
+  console.log(formatCounts(result, `${snapshotDir}/manifest.json`))
   return 0
 }
 

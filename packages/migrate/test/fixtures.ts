@@ -40,9 +40,7 @@ export const preflight = (overrides: Partial<ManifestPreflight> = {}): ManifestP
 })
 
 /** A per-resource extract progress record, stating only the fields under test. */
-export const resourceProgress = (
-  overrides: Partial<ManifestResource> = {},
-): ManifestResource => ({
+export const resourceProgress = (overrides: Partial<ManifestResource> = {}): ManifestResource => ({
   count: 0,
   pages: 0,
   requests: 0,

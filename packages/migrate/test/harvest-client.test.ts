@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   harvestFetch,
+  harvestFetchUrl,
   type HarvestApiError,
   type HarvestTransportError,
 } from '../src/harvest-client.js'
@@ -52,6 +53,45 @@ describe('harvestFetch', () => {
     await harvestFetch('/v2/company', { pat: 'p', userAgentEmail: 'e@x.com', accountId: '42' })
 
     const [, init] = vi.mocked(fetch).mock.calls[0]
+    const headers = init?.headers as Record<string, string>
+    expect(headers.Authorization).toBe('Bearer p')
+    expect(headers['Harvest-Account-Id']).toBe('42')
+    expect(headers['User-Agent']).toBeTruthy()
+  })
+
+  // The throttle policy lives in the paginator, but the *number* it needs comes
+  // from here: a Retry-After we cannot read must be null, so the caller falls back
+  // to its own default rather than to a wrong wait.
+  it('[unit] carries Retry-After off a 429 as integer seconds, or null when unreadable', async () => {
+    const call = async (retryAfter?: string): Promise<HarvestApiError> => {
+      vi.mocked(fetch).mockResolvedValueOnce(
+        new Response('{}', {
+          status: 429,
+          headers: retryAfter ? { 'retry-after': retryAfter } : {},
+        }),
+      )
+      return (await harvestFetch('/v2/time_entries', {
+        pat: 'p',
+        userAgentEmail: 'e@x.com',
+        accountId: '1',
+      }).catch((e: unknown) => e)) as HarvestApiError
+    }
+
+    expect((await call('7')).retryAfterSeconds).toBe(7)
+    expect((await call()).retryAfterSeconds).toBeNull()
+    // Harvest documents seconds only; the HTTP-date form is deliberately not parsed.
+    expect((await call('Wed, 21 Oct 2026 07:28:00 GMT')).retryAfterSeconds).toBeNull()
+  })
+
+  it('[unit] harvestFetchUrl sends an absolute URL through untouched, with the same headers', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, {}))
+    // The links.next shape: an opaque cursor, on a host we never concatenate onto.
+    const next = 'https://api.harvestapp.com/v2/clients?cursor=eyJhZnRlciI6MTIzfQ'
+
+    await harvestFetchUrl(next, { pat: 'p', userAgentEmail: 'e@x.com', accountId: '42' })
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0]
+    expect(url).toBe(next)
     const headers = init?.headers as Record<string, string>
     expect(headers.Authorization).toBe('Bearer p')
     expect(headers['Harvest-Account-Id']).toBe('42')

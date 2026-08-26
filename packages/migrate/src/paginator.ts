@@ -1,0 +1,185 @@
+// Cursor pagination, plus the throttle/backoff policy for every request extract
+// makes (E14).
+//
+// The one rule this module exists to enforce: only the FIRST URL of a sweep is
+// built here. Every page after it is `body.links.next` used byte-for-byte, per
+// the Harvest doc mandate — "always use the pagination URLs provided by the links
+// section instead of constructing pagination links yourself" (research §0.4).
+// Reconstructing the next URL from a cursor works right up until Harvest changes
+// the cursor encoding or moves the collection, and then it silently reads page 1
+// forever.
+
+import {
+  harvestFetchUrl,
+  type HarvestApiError,
+  type HarvestClientConfig,
+} from './harvest-client.js'
+import { describe } from './response.js'
+import type { RateLimiter } from './rate-limiter.js'
+
+/** Research §0.4: default and maximum alike. */
+export const PER_PAGE = '2000'
+
+/** 429 waits are capped: a Retry-After of 3600 is a bug report, not a nap. */
+const MAX_RETRY_AFTER_S = 120
+/** Used when a 429 arrives with no readable Retry-After — one full window, rounded up. */
+const DEFAULT_RETRY_AFTER_S = 15
+const MAX_THROTTLE_ATTEMPTS = 5
+const MAX_SERVER_ERROR_ATTEMPTS = 4
+
+export interface PaginateStart {
+  /** Resource name, for error messages and logs. */
+  resource: string
+  /** Path relative to the API host — the only URL this module composes. */
+  path: string
+  /** Envelope key holding the records. */
+  collection: string
+  params?: Record<string, string>
+}
+
+export interface PaginateDeps {
+  limiter: RateLimiter
+  sleep: (ms: number) => Promise<void>
+  log: (line: string) => void
+}
+
+export interface Page {
+  /** The URL that produced this page, exactly as requested. */
+  url: string
+  objects: unknown[]
+  /** `links.next` verbatim, or null at the end of the collection. */
+  nextUrl: string | null
+  totalEntries: number | null
+  /** Requests spent on this page, retries included — the real cost, not the page count. */
+  requests: number
+}
+
+const badPage = (resource: string, url: string, detail: string): Error =>
+  new Error(
+    `unexpected ${resource} response from ${url} — ${detail}. Refusing to treat this as the last ` +
+      'page: a paginated sweep that stops early writes a snapshot that is missing most of the ' +
+      'account and still reports success.',
+  )
+
+const asRecord = (raw: unknown, resource: string, url: string): Record<string, unknown> => {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw badPage(resource, url, `expected a JSON object, got ${describe(raw)}`)
+  }
+  return raw as Record<string, unknown>
+}
+
+const isApiError = (err: unknown): err is HarvestApiError =>
+  err instanceof Error && typeof (err as HarvestApiError).status === 'number'
+
+const exhausted = (resource: string, url: string, attempts: number, why: string): Error =>
+  new Error(
+    `${resource}: gave up on ${url} after ${attempts} attempts (${why}). Everything extracted so ` +
+      'far is already on disk and the manifest records where this resource stopped — re-run ' +
+      '`ezacto-migrate extract` against the same --snapshot-dir to continue.',
+  )
+
+/**
+ * One request, with the policy the story's AC #2 asks for: honor `Retry-After` on
+ * 429, exponential backoff on 5xx, and rethrow anything that a retry cannot fix
+ * (401/403/404/422 are answers, not weather).
+ */
+const fetchPage = async (
+  url: string,
+  resource: string,
+  config: HarvestClientConfig,
+  deps: PaginateDeps,
+): Promise<{ body: unknown; requests: number }> => {
+  let throttles = 0
+  let serverErrors = 0
+  let requests = 0
+  for (;;) {
+    await deps.limiter.acquire()
+    requests += 1
+    try {
+      return { body: await harvestFetchUrl(url, config), requests }
+    } catch (err) {
+      if (!isApiError(err)) throw err
+      if (err.status === 429) {
+        throttles += 1
+        if (throttles >= MAX_THROTTLE_ATTEMPTS) {
+          throw exhausted(resource, url, throttles, 'Harvest kept throttling the request')
+        }
+        const seconds = Math.min(err.retryAfterSeconds ?? DEFAULT_RETRY_AFTER_S, MAX_RETRY_AFTER_S)
+        deps.log(
+          `${resource}: throttled by Harvest (429), waiting ${seconds}s before retrying ${url}`,
+        )
+        await deps.sleep(seconds * 1000)
+        // Harvest's window has rolled by the time it tells us to come back, so
+        // ours must too — otherwise we sit out a budget nobody is spending.
+        deps.limiter.reset()
+        continue
+      }
+      if (err.status >= 500) {
+        serverErrors += 1
+        if (serverErrors >= MAX_SERVER_ERROR_ATTEMPTS) {
+          throw exhausted(resource, url, serverErrors, `Harvest kept returning ${err.status}`)
+        }
+        const waitMs = 1000 * 2 ** (serverErrors - 1)
+        deps.log(`${resource}: Harvest returned ${err.status}, retrying ${url} in ${waitMs}ms`)
+        await deps.sleep(waitMs)
+        continue
+      }
+      throw err
+    }
+  }
+}
+
+/**
+ * Walks a collection from its first page to its last, yielding one page at a time
+ * so the caller can append and checkpoint before the next request goes out.
+ */
+export async function* paginate(
+  start: PaginateStart,
+  config: HarvestClientConfig,
+  deps: PaginateDeps,
+): AsyncGenerator<Page> {
+  const query = new URLSearchParams({ per_page: PER_PAGE, ...start.params })
+  const baseUrl = config.baseUrl ?? 'https://api.harvestapp.com'
+  let url: string | null = `${baseUrl}${start.path}?${query.toString()}`
+
+  while (url !== null) {
+    const requested: string = url
+    const fetched = await fetchPage(requested, start.resource, config, deps)
+    const body = asRecord(fetched.body, start.resource, requested)
+
+    const objects = body[start.collection]
+    if (!Array.isArray(objects)) {
+      throw badPage(
+        start.resource,
+        requested,
+        `"${start.collection}" is ${describe(objects)}, expected an array of records`,
+      )
+    }
+
+    // An absent `links` is the failure that costs 90% of an account: treated as
+    // "no next page" it looks exactly like a small collection, and the run exits 0.
+    const links = body.links
+    if (typeof links !== 'object' || links === null || Array.isArray(links)) {
+      throw badPage(start.resource, requested, `"links" is ${describe(links)}, expected an object`)
+    }
+    const next = (links as Record<string, unknown>).next
+    if (next !== null && typeof next !== 'string') {
+      throw badPage(
+        start.resource,
+        requested,
+        `"links.next" is ${describe(next)}, expected a URL string or null`,
+      )
+    }
+
+    const totalEntries = body.total_entries
+    yield {
+      url: requested,
+      objects,
+      nextUrl: next,
+      totalEntries: typeof totalEntries === 'number' ? totalEntries : null,
+      requests: fetched.requests,
+    }
+
+    url = next
+  }
+}

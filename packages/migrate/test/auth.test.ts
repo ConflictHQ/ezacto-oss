@@ -254,7 +254,10 @@ describe('runAuth', () => {
     usersMeResponse = { id: 1, access_roles: ['administrator'] }
     await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir })
     const stamped = await readManifest(dir)
-    await writeManifest(dir, { ...stamped, resources: { clients: resourceProgress({ count: 12, pages: 1 }) } })
+    await writeManifest(dir, {
+      ...stamped,
+      resources: { clients: resourceProgress({ count: 12, pages: 1 }) },
+    })
 
     usersMeResponse = { id: 2, access_roles: ['administrator'] }
     const err = await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir }).catch(
@@ -272,7 +275,10 @@ describe('runAuth', () => {
     usersMeResponse = { id: 1, access_roles: ['administrator'] }
     await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir })
     const stamped = await readManifest(dir)
-    await writeManifest(dir, { ...stamped, resources: { clients: resourceProgress({ count: 12, pages: 1 }) } })
+    await writeManifest(dir, {
+      ...stamped,
+      resources: { clients: resourceProgress({ count: 12, pages: 1 }) },
+    })
 
     usersMeResponse = { id: 1, access_roles: ['member'] }
     const err = await runAuth({
@@ -306,7 +312,10 @@ describe('runAuth', () => {
     usersMeResponse = { id: 1, access_roles: ['administrator'] }
     await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir })
     const stamped = await readManifest(dir)
-    await writeManifest(dir, { ...stamped, resources: { clients: resourceProgress({ count: 12, pages: 1 }) } })
+    await writeManifest(dir, {
+      ...stamped,
+      resources: { clients: resourceProgress({ count: 12, pages: 1 }) },
+    })
 
     usersMeResponse = { id: 2, access_roles: ['administrator'] }
     const logs: string[] = []
