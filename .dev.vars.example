@@ -20,3 +20,4 @@ SESSION_SECRET=
 # --- migrate package (dev, against the live Harvest account) ---
 HARVEST_ACCOUNT_ID=
 HARVEST_PAT=
+HARVEST_USER_AGENT_EMAIL=
