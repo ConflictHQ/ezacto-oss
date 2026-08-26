@@ -50,6 +50,7 @@ export const resourceProgress = (overrides: Partial<ManifestResource> = {}): Man
   parent_id: null,
   pass: 0,
   complete: true,
+  interrupted: false,
   incremental: false,
   skipped_reason: null,
   started_at: '2026-08-20T10:00:00.000Z',

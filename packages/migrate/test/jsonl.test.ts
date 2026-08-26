@@ -3,11 +3,11 @@
 // raw file back to the manifest's own count after a crash lands between the
 // fsync and the rename that would have claimed it.
 
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { appendPage, reconcileToCount, startResource } from '../src/jsonl.js'
+import { appendPage, mergeIncremental, reconcileToCount, startResource } from '../src/jsonl.js'
 
 let dir: string
 
@@ -20,6 +20,12 @@ afterEach(async () => {
 })
 
 const rawPath = (resource: string): string => join(dir, 'raw', `${resource}.jsonl`)
+const stagePath = (resource: string): string => `${rawPath(resource)}.incoming`
+const exists = async (path: string): Promise<boolean> =>
+  access(path).then(
+    () => true,
+    () => false,
+  )
 
 describe('appendPage', () => {
   it('[unit] writes each object verbatim — no JSON.parse/stringify round trip', async () => {
@@ -99,5 +105,74 @@ describe('reconcileToCount', () => {
     await reconcileToCount(dir, 'contacts', 0)
 
     expect(await readFile(rawPath('contacts'), 'utf8')).toBe('')
+  })
+})
+
+describe('reconcileToCount over a file larger than one read chunk', () => {
+  // The file this runs on for a multi-year account is hundreds of megabytes —
+  // past Node's maximum string length (536,870,888 chars) long before it is past
+  // the disk, and reading it in threw `RangeError: Invalid string length` before
+  // any of the checks above could run. Which made the snapshots that most need
+  // resuming the ones that could not be resumed at all. 4000 rows is several
+  // 64 KiB reads: enough to walk the chunk boundaries the scan now works in.
+  it('[unit] counts and cuts by scanning, across chunk boundaries', async () => {
+    await startResource(dir, 'time_entries')
+    const rows = Array.from({ length: 4000 }, (_, i) => ({ id: i, notes: 'x'.repeat(60) }))
+    await appendPage(dir, 'time_entries', rows)
+    const whole = await readFile(rawPath('time_entries'), 'utf8')
+    expect(whole.length).toBeGreaterThan(1 << 16)
+
+    await reconcileToCount(dir, 'time_entries', 3999)
+
+    const cut = await readFile(rawPath('time_entries'), 'utf8')
+    expect(cut.split('\n').slice(0, -1)).toHaveLength(3999)
+    expect(cut).toBe(whole.slice(0, cut.length))
+  })
+})
+
+describe('mergeIncremental', () => {
+  // An `updated_since` pass returns fresher copies of rows the snapshot already
+  // holds. Appended, they are a second line per changed row — and a second parent
+  // id for any child step fanning out over the resource.
+  it('[unit] a changed row replaces its older copy in place, and a new row lands at the end', async () => {
+    await startResource(dir, 'invoices')
+    await appendPage(dir, 'invoices', [{ id: 1, n: 'old' }, { id: 2, n: 'two' }])
+    await appendPage(dir, 'invoices', [{ id: 1, n: 'new' }, { id: 3, n: 'three' }], true)
+
+    expect(await mergeIncremental(dir, 'invoices')).toBe(3)
+
+    // Position matters: a resumed child fan-out skips forward through this file
+    // in order, so a changed parent moved to the end would take every parent
+    // behind it out of the sweep.
+    expect((await readFile(rawPath('invoices'), 'utf8')).split('\n').slice(0, -1)).toEqual([
+      '{"id":1,"n":"new"}',
+      '{"id":2,"n":"two"}',
+      '{"id":3,"n":"three"}',
+    ])
+    // …and the staged rows are gone, so a later pass cannot merge them twice.
+    expect(await exists(stagePath('invoices'))).toBe(false)
+  })
+
+  it('[unit] a pass that staged nothing leaves the file untouched', async () => {
+    await startResource(dir, 'users')
+    await appendPage(dir, 'users', [{ id: 1 }])
+    await startResource(dir, 'users', true)
+
+    expect(await mergeIncremental(dir, 'users')).toBeNull()
+
+    expect(await readFile(rawPath('users'), 'utf8')).toBe('{"id":1}\n')
+    expect(await exists(stagePath('users'))).toBe(false)
+  })
+
+  it('[unit] a full sweep discards rows staged by an incremental pass that never merged', async () => {
+    await startResource(dir, 'clients')
+    await appendPage(dir, 'clients', [{ id: 1 }])
+    await appendPage(dir, 'clients', [{ id: 1, n: 'half a pass' }], true)
+
+    // What the step does when it decides to sweep the resource in full instead.
+    await startResource(dir, 'clients')
+
+    expect(await exists(stagePath('clients'))).toBe(false)
+    expect(await readFile(rawPath('clients'), 'utf8')).toBe('')
   })
 })

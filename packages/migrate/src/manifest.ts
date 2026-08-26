@@ -75,7 +75,11 @@ export interface ManifestPreflight extends ManifestCompanySettings {
  * itself accurately rather than one that has to be re-derived from raw/.
  */
 export interface ManifestResource {
-  /** Objects appended to raw/<resource>.jsonl so far. */
+  /**
+   * Lines in raw/<resource>.jsonl — one per object, and after an incremental
+   * pass has merged, one per object id. Unchanged while such a pass is in
+   * flight: its rows are staged beside the file until it finishes.
+   */
   count: number
   /**
    * `total_entries` as Harvest reported it, summed over the sweeps this resource is
@@ -112,12 +116,34 @@ export interface ManifestResource {
   pass: number
   complete: boolean
   /**
+   * True from the moment a run claims this resource until its passes (or its
+   * parents) are exhausted — so a record found `interrupted: true` is one a
+   * process died inside, and the cursor above is a checkpoint worth resuming
+   * from. Cleared when the sweep runs out of passes, whatever its tallies then
+   * say.
+   *
+   * `next_url: null` cannot carry that on its own. It reads identically for
+   * "this pass ran to the end of its cursor", "this pass never got a page" and
+   * "the sweep ended short of total_entries", and only the middle case has
+   * anything left to fetch at the recorded spot. Resuming either of the others
+   * issues no requests at all: it stamped a watermark over rows that had never
+   * been fetched, and it made a short sweep unfinishable — every re-run
+   * reproducing it exactly, forever.
+   */
+  interrupted: boolean
+  /**
    * True while `count`/`pages`/`next_url` describe an `updated_since`-filtered
    * pass over an already-complete resource, rather than the original full sweep.
-   * Read back on resume so a killed incremental pass continues as one — with
+   * Read back on resume so a killed incremental pass is re-run as one — with
    * `updated_since` still applied and without re-imposing the full-sweep
    * `total_entries` shortfall check a filtered query cannot satisfy — instead of
-   * being mistaken for an interrupted first sweep.
+   * being mistaken for an interrupted first sweep and re-sweeping the account.
+   *
+   * The pass's rows live in raw/<resource>.jsonl.incoming until it finishes, so
+   * `count` keeps describing raw/<resource>.jsonl throughout one, and an
+   * interrupted pass is re-run from its first page rather than resumed from a
+   * cursor: it is bounded by what changed since the watermark, and a filtered
+   * sweep whose rows have not been merged yet has nothing to duplicate.
    */
   incremental: boolean
   /** Why this resource holds nothing: a disabled feature, or a 403 on an optional step. */

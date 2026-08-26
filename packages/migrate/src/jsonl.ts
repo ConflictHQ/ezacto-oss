@@ -2,23 +2,53 @@
 // §2.3). No field is added, removed, reordered or reinterpreted at extract time:
 // a transform bug has to be fixable by re-running `load`, because extract is the
 // expensive rate-limited step and the transform is free.
+//
+// Nothing here reads a whole file into memory. raw/time_entries.jsonl for a
+// multi-year agency account runs to hundreds of megabytes — past Node's maximum
+// string length (536,870,888 chars) well before it is past the disk — and every
+// function below is on the resume path, i.e. the path that only runs after a long
+// extract has already been interrupted once.
 
-import { mkdir, open, readFile } from 'node:fs/promises'
+import { mkdir, open, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
 const rawPath = (dir: string, resource: string): string => join(dir, 'raw', `${resource}.jsonl`)
 
 /**
+ * Where an `updated_since` pass parks its rows until it finishes: they are
+ * *fresher copies* of rows raw/<resource>.jsonl already holds, so appending them
+ * straight onto it would leave the snapshot with two of each (see mergeIncremental).
+ */
+const stagePath = (dir: string, resource: string): string =>
+  `${rawPath(dir, resource)}.incoming`
+
+const pathFor = (dir: string, resource: string, staged: boolean): string =>
+  staged ? stagePath(dir, resource) : rawPath(dir, resource)
+
+/** 64 KiB: the read/write unit for the streaming passes below. */
+const CHUNK = 1 << 16
+const NEWLINE = 0x0a
+
+/**
  * Empties (and creates) a resource's file at the start of its step, so a re-run
  * replaces rows rather than appending a second copy of the account. Also what
  * guarantees a file exists for a resource that turns out to have no rows at all —
  * "zero rows" and "never swept" must not look the same on disk.
+ *
+ * `staged` empties the incremental pass's staging file instead; starting the
+ * resource itself also discards any staging file left behind by an incremental
+ * pass that was abandoned rather than merged, whose rows a full sweep replaces.
  */
-export const startResource = async (dir: string, resource: string): Promise<void> => {
+export const startResource = async (
+  dir: string,
+  resource: string,
+  staged = false,
+): Promise<void> => {
   await mkdir(join(dir, 'raw'), { recursive: true })
-  const handle = await open(rawPath(dir, resource), 'w')
+  const handle = await open(pathFor(dir, resource, staged), 'w')
   await handle.close()
+  if (!staged) await rm(stagePath(dir, resource), { force: true })
 }
 
 /**
@@ -30,9 +60,10 @@ export const appendPage = async (
   dir: string,
   resource: string,
   objects: unknown[],
+  staged = false,
 ): Promise<void> => {
   await mkdir(join(dir, 'raw'), { recursive: true })
-  const handle = await open(rawPath(dir, resource), 'a')
+  const handle = await open(pathFor(dir, resource, staged), 'a')
   try {
     if (objects.length > 0) {
       await handle.writeFile(objects.map((o) => `${JSON.stringify(o)}\n`).join(''), 'utf8')
@@ -57,6 +88,10 @@ export const appendPage = async (
  * they get re-fetched from the still-valid cursor rather than trusted twice. A
  * line with no trailing `\n` is a write that was mid-flight when the crash hit;
  * it is never "complete" regardless of what `count` says.
+ *
+ * Counted by scanning for newline bytes and cut with a truncate, never by
+ * reading the file in: the resource most likely to be interrupted is also the
+ * one whose file is too big to be a JS string at all.
  */
 export const reconcileToCount = async (
   dir: string,
@@ -64,31 +99,67 @@ export const reconcileToCount = async (
   count: number,
 ): Promise<void> => {
   const path = rawPath(dir, resource)
-  const raw = await readFile(path, 'utf8')
-  // split('\n') on well-formed content ("a\nb\n") ends in a trailing '' for the
-  // newline after the last line; on torn content ("a\nb") the last element is the
-  // unterminated fragment itself. Dropping it either way leaves exactly the lines
-  // that ended in their own '\n' — the only ones fsync ever promised were durable.
-  const complete = raw.split('\n').slice(0, -1)
-  if (complete.length < count) {
-    throw new Error(
-      `${path} holds ${complete.length} committed line(s) but manifest.json claims ${count} — ` +
-        'the file is missing rows fsync should have made durable. This snapshot cannot be ' +
-        'resumed safely; re-run extract without --snapshot-dir pointed at it, or restore the ' +
-        'file from backup before resuming.',
-    )
-  }
-  const target = count > 0 ? `${complete.slice(0, count).join('\n')}\n` : ''
-  // Also catches (and drops) a torn trailing line past `count` complete lines —
-  // `complete.length` already matches `count` there too, so the line count alone
-  // is not enough; only comparing against the exact bytes a clean file would hold
-  // also cleans up bytes fsync never promised were part of a whole line.
-  if (raw === target) return
-  const handle = await open(path, 'w')
+  const handle = await open(path, 'r+')
   try {
-    await handle.writeFile(target, 'utf8')
-    await handle.sync()
+    const chunk = Buffer.allocUnsafe(CHUNK)
+    let bytes = 0
+    let lines = 0
+    // Bytes up to and including the newline that ends the `count`-th line: the
+    // length a file holding exactly what the manifest claims would have. Zero
+    // when the manifest claims nothing, which truncates the file to empty.
+    let keep = 0
+    for (;;) {
+      const { bytesRead } = await handle.read(chunk, 0, CHUNK, bytes)
+      if (bytesRead === 0) break
+      for (let i = 0; i < bytesRead; i += 1) {
+        if (chunk[i] !== NEWLINE) continue
+        lines += 1
+        if (lines === count) keep = bytes + i + 1
+      }
+      bytes += bytesRead
+    }
+    if (lines < count) {
+      throw new Error(
+        `${path} holds ${lines} committed line(s) but manifest.json claims ${count} — ` +
+          'the file is missing rows fsync should have made durable. This snapshot cannot be ' +
+          'resumed safely; re-run extract without --snapshot-dir pointed at it, or restore the ' +
+          'file from backup before resuming.',
+      )
+    }
+    // Anything past `keep` is either a page the manifest never claimed or a torn
+    // trailing line — bytes fsync never promised were part of a whole row.
+    if (bytes !== keep) {
+      await handle.truncate(keep)
+      await handle.sync()
+    }
   } finally {
+    await handle.close()
+  }
+}
+
+/**
+ * Streams one jsonl file as {line, id} pairs, skipping blank lines. `whyId` says
+ * what the id was needed for, so a row without one names the caller it broke.
+ */
+async function* jsonlRows(
+  path: string,
+  whyId = '',
+): AsyncGenerator<{ line: string; id: number }> {
+  const handle = await open(path, 'r')
+  const lines = createInterface({ input: handle.createReadStream(), crlfDelay: Infinity })
+  try {
+    let lineNo = 0
+    for await (const line of lines) {
+      lineNo += 1
+      if (line.trim() === '') continue
+      const id = (JSON.parse(line) as { id?: unknown }).id
+      if (typeof id !== 'number') {
+        throw new Error(`${path} line ${lineNo} has no numeric "id"${whyId}`)
+      }
+      yield { line, id }
+    }
+  } finally {
+    lines.close()
     await handle.close()
   }
 }
@@ -103,9 +174,8 @@ export const reconcileToCount = async (
  */
 export async function* readIds(dir: string, resource: string): AsyncGenerator<number> {
   const path = rawPath(dir, resource)
-  let handle
   try {
-    handle = await open(path, 'r')
+    for await (const { id } of jsonlRows(path, ` — cannot fan out over ${resource}`)) yield id
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       throw new Error(
@@ -115,22 +185,81 @@ export async function* readIds(dir: string, resource: string): AsyncGenerator<nu
     }
     throw err
   }
-  const lines = createInterface({ input: handle.createReadStream(), crlfDelay: Infinity })
+}
+
+/**
+ * Folds a finished `updated_since` pass's staged rows into raw/<resource>.jsonl,
+ * replacing the copy of each row it superseded. Returns the merged file's line
+ * count, or null when the pass staged nothing and the file is untouched.
+ *
+ * An incremental pass re-fetches rows the snapshot already holds — that is what
+ * `updated_since` returns. Appending them leaves two lines per changed row: a
+ * `count` that overstates the account, a duplicate id for any child step that
+ * fans out over this resource (a second request per changed parent and a second
+ * copy of its children), and a snapshot that disagrees with the database `load`
+ * upserts it into by harvest_id, leaving `verify` (§6) a delta nothing explains.
+ *
+ * Each row keeps its position: a changed row is replaced where it already sat,
+ * and only rows this account did not have before are appended. Order is part of
+ * what a resumed child fan-out reads back — it skips forward through
+ * raw/<parent>.jsonl to the parent it stopped inside — so a merge that moved
+ * changed parents to the end would make the fan-out skip past every parent that
+ * had moved behind it.
+ *
+ * Streamed, and committed by an fsync+rename that leaves the file either wholly
+ * merged or wholly untouched. Memory holds the pass's own rows and nothing else:
+ * the set of rows changed since the watermark, which this run just fetched over
+ * the network a page at a time. The staging file survives a crash mid-merge, so
+ * re-running the pass and merging again lands on the same file.
+ */
+export const mergeIncremental = async (dir: string, resource: string): Promise<number | null> => {
+  const main = rawPath(dir, resource)
+  const stage = stagePath(dir, resource)
+
+  // Insertion-ordered, and drained as the rows are placed: what is left at the
+  // end is the rows this account did not have before, in the order they arrived.
+  const fresher = new Map<number, string>()
   try {
-    let lineNo = 0
-    for await (const line of lines) {
-      lineNo += 1
-      if (line.trim() === '') continue
-      const id = (JSON.parse(line) as { id?: unknown }).id
-      if (typeof id !== 'number') {
-        throw new Error(
-          `${path} line ${lineNo} has no numeric "id" — cannot fan out over ${resource}`,
-        )
-      }
-      yield id
+    for await (const { line, id } of jsonlRows(stage, ` — cannot merge the ${resource} pass`)) {
+      fresher.set(id, line)
     }
+  } catch (err) {
+    // No staging file at all: an incremental pass that never wrote a page.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw err
+  }
+  if (fresher.size === 0) {
+    await rm(stage, { force: true })
+    return null
+  }
+
+  const merged = `${main}.merged`
+  const handle = await open(merged, 'w')
+  let kept = 0
+  try {
+    let pending = ''
+    const write = async (line: string, force = false): Promise<void> => {
+      pending += line
+      if (pending.length === 0 || (!force && pending.length < CHUNK)) return
+      await handle.writeFile(pending, 'utf8')
+      pending = ''
+    }
+    for await (const { line, id } of jsonlRows(main, ` — cannot merge the ${resource} pass`)) {
+      const replacement = fresher.get(id)
+      if (replacement !== undefined) fresher.delete(id)
+      await write(`${replacement ?? line}\n`)
+      kept += 1
+    }
+    for (const line of fresher.values()) {
+      await write(`${line}\n`)
+      kept += 1
+    }
+    await write('', true)
+    await handle.sync()
   } finally {
-    lines.close()
     await handle.close()
   }
+  await rename(merged, main)
+  await rm(stage, { force: true })
+  return kept
 }

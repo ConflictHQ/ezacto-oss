@@ -565,19 +565,230 @@ describe('runExtract when the account moves under it', () => {
     await start({})
     await extract(dir)
     expect(manifestOnDisk().finished_at).not.toBeNull()
-    expect(linesOnDisk('roles')).toHaveLength(1)
+    expect(linesOnDisk('clients')).toHaveLength(1)
 
     await server?.close()
-    await start({ '/v2/roles': () => ({ status: 500, body: { message: 'boom' } }) })
+    await start({ '/v2/clients': () => ({ status: 500, body: { message: 'boom' } }) })
     const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
 
-    expect(err.message).toContain('roles')
+    expect(err.message).toContain('clients')
     const manifest = manifestOnDisk()
     expect(manifest.finished_at).toBeNull()
-    // The prior run's row is untouched — an incremental pass appends, it never
-    // truncates, so a failure before its first successful page is a no-op on disk.
-    expect(manifest.resources.roles).toMatchObject({ count: 1, complete: false, incremental: true })
-    expect(linesOnDisk('roles')).toHaveLength(1)
+    // The prior run's row is untouched — an incremental pass stages its rows and
+    // merges them only once it finishes, so a failure before its first successful
+    // page is a no-op on the file the manifest is describing.
+    expect(manifest.resources.clients).toMatchObject({
+      count: 1,
+      complete: false,
+      incremental: true,
+    })
+    expect(linesOnDisk('clients')).toHaveLength(1)
+  })
+
+  // The same failure one step earlier is where this used to lose rows silently.
+  // The incremental record was spread from the last *full* sweep's, inheriting
+  // its `pages`, `pass` and `next_url: null` — so a pass that died before its
+  // first request left a record the next run read as "that pass ran to the end of
+  // its cursor". It issued no requests at all, stamped the resource complete, and
+  // moved updated_since to the dead run's start time: every row changed in
+  // between was behind the watermark for good, and the run exited 0.
+  it('[unit] an incremental pass that dies before its first page is re-run, not stepped over', async () => {
+    let down = false
+    await start({
+      '/v2/clients': (url) =>
+        down
+          ? { status: 500, body: { message: 'boom' } }
+          : {
+              body: envelope(
+                'clients',
+                url.searchParams.get('updated_since') ? [row(31)] : [row(30)],
+              ),
+            },
+    })
+    await extract(dir, logs)
+    const watermark = manifestOnDisk().updated_since.clients
+    expect(watermark).toBeDefined()
+
+    down = true
+    const failed = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+    expect(failed.message).toContain('clients')
+    // A pass that fetched nothing may not move the watermark it was reading.
+    expect(manifestOnDisk().updated_since.clients).toBe(watermark)
+
+    down = false
+    const before = server?.requests.length ?? 0
+    const result = await extract(dir, logs)
+    const resumed = (server?.requests ?? [])
+      .slice(before)
+      .filter((r) => r.startsWith('/v2/clients?'))
+
+    // The pass the outage killed actually goes out this time, filtered on the
+    // watermark it never got past — so the row changed in the meantime lands.
+    expect(resumed).toHaveLength(1)
+    expect(resumed[0]).toContain(`updated_since=${encodeURIComponent(watermark)}`)
+    expect(linesOnDisk('clients').map((l) => JSON.parse(l) as unknown)).toEqual([row(30), row(31)])
+    expect(result.resources.clients).toMatchObject({
+      count: 2,
+      complete: true,
+      incremental: true,
+    })
+  })
+
+  // /v2/roles takes only `page` and `per_page` (research §7, §13). Harvest ignores
+  // query params it does not implement, so an incremental pass over it asked for
+  // the changed roles, was handed the whole collection, and appended it: a second
+  // copy of every role on every re-run, unbounded, with the truncation warning
+  // suppressed because the record called itself incremental.
+  it('[unit] roles is swept in full on a re-run — Harvest has no updated_since for it', async () => {
+    await start({ '/v2/roles': () => ({ body: envelope('roles', [row(20), row(21)]) }) })
+
+    await extract(dir, logs)
+    await extract(dir, logs)
+
+    const queries = (server?.requests ?? []).filter((r) => r.startsWith('/v2/roles?'))
+    expect(queries).toHaveLength(2)
+    expect(queries.some((q) => q.includes('updated_since'))).toBe(false)
+    expect(linesOnDisk('roles').map((l) => JSON.parse(l) as unknown)).toEqual([row(20), row(21)])
+    expect(manifestOnDisk().resources.roles).toMatchObject({
+      count: 2,
+      total_entries: 2,
+      complete: true,
+      incremental: false,
+    })
+  })
+
+  // A sweep that ran out of cursor short of Harvest's tally has no page left to
+  // resume from — but it looked exactly like one that did (`pages > 0`,
+  // `next_url: null`), so the re-run skipped straight past it, issued nothing,
+  // re-evaluated the same shortfall and threw the same error. Forever: the
+  // snapshot could never be finished, while the error and the CLI both promised a
+  // re-run would sweep it again.
+  it('[unit] a sweep that fell short is swept again next run, not resumed into a no-op', async () => {
+    let honest = false
+    await start({
+      '/v2/clients': () =>
+        honest
+          ? { body: envelope('clients', [row(30), row(31)]) }
+          : { body: { ...envelope('clients', [row(30)]), total_entries: 2 } },
+    })
+
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+    expect(err.message).toContain('extract did not complete: clients')
+
+    honest = true
+    const before = server?.requests.length ?? 0
+    const result = await extract(dir, logs)
+    const second = (server?.requests ?? []).slice(before).filter((r) => r.startsWith('/v2/clients?'))
+
+    // Asked again, from page 1 — not an incremental pass over a file known to be
+    // missing rows, which would leave the gap in place behind a watermark.
+    expect(second).toHaveLength(1)
+    expect(second[0]).not.toContain('updated_since')
+    expect(linesOnDisk('clients').map((l) => JSON.parse(l) as unknown)).toEqual([row(30), row(31)])
+    expect(result.resources.clients).toMatchObject({
+      count: 2,
+      total_entries: 2,
+      complete: true,
+    })
+    expect(manifestOnDisk().finished_at).not.toBeNull()
+  })
+
+  // An incremental pass returns fresher copies of rows the snapshot already
+  // holds. Appended, they were a second line for every changed row — and where
+  // the resource is a fan-out parent, `readIds` handed the same id to the child
+  // step twice: two requests per changed parent and two copies of its children,
+  // with `count` and `total_entries` both doubling so nothing noticed.
+  it('[unit] an incremental parent pass does not duplicate rows or fan its children out twice', async () => {
+    await start({
+      '/v2/invoices': (url) => ({
+        body: envelope('invoices', url.searchParams.get('updated_since') ? [INVOICES[0]] : INVOICES),
+      }),
+    })
+
+    await extract(dir, logs)
+    const before = server?.requests.length ?? 0
+    const result = await extract(dir, logs)
+    const second = (server?.requests ?? []).slice(before).map((r) => r.split('?')[0])
+
+    // Invoice 100 came back changed. It is still one invoice, in the position it
+    // already had — a fan-out resuming into this file skips forward through it in
+    // order, so a merge that moved changed parents to the end would make it skip
+    // every parent that had moved behind the one it stopped inside.
+    expect(linesOnDisk('invoices').map((l) => JSON.parse(l) as unknown)).toEqual(INVOICES)
+    expect(result.resources.invoices).toMatchObject({ count: 2, incremental: true })
+    expect(second.filter((p) => p === '/v2/invoices/100/messages')).toHaveLength(1)
+    expect(second.filter((p) => p === '/v2/invoices/101/messages')).toHaveLength(1)
+    expect(linesOnDisk('invoice_messages').map((l) => JSON.parse(l) as unknown)).toEqual([
+      row(1100),
+      row(1101),
+    ])
+    expect(result.resources.invoice_messages).toMatchObject({
+      count: 2,
+      total_entries: 2,
+      complete: true,
+    })
+  })
+
+  // `watermark` was only resolved for a *fresh* incremental pass, but the
+  // `incremental` flag survived into the resumed record — so every pass after the
+  // one being resumed spread `undefined` into the query string and asked Harvest
+  // for `updated_since=undefined`. Harvest either rejects it (the resume can
+  // never finish) or ignores it and hands back the whole collection.
+  it('[unit] a re-run of a killed multi-pass incremental filters every pass, never on undefined', async () => {
+    let page2Recovered = false
+    await start({
+      '/v2/task_assignments': (url) => {
+        const since = url.searchParams.get('updated_since')
+        const active = url.searchParams.get('is_active') === 'true'
+        // `links.next` is followed verbatim, so the cursor page carries neither
+        // filter — it is checked first, before the params either pass sends.
+        if (url.searchParams.get('cursor') === 'NEXT') {
+          return page2Recovered
+            ? { body: envelope('task_assignments', [row(902)]) }
+            : { status: 500, body: { message: 'boom' } }
+        }
+        if (since === null) return { body: envelope('task_assignments', [row(active ? 90 : 91)]) }
+        if (!active) return { body: envelope('task_assignments', [row(901)]) }
+        return {
+          body: envelope(
+            'task_assignments',
+            [row(900)],
+            `${server?.baseUrl ?? ''}/v2/task_assignments?cursor=NEXT`,
+          ),
+        }
+      },
+    })
+
+    await extract(dir, logs)
+    const watermark = manifestOnDisk().updated_since.task_assignments
+
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+    expect(err.message).toContain('task_assignments')
+
+    page2Recovered = true
+    const before = server?.requests.length ?? 0
+    const result = await extract(dir, logs)
+    const resumed = (server?.requests ?? [])
+      .slice(before)
+      .filter((r) => r.startsWith('/v2/task_assignments?'))
+
+    expect(resumed.join('\n')).not.toContain('undefined')
+    // The is_active=false pass is the one that used to carry it: it is reached
+    // after the pass the crash landed in, so it is built from params, not replayed
+    // from a stored cursor.
+    const inactive = resumed.filter((r) => r.includes('is_active=false'))
+    expect(inactive).toHaveLength(1)
+    expect(inactive[0]).toContain(`updated_since=${encodeURIComponent(watermark)}`)
+    // The killed pass's staged rows were discarded and re-fetched, so nothing is
+    // in the file twice.
+    expect(linesOnDisk('task_assignments').map((l) => JSON.parse(l) as unknown)).toEqual([
+      row(90),
+      row(91),
+      row(900),
+      row(902),
+      row(901),
+    ])
+    expect(result.resources.task_assignments).toMatchObject({ count: 5, complete: true })
   })
 
   // count == jsonl line count is true of any truncation. Harvest's own tally is the
@@ -847,11 +1058,15 @@ describe('runExtract when the account moves under it', () => {
     let page2Recovered = false
     await start({
       // invoices itself is a complete `list` resource by the time invoice_messages
-      // resumes, so the second run's own updated_since pass over it must not
-      // re-report invoice 101 — that would give the fan-out below a duplicate
-      // parent id, a resume artifact unrelated to what this test is about.
+      // resumes, so the second run makes its own updated_since pass over it —
+      // and re-reports invoice 101, the way a real account would for an invoice
+      // touched since the watermark. The fan-out below still has to see two
+      // parents, once each.
       '/v2/invoices': (url) => ({
-        body: envelope('invoices', url.searchParams.get('updated_since') ? [] : INVOICES),
+        body: envelope(
+          'invoices',
+          url.searchParams.get('updated_since') ? [INVOICES[1]] : INVOICES,
+        ),
       }),
       '/v2/invoices/{id}/messages': (url) => {
         if (userId(url) !== 100) return { body: envelope('invoice_messages', [row(1101)]) }
