@@ -82,7 +82,7 @@ describe('ezacto-migrate CLI entrypoint', () => {
   })
 
   it('[unit] extract refuses a snapshot dir auth has never stamped', async () => {
-    await writeFile(join(dir, '.dev.vars'), 'HARVEST_PAT=not-a-real-token\n')
+    await writeFile(join(dir, '.dev.vars'), 'HARVEST_PAT=fake\n')
 
     const { code, stderr } = await runNode(cliPath, ['extract', '--snapshot-dir', dir], {
       cwd: dir,

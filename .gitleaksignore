@@ -1,0 +1,18 @@
+# Reviewed findings that are not secrets. One line per fingerprint, each with the
+# reason — an unexplained entry here is indistinguishable from a covered-up leak.
+#
+# Fingerprints are commit:path:rule:line, so an entry stops applying the moment the
+# line moves. That is deliberate: a re-review is cheap, a stale blanket exemption is
+# not. Never add a path glob here — a rule that cannot see test files cannot catch
+# the real secret somebody eventually pastes into one.
+#
+# NOTE: describe offending values, never reproduce them. A comment quoting the
+# literal string re-introduces it in a new commit, and the scanner is right to
+# flag that too.
+
+# A CLI test fixture: the placeholder assigned to HARVEST_PAT was 17 characters,
+# which trips the {16,} length heuristic in .gitleaks.toml. Not a credential —
+# real Harvest PATs are 96 characters, shaped <digits>.pt.<random>. Fixed forward
+# in the same commit that adds this line (the fixture is now four characters);
+# history is not rewritten, so the historical occurrence is pinned here.
+8a37092d61a3c8df18e274ced30d6a4cb4f6136e:packages/migrate/test/cli.test.ts:harvest-pat-assignment:79
