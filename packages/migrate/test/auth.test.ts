@@ -9,7 +9,12 @@ import {
   writeManifest,
   type Manifest,
 } from '../src/manifest.js'
-import { COMPANY_RESPONSE as COMPANY, COMPANY_SETTINGS, preflight } from './fixtures.js'
+import {
+  COMPANY_RESPONSE as COMPANY,
+  COMPANY_SETTINGS,
+  preflight,
+  resourceProgress,
+} from './fixtures.js'
 
 const jsonResponse = (body: unknown): Response =>
   new Response(JSON.stringify(body), { status: 200 })
@@ -129,7 +134,15 @@ describe('runAuth', () => {
       finished_at: null,
       tool_version: '0.0.0',
       preflight: preflight({ clock: '24h', wants_timestamp_timers: false }),
-      resources: { time_entries: { count: 48213, pages: 25, cursor: 'eyJhZnRlciI6MTIzfQ' } },
+      resources: {
+        time_entries: resourceProgress({
+          count: 48213,
+          pages: 25,
+          next_url: 'https://api.harvestapp.com/v2/time_entries?cursor=eyJhZnRlciI6MTIzfQ',
+          complete: false,
+          finished_at: null,
+        }),
+      },
       updated_since: { time_entries: '2026-08-20T10:00:00Z' },
     }
     await writeManifest(dir, half)
@@ -201,10 +214,11 @@ describe('runAuth', () => {
     expect(logs.some((l) => l.includes('raw/'))).toBe(true)
   })
 
-  // AC #4 is about `extract`, which is a separate CLI invocation (migration-spec
-  // §0) that never calls /v2/users/me (§2.1 order, steps 1-13). If the manifest
-  // does not record who authenticated, a member-scoped snapshot is byte-identical
-  // to an administrator's and nothing downstream can warn or explain the deltas.
+  // AC #4 is about `extract`, a separate CLI invocation (migration-spec §0) that
+  // re-reads HARVEST_PAT and checks the identity it gets against this record before
+  // sweeping. If the manifest does not say who authenticated, a member-scoped
+  // snapshot is byte-identical to an administrator's, extract has nothing to
+  // compare its own /v2/users/me against, and nothing downstream can explain the deltas.
   it('[unit] records the authenticating user, so a member-scoped snapshot is distinguishable', async () => {
     usersMeResponse = { id: 4242, access_roles: ['member', 'project_manager'] }
 
@@ -241,7 +255,10 @@ describe('runAuth', () => {
     usersMeResponse = { id: 1, access_roles: ['administrator'] }
     await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir })
     const stamped = await readManifest(dir)
-    await writeManifest(dir, { ...stamped, resources: { clients: { count: 12, pages: 1 } } })
+    await writeManifest(dir, {
+      ...stamped,
+      resources: { clients: resourceProgress({ count: 12, pages: 1 }) },
+    })
 
     usersMeResponse = { id: 2, access_roles: ['administrator'] }
     const err = await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir }).catch(
@@ -259,7 +276,10 @@ describe('runAuth', () => {
     usersMeResponse = { id: 1, access_roles: ['administrator'] }
     await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir })
     const stamped = await readManifest(dir)
-    await writeManifest(dir, { ...stamped, resources: { clients: { count: 12, pages: 1 } } })
+    await writeManifest(dir, {
+      ...stamped,
+      resources: { clients: resourceProgress({ count: 12, pages: 1 }) },
+    })
 
     usersMeResponse = { id: 1, access_roles: ['member'] }
     const err = await runAuth({
@@ -293,7 +313,10 @@ describe('runAuth', () => {
     usersMeResponse = { id: 1, access_roles: ['administrator'] }
     await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir })
     const stamped = await readManifest(dir)
-    await writeManifest(dir, { ...stamped, resources: { clients: { count: 12, pages: 1 } } })
+    await writeManifest(dir, {
+      ...stamped,
+      resources: { clients: resourceProgress({ count: 12, pages: 1 }) },
+    })
 
     usersMeResponse = { id: 2, access_roles: ['administrator'] }
     const logs: string[] = []

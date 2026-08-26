@@ -69,6 +69,55 @@ export interface ManifestPreflight extends ManifestCompanySettings {
   user: ManifestPreflightUser
 }
 
+/**
+ * Per-resource extract progress — the resume record §2.4 rests on. Rewritten
+ * after every page, so a crash or a 429 storm leaves a snapshot that describes
+ * itself accurately rather than one that has to be re-derived from raw/.
+ */
+export interface ManifestResource {
+  /** Objects appended to raw/<resource>.jsonl so far. */
+  count: number
+  /**
+   * `total_entries` as Harvest reported it, summed over the sweeps this resource is
+   * made of (one per pass, one per parent), or null when no page carried it.
+   *
+   * The only outside witness to how big the collection was. `count` is what we
+   * wrote, and is self-consistent with any truncation — a `links.next: null` that
+   * should not have been null leaves both numbers agreeing on a snapshot that is
+   * missing most of the account. Recorded here because re-asking Harvest costs the
+   * extract budget again, and `verify` runs later (migration-spec §6).
+   */
+  total_entries: number | null
+  /** Pages consumed; with `requests`, the cost record §2.2 asks extract to print. */
+  pages: number
+  requests: number
+  /**
+   * Child parents that answered 404: rows deleted between the parent sweep and the
+   * fan-out. Extract runs against an account people are still using (§5), so this is
+   * a race rather than a failure — but their children are absent from the snapshot
+   * and will not turn up on a re-read, so a consumer comparing counts has to know.
+   */
+  missing_parents: number
+  /**
+   * The next page URL exactly as Harvest returned it in `links.next`, or null at
+   * the end of the collection. A *URL*, never a bare cursor: the doc mandate is to
+   * follow `links` verbatim (research §0.4), and a resume that rebuilt a URL from a
+   * stored cursor would be constructing pagination links by hand at the one moment
+   * it matters most.
+   */
+  next_url: string | null
+  /** For child steps (per-user rates, per-invoice messages), the parent id in flight. */
+  parent_id: number | null
+  /** Index into the step's `passes` — which sweep of a multi-pass step is in flight. */
+  pass: number
+  complete: boolean
+  /** Why this resource holds nothing: a disabled feature, or a 403 on an optional step. */
+  skipped_reason: string | null
+  /** Captured before the step's first request — the watermark a later incremental run reads. */
+  started_at: string
+  finished_at: string | null
+}
+
 export interface Manifest {
   account: { id: string; name: string }
   company_name: string
@@ -76,8 +125,9 @@ export interface Manifest {
   finished_at: string | null
   tool_version: string
   preflight: ManifestPreflight
-  resources: Record<string, unknown>
-  updated_since: Record<string, unknown>
+  resources: Record<string, ManifestResource>
+  /** ISO watermark per resource: the time extract started sweeping it. */
+  updated_since: Record<string, string>
 }
 
 const MANIFEST_FILE = 'manifest.json'

@@ -2,7 +2,11 @@
 // records, so spelling them out per test would bury what each test is actually
 // asserting — every test states only the fields it cares about.
 
-import type { ManifestCompanySettings, ManifestPreflight } from '../src/manifest.js'
+import type {
+  ManifestCompanySettings,
+  ManifestPreflight,
+  ManifestResource,
+} from '../src/manifest.js'
 
 export const COMPANY_SETTINGS: ManifestCompanySettings = {
   clock: '12h',
@@ -32,5 +36,22 @@ export const ADMIN_USER = { id: 1, access_roles: ['administrator'], is_administr
 export const preflight = (overrides: Partial<ManifestPreflight> = {}): ManifestPreflight => ({
   ...COMPANY_SETTINGS,
   user: ADMIN_USER,
+  ...overrides,
+})
+
+/** A per-resource extract progress record, stating only the fields under test. */
+export const resourceProgress = (overrides: Partial<ManifestResource> = {}): ManifestResource => ({
+  count: 0,
+  total_entries: null,
+  pages: 0,
+  requests: 0,
+  missing_parents: 0,
+  next_url: null,
+  parent_id: null,
+  pass: 0,
+  complete: true,
+  skipped_reason: null,
+  started_at: '2026-08-20T10:00:00.000Z',
+  finished_at: '2026-08-20T10:05:00.000Z',
   ...overrides,
 })

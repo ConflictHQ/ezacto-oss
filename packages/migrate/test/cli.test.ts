@@ -9,7 +9,9 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { formatCounts } from '../src/cli.js'
 import { findDevVars } from '../src/env.js'
+import { resourceProgress } from './fixtures.js'
 
 const execFileAsync = promisify(execFile)
 const pkgDir = fileURLToPath(new URL('..', import.meta.url))
@@ -64,6 +66,39 @@ describe('ezacto-migrate CLI entrypoint', () => {
     expect(code).toBe(1)
   })
 
+  it('[unit] lists every command it can actually dispatch', async () => {
+    const { stdout } = await runNode(cliPath)
+
+    // A command in the usage text that the dispatcher does not handle would print
+    // usage and exit 1 — advertised and broken.
+    expect(stdout).toContain('auth')
+    expect(stdout).toContain('extract')
+  })
+
+  // The usage text called extract "resumable". Nothing reads
+  // manifest.resources[*].next_url back and every step re-runs through
+  // startResource, which truncates that resource's raw file — so a user who read
+  // "resumable" and re-ran after an hour-three failure got a full re-sweep that
+  // began by deleting what the first run had collected.
+  it('[unit] does not advertise a resume it has not implemented', async () => {
+    const { stdout } = await runNode(cliPath)
+
+    expect(stdout).not.toMatch(/resumable/i)
+    expect(stdout).toContain('it does not resume')
+  })
+
+  it('[unit] extract refuses a snapshot dir auth has never stamped', async () => {
+    await writeFile(join(dir, '.dev.vars'), 'HARVEST_PAT=not-a-real-token\n')
+
+    const { code, stderr } = await runNode(cliPath, ['extract', '--snapshot-dir', dir], {
+      cwd: dir,
+    })
+
+    // Fails on the missing manifest, before spending a request on a bad token.
+    expect(stderr).toContain('ezacto-migrate auth')
+    expect(code).toBe(1)
+  })
+
   it('[unit] does the same through a bin symlink — the installed shape is not a silent no-op', async () => {
     const link = join(dir, 'ezacto-migrate')
     await symlink(cliPath, link)
@@ -88,6 +123,20 @@ describe('ezacto-migrate CLI entrypoint', () => {
     expect(code).toBe(1)
   })
 
+  // A page of 2000 time entries carries fully embedded assignment objects, so the
+  // ten-second default is tight on a slow link — and before this flag the only
+  // remedy for a page that would not finish in time was not running extract.
+  it('[unit] --request-timeout is rejected when it is not a positive number of seconds', async () => {
+    await writeFile(join(dir, '.dev.vars'), 'HARVEST_PAT=t\n')
+
+    const { code, stderr } = await runNode(cliPath, ['extract', '--request-timeout', 'soon'], {
+      cwd: dir,
+    })
+
+    expect(stderr).toContain('--request-timeout must be a positive number of seconds, got "soon"')
+    expect(code).toBe(1)
+  })
+
   it('[unit] loads .dev.vars from the working directory, not from the installed module', async () => {
     // no HARVEST_PAT in it: the error proves which file was read, without a token
     const devVars = join(dir, '.dev.vars')
@@ -97,5 +146,53 @@ describe('ezacto-migrate CLI entrypoint', () => {
 
     expect(stderr).toContain(`add HARVEST_PAT=<token> to ${devVars}`)
     expect(code).toBe(1)
+  })
+})
+
+describe('the extract counts table', () => {
+  it('[unit] prints a row per resource, aligned, with skips called out and a total', () => {
+    const table = formatCounts(
+      {
+        resources: {
+          users: resourceProgress({ count: 12, pages: 1 }),
+          time_entries: resourceProgress({ count: 48213, pages: 25 }),
+          estimates: resourceProgress({ skipped_reason: 'estimate_feature is false' }),
+        },
+        requests: 27,
+        durationMs: 61_400,
+      },
+      '/snap/manifest.json',
+    )
+
+    const lines = table.split('\n')
+    // Column alignment is what makes a spot-check against the Harvest UI readable.
+    expect(lines[0]).toBe('users              12 rows     1 pages')
+    expect(lines[1]).toBe('time_entries    48213 rows    25 pages')
+    // A zero that is *explained* must not read like a zero that is a bug.
+    expect(lines[2]).toBe(
+      'estimates           0 rows     0 pages  skipped: estimate_feature is false',
+    )
+    expect(lines[4]).toBe('total: 48225 rows, 27 requests, 61s')
+    expect(lines[5]).toBe('manifest: /snap/manifest.json')
+  })
+
+  // A resource that came back short prints as an ordinary number otherwise, and
+  // this table is what a Harvest UI spot-check is compared against.
+  it('[unit] says when a count is short of the account, not just what was written', () => {
+    const table = formatCounts(
+      {
+        resources: {
+          time_entries: resourceProgress({ count: 1, pages: 1, total_entries: 4000 }),
+          invoice_messages: resourceProgress({ count: 55, pages: 55, missing_parents: 2 }),
+        },
+        requests: 60,
+        durationMs: 10_000,
+      },
+      '/snap/manifest.json',
+    )
+
+    const lines = table.split('\n')
+    expect(lines[0]).toContain('Harvest reported 4000')
+    expect(lines[1]).toContain('2 parents missing')
   })
 })

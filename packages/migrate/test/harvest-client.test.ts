@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   harvestFetch,
+  harvestFetchUrl,
   type HarvestApiError,
   type HarvestTransportError,
 } from '../src/harvest-client.js'
@@ -56,6 +57,70 @@ describe('harvestFetch', () => {
     expect(headers.Authorization).toBe('Bearer p')
     expect(headers['Harvest-Account-Id']).toBe('42')
     expect(headers['User-Agent']).toBeTruthy()
+  })
+
+  // The throttle policy lives in the paginator, but the *number* it needs comes
+  // from here: a Retry-After we cannot read must be null, so the caller falls back
+  // to its own default rather than to a wrong wait.
+  it('[unit] carries Retry-After off a 429 as integer seconds, or null when unreadable', async () => {
+    const call = async (retryAfter?: string): Promise<HarvestApiError> => {
+      vi.mocked(fetch).mockResolvedValueOnce(
+        new Response('{}', {
+          status: 429,
+          headers: retryAfter ? { 'retry-after': retryAfter } : {},
+        }),
+      )
+      return (await harvestFetch('/v2/time_entries', {
+        pat: 'p',
+        userAgentEmail: 'e@x.com',
+        accountId: '1',
+      }).catch((e: unknown) => e)) as HarvestApiError
+    }
+
+    expect((await call('7')).retryAfterSeconds).toBe(7)
+    expect((await call()).retryAfterSeconds).toBeNull()
+    // Harvest documents seconds only; the HTTP-date form is deliberately not parsed.
+    expect((await call('Wed, 21 Oct 2026 07:28:00 GMT')).retryAfterSeconds).toBeNull()
+    // `Number('')` and `Number('   ')` are both 0, so a blank header read as
+    // "come back immediately" and was indistinguishable from a parsed value. A
+    // CDN error page or a proxy emitting `retry-after: ${undefined}` sends one.
+    expect((await call('')).retryAfterSeconds).toBeNull()
+    expect((await call('   ')).retryAfterSeconds).toBeNull()
+    // A literal 0 is legal (RFC 9110) and readable — carried as-is; the wait floor
+    // that keeps it from becoming a tight loop belongs to the retry policy.
+    expect((await call('0')).retryAfterSeconds).toBe(0)
+  })
+
+  it('[unit] harvestFetchUrl sends an absolute URL through untouched, with the same headers', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, {}))
+    // The links.next shape: an opaque cursor, on a host we never concatenate onto.
+    const next = 'https://api.harvestapp.com/v2/clients?cursor=eyJhZnRlciI6MTIzfQ'
+
+    await harvestFetchUrl(next, { pat: 'p', userAgentEmail: 'e@x.com', accountId: '42' })
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0]
+    expect(url).toBe(next)
+    const headers = init?.headers as Record<string, string>
+    expect(headers.Authorization).toBe('Bearer p')
+    expect(headers['Harvest-Account-Id']).toBe('42')
+    expect(headers['User-Agent']).toBeTruthy()
+  })
+
+  // The URL is an argument here, and for the paginator it comes out of a response
+  // body. Whatever it says, the Authorization header goes on it — so the host is
+  // checked in the one place that attaches the token, not only at the call sites.
+  it('[unit] refuses to put the PAT on a URL that is not the configured API host', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, {}))
+
+    const err = (await harvestFetchUrl('http://169.254.169.254/latest/meta-data/', {
+      pat: 'p',
+      userAgentEmail: 'e@x.com',
+      accountId: '42',
+    }).catch((e: unknown) => e)) as Error
+
+    expect(err.message).toContain('refusing to request http://169.254.169.254/latest/meta-data/')
+    expect(err.message).toContain('https://api.harvestapp.com')
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled()
   })
 
   it('[unit] cannot be constructed without a User-Agent even when accountId is intentionally unset', async () => {
@@ -161,5 +226,70 @@ describe('harvestFetch deadlines and retry [unit]', () => {
     expect(err.timedOut).toBe(false)
     expect(err.attempts).toBe(2)
     expect(err.message).toContain('could not reach Harvest')
+  })
+})
+
+// The origin allow-list runs on the URL *before* the request goes out. Redirect
+// following happens inside fetch(), after it — so with the default `redirect:
+// 'follow'` a single 302 from the API takes the request to any host reachable from
+// the operator's machine (RFC1918, 169.254.169.254, a port on localhost) and hands
+// the caller the attacker's JSON as though Harvest had said it. The Fetch spec
+// strips Authorization cross-origin, but nothing here rests on that, and the
+// account id and the operator's email in the User-Agent are sent regardless.
+describe('harvestFetchUrl refuses a redirect off the API origin [unit]', () => {
+  let api: Server | undefined
+  let target: Server | undefined
+
+  const listen = async (handler: Parameters<typeof createServer>[1]): Promise<[Server, string]> => {
+    const started = createServer(handler)
+    await new Promise<void>((resolve) => started.listen(0, '127.0.0.1', resolve))
+    return [started, `http://127.0.0.1:${(started.address() as AddressInfo).port}`]
+  }
+
+  const shut = async (s: Server | undefined): Promise<void> => {
+    if (!s) return
+    s.closeAllConnections()
+    await new Promise<void>((resolve) => s.close(() => resolve()))
+  }
+
+  afterEach(async () => {
+    await shut(api)
+    await shut(target)
+    api = undefined
+    target = undefined
+  })
+
+  it('[unit] does not follow a 302, and sends the target nothing at all', async () => {
+    const received: Record<string, string | string[] | undefined>[] = []
+    const [targetServer, targetUrl] = await listen((req, res) => {
+      received.push({ url: req.url, ...req.headers })
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ users: [{ id: 999999, first_name: 'INJECTED' }] }))
+    })
+    target = targetServer
+
+    const evil = `${targetUrl}/latest/meta-data/`
+    const [apiServer, baseUrl] = await listen((_req, res) => {
+      res.writeHead(302, { location: evil })
+      res.end('moved')
+    })
+    api = apiServer
+
+    const err = (await harvestFetchUrl(`${baseUrl}/v2/users`, {
+      pat: 'p',
+      userAgentEmail: 'e@x.com',
+      accountId: '42',
+      baseUrl,
+      timeoutMs: 2_000,
+    }).catch((e: unknown) => e)) as HarvestApiError
+
+    // Nothing reached the redirect target — not the account id, not the User-Agent
+    // carrying the operator's email, not a connection.
+    expect(received).toEqual([])
+    expect(err.status).toBe(302)
+    expect(err.message).toContain('refusing to follow the 302 redirect')
+    expect(err.message).toContain(`${baseUrl}/v2/users`)
+    expect(err.message).toContain(evil)
+    expect(err.message).toContain('the Harvest API does not redirect')
   })
 })
