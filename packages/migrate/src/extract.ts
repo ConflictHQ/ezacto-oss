@@ -6,13 +6,17 @@
 // manifest claims them, so a crash under-claims (worst case: one page re-fetched)
 // instead of over-claiming (worst case: a snapshot that lies about its contents).
 //
+// The same rule one level up: `finished_at` is cleared before the first step and
+// restamped only after the last, so a run that dies leaves a snapshot that says it
+// is unfinished rather than one carrying the previous run's stamp.
+//
 // This story writes the resume record. It does not yet read it back to skip
 // completed work — resuming mid-resource is its own story, with its own kill -9
 // acceptance test.
 
-import { visibilityWarning } from './auth.js'
+import { parseUserMe, scopeChangeBetween, visibilityWarning } from './auth.js'
 import type { HarvestEnv } from './env.js'
-import type { HarvestApiError, HarvestClientConfig } from './harvest-client.js'
+import { harvestFetch, type HarvestApiError, type HarvestClientConfig } from './harvest-client.js'
 import { appendPage, readIds, startResource } from './jsonl.js'
 import { readManifestIfExists, writeManifest, type ManifestResource } from './manifest.js'
 import { paginate, type PaginateDeps } from './paginator.js'
@@ -44,6 +48,27 @@ const budgetSeconds = (requests: number): number =>
 const isApiError = (err: unknown): err is HarvestApiError =>
   err instanceof Error && typeof (err as HarvestApiError).status === 'number'
 
+/**
+ * The same refusal, said somewhere it can be acted on. `Harvest API error: 404
+ * {"message":"Not Found"}` reaching a user names no resource, no path and no
+ * parent, and omits the one fact that matters — the snapshot on disk is intact and
+ * the run can be continued. `status` is carried through, because the caller
+ * classifies on it after this wrapping.
+ */
+const inContext = (resource: string, path: string, err: HarvestApiError): HarvestApiError => {
+  const contextual = new Error(
+    `${resource}: request to ${path} failed — ${err.message}. Everything extracted so far is ` +
+      'already on disk and the manifest records where this resource stopped — re-run ' +
+      '`ezacto-migrate extract` against the same --snapshot-dir to continue.',
+    { cause: err },
+  ) as HarvestApiError
+  contextual.status = err.status
+  contextual.fix = err.fix
+  contextual.body = err.body
+  contextual.retryAfterSeconds = err.retryAfterSeconds
+  return contextual
+}
+
 export const runExtract = async (options: RunExtractOptions): Promise<ExtractResult> => {
   const { env, snapshotDir } = options
   const now = options.now ?? (() => new Date())
@@ -59,12 +84,6 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
     )
   }
 
-  // The same warning auth raises, re-raised from the manifest before the first
-  // request: a member-scoped PAT produces a snapshot that is a fraction of the
-  // account and looks, from its exit code, exactly like a complete one.
-  const warning = visibilityWarning(manifest.preflight.user)
-  if (warning) log(warning)
-
   const config: HarvestClientConfig = {
     pat: env.pat,
     userAgentEmail: env.userAgentEmail,
@@ -72,6 +91,35 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
     baseUrl: options.baseUrl,
     timeoutMs: options.timeoutMs,
   }
+
+  // One limiter for the whole run: the budget is per account, not per resource.
+  // It is created before the identity check so that request counts against it too.
+  const limiter = createRateLimiter({ sleep })
+  const deps: PaginateDeps = { limiter, sleep, log }
+
+  // Who this PAT actually is, asked live rather than read out of the manifest.
+  // manifest.preflight describes the token `auth` ran with; this process re-read
+  // HARVEST_PAT from the environment and nothing so far has proved it is the same
+  // one. An administrator `auth` followed by a member-scoped `extract` sweeps a
+  // fraction of the account, prints no warning (the manifest still says
+  // administrator), stamps finished_at and exits 0 — the one delta reconcile
+  // cannot explain afterwards (§6). One request out of thousands closes it.
+  await limiter.acquire()
+  const me = parseUserMe(await harvestFetch('/v2/users/me', config))
+  const scopeChange = scopeChangeBetween(manifest.preflight.user, me)
+  if (scopeChange) {
+    throw new Error(
+      `HARVEST_PAT is not the identity ${snapshotDir} was stamped with — ${scopeChange}. The rows ` +
+        "already in raw/ show the preflight identity's visibility and this token sees a different " +
+        `slice of the account. Export the original PAT, or re-run \`ezacto-migrate auth ` +
+        `--snapshot-dir ${snapshotDir}\` to re-stamp the preflight for this one (it gates the change).`,
+    )
+  }
+
+  // A member-scoped PAT produces a snapshot that is a fraction of the account and
+  // looks, from its exit code, exactly like a complete one.
+  const warning = visibilityWarning(me)
+  if (warning) log(warning)
 
   const enabled = (step: ResourceStep): boolean =>
     !step.requires || manifest.preflight[step.requires]
@@ -89,10 +137,6 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
     )
   }
 
-  // One limiter for the whole run: the budget is per account, not per resource.
-  const limiter = createRateLimiter({ sleep })
-  const deps: PaginateDeps = { limiter, sleep, log }
-
   const resources: Record<string, ManifestResource> = { ...manifest.resources }
 
   const persist = async (): Promise<void> => {
@@ -100,14 +144,23 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
     await writeManifest(snapshotDir, manifest)
   }
 
+  // A run in flight is not a finished snapshot. `finished_at` is the top-level
+  // completeness signal every consumer keys on, and startResource is about to
+  // truncate the first raw file — so a re-run that dies three steps in must not
+  // leave the previous run's stamp standing over a resource that is now empty.
+  manifest.finished_at = null
+  await persist()
+
   for (const step of RESOURCES) {
     const startedAt = now().toISOString()
 
     if (!enabled(step)) {
       resources[step.name] = {
         count: 0,
+        total_entries: null,
         pages: 0,
         requests: 0,
+        missing_parents: 0,
         next_url: null,
         parent_id: null,
         pass: 0,
@@ -122,8 +175,10 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
 
     const record: ManifestResource = {
       count: 0,
+      total_entries: null,
       pages: 0,
       requests: 0,
+      missing_parents: 0,
       next_url: null,
       parent_id: null,
       pass: 0,
@@ -143,20 +198,33 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
       pass: number,
       parentId: number | null,
     ): Promise<void> => {
-      for await (const page of paginate(
-        { resource: step.name, path, collection: step.collection, params },
-        config,
-        deps,
-      )) {
-        // Append first, then claim it. A crash between the two re-fetches one page.
-        await appendPage(snapshotDir, step.name, page.objects)
-        record.count += page.objects.length
-        record.pages += 1
-        record.requests += page.requests
-        record.next_url = page.nextUrl
-        record.parent_id = parentId
-        record.pass = pass
-        await persist()
+      // Every page of one sweep repeats the same tally, so it is taken once and
+      // added to the resource's — a resource is one sweep per pass, per parent.
+      let sweepTotal: number | null = null
+      try {
+        for await (const page of paginate(
+          { resource: step.name, path, collection: step.collection, params },
+          config,
+          deps,
+        )) {
+          // Append first, then claim it. A crash between the two re-fetches one page.
+          await appendPage(snapshotDir, step.name, page.objects)
+          record.count += page.objects.length
+          record.pages += 1
+          record.requests += page.requests
+          record.next_url = page.nextUrl
+          record.parent_id = parentId
+          record.pass = pass
+          if (sweepTotal === null) sweepTotal = page.totalEntries
+          await persist()
+        }
+      } catch (err) {
+        // A bare `Harvest API error: 404 {...}` names nothing the reader can act on.
+        if (isApiError(err)) throw inContext(step.name, path, err)
+        throw err
+      }
+      if (sweepTotal !== null) {
+        record.total_entries = (record.total_entries ?? 0) + sweepTotal
       }
     }
 
@@ -171,24 +239,86 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
         `${step.name}: fanning out over ${parentCount} ${step.parent} ` +
           `(~${parentCount} requests, ~${budgetSeconds(parentCount)}s at the budget)`,
       )
+      let parents = 0
+      let refused = 0
+      let refusedStatus = 0
+      let missing = 0
+      let lastParentId = 0
       for await (const parentId of readIds(snapshotDir, step.parent)) {
+        parents += 1
+        lastParentId = parentId
         try {
           await sweep(step.path(parentId), undefined, 0, parentId)
         } catch (err) {
+          if (!isApiError(err)) throw err
+          // Both refusals below cost a request against the budget even though they
+          // yielded no page — the manifest's cost record has to say so.
+          //
           // An optional step is one we can only discover by being refused —
-          // teammates is gated by company.team_feature, which /v2/company does
-          // not report. A refusal is an answer about the account, not a failure.
-          if (step.optional && isApiError(err) && (err.status === 403 || err.status === 404)) {
-            // The refusal cost a request against the budget even though it
-            // yielded no page — the manifest's cost record has to say so.
+          // teammates is gated by company.team_feature, which /v2/company does not
+          // report. But Harvest's 403 is scoped to the object asked for ("the object
+          // you requested was found but you don't have authorization", research
+          // §0.3), so one refusal is an answer about one parent. The fan-out
+          // continues; only a refusal from every parent says anything about the
+          // account, and that is decided after the loop.
+          if (step.optional && (err.status === 403 || err.status === 404)) {
             record.requests += 1
-            record.skipped_reason = `Harvest returned ${err.status} for ${step.name} — the feature is not enabled on this account`
-            log(`${step.name}: ${record.skipped_reason}, skipping`)
-            break
+            refused += 1
+            refusedStatus = err.status
+            continue
+          }
+          // A 404 on a child endpoint means the parent row is gone. extract runs
+          // against an account people are still using (§5), so an invoice deleted
+          // between the parent sweep and this fan-out is a race, not a failure —
+          // recorded and continued past, rather than taking every later step down
+          // with it.
+          if (err.status === 404) {
+            record.requests += 1
+            missing += 1
+            log(
+              `${step.name}: ${step.parent} ${parentId} returned 404 — deleted since the ` +
+                `${step.parent} sweep; recording it as missing and continuing`,
+            )
+            continue
           }
           throw err
         }
       }
+
+      // …unless *every* parent 404s, which is not a race — it is a path that does
+      // not exist for this account. Recording an empty resource as complete is
+      // exactly the silent-data-loss failure the registry's guess-guard exists for.
+      if (missing > 0 && missing === parents) {
+        throw new Error(
+          `${step.name}: Harvest returned 404 for every one of the ${parents} ${step.parent} this ` +
+            `step fanned out over (last: ${step.path(lastParentId)}). Either that path is wrong for ` +
+            `this account or the whole ${step.parent} collection was deleted mid-run — refusing to ` +
+            `record an empty ${step.name} as a complete resource.`,
+        )
+      }
+      if (missing > 0) {
+        record.missing_parents = missing
+      }
+      if (refused > 0) {
+        record.skipped_reason =
+          refused === parents
+            ? `Harvest returned ${refusedStatus} for all ${parents} ${step.parent} — ${step.name} is not enabled on this account`
+            : `Harvest returned ${refusedStatus} for ${refused} of ${parents} ${step.parent} — those ${step.name} are not in this snapshot`
+        log(`${step.name}: ${record.skipped_reason}`)
+      }
+    }
+
+    // Harvest states the size of every collection it paginates, and that tally is
+    // the only witness to this sweep from outside: `count` is the rows we wrote,
+    // which agrees with itself whether the sweep ran to the end of the collection
+    // or stopped at the first `links.next: null` that should not have been null.
+    // Recorded for `verify` (§6) either way, and said out loud when they disagree.
+    if (record.total_entries !== null && record.total_entries !== record.count) {
+      log(
+        `WARNING: ${step.name} — Harvest reported ${record.total_entries} entries and the snapshot ` +
+          `holds ${record.count} rows. Rows created or deleted while the sweep was running explain a ` +
+          `small gap; a large one means the sweep stopped early — check raw/${step.name}.jsonl before loading.`,
+      )
     }
 
     record.complete = true
@@ -201,6 +331,7 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
 
     log(
       `${step.name}: ${record.count} rows, ${record.pages} pages, ${record.requests} requests` +
+        (record.missing_parents > 0 ? `, ${record.missing_parents} missing parents` : '') +
         (record.skipped_reason ? ` (${record.skipped_reason})` : ''),
     )
   }

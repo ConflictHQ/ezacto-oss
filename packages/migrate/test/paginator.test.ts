@@ -2,6 +2,8 @@
 // (429 honors Retry-After), both asserted against a real server so the claims are
 // about what was actually requested.
 
+import { createServer, type Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 import { paginate, type Page, type PaginateDeps } from '../src/paginator.js'
 import { createRateLimiter } from '../src/rate-limiter.js'
@@ -153,6 +155,47 @@ describe('paginate follows the links object', () => {
     ).catch((e: unknown) => e as Error)
 
     expect((err as Error).message).toContain('"invoice_messages" is missing')
+  })
+})
+
+// `links.next` is a request target named by the response body, and harvest-client
+// attaches the account's PAT to every request it makes. Following links verbatim is
+// about not *rebuilding* the URL; it was never a licence to follow one off the API
+// origin, where the token would land in someone else's log — in cleartext, if the
+// link says http://.
+describe('paginate refuses a next link off the API origin [unit]', () => {
+  let elsewhere: Server | undefined
+  afterEach(async () => {
+    const closing = elsewhere
+    elsewhere = undefined
+    if (closing) {
+      closing.closeAllConnections()
+      await new Promise<void>((resolve) => closing.close(() => resolve()))
+    }
+  })
+
+  it('[unit] does not send the PAT to a host named by links.next', async () => {
+    const received: (string | undefined)[] = []
+    const started = createServer((req, res) => {
+      received.push(req.headers.authorization)
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(envelope('users', [])))
+    })
+    elsewhere = started
+    await new Promise<void>((resolve) => started.listen(0, '127.0.0.1', resolve))
+    const collector = `http://127.0.0.1:${(started.address() as AddressInfo).port}/collect`
+
+    const h = harness()
+    const err = await collect(
+      { '/v2/users': () => ({ body: envelope('users', [{ id: 1 }], collector) }) },
+      { resource: 'users', path: '/v2/users', collection: 'users' },
+      h,
+    ).catch((e: unknown) => e as Error)
+
+    expect(received).toEqual([])
+    expect((err as Error).message).toContain('refusing to follow users pagination')
+    expect((err as Error).message).toContain(collector)
+    expect((err as Error).message).toContain("carries the account's Harvest PAT")
   })
 })
 

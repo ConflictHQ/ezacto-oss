@@ -4,6 +4,9 @@
 
 const TIMEOUT_MS = 10_000
 
+/** The Harvest API host, when a caller does not point the client somewhere else. */
+export const DEFAULT_BASE_URL = 'https://api.harvestapp.com'
+
 export interface HarvestClientConfig {
   pat: string
   userAgentEmail: string
@@ -132,6 +135,27 @@ const doFetch = async (
 }
 
 /**
+ * The one origin this client may send the PAT to.
+ *
+ * Every request built here carries `Authorization: Bearer <pat>`, so a URL is not
+ * merely somewhere to read from — it is somewhere the account's full-access token
+ * ends up. The origin comparison covers the scheme too: an `http://` URL is a
+ * different origin from the `https://` base, and would put the token on the wire
+ * in cleartext.
+ */
+export const apiOrigin = (config: HarvestClientConfig): string =>
+  new URL(config.baseUrl ?? DEFAULT_BASE_URL).origin
+
+/** True when `url` is on the origin this config authenticates against. */
+export const isApiOrigin = (url: string, config: HarvestClientConfig): boolean => {
+  try {
+    return new URL(url).origin === apiOrigin(config)
+  } catch {
+    return false
+  }
+}
+
+/**
  * Issues a GET against an already-built absolute URL.
  *
  * This is the entry point pagination uses: the doc mandate is to follow the
@@ -144,6 +168,17 @@ export const harvestFetchUrl = async (
   url: string,
   config: HarvestClientConfig,
 ): Promise<unknown> => {
+  // The URL is an argument, and for pagination it is an argument that came out of a
+  // response body — while the Authorization header below goes on unconditionally. So
+  // the host is checked here, in the one place that attaches the token: a `links.next`
+  // naming another host would otherwise hand a full-account PAT to whoever named it.
+  if (!isApiOrigin(url, config)) {
+    throw new Error(
+      `refusing to request ${url}: it is not on ${apiOrigin(config)}, and every request this client ` +
+        "makes carries the account's Harvest PAT.",
+    )
+  }
+
   const timeoutMs = config.timeoutMs ?? TIMEOUT_MS
   const headers: Record<string, string> = {
     Authorization: `Bearer ${config.pat}`,
@@ -177,4 +212,4 @@ export const harvestFetchUrl = async (
  * which needs no account id — pass config.accountId as undefined for that call only.
  */
 export const harvestFetch = (path: string, config: HarvestClientConfig): Promise<unknown> =>
-  harvestFetchUrl(`${config.baseUrl ?? 'https://api.harvestapp.com'}${path}`, config)
+  harvestFetchUrl(`${config.baseUrl ?? DEFAULT_BASE_URL}${path}`, config)

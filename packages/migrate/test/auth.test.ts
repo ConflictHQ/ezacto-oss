@@ -214,10 +214,11 @@ describe('runAuth', () => {
     expect(logs.some((l) => l.includes('raw/'))).toBe(true)
   })
 
-  // AC #4 is about `extract`, which is a separate CLI invocation (migration-spec
-  // §0) that never calls /v2/users/me (§2.1 order, steps 1-13). If the manifest
-  // does not record who authenticated, a member-scoped snapshot is byte-identical
-  // to an administrator's and nothing downstream can warn or explain the deltas.
+  // AC #4 is about `extract`, a separate CLI invocation (migration-spec §0) that
+  // re-reads HARVEST_PAT and checks the identity it gets against this record before
+  // sweeping. If the manifest does not say who authenticated, a member-scoped
+  // snapshot is byte-identical to an administrator's, extract has nothing to
+  // compare its own /v2/users/me against, and nothing downstream can explain the deltas.
   it('[unit] records the authenticating user, so a member-scoped snapshot is distinguishable', async () => {
     usersMeResponse = { id: 4242, access_roles: ['member', 'project_manager'] }
 

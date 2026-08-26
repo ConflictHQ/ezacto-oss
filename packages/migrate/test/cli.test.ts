@@ -149,4 +149,24 @@ describe('the extract counts table', () => {
     expect(lines[4]).toBe('total: 48225 rows, 27 requests, 61s')
     expect(lines[5]).toBe('manifest: /snap/manifest.json')
   })
+
+  // A resource that came back short prints as an ordinary number otherwise, and
+  // this table is what a Harvest UI spot-check is compared against.
+  it('[unit] says when a count is short of the account, not just what was written', () => {
+    const table = formatCounts(
+      {
+        resources: {
+          time_entries: resourceProgress({ count: 1, pages: 1, total_entries: 4000 }),
+          invoice_messages: resourceProgress({ count: 55, pages: 55, missing_parents: 2 }),
+        },
+        requests: 60,
+        durationMs: 10_000,
+      },
+      '/snap/manifest.json',
+    )
+
+    const lines = table.split('\n')
+    expect(lines[0]).toContain('Harvest reported 4000')
+    expect(lines[1]).toContain('2 parents missing')
+  })
 })

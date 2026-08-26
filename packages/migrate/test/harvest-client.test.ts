@@ -98,6 +98,23 @@ describe('harvestFetch', () => {
     expect(headers['User-Agent']).toBeTruthy()
   })
 
+  // The URL is an argument here, and for the paginator it comes out of a response
+  // body. Whatever it says, the Authorization header goes on it — so the host is
+  // checked in the one place that attaches the token, not only at the call sites.
+  it('[unit] refuses to put the PAT on a URL that is not the configured API host', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, {}))
+
+    const err = (await harvestFetchUrl('http://169.254.169.254/latest/meta-data/', {
+      pat: 'p',
+      userAgentEmail: 'e@x.com',
+      accountId: '42',
+    }).catch((e: unknown) => e)) as Error
+
+    expect(err.message).toContain('refusing to request http://169.254.169.254/latest/meta-data/')
+    expect(err.message).toContain('https://api.harvestapp.com')
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled()
+  })
+
   it('[unit] cannot be constructed without a User-Agent even when accountId is intentionally unset', async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse(200, {}))
 

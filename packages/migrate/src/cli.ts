@@ -24,13 +24,23 @@ Options:
  * Harvest UI spot-check is compared against. Skipped steps print too: a resource
  * that is absent because a feature is off has to be distinguishable from one that
  * silently came back empty.
+ *
+ * So do the two ways a row count can be short of the account: a sweep that ended
+ * before Harvest's own `total_entries`, and child parents that vanished mid-run.
+ * Without them a truncated resource prints as a perfectly ordinary number.
  */
 export const formatCounts = (result: ExtractResult, manifestPath: string): string => {
   const names = Object.keys(result.resources)
   const width = Math.max(...names.map((n) => n.length), 8)
   const lines = names.map((name) => {
     const r = result.resources[name]
-    const note = r.skipped_reason ? `  skipped: ${r.skipped_reason}` : ''
+    const notes: string[] = []
+    if (r.total_entries !== null && r.total_entries !== r.count) {
+      notes.push(`Harvest reported ${r.total_entries}`)
+    }
+    if (r.missing_parents > 0) notes.push(`${r.missing_parents} parents missing`)
+    if (r.skipped_reason) notes.push(`skipped: ${r.skipped_reason}`)
+    const note = notes.length > 0 ? `  ${notes.join('; ')}` : ''
     return `${name.padEnd(width)}  ${String(r.count).padStart(7)} rows  ${String(r.pages).padStart(4)} pages${note}`
   })
   const rows = names.reduce((sum, name) => sum + result.resources[name].count, 0)

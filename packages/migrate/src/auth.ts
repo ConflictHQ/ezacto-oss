@@ -39,11 +39,10 @@ export interface RunAuthOptions {
 }
 
 /**
- * The warning AC #4 requires, derived from what the manifest records rather than
- * from a live response. `extract` is a separate CLI invocation whose only
- * inherited state is snapshot/manifest.json (migration-spec §0) and it never
- * calls /v2/users/me (§2.1 order, steps 1–13) — so it raises this same warning
- * from the manifest before its first request.
+ * The warning AC #4 requires. `extract` is a separate CLI invocation that re-reads
+ * HARVEST_PAT from the environment, so it re-runs this check against its own live
+ * /v2/users/me rather than trusting the identity the manifest records: the two are
+ * only the same token until someone rotates one.
  */
 export const visibilityWarning = (user: ManifestPreflightUser): string | null => {
   if (user.is_administrator) return null
@@ -315,7 +314,8 @@ const parseCompany = (raw: unknown): CompanyPreflight => {
   }
 }
 
-const parseUserMe = (raw: unknown): ManifestPreflightUser => {
+/** Validates a /v2/users/me body into the preflight identity. Shared with extract. */
+export const parseUserMe = (raw: unknown): ManifestPreflightUser => {
   const endpoint = '/v2/users/me'
   const body = asRecord(raw, endpoint)
   const roles = body.access_roles

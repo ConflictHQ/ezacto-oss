@@ -10,7 +10,10 @@
 // forever.
 
 import {
+  apiOrigin,
+  DEFAULT_BASE_URL,
   harvestFetchUrl,
+  isApiOrigin,
   type HarvestApiError,
   type HarvestClientConfig,
 } from './harvest-client.js'
@@ -59,6 +62,21 @@ const badPage = (resource: string, url: string, detail: string): Error =>
     `unexpected ${resource} response from ${url} — ${detail}. Refusing to treat this as the last ` +
       'page: a paginated sweep that stops early writes a snapshot that is missing most of the ' +
       'account and still reports success.',
+  )
+
+/**
+ * `links.next` is a request target chosen by the response body, and every request
+ * carries the account's PAT (harvest-client attaches it by construction). Harvest's
+ * own links stay on the API host; one that does not is a compromised or proxied
+ * response, and following it would hand a full-account token — in cleartext, if the
+ * link says `http://` — to whoever named the host. Following links verbatim means
+ * not *rebuilding* the URL; it has never meant following it off the API origin.
+ */
+const offOrigin = (resource: string, url: string, next: string, origin: string): Error =>
+  new Error(
+    `refusing to follow ${resource} pagination from ${url} to ${next} — "links.next" is not on ` +
+      `${origin}. Every request carries the account's Harvest PAT, so a next link on another origin ` +
+      'would send it there.',
   )
 
 const asRecord = (raw: unknown, resource: string, url: string): Record<string, unknown> => {
@@ -139,7 +157,7 @@ export async function* paginate(
   deps: PaginateDeps,
 ): AsyncGenerator<Page> {
   const query = new URLSearchParams({ per_page: PER_PAGE, ...start.params })
-  const baseUrl = config.baseUrl ?? 'https://api.harvestapp.com'
+  const baseUrl = config.baseUrl ?? DEFAULT_BASE_URL
   let url: string | null = `${baseUrl}${start.path}?${query.toString()}`
 
   while (url !== null) {
@@ -169,6 +187,13 @@ export async function* paginate(
         requested,
         `"links.next" is ${describe(next)}, expected a URL string or null`,
       )
+    }
+
+    // Checked before the page is yielded: the caller persists `nextUrl` into
+    // manifest.resources[…].next_url, and a resume story that trusted the manifest
+    // would follow a poisoned URL long after this run ended.
+    if (next !== null && !isApiOrigin(next, config)) {
+      throw offOrigin(start.resource, requested, next, apiOrigin(config))
     }
 
     const totalEntries = body.total_entries

@@ -18,7 +18,7 @@ import {
   type FakeHarvest,
   type RouteHandler,
 } from './harvest-server.js'
-import { preflight } from './fixtures.js'
+import { ADMIN_USER, preflight } from './fixtures.js'
 
 const row = (id: number, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
   id,
@@ -51,7 +51,13 @@ interface MidRun {
   invoicePage2: { count: number; pages: number; lines: number } | undefined
 }
 
-const listRoutes = (mid: MidRun): Record<string, RouteHandler> => ({
+const listRoutes = (
+  mid: MidRun,
+  overrides: Record<string, RouteHandler> = {},
+): Record<string, RouteHandler> => ({
+  // extract asks who this PAT is before it sweeps: the manifest describes the
+  // token `auth` ran with, and this process re-read HARVEST_PAT.
+  '/v2/users/me': () => ({ body: ADMIN_USER }),
   '/v2/users': () => {
     mid.usersWatermarkBeforeFirstRequest = manifestOnDisk().resources.users?.started_at
     return { body: envelope('users', USERS) }
@@ -105,7 +111,32 @@ const listRoutes = (mid: MidRun): Record<string, RouteHandler> => ({
   }),
   '/v2/time_entries': () => ({ body: envelope('time_entries', [row(500), row(501)]) }),
   '/v2/expenses': () => ({ body: envelope('expenses', [row(600)]) }),
+  ...overrides,
 })
+
+/** The manifest `auth` leaves behind: administrator PAT, estimate_feature off. */
+const seedManifest = async (target: string): Promise<void> =>
+  writeManifest(target, {
+    account: { id: '42', name: 'CONFLICT' },
+    company_name: 'CONFLICT',
+    started_at: '2026-08-26T00:00:00.000Z',
+    finished_at: null,
+    tool_version: '0.0.0',
+    preflight: preflight({ estimate_feature: false }),
+    resources: {},
+    updated_since: {},
+  })
+
+const extract = (target: string, logs?: string[]): Promise<ExtractResult> =>
+  runExtract({
+    env: { pat: 'p', accountId: '42', userAgentEmail: 'e@x.com' },
+    snapshotDir: target,
+    baseUrl: server?.baseUrl,
+    timeoutMs: 5_000,
+    now: tickingClock(),
+    log: (line) => logs?.push(line),
+    sleep: () => Promise.resolve(),
+  })
 
 /** A clock that advances a second per read, so watermarks are distinguishable. */
 const tickingClock = (): (() => Date) => {
@@ -129,26 +160,9 @@ describe('runExtract against a fake Harvest account', () => {
 
     // estimate_feature off, invoice/expense on: one feature-gated skip and one
     // live child fan-out in the same run.
-    await writeManifest(dir, {
-      account: { id: '42', name: 'CONFLICT' },
-      company_name: 'CONFLICT',
-      started_at: '2026-08-26T00:00:00.000Z',
-      finished_at: null,
-      tool_version: '0.0.0',
-      preflight: preflight({ estimate_feature: false }),
-      resources: {},
-      updated_since: {},
-    })
+    await seedManifest(dir)
 
-    result = await runExtract({
-      env: { pat: 'p', accountId: '42', userAgentEmail: 'e@x.com' },
-      snapshotDir: dir,
-      baseUrl: server.baseUrl,
-      timeoutMs: 5_000,
-      now: tickingClock(),
-      log: (line) => logs.push(line),
-      sleep: () => Promise.resolve(),
-    })
+    result = await extract(dir, logs)
   })
 
   afterEach(async () => {
@@ -245,12 +259,18 @@ describe('runExtract against a fake Harvest account', () => {
     expect(logs.join('\n')).toContain('skipping 3 feature-gated step(s)')
   })
 
-  it('[unit] a 403 on the optional teammates step records a skip and the run continues', () => {
+  it('[unit] a 403 from every user is the account answering, and the run continues', () => {
     const teammates = result.resources.teammates as ManifestResource
-    expect(teammates.skipped_reason).toContain('403')
+    // Only "the feature is off" once every parent has said so — and every parent
+    // was asked, rather than the first refusal ending the fan-out.
+    expect(paths().filter((p) => /^\/v2\/users\/\d+\/teammates$/.test(p))).toEqual([
+      '/v2/users/1/teammates',
+      '/v2/users/2/teammates',
+    ])
+    expect(teammates.skipped_reason).toContain('403 for all 2 users')
     expect(teammates.complete).toBe(true)
-    // The refusal still cost a request; the cost record must not read as free.
-    expect(teammates.requests).toBe(1)
+    // Each refusal still cost a request; the cost record must not read as free.
+    expect(teammates.requests).toBe(2)
     // …and everything after it still ran.
     expect(result.resources.expenses.count).toBe(1)
     expect(manifestOnDisk().finished_at).not.toBeNull()
@@ -267,15 +287,7 @@ describe('runExtract against a fake Harvest account', () => {
   })
 
   it('[unit] a re-run replaces rows rather than appending a second copy of the account', async () => {
-    await runExtract({
-      env: { pat: 'p', accountId: '42', userAgentEmail: 'e@x.com' },
-      snapshotDir: dir,
-      baseUrl: server?.baseUrl,
-      timeoutMs: 5_000,
-      now: tickingClock(),
-      log: () => {},
-      sleep: () => Promise.resolve(),
-    })
+    await extract(dir)
 
     // Not four. Appending onto a populated snapshot would double every count in
     // the manifest and every row a later `load` reads.
@@ -304,5 +316,170 @@ describe('runExtract preconditions', () => {
     } finally {
       await rm(empty, { recursive: true, force: true })
     }
+  })
+})
+
+/**
+ * The account is not a fixture: rows are created and deleted while the sweep runs
+ * (migration-spec §5 runs extract against an account people are still using), the
+ * PAT in the environment is not necessarily the one `auth` ran with, and a step
+ * can fail after earlier ones have already written files. Each case below is a way
+ * the previous shape of this module lost data, or claimed data it did not have.
+ */
+describe('runExtract when the account moves under it', () => {
+  let logs: string[]
+  const mid: MidRun = { usersWatermarkBeforeFirstRequest: undefined, invoicePage2: undefined }
+
+  /** Starts a fake account whose routes differ from the happy path where stated. */
+  const start = async (overrides: Record<string, RouteHandler>): Promise<void> => {
+    server = await startFakeHarvest(listRoutes(mid, overrides))
+  }
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'ezacto-migrate-extract-moving-'))
+    logs = []
+    await seedManifest(dir)
+  })
+
+  afterEach(async () => {
+    await server?.close()
+    server = undefined
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  const userId = (url: URL): number => Number(url.pathname.split('/')[3])
+
+  // Harvest's 403 is scoped to the object asked for (research §0.3: "the object you
+  // requested was found but you don't have authorization"), so one user's refusal
+  // says nothing about the next user's — and nothing at all about the account.
+  it('[unit] one user refused does not end the teammates fan-out, and the reason says so', async () => {
+    await start({
+      '/v2/users/{id}/teammates': (url) =>
+        userId(url) === 1
+          ? { status: 403, body: { message: 'not authorized' } }
+          : { body: envelope('teammates', [row(1002)]) },
+    })
+
+    const result = await extract(dir, logs)
+
+    // User 2 was asked, and their teammates are in the snapshot.
+    expect(server?.requests.map((r) => r.split('?')[0])).toContain('/v2/users/2/teammates')
+    expect(linesOnDisk('teammates').map((l) => JSON.parse(l) as unknown)).toEqual([row(1002)])
+    expect(result.resources.teammates.count).toBe(1)
+    // …and the manifest says what actually happened, not "the account has no teammates".
+    expect(result.resources.teammates.skipped_reason).toBe(
+      'Harvest returned 403 for 1 of 2 users — those teammates are not in this snapshot',
+    )
+    expect(manifestOnDisk().finished_at).not.toBeNull()
+  })
+
+  // An invoice deleted between the parent sweep and the fan-out is a routine race,
+  // not a reason to abandon every step after it.
+  it('[unit] a 404 on one parent is recorded as missing and the run carries on', async () => {
+    await start({
+      '/v2/invoices/{id}/messages': (url) =>
+        userId(url) === 101
+          ? { status: 404, body: { message: 'Not Found' } }
+          : { body: envelope('invoice_messages', [row(1100)]) },
+    })
+
+    const result = await extract(dir, logs)
+
+    expect(result.resources.invoice_messages).toMatchObject({
+      count: 1,
+      missing_parents: 1,
+      complete: true,
+    })
+    // The steps after the failure ran — which is the whole point.
+    expect(result.resources.time_entries.count).toBe(2)
+    expect(result.resources.expenses.count).toBe(1)
+    expect(logs.join('\n')).toContain('invoices 101 returned 404')
+  })
+
+  // …but a path that 404s for *every* parent is not a race, and an empty resource
+  // recorded as complete is the silent data loss the registry's guess-guard exists for.
+  it('[unit] every parent 404ing stops the run and names the path that answered', async () => {
+    await start({
+      '/v2/invoices/{id}/messages': () => ({ status: 404, body: { message: 'Not Found' } }),
+    })
+
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+
+    expect(err.message).toContain('every one of the 2 invoices')
+    expect(err.message).toContain('/v2/invoices/101/messages')
+    expect(err.message).toContain('refusing to record an empty invoice_messages')
+  })
+
+  // `Harvest API error: 422 {"message":"…"}` names no resource, no path, and none of
+  // the "everything so far is on disk" guidance the 429/5xx path already gives.
+  it('[unit] a failure a retry cannot fix names the resource, the path and the way on', async () => {
+    await start({
+      '/v2/invoices/{id}/messages': () => ({ status: 422, body: { message: 'Unprocessable' } }),
+    })
+
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+
+    expect(err.message).toContain('invoice_messages')
+    expect(err.message).toContain('/v2/invoices/100/messages')
+    expect(err.message).toContain('422')
+    expect(err.message).toContain('--snapshot-dir')
+  })
+
+  // manifest.finished_at is the completeness signal every consumer keys on, and
+  // startResource truncates a resource's raw file at the start of its step: a
+  // re-run that dies must not leave the previous run's stamp over an empty file.
+  it('[unit] a re-run that dies mid-sweep clears the finished_at of the run before it', async () => {
+    await start({})
+    await extract(dir)
+    expect(manifestOnDisk().finished_at).not.toBeNull()
+    expect(linesOnDisk('roles')).toHaveLength(1)
+
+    await server?.close()
+    await start({ '/v2/roles': () => ({ status: 500, body: { message: 'boom' } }) })
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+
+    expect(err.message).toContain('roles')
+    const manifest = manifestOnDisk()
+    expect(manifest.finished_at).toBeNull()
+    expect(manifest.resources.roles).toMatchObject({ count: 0, complete: false })
+    // The old rows are gone — which is exactly why the manifest must not say finished.
+    expect(readFileSync(join(dir, 'raw', 'roles.jsonl'), 'utf8')).toBe('')
+  })
+
+  // count == jsonl line count is true of any truncation. Harvest's own tally is the
+  // only witness from outside the sweep, and it is what `verify` will gate on.
+  it('[unit] a sweep that stops short of Harvest total_entries records it and warns', async () => {
+    await start({
+      '/v2/time_entries': () => ({
+        // one row, a stated four thousand, and links.next already null
+        body: { ...envelope('time_entries', [row(500)]), total_entries: 4000, total_pages: 2 },
+      }),
+    })
+
+    const result = await extract(dir, logs)
+
+    expect(result.resources.time_entries).toMatchObject({ count: 1, total_entries: 4000 })
+    expect(manifestOnDisk().resources.time_entries.total_entries).toBe(4000)
+    expect(logs.join('\n')).toContain(
+      'WARNING: time_entries — Harvest reported 4000 entries and the snapshot holds 1 rows',
+    )
+  })
+
+  // The manifest describes the PAT `auth` ran with; this process re-read HARVEST_PAT.
+  // Sweeping anyway writes a fraction of the account under a preflight that claims
+  // administrator visibility, prints no warning, and exits 0.
+  it('[unit] a PAT that is not the stamped identity is refused before the first sweep', async () => {
+    await start({
+      // same user, demoted since auth — the case that silently shrinks the snapshot
+      '/v2/users/me': () => ({ body: { id: 1, access_roles: ['member'] } }),
+    })
+
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+
+    expect(err.message).toContain('was administrator, is now member-scoped')
+    expect(err.message).toContain('ezacto-migrate auth')
+    // Nothing was swept, so nothing on disk was overwritten by the wrong identity.
+    expect(server?.requests).toEqual(['/v2/users/me'])
+    expect(manifestOnDisk().resources).toEqual({})
   })
 })
