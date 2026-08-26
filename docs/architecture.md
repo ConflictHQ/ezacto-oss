@@ -14,9 +14,11 @@
   against team-domain JWKS; never bare CF-Access-* headers). Native magic-link +
   password at v1.0.
 - **Email:** pluggable `Mailer`, HTTP-first (Workers cannot SMTP; SMTP is
-  container-only). SES first — lift the SigV4 client from Conflict's `mailsend`.
-  Every send is a queued job with a logged delivery outcome. Send as the user's
-  domain (SPF/DKIM/DMARC aligned).
+  container-only). **Mailgun** is the first implementation — a plain HTTP API, so
+  no SigV4 client is needed. Every send is a queued job with a logged delivery
+  outcome. Send as the user's domain (SPF/DKIM/DMARC aligned), from a **sending
+  subdomain** (`go.<domain>`) so transactional mail cannot damage the deliverability
+  of the humans' own inbox on the apex.
 - **Money:** users-get-paid only. Checkout shape (Stripe/PayPal/QBO pay links +
   webhooks) and reconciliation shape (Mercury: reference tokens, suggested-match
   queue, unmatched state). **We never hold funds. No billing code exists here.**
