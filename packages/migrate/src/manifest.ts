@@ -6,6 +6,19 @@
 import { mkdir, open, readFile, rename } from 'node:fs/promises'
 import { join } from 'node:path'
 
+/**
+ * The authenticating user, recorded because it changes what the snapshot *is*:
+ * a member-scoped PAT sees only its own time entries and projects, so a partial
+ * snapshot must be distinguishable from a complete one — by `extract` (which
+ * warns before its first request) and by `reconcile` (which must be able to
+ * explain the resulting deltas, migration-spec §6).
+ */
+export interface ManifestPreflightUser {
+  id: number
+  access_roles: string[]
+  is_administrator: boolean
+}
+
 export interface ManifestPreflight {
   clock: string
   wants_timestamp_timers: boolean
@@ -13,6 +26,7 @@ export interface ManifestPreflight {
   invoice_feature: boolean
   estimate_feature: boolean
   approval_feature: boolean
+  user: ManifestPreflightUser
 }
 
 export interface Manifest {

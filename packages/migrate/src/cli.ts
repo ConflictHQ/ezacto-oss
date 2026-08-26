@@ -39,8 +39,8 @@ const main = async (): Promise<number> => {
     return 1
   }
 
-  loadDevVars()
-  const env = readHarvestEnv()
+  const devVarsPath = loadDevVars()
+  const env = readHarvestEnv(devVarsPath)
   const toolVersion = await readToolVersion()
   const snapshotDir = values['snapshot-dir'] ?? './snapshot'
 

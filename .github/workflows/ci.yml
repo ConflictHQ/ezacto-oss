@@ -13,6 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # full history: the gitleaks step below scans commits, not just the
+          # working tree, so a secret added and later removed on the same branch
+          # is still caught
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
@@ -24,6 +29,25 @@ jobs:
       - name: gitleaks (E12 — secrets never in git)
         run: |
           curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz | tar -xz gitleaks
-          ./gitleaks dir . --redact --no-banner
+
+          # Self-test: a gate that cannot detect this repo's own secret shape is
+          # decoration. gitleaks' default ruleset has no keyword for "PAT", so
+          # HARVEST_PAT=<token> scans clean without .gitleaks.toml. The canary is
+          # generated here and never committed.
+          canary="${RUNNER_TEMP:-/tmp}/gitleaks-canary.env"
+          printf 'HARVEST_PAT=%s\n' "1234567.pt.$(head -c 96 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 64)" > "$canary"
+          if ./gitleaks dir "$canary" --config .gitleaks.toml --redact --no-banner; then
+            blind=1
+          else
+            blind=0
+          fi
+          rm -f "$canary"
+          if [ "$blind" = 1 ]; then
+            echo "::error::gitleaks no longer detects a Harvest PAT — the E12 gate is blind"
+            exit 1
+          fi
+
+          # History, not just the working tree (needs fetch-depth: 0 above).
+          ./gitleaks git . --config .gitleaks.toml --redact --no-banner
         env:
           GITLEAKS_VERSION: 8.30.0

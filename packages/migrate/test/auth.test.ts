@@ -2,8 +2,13 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { runAuth } from '../src/auth.js'
-import { readManifest, writeManifest, type Manifest } from '../src/manifest.js'
+import { runAuth, visibilityWarning } from '../src/auth.js'
+import {
+  readManifest,
+  readManifestIfExists,
+  writeManifest,
+  type Manifest,
+} from '../src/manifest.js'
 
 const jsonResponse = (body: unknown): Response =>
   new Response(JSON.stringify(body), { status: 200 })
@@ -27,13 +32,15 @@ const baseEnv = { pat: 'p', accountId: undefined, userAgentEmail: 'e@x.com' }
 describe('runAuth', () => {
   let dir: string
   let order: string[]
-  let usersMeResponse: { id: number; access_roles: string[] }
-  let accountsResponse: typeof ACCOUNTS
+  let usersMeResponse: unknown
+  let accountsResponse: unknown
+  let companyResponse: unknown
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'ezacto-migrate-auth-'))
     order = []
     accountsResponse = ACCOUNTS
+    companyResponse = COMPANY
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string) => {
@@ -43,7 +50,7 @@ describe('runAuth', () => {
         }
         if (url.includes('/v2/company')) {
           order.push('company')
-          return Promise.resolve(jsonResponse(COMPANY))
+          return Promise.resolve(jsonResponse(companyResponse))
         }
         if (url.includes('/v2/users/me')) {
           order.push('users/me')
@@ -101,6 +108,7 @@ describe('runAuth', () => {
       invoice_feature: COMPANY.invoice_feature,
       estimate_feature: COMPANY.estimate_feature,
       approval_feature: COMPANY.approval_feature,
+      user: { id: 1, access_roles: ['administrator'], is_administrator: true },
     })
   })
 
@@ -135,6 +143,7 @@ describe('runAuth', () => {
         invoice_feature: false,
         estimate_feature: false,
         approval_feature: false,
+        user: { id: 1, access_roles: ['administrator'], is_administrator: true },
       },
       resources: { time_entries: { count: 48213, pages: 25, cursor: 'eyJhZnRlciI6MTIzfQ' } },
       updated_since: { time_entries: '2026-08-20T10:00:00Z' },
@@ -206,5 +215,101 @@ describe('runAuth', () => {
     expect(manifest.account.id).toBe('222')
     expect(manifest.resources).toEqual({})
     expect(logs.some((l) => l.includes('raw/'))).toBe(true)
+  })
+
+  // AC #4 is about `extract`, which is a separate CLI invocation (migration-spec
+  // §0) that never calls /v2/users/me (§2.1 order, steps 1-13). If the manifest
+  // does not record who authenticated, a member-scoped snapshot is byte-identical
+  // to an administrator's and nothing downstream can warn or explain the deltas.
+  it('[unit] records the authenticating user, so a member-scoped snapshot is distinguishable', async () => {
+    usersMeResponse = { id: 4242, access_roles: ['member', 'project_manager'] }
+
+    await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir, log: () => {} })
+
+    const manifest = await readManifest(dir)
+    expect(manifest.preflight.user).toEqual({
+      id: 4242,
+      access_roles: ['member', 'project_manager'],
+      is_administrator: false,
+    })
+    // and the warning extract must raise is reproducible from the manifest alone
+    expect(visibilityWarning(manifest.preflight.user)).toContain('not an administrator')
+  })
+
+  it('[unit] an administrator manifest is distinguishable from a member one', async () => {
+    usersMeResponse = { id: 7, access_roles: ['administrator'] }
+
+    await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir })
+
+    const manifest = await readManifest(dir)
+    expect(manifest.preflight.user.is_administrator).toBe(true)
+    expect(visibilityWarning(manifest.preflight.user)).toBeNull()
+  })
+})
+
+// A bare `as` cast over a preflight response writes a manifest full of holes and
+// still exits 0. manifest.preflight.clock is what later commands use to parse
+// started_time/ended_time, so a silently empty preflight poisons the snapshot.
+describe('runAuth preflight validation', () => {
+  let dir: string
+  let usersMeResponse: unknown
+  let accountsResponse: unknown
+  let companyResponse: unknown
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'ezacto-migrate-auth-bad-'))
+    accountsResponse = ACCOUNTS
+    companyResponse = COMPANY
+    usersMeResponse = { id: 1, access_roles: ['administrator'] }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.includes('id.getharvest.com'))
+          return Promise.resolve(jsonResponse(accountsResponse))
+        if (url.includes('/v2/company')) return Promise.resolve(jsonResponse(companyResponse))
+        if (url.includes('/v2/users/me')) return Promise.resolve(jsonResponse(usersMeResponse))
+        throw new Error(`unexpected url ${url}`)
+      }),
+    )
+  })
+  afterEach(async () => {
+    vi.unstubAllGlobals()
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  const expectRefusal = async (contains: string[]): Promise<void> => {
+    const err = await runAuth({
+      env: baseEnv,
+      toolVersion: '0.0.0',
+      snapshotDir: dir,
+      log: () => {},
+    }).catch((e: unknown) => e as Error)
+
+    expect(err).toBeInstanceOf(Error)
+    for (const fragment of contains) {
+      expect((err as Error).message).toContain(fragment)
+    }
+    // and nothing half-formed is left for extract to resume from
+    expect(await readManifestIfExists(dir)).toBeNull()
+  }
+
+  it('[unit] refuses a /v2/company response missing clock', async () => {
+    companyResponse = { name: 'CONFLICT', full_domain: 'acme.harvestapp.com' }
+    await expectRefusal(['/v2/company', 'clock', 'missing'])
+  })
+
+  it('[unit] refuses a /v2/company response whose feature flags are not booleans', async () => {
+    companyResponse = { ...COMPANY, approval_feature: 'true' }
+    await expectRefusal(['/v2/company', 'approval_feature', 'expected a boolean'])
+  })
+
+  it('[unit] refuses a /v2/users/me response without access_roles', async () => {
+    usersMeResponse = { id: 1 }
+    await expectRefusal(['/v2/users/me', 'access_roles'])
+  })
+
+  it('[unit] refuses an accounts response that is not the documented shape', async () => {
+    accountsResponse = { user: ACCOUNTS.user }
+    await expectRefusal(['accounts', 'expected an array'])
   })
 })

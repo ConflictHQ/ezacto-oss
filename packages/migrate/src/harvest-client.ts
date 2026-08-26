@@ -9,6 +9,8 @@ export interface HarvestClientConfig {
   userAgentEmail: string
   accountId?: string
   baseUrl?: string
+  /** Per-attempt deadline, headers *and* body. Injectable so tests are fast. */
+  timeoutMs?: number
 }
 
 export interface HarvestApiError extends Error {
@@ -17,12 +19,19 @@ export interface HarvestApiError extends Error {
   body: string
 }
 
+export interface HarvestTransportError extends Error {
+  fix: string
+  attempts: number
+  timedOut: boolean
+}
+
 const makeApiError = (status: number, body: string): HarvestApiError => {
   let message: string
   let fix: string
   if (status === 401) {
     fix =
-      'PAT is invalid or expired — regenerate it in Harvest ID > Developers and update HARVEST_PAT in .dev.vars'
+      'PAT is invalid or expired — regenerate it in Harvest ID > Developers and set the new value as ' +
+      'HARVEST_PAT (in your environment, or in the nearest .dev.vars file)'
     message = fix
   } else if (status === 400) {
     fix =
@@ -39,11 +48,59 @@ const makeApiError = (status: number, body: string): HarvestApiError => {
   return err
 }
 
-const doFetch = async (url: string, headers: Record<string, string>): Promise<Response> => {
+/**
+ * E14 visible failure surface: two silent attempts must not end in a bare
+ * `TypeError: fetch failed` (or, worse, no error at all).
+ */
+const makeTransportError = (
+  url: string,
+  attempts: number,
+  timeoutMs: number,
+  timedOut: boolean,
+  cause: unknown,
+): HarvestTransportError => {
+  const fix = timedOut
+    ? `Harvest did not complete the response within ${timeoutMs}ms — retry, or check https://www.harveststatus.com`
+    : `could not reach Harvest (${cause instanceof Error ? cause.message : String(cause)}) — check your network, or https://www.harveststatus.com`
+  const err = new Error(`${url} failed after ${attempts} attempts: ${fix}`) as HarvestTransportError
+  err.fix = fix
+  err.attempts = attempts
+  err.timedOut = timedOut
+  return err
+}
+
+/** Internal marker: this attempt hit the deadline rather than a network fault. */
+class TimeoutSignal extends Error {}
+
+interface Attempt {
+  status: number
+  ok: boolean
+  body: string
+}
+
+/**
+ * One attempt, with the abort timer covering the *whole* exchange. The body is
+ * read here on purpose: a server that sends headers and then stalls the body
+ * would otherwise hang forever, because clearing the timer when fetch() resolves
+ * leaves the body read undeadlined.
+ */
+const doFetch = async (
+  url: string,
+  headers: Record<string, string>,
+  timeoutMs: number,
+): Promise<Attempt> => {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, timeoutMs)
   try {
-    return await fetch(url, { headers, signal: controller.signal })
+    const response = await fetch(url, { headers, signal: controller.signal })
+    const body = await response.text()
+    return { status: response.status, ok: response.ok, body }
+  } catch (err) {
+    throw timedOut ? new TimeoutSignal() : err
   } finally {
     clearTimeout(timer)
   }
@@ -56,6 +113,7 @@ const doFetch = async (url: string, headers: Record<string, string>): Promise<Re
  */
 export const harvestFetch = async (path: string, config: HarvestClientConfig): Promise<unknown> => {
   const baseUrl = config.baseUrl ?? 'https://api.harvestapp.com'
+  const timeoutMs = config.timeoutMs ?? TIMEOUT_MS
   const url = `${baseUrl}${path}`
   const headers: Record<string, string> = {
     Authorization: `Bearer ${config.pat}`,
@@ -65,17 +123,20 @@ export const harvestFetch = async (path: string, config: HarvestClientConfig): P
     headers['Harvest-Account-Id'] = config.accountId
   }
 
-  let response: Response
+  let attempt: Attempt
   try {
-    response = await doFetch(url, headers)
+    attempt = await doFetch(url, headers, timeoutMs)
   } catch {
-    // single retry on network failure (E14)
-    response = await doFetch(url, headers)
+    // single retry on timeout or network failure (E14)
+    try {
+      attempt = await doFetch(url, headers, timeoutMs)
+    } catch (err) {
+      throw makeTransportError(url, 2, timeoutMs, err instanceof TimeoutSignal, err)
+    }
   }
 
-  const body = await response.text()
-  if (!response.ok) {
-    throw makeApiError(response.status, body)
+  if (!attempt.ok) {
+    throw makeApiError(attempt.status, attempt.body)
   }
-  return body ? JSON.parse(body) : undefined
+  return attempt.body ? JSON.parse(attempt.body) : undefined
 }

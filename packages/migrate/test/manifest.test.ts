@@ -33,6 +33,7 @@ describe('manifest', () => {
         invoice_feature: false,
         estimate_feature: true,
         approval_feature: false,
+        user: { id: 9, access_roles: ['administrator'], is_administrator: true },
       },
       resources: {},
       updated_since: {},
@@ -47,6 +48,13 @@ describe('manifest', () => {
     expect(read.preflight.invoice_feature).toBe(false)
     expect(read.preflight.estimate_feature).toBe(true)
     expect(read.preflight.approval_feature).toBe(false)
+    // provenance: a partial, member-scoped snapshot must not be byte-identical
+    // to an administrator's (migration-spec §6 explained deltas)
+    expect(read.preflight.user).toEqual({
+      id: 9,
+      access_roles: ['administrator'],
+      is_administrator: true,
+    })
   })
 
   it('[unit] mkdir -p creates a missing snapshot directory', async () => {
@@ -64,6 +72,7 @@ describe('manifest', () => {
         invoice_feature: false,
         estimate_feature: false,
         approval_feature: false,
+        user: { id: 9, access_roles: ['member'], is_administrator: false },
       },
       resources: {},
       updated_since: {},
@@ -88,6 +97,7 @@ describe('manifest', () => {
         invoice_feature: false,
         estimate_feature: false,
         approval_feature: false,
+        user: { id: 9, access_roles: ['member'], is_administrator: false },
       },
       resources: {},
       updated_since: {},

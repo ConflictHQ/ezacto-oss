@@ -1,0 +1,30 @@
+# gitleaks config for ezacto-oss — E12 ("secrets never in git") is only a gate if
+# it detects the secrets this repo actually handles.
+#
+# gitleaks' default generic-api-key rule keys off nearby keywords
+# (token/key/secret/access/auth/password). "PAT" is not one of them, so a
+# committed `HARVEST_PAT=<token>` line scans clean under the default ruleset —
+# and a Harvest PAT has no documented expiry and reaches every Harvest account
+# its owner belongs to. The rules below close that gap; ci.yml self-tests them
+# against a freshly generated canary, so a config that stops matching fails CI
+# instead of silently going blind.
+
+title = "ezacto-oss"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "harvest-pat"
+description = "Harvest personal access token"
+# Harvest PATs are <account-digits>.pt.<long random string>
+regex = '''\b[0-9]{4,12}\.pt\.[A-Za-z0-9_\-]{32,}'''
+keywords = [".pt."]
+
+[[rules]]
+id = "harvest-pat-assignment"
+description = "HARVEST_PAT assigned a literal value"
+# Format-independent backstop: any non-empty HARVEST_PAT value in the tree.
+# `.dev.vars.example` ships the key with an empty value, which does not match.
+regex = '''(?i)\bharvest_pat\b\s*[:=]\s*['"]?([A-Za-z0-9._\-]{16,})['"]?'''
+keywords = ["harvest_pat"]

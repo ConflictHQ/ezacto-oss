@@ -1,5 +1,11 @@
+import { createServer, type Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { harvestFetch, type HarvestApiError } from '../src/harvest-client.js'
+import {
+  harvestFetch,
+  type HarvestApiError,
+  type HarvestTransportError,
+} from '../src/harvest-client.js'
 
 const jsonResponse = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status })
@@ -65,5 +71,95 @@ describe('harvestFetch', () => {
     const headers = init?.headers as Record<string, string>
     expect(headers['User-Agent']).toBeTruthy()
     expect(headers['Harvest-Account-Id']).toBeUndefined()
+  })
+})
+
+// E14: the deadline has to cover the whole exchange. A server that sends headers
+// and then stalls the body is the case a header-only timeout misses — it hangs
+// the CLI forever, with no output, no error, and no exit.
+describe('harvestFetch deadlines and retry [unit]', () => {
+  let server: Server | undefined
+
+  /** Starts a server on an ephemeral port and returns its base URL. */
+  const listen = async (handler: Parameters<typeof createServer>[1]): Promise<string> => {
+    const started = createServer(handler)
+    server = started
+    await new Promise<void>((resolve) => started.listen(0, '127.0.0.1', resolve))
+    return `http://127.0.0.1:${(started.address() as AddressInfo).port}`
+  }
+
+  const close = async (): Promise<void> => {
+    if (!server) return
+    const closing = server
+    server = undefined
+    closing.closeAllConnections()
+    await new Promise<void>((resolve) => closing.close(() => resolve()))
+  }
+
+  afterEach(close)
+
+  it('[unit] times out a response whose headers arrive but whose body never ends', async () => {
+    const baseUrl = await listen((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.write('{"na') // body opened, never completed
+    })
+
+    const startedAt = Date.now()
+    const err = (await harvestFetch('/v2/company', {
+      pat: 'p',
+      userAgentEmail: 'e@x.com',
+      accountId: '1',
+      baseUrl,
+      timeoutMs: 100,
+    }).catch((e: unknown) => e)) as HarvestTransportError
+
+    expect(err).toBeInstanceOf(Error)
+    expect(err.timedOut).toBe(true)
+    expect(err.attempts).toBe(2)
+    expect(err.message).toContain('/v2/company')
+    expect(err.message).toContain('100ms')
+    expect(Date.now() - startedAt).toBeLessThan(2_000)
+  })
+
+  it('[unit] retries once on a dropped connection, then succeeds', async () => {
+    let calls = 0
+    const baseUrl = await listen((_req, res) => {
+      calls += 1
+      if (calls === 1) {
+        res.socket?.destroy()
+        return
+      }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ name: 'CONFLICT' }))
+    })
+
+    const body = await harvestFetch('/v2/company', {
+      pat: 'p',
+      userAgentEmail: 'e@x.com',
+      accountId: '1',
+      baseUrl,
+      timeoutMs: 2_000,
+    })
+
+    expect(calls).toBe(2)
+    expect(body).toEqual({ name: 'CONFLICT' })
+  })
+
+  it('[unit] surfaces an unreachable host as a named failure, not a bare fetch error', async () => {
+    // bind, note the URL, then close it: a port nothing is listening on
+    const baseUrl = await listen((_req, res) => res.end('{}'))
+    await close()
+
+    const err = (await harvestFetch('/v2/company', {
+      pat: 'p',
+      userAgentEmail: 'e@x.com',
+      accountId: '1',
+      baseUrl,
+      timeoutMs: 2_000,
+    }).catch((e: unknown) => e)) as HarvestTransportError
+
+    expect(err.timedOut).toBe(false)
+    expect(err.attempts).toBe(2)
+    expect(err.message).toContain('could not reach Harvest')
   })
 })

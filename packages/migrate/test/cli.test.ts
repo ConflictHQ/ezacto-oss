@@ -3,12 +3,13 @@
 // argv[1] is the symlink and not the module realpath.
 
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm, symlink } from 'node:fs/promises'
+import { mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { findDevVars } from '../src/env.js'
 
 const execFileAsync = promisify(execFile)
 const pkgDir = fileURLToPath(new URL('..', import.meta.url))
@@ -20,12 +21,24 @@ interface RunResult {
   stderr: string
 }
 
-const runNode = (entry: string): Promise<RunResult> =>
+const runNode = (
+  entry: string,
+  args: string[] = [],
+  opts: { cwd?: string } = {},
+): Promise<RunResult> =>
   new Promise((resolve) => {
-    execFile(process.execPath, [entry], { cwd: pkgDir }, (err, stdout, stderr) => {
-      const code = err && typeof err.code === 'number' ? err.code : 0
-      resolve({ code, stdout, stderr })
-    })
+    // the shipped CLI must never depend on the developer's own credentials
+    const env = { ...process.env }
+    delete env.HARVEST_PAT
+    execFile(
+      process.execPath,
+      [entry, ...args],
+      { cwd: opts.cwd ?? pkgDir, env },
+      (err, stdout, stderr) => {
+        const code = err && typeof err.code === 'number' ? err.code : 0
+        resolve({ code, stdout, stderr })
+      },
+    )
   })
 
 describe('ezacto-migrate CLI entrypoint', () => {
@@ -36,7 +49,9 @@ describe('ezacto-migrate CLI entrypoint', () => {
   }, 120_000)
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'ezacto-migrate-cli-'))
+    // realpath: on macOS the child's process.cwd() reports /private/var/…,
+    // and these tests compare the CLI's output against this path
+    dir = await realpath(await mkdtemp(join(tmpdir(), 'ezacto-migrate-cli-')))
   })
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true })
@@ -56,6 +71,31 @@ describe('ezacto-migrate CLI entrypoint', () => {
     const { code, stdout } = await runNode(link)
 
     expect(stdout).toContain('ezacto-migrate <command>')
+    expect(code).toBe(1)
+  })
+
+  // migration-spec §1 ships this as a standalone published CLI: for every user
+  // who is not sitting in the ezacto repo, a module-relative .dev.vars lookup
+  // resolves to <prefix>/lib/.dev.vars and the named fix is a file the tool will
+  // never read. AC #1 requires the error to name a fix that works.
+  it('[unit] with no .dev.vars anywhere, the error names the file to create in the working dir', async () => {
+    expect(findDevVars(dir)).toBeNull() // guard: nothing above the temp dir either
+
+    const { code, stderr } = await runNode(cliPath, ['auth'], { cwd: dir })
+
+    expect(stderr).toContain('HARVEST_PAT')
+    expect(stderr).toContain(join(dir, '.dev.vars'))
+    expect(code).toBe(1)
+  })
+
+  it('[unit] loads .dev.vars from the working directory, not from the installed module', async () => {
+    // no HARVEST_PAT in it: the error proves which file was read, without a token
+    const devVars = join(dir, '.dev.vars')
+    await writeFile(devVars, 'HARVEST_USER_AGENT_EMAIL=user@example.com\n')
+
+    const { code, stderr } = await runNode(cliPath, ['auth'], { cwd: dir })
+
+    expect(stderr).toContain(`add HARVEST_PAT=<token> to ${devVars}`)
     expect(code).toBe(1)
   })
 })
