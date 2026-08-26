@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util'
+import { realpathSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { loadDevVars, readHarvestEnv } from './env.js'
@@ -13,6 +14,7 @@ Commands:
 Options:
   --account-id <id>    Harvest account id to use (skips auto-pick/prompt)
   --snapshot-dir <dir> Snapshot directory to write manifest.json into (default: ./snapshot)
+  --force              Re-stamp a snapshot dir that holds a different account
 `
 
 const readToolVersion = async (): Promise<string> => {
@@ -27,6 +29,7 @@ const main = async (): Promise<number> => {
     options: {
       'account-id': { type: 'string' },
       'snapshot-dir': { type: 'string' },
+      force: { type: 'boolean' },
     },
   })
   const command = positionals[0]
@@ -46,6 +49,7 @@ const main = async (): Promise<number> => {
     toolVersion,
     snapshotDir,
     accountIdFlag: values['account-id'],
+    force: values.force,
   })
 
   console.log(`account:       ${result.account.name} (${result.account.id})`)
@@ -55,7 +59,19 @@ const main = async (): Promise<number> => {
   return 0
 }
 
-const isMain = process.argv[1] === fileURLToPath(import.meta.url)
+// npm installs `bin` entries as symlinks (node_modules/.bin, npm link, npx) and
+// Node leaves argv[1] as the symlink path while resolving import.meta.url to the
+// realpath — compare realpaths, or the installed CLI is a silent no-op.
+const isMain = ((): boolean => {
+  const entry = process.argv[1]
+  if (!entry) return false
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url))
+  } catch {
+    return false
+  }
+})()
+
 if (isMain) {
   main()
     .then((code) => process.exit(code))

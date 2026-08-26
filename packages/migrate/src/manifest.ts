@@ -1,8 +1,9 @@
 // snapshot/manifest.json — the load-bearing artifact shared with extract/verify
 // (migration-spec §2.3). This story only writes the account/preflight subset;
-// `resources` and `updated_since` are left as empty placeholders for extract to fill.
+// `resources` and `updated_since` are filled in by extract and must survive any
+// later write from another command (§2.4: they are the resume record).
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, rename } from 'node:fs/promises'
 import { join } from 'node:path'
 
 export interface ManifestPreflight {
@@ -27,12 +28,36 @@ export interface Manifest {
 
 const MANIFEST_FILE = 'manifest.json'
 
+/**
+ * Writes manifest.json atomically (tmp + fsync + rename): §2.4 resumability
+ * depends on the file surviving a crash or a 429 storm mid-write — a truncated
+ * manifest loses every cursor and watermark in the snapshot.
+ */
 export const writeManifest = async (dir: string, data: Manifest): Promise<void> => {
   await mkdir(dir, { recursive: true })
-  await writeFile(join(dir, MANIFEST_FILE), `${JSON.stringify(data, null, 2)}\n`, 'utf8')
+  const target = join(dir, MANIFEST_FILE)
+  const tmp = `${target}.tmp`
+  const handle = await open(tmp, 'w')
+  try {
+    await handle.writeFile(`${JSON.stringify(data, null, 2)}\n`, 'utf8')
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+  await rename(tmp, target)
 }
 
 export const readManifest = async (dir: string): Promise<Manifest> => {
   const raw = await readFile(join(dir, MANIFEST_FILE), 'utf8')
   return JSON.parse(raw) as Manifest
+}
+
+/** Same as readManifest, but `null` when the snapshot dir has no manifest yet. */
+export const readManifestIfExists = async (dir: string): Promise<Manifest | null> => {
+  try {
+    return await readManifest(dir)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw err
+  }
 }

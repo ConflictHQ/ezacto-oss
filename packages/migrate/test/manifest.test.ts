@@ -1,8 +1,13 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { readManifest, writeManifest, type Manifest } from '../src/manifest.js'
+import {
+  readManifest,
+  readManifestIfExists,
+  writeManifest,
+  type Manifest,
+} from '../src/manifest.js'
 
 describe('manifest', () => {
   let dir: string
@@ -67,5 +72,34 @@ describe('manifest', () => {
     await writeManifest(nested, manifest)
     const read = await readManifest(nested)
     expect(read.account.id).toBe('1')
+  })
+
+  it('[unit] writes atomically: no partial file is left behind for extract to resume from', async () => {
+    const manifest: Manifest = {
+      account: { id: '1', name: 'x' },
+      company_name: 'x',
+      started_at: '2026-08-26T00:00:00.000Z',
+      finished_at: null,
+      tool_version: '0.0.0',
+      preflight: {
+        clock: '24h',
+        wants_timestamp_timers: false,
+        expense_feature: false,
+        invoice_feature: false,
+        estimate_feature: false,
+        approval_feature: false,
+      },
+      resources: {},
+      updated_since: {},
+    }
+
+    await writeManifest(dir, manifest)
+    await writeManifest(dir, manifest)
+
+    expect(await readdir(dir)).toEqual(['manifest.json'])
+  })
+
+  it('[unit] readManifestIfExists returns null for a snapshot dir with no manifest yet', async () => {
+    expect(await readManifestIfExists(dir)).toBeNull()
   })
 })

@@ -1,7 +1,7 @@
 // `ezacto-migrate auth` — PAT + account discovery + preflight (migration-spec §1).
 
 import { harvestFetch } from './harvest-client.js'
-import { writeManifest, type Manifest } from './manifest.js'
+import { readManifestIfExists, writeManifest, type Manifest } from './manifest.js'
 import type { HarvestEnv } from './env.js'
 
 interface HarvestAccount {
@@ -42,6 +42,10 @@ export interface RunAuthOptions {
   toolVersion: string
   snapshotDir: string
   accountIdFlag?: string
+  /** Allow re-pointing a populated snapshot dir at a different Harvest account. */
+  force?: boolean
+  /** Injectable clock — tests never depend on a real `now`. */
+  now?: () => Date
   log?: (line: string) => void
 }
 
@@ -50,7 +54,8 @@ export interface RunAuthOptions {
  * access, and persists the result into snapshot/manifest.json.
  */
 export const runAuth = async (options: RunAuthOptions): Promise<AuthResult> => {
-  const { env, toolVersion, snapshotDir, accountIdFlag } = options
+  const { env, toolVersion, snapshotDir, accountIdFlag, force } = options
+  const now = options.now ?? (() => new Date())
   const log = options.log ?? ((line: string) => console.log(line))
   const baseUrl = 'https://id.getharvest.com'
 
@@ -87,13 +92,32 @@ export const runAuth = async (options: RunAuthOptions): Promise<AuthResult> => {
     )
   }
 
-  // 4 — persist preflight into the snapshot manifest.
-  const startedAt = new Date().toISOString()
+  // 4 — persist preflight into the snapshot manifest, without destroying what a
+  // previous run put there. `resources` (page/cursor progress) and `updated_since`
+  // (incremental watermarks) are extract's resume record (migration-spec §2.3/§2.4);
+  // re-running `auth` against the same snapshot dir must carry them forward.
+  const existing = await readManifestIfExists(snapshotDir)
+  const sameAccount = existing?.account?.id === accountId
+  if (existing && !sameAccount && !force) {
+    throw new Error(
+      `snapshot dir ${snapshotDir} already holds account ${existing.account?.id} (${existing.account?.name}), ` +
+        `not ${accountId} (${resolved.name}) — its raw/ data belongs to the other account. ` +
+        'Use a different --snapshot-dir, or pass --force to re-stamp this one (extract progress for ' +
+        'the previous account is discarded).',
+    )
+  }
+  if (existing && !sameAccount) {
+    log(
+      `WARNING: --force re-stamped ${snapshotDir} from account ${existing.account?.id} to ${accountId} — ` +
+        "any raw/ files already in this directory hold the previous account's data; delete them before extract",
+    )
+  }
+  const carried = sameAccount ? existing : null
   const manifest: Manifest = {
     account: { id: accountId, name: resolved.name },
     company_name: company.name,
-    started_at: startedAt,
-    finished_at: null,
+    started_at: carried?.started_at ?? now().toISOString(),
+    finished_at: carried?.finished_at ?? null,
     tool_version: toolVersion,
     preflight: {
       clock: company.clock,
@@ -103,8 +127,8 @@ export const runAuth = async (options: RunAuthOptions): Promise<AuthResult> => {
       estimate_feature: company.estimate_feature,
       approval_feature: company.approval_feature,
     },
-    resources: {},
-    updated_since: {},
+    resources: carried?.resources ?? {},
+    updated_since: carried?.updated_since ?? {},
   }
   await writeManifest(snapshotDir, manifest)
 

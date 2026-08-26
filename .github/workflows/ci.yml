@@ -21,3 +21,9 @@ jobs:
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
       - name: verify (typecheck + lint + test)
         run: npm run verify
+      - name: gitleaks (E12 — secrets never in git)
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz | tar -xz gitleaks
+          ./gitleaks dir . --redact --no-banner
+        env:
+          GITLEAKS_VERSION: 8.30.0
