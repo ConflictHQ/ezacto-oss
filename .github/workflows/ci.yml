@@ -1,0 +1,23 @@
+name: ci
+# Quality gates per PROCESS.md: lint, typecheck, test — green before merge.
+# Scaffolded before the first package on purpose: the pipeline is proven,
+# and expands automatically as workspaces land (scripts use --if-present).
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: install
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+      - name: verify (typecheck + lint + test)
+        run: npm run verify

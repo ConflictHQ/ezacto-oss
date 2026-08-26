@@ -1,0 +1,13 @@
+{
+  "name": "ezacto-oss",
+  "private": true,
+  "version": "0.0.0",
+  "description": "ezacto — open-source time tracking & invoicing. Pre-build: knowledge, specs, and pipeline scaffolding.",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present || true",
+    "lint": "npm run lint --workspaces --if-present || true",
+    "test": "npm run test --workspaces --if-present || true",
+    "verify": "npm run typecheck && npm run lint && npm run test"
+  }
+}

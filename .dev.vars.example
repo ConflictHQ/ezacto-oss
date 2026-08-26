@@ -1,0 +1,22 @@
+# ezacto-oss — local dev secrets (copy to .dev.vars; NEVER commit .dev.vars)
+# Infrastructure bindings (D1 database, R2 receipts/exports, Queues) are wrangler
+# bindings, not env vars — they live in wrangler.jsonc when the worker entry lands.
+
+# --- Identity seam: Cloudflare Access implementation (D4) ---
+ACCESS_TEAM_DOMAIN=https://<team>.cloudflareaccess.com
+ACCESS_POLICY_AUD=
+
+# --- Mailer seam: SES implementation (D14) ---
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+SES_CONFIGURATION_SET=
+MAIL_FROM_DOMAIN=
+
+# --- App ---
+APP_BASE_URL=http://localhost:8787
+SESSION_SECRET=
+
+# --- migrate package (dev, against the live Harvest account) ---
+HARVEST_ACCOUNT_ID=
+HARVEST_PAT=
