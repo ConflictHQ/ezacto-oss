@@ -1,4 +1,4 @@
-# Architecture (from decisions D2–D7, D13–D14 — canonical records in ezacto-brain)
+# Architecture (from decisions D2–D7, D13–D14 — canonical records in the umbrella repo (ConflictHQ/ezacto))
 
 - **Runtime:** TypeScript + Hono + Drizzle. Worker (default) + container. Hono and
   Drizzle both run on both targets; entry points are thin.

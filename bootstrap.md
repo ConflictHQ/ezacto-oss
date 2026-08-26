@@ -6,7 +6,7 @@ the Harvest replacement. Single org, free, no billing, no telemetry. Private now
 
 **Current state: knowledge + specs only. No code yet, deliberately.** The build
 starts here in its own sessions, bottom-up, per `PLAN.md`. The umbrella brain
-(`ezacto-brain`) holds the full research corpus and decision records; this repo
+(`ezacto` (the umbrella)) holds the full research corpus and decision records; this repo
 carries localized copies of everything needed to build.
 
 ## What gets built here (D2, D7)

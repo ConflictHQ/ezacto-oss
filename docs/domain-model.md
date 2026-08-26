@@ -1,4 +1,4 @@
-> Localized copy for the build. Source of truth: ezacto-brain `knowledge/docs/`.
+> Localized copy for the build. Source of truth: ezacto `knowledge/docs/`.
 > Synced 2026-08-25 — if editing, edit the brain copy and re-sync.
 
 ---

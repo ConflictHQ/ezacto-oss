@@ -1,4 +1,4 @@
-> Localized copy for the build. Source of truth: ezacto-brain `knowledge/docs/`.
+> Localized copy for the build. Source of truth: ezacto `knowledge/docs/`.
 > Synced 2026-08-25 — if editing, edit the brain copy and re-sync.
 
 ---
@@ -23,7 +23,8 @@ leaving Harvest.
 unexplained deltas, and every explained delta is one of the documented gaps in §7.
 "It imported without errors" is not done.
 
-Product shape: a standalone CLI (`ezacto-migrate`), zero dependency on the rest of
+Product shape: a standalone CLI (published as `ezacto-migrate`, built from the oss
+repo's `packages/migrate`), zero dependency on the rest of
 ezacto at extract time. Extract works even if you never install ezacto — that is the
 point of the wedge: **get your data out first, decide later.**
 
