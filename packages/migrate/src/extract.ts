@@ -21,7 +21,7 @@ import {
   type HarvestApiError,
   type HarvestClientConfig,
 } from './harvest-client.js'
-import { appendPage, readIds, startResource } from './jsonl.js'
+import { appendPage, readIds, reconcileToCount, startResource } from './jsonl.js'
 import { readManifestIfExists, writeManifest, type ManifestResource } from './manifest.js'
 import { fetchWithPolicy, paginate, RESUME_GUIDANCE, type PaginateDeps } from './paginator.js'
 import { createRateLimiter, RATE_LIMIT, RATE_WINDOW_MS } from './rate-limiter.js'
@@ -180,6 +180,9 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
 
   for (const step of RESOURCES) {
     const startedAt = now().toISOString()
+    // The record this resource ended the previous run in, before this run
+    // touches it — undefined the first time extract ever sees this resource.
+    const prior = resources[step.name]
 
     if (!enabled(step)) {
       // `count: 0` is a claim about raw/<resource>.jsonl, so the file has to be
@@ -201,6 +204,7 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
         parent_id: null,
         pass: 0,
         complete: true,
+        incremental: false,
         skipped_reason: `${step.requires ?? 'feature'} is false`,
         started_at: startedAt,
         finished_at: startedAt,
@@ -209,22 +213,64 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
       continue
     }
 
-    const record: ManifestResource = {
-      count: 0,
-      total_entries: null,
-      pages: 0,
-      requests: 0,
-      missing_parents: 0,
-      next_url: null,
-      parent_id: null,
-      pass: 0,
-      complete: false,
-      skipped_reason: null,
-      started_at: startedAt,
-      finished_at: null,
-    }
+    // Resuming means a *previous* run wrote pages for this resource and never
+    // reached `complete: true` — a crash or an unretryable failure mid-sweep.
+    // `prior.pages > 0` (or, for a fan-out, `prior.parent_id` having been set) is
+    // what tells that apart from a resource this run has simply not reached yet:
+    // both look like "not complete" in the manifest, but only one has a cursor
+    // worth continuing from.
+    const resuming =
+      prior !== undefined &&
+      !prior.complete &&
+      prior.skipped_reason === null &&
+      (prior.pages > 0 || (step.kind === 'child' && prior.parent_id !== null))
+
+    // A prior run finished this resource. For a `list` step that becomes an
+    // `updated_since` incremental pass (§2.4) — appended onto the existing file,
+    // never re-swept. `child` steps stay out of that: they fan out over the
+    // *current* parent ids read back off disk, and Harvest's child endpoints
+    // (messages, rates, payments) do not offer a comparable filter — re-sweeping
+    // them in full each run is what stays correct without one.
+    //
+    // `prior.skipped_reason === null` excludes a resource whose feature was off
+    // last run and is on now: that record is `complete: true` with `count: 0`
+    // and no `updated_since` entry (the skip branch above deletes it) — treating
+    // it as incremental would query `updated_since=undefined` and never sweep the
+    // rows this account has always had.
+    const incrementalEligible =
+      prior !== undefined && prior.complete && prior.skipped_reason === null && step.kind === 'list'
+    const watermark = incrementalEligible ? manifest.updated_since[step.name] : undefined
+
+    const record: ManifestResource = resuming
+      ? { ...prior, complete: false, finished_at: null }
+      : incrementalEligible
+        ? { ...prior, complete: false, finished_at: null, incremental: true, started_at: startedAt }
+        : {
+            count: 0,
+            total_entries: null,
+            pages: 0,
+            requests: 0,
+            missing_parents: 0,
+            next_url: null,
+            parent_id: null,
+            pass: 0,
+            complete: false,
+            incremental: false,
+            skipped_reason: null,
+            started_at: startedAt,
+            finished_at: null,
+          }
     resources[step.name] = record
-    await startResource(snapshotDir, step.name)
+
+    if (resuming) {
+      // The file can be one page ahead of the manifest (fsynced, not yet
+      // claimed) if the previous run died between the two — drop what the
+      // manifest never got to count, so the page it names is re-fetched once,
+      // not skipped or duplicated.
+      await reconcileToCount(snapshotDir, step.name, record.count)
+    } else if (!incrementalEligible) {
+      await startResource(snapshotDir, step.name)
+    }
     await persist()
 
     /** Consume one sweep, checkpointing after every page. */
@@ -233,13 +279,19 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
       params: Record<string, string> | undefined,
       pass: number,
       parentId: number | null,
+      startUrl?: string,
+      alreadyTallied = false,
     ): Promise<void> => {
       // Every page of one sweep repeats the same tally, so it is taken once and
       // added to the resource's — a resource is one sweep per pass, per parent.
-      let tallied = false
+      // `alreadyTallied` is set when this call is *resuming* a pass or parent
+      // whose first page — and its contribution to total_entries — was already
+      // folded in before the crash; without it, resuming would count that page's
+      // total_entries twice.
+      let tallied = alreadyTallied
       try {
         for await (const page of paginate(
-          { resource: step.name, path, collection: step.collection, params },
+          { resource: step.name, path, collection: step.collection, params, startUrl },
           config,
           deps,
         )) {
@@ -257,9 +309,14 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
           // the rows and drop the one number that says how many there should have
           // been — leaving total_entries reading *lower* than count, i.e. the only
           // outside witness against truncation pointing away from it.
+          //
+          // Skipped entirely for an incremental pass: total_entries there counts
+          // rows matching `updated_since`, not the collection, and comparing it to
+          // the file's cumulative count would read every incremental pass as a
+          // truncation.
           if (!tallied) {
             tallied = true
-            if (page.totalEntries !== null) {
+            if (!record.incremental && page.totalEntries !== null) {
               record.total_entries = (record.total_entries ?? 0) + page.totalEntries
             }
           }
@@ -274,8 +331,24 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
 
     if (step.kind === 'list') {
       const passes = step.passes ?? [undefined]
+      // Where the previous run's cursor sits: mid-pass (resume that pass from its
+      // `next_url`) or between passes (skip straight to the next one) — `pass` and
+      // `next_url` are shared across every pass of one resource because they are
+      // one sweep-in-flight at a time, so the pair always names exactly one spot.
+      const resumePass = resuming ? record.pass : 0
+      const resumeUrl = resuming ? record.next_url : null
       for (const [pass, extra] of passes.entries()) {
-        await sweep(step.path, { ...step.params, ...extra }, pass, null)
+        if (resuming) {
+          if (pass < resumePass) continue
+          if (pass === resumePass && resumeUrl === null) continue // that pass already finished
+        }
+        const startUrl = resuming && pass === resumePass ? (resumeUrl ?? undefined) : undefined
+        const params = {
+          ...step.params,
+          ...extra,
+          ...(record.incremental ? { updated_since: watermark as string } : {}),
+        }
+        await sweep(step.path, params, pass, null, startUrl, startUrl !== undefined)
       }
     } else {
       const parentCount = resources[step.parent]?.count ?? 0
@@ -283,17 +356,31 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
         `${step.name}: fanning out over ${parentCount} ${step.parent} ` +
           `(~${parentCount} requests, ~${budgetSeconds(parentCount)}s at the budget)`,
       )
+      // Same idea as the list-step cursor above, one level deeper: `parent_id` is
+      // the parent whose own pagination `next_url` describes. A crash right after
+      // finishing a parent (next_url back to null) leaves nothing to resume in
+      // it — the fan-out just has to skip past an id it already fully swept.
       let parents = 0
       let refused = 0
       let refusedStatus = 0
-      let missing = 0
+      let missing = resuming ? record.missing_parents : 0
       let lastParentId = 0
+      let resumePending = resuming
+      const resumeParentId = resuming ? record.parent_id : null
+      const resumeUrl = resuming ? record.next_url : null
       for await (const parentId of readIds(snapshotDir, step.parent)) {
         parents += 1
         lastParentId = parentId
+        let startUrl: string | undefined
+        if (resumePending) {
+          if (parentId !== resumeParentId) continue
+          resumePending = false
+          if (resumeUrl === null) continue // this parent already fully swept
+          startUrl = resumeUrl
+        }
         const pagesBefore = record.pages
         try {
-          await sweep(step.path(parentId), undefined, 0, parentId)
+          await sweep(step.path(parentId), undefined, 0, parentId, startUrl, startUrl !== undefined)
         } catch (err) {
           if (!isApiError(err)) throw err
 
@@ -380,7 +467,16 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
     // which agrees with itself whether the sweep ran to the end of the collection
     // or stopped at the first `links.next: null` that should not have been null.
     // Recorded for `verify` (§6) either way, and said out loud when they disagree.
-    if (record.total_entries !== null && record.total_entries !== record.count) {
+    // None of this applies to an incremental pass — `sweep` never tallies
+    // total_entries for one (see above), so `record.total_entries` here is still
+    // whatever the last full sweep left it at, and comparing it to a cumulative
+    // `count` that now includes incremental rows would misread every incremental
+    // pass as a truncation.
+    if (
+      !record.incremental &&
+      record.total_entries !== null &&
+      record.total_entries !== record.count
+    ) {
       const gap = record.total_entries - record.count
       // Rows created or deleted *while* the sweep ran move the tally either way by
       // a little, and that is the only benign reading. A shortfall past that is the
@@ -410,15 +506,22 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
     // means rows were created while the sweep ran — surprising enough to log, but
     // it cannot conceal a truncation, and failing a run over it would fail every
     // extract of an account somebody is still using.
-    const short = record.total_entries !== null && record.count < record.total_entries
+    // An incremental pass has no total_entries to fall short of — exhausting its
+    // (filtered) cursor is the whole of what "complete" means for one.
+    const short =
+      !record.incremental && record.total_entries !== null && record.count < record.total_entries
 
     record.complete = !short
     record.finished_at = now().toISOString()
     if (record.complete) {
-      // The watermark is the time *before* this step's first request, never after:
-      // a row updated while the sweep was running must be re-read next time, not
-      // stepped over because the clock had already moved past it.
-      manifest.updated_since[step.name] = startedAt
+      // The watermark is the time *before* this pass's first request, never
+      // after: a row updated while the sweep was running must be re-read next
+      // time, not stepped over because the clock had already moved past it.
+      // `record.started_at`, not the local `startedAt` — resuming an interrupted
+      // pass keeps the *original* pre-crash timestamp there (see above), and a
+      // watermark stamped from the later resume time would step over any row
+      // updated in the gap between the crash and the resume.
+      manifest.updated_since[step.name] = record.started_at
     }
     await persist()
 

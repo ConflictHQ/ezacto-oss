@@ -75,16 +75,10 @@ describe('ezacto-migrate CLI entrypoint', () => {
     expect(stdout).toContain('extract')
   })
 
-  // The usage text called extract "resumable". Nothing reads
-  // manifest.resources[*].next_url back and every step re-runs through
-  // startResource, which truncates that resource's raw file — so a user who read
-  // "resumable" and re-ran after an hour-three failure got a full re-sweep that
-  // began by deleting what the first run had collected.
-  it('[unit] does not advertise a resume it has not implemented', async () => {
+  it('[unit] advertises the resume and incremental behavior extract now has', async () => {
     const { stdout } = await runNode(cliPath)
 
-    expect(stdout).not.toMatch(/resumable/i)
-    expect(stdout).toContain('it does not resume')
+    expect(stdout).toContain('resumes an interrupted resource from its last checkpoint')
   })
 
   it('[unit] extract refuses a snapshot dir auth has never stamped', async () => {

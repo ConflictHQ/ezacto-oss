@@ -11,8 +11,10 @@ const USAGE = `ezacto-migrate <command> [options]
 
 Commands:
   auth     Authenticate with Harvest, resolve the account, and preflight settings
-  extract  Sweep the account into the snapshot dir (run auth first; a re-run
-           re-sweeps every resource from page 1 — it does not resume)
+  extract  Sweep the account into the snapshot dir (run auth first). A re-run
+           resumes an interrupted resource from its last checkpoint rather than
+           re-sweeping it, and refreshes an already-complete one with only the
+           rows Harvest reports changed since its last watermark.
 
 Options:
   --account-id <id>    Harvest account id to use (skips auto-pick/prompt)

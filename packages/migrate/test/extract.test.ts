@@ -293,13 +293,58 @@ describe('runExtract against a fake Harvest account', () => {
     expect(logs.join('\n')).toContain('invoice_messages: fanning out over 2 invoices')
   })
 
-  it('[unit] a re-run replaces rows rather than appending a second copy of the account', async () => {
+  it('[unit] a re-run over a complete resource does not duplicate rows when nothing changed', async () => {
+    // A re-run over a *complete* resource is an updated_since pass, not a
+    // truncate-and-resweep — so the route only has to answer accurately for
+    // that filter, the way a real account would when nothing changed.
+    await server?.close()
+    server = await startFakeHarvest(
+      listRoutes(mid, {
+        '/v2/users': (url) => ({
+          body: envelope('users', url.searchParams.get('updated_since') ? [] : USERS),
+        }),
+      }),
+    )
+
     await extract(dir)
 
-    // Not four. Appending onto a populated snapshot would double every count in
-    // the manifest and every row a later `load` reads.
+    // Not four. Appending a second copy of unchanged rows is exactly what an
+    // `updated_since` filter exists to avoid.
     expect(linesOnDisk('users').map((l) => JSON.parse(l) as unknown)).toEqual(USERS)
-    expect(manifestOnDisk().resources.users.count).toBe(2)
+    expect(manifestOnDisk().resources.users).toMatchObject({ count: 2, incremental: true })
+  })
+
+  it('[unit] a re-run over a complete snapshot becomes an updated_since incremental pass', async () => {
+    const watermark = manifestOnDisk().updated_since.users
+    expect(watermark).toBeDefined()
+
+    await server?.close()
+    const seenParams: (string | null)[] = []
+    server = await startFakeHarvest(
+      listRoutes(mid, {
+        '/v2/users': (url) => {
+          const since = url.searchParams.get('updated_since')
+          seenParams.push(since)
+          // The one user Harvest reports as touched since the watermark.
+          return { body: envelope('users', since ? [row(3)] : USERS) }
+        },
+      }),
+    )
+
+    await extract(dir)
+
+    // The filter Harvest was actually asked with — the watermark this exact
+    // resource stamped on the run before, not a fresh full sweep (`null`).
+    expect(seenParams).toEqual([watermark])
+    // Appended after the existing rows, not in place of them.
+    expect(linesOnDisk('users').map((l) => JSON.parse(l) as unknown)).toEqual([...USERS, row(3)])
+    expect(manifestOnDisk().resources.users).toMatchObject({
+      count: 3,
+      complete: true,
+      incremental: true,
+    })
+    // A watermark is stamped for the *next* incremental pass to use.
+    expect(manifestOnDisk().updated_since.users).toBeDefined()
   })
 
   it('[unit] the run reports its own cost', () => {
@@ -510,10 +555,13 @@ describe('runExtract when the account moves under it', () => {
     expect(err.message).toContain('--snapshot-dir')
   })
 
-  // manifest.finished_at is the completeness signal every consumer keys on, and
-  // startResource truncates a resource's raw file at the start of its step: a
-  // re-run that dies must not leave the previous run's stamp over an empty file.
-  it('[unit] a re-run that dies mid-sweep clears the finished_at of the run before it', async () => {
+  // manifest.finished_at is the completeness signal every consumer keys on. A
+  // re-run over an already-complete resource is now an incremental append, not a
+  // truncate-and-resweep — so a failure before that pass writes anything must
+  // leave the *previous* run's rows standing (they are still an accurate,
+  // complete snapshot as of the old watermark) while still refusing to claim the
+  // run that just failed finished.
+  it('[unit] a re-run that dies mid-sweep leaves the previous rows in place, unfinished', async () => {
     await start({})
     await extract(dir)
     expect(manifestOnDisk().finished_at).not.toBeNull()
@@ -526,9 +574,10 @@ describe('runExtract when the account moves under it', () => {
     expect(err.message).toContain('roles')
     const manifest = manifestOnDisk()
     expect(manifest.finished_at).toBeNull()
-    expect(manifest.resources.roles).toMatchObject({ count: 0, complete: false })
-    // The old rows are gone — which is exactly why the manifest must not say finished.
-    expect(readFileSync(join(dir, 'raw', 'roles.jsonl'), 'utf8')).toBe('')
+    // The prior run's row is untouched — an incremental pass appends, it never
+    // truncates, so a failure before its first successful page is a no-op on disk.
+    expect(manifest.resources.roles).toMatchObject({ count: 1, complete: false, incremental: true })
+    expect(linesOnDisk('roles')).toHaveLength(1)
   })
 
   // count == jsonl line count is true of any truncation. Harvest's own tally is the
@@ -618,6 +667,47 @@ describe('runExtract when the account moves under it', () => {
     expect(after.updated_since.invoices).toBeUndefined()
   })
 
+  // The mirror image of the test above: a skipped resource's manifest record is
+  // `complete: true` with no `updated_since` entry — exactly what an already-swept
+  // resource looks like. Turning the feature back on has to read that correctly
+  // as "never actually swept", not query `updated_since=undefined` and hand back
+  // an empty resource forever.
+  it('[unit] a resource gated back on after being skipped gets a full sweep, not a broken incremental one', async () => {
+    await start({})
+    const before = manifestOnDisk()
+    await writeManifest(dir, {
+      ...before,
+      preflight: { ...before.preflight, invoice_feature: false },
+    })
+
+    await extract(dir, logs)
+    expect(manifestOnDisk().resources.invoices).toMatchObject({
+      count: 0,
+      complete: true,
+      skipped_reason: 'invoice_feature is false',
+    })
+    expect(manifestOnDisk().updated_since.invoices).toBeUndefined()
+
+    await server?.close()
+    await start({})
+    const reenabled = manifestOnDisk()
+    await writeManifest(dir, {
+      ...reenabled,
+      preflight: { ...reenabled.preflight, invoice_feature: true },
+    })
+
+    await extract(dir, logs)
+
+    const after = manifestOnDisk()
+    expect(after.resources.invoices).toMatchObject({
+      count: 2,
+      complete: true,
+      skipped_reason: null,
+    })
+    expect(linesOnDisk('invoices').map((l) => JSON.parse(l) as unknown)).toEqual(INVOICES)
+    expect(after.updated_since.invoices).toBeDefined()
+  })
+
   // The manifest describes the PAT `auth` ran with; this process re-read HARVEST_PAT.
   // Sweeping anyway writes a fraction of the account under a preflight that claims
   // administrator visibility, prints no warning, and exits 0.
@@ -669,11 +759,10 @@ describe('runExtract when the account moves under it', () => {
     expect(err.message).toContain(dir)
   })
 
-  // The CLI called extract "resumable" and every failure message said "re-run to
-  // continue". Nothing reads manifest.resources[*].next_url back, and startResource
-  // truncates each raw file at the top of its step — so "continue" named a command
-  // that begins by deleting the rows the sentence promised were safe.
-  it('[unit] a failed run says a re-run re-sweeps from page 1, and a re-run does exactly that', async () => {
+  // manifest.resources[*].next_url is read back now, so "re-run to continue"
+  // means what it says: the resources that already finished are not re-swept
+  // from page 1, and the one that failed picks up from wherever it stopped.
+  it('[unit] a failed run resumes without re-sweeping every already-complete resource', async () => {
     await start({
       '/v2/expenses': (_url, hit) =>
         hit === 1
@@ -682,18 +771,136 @@ describe('runExtract when the account moves under it', () => {
     })
 
     const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
-    expect(err.message).toContain('does not yet resume mid-resource')
-    expect(err.message).toContain('re-sweeps every resource from page 1')
+    expect(err.message).toContain('resumes this resource from its last checkpoint')
 
     const afterFirstRun = server?.requests.length ?? 0
-    await extract(dir, logs)
+    const result = await extract(dir, logs)
     const second = (server?.requests ?? []).slice(afterFirstRun).map((r) => r.split('?')[0])
 
-    // A run that had resumed would have issued one request. This is the whole
-    // account again, from the top — which is what the message now promises.
-    expect(second[0]).toBe('/v2/users/me')
-    expect(second).toContain('/v2/users')
-    expect(second.length).toBeGreaterThan(10)
+    // users is a complete `list` resource: the second run touches it exactly
+    // once, as an updated_since pass — not the sweep a fresh run would issue.
+    expect(second.filter((p) => p === '/v2/users')).toHaveLength(1)
+    // expenses never wrote a row before the failure, so there was nothing to
+    // resume — the second run sweeps it fresh, and this time it succeeds.
+    expect(second).toContain('/v2/expenses')
+    expect(result.resources.expenses.count).toBe(1)
+    expect(manifestOnDisk().finished_at).not.toBeNull()
+  })
+
+  // AC #1: a kill mid-resource resumes from the last cursor rather than
+  // re-fetching completed pages — page 1 lands on disk and is claimed by the
+  // manifest, page 2 never comes back, and the resumed run has to ask for
+  // exactly the one page it is missing.
+  it('[unit] Kill -9 mid-resource then rerun: no duplicate lines, no gaps, manifest counts correct', async () => {
+    // `next_url` is only ever valid on the origin that issued it (paginator
+    // refuses to follow a link off the API host), so the crash and the resume
+    // have to hit the same fake server — one flag flips page 2 from "500 forever"
+    // to "answers", the way a real Harvest outage recovering would look.
+    let page2Recovered = false
+    await start({
+      '/v2/invoices': (url) =>
+        url.searchParams.get('cursor') === 'NEXT'
+          ? page2Recovered
+            ? { body: envelope('invoices', [INVOICES[1]]) }
+            : { status: 500, body: { message: 'boom' } }
+          : {
+              body: envelope(
+                'invoices',
+                [INVOICES[0]],
+                `${server?.baseUrl ?? ''}/v2/invoices?cursor=NEXT`,
+              ),
+            },
+    })
+
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+    expect(err.message).toContain('invoices')
+
+    const midCrash = manifestOnDisk()
+    expect(midCrash.resources.invoices).toMatchObject({ count: 1, pages: 1, complete: false })
+    expect(midCrash.resources.invoices.next_url).toContain('cursor=NEXT')
+    expect(linesOnDisk('invoices')).toHaveLength(1)
+
+    page2Recovered = true
+    const requestsBefore = server?.requests.length ?? 0
+
+    const result = await extract(dir, logs)
+
+    // Resumed straight from the stored cursor: exactly one further request to
+    // /v2/invoices, not the two a from-scratch sweep would have made.
+    expect(
+      (server?.requests ?? [])
+        .slice(requestsBefore)
+        .map((r) => r.split('?')[0])
+        .filter((p) => p === '/v2/invoices'),
+    ).toHaveLength(1)
+    // No gap, no duplicate: page 1 from before the crash, page 2 from the resume.
+    expect(linesOnDisk('invoices').map((l) => JSON.parse(l) as unknown)).toEqual(INVOICES)
+    expect(result.resources.invoices).toMatchObject({ count: 2, pages: 2, complete: true })
+    expect(manifestOnDisk().finished_at).not.toBeNull()
+  })
+
+  // Same guarantee one level deeper: a fan-out killed partway through one
+  // parent's own pagination resumes that parent from its cursor, then carries on
+  // to the parents it had not reached yet — never re-requesting parent 100's
+  // page 1, never skipping parent 101 entirely.
+  it('[unit] Kill -9 mid-parent of a child fan-out then rerun: no duplicate lines, no gaps', async () => {
+    let page2Recovered = false
+    await start({
+      // invoices itself is a complete `list` resource by the time invoice_messages
+      // resumes, so the second run's own updated_since pass over it must not
+      // re-report invoice 101 — that would give the fan-out below a duplicate
+      // parent id, a resume artifact unrelated to what this test is about.
+      '/v2/invoices': (url) => ({
+        body: envelope('invoices', url.searchParams.get('updated_since') ? [] : INVOICES),
+      }),
+      '/v2/invoices/{id}/messages': (url) => {
+        if (userId(url) !== 100) return { body: envelope('invoice_messages', [row(1101)]) }
+        if (url.searchParams.get('cursor') === 'NEXT') {
+          return page2Recovered
+            ? { body: envelope('invoice_messages', [row(1002)]) }
+            : { status: 500, body: { message: 'boom' } }
+        }
+        return {
+          body: envelope(
+            'invoice_messages',
+            [row(1001)],
+            `${server?.baseUrl ?? ''}/v2/invoices/100/messages?cursor=NEXT`,
+          ),
+        }
+      },
+    })
+
+    const err = (await extract(dir, logs).catch((e: unknown) => e)) as Error
+    expect(err.message).toContain('invoice_messages')
+
+    const midCrash = manifestOnDisk()
+    expect(midCrash.resources.invoice_messages).toMatchObject({
+      count: 1,
+      pages: 1,
+      parent_id: 100,
+      complete: false,
+    })
+    expect(linesOnDisk('invoice_messages')).toHaveLength(1)
+    // Parent 101 was never reached — the crash happened inside parent 100's own
+    // pagination, before the fan-out moved on.
+    expect(requestPaths()).not.toContain('/v2/invoices/101/messages')
+
+    page2Recovered = true
+    const requestsBefore = server?.requests.length ?? 0
+
+    const result = await extract(dir, logs)
+    const resumedPaths = (server?.requests ?? []).slice(requestsBefore).map((r) => r.split('?')[0])
+
+    // Parent 100's page 1 was never re-requested; parent 101 was reached exactly once.
+    expect(resumedPaths.filter((p) => p === '/v2/invoices/100/messages')).toHaveLength(1)
+    expect(resumedPaths.filter((p) => p === '/v2/invoices/101/messages')).toHaveLength(1)
+    expect(linesOnDisk('invoice_messages').map((l) => JSON.parse(l) as unknown)).toEqual([
+      row(1001),
+      row(1002),
+      row(1101),
+    ])
+    expect(result.resources.invoice_messages).toMatchObject({ count: 3, complete: true })
+    expect(manifestOnDisk().finished_at).not.toBeNull()
   })
 })
 

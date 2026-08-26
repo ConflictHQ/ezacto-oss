@@ -111,6 +111,15 @@ export interface ManifestResource {
   /** Index into the step's `passes` — which sweep of a multi-pass step is in flight. */
   pass: number
   complete: boolean
+  /**
+   * True while `count`/`pages`/`next_url` describe an `updated_since`-filtered
+   * pass over an already-complete resource, rather than the original full sweep.
+   * Read back on resume so a killed incremental pass continues as one — with
+   * `updated_since` still applied and without re-imposing the full-sweep
+   * `total_entries` shortfall check a filtered query cannot satisfy — instead of
+   * being mistaken for an interrupted first sweep.
+   */
+  incremental: boolean
   /** Why this resource holds nothing: a disabled feature, or a 403 on an optional step. */
   skipped_reason: string | null
   /** Captured before the step's first request — the watermark a later incremental run reads. */

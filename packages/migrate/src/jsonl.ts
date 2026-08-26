@@ -3,7 +3,7 @@
 // a transform bug has to be fixable by re-running `load`, because extract is the
 // expensive rate-limited step and the transform is free.
 
-import { mkdir, open } from 'node:fs/promises'
+import { mkdir, open, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
@@ -37,6 +37,56 @@ export const appendPage = async (
     if (objects.length > 0) {
       await handle.writeFile(objects.map((o) => `${JSON.stringify(o)}\n`).join(''), 'utf8')
     }
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
+/**
+ * Reconciles raw/<resource>.jsonl with the manifest's own count after a crash.
+ * `appendPage` fsyncs a page's bytes to disk *before* the manifest is rewritten
+ * to claim it (§2.4) — the ordering that guarantees a crash never over-claims —
+ * but it does leave one window where the file can be a page ahead of the
+ * manifest: killed after the fsync, before the rename that commits manifest.json.
+ * A resume that trusted the file's own length there, and asked `next_url` for
+ * the page after the one already on disk, would silently duplicate it.
+ *
+ * So resume always calls this first: read what is actually on disk, and if it
+ * holds more complete lines than the manifest counted, throw the extra away —
+ * they get re-fetched from the still-valid cursor rather than trusted twice. A
+ * line with no trailing `\n` is a write that was mid-flight when the crash hit;
+ * it is never "complete" regardless of what `count` says.
+ */
+export const reconcileToCount = async (
+  dir: string,
+  resource: string,
+  count: number,
+): Promise<void> => {
+  const path = rawPath(dir, resource)
+  const raw = await readFile(path, 'utf8')
+  // split('\n') on well-formed content ("a\nb\n") ends in a trailing '' for the
+  // newline after the last line; on torn content ("a\nb") the last element is the
+  // unterminated fragment itself. Dropping it either way leaves exactly the lines
+  // that ended in their own '\n' — the only ones fsync ever promised were durable.
+  const complete = raw.split('\n').slice(0, -1)
+  if (complete.length < count) {
+    throw new Error(
+      `${path} holds ${complete.length} committed line(s) but manifest.json claims ${count} — ` +
+        'the file is missing rows fsync should have made durable. This snapshot cannot be ' +
+        'resumed safely; re-run extract without --snapshot-dir pointed at it, or restore the ' +
+        'file from backup before resuming.',
+    )
+  }
+  const target = count > 0 ? `${complete.slice(0, count).join('\n')}\n` : ''
+  // Also catches (and drops) a torn trailing line past `count` complete lines —
+  // `complete.length` already matches `count` there too, so the line count alone
+  // is not enough; only comparing against the exact bytes a clean file would hold
+  // also cleans up bytes fsync never promised were part of a whole line.
+  if (raw === target) return
+  const handle = await open(path, 'w')
+  try {
+    await handle.writeFile(target, 'utf8')
     await handle.sync()
   } finally {
     await handle.close()
