@@ -3,6 +3,8 @@
 // every current collection by ID. Raw rows are intentionally never removed:
 // deleted_upstream is a tombstone instruction for a downstream upsert/load.
 
+import { copyFile, mkdir, mkdtemp, open, rm } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { HarvestEnv } from './env.js'
 import {
   createExtractSession,
@@ -10,7 +12,7 @@ import {
   type ExtractResult,
   type ExtractSession,
 } from './extract.js'
-import { readIds } from './jsonl.js'
+import { readIds, restoreDeletedRows } from './jsonl.js'
 import {
   readManifest,
   writeManifest,
@@ -139,6 +141,30 @@ const enabled = (manifest: Manifest, step: ResourceStep): boolean =>
   !step.requires || manifest.preflight[step.requires]
 
 /**
+ * The extractor legitimately replaces full-sweep files (child and
+ * noUpdatedSince resources). Sync needs their old IDs and verbatim rows until
+ * it has a completed witness, so it durably snapshots raw/ before extraction.
+ */
+const captureRaw = async (snapshotDir: string, backupDir: string, resource: string): Promise<boolean> => {
+  const source = join(snapshotDir, 'raw', `${resource}.jsonl`)
+  const target = join(backupDir, 'raw', `${resource}.jsonl`)
+  await mkdir(join(backupDir, 'raw'), { recursive: true })
+  try {
+    await copyFile(source, target)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw err
+  }
+  const handle = await open(target, 'r')
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+  return true
+}
+
+/**
  * Incrementally extract, then publish deletion marks resource-by-resource only
  * after their entire full-ID witness has completed. This is deliberately
  * one-directional: no Harvest request here ever writes or mutates upstream.
@@ -157,67 +183,120 @@ export const runSync = async (options: RunSyncOptions): Promise<SyncResult> => {
     sleep: options.sleep,
   })
 
-  const extract = await runExtract({ ...options, session })
-  const manifest = await readManifest(options.snapshotDir)
-  const deletedUpstream: Record<string, number[]> = { ...(manifest.deleted_upstream ?? {}) }
-  const fullIdSweeps: Record<string, ManifestFullIdSweep> = { ...(manifest.full_id_sweeps ?? {}) }
-  const sweeps: Record<string, SyncSweepResult> = {}
-  let deleted = 0
-  let restored = 0
-
-  for (const step of RESOURCES) {
-    if (!enabled(manifest, step)) continue
-
-    const priorDeleted = new Set(deletedUpstream[step.name] ?? [])
-    const parents =
-      step.kind === 'child'
-        ? await currentRawIds(options.snapshotDir, step.parent, new Set(deletedUpstream[step.parent] ?? []))
-        : null
-    const witness = await witnessedIds(step, session, parents)
-    if (witness === null) {
-      log(`${step.name}: no full-ID witness available; leaving deletion marks unchanged`)
-      continue
-    }
-
-    // Compute the entire delta before touching manifest.json. A failed or short
-    // sweep therefore leaves both old tombstones and its old witness intact.
-    const nextDeleted = new Set(priorDeleted)
-    let added = 0
-    let cleared = 0
-    for await (const id of readIds(options.snapshotDir, step.name)) {
-      if (!witness.ids.has(id) && !nextDeleted.has(id)) {
-        nextDeleted.add(id)
-        added += 1
+  const backupDir = await mkdtemp(join(options.snapshotDir, '.sync-before-'))
+  try {
+    const backedUp = new Set<string>()
+    for (const step of RESOURCES) {
+      if (enabled(initial, step) && (await captureRaw(options.snapshotDir, backupDir, step.name))) {
+        backedUp.add(step.name)
       }
     }
-    for (const id of witness.ids) {
-      if (nextDeleted.delete(id)) cleared += 1
+
+    const extract = await runExtract({ ...options, session })
+    const manifest = await readManifest(options.snapshotDir)
+    const deletedUpstream: Record<string, number[]> = { ...(manifest.deleted_upstream ?? {}) }
+    const fullIdSweeps: Record<string, ManifestFullIdSweep> = { ...(manifest.full_id_sweeps ?? {}) }
+    const sweeps: Record<string, SyncSweepResult> = {}
+    let deleted = 0
+    let restored = 0
+
+    for (const step of RESOURCES) {
+      if (!enabled(manifest, step)) continue
+
+      const restorePriorRows = async (): Promise<void> => {
+        if (!backedUp.has(step.name)) return
+        const allPriorIds = new Set<number>()
+        for await (const id of readIds(backupDir, step.name)) allPriorIds.add(id)
+        const restoredRows = await restoreDeletedRows(
+          options.snapshotDir,
+          step.name,
+          backupDir,
+          allPriorIds,
+        )
+        manifest.resources[step.name].count += restoredRows
+      }
+
+      const priorDeleted = new Set(deletedUpstream[step.name] ?? [])
+      const parents =
+        step.kind === 'child'
+          ? await currentRawIds(options.snapshotDir, step.parent, new Set(deletedUpstream[step.parent] ?? []))
+          : null
+      let witness: Awaited<ReturnType<typeof witnessedIds>>
+      try {
+        witness = await witnessedIds(step, session, parents)
+      } catch (err) {
+        // A short/malformed witness is not permission to discard rows that a
+        // full extract replaced. Restore the pre-sync bytes before surfacing
+        // the refusal, without publishing any deletion metadata.
+        await restorePriorRows()
+        await writeManifest(options.snapshotDir, manifest)
+        throw err
+      }
+      if (witness === null) {
+        await restorePriorRows()
+        await writeManifest(options.snapshotDir, manifest)
+        log(`${step.name}: no full-ID witness available; leaving deletion marks unchanged`)
+        continue
+      }
+
+      // Compute the entire delta against the pre-extract source when it exists.
+      // Full extract steps replace their raw file, so comparing against the file
+      // after extract would erase the very IDs sync is supposed to tombstone.
+      const nextDeleted = new Set(priorDeleted)
+      let added = 0
+      let cleared = 0
+      if (backedUp.has(step.name)) {
+        for await (const id of readIds(backupDir, step.name)) {
+          if (!witness.ids.has(id) && !nextDeleted.has(id)) {
+            nextDeleted.add(id)
+            added += 1
+          }
+        }
+      }
+      for (const id of witness.ids) {
+        if (nextDeleted.delete(id)) cleared += 1
+      }
+
+      // Re-add only rows the witness has proved gone, and only after the full
+      // witness. This keeps raw/ lossless even though extract replaces a full
+      // resource file as part of its normal resumable extraction semantics.
+      if (backedUp.has(step.name)) {
+        const restoredRows = await restoreDeletedRows(
+          options.snapshotDir,
+          step.name,
+          backupDir,
+          nextDeleted,
+        )
+        manifest.resources[step.name].count += restoredRows
+      }
+
+      const fullIdSweep: ManifestFullIdSweep = {
+        completed_at: now().toISOString(),
+        seen_count: witness.ids.size,
+        total_entries: witness.totalEntries,
+        requests: witness.requests,
+      }
+      if (nextDeleted.size === 0) delete deletedUpstream[step.name]
+      else deletedUpstream[step.name] = [...nextDeleted].sort((a, b) => a - b)
+      fullIdSweeps[step.name] = fullIdSweep
+      manifest.deleted_upstream = deletedUpstream
+      manifest.full_id_sweeps = fullIdSweeps
+      await writeManifest(options.snapshotDir, manifest)
+
+      sweeps[step.name] = { ...fullIdSweep, deleted: added, restored: cleared }
+      deleted += added
+      restored += cleared
     }
 
-    const fullIdSweep: ManifestFullIdSweep = {
-      completed_at: now().toISOString(),
-      seen_count: witness.ids.size,
-      total_entries: witness.totalEntries,
-      requests: witness.requests,
+    return {
+      extract,
+      sweeps,
+      deleted,
+      restored,
+      requests: session.limiter.granted,
+      durationMs: Date.now() - started,
     }
-    if (nextDeleted.size === 0) delete deletedUpstream[step.name]
-    else deletedUpstream[step.name] = [...nextDeleted].sort((a, b) => a - b)
-    fullIdSweeps[step.name] = fullIdSweep
-    manifest.deleted_upstream = deletedUpstream
-    manifest.full_id_sweeps = fullIdSweeps
-    await writeManifest(options.snapshotDir, manifest)
-
-    sweeps[step.name] = { ...fullIdSweep, deleted: added, restored: cleared }
-    deleted += added
-    restored += cleared
-  }
-
-  return {
-    extract,
-    sweeps,
-    deleted,
-    restored,
-    requests: session.limiter.granted,
-    durationMs: Date.now() - started,
+  } finally {
+    await rm(backupDir, { recursive: true, force: true })
   }
 }

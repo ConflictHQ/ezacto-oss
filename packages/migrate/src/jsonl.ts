@@ -242,6 +242,47 @@ export async function* readIds(dir: string, resource: string): AsyncGenerator<nu
 }
 
 /**
+ * Re-append selected verbatim rows from another snapshot's raw/ directory when
+ * a full sync sweep has established they are upstream tombstones. The current
+ * file wins for any id it still contains, so repeated syncs cannot duplicate a
+ * retained row. Returns the number of lines restored.
+ */
+export const restoreDeletedRows = async (
+  dir: string,
+  resource: string,
+  sourceDir: string,
+  deleted: ReadonlySet<number>,
+): Promise<number> => {
+  if (deleted.size === 0) return 0
+
+  const current = new Set<number>()
+  for await (const id of readIds(dir, resource)) current.add(id)
+
+  const handle = await open(rawPath(dir, resource), 'a')
+  let restored = 0
+  let pending = ''
+  try {
+    const write = async (line: string, force = false): Promise<void> => {
+      pending += line
+      if (!force && pending.length < CHUNK) return
+      if (pending.length > 0) await handle.writeFile(pending, 'utf8')
+      pending = ''
+    }
+    for await (const { line, id } of jsonlRows(rawPath(sourceDir, resource))) {
+      if (!deleted.has(id) || current.has(id)) continue
+      await write(`${line}\n`)
+      current.add(id)
+      restored += 1
+    }
+    await write('', true)
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+  return restored
+}
+
+/**
  * Folds a finished `updated_since` pass's staged rows into raw/<resource>.jsonl,
  * replacing the copy of each row it superseded. Returns the merged file's line
  * count, or null when the pass staged nothing and the file is untouched.

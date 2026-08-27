@@ -17,6 +17,8 @@ const row = (id: number): Record<string, unknown> => ({
 const env = { pat: 'p', accountId: '42', userAgentEmail: 'sync@test.invalid' }
 
 let upstreamHasUser2 = true
+let upstreamHasRole20 = true
+let upstreamHasInvoiceMessage = true
 let shortUsersWitness = false
 let server: FakeHarvest
 let dir: string
@@ -50,7 +52,7 @@ const routes = (): Record<string, RouteHandler> => ({
       : { status: 404, body: { message: 'gone' } }
   },
   '/v2/users/{id}/teammates': () => ({ status: 403, body: { message: 'disabled' } }),
-  '/v2/roles': (url) => list('roles', [20], url),
+  '/v2/roles': (url) => list('roles', upstreamHasRole20 ? [20] : [], url),
   '/v2/clients': (url) => list('clients', [30], url),
   '/v2/contacts': (url) => list('contacts', [40], url),
   '/v2/tasks': (url) => list('tasks', [50], url),
@@ -62,7 +64,9 @@ const routes = (): Record<string, RouteHandler> => ({
   '/v2/user_assignments': (url) =>
     list('user_assignments', [url.searchParams.get('is_active') === 'false' ? 96 : 95], url),
   '/v2/invoices': (url) => list('invoices', [100], url),
-  '/v2/invoices/{id}/messages': () => ({ body: envelope('invoice_messages', [row(1100)]) }),
+  '/v2/invoices/{id}/messages': () => ({
+    body: envelope('invoice_messages', upstreamHasInvoiceMessage ? [row(1100)] : []),
+  }),
   '/v2/invoices/{id}/payments': () => ({ body: envelope('invoice_payments', [row(2100)]) }),
   '/v2/time_entries': (url) => list('time_entries', [500], url),
   '/v2/expenses': (url) => list('expenses', [600], url),
@@ -87,6 +91,8 @@ const run = (): Promise<SyncResult> =>
 describe('runSync', () => {
   beforeEach(async () => {
     upstreamHasUser2 = true
+    upstreamHasRole20 = true
+    upstreamHasInvoiceMessage = true
     shortUsersWitness = false
     dir = await mkdtemp(join(tmpdir(), 'ezacto-migrate-sync-'))
     server = await startFakeHarvest(routes())
@@ -161,5 +167,19 @@ describe('runSync', () => {
     const manifest = await readManifest(dir)
     expect(manifest.deleted_upstream?.users).toBeUndefined()
     expect(manifest.full_id_sweeps?.users).toBeUndefined()
+  })
+
+  it('[unit] retains and marks vanished child and no-updated-since rows after extract replaces them', async () => {
+    upstreamHasRole20 = false
+    upstreamHasInvoiceMessage = false
+
+    await run()
+    const manifest = await readManifest(dir)
+    expect(manifest.deleted_upstream?.roles).toEqual([20])
+    expect(manifest.deleted_upstream?.invoice_messages).toEqual([1100])
+    expect((await readFile(join(dir, 'raw', 'roles.jsonl'), 'utf8')).trim()).toContain('"id":20')
+    expect((await readFile(join(dir, 'raw', 'invoice_messages.jsonl'), 'utf8')).trim()).toContain(
+      '"id":1100',
+    )
   })
 })

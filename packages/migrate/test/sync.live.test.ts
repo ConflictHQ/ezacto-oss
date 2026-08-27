@@ -2,7 +2,7 @@
 // two consecutive syncs without producing a deletion or domain delta. CI has no
 // credentials, so this stays a credential-gated acceptance test like extract.
 
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -12,6 +12,23 @@ import { runSync } from '../src/sync.js'
 
 loadDevVars()
 const hasLiveCreds = Boolean(process.env.HARVEST_PAT && process.env.HARVEST_ACCOUNT_ID)
+
+const normalizedRaw = async (snapshotDir: string): Promise<Record<string, string[]>> => {
+  const rawDir = join(snapshotDir, 'raw')
+  const names = (await readdir(rawDir)).filter((name) => name.endsWith('.jsonl')).sort()
+  const entries = await Promise.all(
+    names.map(async (name) => {
+      const rows = (await readFile(join(rawDir, name), 'utf8'))
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { id: number })
+        .sort((a, b) => a.id - b.id)
+        .map((row) => JSON.stringify(row))
+      return [name, rows] as const
+    }),
+  )
+  return Object.fromEntries(entries)
+}
 
 describe.skipIf(!hasLiveCreds)('runSync [e2e:migrate-reconcile] against the live CONFLICT account', () => {
   let dir: string
@@ -31,12 +48,15 @@ describe.skipIf(!hasLiveCreds)('runSync [e2e:migrate-reconcile] against the live
     }
     await runAuth({ env, toolVersion: '0.0.0', snapshotDir: dir })
     await runSync({ env, snapshotDir: dir })
+    const afterFirst = await normalizedRaw(dir)
 
     const second = await runSync({ env, snapshotDir: dir })
+    const afterSecond = await normalizedRaw(dir)
     // Full-ID witness timestamps and request counts legitimately change. The
     // parallel-run invariant is zero domain/deletion delta, not byte equality of
     // the whole manifest.
     expect(second.deleted).toBe(0)
     expect(second.restored).toBe(0)
+    expect(afterSecond).toEqual(afterFirst)
   }, 900_000)
 })
