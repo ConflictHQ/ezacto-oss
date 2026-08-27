@@ -1011,6 +1011,12 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
     prior: priorBinaries,
     timeoutMs: options.timeoutMs,
     log,
+    webAuth: {
+      origin: manifest.preflight.base_uri,
+      pat: env.pat,
+      accountId: manifest.account.id,
+      userAgentEmail: env.userAgentEmail,
+    },
   })
   if (priorBinaries?.invoice_pdfs) binaries.invoice_pdfs = priorBinaries.invoice_pdfs
   manifest.binaries = binaries

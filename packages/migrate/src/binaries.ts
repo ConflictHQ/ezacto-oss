@@ -23,6 +23,13 @@ export interface DownloadBinariesOptions {
   timeoutMs?: number
   fetchImpl?: typeof fetch
   log?: (line: string) => void
+  /** PAT headers permitted only on this exact Harvest account-web origin. */
+  webAuth?: {
+    origin: string
+    pat: string
+    accountId: string
+    userAgentEmail: string
+  }
 }
 
 const exists = async (path: string): Promise<boolean> => {
@@ -56,13 +63,35 @@ const fetchBytes = async (
   url: string,
   timeoutMs: number,
   fetchImpl: typeof fetch,
+  webAuth: DownloadBinariesOptions['webAuth'],
 ): Promise<{ bytes: Uint8Array; contentType: string | null }> => {
+  let authenticated = false
+  if (webAuth) {
+    try {
+      authenticated = new URL(url).origin === new URL(webAuth.origin).origin
+    } catch {
+      authenticated = false
+    }
+  }
+  const headers: Record<string, string> | undefined =
+    authenticated && webAuth
+      ? {
+          Authorization: `Bearer ${webAuth.pat}`,
+          'Harvest-Account-Id': webAuth.accountId,
+          'User-Agent': `ezacto-migrate (${webAuth.userAgentEmail})`,
+        }
+      : undefined
   let last: unknown
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
-      const response = await fetchImpl(url, { redirect: 'follow', signal: controller.signal })
+      const response = await fetchImpl(url, {
+        // Never let a response redirect Harvest credentials to another origin.
+        redirect: authenticated ? 'manual' : 'follow',
+        signal: controller.signal,
+        ...(headers ? { headers } : {}),
+      })
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       return {
         bytes: new Uint8Array(await response.arrayBuffer()),
@@ -112,7 +141,7 @@ export const downloadBinaries = async (
     }
 
     try {
-      const downloaded = await fetchBytes(url, timeoutMs, fetchImpl)
+      const downloaded = await fetchBytes(url, timeoutMs, fetchImpl, options.webAuth)
       const sha256 = createHash('sha256').update(downloaded.bytes).digest('hex')
       const directory = resource === 'receipt' ? 'receipts' : 'avatars'
       const destination = join(snapshotDir, directory, `${sha256}${safeExtension(fileName)}`)
