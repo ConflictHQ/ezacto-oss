@@ -14,6 +14,10 @@ import { runSync } from '../src/sync.js'
 
 loadDevVars()
 const hasLiveCreds = Boolean(process.env.HARVEST_PAT && process.env.HARVEST_ACCOUNT_ID)
+// The live account currently has hundreds of invoices. Each sync deliberately
+// visits every invoice message/payment endpoint twice (extract + ID witness),
+// and this acceptance test runs two syncs under Harvest's 100 req / 15 s budget.
+const LIVE_SYNC_TIMEOUT_MS = 30 * 60_000
 
 const normalizedRaw = async (snapshotDir: string): Promise<Record<string, string[]>> => {
   const rawDir = join(snapshotDir, 'raw')
@@ -69,5 +73,5 @@ describe.skipIf(!hasLiveCreds)('runSync [e2e:migrate-reconcile] against the live
       if (step.name === 'teammates' || (step.requires && !manifest.preflight[step.requires])) continue
       expect(manifest.full_id_sweeps?.[step.name], `${step.name} must be deletion-witnessed`).toBeDefined()
     }
-  }, 900_000)
+  }, LIVE_SYNC_TIMEOUT_MS)
 })
