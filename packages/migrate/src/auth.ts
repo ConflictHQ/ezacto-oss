@@ -13,6 +13,7 @@ import {
 } from './manifest.js'
 import type { HarvestEnv } from './env.js'
 import { acquireSnapshotLock, releaseSnapshotLock } from './snapshot-lock.js'
+import { sanitizePriorBinaries } from './binaries.js'
 
 interface HarvestAccount {
   id: number
@@ -134,6 +135,7 @@ export const runAuth = async (options: RunAuthOptions): Promise<AuthResult> => {
   // (incremental watermarks) are extract's resume record (migration-spec §2.3/§2.4);
   // re-running `auth` against the same snapshot dir must carry them forward.
   const existing = await readManifestIfExists(snapshotDir)
+  const safeExistingBinaries = await sanitizePriorBinaries(snapshotDir, existing?.binaries)
   const sameAccount = existing?.account?.id === accountId
   if (existing && !sameAccount && !force) {
     throw new Error(
@@ -179,6 +181,10 @@ export const runAuth = async (options: RunAuthOptions): Promise<AuthResult> => {
       )
     }
   }
+  // Same-account auth is also a manifest rewrite. Never carry nested binary
+  // runtime data through it until every record has been rebuilt from verified
+  // on-disk content and every anomaly has been reduced to stable scalars.
+  const carriedBinaries = carried ? safeExistingBinaries : undefined
 
   const manifest: Manifest = {
     account: { id: accountId, name: resolved.name },
@@ -194,7 +200,7 @@ export const runAuth = async (options: RunAuthOptions): Promise<AuthResult> => {
     // not carry one account's deletion decisions across a forced re-stamp.
     ...(carried?.deleted_upstream ? { deleted_upstream: carried.deleted_upstream } : {}),
     ...(carried?.full_id_sweeps ? { full_id_sweeps: carried.full_id_sweeps } : {}),
-    ...(carried?.binaries ? { binaries: carried.binaries } : {}),
+    ...(carriedBinaries ? { binaries: carriedBinaries } : {}),
   }
   await writeManifest(snapshotDir, manifest)
 
@@ -306,6 +312,11 @@ const parseCompany = (raw: unknown): CompanyPreflight => {
   return {
     name: requireString(body, 'name', endpoint),
     settings: {
+      // The invoice archive is served from Harvest's client-facing web origin,
+      // not api.harvestapp.com. Capture its non-secret account location here so
+      // archive never has to repeat the expensive company preflight.
+      base_uri: requireString(body, 'base_uri', endpoint),
+      full_domain: requireString(body, 'full_domain', endpoint),
       clock: requireString(body, 'clock', endpoint),
       wants_timestamp_timers: requireBoolean(body, 'wants_timestamp_timers', endpoint),
       expense_feature: requireBoolean(body, 'expense_feature', endpoint),
