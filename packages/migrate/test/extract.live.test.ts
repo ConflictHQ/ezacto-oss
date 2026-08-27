@@ -63,6 +63,24 @@ describe.skipIf(!hasLiveCreds)('runExtract [api] against the live CONFLICT accou
       expect(lines, `${name}: manifest count vs raw/${name}.jsonl`).toHaveLength(record.count)
     }
 
+    // Story 04: every live receipt with a URL has a verified content-addressed
+    // archive entry. This stays a real-account test; fixture coverage lives in
+    // binaries.test.ts and cannot prove Harvest's signed URLs still work.
+    const expenses = (await readFile(join(dir, 'raw', 'expenses.jsonl'), 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { id: number; receipt?: { url?: string; file_size?: number } })
+    const receipts = expenses.filter((expense) => expense.receipt?.url)
+    expect(Object.keys(manifest.binaries?.receipts ?? {})).toHaveLength(receipts.length)
+    expect(
+      (manifest.binaries?.anomalies ?? []).filter((anomaly) => anomaly.resource === 'receipt'),
+    ).toEqual([])
+    for (const expense of receipts) {
+      const archived = manifest.binaries?.receipts[String(expense.id)]
+      expect(archived, `expense ${expense.id} receipt was not archived`).toBeDefined()
+      expect((await readFile(join(dir, archived!.path))).byteLength).toBe(expense.receipt?.file_size)
+    }
+
     expect(manifest.finished_at).not.toBeNull()
 
     // The run was paced by the budget it declared (§2.2): past the first window,
