@@ -73,6 +73,7 @@ describe('ezacto-migrate CLI entrypoint', () => {
     // usage and exit 1 — advertised and broken.
     expect(stdout).toContain('auth')
     expect(stdout).toContain('extract')
+    expect(stdout).toContain('sync')
     expect(stdout).toContain('verify')
   })
 

@@ -12,6 +12,7 @@ import {
   type ManifestPreflightUser,
 } from './manifest.js'
 import type { HarvestEnv } from './env.js'
+import { acquireSnapshotLock, releaseSnapshotLock } from './snapshot-lock.js'
 
 interface HarvestAccount {
   id: number
@@ -90,6 +91,8 @@ export const runAuth = async (options: RunAuthOptions): Promise<AuthResult> => {
   const { env, toolVersion, snapshotDir, accountIdFlag, force } = options
   const now = options.now ?? (() => new Date())
   const log = options.log ?? ((line: string) => console.log(line))
+  const lockPath = await acquireSnapshotLock(snapshotDir, 'auth')
+  try {
   const baseUrl = 'https://id.getharvest.com'
 
   // 1 — account discovery, no Harvest-Account-Id header for this call.
@@ -186,6 +189,12 @@ export const runAuth = async (options: RunAuthOptions): Promise<AuthResult> => {
     preflight,
     resources: carried?.resources ?? {},
     updated_since: carried?.updated_since ?? {},
+    // Sync tombstones are scoped to this account just as extract progress is.
+    // Preserve them when rotating/re-running auth for the same account, but do
+    // not carry one account's deletion decisions across a forced re-stamp.
+    ...(carried?.deleted_upstream ? { deleted_upstream: carried.deleted_upstream } : {}),
+    ...(carried?.full_id_sweeps ? { full_id_sweeps: carried.full_id_sweeps } : {}),
+    ...(carried?.binaries ? { binaries: carried.binaries } : {}),
   }
   await writeManifest(snapshotDir, manifest)
 
@@ -194,6 +203,9 @@ export const runAuth = async (options: RunAuthOptions): Promise<AuthResult> => {
     companyName: company.name,
     isAdministrator: me.is_administrator,
     manifestDir: snapshotDir,
+  }
+  } finally {
+    await releaseSnapshotLock(lockPath)
   }
 }
 

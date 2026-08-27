@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { hostname } from 'node:os'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -125,6 +126,19 @@ describe('runAuth', () => {
     expect(order).toEqual(['accounts', 'company', 'users/me'])
   })
 
+  it('[unit] refuses auth while extract owns the snapshot lock, before any API request', async () => {
+    await mkdir(join(dir, '.sync.lock'))
+    await writeFile(
+      join(dir, '.sync.lock', 'owner.json'),
+      JSON.stringify({ pid: process.pid, host: hostname(), command: 'extract', started_at: '2026-08-26T00:00:00.000Z', token: 'live-extract' }),
+    )
+
+    await expect(runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir })).rejects.toThrow(
+      'snapshot is locked by extract',
+    )
+    expect(order).toEqual([])
+  })
+
   it('[unit] carries extract progress forward: a re-run preserves resources, watermarks, and started_at', async () => {
     usersMeResponse = { id: 1, access_roles: ['administrator'] }
     const half: Manifest = {
@@ -144,6 +158,28 @@ describe('runAuth', () => {
         }),
       },
       updated_since: { time_entries: '2026-08-20T10:00:00Z' },
+      deleted_upstream: { roles: [7] },
+      full_id_sweeps: {
+        roles: {
+          completed_at: '2026-08-20T10:00:00.000Z',
+          seen_count: 3,
+          total_entries: 3,
+          requests: 1,
+        },
+      },
+      binaries: {
+        receipts: {
+          '17': {
+            source_id: 17,
+            sha256: 'a'.repeat(64),
+            path: 'binaries/sha256/aa/archive.pdf',
+            bytes: 42,
+            content_type: 'application/pdf',
+          },
+        },
+        avatars: {},
+        anomalies: [],
+      },
     }
     await writeManifest(dir, half)
 
@@ -157,6 +193,9 @@ describe('runAuth', () => {
     const manifest = await readManifest(dir)
     expect(manifest.resources).toEqual(half.resources)
     expect(manifest.updated_since).toEqual(half.updated_since)
+    expect(manifest.deleted_upstream).toEqual(half.deleted_upstream)
+    expect(manifest.full_id_sweeps).toEqual(half.full_id_sweeps)
+    expect(manifest.binaries).toEqual(half.binaries)
     expect(manifest.started_at).toBe('2026-08-01T00:00:00.000Z')
     // the preflight itself is re-stamped from the live company response
     expect(manifest.preflight.clock).toBe(COMPANY.clock)
@@ -198,6 +237,22 @@ describe('runAuth', () => {
     }
     const logs: string[] = []
     await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir, accountIdFlag: '111' })
+    const first = await readManifest(dir)
+    first.deleted_upstream = { roles: [7] }
+    first.full_id_sweeps = {
+      roles: {
+        completed_at: '2026-08-26T00:00:00.000Z',
+        seen_count: 3,
+        total_entries: 3,
+        requests: 1,
+      },
+    }
+    first.binaries = {
+      receipts: {},
+      avatars: {},
+      anomalies: [],
+    }
+    await writeManifest(dir, first)
 
     await runAuth({
       env: baseEnv,
@@ -211,6 +266,9 @@ describe('runAuth', () => {
     const manifest = await readManifest(dir)
     expect(manifest.account.id).toBe('222')
     expect(manifest.resources).toEqual({})
+    expect(manifest.deleted_upstream).toBeUndefined()
+    expect(manifest.full_id_sweeps).toBeUndefined()
+    expect(manifest.binaries).toBeUndefined()
     expect(logs.some((l) => l.includes('raw/'))).toBe(true)
   })
 

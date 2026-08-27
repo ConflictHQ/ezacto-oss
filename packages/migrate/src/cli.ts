@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { loadDevVars, readHarvestEnv } from './env.js'
 import { runAuth } from './auth.js'
 import { runExtract, type ExtractResult } from './extract.js'
+import { runSync, syncExitCode } from './sync.js'
 import { runVerify } from './verify.js'
 
 const USAGE = `ezacto-migrate <command> [options]
@@ -16,6 +17,7 @@ Commands:
            resumes an interrupted resource from its last checkpoint rather than
            re-sweeping it, and refreshes an already-complete one with only the
            rows Harvest reports changed since its last watermark.
+  sync     Run an incremental extract, then a complete full-ID delete witness.
   verify   Check snapshot counts/FKs and capture report checksums per currency
 
 Options:
@@ -106,7 +108,7 @@ const main = async (): Promise<number> => {
   })
   const command = positionals[0]
 
-  if (command !== 'auth' && command !== 'extract' && command !== 'verify') {
+  if (command !== 'auth' && command !== 'extract' && command !== 'verify' && command !== 'sync') {
     process.stdout.write(USAGE)
     return 1
   }
@@ -144,6 +146,31 @@ const main = async (): Promise<number> => {
       `verified: snapshot internally consistent; ${result.checksums.requests} report requests; ` +
         `${snapshotDir}/checksums.json`,
     )
+    return 0
+  }
+
+  if (command === 'sync') {
+    const result = await runSync({ env, snapshotDir, timeoutMs })
+    console.log(formatCounts(result.extract, `${snapshotDir}/manifest.json`))
+    console.log(
+      `sync: ${result.deleted} deletion mark(s) added, ${result.restored} cleared; ` +
+        `${result.requests} requests total`,
+    )
+    if (Object.keys(result.unsupported).length > 0) {
+      console.log(
+        `sync: deletion coverage unsupported for ${Object.entries(result.unsupported)
+          .map(([resource, reason]) => `${resource} (${reason})`)
+          .join(', ')}`,
+      )
+    }
+    if (!result.complete) {
+      console.error(
+        `sync incomplete: no safe deletion decision for ${Object.entries(result.unwitnessed)
+          .map(([resource, reason]) => `${resource} (${reason})`)
+          .join(', ')}`,
+      )
+      return syncExitCode(result)
+    }
     return 0
   }
 

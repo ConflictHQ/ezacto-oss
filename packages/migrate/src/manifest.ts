@@ -215,6 +215,25 @@ export interface ManifestResource {
   finished_at: string | null
 }
 
+/**
+ * The outcome of one complete, unfiltered ID sweep done by `sync`.
+ *
+ * It deliberately records the witness rather than merely a timestamp: deletion
+ * marks are only safe when the number of rows Harvest said existed agrees with
+ * the number of rows this sweep actually read.  The fields are optional in
+ * Manifest so snapshots written before `sync` remain readable without a
+ * migration.
+ */
+export interface ManifestFullIdSweep {
+  completed_at: string
+  /** Distinct numeric ids seen while following every `links.next` URL. */
+  seen_count: number
+  /** Sum of Harvest's `total_entries` witnesses, one per collection sweep. */
+  total_entries: number
+  /** Requests spent, including policy retries. */
+  requests: number
+}
+
 export interface Manifest {
   account: { id: string; name: string }
   company_name: string
@@ -225,6 +244,14 @@ export interface Manifest {
   resources: Record<string, ManifestResource>
   /** ISO watermark per resource: the time extract started sweeping it. */
   updated_since: Record<string, string>
+  /**
+   * IDs still retained verbatim in raw/, but absent from the last witnessed
+   * upstream sweep. Consumers can tombstone their upserted row without making
+   * the inspectable source snapshot lossy.
+   */
+  deleted_upstream?: Record<string, number[]>
+  /** Last successful full-ID witness per resource. */
+  full_id_sweeps?: Record<string, ManifestFullIdSweep>
   /** Content-addressed binary archive populated after the JSON resources finish. */
   binaries?: ManifestBinaries
 }
