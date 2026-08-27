@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "description": "ezacto — open-source time tracking & invoicing. Pre-build: knowledge, specs, and pipeline scaffolding.",
   "engines": { "node": ">=22" },
-  "workspaces": ["packages/*"],
+  "workspaces": ["packages/*", "entries/*"],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",

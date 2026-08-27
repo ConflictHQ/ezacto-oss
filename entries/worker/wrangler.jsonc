@@ -1,0 +1,35 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ezacto",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-26",
+
+  // Closed deliberately. The default *.workers.dev subdomain serves the SAME
+  // worker with nothing in front of it — an unauthenticated side door past
+  // whatever gates the custom domain. Every environment below keeps it shut.
+  "workers_dev": false,
+  "observability": { "enabled": true },
+
+  // Two environments, on purpose: our books, and the one everyone else sees.
+  // No per-branch preview workers — deploy targets are hosts we own and name.
+  // D1/R2/Queues bindings land with the stories that use them (D17).
+  "env": {
+    // CONFLICT's own instance — the dogfood deployment, and the OSS gate.
+    "prod": {
+      "name": "ezacto",
+      "routes": [{ "pattern": "app.example.com", "custom_domain": true }],
+      "vars": { "ENVIRONMENT": "prod", "RELEASE": "unknown" },
+      "workers_dev": false,
+      "observability": { "enabled": true }
+    },
+
+    // The dev deployment, which becomes the public demo. Apex of the .io.
+    "dev": {
+      "name": "ezacto-dev",
+      "routes": [{ "pattern": "ezacto.io", "custom_domain": true }],
+      "vars": { "ENVIRONMENT": "dev", "RELEASE": "unknown" },
+      "workers_dev": false,
+      "observability": { "enabled": true }
+    }
+  }
+}
