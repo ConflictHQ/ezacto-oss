@@ -23,7 +23,7 @@ describe('snapshot mutation lock', () => {
     )
 
     const lock = await acquireSnapshotLock(dir, 'extract')
-    expect(JSON.parse(await readFile(join(lock, 'owner.json'), 'utf8'))).toMatchObject({
+    expect(JSON.parse(await readFile(join(lock.path, 'owner.json'), 'utf8'))).toMatchObject({
       pid: process.pid,
       host: hostname(),
       command: 'extract',
