@@ -23,6 +23,7 @@
 // resuming into a list that reordered under it.
 
 import { parseUserMe, scopeChangeBetween, visibilityWarning } from './auth.js'
+import { downloadBinaries } from './binaries.js'
 import type { HarvestEnv } from './env.js'
 import {
   DEFAULT_BASE_URL,
@@ -989,6 +990,13 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
         `last checkpoint.`,
     )
   }
+
+  manifest.binaries = await downloadBinaries({
+    snapshotDir,
+    prior: manifest.binaries,
+    timeoutMs: options.timeoutMs,
+    log,
+  })
 
   manifest.finished_at = now().toISOString()
   await persist()
