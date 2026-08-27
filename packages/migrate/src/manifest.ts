@@ -225,6 +225,29 @@ export interface Manifest {
   resources: Record<string, ManifestResource>
   /** ISO watermark per resource: the time extract started sweeping it. */
   updated_since: Record<string, string>
+  /** Content-addressed binary archive populated after the JSON resources finish. */
+  binaries?: ManifestBinaries
+}
+
+export interface ManifestBinaryAsset {
+  source_id: number
+  sha256: string
+  path: string
+  bytes: number
+  content_type: string | null
+}
+
+export interface ManifestBinaryAnomaly {
+  kind: 'download_failed' | 'size_mismatch' | 'invalid_record'
+  resource: 'receipt' | 'avatar'
+  source_id: number | null
+  message: string
+}
+
+export interface ManifestBinaries {
+  receipts: Record<string, ManifestBinaryAsset>
+  avatars: Record<string, ManifestBinaryAsset>
+  anomalies: ManifestBinaryAnomaly[]
 }
 
 const MANIFEST_FILE = 'manifest.json'
