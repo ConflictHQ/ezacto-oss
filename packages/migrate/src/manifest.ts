@@ -272,11 +272,20 @@ export interface ManifestBinaryAsset {
   content_type: string | null
 }
 
+/** Stable, secret-free binary outcomes. External exception text never reaches the manifest. */
+export type ManifestBinaryAnomalyReason =
+  | 'request_failed'
+  | 'http_status'
+  | 'redirect_refused'
+  | 'archive_write_failed'
+  | 'size_mismatch'
+  | 'invalid_record'
+
 export interface ManifestBinaryAnomaly {
   kind: 'download_failed' | 'size_mismatch' | 'invalid_record'
   resource: 'receipt' | 'avatar'
   source_id: number | null
-  message: string
+  message: ManifestBinaryAnomalyReason
 }
 
 export interface ManifestBinaries {

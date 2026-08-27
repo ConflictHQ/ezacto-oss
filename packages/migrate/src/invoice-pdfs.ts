@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { join, relative } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
+import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 export interface InvoicePdfInput {
   id: number
@@ -76,24 +76,84 @@ const DEFAULT_MINIMUM_DELAY_MS = 250
 const isPdf = (bytes: Uint8Array): boolean =>
   bytes.length >= PDF_PREFIX.length && PDF_PREFIX.every((byte, index) => bytes[index] === byte)
 
-const validPriorRecord = async (
-  snapshotDir: string,
-  invoiceId: number,
-  record: InvoicePdfRecord,
-): Promise<boolean> => {
-  if (record.source_id !== invoiceId || !/^[a-f0-9]{64}$/.test(record.sha256)) return false
-  if (record.path !== `invoice-pdfs/${record.sha256}.pdf`) return false
-  if (!Number.isSafeInteger(record.bytes) || record.bytes < PDF_PREFIX.length) return false
-  if (record.content_type !== 'application/pdf') return false
+const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   try {
-    const bytes = new Uint8Array(await readFile(join(snapshotDir, record.path)))
-    return (
-      bytes.byteLength === record.bytes &&
-      isPdf(bytes) &&
-      createHash('sha256').update(bytes).digest('hex') === record.sha256
-    )
+    const prototype = Object.getPrototypeOf(value)
+    return prototype === Object.prototype || prototype === null
   } catch {
     return false
+  }
+}
+
+const isStrictDescendant = (root: string, candidate: string): boolean => {
+  const fromRoot = relative(root, candidate)
+  return (
+    fromRoot !== '' &&
+    fromRoot !== '..' &&
+    !fromRoot.startsWith(`..${sep}`) &&
+    !isAbsolute(fromRoot)
+  )
+}
+
+const archiveRoot = async (snapshotDir: string, create: boolean): Promise<string | null> => {
+  try {
+    const snapshotRoot = await realpath(snapshotDir)
+    const archivePath = resolve(snapshotRoot, 'invoice-pdfs')
+    if (create) await mkdir(archivePath, { recursive: true })
+    const archiveStat = await lstat(archivePath)
+    if (!archiveStat.isDirectory() || archiveStat.isSymbolicLink()) return null
+    const resolvedArchive = await realpath(archivePath)
+    return isStrictDescendant(snapshotRoot, resolvedArchive) ? resolvedArchive : null
+  } catch {
+    return null
+  }
+}
+
+const validatedPriorRecord = async (
+  snapshotDir: string,
+  invoiceId: number,
+  value: unknown,
+): Promise<InvoicePdfRecord | null> => {
+  if (!isPlainObject(value)) return null
+  if (value.source_id !== invoiceId || typeof value.sha256 !== 'string') return null
+  const sha256 = value.sha256
+  if (!/^[a-f0-9]{64}$/.test(sha256)) return null
+  const posixPath = `invoice-pdfs/${sha256}.pdf`
+  const windowsPath = `invoice-pdfs\\${sha256}.pdf`
+  if (value.path !== posixPath && value.path !== windowsPath) return null
+  if (!Number.isSafeInteger(value.bytes) || (value.bytes as number) < PDF_PREFIX.length) return null
+  if (value.content_type !== 'application/pdf') return null
+  try {
+    const root = await archiveRoot(snapshotDir, false)
+    if (!root) return null
+    // The manifest path is only a format witness. The validated digest derives
+    // the path we inspect, so neither slash style can steer filesystem access.
+    const candidate = resolve(root, `${sha256}.pdf`)
+    if (!isStrictDescendant(root, candidate)) return null
+    const fileStat = await lstat(candidate)
+    if (!fileStat.isFile() || fileStat.isSymbolicLink()) return null
+    const resolvedCandidate = await realpath(candidate)
+    if (!isStrictDescendant(root, resolvedCandidate)) return null
+    const bytes = new Uint8Array(await readFile(resolvedCandidate))
+    if (
+      bytes.byteLength !== value.bytes ||
+      !isPdf(bytes) ||
+      createHash('sha256').update(bytes).digest('hex') !== sha256
+    ) {
+      return null
+    }
+    // Rebuild from validated scalars. Unknown input fields (including a
+    // reflected client_key) can never survive into a manifest checkpoint.
+    return {
+      source_id: invoiceId,
+      sha256,
+      path: posixPath,
+      bytes: value.bytes as number,
+      content_type: 'application/pdf',
+    }
+  } catch {
+    return null
   }
 }
 
@@ -207,18 +267,33 @@ const storePdf = async (
   bytes: Uint8Array,
 ): Promise<InvoicePdfRecord> => {
   const sha256 = createHash('sha256').update(bytes).digest('hex')
-  const directory = join(snapshotDir, 'invoice-pdfs')
-  const destination = join(directory, `${sha256}.pdf`)
-  await mkdir(directory, { recursive: true })
+  const root = await archiveRoot(snapshotDir, true)
+  if (!root) throw new Error('invoice PDF archive root is not a safe directory')
+  const destination = resolve(root, `${sha256}.pdf`)
+  if (!isStrictDescendant(root, destination)) {
+    throw new Error('invoice PDF destination escapes the archive root')
+  }
+  const manifestPath = `invoice-pdfs/${sha256}.pdf`
   let alreadyStored = false
   try {
-    alreadyStored = Buffer.from(await readFile(destination)).equals(Buffer.from(bytes))
+    const destinationStat = await lstat(destination)
+    if (!destinationStat.isFile() || destinationStat.isSymbolicLink()) {
+      throw new Error('invoice PDF destination is not a regular file')
+    }
+    const resolvedDestination = await realpath(destination)
+    if (!isStrictDescendant(root, resolvedDestination)) {
+      throw new Error('invoice PDF destination escapes the archive root')
+    }
+    alreadyStored = Buffer.from(await readFile(resolvedDestination)).equals(Buffer.from(bytes))
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
   if (!alreadyStored) {
-    const temporary = `${destination}.tmp-${process.pid}-${invoiceId}`
-    await writeFile(temporary, bytes)
+    const temporary = resolve(root, `.${sha256}.tmp-${process.pid}-${invoiceId}-${randomUUID()}`)
+    if (!isStrictDescendant(root, temporary)) {
+      throw new Error('invoice PDF temporary path escapes the archive root')
+    }
+    await writeFile(temporary, bytes, { flag: 'wx' })
     await rename(temporary, destination).catch(async (error: unknown) => {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
         await rm(temporary, { force: true })
@@ -234,7 +309,9 @@ const storePdf = async (
   return {
     source_id: invoiceId,
     sha256,
-    path: relative(snapshotDir, destination),
+    // Snapshot manifests use `/` on every host so a copied archive remains
+    // valid when it moves between POSIX and Windows.
+    path: manifestPath,
     bytes: bytes.byteLength,
     content_type: 'application/pdf',
   }
@@ -261,10 +338,31 @@ export const archiveInvoicePdfs = async (
     }
     requestedIds.add(id)
   }
-  // Keep records outside the current input set. A temporarily-disabled invoice
-  // feature empties raw/invoices.jsonl, but it must not orphan an already-built
-  // archive or force every rendering to be fetched again when the feature returns.
-  const records: Record<string, InvoicePdfRecord> = { ...(options.prior?.records ?? {}) }
+  // Keep valid records outside the current input set. A temporarily-disabled
+  // invoice feature must not orphan an already-built archive, but historical
+  // records are still untrusted manifest input: never reserialize a stale path,
+  // mismatched id, corrupt object, or reflected content type just because its
+  // invoice is not part of this sweep.
+  const records: Record<string, InvoicePdfRecord> = {}
+  const pendingCurrentRecords: Record<string, unknown> = {}
+  const priorRecords = isPlainObject(options.prior?.records) ? options.prior.records : {}
+  for (const [id, record] of Object.entries(priorRecords)) {
+    const invoiceId = Number(id)
+    if (!Number.isSafeInteger(invoiceId) || String(invoiceId) !== id) continue
+    // Validate every retained record before the first progress checkpoint.
+    // Otherwise checkpointing invoice one would either reserialize an untrusted
+    // future record or drop every not-yet-visited success, making a crash retry
+    // fetch the rest of a previously complete archive again.
+    const validated = await validatedPriorRecord(options.snapshotDir, invoiceId, record)
+    if (validated) {
+      records[id] = validated
+    } else if (requestedIds.has(id)) {
+      // Do not serialize an invalid record, but let a later invoice revalidate
+      // it: two invoices can share one content-addressed object, and repairing
+      // the first can make the second record valid without another request.
+      pendingCurrentRecords[id] = record
+    }
+  }
   const anomalies: InvoicePdfAnomaly[] = []
   let skipped = 0
   let unarchivable = 0
@@ -291,8 +389,14 @@ export const archiveInvoicePdfs = async (
 
   for (const invoice of options.invoices) {
     const id = String(invoice.id)
-    const previous = records[id]
-    if (previous && (await validPriorRecord(options.snapshotDir, invoice.id, previous))) {
+    let previous = records[id]
+    const pending = pendingCurrentRecords[id]
+    const validated = await validatedPriorRecord(options.snapshotDir, invoice.id, pending)
+    if (!previous && validated) {
+      records[id] = validated
+      previous = validated
+    }
+    if (previous) {
       skipped += 1
       await checkpoint()
       continue

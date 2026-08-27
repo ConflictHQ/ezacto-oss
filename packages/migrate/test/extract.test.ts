@@ -498,6 +498,43 @@ describe('runExtract when the account moves under it', () => {
   const userId = (url: URL): number => Number(url.pathname.split('/')[3])
   const requestPaths = (): string[] => (server?.requests ?? []).map((r) => r.split('?')[0])
 
+  it('[unit] checkpoints each receipt outcome before requesting the next binary', async () => {
+    let firstReceiptWasDurable = false
+    await start({
+      '/v2/expenses': () => ({
+        body: envelope('expenses', [
+          row(601, {
+            receipt: {
+              url: `${server?.baseUrl}/binary/601`,
+              file_name: 'first.png',
+              file_size: 13,
+              content_type: 'image/png',
+            },
+          }),
+          row(602, {
+            receipt: {
+              url: `${server?.baseUrl}/binary/602`,
+              file_name: 'second.png',
+              file_size: 13,
+              content_type: 'image/png',
+            },
+          }),
+        ]),
+      }),
+      '/binary/{id}': (url) => {
+        if (url.pathname.endsWith('/602')) {
+          firstReceiptWasDurable = manifestOnDisk().binaries?.receipts['601'] !== undefined
+        }
+        return { headers: { 'content-type': 'image/png' }, body: 'receipt bytes' }
+      },
+    })
+
+    await extract(dir, logs)
+
+    expect(firstReceiptWasDurable).toBe(true)
+    expect(Object.keys(manifestOnDisk().binaries?.receipts ?? {})).toEqual(['601', '602'])
+  })
+
   // Harvest's 403 is scoped to the object asked for (research §0.3: "the object you
   // requested was found but you don't have authorization"), so one user's refusal
   // says nothing about the next user's — and nothing at all about the account.

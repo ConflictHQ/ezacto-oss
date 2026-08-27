@@ -1006,11 +1006,33 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
   }
 
   const priorBinaries = manifest.binaries
+  // Receipt/avatar outcomes checkpoint before the invoice sweep starts. Sanitize
+  // the prior invoice index first so those early writes never reserialize a
+  // tampered path or reflected value from an older manifest. With no requested
+  // invoices this performs validation only and cannot issue a web request.
+  const safePriorInvoicePdfs = priorBinaries?.invoice_pdfs
+    ? await archiveInvoicePdfs({
+        snapshotDir,
+        baseUri: invoicePdfBaseUri,
+        invoices: [],
+        prior: priorBinaries.invoice_pdfs,
+      })
+    : undefined
+  const safePriorBinaries = priorBinaries
+    ? {
+        ...priorBinaries,
+        ...(safePriorInvoicePdfs ? { invoice_pdfs: safePriorInvoicePdfs } : {}),
+      }
+    : undefined
   const binaries = await downloadBinaries({
     snapshotDir,
-    prior: priorBinaries,
+    prior: safePriorBinaries,
     timeoutMs: options.timeoutMs,
     log,
+    onProgress: async (archive) => {
+      manifest.binaries = archive
+      await persist()
+    },
     webAuth: {
       origin: manifest.preflight.base_uri,
       pat: env.pat,
@@ -1018,7 +1040,6 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
       userAgentEmail: env.userAgentEmail,
     },
   })
-  if (priorBinaries?.invoice_pdfs) binaries.invoice_pdfs = priorBinaries.invoice_pdfs
   manifest.binaries = binaries
   // Receipt/avatar downloads finish before the longer invoice sweep. Make
   // their new index durable before the first client-facing request.
@@ -1038,7 +1059,7 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
     // Production never sets it and uses the web origin captured by auth.
     baseUri: invoicePdfBaseUri,
     invoices: invoicePdfInputs,
-    prior: priorBinaries?.invoice_pdfs,
+    prior: safePriorInvoicePdfs,
     timeoutMs: options.timeoutMs,
     throttle: options.invoicePdfThrottle,
     log,

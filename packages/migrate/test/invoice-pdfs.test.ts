@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -6,6 +6,7 @@ import {
   archiveInvoicePdfs,
   createInvoicePdfThrottle,
   readInvoicePdfInputs,
+  type InvoicePdfArchive,
   type InvoicePdfInput,
 } from '../src/invoice-pdfs.js'
 
@@ -218,6 +219,26 @@ describe('invoice PDF archive', () => {
       unarchivable: 0,
     })
 
+    const checkpointedRecords: string[][] = []
+    const unchangedFetch = vi.fn<typeof fetch>()
+    await archiveInvoicePdfs({
+      snapshotDir: dir,
+      baseUri: 'https://example.harvestapp.com',
+      invoices,
+      prior: second,
+      fetchImpl: unchangedFetch,
+      throttle: () => Promise.resolve(),
+      onProgress: (archive) => {
+        checkpointedRecords.push(Object.keys(archive.records).sort())
+        return Promise.resolve()
+      },
+    })
+    expect(unchangedFetch).not.toHaveBeenCalled()
+    expect(checkpointedRecords).toEqual([
+      ['1', '2'],
+      ['1', '2'],
+    ])
+
     await unlink(join(dir, second.records['1'].path))
     const missingFetch = vi.fn<typeof fetch>().mockResolvedValue(pdfResponse())
     const third = await archiveInvoicePdfs({
@@ -272,6 +293,124 @@ describe('invoice PDF archive', () => {
     })
     expect(preserved.records).toEqual(fifth.records)
     expect(preserved.summary).toMatchObject({ total: 0, archived: 0 })
+  })
+
+  it('[unit] retains only verified historical records outside the current input set', async () => {
+    const sourceKey = 'must-not-escape-retained-record'
+    const current = await archiveInvoicePdfs({
+      snapshotDir: dir,
+      baseUri: 'https://example.harvestapp.com',
+      invoices: [
+        { id: 1, client_key: 'one' },
+        { id: 2, client_key: 'two' },
+      ],
+      fetchImpl: vi.fn<typeof fetch>().mockImplementation(() => Promise.resolve(pdfResponse())),
+      throttle: () => Promise.resolve(),
+    })
+    const prior = structuredClone(current)
+    const runtimeRecords = prior.records as Record<string, unknown>
+    const firstRuntimeRecord = runtimeRecords['1'] as Record<string, unknown>
+    firstRuntimeRecord.client_key = sourceKey
+    prior.records['1'].path = `invoice-pdfs\\${prior.records['1'].sha256}.pdf`
+    prior.records['2'].path = `../${sourceKey}.pdf`
+
+    const corruptSha = 'a'.repeat(64)
+    const corruptBytes = Buffer.from('%PDF-corrupt-retained-object')
+    await writeFile(join(dir, 'invoice-pdfs', `${corruptSha}.pdf`), corruptBytes)
+    prior.records['3'] = {
+      source_id: 3,
+      sha256: corruptSha,
+      path: `invoice-pdfs/${corruptSha}.pdf`,
+      bytes: corruptBytes.byteLength,
+      content_type: 'application/pdf',
+    }
+    prior.records['4'] = {
+      ...prior.records['1'],
+      source_id: 4,
+      content_type: sourceKey,
+    }
+    runtimeRecords['5'] = null
+    runtimeRecords['6'] = 'not an object'
+    runtimeRecords['7'] = []
+
+    const logs: string[] = []
+    const retained = await archiveInvoicePdfs({
+      snapshotDir: dir,
+      baseUri: 'https://example.harvestapp.com',
+      invoices: [],
+      prior,
+      fetchImpl: vi.fn<typeof fetch>(),
+      log: (line) => logs.push(line),
+    })
+
+    expect(retained.records).toEqual({ '1': current.records['1'] })
+    expect(retained.summary).toMatchObject({ total: 0, archived: 0 })
+    expect(`${JSON.stringify(retained)}\n${logs.join('\n')}`).not.toContain(sourceKey)
+
+    const malformedMap = await archiveInvoicePdfs({
+      snapshotDir: dir,
+      baseUri: 'https://example.harvestapp.com',
+      invoices: [],
+      prior: { ...prior, records: null } as unknown as InvoicePdfArchive,
+      fetchImpl: vi.fn<typeof fetch>(),
+    })
+    expect(malformedMap.records).toEqual({})
+  })
+
+  it('[unit] rejects a symlinked retained PDF even when its target has valid bytes', async () => {
+    const current = await archiveInvoicePdfs({
+      snapshotDir: dir,
+      baseUri: 'https://example.harvestapp.com',
+      invoices: [{ id: 1, client_key: 'one' }],
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(pdfResponse()),
+      throttle: () => Promise.resolve(),
+    })
+    const archivedPath = join(dir, current.records['1'].path)
+    const outsidePath = join(dir, 'outside-archive.pdf')
+    await writeFile(outsidePath, PDF)
+    await unlink(archivedPath)
+    try {
+      await symlink(outsidePath, archivedPath, 'file')
+    } catch (error) {
+      if (['EPERM', 'EACCES', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+        return
+      }
+      throw error
+    }
+
+    const retained = await archiveInvoicePdfs({
+      snapshotDir: dir,
+      baseUri: 'https://example.harvestapp.com',
+      invoices: [],
+      prior: current,
+      fetchImpl: vi.fn<typeof fetch>(),
+    })
+    expect(retained.records).toEqual({})
+  })
+
+  it('[unit] refuses to store through a symlinked archive root', async () => {
+    const outsideRoot = join(dir, 'outside-archive-root')
+    await mkdir(outsideRoot)
+    try {
+      await symlink(outsideRoot, join(dir, 'invoice-pdfs'), 'dir')
+    } catch (error) {
+      if (['EPERM', 'EACCES', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+        return
+      }
+      throw error
+    }
+
+    const result = await archiveInvoicePdfs({
+      snapshotDir: dir,
+      baseUri: 'https://example.harvestapp.com',
+      invoices: [{ id: 1, client_key: 'one' }],
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(pdfResponse()),
+      throttle: () => Promise.resolve(),
+    })
+
+    expect(result.records).toEqual({})
+    expect(result.anomalies).toEqual([{ invoice_id: 1, reason: 'archive_write_failed' }])
+    expect(await readdir(outsideRoot)).toEqual([])
   })
 
   it('[unit] checkpoints a secret-free outcome after every invoice', async () => {
