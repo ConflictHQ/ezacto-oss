@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { mkdtemp, readFile, rm, unlink, writeFile, mkdir } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -68,6 +68,31 @@ describe('binary snapshot archive', () => {
     await unlink(join(dir, second.receipts['7'].path))
     await downloadBinaries({ snapshotDir: dir, prior: second })
     expect(hits).toBe(2)
+  })
+
+  it('[unit] refetches a current receipt when its declared file_size changes', async () => {
+    await writeFile(
+      join(dir, 'raw', 'expenses.jsonl'),
+      `${JSON.stringify({ id: 7, receipt: { url: baseUrl, file_name: 'proof.png', file_size: 13 } })}\n`,
+    )
+    const first = await downloadBinaries({ snapshotDir: dir })
+    await writeFile(
+      join(dir, 'raw', 'expenses.jsonl'),
+      `${JSON.stringify({ id: 7, receipt: { url: baseUrl, file_name: 'proof.png', file_size: 14 } })}\n`,
+    )
+
+    const second = await downloadBinaries({ snapshotDir: dir, prior: first })
+
+    expect(hits).toBe(2)
+    expect(second.receipts['7']).toEqual(first.receipts['7'])
+    expect(second.anomalies).toEqual([
+      {
+        kind: 'size_mismatch',
+        resource: 'receipt',
+        source_id: 7,
+        message: 'size_mismatch',
+      },
+    ])
   })
 
   it('[unit] receipt and avatar files are named by their content hash', async () => {
@@ -386,5 +411,128 @@ describe('binary snapshot archive', () => {
     expect(await readFile(join(dir, repaired.receipts['7'].path), 'utf8')).toBe('receipt bytes')
     expect(await readFile(join(dir, repaired.avatars['9'].path), 'utf8')).toBe('receipt bytes')
     expect(repaired.anomalies).toEqual([])
+  })
+
+  it('[unit] retains Windows-style historical receipt and avatar paths and normalizes them', async () => {
+    await writeFile(
+      join(dir, 'raw', 'expenses.jsonl'),
+      `${JSON.stringify({ id: 7, receipt: { url: baseUrl, file_name: 'proof.png' } })}\n`,
+    )
+    await writeFile(
+      join(dir, 'raw', 'users.jsonl'),
+      `${JSON.stringify({ id: 9, avatar_url: baseUrl })}\n`,
+    )
+    const first = await downloadBinaries({ snapshotDir: dir })
+    const prior = structuredClone(first)
+    prior.receipts['7'].path = prior.receipts['7'].path.replace('/', '\\')
+    prior.avatars['9'].path = prior.avatars['9'].path.replace('/', '\\')
+    await writeFile(join(dir, 'raw', 'expenses.jsonl'), '')
+    await writeFile(join(dir, 'raw', 'users.jsonl'), '')
+
+    const retained = await downloadBinaries({ snapshotDir: dir, prior })
+
+    expect(hits).toBe(2)
+    expect(retained.receipts).toEqual(first.receipts)
+    expect(retained.avatars).toEqual(first.avatars)
+    expect(retained.receipts['7'].path).toMatch(/^receipts\//)
+    expect(retained.avatars['9'].path).toMatch(/^avatars\//)
+  })
+
+  it('[unit] rejects malformed runtime prior containers without throwing', async () => {
+    const retained = await downloadBinaries({
+      snapshotDir: dir,
+      prior: {
+        receipts: [],
+        avatars: 'not-a-map',
+        anomalies: { message: 'not-an-array' },
+      } as unknown as ManifestBinaries,
+    })
+
+    expect(retained.receipts).toEqual({})
+    expect(retained.avatars).toEqual({})
+    expect(retained.anomalies).toEqual([])
+  })
+
+  it('[unit] rejects symlinked receipt and avatar files without changing their targets', async () => {
+    await writeFile(
+      join(dir, 'raw', 'expenses.jsonl'),
+      `${JSON.stringify({ id: 7, receipt: { url: baseUrl, file_name: 'proof.png' } })}\n`,
+    )
+    await writeFile(
+      join(dir, 'raw', 'users.jsonl'),
+      `${JSON.stringify({ id: 9, avatar_url: baseUrl })}\n`,
+    )
+    const first = await downloadBinaries({ snapshotDir: dir })
+    const outsideReceipt = join(dir, 'outside-receipt')
+    const outsideAvatar = join(dir, 'outside-avatar')
+    await writeFile(outsideReceipt, 'receipt bytes')
+    await writeFile(outsideAvatar, 'receipt bytes')
+    await unlink(join(dir, first.receipts['7'].path))
+    await unlink(join(dir, first.avatars['9'].path))
+    try {
+      await symlink(outsideReceipt, join(dir, first.receipts['7'].path), 'file')
+      await symlink(outsideAvatar, join(dir, first.avatars['9'].path), 'file')
+    } catch (error) {
+      if (['EPERM', 'EACCES', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+        return
+      }
+      throw error
+    }
+
+    const repaired = await downloadBinaries({ snapshotDir: dir, prior: first })
+
+    expect(repaired.receipts).toEqual({})
+    expect(repaired.avatars).toEqual({})
+    expect(repaired.anomalies).toEqual([
+      {
+        kind: 'download_failed',
+        resource: 'receipt',
+        source_id: 7,
+        message: 'archive_write_failed',
+      },
+      {
+        kind: 'download_failed',
+        resource: 'avatar',
+        source_id: 9,
+        message: 'archive_write_failed',
+      },
+    ])
+    expect(await readFile(outsideReceipt, 'utf8')).toBe('receipt bytes')
+    expect(await readFile(outsideAvatar, 'utf8')).toBe('receipt bytes')
+  })
+
+  it('[unit] refuses receipt and avatar writes through symlinked resource roots', async () => {
+    const outsideReceipts = join(dir, 'outside-receipts-root')
+    const outsideAvatars = join(dir, 'outside-avatars-root')
+    await mkdir(outsideReceipts)
+    await mkdir(outsideAvatars)
+    try {
+      await symlink(outsideReceipts, join(dir, 'receipts'), 'dir')
+      await symlink(outsideAvatars, join(dir, 'avatars'), 'dir')
+    } catch (error) {
+      if (['EPERM', 'EACCES', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+        return
+      }
+      throw error
+    }
+    await writeFile(
+      join(dir, 'raw', 'expenses.jsonl'),
+      `${JSON.stringify({ id: 7, receipt: { url: baseUrl, file_name: 'proof.png' } })}\n`,
+    )
+    await writeFile(
+      join(dir, 'raw', 'users.jsonl'),
+      `${JSON.stringify({ id: 9, avatar_url: baseUrl })}\n`,
+    )
+
+    const result = await downloadBinaries({ snapshotDir: dir })
+
+    expect(result.receipts).toEqual({})
+    expect(result.avatars).toEqual({})
+    expect(result.anomalies.map((anomaly) => anomaly.message)).toEqual([
+      'archive_write_failed',
+      'archive_write_failed',
+    ])
+    expect(await readdir(outsideReceipts)).toEqual([])
+    expect(await readdir(outsideAvatars)).toEqual([])
   })
 })

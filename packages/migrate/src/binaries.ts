@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { extname, join } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
+import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type {
   ManifestBinaries,
   ManifestBinaryAnomaly,
@@ -134,6 +134,77 @@ const canonicalAssetPath = (
   extension?: string,
 ): string => (resource === 'receipt' ? `receipts/${sha256}${extension ?? ''}` : `avatars/${sha256}`)
 
+const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  try {
+    const prototype = Object.getPrototypeOf(value)
+    return prototype === Object.prototype || prototype === null
+  } catch {
+    return false
+  }
+}
+
+const isStrictDescendant = (root: string, candidate: string): boolean => {
+  const fromRoot = relative(root, candidate)
+  return (
+    fromRoot !== '' &&
+    fromRoot !== '..' &&
+    !fromRoot.startsWith(`..${sep}`) &&
+    !isAbsolute(fromRoot)
+  )
+}
+
+const binaryRoot = async (
+  snapshotDir: string,
+  resource: 'receipt' | 'avatar',
+  create: boolean,
+): Promise<string | null> => {
+  try {
+    const snapshotRoot = await realpath(snapshotDir)
+    const directory = resource === 'receipt' ? 'receipts' : 'avatars'
+    const rootPath = resolve(snapshotRoot, directory)
+    if (create) await mkdir(rootPath, { recursive: true })
+    const rootStat = await lstat(rootPath)
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return null
+    const resolvedRoot = await realpath(rootPath)
+    return isStrictDescendant(snapshotRoot, resolvedRoot) ? resolvedRoot : null
+  } catch {
+    return null
+  }
+}
+
+interface CanonicalPriorAssetPath {
+  fileName: string
+  manifestPath: string
+}
+
+const canonicalPriorAssetPath = (
+  resource: 'receipt' | 'avatar',
+  sha256: string,
+  value: unknown,
+  expectedExtension: string | undefined,
+): CanonicalPriorAssetPath | null => {
+  if (typeof value !== 'string') return null
+  if (resource === 'avatar') {
+    const manifestPath = canonicalAssetPath(resource, sha256)
+    if (value !== manifestPath && value !== manifestPath.replace('/', '\\')) return null
+    return { fileName: sha256, manifestPath }
+  }
+
+  let extension = expectedExtension
+  if (extension === undefined) {
+    const posixPrefix = `receipts/${sha256}`
+    const windowsPrefix = `receipts\\${sha256}`
+    if (value.startsWith(posixPrefix)) extension = value.slice(posixPrefix.length)
+    else if (value.startsWith(windowsPrefix)) extension = value.slice(windowsPrefix.length)
+    else return null
+    if (!/^(?:\.[a-z0-9]{1,10})?$/.test(extension)) return null
+  }
+  const manifestPath = canonicalAssetPath(resource, sha256, extension)
+  if (value !== manifestPath && value !== manifestPath.replace('/', '\\')) return null
+  return { fileName: `${sha256}${extension}`, manifestPath }
+}
+
 const validPriorAsset = async (
   snapshotDir: string,
   resource: 'receipt' | 'avatar',
@@ -141,27 +212,34 @@ const validPriorAsset = async (
   raw: unknown,
   expectedExtension?: string,
   expectedContentType?: string,
+  expectedSize?: number,
 ): Promise<ManifestBinaryAsset | null> => {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
-  const record = raw as Record<string, unknown>
+  if (!isPlainObject(raw)) return null
+  const record = raw
   if (record.source_id !== sourceId) return null
   if (typeof record.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(record.sha256)) return null
   if (!Number.isSafeInteger(record.bytes) || (record.bytes as number) < 0) return null
+  if (expectedSize !== undefined && record.bytes !== expectedSize) return null
   const contentType = canonicalContentType(record.content_type)
   if (contentType === undefined) return null
   const expectedType = canonicalContentType(expectedContentType)
   if (expectedType && contentType !== expectedType) return null
 
-  const canonical =
-    expectedExtension === undefined
-      ? resource === 'receipt'
-        ? new RegExp(`^receipts/${record.sha256}(?:\\.[a-z0-9]{1,10})?$`).test(String(record.path))
-        : record.path === canonicalAssetPath(resource, record.sha256)
-      : record.path === canonicalAssetPath(resource, record.sha256, expectedExtension)
+  const canonical = canonicalPriorAssetPath(resource, record.sha256, record.path, expectedExtension)
   if (!canonical) return null
 
   try {
-    const bytes = new Uint8Array(await readFile(join(snapshotDir, record.path as string)))
+    const root = await binaryRoot(snapshotDir, resource, false)
+    if (!root) return null
+    // The raw manifest path only proves a supported slash style. Filesystem
+    // access is derived from the validated digest/extension instead.
+    const candidate = resolve(root, canonical.fileName)
+    if (!isStrictDescendant(root, candidate)) return null
+    const candidateStat = await lstat(candidate)
+    if (!candidateStat.isFile() || candidateStat.isSymbolicLink()) return null
+    const resolvedCandidate = await realpath(candidate)
+    if (!isStrictDescendant(root, resolvedCandidate)) return null
+    const bytes = new Uint8Array(await readFile(resolvedCandidate))
     if (bytes.byteLength !== record.bytes) return null
     if (createHash('sha256').update(bytes).digest('hex') !== record.sha256) return null
   } catch {
@@ -170,7 +248,7 @@ const validPriorAsset = async (
   return {
     source_id: sourceId,
     sha256: record.sha256,
-    path: record.path as string,
+    path: canonical.manifestPath,
     bytes: record.bytes as number,
     content_type: contentType,
   }
@@ -258,23 +336,41 @@ const storeAsset = async (
   contentType: string | null,
 ): Promise<ManifestBinaryAsset> => {
   const sha256 = createHash('sha256').update(bytes).digest('hex')
-  const directory = resource === 'receipt' ? 'receipts' : 'avatars'
   const manifestPath = canonicalAssetPath(
     resource,
     sha256,
     resource === 'receipt' ? extension : undefined,
   )
-  const destination = join(snapshotDir, manifestPath)
-  await mkdir(join(snapshotDir, directory), { recursive: true })
+  const root = await binaryRoot(snapshotDir, resource, true)
+  if (!root) throw new Error('binary archive root is not a safe directory')
+  const fileName = resource === 'receipt' ? `${sha256}${extension}` : sha256
+  const destination = resolve(root, fileName)
+  if (!isStrictDescendant(root, destination)) {
+    throw new Error('binary archive destination escapes its root')
+  }
   let alreadyStored = false
   try {
-    alreadyStored = Buffer.from(await readFile(destination)).equals(Buffer.from(bytes))
+    const destinationStat = await lstat(destination)
+    if (!destinationStat.isFile() || destinationStat.isSymbolicLink()) {
+      throw new Error('binary archive destination is not a regular file')
+    }
+    const resolvedDestination = await realpath(destination)
+    if (!isStrictDescendant(root, resolvedDestination)) {
+      throw new Error('binary archive destination escapes its root')
+    }
+    alreadyStored = Buffer.from(await readFile(resolvedDestination)).equals(Buffer.from(bytes))
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
   if (!alreadyStored) {
-    const temporary = `${destination}.tmp-${process.pid}-${resource}-${sourceId}`
-    await writeFile(temporary, bytes)
+    const temporary = resolve(
+      root,
+      `.${sha256}.tmp-${process.pid}-${resource}-${sourceId}-${randomUUID()}`,
+    )
+    if (!isStrictDescendant(root, temporary)) {
+      throw new Error('binary archive temporary path escapes its root')
+    }
+    await writeFile(temporary, bytes, { flag: 'wx' })
     try {
       await rename(temporary, destination).catch(async (error: unknown) => {
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
@@ -302,10 +398,11 @@ export const downloadBinaries = async (
   const fetchImpl = options.fetchImpl ?? fetch
   const log = options.log ?? (() => undefined)
   const auth = receiptWebAuth(options)
+  const priorAnomalies = Array.isArray(options.prior?.anomalies) ? options.prior.anomalies : []
   const result: ManifestBinaries = {
     receipts: {},
     avatars: {},
-    anomalies: (options.prior?.anomalies ?? []).flatMap((anomaly) => {
+    anomalies: priorAnomalies.flatMap((anomaly) => {
       const safe = safePriorAnomaly(anomaly)
       return safe ? [safe] : []
     }),
@@ -322,7 +419,9 @@ export const downloadBinaries = async (
     })
   }
   for (const resource of ['receipt', 'avatar'] as const) {
-    const priorAssets = resource === 'receipt' ? options.prior?.receipts : options.prior?.avatars
+    const candidatePriorAssets =
+      resource === 'receipt' ? options.prior?.receipts : options.prior?.avatars
+    const priorAssets = isPlainObject(candidatePriorAssets) ? candidatePriorAssets : {}
     const assets = resource === 'receipt' ? result.receipts : result.avatars
     for (const [id, raw] of Object.entries(priorAssets ?? {})) {
       const sourceId = Number(id)
@@ -367,6 +466,7 @@ export const downloadBinaries = async (
         previous,
         resource === 'receipt' ? extension : undefined,
         typeof expectedType === 'string' ? expectedType : undefined,
+        expectedSize,
       ))
     ) {
       await checkpoint()
