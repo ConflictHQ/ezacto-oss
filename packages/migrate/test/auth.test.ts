@@ -167,6 +167,19 @@ describe('runAuth', () => {
           requests: 1,
         },
       },
+      binaries: {
+        receipts: {
+          '17': {
+            source_id: 17,
+            sha256: 'a'.repeat(64),
+            path: 'binaries/sha256/aa/archive.pdf',
+            bytes: 42,
+            content_type: 'application/pdf',
+          },
+        },
+        avatars: {},
+        anomalies: [],
+      },
     }
     await writeManifest(dir, half)
 
@@ -182,6 +195,7 @@ describe('runAuth', () => {
     expect(manifest.updated_since).toEqual(half.updated_since)
     expect(manifest.deleted_upstream).toEqual(half.deleted_upstream)
     expect(manifest.full_id_sweeps).toEqual(half.full_id_sweeps)
+    expect(manifest.binaries).toEqual(half.binaries)
     expect(manifest.started_at).toBe('2026-08-01T00:00:00.000Z')
     // the preflight itself is re-stamped from the live company response
     expect(manifest.preflight.clock).toBe(COMPANY.clock)
@@ -233,6 +247,11 @@ describe('runAuth', () => {
         requests: 1,
       },
     }
+    first.binaries = {
+      receipts: {},
+      avatars: {},
+      anomalies: [],
+    }
     await writeManifest(dir, first)
 
     await runAuth({
@@ -249,6 +268,7 @@ describe('runAuth', () => {
     expect(manifest.resources).toEqual({})
     expect(manifest.deleted_upstream).toBeUndefined()
     expect(manifest.full_id_sweeps).toBeUndefined()
+    expect(manifest.binaries).toBeUndefined()
     expect(logs.some((l) => l.includes('raw/'))).toBe(true)
   })
 

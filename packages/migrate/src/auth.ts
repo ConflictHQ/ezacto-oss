@@ -194,6 +194,7 @@ export const runAuth = async (options: RunAuthOptions): Promise<AuthResult> => {
     // not carry one account's deletion decisions across a forced re-stamp.
     ...(carried?.deleted_upstream ? { deleted_upstream: carried.deleted_upstream } : {}),
     ...(carried?.full_id_sweeps ? { full_id_sweeps: carried.full_id_sweeps } : {}),
+    ...(carried?.binaries ? { binaries: carried.binaries } : {}),
   }
   await writeManifest(snapshotDir, manifest)
 
