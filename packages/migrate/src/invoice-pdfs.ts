@@ -59,6 +59,10 @@ export interface CreateInvoicePdfThrottleOptions {
 export interface ArchiveInvoicePdfsOptions {
   snapshotDir: string
   baseUri: string
+  /** Account-domain witness captured from Harvest's authenticated company response. */
+  expectedFullDomain?: string
+  /** Explicit loopback-only seam. Production callers must never derive this from manifest data. */
+  testBaseUri?: string
   invoices: InvoicePdfInput[]
   prior?: InvoicePdfArchive
   timeoutMs?: number
@@ -157,16 +161,155 @@ const validatedPriorRecord = async (
   }
 }
 
-const normalizedBaseUri = (value: string): URL | null => {
+const OFFICIAL_ACCOUNT_DOMAIN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.harvestapp\.com$/i
+
+const strictOrigin = (value: string): URL | null => {
   try {
+    if (value !== value.trim() || value.includes('?') || value.includes('#')) return null
     const base = new URL(value)
-    if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password) return null
-    base.hash = ''
-    base.search = ''
-    base.pathname = base.pathname.replace(/\/+$/, '')
+    if (base.username || base.password || base.pathname !== '/' || base.search || base.hash) return null
     return base
   } catch {
     return null
+  }
+}
+
+const isLoopback = (hostname: string): boolean =>
+  ['127.0.0.1', '::1', '[::1]', 'localhost'].includes(hostname)
+
+const normalizedBaseUri = (
+  value: string,
+  expectedFullDomain: string | undefined,
+  testBaseUri: string | undefined,
+): URL | null => {
+  const base = strictOrigin(value)
+  if (!base) return null
+
+  // The fake-server route exists only when the caller explicitly supplies the
+  // same loopback origin as a test seam. A value read from manifest.json cannot
+  // opt itself into this branch.
+  if (testBaseUri !== undefined) {
+    const testBase = strictOrigin(testBaseUri)
+    if (
+      testBase &&
+      ['http:', 'https:'].includes(testBase.protocol) &&
+      isLoopback(testBase.hostname) &&
+      base.origin === testBase.origin
+    ) {
+      return base
+    }
+  }
+
+  if (
+    base.protocol !== 'https:' ||
+    base.port ||
+    !OFFICIAL_ACCOUNT_DOMAIN.test(base.hostname) ||
+    typeof expectedFullDomain !== 'string' ||
+    !OFFICIAL_ACCOUNT_DOMAIN.test(expectedFullDomain) ||
+    base.hostname !== expectedFullDomain.toLowerCase()
+  ) {
+    return null
+  }
+  return base
+}
+
+const INVOICE_ANOMALY_REASONS = new Set<InvoicePdfAnomalyReason>([
+  'missing_client_key',
+  'invalid_base_uri',
+  'http_status',
+  'wrong_content_type',
+  'invalid_pdf',
+  'download_failed',
+  'archive_write_failed',
+])
+
+const safePriorAnomaly = (raw: unknown): InvoicePdfAnomaly | null => {
+  if (!isPlainObject(raw)) return null
+  if (!Number.isSafeInteger(raw.invoice_id) || typeof raw.reason !== 'string') return null
+  if (!INVOICE_ANOMALY_REASONS.has(raw.reason as InvoicePdfAnomalyReason)) return null
+  return {
+    invoice_id: raw.invoice_id as number,
+    reason: raw.reason as InvoicePdfAnomalyReason,
+  }
+}
+
+const safePriorSummary = (
+  raw: unknown,
+  anomalies: InvoicePdfAnomaly[],
+  records: Record<string, InvoicePdfRecord>,
+): InvoicePdfArchiveSummary => {
+  const unarchivable = anomalies.filter((item) => item.reason === 'missing_client_key').length
+  const failed = anomalies.length - unarchivable
+  if (isPlainObject(raw)) {
+    const values = ['total', 'archived', 'skipped', 'failed', 'unarchivable'] as const
+    if (values.every((key) => Number.isSafeInteger(raw[key]) && (raw[key] as number) >= 0)) {
+      const summary = raw as unknown as InvoicePdfArchiveSummary
+      if (
+        summary.archived <= summary.total &&
+        summary.skipped <= summary.archived &&
+        summary.archived <= Object.keys(records).length &&
+        summary.archived + anomalies.length === summary.total
+      ) {
+        return {
+          total: summary.total,
+          archived: summary.archived,
+          skipped: summary.skipped,
+          failed,
+          unarchivable,
+        }
+      }
+    }
+  }
+  return {
+    total: Object.keys(records).length + anomalies.length,
+    archived: Object.keys(records).length,
+    skipped: 0,
+    failed,
+    unarchivable,
+  }
+}
+
+/**
+ * Rebuilds a prior invoice index exclusively from verified on-disk objects and
+ * stable scalar outcomes. It never issues a request and never reserializes an
+ * unknown runtime field.
+ */
+export const sanitizePriorInvoicePdfArchive = async (
+  snapshotDir: string,
+  raw: unknown,
+): Promise<InvoicePdfArchive | undefined> => {
+  if (!isPlainObject(raw)) return undefined
+  try {
+    const records: Record<string, InvoicePdfRecord> = {}
+    const priorRecords = isPlainObject(raw.records) ? raw.records : {}
+    for (const [id, candidate] of Object.entries(priorRecords)) {
+      const invoiceId = Number(id)
+      if (!Number.isSafeInteger(invoiceId) || String(invoiceId) !== id) continue
+      const validated = await validatedPriorRecord(snapshotDir, invoiceId, candidate)
+      if (validated) records[id] = validated
+    }
+    const anomalies: InvoicePdfAnomaly[] = []
+    const anomalyIds = new Set<number>()
+    if (Array.isArray(raw.anomalies)) {
+      for (const candidate of raw.anomalies) {
+        const safe = safePriorAnomaly(candidate)
+        if (
+          safe &&
+          records[String(safe.invoice_id)] === undefined &&
+          !anomalyIds.has(safe.invoice_id)
+        ) {
+          anomalyIds.add(safe.invoice_id)
+          anomalies.push(safe)
+        }
+      }
+    }
+    return {
+      records,
+      anomalies,
+      summary: safePriorSummary(raw.summary, anomalies, records),
+    }
+  } catch {
+    return undefined
   }
 }
 
@@ -329,7 +472,11 @@ export const archiveInvoicePdfs = async (
   const throttle = options.throttle ?? createInvoicePdfThrottle()
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const log = options.log ?? (() => undefined)
-  const base = normalizedBaseUri(options.baseUri)
+  const base = normalizedBaseUri(
+    options.baseUri,
+    options.expectedFullDomain,
+    options.testBaseUri,
+  )
   const requestedIds = new Set<string>()
   for (const invoice of options.invoices) {
     const id = String(invoice.id)

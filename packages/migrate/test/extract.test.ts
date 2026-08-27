@@ -498,6 +498,77 @@ describe('runExtract when the account moves under it', () => {
   const userId = (url: URL): number => Number(url.pathname.split('/')[3])
   const requestPaths = (): string[] => (server?.requests ?? []).map((r) => r.split('?')[0])
 
+  it('[unit] sanitizes retained binaries before the first failing extract checkpoint', async () => {
+    const retainedSecret = 'early-checkpoint-retained-secret'
+    const before = manifestOnDisk()
+    await writeManifest(dir, {
+      ...before,
+      binaries: {
+        receipts: {
+          '7': {
+            source_id: 7,
+            sha256: 'a'.repeat(64),
+            path: `../${retainedSecret}`,
+            bytes: 10,
+            content_type: 'application/pdf',
+            client_key: retainedSecret,
+          },
+        },
+        avatars: {
+          '8': {
+            source_id: 8,
+            sha256: 'b'.repeat(64),
+            path: `avatars/${retainedSecret}`,
+            bytes: 10,
+            content_type: null,
+          },
+        },
+        anomalies: [
+          {
+            kind: { toString: null, valueOf: null },
+            resource: 'receipt',
+            source_id: 7,
+            message: retainedSecret,
+          },
+        ],
+        invoice_pdfs: {
+          records: {
+            '9': {
+              source_id: 9,
+              sha256: 'c'.repeat(64),
+              path: `../${retainedSecret}.pdf`,
+              bytes: 10,
+              content_type: 'application/pdf',
+              client_key: retainedSecret,
+            },
+          },
+          anomalies: [{ invoice_id: 9, reason: retainedSecret }],
+          summary: {
+            total: 1,
+            archived: 1,
+            skipped: 1,
+            failed: 0,
+            unarchivable: 0,
+          },
+        },
+      } as never,
+    })
+    await start({ '/v2/users': () => ({ status: 422, body: { message: 'stop early' } }) })
+
+    await expect(extract(dir, logs)).rejects.toThrow('users: request')
+
+    const checkpoint = manifestOnDisk()
+    expect(JSON.stringify(checkpoint)).not.toContain(retainedSecret)
+    expect(checkpoint.binaries?.receipts).toEqual({})
+    expect(checkpoint.binaries?.avatars).toEqual({})
+    expect(checkpoint.binaries?.invoice_pdfs?.records).toEqual({})
+    expect(
+      (server?.requests ?? []).some(
+        (request) => request.startsWith('/client/invoices/') || request.startsWith('/binary/'),
+      ),
+    ).toBe(false)
+  })
+
   it('[unit] checkpoints each receipt outcome before requesting the next binary', async () => {
     let firstReceiptWasDurable = false
     await start({

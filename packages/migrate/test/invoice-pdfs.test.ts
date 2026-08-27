@@ -6,6 +6,8 @@ import {
   archiveInvoicePdfs,
   createInvoicePdfThrottle,
   readInvoicePdfInputs,
+  sanitizePriorInvoicePdfArchive,
+  type ArchiveInvoicePdfsOptions,
   type InvoicePdfArchive,
   type InvoicePdfInput,
 } from '../src/invoice-pdfs.js'
@@ -13,6 +15,8 @@ import {
 const PDF = new TextEncoder().encode('%PDF-1.7\ninvoice')
 const pdfResponse = (): Response =>
   new Response(PDF, { status: 200, headers: { 'content-type': 'application/pdf' } })
+const archive = (options: ArchiveInvoicePdfsOptions) =>
+  archiveInvoicePdfs({ expectedFullDomain: 'example.harvestapp.com', ...options })
 
 describe('invoice PDF archive', () => {
   let dir: string
@@ -27,7 +31,7 @@ describe('invoice PDF archive', () => {
 
   it('[unit] stores verified PDFs by content hash and reports the current archive count', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(pdfResponse())
-    const result = await archiveInvoicePdfs({
+    const result = await archive({
       snapshotDir: dir,
       baseUri: 'https://example.harvestapp.com/',
       invoices: [{ id: 7, client_key: 'client-secret' }],
@@ -50,6 +54,73 @@ describe('invoice PDF archive', () => {
     })
   })
 
+  it('[unit] refuses every non-account production origin without sending or exposing the key', async () => {
+    const key = 'origin-scope-bearer-secret'
+    const cases: Array<{ baseUri: string; expectedFullDomain?: string }> = [
+      { baseUri: 'https://attacker.example' },
+      { baseUri: 'https://example.harvestapp.com.attacker.example' },
+      { baseUri: 'http://example.harvestapp.com' },
+      { baseUri: 'https://example.harvestapp.com:8443' },
+      { baseUri: 'https://example.harvestapp.com/account' },
+      { baseUri: 'https://example.harvestapp.com?redirect=attacker.example' },
+      { baseUri: 'https://example.harvestapp.com#fragment' },
+      { baseUri: 'https://user@example.harvestapp.com' },
+      {
+        baseUri: 'https://different.harvestapp.com',
+        expectedFullDomain: 'example.harvestapp.com',
+      },
+    ]
+
+    for (const candidate of cases) {
+      const logs: string[] = []
+      const fetchImpl = vi.fn<typeof fetch>()
+      const result = await archive({
+        snapshotDir: dir,
+        baseUri: candidate.baseUri,
+        ...(candidate.expectedFullDomain
+          ? { expectedFullDomain: candidate.expectedFullDomain }
+          : {}),
+        invoices: [{ id: 7, client_key: key }],
+        fetchImpl,
+        throttle: () => Promise.resolve(),
+        log: (line) => logs.push(line),
+      })
+
+      expect(fetchImpl, candidate.baseUri).not.toHaveBeenCalled()
+      expect(result.anomalies).toEqual([{ invoice_id: 7, reason: 'invalid_base_uri' }])
+      expect(`${JSON.stringify(result)}\n${logs.join('\n')}`).not.toContain(key)
+    }
+
+    const noDomainFetch = vi.fn<typeof fetch>()
+    await archiveInvoicePdfs({
+      snapshotDir: dir,
+      baseUri: 'https://example.harvestapp.com',
+      invoices: [{ id: 7, client_key: key }],
+      fetchImpl: noDomainFetch,
+      throttle: () => Promise.resolve(),
+    })
+    expect(noDomainFetch).not.toHaveBeenCalled()
+  })
+
+  it('[unit] permits only an explicitly supplied loopback test origin', async () => {
+    const baseUri = 'http://127.0.0.1:43117'
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(pdfResponse())
+    const result = await archiveInvoicePdfs({
+      snapshotDir: dir,
+      baseUri,
+      testBaseUri: baseUri,
+      invoices: [{ id: 7, client_key: 'loopback-only-key' }],
+      fetchImpl,
+      throttle: () => Promise.resolve(),
+    })
+
+    expect(result.summary.archived).toBe(1)
+    expect(fetchImpl).toHaveBeenCalledWith(
+      new URL(`${baseUri}/client/invoices/loopback-only-key.pdf`),
+      expect.objectContaining({ redirect: 'manual' }),
+    )
+  })
+
   it('[unit] rejects non-200 and non-PDF responses and never stores them', async () => {
     const html = new Response('<html>not found</html>', {
       status: 200,
@@ -65,7 +136,7 @@ describe('invoice PDF archive', () => {
       .mockResolvedValueOnce(falsePdf)
       .mockResolvedValueOnce(new Response(null, { status: 404 }))
 
-    const result = await archiveInvoicePdfs({
+    const result = await archive({
       snapshotDir: dir,
       baseUri: 'https://example.harvestapp.com',
       invoices: [
@@ -92,7 +163,7 @@ describe('invoice PDF archive', () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockRejectedValue(new Error(`request failed for ${key}`))
-    const result = await archiveInvoicePdfs({
+    const result = await archive({
       snapshotDir: dir,
       baseUri: 'https://example.harvestapp.com',
       invoices: [
@@ -113,7 +184,7 @@ describe('invoice PDF archive', () => {
     ])
     expect(fetchImpl).toHaveBeenCalledTimes(1)
 
-    const invalidBase = await archiveInvoicePdfs({
+    const invalidBase = await archive({
       snapshotDir: dir,
       baseUri: 'not a URI',
       invoices: [{ id: 3, client_key: key }],
@@ -129,7 +200,7 @@ describe('invoice PDF archive', () => {
   it('[unit] uses only its own request throttle', async () => {
     const throttle = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(pdfResponse())
-    await archiveInvoicePdfs({
+    await archive({
       snapshotDir: dir,
       baseUri: 'https://example.harvestapp.com',
       invoices: [
@@ -170,7 +241,7 @@ describe('invoice PDF archive', () => {
       if (init?.signal?.aborted) return Promise.reject(new Error('already aborted'))
       return Promise.resolve(pdfResponse())
     })
-    const result = await archiveInvoicePdfs({
+    const result = await archive({
       snapshotDir: dir,
       baseUri: 'https://example.harvestapp.com',
       invoices: [{ id: 1, client_key: 'one' }],
@@ -192,7 +263,7 @@ describe('invoice PDF archive', () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(pdfResponse())
       .mockRejectedValueOnce(new Error('temporary failure for two'))
-    const first = await archiveInvoicePdfs({
+    const first = await archive({
       snapshotDir: dir,
       baseUri: 'https://example.harvestapp.com',
       invoices,
@@ -202,7 +273,7 @@ describe('invoice PDF archive', () => {
     expect(first.summary.archived).toBe(1)
 
     const retryFetch = vi.fn<typeof fetch>().mockResolvedValue(pdfResponse())
-    const second = await archiveInvoicePdfs({
+    const second = await archive({
       snapshotDir: dir,
       baseUri: 'https://example.harvestapp.com',
       invoices,
@@ -221,7 +292,7 @@ describe('invoice PDF archive', () => {
 
     const checkpointedRecords: string[][] = []
     const unchangedFetch = vi.fn<typeof fetch>()
-    await archiveInvoicePdfs({
+    await archive({
       snapshotDir: dir,
       baseUri: 'https://example.harvestapp.com',
       invoices,
@@ -241,7 +312,7 @@ describe('invoice PDF archive', () => {
 
     await unlink(join(dir, second.records['1'].path))
     const missingFetch = vi.fn<typeof fetch>().mockResolvedValue(pdfResponse())
-    const third = await archiveInvoicePdfs({
+    const third = await archive({
       snapshotDir: dir,
       baseUri: 'https://example.harvestapp.com',
       invoices,
@@ -257,7 +328,7 @@ describe('invoice PDF archive', () => {
     const corruptFetch = vi
       .fn<typeof fetch>()
       .mockImplementation(() => Promise.resolve(pdfResponse()))
-    const fourth = await archiveInvoicePdfs({
+    const fourth = await archive({
       snapshotDir: dir,
       baseUri: 'https://example.harvestapp.com',
       invoices,
@@ -273,7 +344,7 @@ describe('invoice PDF archive', () => {
     const traversal = structuredClone(fourth)
     traversal.records['1'].path = '../outside.pdf'
     const traversalFetch = vi.fn<typeof fetch>().mockResolvedValue(pdfResponse())
-    const fifth = await archiveInvoicePdfs({
+    const fifth = await archive({
       snapshotDir: dir,
       baseUri: 'https://example.harvestapp.com',
       invoices,
@@ -284,7 +355,7 @@ describe('invoice PDF archive', () => {
     expect(traversalFetch).toHaveBeenCalledTimes(1)
     expect(fifth.records['1'].path).toMatch(/^invoice-pdfs\/[a-f0-9]{64}\.pdf$/)
 
-    const preserved = await archiveInvoicePdfs({
+    const preserved = await archive({
       snapshotDir: dir,
       baseUri: 'https://example.harvestapp.com',
       invoices: [],
@@ -297,7 +368,7 @@ describe('invoice PDF archive', () => {
 
   it('[unit] retains only verified historical records outside the current input set', async () => {
     const sourceKey = 'must-not-escape-retained-record'
-    const current = await archiveInvoicePdfs({
+    const current = await archive({
       snapshotDir: dir,
       baseUri: 'https://example.harvestapp.com',
       invoices: [
@@ -334,7 +405,7 @@ describe('invoice PDF archive', () => {
     runtimeRecords['7'] = []
 
     const logs: string[] = []
-    const retained = await archiveInvoicePdfs({
+    const retained = await archive({
       snapshotDir: dir,
       baseUri: 'https://example.harvestapp.com',
       invoices: [],
@@ -347,7 +418,7 @@ describe('invoice PDF archive', () => {
     expect(retained.summary).toMatchObject({ total: 0, archived: 0 })
     expect(`${JSON.stringify(retained)}\n${logs.join('\n')}`).not.toContain(sourceKey)
 
-    const malformedMap = await archiveInvoicePdfs({
+    const malformedMap = await archive({
       snapshotDir: dir,
       baseUri: 'https://example.harvestapp.com',
       invoices: [],
@@ -357,8 +428,56 @@ describe('invoice PDF archive', () => {
     expect(malformedMap.records).toEqual({})
   })
 
+  it('[unit] sanitizes, deduplicates, and reconciles retained invoice outcomes', async () => {
+    const secret = 'retained-invoice-secret'
+    const current = await archive({
+      snapshotDir: dir,
+      baseUri: 'https://example.harvestapp.com',
+      invoices: [
+        { id: 1, client_key: 'one' },
+        { id: 2, client_key: 'two' },
+      ],
+      fetchImpl: vi.fn<typeof fetch>().mockImplementation(() => Promise.resolve(pdfResponse())),
+      throttle: () => Promise.resolve(),
+    })
+    const raw = structuredClone(current) as unknown as Record<string, unknown>
+    const records = raw.records as Record<string, Record<string, unknown>>
+    records['1'].client_key = secret
+    raw.anomalies = [
+      { invoice_id: 1, reason: 'download_failed', client_key: secret },
+      { invoice_id: 3, reason: 'missing_client_key' },
+      { invoice_id: 3, reason: 'download_failed' },
+      { invoice_id: 4, reason: 'download_failed' },
+      { invoice_id: 5, reason: secret },
+    ]
+    raw.summary = {
+      total: 999,
+      archived: 999,
+      skipped: 999,
+      failed: 999,
+      unarchivable: 999,
+      client_key: secret,
+    }
+
+    const safe = await sanitizePriorInvoicePdfArchive(dir, raw)
+
+    expect(safe?.records).toEqual(current.records)
+    expect(safe?.anomalies).toEqual([
+      { invoice_id: 3, reason: 'missing_client_key' },
+      { invoice_id: 4, reason: 'download_failed' },
+    ])
+    expect(safe?.summary).toEqual({
+      total: 4,
+      archived: 2,
+      skipped: 0,
+      failed: 1,
+      unarchivable: 1,
+    })
+    expect(JSON.stringify(safe)).not.toContain(secret)
+  })
+
   it('[unit] rejects a symlinked retained PDF even when its target has valid bytes', async () => {
-    const current = await archiveInvoicePdfs({
+    const current = await archive({
       snapshotDir: dir,
       baseUri: 'https://example.harvestapp.com',
       invoices: [{ id: 1, client_key: 'one' }],
@@ -378,7 +497,7 @@ describe('invoice PDF archive', () => {
       throw error
     }
 
-    const retained = await archiveInvoicePdfs({
+    const retained = await archive({
       snapshotDir: dir,
       baseUri: 'https://example.harvestapp.com',
       invoices: [],
@@ -400,7 +519,7 @@ describe('invoice PDF archive', () => {
       throw error
     }
 
-    const result = await archiveInvoicePdfs({
+    const result = await archive({
       snapshotDir: dir,
       baseUri: 'https://example.harvestapp.com',
       invoices: [{ id: 1, client_key: 'one' }],
@@ -415,7 +534,7 @@ describe('invoice PDF archive', () => {
 
   it('[unit] checkpoints a secret-free outcome after every invoice', async () => {
     const checkpoints: number[] = []
-    const result = await archiveInvoicePdfs({
+    const result = await archive({
       snapshotDir: dir,
       baseUri: 'https://example.harvestapp.com',
       invoices: [

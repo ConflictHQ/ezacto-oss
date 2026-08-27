@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, symlink, unlink, writeFile } fro
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { downloadBinaries } from '../src/binaries.js'
+import { downloadBinaries, sanitizePriorBinaries } from '../src/binaries.js'
 import type { ManifestBinaries } from '../src/manifest.js'
 
 describe('binary snapshot archive', () => {
@@ -451,6 +451,37 @@ describe('binary snapshot archive', () => {
     expect(retained.receipts).toEqual({})
     expect(retained.avatars).toEqual({})
     expect(retained.anomalies).toEqual([])
+  })
+
+  it('[unit] drops hostile anomaly scalars without coercing them or aborting sanitation', async () => {
+    const hostileScalar = { toString: null, valueOf: null }
+    const raw = {
+      receipts: {},
+      avatars: {},
+      anomalies: [
+        {
+          kind: hostileScalar,
+          resource: 'receipt',
+          source_id: 7,
+          message: 'request_failed',
+        },
+        {
+          kind: 'download_failed',
+          resource: hostileScalar,
+          source_id: 8,
+          message: 'request_failed',
+        },
+      ],
+    }
+
+    await expect(sanitizePriorBinaries(dir, raw)).resolves.toEqual({
+      receipts: {},
+      avatars: {},
+      anomalies: [],
+    })
+    await expect(
+      downloadBinaries({ snapshotDir: dir, prior: raw as unknown as ManifestBinaries }),
+    ).resolves.toMatchObject({ anomalies: [] })
   })
 
   it('[unit] rejects symlinked receipt and avatar files without changing their targets', async () => {

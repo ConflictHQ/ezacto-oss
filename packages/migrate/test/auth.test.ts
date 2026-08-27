@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { tmpdir } from 'node:os'
@@ -143,6 +144,10 @@ describe('runAuth', () => {
 
   it('[unit] carries extract progress forward: a re-run preserves resources, watermarks, and started_at', async () => {
     usersMeResponse = { id: 1, access_roles: ['administrator'] }
+    const receiptBytes = Buffer.from('verified legacy receipt')
+    const receiptSha = createHash('sha256').update(receiptBytes).digest('hex')
+    await mkdir(join(dir, 'receipts'))
+    await writeFile(join(dir, 'receipts', `${receiptSha}.pdf`), receiptBytes)
     const half: Manifest = {
       account: { id: '999', name: 'CONFLICT' },
       company_name: 'CONFLICT',
@@ -173,9 +178,9 @@ describe('runAuth', () => {
         receipts: {
           '17': {
             source_id: 17,
-            sha256: 'a'.repeat(64),
-            path: 'binaries/sha256/aa/archive.pdf',
-            bytes: 42,
+            sha256: receiptSha,
+            path: `receipts/${receiptSha}.pdf`,
+            bytes: receiptBytes.byteLength,
             content_type: 'application/pdf',
           },
         },
@@ -183,6 +188,18 @@ describe('runAuth', () => {
         anomalies: [],
       },
     }
+    const expectedBinaries = structuredClone(half.binaries)
+    const retainedSecret = 'auth-retained-secret'
+    ;(half.binaries!.receipts['17'] as unknown as Record<string, unknown>).client_key =
+      retainedSecret
+    half.binaries!.anomalies = [
+      {
+        kind: { toString: null, valueOf: null } as never,
+        resource: 'receipt',
+        source_id: 17,
+        message: retainedSecret as never,
+      },
+    ]
     // Snapshots written before the invoice-PDF archive did not have these two
     // company-location fields. They must remain resumable: auth fills the new
     // fields without discarding any extract or binary progress.
@@ -202,7 +219,9 @@ describe('runAuth', () => {
     expect(manifest.updated_since).toEqual(half.updated_since)
     expect(manifest.deleted_upstream).toEqual(half.deleted_upstream)
     expect(manifest.full_id_sweeps).toEqual(half.full_id_sweeps)
-    expect(manifest.binaries).toEqual(half.binaries)
+    expect(manifest.binaries).toEqual(expectedBinaries)
+    expect(JSON.stringify(manifest)).not.toContain(retainedSecret)
+    expect(order).toEqual(['accounts', 'company', 'users/me'])
     expect(manifest.started_at).toBe('2026-08-01T00:00:00.000Z')
     // the preflight itself is re-stamped from the live company response
     expect(manifest.preflight.base_uri).toBe(COMPANY.base_uri)

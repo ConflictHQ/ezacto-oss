@@ -23,7 +23,7 @@
 // resuming into a list that reordered under it.
 
 import { parseUserMe, scopeChangeBetween, visibilityWarning } from './auth.js'
-import { downloadBinaries } from './binaries.js'
+import { downloadBinaries, sanitizePriorBinaries } from './binaries.js'
 import type { HarvestEnv } from './env.js'
 import {
   archiveInvoicePdfs,
@@ -229,6 +229,12 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
         `preflight that auth records. Run \`ezacto-migrate auth --snapshot-dir ${snapshotDir}\` first.`,
     )
   }
+  // `manifest.binaries` is runtime input, including on same-account auth and
+  // crash resumes. Validate every retained file and rebuild every nested scalar
+  // before the first manifest checkpoint can serialize it again.
+  const safePriorBinaries = await sanitizePriorBinaries(snapshotDir, manifest.binaries)
+  if (safePriorBinaries) manifest.binaries = safePriorBinaries
+  else delete manifest.binaries
   const invoicePdfBaseUri = options.baseUrl ?? manifest.preflight.base_uri
   if (typeof invoicePdfBaseUri !== 'string' || invoicePdfBaseUri.trim() === '') {
     throw new Error(
@@ -236,7 +242,6 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
         `Run \`ezacto-migrate auth --snapshot-dir ${snapshotDir}\` to refresh its preflight before extract.`,
     )
   }
-
   const session =
     options.session ??
     createExtractSession({
@@ -1005,25 +1010,6 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
     )
   }
 
-  const priorBinaries = manifest.binaries
-  // Receipt/avatar outcomes checkpoint before the invoice sweep starts. Sanitize
-  // the prior invoice index first so those early writes never reserialize a
-  // tampered path or reflected value from an older manifest. With no requested
-  // invoices this performs validation only and cannot issue a web request.
-  const safePriorInvoicePdfs = priorBinaries?.invoice_pdfs
-    ? await archiveInvoicePdfs({
-        snapshotDir,
-        baseUri: invoicePdfBaseUri,
-        invoices: [],
-        prior: priorBinaries.invoice_pdfs,
-      })
-    : undefined
-  const safePriorBinaries = priorBinaries
-    ? {
-        ...priorBinaries,
-        ...(safePriorInvoicePdfs ? { invoice_pdfs: safePriorInvoicePdfs } : {}),
-      }
-    : undefined
   const binaries = await downloadBinaries({
     snapshotDir,
     prior: safePriorBinaries,
@@ -1058,8 +1044,10 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
     // `baseUrl` is the whole-sweep local-server seam used by extract tests.
     // Production never sets it and uses the web origin captured by auth.
     baseUri: invoicePdfBaseUri,
+    expectedFullDomain: manifest.preflight.full_domain,
+    ...(options.baseUrl !== undefined ? { testBaseUri: options.baseUrl } : {}),
     invoices: invoicePdfInputs,
-    prior: safePriorInvoicePdfs,
+    prior: safePriorBinaries?.invoice_pdfs,
     timeoutMs: options.timeoutMs,
     throttle: options.invoicePdfThrottle,
     log,

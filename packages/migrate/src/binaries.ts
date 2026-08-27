@@ -7,6 +7,7 @@ import type {
   ManifestBinaryAnomalyReason,
   ManifestBinaryAsset,
 } from './manifest.js'
+import { sanitizePriorInvoicePdfArchive } from './invoice-pdfs.js'
 
 interface ReceiptRecord {
   id: number
@@ -257,10 +258,18 @@ const validPriorAsset = async (
 const safePriorAnomaly = (raw: unknown): ManifestBinaryAnomaly | null => {
   if (!isPlainObject(raw)) return null
   const anomaly = raw
-  if (!['download_failed', 'size_mismatch', 'invalid_record'].includes(String(anomaly.kind))) {
+  if (
+    typeof anomaly.kind !== 'string' ||
+    !['download_failed', 'size_mismatch', 'invalid_record'].includes(anomaly.kind)
+  ) {
     return null
   }
-  if (!['receipt', 'avatar'].includes(String(anomaly.resource))) return null
+  if (
+    typeof anomaly.resource !== 'string' ||
+    !['receipt', 'avatar'].includes(anomaly.resource)
+  ) {
+    return null
+  }
   if (anomaly.source_id !== null && !Number.isSafeInteger(anomaly.source_id)) return null
   const kind = anomaly.kind as ManifestBinaryAnomaly['kind']
   const allowedDownloadReasons = new Set<ManifestBinaryAnomalyReason>([
@@ -282,6 +291,59 @@ const safePriorAnomaly = (raw: unknown): ManifestBinaryAnomaly | null => {
     resource: anomaly.resource as ManifestBinaryAnomaly['resource'],
     source_id: anomaly.source_id as number | null,
     message,
+  }
+}
+
+/**
+ * Validates all retained binary indexes without reading current raw inputs or
+ * issuing downloads. Every returned object is rebuilt from safe scalars and a
+ * verified regular file beneath the snapshot archive roots.
+ */
+export const sanitizePriorBinaries = async (
+  snapshotDir: string,
+  raw: unknown,
+): Promise<ManifestBinaries | undefined> => {
+  if (!isPlainObject(raw)) return undefined
+  try {
+    const result: ManifestBinaries = { receipts: {}, avatars: {}, anomalies: [] }
+    const priorAnomalies = Array.isArray(raw.anomalies) ? raw.anomalies : []
+    for (const candidate of priorAnomalies) {
+      const safe = safePriorAnomaly(candidate)
+      if (safe) result.anomalies.push(safe)
+    }
+
+    const addInvalidRecord = (
+      resource: 'receipt' | 'avatar',
+      sourceId: number | null,
+    ): void => {
+      result.anomalies.push({
+        kind: 'invalid_record',
+        resource,
+        source_id: sourceId,
+        message: 'invalid_record',
+      })
+    }
+    for (const resource of ['receipt', 'avatar'] as const) {
+      const candidateAssets = resource === 'receipt' ? raw.receipts : raw.avatars
+      const priorAssets = isPlainObject(candidateAssets) ? candidateAssets : {}
+      const assets = resource === 'receipt' ? result.receipts : result.avatars
+      for (const [id, candidate] of Object.entries(priorAssets)) {
+        const sourceId = Number(id)
+        if (!Number.isSafeInteger(sourceId) || String(sourceId) !== id) {
+          addInvalidRecord(resource, null)
+          continue
+        }
+        const valid = await validPriorAsset(snapshotDir, resource, sourceId, candidate)
+        if (valid) assets[id] = valid
+        else addInvalidRecord(resource, sourceId)
+      }
+    }
+
+    const invoicePdfs = await sanitizePriorInvoicePdfArchive(snapshotDir, raw.invoice_pdfs)
+    if (invoicePdfs) result.invoice_pdfs = invoicePdfs
+    return result
+  } catch {
+    return undefined
   }
 }
 
@@ -398,43 +460,11 @@ export const downloadBinaries = async (
   const fetchImpl = options.fetchImpl ?? fetch
   const log = options.log ?? (() => undefined)
   const auth = receiptWebAuth(options)
-  const priorAnomalies = Array.isArray(options.prior?.anomalies) ? options.prior.anomalies : []
-  const result: ManifestBinaries = {
-    receipts: {},
-    avatars: {},
-    anomalies: priorAnomalies.flatMap((anomaly) => {
-      const safe = safePriorAnomaly(anomaly)
-      return safe ? [safe] : []
-    }),
-    ...(options.prior?.invoice_pdfs ? { invoice_pdfs: options.prior.invoice_pdfs } : {}),
-  }
+  const result =
+    (await sanitizePriorBinaries(snapshotDir, options.prior)) ??
+    ({ receipts: {}, avatars: {}, anomalies: [] } satisfies ManifestBinaries)
 
   const anomalies = result.anomalies
-  const addInvalidRecord = (resource: 'receipt' | 'avatar', sourceId: number | null): void => {
-    anomalies.push({
-      kind: 'invalid_record',
-      resource,
-      source_id: sourceId,
-      message: 'invalid_record',
-    })
-  }
-  for (const resource of ['receipt', 'avatar'] as const) {
-    const candidatePriorAssets =
-      resource === 'receipt' ? options.prior?.receipts : options.prior?.avatars
-    const priorAssets = isPlainObject(candidatePriorAssets) ? candidatePriorAssets : {}
-    const assets = resource === 'receipt' ? result.receipts : result.avatars
-    for (const [id, raw] of Object.entries(priorAssets ?? {})) {
-      const sourceId = Number(id)
-      if (!Number.isSafeInteger(sourceId) || String(sourceId) !== id) {
-        addInvalidRecord(resource, null)
-        continue
-      }
-      const valid = await validPriorAsset(snapshotDir, resource, sourceId, raw)
-      if (valid) assets[id] = valid
-      else addInvalidRecord(resource, sourceId)
-    }
-  }
-
   const current = (): ManifestBinaries => ({
     receipts: { ...result.receipts },
     avatars: { ...result.avatars },
