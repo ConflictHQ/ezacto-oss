@@ -144,6 +144,15 @@ describe('runAuth', () => {
         }),
       },
       updated_since: { time_entries: '2026-08-20T10:00:00Z' },
+      deleted_upstream: { roles: [7] },
+      full_id_sweeps: {
+        roles: {
+          completed_at: '2026-08-20T10:00:00.000Z',
+          seen_count: 3,
+          total_entries: 3,
+          requests: 1,
+        },
+      },
     }
     await writeManifest(dir, half)
 
@@ -157,6 +166,8 @@ describe('runAuth', () => {
     const manifest = await readManifest(dir)
     expect(manifest.resources).toEqual(half.resources)
     expect(manifest.updated_since).toEqual(half.updated_since)
+    expect(manifest.deleted_upstream).toEqual(half.deleted_upstream)
+    expect(manifest.full_id_sweeps).toEqual(half.full_id_sweeps)
     expect(manifest.started_at).toBe('2026-08-01T00:00:00.000Z')
     // the preflight itself is re-stamped from the live company response
     expect(manifest.preflight.clock).toBe(COMPANY.clock)
@@ -198,6 +209,17 @@ describe('runAuth', () => {
     }
     const logs: string[] = []
     await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir, accountIdFlag: '111' })
+    const first = await readManifest(dir)
+    first.deleted_upstream = { roles: [7] }
+    first.full_id_sweeps = {
+      roles: {
+        completed_at: '2026-08-26T00:00:00.000Z',
+        seen_count: 3,
+        total_entries: 3,
+        requests: 1,
+      },
+    }
+    await writeManifest(dir, first)
 
     await runAuth({
       env: baseEnv,
@@ -211,6 +233,8 @@ describe('runAuth', () => {
     const manifest = await readManifest(dir)
     expect(manifest.account.id).toBe('222')
     expect(manifest.resources).toEqual({})
+    expect(manifest.deleted_upstream).toBeUndefined()
+    expect(manifest.full_id_sweeps).toBeUndefined()
     expect(logs.some((l) => l.includes('raw/'))).toBe(true)
   })
 

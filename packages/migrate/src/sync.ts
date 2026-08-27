@@ -44,10 +44,22 @@ export interface SyncResult {
   deleted: number
   /** Existing tombstones cleared because an ID reappeared upstream. */
   restored: number
+  /** True only when every enabled resource produced a safe deletion witness. */
+  complete: boolean
+  /** Resources intentionally left without a deletion decision, with the reason. */
+  unwitnessed: Record<string, string>
   /** Both phases, including identity checks and retry attempts. */
   requests: number
   durationMs: number
 }
+
+/** CLI policy: no deletion decision is safer than pretending sync succeeded. */
+export const syncExitCode = (result: Pick<SyncResult, 'complete'>): 0 | 1 =>
+  result.complete ? 0 : 1
+
+type Witness =
+  | { witnessed: true; ids: Set<number>; totalEntries: number; requests: number }
+  | { witnessed: false; reason: string }
 
 const isApiError = (err: unknown): err is Error & { status: number } =>
   err instanceof Error && typeof (err as { status?: unknown }).status === 'number'
@@ -81,7 +93,19 @@ const witnessedIds = async (
   step: ResourceStep,
   session: ExtractSession,
   parentIds: readonly number[] | null,
-): Promise<{ ids: Set<number>; totalEntries: number; requests: number } | null> => {
+): Promise<Witness> => {
+  // Harvest serializes a teammate as a user whose id is only unique *inside the
+  // manager endpoint* it came from. raw/ stays verbatim by contract and does
+  // not carry that parent id, so a single teammates.jsonl cannot reconstruct
+  // the domain key (manager_id, teammate_id). Treating teammate_id as global
+  // would silently conflate two manager assignments; until raw has a separate
+  // relation index, sync must make no delete decision for this resource.
+  if (step.name === 'teammates') {
+    return {
+      witnessed: false,
+      reason: 'teammates are keyed by (manager_id, teammate_id), but verbatim raw rows lack manager_id',
+    }
+  }
   const ids = new Set<number>()
   let totalEntries = 0
   let requests = 0
@@ -122,19 +146,21 @@ const witnessedIds = async (
     // previous deletion state untouched rather than translating a 403 into an
     // account-wide tombstone.
     if (step.kind === 'child' && step.optional && isApiError(err) && [403, 404, 422].includes(err.status)) {
-      return null
+      return { witnessed: false, reason: `Harvest returned ${err.status} for optional endpoint` }
     }
     throw err
   }
 
-  if (!hasWitness) return null
+  if (!hasWitness) {
+    return { witnessed: false, reason: 'Harvest omitted total_entries for this full-ID sweep' }
+  }
   if (ids.size !== totalEntries) {
     throw new Error(
       `${step.name}: full-ID sweep saw ${ids.size} distinct id(s), but Harvest reported ` +
         `${totalEntries}; no deletion marks were published`,
     )
   }
-  return { ids, totalEntries, requests }
+  return { witnessed: true, ids, totalEntries, requests }
 }
 
 const enabled = (manifest: Manifest, step: ResourceStep): boolean =>
@@ -164,6 +190,22 @@ const captureRaw = async (snapshotDir: string, backupDir: string, resource: stri
   return true
 }
 
+const acquireSyncLock = async (snapshotDir: string): Promise<string> => {
+  const path = join(snapshotDir, '.sync.lock')
+  try {
+    // mkdir is atomic, unlike a check-then-create file lock. It remains for the
+    // full command: pre-extract backup, extraction, witnesses and manifest
+    // publication are one snapshot transaction.
+    await mkdir(path)
+    return path
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+      throw new Error(`sync already running for ${snapshotDir} — wait for it to finish before starting another`)
+    }
+    throw err
+  }
+}
+
 /**
  * Incrementally extract, then publish deletion marks resource-by-resource only
  * after their entire full-ID witness has completed. This is deliberately
@@ -173,18 +215,19 @@ export const runSync = async (options: RunSyncOptions): Promise<SyncResult> => {
   const now = options.now ?? (() => new Date())
   const log = options.log ?? ((line: string) => console.log(line))
   const started = Date.now()
-  const initial = await readManifest(options.snapshotDir)
-  const session = createExtractSession({
-    env: options.env,
-    accountId: initial.account.id,
-    baseUrl: options.baseUrl,
-    timeoutMs: options.timeoutMs,
-    log,
-    sleep: options.sleep,
-  })
-
-  const backupDir = await mkdtemp(join(options.snapshotDir, '.sync-before-'))
+  const lockPath = await acquireSyncLock(options.snapshotDir)
   try {
+    const initial = await readManifest(options.snapshotDir)
+    const session = createExtractSession({
+      env: options.env,
+      accountId: initial.account.id,
+      baseUrl: options.baseUrl,
+      timeoutMs: options.timeoutMs,
+      log,
+      sleep: options.sleep,
+    })
+    const backupDir = await mkdtemp(join(options.snapshotDir, '.sync-before-'))
+    try {
     const backedUp = new Set<string>()
     for (const step of RESOURCES) {
       if (enabled(initial, step) && (await captureRaw(options.snapshotDir, backupDir, step.name))) {
@@ -197,24 +240,32 @@ export const runSync = async (options: RunSyncOptions): Promise<SyncResult> => {
     const deletedUpstream: Record<string, number[]> = { ...(manifest.deleted_upstream ?? {}) }
     const fullIdSweeps: Record<string, ManifestFullIdSweep> = { ...(manifest.full_id_sweeps ?? {}) }
     const sweeps: Record<string, SyncSweepResult> = {}
+    const unwitnessed: Record<string, string> = {}
     let deleted = 0
     let restored = 0
 
+    // Preserve every pre-extract row before asking the first witness. A later
+    // full-sweep resource may already have been replaced when an early witness
+    // is malformed; restoring only the resource that failed would then lose the
+    // later resource when the temporary snapshot is cleaned up in finally.
+    for (const resource of backedUp) {
+      const allPriorIds = new Set<number>()
+      for await (const id of readIds(backupDir, resource)) allPriorIds.add(id)
+      const restoredRows = await restoreDeletedRows(
+        options.snapshotDir,
+        resource,
+        backupDir,
+        allPriorIds,
+      )
+      manifest.resources[resource].count += restoredRows
+      // formatCounts receives the result returned by extract, not a reread
+      // manifest. Keep it truthful after restoring source rows.
+      extract.resources[resource].count += restoredRows
+    }
+    await writeManifest(options.snapshotDir, manifest)
+
     for (const step of RESOURCES) {
       if (!enabled(manifest, step)) continue
-
-      const restorePriorRows = async (): Promise<void> => {
-        if (!backedUp.has(step.name)) return
-        const allPriorIds = new Set<number>()
-        for await (const id of readIds(backupDir, step.name)) allPriorIds.add(id)
-        const restoredRows = await restoreDeletedRows(
-          options.snapshotDir,
-          step.name,
-          backupDir,
-          allPriorIds,
-        )
-        manifest.resources[step.name].count += restoredRows
-      }
 
       const priorDeleted = new Set(deletedUpstream[step.name] ?? [])
       const parents =
@@ -225,17 +276,13 @@ export const runSync = async (options: RunSyncOptions): Promise<SyncResult> => {
       try {
         witness = await witnessedIds(step, session, parents)
       } catch (err) {
-        // A short/malformed witness is not permission to discard rows that a
-        // full extract replaced. Restore the pre-sync bytes before surfacing
-        // the refusal, without publishing any deletion metadata.
-        await restorePriorRows()
-        await writeManifest(options.snapshotDir, manifest)
+        // Pre-sync rows were restored above, before the first witness. Refuse
+        // without publishing a deletion decision from this malformed witness.
         throw err
       }
-      if (witness === null) {
-        await restorePriorRows()
-        await writeManifest(options.snapshotDir, manifest)
-        log(`${step.name}: no full-ID witness available; leaving deletion marks unchanged`)
+      if (!witness.witnessed) {
+        unwitnessed[step.name] = witness.reason
+        log(`${step.name}: no full-ID witness available; leaving deletion marks unchanged (${witness.reason})`)
         continue
       }
 
@@ -255,19 +302,6 @@ export const runSync = async (options: RunSyncOptions): Promise<SyncResult> => {
       }
       for (const id of witness.ids) {
         if (nextDeleted.delete(id)) cleared += 1
-      }
-
-      // Re-add only rows the witness has proved gone, and only after the full
-      // witness. This keeps raw/ lossless even though extract replaces a full
-      // resource file as part of its normal resumable extraction semantics.
-      if (backedUp.has(step.name)) {
-        const restoredRows = await restoreDeletedRows(
-          options.snapshotDir,
-          step.name,
-          backupDir,
-          nextDeleted,
-        )
-        manifest.resources[step.name].count += restoredRows
       }
 
       const fullIdSweep: ManifestFullIdSweep = {
@@ -293,10 +327,15 @@ export const runSync = async (options: RunSyncOptions): Promise<SyncResult> => {
       sweeps,
       deleted,
       restored,
+      complete: Object.keys(unwitnessed).length === 0,
+      unwitnessed,
       requests: session.limiter.granted,
       durationMs: Date.now() - started,
     }
+    } finally {
+      await rm(backupDir, { recursive: true, force: true })
+    }
   } finally {
-    await rm(backupDir, { recursive: true, force: true })
+    await rm(lockPath, { recursive: true, force: true })
   }
 }

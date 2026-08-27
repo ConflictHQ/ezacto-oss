@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { loadDevVars, readHarvestEnv } from './env.js'
 import { runAuth } from './auth.js'
 import { runExtract, type ExtractResult } from './extract.js'
-import { runSync } from './sync.js'
+import { runSync, syncExitCode } from './sync.js'
 import { runVerify } from './verify.js'
 
 const USAGE = `ezacto-migrate <command> [options]
@@ -156,6 +156,14 @@ const main = async (): Promise<number> => {
       `sync: ${result.deleted} deletion mark(s) added, ${result.restored} cleared; ` +
         `${result.requests} requests total`,
     )
+    if (!result.complete) {
+      console.error(
+        `sync incomplete: no safe deletion decision for ${Object.entries(result.unwitnessed)
+          .map(([resource, reason]) => `${resource} (${reason})`)
+          .join(', ')}`,
+      )
+      return syncExitCode(result)
+    }
     return 0
   }
 

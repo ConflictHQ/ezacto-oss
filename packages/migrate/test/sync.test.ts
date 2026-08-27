@@ -1,10 +1,10 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { runExtract } from '../src/extract.js'
 import { readManifest, writeManifest } from '../src/manifest.js'
-import { runSync, type SyncResult } from '../src/sync.js'
+import { runSync, syncExitCode, type SyncResult } from '../src/sync.js'
 import { envelope, startFakeHarvest, type FakeHarvest, type RouteHandler } from './harvest-server.js'
 import { ADMIN_USER, preflight } from './fixtures.js'
 
@@ -161,12 +161,21 @@ describe('runSync', () => {
 
   it('[unit] never publishes a deletion decision from a short full-ID witness', async () => {
     upstreamHasUser2 = false
+    upstreamHasRole20 = false
+    upstreamHasInvoiceMessage = false
     shortUsersWitness = true
 
     await expect(run()).rejects.toThrow('users: full-ID sweep saw 1 distinct id(s), but Harvest reported 2')
     const manifest = await readManifest(dir)
     expect(manifest.deleted_upstream?.users).toBeUndefined()
     expect(manifest.full_id_sweeps?.users).toBeUndefined()
+    // `roles` and `invoice_messages` have already been replaced by extract by
+    // the time users' malformed witness is found. Their original raw rows are
+    // restored before any witness runs, not discarded in cleanup.
+    expect((await readFile(join(dir, 'raw', 'roles.jsonl'), 'utf8')).trim()).toContain('"id":20')
+    expect((await readFile(join(dir, 'raw', 'invoice_messages.jsonl'), 'utf8')).trim()).toContain(
+      '"id":1100',
+    )
   })
 
   it('[unit] retains and marks vanished child and no-updated-since rows after extract replaces them', async () => {
@@ -181,5 +190,23 @@ describe('runSync', () => {
     expect((await readFile(join(dir, 'raw', 'invoice_messages.jsonl'), 'utf8')).trim()).toContain(
       '"id":1100',
     )
+  })
+
+  it('[unit] reports teammate deletion detection as incomplete because raw rows lack manager context', async () => {
+    const result = await run()
+
+    expect(result.complete).toBe(false)
+    expect(result.unwitnessed.teammates).toContain('(manager_id, teammate_id)')
+    expect(syncExitCode(result)).toBe(1)
+    expect((await readManifest(dir)).deleted_upstream?.teammates).toBeUndefined()
+  })
+
+  it('[unit] rejects a concurrent sync before it can make a request or replace raw rows', async () => {
+    const before = server.requests.length
+    await mkdir(join(dir, '.sync.lock'))
+
+    await expect(run()).rejects.toThrow(`sync already running for ${dir}`)
+    expect(server.requests).toHaveLength(before)
+    expect((await readFile(join(dir, 'raw', 'roles.jsonl'), 'utf8')).trim()).toContain('"id":20')
   })
 })
