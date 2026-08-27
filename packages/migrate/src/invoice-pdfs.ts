@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { access, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 
 export interface InvoicePdfInput {
@@ -65,23 +65,37 @@ export interface ArchiveInvoicePdfsOptions {
   fetchImpl?: typeof fetch
   throttle?: InvoicePdfThrottle
   log?: (line: string) => void
+  /** Checkpoint-safe archive state after each invoice outcome. */
+  onProgress?: (archive: InvoicePdfArchive) => Promise<void>
 }
 
 const PDF_PREFIX = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d])
 const DEFAULT_TIMEOUT_MS = 15_000
 const DEFAULT_MINIMUM_DELAY_MS = 250
 
-const exists = async (path: string): Promise<boolean> => {
+const isPdf = (bytes: Uint8Array): boolean =>
+  bytes.length >= PDF_PREFIX.length && PDF_PREFIX.every((byte, index) => bytes[index] === byte)
+
+const validPriorRecord = async (
+  snapshotDir: string,
+  invoiceId: number,
+  record: InvoicePdfRecord,
+): Promise<boolean> => {
+  if (record.source_id !== invoiceId || !/^[a-f0-9]{64}$/.test(record.sha256)) return false
+  if (record.path !== `invoice-pdfs/${record.sha256}.pdf`) return false
+  if (!Number.isSafeInteger(record.bytes) || record.bytes < PDF_PREFIX.length) return false
+  if (record.content_type !== 'application/pdf') return false
   try {
-    await access(path)
-    return true
+    const bytes = new Uint8Array(await readFile(join(snapshotDir, record.path)))
+    return (
+      bytes.byteLength === record.bytes &&
+      isPdf(bytes) &&
+      createHash('sha256').update(bytes).digest('hex') === record.sha256
+    )
   } catch {
     return false
   }
 }
-
-const isPdf = (bytes: Uint8Array): boolean =>
-  bytes.length >= PDF_PREFIX.length && PDF_PREFIX.every((byte, index) => bytes[index] === byte)
 
 const normalizedBaseUri = (value: string): URL | null => {
   try {
@@ -116,11 +130,16 @@ export const readInvoicePdfInputs = async (snapshotDir: string): Promise<Invoice
   try {
     raw = await readFile(join(snapshotDir, 'raw', 'invoices.jsonl'), 'utf8')
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error(
+        'raw/invoices.jsonl is missing — extract cannot prove which invoice PDFs belong in this snapshot',
+      )
+    }
     throw error
   }
 
   const inputs: InvoicePdfInput[] = []
+  const ids = new Set<number>()
   const lines = raw.split('\n')
   for (let index = 0; index < lines.length; index += 1) {
     if (!lines[index].trim()) continue
@@ -137,6 +156,10 @@ export const readInvoicePdfInputs = async (snapshotDir: string): Promise<Invoice
     if (!Number.isSafeInteger(record.id)) {
       throw validationError(index + 1, 'invalid_invoice_id')
     }
+    if (ids.has(record.id as number)) {
+      throw validationError(index + 1, 'duplicate_invoice_id')
+    }
+    ids.add(record.id as number)
     if (
       record.client_key !== undefined &&
       record.client_key !== null &&
@@ -172,7 +195,9 @@ export const createInvoicePdfThrottle = (
     const at = now()
     const delay = Math.max(nextRequestAt - at, 0)
     if (delay > 0) await sleep(delay)
-    nextRequestAt = Math.max(nextRequestAt, at) + minimumDelayMs
+    // Sleep may overshoot. Anchor the next slot to the actual grant time, not
+    // the stale pre-sleep clock, or the following request can bunch up behind it.
+    nextRequestAt = Math.max(nextRequestAt, now()) + minimumDelayMs
   }
 }
 
@@ -185,12 +210,25 @@ const storePdf = async (
   const directory = join(snapshotDir, 'invoice-pdfs')
   const destination = join(directory, `${sha256}.pdf`)
   await mkdir(directory, { recursive: true })
-  if (!(await exists(destination))) {
+  let alreadyStored = false
+  try {
+    alreadyStored = Buffer.from(await readFile(destination)).equals(Buffer.from(bytes))
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  if (!alreadyStored) {
     const temporary = `${destination}.tmp-${process.pid}-${invoiceId}`
     await writeFile(temporary, bytes)
     await rename(temporary, destination).catch(async (error: unknown) => {
-      await rm(temporary, { force: true })
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+        await rm(temporary, { force: true })
+        throw error
+      }
+      // Windows does not replace an existing destination with rename. The
+      // temporary file is fully written before this fallback removes a corrupt
+      // object, so the next operation restores the canonical hash path.
+      await rm(destination, { force: true })
+      await rename(temporary, destination)
     })
   }
   return {
@@ -215,11 +253,18 @@ export const archiveInvoicePdfs = async (
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const log = options.log ?? (() => undefined)
   const base = normalizedBaseUri(options.baseUri)
-  const requestedIds = new Set(options.invoices.map((invoice) => String(invoice.id)))
-  const records: Record<string, InvoicePdfRecord> = {}
-  for (const [id, record] of Object.entries(options.prior?.records ?? {})) {
-    if (requestedIds.has(id)) records[id] = record
+  const requestedIds = new Set<string>()
+  for (const invoice of options.invoices) {
+    const id = String(invoice.id)
+    if (requestedIds.has(id)) {
+      throw new Error(`invoice PDF input contains duplicate invoice id ${id}`)
+    }
+    requestedIds.add(id)
   }
+  // Keep records outside the current input set. A temporarily-disabled invoice
+  // feature empties raw/invoices.jsonl, but it must not orphan an already-built
+  // archive or force every rendering to be fetched again when the feature returns.
+  const records: Record<string, InvoicePdfRecord> = { ...(options.prior?.records ?? {}) }
   const anomalies: InvoicePdfAnomaly[] = []
   let skipped = 0
   let unarchivable = 0
@@ -229,11 +274,27 @@ export const archiveInvoicePdfs = async (
     log(`WARNING: invoice ${invoiceId} PDF archive failed — ${reason}`)
   }
 
+  const current = (): InvoicePdfArchive => ({
+    records: { ...records },
+    anomalies: [...anomalies],
+    summary: {
+      total: options.invoices.length,
+      archived: [...requestedIds].filter((id) => records[id] !== undefined).length,
+      skipped,
+      failed: anomalies.length - unarchivable,
+      unarchivable,
+    },
+  })
+  const checkpoint = async (): Promise<void> => {
+    if (options.onProgress) await options.onProgress(current())
+  }
+
   for (const invoice of options.invoices) {
     const id = String(invoice.id)
     const previous = records[id]
-    if (previous && (await exists(join(options.snapshotDir, previous.path)))) {
+    if (previous && (await validPriorRecord(options.snapshotDir, invoice.id, previous))) {
       skipped += 1
+      await checkpoint()
       continue
     }
     delete records[id]
@@ -241,10 +302,23 @@ export const archiveInvoicePdfs = async (
     if (!invoice.client_key) {
       unarchivable += 1
       recordAnomaly(invoice.id, 'missing_client_key')
+      await checkpoint()
       continue
     }
     if (!base) {
       recordAnomaly(invoice.id, 'invalid_base_uri')
+      await checkpoint()
+      continue
+    }
+
+    // Waiting for our own courtesy throttle is not network time. Start the
+    // request/body timeout only after a slot has been granted, otherwise a
+    // deliberately slow sweep can hand fetch an already-aborted signal.
+    try {
+      await throttle()
+    } catch {
+      recordAnomaly(invoice.id, 'download_failed')
+      await checkpoint()
       continue
     }
 
@@ -252,25 +326,29 @@ export const archiveInvoicePdfs = async (
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     let response: Response
     try {
-      await throttle()
       response = await fetchImpl(invoicePdfUrl(base, invoice.client_key), {
-        redirect: 'follow',
+        // The client key is a bearer secret in the path. Do not allow a
+        // response to redirect that key to another origin.
+        redirect: 'manual',
         signal: controller.signal,
       })
     } catch {
       recordAnomaly(invoice.id, 'download_failed')
       clearTimeout(timer)
+      await checkpoint()
       continue
     }
 
     try {
       if (response.status !== 200) {
         recordAnomaly(invoice.id, 'http_status')
+        await checkpoint()
         continue
       }
       const contentType = response.headers.get('content-type')
-      if (!contentType?.toLowerCase().startsWith('application/pdf')) {
+      if (contentType?.split(';', 1)[0].trim().toLowerCase() !== 'application/pdf') {
         recordAnomaly(invoice.id, 'wrong_content_type')
+        await checkpoint()
         continue
       }
       let bytes: Uint8Array
@@ -278,10 +356,12 @@ export const archiveInvoicePdfs = async (
         bytes = new Uint8Array(await response.arrayBuffer())
       } catch {
         recordAnomaly(invoice.id, 'download_failed')
+        await checkpoint()
         continue
       }
       if (!isPdf(bytes)) {
         recordAnomaly(invoice.id, 'invalid_pdf')
+        await checkpoint()
         continue
       }
       try {
@@ -289,20 +369,11 @@ export const archiveInvoicePdfs = async (
       } catch {
         recordAnomaly(invoice.id, 'archive_write_failed')
       }
+      await checkpoint()
     } finally {
       clearTimeout(timer)
     }
   }
 
-  return {
-    records,
-    anomalies,
-    summary: {
-      total: options.invoices.length,
-      archived: Object.keys(records).length,
-      skipped,
-      failed: anomalies.length - unarchivable,
-      unarchivable,
-    },
-  }
+  return current()
 }

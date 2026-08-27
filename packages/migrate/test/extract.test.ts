@@ -43,7 +43,10 @@ const untallied = (body: Record<string, unknown>): Record<string, unknown> => {
 }
 
 const USERS = [row(1), row(2)]
-const INVOICES = [row(100), row(101)]
+const INVOICES: Record<string, unknown>[] = [
+  { ...row(100), client_key: '8100100' },
+  { ...row(101), client_key: '8100101' },
+]
 
 let server: FakeHarvest | undefined
 let dir: string
@@ -124,6 +127,10 @@ const listRoutes = (
   '/v2/invoices/{id}/payments': (url) => ({
     body: envelope('invoice_payments', [row(Number(url.pathname.split('/')[3]) + 2000)]),
   }),
+  '/client/invoices/{id}.pdf': (url) => ({
+    headers: { 'content-type': 'application/pdf' },
+    body: `%PDF-1.7\ninvoice ${url.pathname.split('/')[3]}`,
+  }),
   '/v2/time_entries': () => ({ body: envelope('time_entries', [row(500), row(501)]) }),
   '/v2/expenses': () => ({ body: envelope('expenses', [row(600)]) }),
   ...overrides,
@@ -156,6 +163,7 @@ const extract = (target: string, logs?: string[], sleeps?: number[]): Promise<Ex
       sleeps?.push(ms)
       return Promise.resolve()
     },
+    invoicePdfThrottle: () => Promise.resolve(),
   })
 
 /** A clock that advances a second per read, so watermarks are distinguishable. */
@@ -239,6 +247,37 @@ describe('runExtract against a fake Harvest account', () => {
         .filter(Boolean)
         .map((l) => JSON.parse(l) as unknown),
     ).toEqual(USERS)
+  })
+
+  it('[unit] archives invoice PDFs without spending the general API request budget or leaking keys', async () => {
+    const manifest = manifestOnDisk()
+    const archive = manifest.binaries?.invoice_pdfs
+    expect(archive?.summary).toEqual({
+      total: INVOICES.length,
+      archived: INVOICES.length,
+      skipped: 0,
+      failed: 0,
+      unarchivable: 0,
+    })
+    expect(archive?.anomalies).toEqual([])
+
+    const pdfRequests = (server?.requests ?? []).filter((request) =>
+      request.startsWith('/client/invoices/'),
+    )
+    expect(pdfRequests).toHaveLength(INVOICES.length)
+    expect(result.requests).toBe((server?.requests.length ?? 0) - pdfRequests.length)
+
+    const diagnostics = `${JSON.stringify(manifest)}\n${logs.join('\n')}`
+    expect(
+      INVOICES.some((invoice) => diagnostics.includes(String(invoice.client_key))),
+      'a Harvest invoice bearer key escaped into manifest.json or extract logs',
+    ).toBe(false)
+    for (const invoice of INVOICES) {
+      const invoiceId = invoice.id as number
+      const record = archive?.records[String(invoiceId)]
+      expect(record).toBeDefined()
+      expect((await readFile(join(dir, record!.path))).subarray(0, 5).toString()).toBe('%PDF-')
+    }
   })
 
   it('[unit] every non-skipped resource count equals its jsonl line count', () => {
@@ -370,7 +409,10 @@ describe('runExtract against a fake Harvest account', () => {
   })
 
   it('[unit] the run reports its own cost', () => {
-    expect(result.requests).toBe(server?.requests.length ?? 0)
+    const pdfRequests = (server?.requests ?? []).filter((request) =>
+      request.startsWith('/client/invoices/'),
+    )
+    expect(result.requests).toBe((server?.requests.length ?? 0) - pdfRequests.length)
     expect(result.durationMs).toBeGreaterThanOrEqual(0)
   })
 })
@@ -389,6 +431,36 @@ describe('runExtract preconditions', () => {
       expect((err as Error).message).toContain(empty)
     } finally {
       await rm(empty, { recursive: true, force: true })
+    }
+  })
+
+  it('[unit] directs a legacy manifest through auth before spending any extract requests', async () => {
+    const legacy = await mkdtemp(join(tmpdir(), 'ezacto-migrate-extract-legacy-'))
+    try {
+      const legacyPreflight = { ...preflight() } as Partial<Manifest['preflight']>
+      delete legacyPreflight.base_uri
+      delete legacyPreflight.full_domain
+      await writeManifest(legacy, {
+        account: { id: '42', name: 'CONFLICT' },
+        company_name: 'CONFLICT',
+        started_at: '2026-08-26T00:00:00.000Z',
+        finished_at: null,
+        tool_version: '0.0.0',
+        preflight: legacyPreflight as Manifest['preflight'],
+        resources: {},
+        updated_since: {},
+      })
+
+      const err = (await runExtract({
+        env: { pat: 'p', accountId: '42', userAgentEmail: 'e@x.com' },
+        snapshotDir: legacy,
+        log: () => {},
+      }).catch((error: unknown) => error)) as Error
+
+      expect(err.message).toContain('has no company base_uri')
+      expect(err.message).toContain('ezacto-migrate auth')
+    } finally {
+      await rm(legacy, { recursive: true, force: true })
     }
   })
 })

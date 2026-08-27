@@ -5,6 +5,7 @@
 
 import { mkdir, open, readFile, rename } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { InvoicePdfArchive } from './invoice-pdfs.js'
 
 /**
  * The authenticating user, recorded because it changes what the snapshot *is*:
@@ -282,6 +283,8 @@ export interface ManifestBinaries {
   receipts: Record<string, ManifestBinaryAsset>
   avatars: Record<string, ManifestBinaryAsset>
   anomalies: ManifestBinaryAnomaly[]
+  /** Client-facing invoice renderings; absent on snapshots created before story #82. */
+  invoice_pdfs?: InvoicePdfArchive
 }
 
 const MANIFEST_FILE = 'manifest.json'

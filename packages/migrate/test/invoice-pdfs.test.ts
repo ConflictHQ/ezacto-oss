@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   archiveInvoicePdfs,
+  createInvoicePdfThrottle,
   readInvoicePdfInputs,
   type InvoicePdfInput,
 } from '../src/invoice-pdfs.js'
@@ -35,7 +36,7 @@ describe('invoice PDF archive', () => {
 
     expect(fetchImpl).toHaveBeenCalledWith(
       new URL('https://example.harvestapp.com/client/invoices/client-secret.pdf'),
-      expect.objectContaining({ redirect: 'follow' }),
+      expect.objectContaining({ redirect: 'manual' }),
     )
     expect(result.records['7'].path).toMatch(/^invoice-pdfs\/[a-f0-9]{64}\.pdf$/)
     expect(await readFile(join(dir, result.records['7'].path))).toEqual(Buffer.from(PDF))
@@ -94,8 +95,8 @@ describe('invoice PDF archive', () => {
       snapshotDir: dir,
       baseUri: 'https://example.harvestapp.com',
       invoices: [
-        { id: 1, client_key: key },
         { id: 2, client_key: null },
+        { id: 1, client_key: key },
       ],
       fetchImpl,
       throttle: () => Promise.resolve(),
@@ -106,8 +107,8 @@ describe('invoice PDF archive', () => {
     expect(serialized).not.toContain(key)
     expect(serialized).not.toContain('not a URI')
     expect(result.anomalies).toEqual([
-      { invoice_id: 1, reason: 'download_failed' },
       { invoice_id: 2, reason: 'missing_client_key' },
+      { invoice_id: 1, reason: 'download_failed' },
     ])
     expect(fetchImpl).toHaveBeenCalledTimes(1)
 
@@ -140,6 +141,45 @@ describe('invoice PDF archive', () => {
 
     expect(throttle).toHaveBeenCalledTimes(2)
     expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('[unit] spaces grants from the actual prior grant when a sleep overshoots', async () => {
+    let now = 0
+    let firstSleep = true
+    const throttle = createInvoicePdfThrottle({
+      minimumDelayMs: 250,
+      now: () => now,
+      sleep: (ms) => {
+        now += ms + (firstSleep ? 100 : 0)
+        firstSleep = false
+        return Promise.resolve()
+      },
+    })
+    const grants: number[] = []
+    for (let index = 0; index < 3; index += 1) {
+      await throttle()
+      grants.push(now)
+    }
+
+    expect(grants).toEqual([0, 350, 600])
+  })
+
+  it('[unit] starts the network timeout after its independent throttle grants a slot', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation((_input, init) => {
+      if (init?.signal?.aborted) return Promise.reject(new Error('already aborted'))
+      return Promise.resolve(pdfResponse())
+    })
+    const result = await archiveInvoicePdfs({
+      snapshotDir: dir,
+      baseUri: 'https://example.harvestapp.com',
+      invoices: [{ id: 1, client_key: 'one' }],
+      timeoutMs: 1,
+      fetchImpl,
+      throttle: () => new Promise<void>((resolve) => setTimeout(resolve, 10)),
+    })
+
+    expect(result.summary.archived).toBe(1)
+    expect(result.anomalies).toEqual([])
   })
 
   it('[unit] skips present successes but retries failed and missing archives', async () => {
@@ -191,6 +231,68 @@ describe('invoice PDF archive', () => {
     expect(missingFetch).toHaveBeenCalledTimes(1)
     expect(third.summary.archived).toBe(2)
     expect(third.summary.skipped).toBe(1)
+
+    await writeFile(join(dir, third.records['2'].path), '%PDF-corrupt-after-prefix')
+    const corruptFetch = vi
+      .fn<typeof fetch>()
+      .mockImplementation(() => Promise.resolve(pdfResponse()))
+    const fourth = await archiveInvoicePdfs({
+      snapshotDir: dir,
+      baseUri: 'https://example.harvestapp.com',
+      invoices,
+      prior: third,
+      fetchImpl: corruptFetch,
+      throttle: () => Promise.resolve(),
+    })
+    // Both fixture invoices share one content-addressed object. Repairing it for
+    // the first record makes the second record valid without another request.
+    expect(corruptFetch).toHaveBeenCalledTimes(1)
+    expect(fourth.summary.archived).toBe(2)
+
+    const traversal = structuredClone(fourth)
+    traversal.records['1'].path = '../outside.pdf'
+    const traversalFetch = vi.fn<typeof fetch>().mockResolvedValue(pdfResponse())
+    const fifth = await archiveInvoicePdfs({
+      snapshotDir: dir,
+      baseUri: 'https://example.harvestapp.com',
+      invoices,
+      prior: traversal,
+      fetchImpl: traversalFetch,
+      throttle: () => Promise.resolve(),
+    })
+    expect(traversalFetch).toHaveBeenCalledTimes(1)
+    expect(fifth.records['1'].path).toMatch(/^invoice-pdfs\/[a-f0-9]{64}\.pdf$/)
+
+    const preserved = await archiveInvoicePdfs({
+      snapshotDir: dir,
+      baseUri: 'https://example.harvestapp.com',
+      invoices: [],
+      prior: fifth,
+      fetchImpl: vi.fn<typeof fetch>(),
+    })
+    expect(preserved.records).toEqual(fifth.records)
+    expect(preserved.summary).toMatchObject({ total: 0, archived: 0 })
+  })
+
+  it('[unit] checkpoints a secret-free outcome after every invoice', async () => {
+    const checkpoints: number[] = []
+    const result = await archiveInvoicePdfs({
+      snapshotDir: dir,
+      baseUri: 'https://example.harvestapp.com',
+      invoices: [
+        { id: 1, client_key: 'one' },
+        { id: 2, client_key: null },
+      ],
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(pdfResponse()),
+      throttle: () => Promise.resolve(),
+      onProgress: (archive) => {
+        checkpoints.push(archive.summary.archived + archive.anomalies.length)
+        return Promise.resolve()
+      },
+    })
+
+    expect(checkpoints).toEqual([1, 2])
+    expect(result.summary).toMatchObject({ archived: 1, unarchivable: 1 })
   })
 
   it('[unit] reads only id and client_key and keeps validation errors secret-safe', async () => {
@@ -215,5 +317,14 @@ describe('invoice PDF archive', () => {
     expect(error).toBeInstanceOf(Error)
     expect((error as Error).message).toBe('invalid invoice PDF input at line 1: invalid_client_key')
     expect((error as Error).message).not.toContain(key)
+
+    await writeFile(
+      join(dir, 'raw', 'invoices.jsonl'),
+      `${JSON.stringify({ id: 7, client_key: key })}\n${JSON.stringify({ id: 7, client_key: 'other' })}\n`,
+    )
+    await expect(readInvoicePdfInputs(dir)).rejects.toThrow('duplicate_invoice_id')
+
+    await rm(join(dir, 'raw', 'invoices.jsonl'))
+    await expect(readInvoicePdfInputs(dir)).rejects.toThrow('raw/invoices.jsonl is missing')
   })
 })
