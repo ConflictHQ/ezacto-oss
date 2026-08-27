@@ -1,10 +1,12 @@
-// The parallel-run proof cannot be faked: an actual Harvest account must accept
-// two consecutive syncs without producing a deletion or domain delta. CI has no
-// credentials, so this stays a credential-gated acceptance test like extract.
+// The parallel-run proof cannot be faked. The frozen-server unit test proves a
+// strict second-sync no-op; this live test additionally proves that any row delta
+// on the actively used account carries evidence of a newer upstream version.
+// CI has no credentials, so it stays credential-gated like extract.
 
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { runAuth } from '../src/auth.js'
 import { loadDevVars } from '../src/env.js'
@@ -37,10 +39,18 @@ const normalizedRaw = async (snapshotDir: string): Promise<Record<string, string
 }
 
 interface RawRowDifference {
-  added: number[]
+  added: { id: number; created_at: string | null; updated_at: string | null }[]
   removed: number[]
-  changed: { id: number; fields: string[] }[]
+  changed: {
+    id: number
+    fields: string[]
+    before_updated_at: string | null
+    after_updated_at: string | null
+  }[]
 }
+
+const timestamp = (value: unknown): string | null =>
+  typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? value : null
 
 /** Compact diagnostics: Vitest cannot render a useful diff for ~34k raw rows. */
 const rawDifferences = (
@@ -61,19 +71,28 @@ const rawDifferences = (
         return [row.id, row] as const
       }),
     )
-    const added = [...afterRows.keys()].filter((id) => !beforeRows.has(id)).sort((a, b) => a - b)
-    const removed = [...beforeRows.keys()].filter((id) => !afterRows.has(id)).sort((a, b) => a - b)
-    const changed = [...afterRows.entries()]
-      .filter(([id, row]) => beforeRows.has(id) && JSON.stringify(beforeRows.get(id)) !== JSON.stringify(row))
+    const added = [...afterRows.entries()]
+      .filter(([id]) => !beforeRows.has(id))
       .map(([id, row]) => ({
         id,
-        fields: [...new Set([...Object.keys(beforeRows.get(id) ?? {}), ...Object.keys(row)])]
-          .filter(
-            (field) =>
-              JSON.stringify(beforeRows.get(id)?.[field]) !== JSON.stringify(row[field]),
-          )
-          .sort(),
+        created_at: timestamp(row.created_at),
+        updated_at: timestamp(row.updated_at),
       }))
+      .sort((a, b) => a.id - b.id)
+    const removed = [...beforeRows.keys()].filter((id) => !afterRows.has(id)).sort((a, b) => a - b)
+    const changed = [...afterRows.entries()]
+      .filter(([id, row]) => beforeRows.has(id) && !isDeepStrictEqual(beforeRows.get(id), row))
+      .map(([id, row]) => {
+        const beforeRow: Record<string, unknown> = beforeRows.get(id) ?? {}
+        return {
+          id,
+          fields: [...new Set([...Object.keys(beforeRow), ...Object.keys(row)])]
+            .filter((field) => !isDeepStrictEqual(beforeRow[field], row[field]))
+            .sort(),
+          before_updated_at: timestamp(beforeRow.updated_at),
+          after_updated_at: timestamp(row.updated_at),
+        }
+      })
       .sort((a, b) => a.id - b.id)
     if (added.length > 0 || removed.length > 0 || changed.length > 0) {
       differences[resource] = { added, removed, changed }
@@ -81,6 +100,93 @@ const rawDifferences = (
   }
   return differences
 }
+
+/** Reject drift unless the row itself proves Harvest created or advanced it. */
+const unexplainedRawDifferences = (
+  differences: Record<string, RawRowDifference>,
+  liveWindowStartedAt: string,
+): Record<string, RawRowDifference> => {
+  const unexplained: Record<string, RawRowDifference> = {}
+  for (const [resource, difference] of Object.entries(differences)) {
+    const added = difference.added.filter(
+      (row) =>
+        (row.created_at === null || row.created_at < liveWindowStartedAt) &&
+        (row.updated_at === null || row.updated_at < liveWindowStartedAt),
+    )
+    const changed = difference.changed.filter(
+      (row) =>
+        row.before_updated_at === null ||
+        row.after_updated_at === null ||
+        row.after_updated_at <= row.before_updated_at,
+    )
+    if (added.length > 0 || difference.removed.length > 0 || changed.length > 0) {
+      unexplained[resource] = { added, removed: difference.removed, changed }
+    }
+  }
+  return unexplained
+}
+
+describe('live raw difference classification', () => {
+  it('[unit] accepts a row only when its upstream version advances', () => {
+    const before = {
+      'time_entries.jsonl': [
+        JSON.stringify({ id: 1, notes: 'before', updated_at: '2026-08-27T18:00:00Z' }),
+      ],
+    }
+    const after = {
+      'time_entries.jsonl': [
+        JSON.stringify({ id: 1, notes: 'after', updated_at: '2026-08-27T19:00:00Z' }),
+      ],
+    }
+
+    expect(
+      unexplainedRawDifferences(rawDifferences(before, after), '2026-08-27T17:00:00Z'),
+    ).toEqual({})
+  })
+
+  it('[unit] reports same-version changes, unexplained additions, and removals', () => {
+    const before = {
+      'time_entries.jsonl': [
+        JSON.stringify({ id: 1, notes: 'before', updated_at: '2026-08-27T18:00:00Z' }),
+        JSON.stringify({ id: 2, notes: 'removed', updated_at: '2026-08-27T18:00:00Z' }),
+      ],
+    }
+    const after = {
+      'time_entries.jsonl': [
+        JSON.stringify({ id: 1, notes: 'after', updated_at: '2026-08-27T18:00:00Z' }),
+        JSON.stringify({
+          id: 3,
+          notes: 'old addition',
+          created_at: '2026-08-26T18:00:00Z',
+          updated_at: '2026-08-26T18:00:00Z',
+        }),
+      ],
+    }
+
+    expect(
+      unexplainedRawDifferences(rawDifferences(before, after), '2026-08-27T17:00:00Z'),
+    ).toEqual({
+      'time_entries.jsonl': {
+        added: [
+          {
+            id: 3,
+            created_at: '2026-08-26T18:00:00Z',
+            updated_at: '2026-08-26T18:00:00Z',
+          },
+        ],
+        removed: [2],
+        changed: [
+          {
+            id: 1,
+            fields: ['notes'],
+            before_updated_at: '2026-08-27T18:00:00Z',
+            after_updated_at: '2026-08-27T18:00:00Z',
+          },
+        ],
+      },
+    })
+  })
+})
 
 describe.skipIf(!hasLiveCreds)('runSync [e2e:migrate-reconcile] against the live CONFLICT account', () => {
   let dir: string
@@ -92,13 +198,14 @@ describe.skipIf(!hasLiveCreds)('runSync [e2e:migrate-reconcile] against the live
     await rm(dir, { recursive: true, force: true })
   })
 
-  it('makes a second sync a no-op for domain rows and deletion marks', async () => {
+  it('makes a second sync stable except for newer upstream row versions', async () => {
     const env = {
       pat: process.env.HARVEST_PAT as string,
       accountId: process.env.HARVEST_ACCOUNT_ID,
       userAgentEmail: process.env.HARVEST_USER_AGENT_EMAIL || 'hello@ezacto.com',
     }
     await runAuth({ env, toolVersion: '0.0.0', snapshotDir: dir })
+    const liveWindowStartedAt = new Date().toISOString()
     const first = await runSync({ env, snapshotDir: dir })
     const afterFirst = await normalizedRaw(dir)
 
@@ -109,7 +216,12 @@ describe.skipIf(!hasLiveCreds)('runSync [e2e:migrate-reconcile] against the live
     // the whole manifest.
     expect(second.deleted).toBe(0)
     expect(second.restored).toBe(0)
-    expect(rawDifferences(afterFirst, afterSecond)).toEqual({})
+    expect(
+      unexplainedRawDifferences(
+        rawDifferences(afterFirst, afterSecond),
+        liveWindowStartedAt,
+      ),
+    ).toEqual({})
     expect(first.complete).toBe(true)
     expect(second.complete).toBe(true)
     expect(second.unwitnessed).toEqual({})
