@@ -65,6 +65,46 @@ export interface RunExtractOptions {
   /** Test seam: point the whole sweep at a local server. */
   baseUrl?: string
   timeoutMs?: number
+  /** Reused by sync so extraction and its ID witnesses share one API budget. */
+  session?: ExtractSession
+}
+
+/** One Harvest API session and its account-wide general-endpoint budget. */
+export interface ExtractSession {
+  config: HarvestClientConfig
+  deps: PaginateDeps
+  limiter: ReturnType<typeof createRateLimiter>
+}
+
+export interface CreateExtractSessionOptions {
+  env: HarvestEnv
+  accountId: string
+  log?: (line: string) => void
+  sleep?: (ms: number) => Promise<void>
+  baseUrl?: string
+  timeoutMs?: number
+}
+
+/**
+ * Creates the reusable session used by `extract` and `sync`. Keeping the
+ * limiter here makes it impossible for sync's second phase to unknowingly
+ * spend outside the account's one general-endpoint budget.
+ */
+export const createExtractSession = (options: CreateExtractSessionOptions): ExtractSession => {
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+  const log = options.log ?? ((line: string) => console.log(line))
+  const limiter = createRateLimiter({ sleep })
+  return {
+    config: {
+      pat: options.env.pat,
+      userAgentEmail: options.env.userAgentEmail,
+      accountId: options.accountId,
+      baseUrl: options.baseUrl,
+      timeoutMs: options.timeoutMs,
+    },
+    deps: { limiter, sleep, log },
+    limiter,
+  }
 }
 
 /** Seconds a given number of requests costs at the general budget. */
@@ -166,7 +206,6 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
   const { env, snapshotDir } = options
   const now = options.now ?? (() => new Date())
   const log = options.log ?? ((line: string) => console.log(line))
-  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
   const startedMs = Date.now()
 
   const manifest = await readManifestIfExists(snapshotDir)
@@ -177,18 +216,23 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
     )
   }
 
-  const config: HarvestClientConfig = {
-    pat: env.pat,
-    userAgentEmail: env.userAgentEmail,
-    accountId: manifest.account.id,
-    baseUrl: options.baseUrl,
-    timeoutMs: options.timeoutMs,
+  const session =
+    options.session ??
+    createExtractSession({
+      env,
+      accountId: manifest.account.id,
+      baseUrl: options.baseUrl,
+      timeoutMs: options.timeoutMs,
+      log,
+      sleep: options.sleep,
+    })
+  const { config, deps, limiter } = session
+  if (config.accountId !== manifest.account.id) {
+    throw new Error(
+      `the supplied Harvest session is for account ${config.accountId ?? '(none)'}, but ` +
+        `${snapshotDir}/manifest.json is stamped for account ${manifest.account.id}`,
+    )
   }
-
-  // One limiter for the whole run: the budget is per account, not per resource.
-  // It is created before the identity check so that request counts against it too.
-  const limiter = createRateLimiter({ sleep })
-  const deps: PaginateDeps = { limiter, sleep, log }
 
   // Who this PAT actually is, asked live rather than read out of the manifest.
   // manifest.preflight describes the token `auth` ran with; this process re-read
