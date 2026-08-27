@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { loadDevVars, readHarvestEnv } from './env.js'
 import { runAuth } from './auth.js'
 import { runExtract, type ExtractResult } from './extract.js'
+import { runVerify } from './verify.js'
 
 const USAGE = `ezacto-migrate <command> [options]
 
@@ -15,6 +16,7 @@ Commands:
            resumes an interrupted resource from its last checkpoint rather than
            re-sweeping it, and refreshes an already-complete one with only the
            rows Harvest reports changed since its last watermark.
+  verify   Check snapshot counts/FKs and capture report checksums per currency
 
 Options:
   --account-id <id>    Harvest account id to use (skips auto-pick/prompt)
@@ -104,7 +106,7 @@ const main = async (): Promise<number> => {
   })
   const command = positionals[0]
 
-  if (command !== 'auth' && command !== 'extract') {
+  if (command !== 'auth' && command !== 'extract' && command !== 'verify') {
     process.stdout.write(USAGE)
     return 1
   }
@@ -127,6 +129,21 @@ const main = async (): Promise<number> => {
     console.log(`company:       ${result.companyName}`)
     console.log(`administrator: ${result.isAdministrator ? 'yes' : 'no'}`)
     console.log(`manifest:      ${result.manifestDir}/manifest.json`)
+    return 0
+  }
+
+  if (command === 'verify') {
+    const result = await runVerify({ env, snapshotDir, timeoutMs })
+    if (result.issues.length > 0) {
+      for (const issue of result.issues) {
+        console.error(`${issue.kind}: ${issue.path} id=${String(issue.id)} — ${issue.message}`)
+      }
+      return 1
+    }
+    console.log(
+      `verified: snapshot internally consistent; ${result.checksums.requests} report requests; ` +
+        `${snapshotDir}/checksums.json`,
+    )
     return 0
   }
 
