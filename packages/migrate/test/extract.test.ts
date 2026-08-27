@@ -43,7 +43,10 @@ const untallied = (body: Record<string, unknown>): Record<string, unknown> => {
 }
 
 const USERS = [row(1), row(2)]
-const INVOICES = [row(100), row(101)]
+const INVOICES: Record<string, unknown>[] = [
+  { ...row(100), client_key: '8100100' },
+  { ...row(101), client_key: '8100101' },
+]
 
 let server: FakeHarvest | undefined
 let dir: string
@@ -124,6 +127,10 @@ const listRoutes = (
   '/v2/invoices/{id}/payments': (url) => ({
     body: envelope('invoice_payments', [row(Number(url.pathname.split('/')[3]) + 2000)]),
   }),
+  '/client/invoices/{id}.pdf': (url) => ({
+    headers: { 'content-type': 'application/pdf' },
+    body: `%PDF-1.7\ninvoice ${url.pathname.split('/')[3]}`,
+  }),
   '/v2/time_entries': () => ({ body: envelope('time_entries', [row(500), row(501)]) }),
   '/v2/expenses': () => ({ body: envelope('expenses', [row(600)]) }),
   ...overrides,
@@ -156,6 +163,7 @@ const extract = (target: string, logs?: string[], sleeps?: number[]): Promise<Ex
       sleeps?.push(ms)
       return Promise.resolve()
     },
+    invoicePdfThrottle: () => Promise.resolve(),
   })
 
 /** A clock that advances a second per read, so watermarks are distinguishable. */
@@ -239,6 +247,37 @@ describe('runExtract against a fake Harvest account', () => {
         .filter(Boolean)
         .map((l) => JSON.parse(l) as unknown),
     ).toEqual(USERS)
+  })
+
+  it('[unit] archives invoice PDFs without spending the general API request budget or leaking keys', async () => {
+    const manifest = manifestOnDisk()
+    const archive = manifest.binaries?.invoice_pdfs
+    expect(archive?.summary).toEqual({
+      total: INVOICES.length,
+      archived: INVOICES.length,
+      skipped: 0,
+      failed: 0,
+      unarchivable: 0,
+    })
+    expect(archive?.anomalies).toEqual([])
+
+    const pdfRequests = (server?.requests ?? []).filter((request) =>
+      request.startsWith('/client/invoices/'),
+    )
+    expect(pdfRequests).toHaveLength(INVOICES.length)
+    expect(result.requests).toBe((server?.requests.length ?? 0) - pdfRequests.length)
+
+    const diagnostics = `${JSON.stringify(manifest)}\n${logs.join('\n')}`
+    expect(
+      INVOICES.some((invoice) => diagnostics.includes(String(invoice.client_key))),
+      'a Harvest invoice bearer key escaped into manifest.json or extract logs',
+    ).toBe(false)
+    for (const invoice of INVOICES) {
+      const invoiceId = invoice.id as number
+      const record = archive?.records[String(invoiceId)]
+      expect(record).toBeDefined()
+      expect((await readFile(join(dir, record!.path))).subarray(0, 5).toString()).toBe('%PDF-')
+    }
   })
 
   it('[unit] every non-skipped resource count equals its jsonl line count', () => {
@@ -370,7 +409,10 @@ describe('runExtract against a fake Harvest account', () => {
   })
 
   it('[unit] the run reports its own cost', () => {
-    expect(result.requests).toBe(server?.requests.length ?? 0)
+    const pdfRequests = (server?.requests ?? []).filter((request) =>
+      request.startsWith('/client/invoices/'),
+    )
+    expect(result.requests).toBe((server?.requests.length ?? 0) - pdfRequests.length)
     expect(result.durationMs).toBeGreaterThanOrEqual(0)
   })
 })
@@ -389,6 +431,36 @@ describe('runExtract preconditions', () => {
       expect((err as Error).message).toContain(empty)
     } finally {
       await rm(empty, { recursive: true, force: true })
+    }
+  })
+
+  it('[unit] directs a legacy manifest through auth before spending any extract requests', async () => {
+    const legacy = await mkdtemp(join(tmpdir(), 'ezacto-migrate-extract-legacy-'))
+    try {
+      const legacyPreflight = { ...preflight() } as Partial<Manifest['preflight']>
+      delete legacyPreflight.base_uri
+      delete legacyPreflight.full_domain
+      await writeManifest(legacy, {
+        account: { id: '42', name: 'CONFLICT' },
+        company_name: 'CONFLICT',
+        started_at: '2026-08-26T00:00:00.000Z',
+        finished_at: null,
+        tool_version: '0.0.0',
+        preflight: legacyPreflight as Manifest['preflight'],
+        resources: {},
+        updated_since: {},
+      })
+
+      const err = (await runExtract({
+        env: { pat: 'p', accountId: '42', userAgentEmail: 'e@x.com' },
+        snapshotDir: legacy,
+        log: () => {},
+      }).catch((error: unknown) => error)) as Error
+
+      expect(err.message).toContain('has no company base_uri')
+      expect(err.message).toContain('ezacto-migrate auth')
+    } finally {
+      await rm(legacy, { recursive: true, force: true })
     }
   })
 })
@@ -425,6 +497,114 @@ describe('runExtract when the account moves under it', () => {
 
   const userId = (url: URL): number => Number(url.pathname.split('/')[3])
   const requestPaths = (): string[] => (server?.requests ?? []).map((r) => r.split('?')[0])
+
+  it('[unit] sanitizes retained binaries before the first failing extract checkpoint', async () => {
+    const retainedSecret = 'early-checkpoint-retained-secret'
+    const before = manifestOnDisk()
+    await writeManifest(dir, {
+      ...before,
+      binaries: {
+        receipts: {
+          '7': {
+            source_id: 7,
+            sha256: 'a'.repeat(64),
+            path: `../${retainedSecret}`,
+            bytes: 10,
+            content_type: 'application/pdf',
+            client_key: retainedSecret,
+          },
+        },
+        avatars: {
+          '8': {
+            source_id: 8,
+            sha256: 'b'.repeat(64),
+            path: `avatars/${retainedSecret}`,
+            bytes: 10,
+            content_type: null,
+          },
+        },
+        anomalies: [
+          {
+            kind: { toString: null, valueOf: null },
+            resource: 'receipt',
+            source_id: 7,
+            message: retainedSecret,
+          },
+        ],
+        invoice_pdfs: {
+          records: {
+            '9': {
+              source_id: 9,
+              sha256: 'c'.repeat(64),
+              path: `../${retainedSecret}.pdf`,
+              bytes: 10,
+              content_type: 'application/pdf',
+              client_key: retainedSecret,
+            },
+          },
+          anomalies: [{ invoice_id: 9, reason: retainedSecret }],
+          summary: {
+            total: 1,
+            archived: 1,
+            skipped: 1,
+            failed: 0,
+            unarchivable: 0,
+          },
+        },
+      } as never,
+    })
+    await start({ '/v2/users': () => ({ status: 422, body: { message: 'stop early' } }) })
+
+    await expect(extract(dir, logs)).rejects.toThrow('users: request')
+
+    const checkpoint = manifestOnDisk()
+    expect(JSON.stringify(checkpoint)).not.toContain(retainedSecret)
+    expect(checkpoint.binaries?.receipts).toEqual({})
+    expect(checkpoint.binaries?.avatars).toEqual({})
+    expect(checkpoint.binaries?.invoice_pdfs?.records).toEqual({})
+    expect(
+      (server?.requests ?? []).some(
+        (request) => request.startsWith('/client/invoices/') || request.startsWith('/binary/'),
+      ),
+    ).toBe(false)
+  })
+
+  it('[unit] checkpoints each receipt outcome before requesting the next binary', async () => {
+    let firstReceiptWasDurable = false
+    await start({
+      '/v2/expenses': () => ({
+        body: envelope('expenses', [
+          row(601, {
+            receipt: {
+              url: `${server?.baseUrl}/binary/601`,
+              file_name: 'first.png',
+              file_size: 13,
+              content_type: 'image/png',
+            },
+          }),
+          row(602, {
+            receipt: {
+              url: `${server?.baseUrl}/binary/602`,
+              file_name: 'second.png',
+              file_size: 13,
+              content_type: 'image/png',
+            },
+          }),
+        ]),
+      }),
+      '/binary/{id}': (url) => {
+        if (url.pathname.endsWith('/602')) {
+          firstReceiptWasDurable = manifestOnDisk().binaries?.receipts['601'] !== undefined
+        }
+        return { headers: { 'content-type': 'image/png' }, body: 'receipt bytes' }
+      },
+    })
+
+    await extract(dir, logs)
+
+    expect(firstReceiptWasDurable).toBe(true)
+    expect(Object.keys(manifestOnDisk().binaries?.receipts ?? {})).toEqual(['601', '602'])
+  })
 
   // Harvest's 403 is scoped to the object asked for (research §0.3: "the object you
   // requested was found but you don't have authorization"), so one user's refusal

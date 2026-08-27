@@ -29,6 +29,7 @@ describe.skipIf(!hasLiveCreds)('runExtract [api] against the live CONFLICT accou
   })
 
   it('completes a full extract and records per-resource counts in manifest.json', async () => {
+    const logs: string[] = []
     const env = {
       pat: process.env.HARVEST_PAT as string,
       accountId: process.env.HARVEST_ACCOUNT_ID,
@@ -36,7 +37,7 @@ describe.skipIf(!hasLiveCreds)('runExtract [api] against the live CONFLICT accou
     }
     await runAuth({ env, toolVersion: '0.0.0', snapshotDir: dir })
 
-    const result = await runExtract({ env, snapshotDir: dir })
+    const result = await runExtract({ env, snapshotDir: dir, log: (line) => logs.push(line) })
     const manifest = await readManifest(dir)
 
     // Every step in the registry has an answer: swept, or explicitly skipped.
@@ -81,6 +82,39 @@ describe.skipIf(!hasLiveCreds)('runExtract [api] against the live CONFLICT accou
       expect((await readFile(join(dir, archived!.path))).byteLength).toBe(expense.receipt?.file_size)
     }
 
+    // Story 07: every client-facing invoice rendering is a verified PDF in the
+    // content-addressed archive, and its bearer key never leaves raw input.
+    const invoices = (await readFile(join(dir, 'raw', 'invoices.jsonl'), 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { id: number; client_key?: string | null })
+    expect(invoices.length).toBeGreaterThan(0)
+    expect(invoices).toHaveLength(manifest.resources.invoices.count)
+    const invoiceArchive = manifest.binaries?.invoice_pdfs
+    expect(invoiceArchive, 'manifest has no invoice PDF archive').toBeDefined()
+    expect(invoiceArchive!.summary.total).toBe(invoices.length)
+    expect(invoiceArchive!.summary.archived).toBe(
+      invoices.length - invoiceArchive!.anomalies.length,
+    )
+    // The live CONFLICT account is expected to have a usable client rendering
+    // for every invoice. The formula above remains the manifest invariant if an
+    // anomaly is ever intentionally accepted; today, any one is a red gate.
+    expect(invoiceArchive!.anomalies).toEqual([])
+    expect(Object.keys(invoiceArchive!.records)).toHaveLength(invoices.length)
+    for (const invoice of invoices) {
+      const archived = invoiceArchive!.records[String(invoice.id)]
+      expect(archived, `invoice ${invoice.id} PDF was not archived`).toBeDefined()
+      expect((await readFile(join(dir, archived!.path))).subarray(0, 5).toString()).toBe('%PDF-')
+    }
+    const clientKeys = invoices.flatMap((invoice) =>
+      typeof invoice.client_key === 'string' ? [invoice.client_key] : [],
+    )
+    const diagnostics = `${JSON.stringify(manifest)}\n${logs.join('\n')}`
+    expect(
+      clientKeys.some((key) => diagnostics.includes(key)),
+      'a Harvest invoice bearer key escaped into manifest.json or extract logs',
+    ).toBe(false)
+
     expect(manifest.finished_at).not.toBeNull()
 
     // The run was paced by the budget it declared (§2.2): past the first window,
@@ -105,5 +139,8 @@ describe.skipIf(!hasLiveCreds)('runExtract [api] against the live CONFLICT accou
       `total: ${result.requests} requests in ${Math.round(elapsedS)}s ` +
         `(administrator: ${manifest.preflight.user.is_administrator})`,
     )
-  }, 900_000)
+    console.log(
+      `invoice PDFs: ${invoiceArchive!.summary.archived}/${invoiceArchive!.summary.total} archived`,
+    )
+  }, 1_800_000)
 })

@@ -23,8 +23,13 @@
 // resuming into a list that reordered under it.
 
 import { parseUserMe, scopeChangeBetween, visibilityWarning } from './auth.js'
-import { downloadBinaries } from './binaries.js'
+import { downloadBinaries, sanitizePriorBinaries } from './binaries.js'
 import type { HarvestEnv } from './env.js'
+import {
+  archiveInvoicePdfs,
+  readInvoicePdfInputs,
+  type InvoicePdfThrottle,
+} from './invoice-pdfs.js'
 import {
   DEFAULT_BASE_URL,
   type HarvestApiError,
@@ -71,6 +76,8 @@ export interface RunExtractOptions {
   session?: ExtractSession
   /** sync already holds the snapshot-wide mutation lock for its nested extract. */
   lockHeld?: boolean
+  /** Test seam for the invoice web-surface throttle; never the Harvest API limiter. */
+  invoicePdfThrottle?: InvoicePdfThrottle
 }
 
 /** One Harvest API session and its account-wide general-endpoint budget. */
@@ -222,7 +229,19 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
         `preflight that auth records. Run \`ezacto-migrate auth --snapshot-dir ${snapshotDir}\` first.`,
     )
   }
-
+  // `manifest.binaries` is runtime input, including on same-account auth and
+  // crash resumes. Validate every retained file and rebuild every nested scalar
+  // before the first manifest checkpoint can serialize it again.
+  const safePriorBinaries = await sanitizePriorBinaries(snapshotDir, manifest.binaries)
+  if (safePriorBinaries) manifest.binaries = safePriorBinaries
+  else delete manifest.binaries
+  const invoicePdfBaseUri = options.baseUrl ?? manifest.preflight.base_uri
+  if (typeof invoicePdfBaseUri !== 'string' || invoicePdfBaseUri.trim() === '') {
+    throw new Error(
+      `${snapshotDir}/manifest.json predates the invoice PDF archive and has no company base_uri. ` +
+        `Run \`ezacto-migrate auth --snapshot-dir ${snapshotDir}\` to refresh its preflight before extract.`,
+    )
+  }
   const session =
     options.session ??
     createExtractSession({
@@ -991,12 +1010,57 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
     )
   }
 
-  manifest.binaries = await downloadBinaries({
+  const binaries = await downloadBinaries({
     snapshotDir,
-    prior: manifest.binaries,
+    prior: safePriorBinaries,
     timeoutMs: options.timeoutMs,
     log,
+    onProgress: async (archive) => {
+      manifest.binaries = archive
+      await persist()
+    },
+    webAuth: {
+      origin: manifest.preflight.base_uri,
+      pat: env.pat,
+      accountId: manifest.account.id,
+      userAgentEmail: env.userAgentEmail,
+    },
   })
+  manifest.binaries = binaries
+  // Receipt/avatar downloads finish before the longer invoice sweep. Make
+  // their new index durable before the first client-facing request.
+  await persist()
+  const invoicePdfInputs = await readInvoicePdfInputs(snapshotDir)
+  const invoiceResource = resources.invoices
+  if (!invoiceResource || invoicePdfInputs.length !== invoiceResource.count) {
+    throw new Error(
+      `raw/invoices.jsonl holds ${invoicePdfInputs.length} invoice row(s), but manifest.json ` +
+        `claims ${invoiceResource?.count ?? 'none'} — refusing to build a PDF archive from an ` +
+        'incomplete or mismatched source file',
+    )
+  }
+  binaries.invoice_pdfs = await archiveInvoicePdfs({
+    snapshotDir,
+    // `baseUrl` is the whole-sweep local-server seam used by extract tests.
+    // Production never sets it and uses the web origin captured by auth.
+    baseUri: invoicePdfBaseUri,
+    expectedFullDomain: manifest.preflight.full_domain,
+    ...(options.baseUrl !== undefined ? { testBaseUri: options.baseUrl } : {}),
+    invoices: invoicePdfInputs,
+    prior: safePriorBinaries?.invoice_pdfs,
+    timeoutMs: options.timeoutMs,
+    throttle: options.invoicePdfThrottle,
+    log,
+    onProgress: async (archive) => {
+      binaries.invoice_pdfs = archive
+      await persist()
+    },
+  })
+  log(
+    `invoice_pdfs: ${binaries.invoice_pdfs.summary.archived} archived, ` +
+      `${binaries.invoice_pdfs.anomalies.length} anomalies, ` +
+      `${binaries.invoice_pdfs.summary.skipped} unchanged`,
+  )
 
   manifest.finished_at = now().toISOString()
   await persist()

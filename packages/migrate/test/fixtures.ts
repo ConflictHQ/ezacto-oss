@@ -1,4 +1,4 @@
-// Shared preflight fixtures. `/v2/company` carries fourteen settings the manifest
+// Shared preflight fixtures. `/v2/company` carries the settings and web location the manifest
 // records, so spelling them out per test would bury what each test is actually
 // asserting — every test states only the fields it cares about.
 
@@ -9,6 +9,8 @@ import type {
 } from '../src/manifest.js'
 
 export const COMPANY_SETTINGS: ManifestCompanySettings = {
+  base_uri: 'https://acme.harvestapp.com',
+  full_domain: 'acme.harvestapp.com',
   clock: '12h',
   wants_timestamp_timers: true,
   expense_feature: true,
