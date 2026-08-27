@@ -1,15 +1,22 @@
 // A snapshot is one mutable artifact shared by auth, extract and sync. This
 // lock serializes their whole transactions, including sync's nested extract.
 
-import { mkdir, open, readFile, rm } from 'node:fs/promises'
+import { mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 
 interface SnapshotLockOwner {
   pid: number
   host: string
   command: 'auth' | 'extract' | 'sync'
   started_at: string
+  token: string
+}
+
+export interface SnapshotLock {
+  path: string
+  token: string
 }
 
 const OWNER_FILE = 'owner.json'
@@ -25,10 +32,20 @@ const pidIsLive = (pid: number): boolean => {
   }
 }
 
-const writeOwner = async (path: string, command: SnapshotLockOwner['command']): Promise<void> => {
+const writeOwner = async (
+  path: string,
+  command: SnapshotLockOwner['command'],
+  token: string,
+): Promise<void> => {
   const handle = await open(join(path, OWNER_FILE), 'w')
   try {
-    const owner: SnapshotLockOwner = { pid: process.pid, host: hostname(), command, started_at: new Date().toISOString() }
+    const owner: SnapshotLockOwner = {
+      pid: process.pid,
+      host: hostname(),
+      command,
+      started_at: new Date().toISOString(),
+      token,
+    }
     await handle.writeFile(`${JSON.stringify(owner)}\n`, 'utf8')
     await handle.sync()
   } finally {
@@ -36,22 +53,26 @@ const writeOwner = async (path: string, command: SnapshotLockOwner['command']): 
   }
 }
 
-const createLock = async (path: string, command: SnapshotLockOwner['command']): Promise<string> => {
+const createLock = async (
+  path: string,
+  command: SnapshotLockOwner['command'],
+): Promise<SnapshotLock> => {
   await mkdir(path)
+  const token = randomUUID()
   try {
-    await writeOwner(path, command)
+    await writeOwner(path, command, token)
   } catch (err) {
     // Do not strand an unreadable lock when the owner record cannot be made.
     await rm(path, { recursive: true, force: true })
     throw err
   }
-  return path
+  return { path, token }
 }
 
 export const acquireSnapshotLock = async (
   snapshotDir: string,
   command: SnapshotLockOwner['command'],
-): Promise<string> => {
+): Promise<SnapshotLock> => {
   const path = join(snapshotDir, '.sync.lock')
   await mkdir(snapshotDir, { recursive: true })
   try {
@@ -66,6 +87,7 @@ export const acquireSnapshotLock = async (
     if (
       typeof owner.pid !== 'number' ||
       typeof owner.host !== 'string' ||
+      typeof owner.token !== 'string' ||
       (owner.command !== 'auth' && owner.command !== 'extract' && owner.command !== 'sync')
     ) {
       throw new Error('invalid owner')
@@ -82,20 +104,35 @@ export const acquireSnapshotLock = async (
     throw new Error(`snapshot is locked by ${owner.command} (pid ${owner.pid}). Wait for it to finish.`)
   }
 
-  // SIGKILL/restart leaves a dead local PID. It is the only unambiguous stale
-  // owner, so it can be reclaimed automatically. A competing creator simply
-  // wins the mkdir race below and is never removed by this caller.
-  await rm(path, { recursive: true, force: true })
+  // Atomically move the stale directory out of the lock name. Exactly one
+  // contender can win this rename; unlike rm+mkdir, a loser can never delete a
+  // new live lock the winner has already created.
+  const quarantine = `${path}.stale-${randomUUID()}`
   try {
+    await rename(path, quarantine)
     return await createLock(path, command)
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
-      throw new Error(`snapshot is locked by another process that acquired ${path}`)
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      // Another contender claimed the stale directory. Read the lock it made
+      // (or its own in-progress owner) rather than acting on the stale state.
+      return acquireSnapshotLock(snapshotDir, command)
     }
     throw err
+  } finally {
+    await rm(quarantine, { recursive: true, force: true })
   }
 }
 
-export const releaseSnapshotLock = async (path: string): Promise<void> => {
-  await rm(path, { recursive: true, force: true })
+export const releaseSnapshotLock = async (lock: SnapshotLock): Promise<void> => {
+  let owner: SnapshotLockOwner
+  try {
+    owner = JSON.parse(await readFile(join(lock.path, OWNER_FILE), 'utf8')) as SnapshotLockOwner
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw err
+  }
+  if (owner.token !== lock.token) {
+    throw new Error(`refusing to release ${lock.path}: lock ownership changed`)
+  }
+  await rm(lock.path, { recursive: true, force: true })
 }

@@ -130,7 +130,7 @@ describe('runAuth', () => {
     await mkdir(join(dir, '.sync.lock'))
     await writeFile(
       join(dir, '.sync.lock', 'owner.json'),
-      JSON.stringify({ pid: process.pid, host: hostname(), command: 'extract', started_at: '2026-08-26T00:00:00.000Z' }),
+      JSON.stringify({ pid: process.pid, host: hostname(), command: 'extract', started_at: '2026-08-26T00:00:00.000Z', token: 'live-extract' }),
     )
 
     await expect(runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir })).rejects.toThrow(

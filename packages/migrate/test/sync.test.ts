@@ -210,7 +210,7 @@ describe('runSync', () => {
     await mkdir(join(dir, '.sync.lock'))
     await writeFile(
       join(dir, '.sync.lock', 'owner.json'),
-      `${JSON.stringify({ pid: process.pid, host: hostname(), command: 'extract', started_at: '2026-08-26T00:00:00.000Z' })}\n`,
+      `${JSON.stringify({ pid: process.pid, host: hostname(), command: 'extract', started_at: '2026-08-26T00:00:00.000Z', token: 'live-extract' })}\n`,
     )
 
     await expect(run()).rejects.toThrow('snapshot is locked by extract')
@@ -223,7 +223,7 @@ describe('runSync', () => {
     await mkdir(join(dir, '.sync.lock'))
     await writeFile(
       join(dir, '.sync.lock', 'owner.json'),
-      `${JSON.stringify({ pid: process.pid, host: hostname(), command: 'auth', started_at: '2026-08-26T00:00:00.000Z' })}\n`,
+      `${JSON.stringify({ pid: process.pid, host: hostname(), command: 'auth', started_at: '2026-08-26T00:00:00.000Z', token: 'live-auth' })}\n`,
     )
 
     await expect(
