@@ -36,6 +36,52 @@ const normalizedRaw = async (snapshotDir: string): Promise<Record<string, string
   return Object.fromEntries(entries)
 }
 
+interface RawRowDifference {
+  added: number[]
+  removed: number[]
+  changed: { id: number; fields: string[] }[]
+}
+
+/** Compact diagnostics: Vitest cannot render a useful diff for ~34k raw rows. */
+const rawDifferences = (
+  before: Record<string, string[]>,
+  after: Record<string, string[]>,
+): Record<string, RawRowDifference> => {
+  const differences: Record<string, RawRowDifference> = {}
+  for (const resource of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    const beforeRows = new Map(
+      (before[resource] ?? []).map((line) => {
+        const row = JSON.parse(line) as Record<string, unknown> & { id: number }
+        return [row.id, row] as const
+      }),
+    )
+    const afterRows = new Map(
+      (after[resource] ?? []).map((line) => {
+        const row = JSON.parse(line) as Record<string, unknown> & { id: number }
+        return [row.id, row] as const
+      }),
+    )
+    const added = [...afterRows.keys()].filter((id) => !beforeRows.has(id)).sort((a, b) => a - b)
+    const removed = [...beforeRows.keys()].filter((id) => !afterRows.has(id)).sort((a, b) => a - b)
+    const changed = [...afterRows.entries()]
+      .filter(([id, row]) => beforeRows.has(id) && JSON.stringify(beforeRows.get(id)) !== JSON.stringify(row))
+      .map(([id, row]) => ({
+        id,
+        fields: [...new Set([...Object.keys(beforeRows.get(id) ?? {}), ...Object.keys(row)])]
+          .filter(
+            (field) =>
+              JSON.stringify(beforeRows.get(id)?.[field]) !== JSON.stringify(row[field]),
+          )
+          .sort(),
+      }))
+      .sort((a, b) => a.id - b.id)
+    if (added.length > 0 || removed.length > 0 || changed.length > 0) {
+      differences[resource] = { added, removed, changed }
+    }
+  }
+  return differences
+}
+
 describe.skipIf(!hasLiveCreds)('runSync [e2e:migrate-reconcile] against the live CONFLICT account', () => {
   let dir: string
 
@@ -63,7 +109,7 @@ describe.skipIf(!hasLiveCreds)('runSync [e2e:migrate-reconcile] against the live
     // the whole manifest.
     expect(second.deleted).toBe(0)
     expect(second.restored).toBe(0)
-    expect(afterSecond).toEqual(afterFirst)
+    expect(rawDifferences(afterFirst, afterSecond)).toEqual({})
     expect(first.complete).toBe(true)
     expect(second.complete).toBe(true)
     expect(second.unwitnessed).toEqual({})
