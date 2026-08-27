@@ -100,6 +100,8 @@ describe('runAuth', () => {
 
     const manifest = await readManifest(dir)
     expect(manifest.preflight).toMatchObject({
+      base_uri: COMPANY.base_uri,
+      full_domain: COMPANY.full_domain,
       clock: COMPANY.clock,
       wants_timestamp_timers: COMPANY.wants_timestamp_timers,
       expense_feature: COMPANY.expense_feature,
@@ -181,6 +183,11 @@ describe('runAuth', () => {
         anomalies: [],
       },
     }
+    // Snapshots written before the invoice-PDF archive did not have these two
+    // company-location fields. They must remain resumable: auth fills the new
+    // fields without discarding any extract or binary progress.
+    delete (half.preflight as Partial<typeof half.preflight>).base_uri
+    delete (half.preflight as Partial<typeof half.preflight>).full_domain
     await writeManifest(dir, half)
 
     await runAuth({
@@ -198,6 +205,8 @@ describe('runAuth', () => {
     expect(manifest.binaries).toEqual(half.binaries)
     expect(manifest.started_at).toBe('2026-08-01T00:00:00.000Z')
     // the preflight itself is re-stamped from the live company response
+    expect(manifest.preflight.base_uri).toBe(COMPANY.base_uri)
+    expect(manifest.preflight.full_domain).toBe(COMPANY.full_domain)
     expect(manifest.preflight.clock).toBe(COMPANY.clock)
   })
 
@@ -394,7 +403,12 @@ describe('runAuth', () => {
     usersMeResponse = { id: 1, access_roles: ['administrator'] }
     await runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir })
 
-    companyResponse = { ...COMPANY, clock: '24h', estimate_feature: false }
+    companyResponse = {
+      ...COMPANY,
+      base_uri: 'https://acme-new.harvestapp.com',
+      clock: '24h',
+      estimate_feature: false,
+    }
     const logs: string[] = []
     await runAuth({
       env: baseEnv,
@@ -404,6 +418,9 @@ describe('runAuth', () => {
     })
 
     const warning = logs.find((l) => l.includes('company settings changed'))
+    expect(warning).toContain(
+      'base_uri: https://acme.harvestapp.com -> https://acme-new.harvestapp.com',
+    )
     expect(warning).toContain('clock: 12h -> 24h')
     expect(warning).toContain('estimate_feature: true -> false')
     expect((await readManifest(dir)).preflight.clock).toBe('24h')
@@ -467,9 +484,22 @@ describe('runAuth preflight validation', () => {
   }
 
   it('[unit] refuses a /v2/company response missing clock', async () => {
-    companyResponse = { name: 'CONFLICT', full_domain: 'acme.harvestapp.com' }
+    companyResponse = {
+      name: 'CONFLICT',
+      base_uri: 'https://acme.harvestapp.com',
+      full_domain: 'acme.harvestapp.com',
+    }
     await expectRefusal(['/v2/company', 'clock', 'missing'])
   })
+
+  it.each(['base_uri', 'full_domain'] as const)(
+    '[unit] refuses a /v2/company response without %s',
+    async (field) => {
+      companyResponse = { ...COMPANY }
+      delete (companyResponse as Record<string, unknown>)[field]
+      await expectRefusal(['/v2/company', field, 'missing'])
+    },
+  )
 
   it('[unit] refuses a /v2/company response whose feature flags are not booleans', async () => {
     companyResponse = { ...COMPANY, approval_feature: 'true' }

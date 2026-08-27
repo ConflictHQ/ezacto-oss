@@ -20,7 +20,7 @@ describe('manifest', () => {
     await rm(dir, { recursive: true, force: true })
   })
 
-  it('[unit] round-trips clock, timer mode, and the four feature flags', async () => {
+  it('[unit] round-trips company location, clock, timer mode, and the four feature flags', async () => {
     const manifest: Manifest = {
       account: { id: '123', name: 'CONFLICT' },
       company_name: 'CONFLICT',
@@ -39,6 +39,8 @@ describe('manifest', () => {
     await writeManifest(dir, manifest)
     const read = await readManifest(dir)
 
+    expect(read.preflight.base_uri).toBe('https://acme.harvestapp.com')
+    expect(read.preflight.full_domain).toBe('acme.harvestapp.com')
     expect(read.preflight.clock).toBe('12h')
     expect(read.preflight.wants_timestamp_timers).toBe(true)
     expect(read.preflight.expense_feature).toBe(true)

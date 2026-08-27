@@ -306,6 +306,11 @@ const parseCompany = (raw: unknown): CompanyPreflight => {
   return {
     name: requireString(body, 'name', endpoint),
     settings: {
+      // The invoice archive is served from Harvest's client-facing web origin,
+      // not api.harvestapp.com. Capture its non-secret account location here so
+      // archive never has to repeat the expensive company preflight.
+      base_uri: requireString(body, 'base_uri', endpoint),
+      full_domain: requireString(body, 'full_domain', endpoint),
       clock: requireString(body, 'clock', endpoint),
       wants_timestamp_timers: requireBoolean(body, 'wants_timestamp_timers', endpoint),
       expense_feature: requireBoolean(body, 'expense_feature', endpoint),

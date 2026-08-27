@@ -29,8 +29,13 @@ export interface ManifestPreflightUser {
  *    read back, `wants_timestamp_timers` which time-entry shape to expect, and the
  *    four `*_feature` flags which resource trees exist at all.
  *  - *display settings* — carried verbatim into the `organization` row at load.
+ *  - *web location* — `base_uri` is the origin of Harvest's client-facing
+ *    invoice PDFs; `full_domain` is retained with it as the account-domain
+ *    witness. Neither value contains a client invoice bearer key.
  */
 export interface ManifestCompanySettings {
+  base_uri: string
+  full_domain: string
   clock: string
   wants_timestamp_timers: boolean
   expense_feature: boolean
@@ -49,6 +54,8 @@ export interface ManifestCompanySettings {
 
 /** The scalar keys of ManifestCompanySettings, for drift reporting on a re-run. */
 export const COMPANY_SETTING_KEYS = [
+  'base_uri',
+  'full_domain',
   'clock',
   'wants_timestamp_timers',
   'expense_feature',
