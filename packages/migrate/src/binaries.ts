@@ -255,8 +255,8 @@ const validPriorAsset = async (
 }
 
 const safePriorAnomaly = (raw: unknown): ManifestBinaryAnomaly | null => {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
-  const anomaly = raw as Record<string, unknown>
+  if (!isPlainObject(raw)) return null
+  const anomaly = raw
   if (!['download_failed', 'size_mismatch', 'invalid_record'].includes(String(anomaly.kind))) {
     return null
   }
