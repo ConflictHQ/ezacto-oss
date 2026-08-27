@@ -1,10 +1,13 @@
 import { sql } from 'drizzle-orm'
 import {
+  type AnySQLiteColumn,
   check,
   index,
   integer,
   primaryKey,
+  real,
   sqliteTable,
+  sqliteView,
   text,
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core'
@@ -287,3 +290,87 @@ export const userCostRates = sqliteTable('user_cost_rates', rateColumns(), (tabl
   index('user_cost_rates_user_id').on(table.userId),
   check('user_cost_rates_amount_nonnegative', sql`${table.amountCents} >= 0`),
 ])
+
+export const clients = sqliteTable(
+  'clients',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: integer('harvest_id'),
+    name: text('name').notNull(),
+    address: text('address'),
+    currency: text('currency').notNull(),
+    isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+    parentClientId: integer('parent_client_id').references((): AnySQLiteColumn => clients.id, {
+      onDelete: 'restrict',
+    }),
+    billToClientId: integer('bill_to_client_id').references((): AnySQLiteColumn => clients.id, {
+      onDelete: 'restrict',
+    }),
+    statementKey: text('statement_key')
+      .notNull()
+      .default(sql`lower(hex(randomblob(32)))`),
+    paymentTerms: text('payment_terms', {
+      enum: ['upon_receipt', 'net_15', 'net_30', 'net_45', 'net_60', 'custom'],
+    })
+      .notNull()
+      .default('custom'),
+    defaultTaxPct: real('default_tax_pct'),
+    defaultTax2Pct: real('default_tax2_pct'),
+    defaultDiscountPct: real('default_discount_pct'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('clients_harvest_id_unique').on(table.harvestId),
+    uniqueIndex('clients_statement_key_unique').on(table.statementKey),
+    index('clients_parent_client_id').on(table.parentClientId),
+    index('clients_bill_to_client_id').on(table.billToClientId),
+    check('clients_is_active_boolean', sql`${table.isActive} in (0, 1)`),
+  ],
+)
+
+// Full closure relation for ad hoc joins and schema consumers. Hot rooted traversal
+// should use listClientDescendants so SQLite anchors at one client.
+export const clientHierarchy = sqliteView('client_hierarchy', {
+  ancestorId: integer('ancestor_id').notNull(),
+  descendantId: integer('descendant_id').notNull(),
+  depth: integer('depth').notNull(),
+}).as(sql`
+  WITH RECURSIVE hierarchy(ancestor_id, descendant_id, depth, visited) AS (
+    SELECT id, id, 0, printf(',%d,', id) FROM clients
+    UNION ALL
+    SELECT hierarchy.ancestor_id, child.id, hierarchy.depth + 1,
+      hierarchy.visited || child.id || ','
+    FROM hierarchy
+    JOIN clients child ON child.parent_client_id = hierarchy.descendant_id
+    WHERE instr(hierarchy.visited, printf(',%d,', child.id)) = 0
+  )
+  SELECT ancestor_id, descendant_id, depth FROM hierarchy
+`)
+
+export const contacts = sqliteTable(
+  'contacts',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: integer('harvest_id'),
+    clientId: integer('client_id')
+      .notNull()
+      .references(() => clients.id, { onDelete: 'restrict' }),
+    title: text('title'),
+    firstName: text('first_name').notNull(),
+    lastName: text('last_name'),
+    email: text('email'),
+    phoneOffice: text('phone_office'),
+    phoneMobile: text('phone_mobile'),
+    fax: text('fax'),
+    invoiceRecipientStatus: text('invoice_recipient_status', {
+      enum: ['none', 'recipient', 'cc', 'bcc'],
+    })
+      .notNull()
+      .default('none'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('contacts_harvest_id_unique').on(table.harvestId),
+    index('contacts_client_id').on(table.clientId),
+  ],
+)

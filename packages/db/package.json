@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "description": "Ezacto's shared Drizzle SQLite schema and D1/container adapters.",
   "type": "module",
+  "files": ["dist"],
   "exports": {
     ".": "./dist/index.js",
     "./schema": "./dist/schema.js"
@@ -12,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "build": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
