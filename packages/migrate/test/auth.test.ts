@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { hostname } from 'node:os'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -123,6 +124,19 @@ describe('runAuth', () => {
     expect(logs).toHaveLength(0)
     expect(result.isAdministrator).toBe(true)
     expect(order).toEqual(['accounts', 'company', 'users/me'])
+  })
+
+  it('[unit] refuses auth while extract owns the snapshot lock, before any API request', async () => {
+    await mkdir(join(dir, '.sync.lock'))
+    await writeFile(
+      join(dir, '.sync.lock', 'owner.json'),
+      JSON.stringify({ pid: process.pid, host: hostname(), command: 'extract', started_at: '2026-08-26T00:00:00.000Z' }),
+    )
+
+    await expect(runAuth({ env: baseEnv, toolVersion: '0.0.0', snapshotDir: dir })).rejects.toThrow(
+      'snapshot is locked by extract',
+    )
+    expect(order).toEqual([])
   })
 
   it('[unit] carries extract progress forward: a re-run preserves resources, watermarks, and started_at', async () => {

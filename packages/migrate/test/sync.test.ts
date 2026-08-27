@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { hostname } from 'node:os'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -20,6 +21,7 @@ let upstreamHasUser2 = true
 let upstreamHasRole20 = true
 let upstreamHasInvoiceMessage = true
 let shortUsersWitness = false
+let clientsFail = false
 let server: FakeHarvest
 let dir: string
 
@@ -53,7 +55,8 @@ const routes = (): Record<string, RouteHandler> => ({
   },
   '/v2/users/{id}/teammates': () => ({ status: 403, body: { message: 'disabled' } }),
   '/v2/roles': (url) => list('roles', upstreamHasRole20 ? [20] : [], url),
-  '/v2/clients': (url) => list('clients', [30], url),
+  '/v2/clients': (url) =>
+    clientsFail ? { status: 500, body: { message: 'temporary failure' } } : list('clients', [30], url),
   '/v2/contacts': (url) => list('contacts', [40], url),
   '/v2/tasks': (url) => list('tasks', [50], url),
   '/v2/expense_categories': (url) => list('expense_categories', [60], url),
@@ -94,6 +97,7 @@ describe('runSync', () => {
     upstreamHasRole20 = true
     upstreamHasInvoiceMessage = true
     shortUsersWitness = false
+    clientsFail = false
     dir = await mkdtemp(join(tmpdir(), 'ezacto-migrate-sync-'))
     server = await startFakeHarvest(routes())
     await writeManifest(dir, {
@@ -192,21 +196,46 @@ describe('runSync', () => {
     )
   })
 
-  it('[unit] reports teammate deletion detection as incomplete because raw rows lack manager context', async () => {
+  it('[unit] reports teammate deletion coverage as nonfatal unsupported because raw rows lack manager context', async () => {
     const result = await run()
 
-    expect(result.complete).toBe(false)
-    expect(result.unwitnessed.teammates).toContain('(manager_id, teammate_id)')
-    expect(syncExitCode(result)).toBe(1)
+    expect(result.complete).toBe(true)
+    expect(result.unsupported.teammates).toContain('(manager_id, teammate_id)')
+    expect(syncExitCode(result)).toBe(0)
     expect((await readManifest(dir)).deleted_upstream?.teammates).toBeUndefined()
   })
 
   it('[unit] rejects a concurrent sync before it can make a request or replace raw rows', async () => {
     const before = server.requests.length
     await mkdir(join(dir, '.sync.lock'))
+    await writeFile(
+      join(dir, '.sync.lock', 'owner.json'),
+      `${JSON.stringify({ pid: process.pid, host: hostname(), command: 'extract', started_at: '2026-08-26T00:00:00.000Z' })}\n`,
+    )
 
-    await expect(run()).rejects.toThrow(`sync already running for ${dir}`)
+    await expect(run()).rejects.toThrow('snapshot is locked by extract')
     expect(server.requests).toHaveLength(before)
+    expect((await readFile(join(dir, 'raw', 'roles.jsonl'), 'utf8')).trim()).toContain('"id":20')
+  })
+
+  it('[unit] refuses extract while another command owns the snapshot lock', async () => {
+    const before = server.requests.length
+    await mkdir(join(dir, '.sync.lock'))
+    await writeFile(
+      join(dir, '.sync.lock', 'owner.json'),
+      `${JSON.stringify({ pid: process.pid, host: hostname(), command: 'auth', started_at: '2026-08-26T00:00:00.000Z' })}\n`,
+    )
+
+    await expect(
+      runExtract({ env, snapshotDir: dir, baseUrl: server.baseUrl, log: () => undefined }),
+    ).rejects.toThrow('snapshot is locked by auth')
+    expect(server.requests).toHaveLength(before)
+  })
+
+  it('[unit] restores backed-up raw rows when extract itself fails before sync can witness them', async () => {
+    clientsFail = true
+
+    await expect(run()).rejects.toThrow('clients')
     expect((await readFile(join(dir, 'raw', 'roles.jsonl'), 'utf8')).trim()).toContain('"id":20')
   })
 })

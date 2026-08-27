@@ -48,6 +48,7 @@ import {
 import { collapseBetweenTokens, spansLines } from './raw-slices.js'
 import { createRateLimiter, RATE_LIMIT, RATE_WINDOW_MS } from './rate-limiter.js'
 import { RESOURCES, type ResourceStep } from './resources.js'
+import { acquireSnapshotLock, releaseSnapshotLock } from './snapshot-lock.js'
 
 export interface ExtractResult {
   resources: Record<string, ManifestResource>
@@ -67,6 +68,8 @@ export interface RunExtractOptions {
   timeoutMs?: number
   /** Reused by sync so extraction and its ID witnesses share one API budget. */
   session?: ExtractSession
+  /** sync already holds the snapshot-wide mutation lock for its nested extract. */
+  lockHeld?: boolean
 }
 
 /** One Harvest API session and its account-wide general-endpoint budget. */
@@ -207,6 +210,9 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
   const now = options.now ?? (() => new Date())
   const log = options.log ?? ((line: string) => console.log(line))
   const startedMs = Date.now()
+  const lockPath = options.lockHeld ? null : await acquireSnapshotLock(snapshotDir, 'extract')
+
+  try {
 
   const manifest = await readManifestIfExists(snapshotDir)
   if (!manifest) {
@@ -991,4 +997,7 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
   // saw: it counts retries, and it counts the requests an optional step spent
   // being refused.
   return { resources, requests: limiter.granted, durationMs: Date.now() - startedMs }
+  } finally {
+    if (lockPath !== null) await releaseSnapshotLock(lockPath)
+  }
 }

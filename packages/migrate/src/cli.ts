@@ -156,6 +156,13 @@ const main = async (): Promise<number> => {
       `sync: ${result.deleted} deletion mark(s) added, ${result.restored} cleared; ` +
         `${result.requests} requests total`,
     )
+    if (Object.keys(result.unsupported).length > 0) {
+      console.log(
+        `sync: deletion coverage unsupported for ${Object.entries(result.unsupported)
+          .map(([resource, reason]) => `${resource} (${reason})`)
+          .join(', ')}`,
+      )
+    }
     if (!result.complete) {
       console.error(
         `sync incomplete: no safe deletion decision for ${Object.entries(result.unwitnessed)

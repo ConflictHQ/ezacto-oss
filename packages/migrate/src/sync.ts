@@ -21,6 +21,7 @@ import {
 } from './manifest.js'
 import { paginate } from './paginator.js'
 import { RESOURCES, type ResourceStep } from './resources.js'
+import { acquireSnapshotLock, releaseSnapshotLock } from './snapshot-lock.js'
 
 export interface RunSyncOptions {
   env: HarvestEnv
@@ -48,6 +49,8 @@ export interface SyncResult {
   complete: boolean
   /** Resources intentionally left without a deletion decision, with the reason. */
   unwitnessed: Record<string, string>
+  /** Nonfatal exclusions from deletion coverage, where raw cannot represent the key. */
+  unsupported: Record<string, string>
   /** Both phases, including identity checks and retry attempts. */
   requests: number
   durationMs: number
@@ -58,8 +61,8 @@ export const syncExitCode = (result: Pick<SyncResult, 'complete'>): 0 | 1 =>
   result.complete ? 0 : 1
 
 type Witness =
-  | { witnessed: true; ids: Set<number>; totalEntries: number; requests: number }
-  | { witnessed: false; reason: string }
+  | { status: 'witnessed'; ids: Set<number>; totalEntries: number; requests: number }
+  | { status: 'unwitnessed' | 'unsupported'; reason: string }
 
 const isApiError = (err: unknown): err is Error & { status: number } =>
   err instanceof Error && typeof (err as { status?: unknown }).status === 'number'
@@ -102,7 +105,7 @@ const witnessedIds = async (
   // relation index, sync must make no delete decision for this resource.
   if (step.name === 'teammates') {
     return {
-      witnessed: false,
+      status: 'unsupported',
       reason: 'teammates are keyed by (manager_id, teammate_id), but verbatim raw rows lack manager_id',
     }
   }
@@ -146,13 +149,13 @@ const witnessedIds = async (
     // previous deletion state untouched rather than translating a 403 into an
     // account-wide tombstone.
     if (step.kind === 'child' && step.optional && isApiError(err) && [403, 404, 422].includes(err.status)) {
-      return { witnessed: false, reason: `Harvest returned ${err.status} for optional endpoint` }
+      return { status: 'unwitnessed', reason: `Harvest returned ${err.status} for optional endpoint` }
     }
     throw err
   }
 
   if (!hasWitness) {
-    return { witnessed: false, reason: 'Harvest omitted total_entries for this full-ID sweep' }
+    return { status: 'unwitnessed', reason: 'Harvest omitted total_entries for this full-ID sweep' }
   }
   if (ids.size !== totalEntries) {
     throw new Error(
@@ -160,7 +163,7 @@ const witnessedIds = async (
         `${totalEntries}; no deletion marks were published`,
     )
   }
-  return { witnessed: true, ids, totalEntries, requests }
+  return { status: 'witnessed', ids, totalEntries, requests }
 }
 
 const enabled = (manifest: Manifest, step: ResourceStep): boolean =>
@@ -190,22 +193,6 @@ const captureRaw = async (snapshotDir: string, backupDir: string, resource: stri
   return true
 }
 
-const acquireSyncLock = async (snapshotDir: string): Promise<string> => {
-  const path = join(snapshotDir, '.sync.lock')
-  try {
-    // mkdir is atomic, unlike a check-then-create file lock. It remains for the
-    // full command: pre-extract backup, extraction, witnesses and manifest
-    // publication are one snapshot transaction.
-    await mkdir(path)
-    return path
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
-      throw new Error(`sync already running for ${snapshotDir} — wait for it to finish before starting another`)
-    }
-    throw err
-  }
-}
-
 /**
  * Incrementally extract, then publish deletion marks resource-by-resource only
  * after their entire full-ID witness has completed. This is deliberately
@@ -215,7 +202,7 @@ export const runSync = async (options: RunSyncOptions): Promise<SyncResult> => {
   const now = options.now ?? (() => new Date())
   const log = options.log ?? ((line: string) => console.log(line))
   const started = Date.now()
-  const lockPath = await acquireSyncLock(options.snapshotDir)
+  const lockPath = await acquireSnapshotLock(options.snapshotDir, 'sync')
   try {
     const initial = await readManifest(options.snapshotDir)
     const session = createExtractSession({
@@ -235,12 +222,31 @@ export const runSync = async (options: RunSyncOptions): Promise<SyncResult> => {
       }
     }
 
-    const extract = await runExtract({ ...options, session })
+    let extract: ExtractResult
+    try {
+      extract = await runExtract({ ...options, session, lockHeld: true })
+    } catch (err) {
+      const interrupted = await readManifest(options.snapshotDir)
+      for (const resource of backedUp) {
+        const allPriorIds = new Set<number>()
+        for await (const id of readIds(backupDir, resource)) allPriorIds.add(id)
+        const restoredRows = await restoreDeletedRows(
+          options.snapshotDir,
+          resource,
+          backupDir,
+          allPriorIds,
+        )
+        interrupted.resources[resource].count += restoredRows
+      }
+      await writeManifest(options.snapshotDir, interrupted)
+      throw err
+    }
     const manifest = await readManifest(options.snapshotDir)
     const deletedUpstream: Record<string, number[]> = { ...(manifest.deleted_upstream ?? {}) }
     const fullIdSweeps: Record<string, ManifestFullIdSweep> = { ...(manifest.full_id_sweeps ?? {}) }
     const sweeps: Record<string, SyncSweepResult> = {}
     const unwitnessed: Record<string, string> = {}
+    const unsupported: Record<string, string> = {}
     let deleted = 0
     let restored = 0
 
@@ -280,9 +286,12 @@ export const runSync = async (options: RunSyncOptions): Promise<SyncResult> => {
         // without publishing a deletion decision from this malformed witness.
         throw err
       }
-      if (!witness.witnessed) {
-        unwitnessed[step.name] = witness.reason
-        log(`${step.name}: no full-ID witness available; leaving deletion marks unchanged (${witness.reason})`)
+      if (witness.status !== 'witnessed') {
+        if (witness.status === 'unsupported') unsupported[step.name] = witness.reason
+        else unwitnessed[step.name] = witness.reason
+        log(
+          `${step.name}: no full-ID witness available; leaving deletion marks unchanged (${witness.reason})`,
+        )
         continue
       }
 
@@ -329,6 +338,7 @@ export const runSync = async (options: RunSyncOptions): Promise<SyncResult> => {
       restored,
       complete: Object.keys(unwitnessed).length === 0,
       unwitnessed,
+      unsupported,
       requests: session.limiter.granted,
       durationMs: Date.now() - started,
     }
@@ -336,6 +346,6 @@ export const runSync = async (options: RunSyncOptions): Promise<SyncResult> => {
       await rm(backupDir, { recursive: true, force: true })
     }
   } finally {
-    await rm(lockPath, { recursive: true, force: true })
+    await releaseSnapshotLock(lockPath)
   }
 }

@@ -12,6 +12,7 @@ import {
   type ManifestPreflightUser,
 } from './manifest.js'
 import type { HarvestEnv } from './env.js'
+import { acquireSnapshotLock, releaseSnapshotLock } from './snapshot-lock.js'
 
 interface HarvestAccount {
   id: number
@@ -90,6 +91,8 @@ export const runAuth = async (options: RunAuthOptions): Promise<AuthResult> => {
   const { env, toolVersion, snapshotDir, accountIdFlag, force } = options
   const now = options.now ?? (() => new Date())
   const log = options.log ?? ((line: string) => console.log(line))
+  const lockPath = await acquireSnapshotLock(snapshotDir, 'auth')
+  try {
   const baseUrl = 'https://id.getharvest.com'
 
   // 1 — account discovery, no Harvest-Account-Id header for this call.
@@ -199,6 +202,9 @@ export const runAuth = async (options: RunAuthOptions): Promise<AuthResult> => {
     companyName: company.name,
     isAdministrator: me.is_administrator,
     manifestDir: snapshotDir,
+  }
+  } finally {
+    await releaseSnapshotLock(lockPath)
   }
 }
 

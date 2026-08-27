@@ -8,6 +8,8 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { runAuth } from '../src/auth.js'
 import { loadDevVars } from '../src/env.js'
+import { readManifest } from '../src/manifest.js'
+import { RESOURCES } from '../src/resources.js'
 import { runSync } from '../src/sync.js'
 
 loadDevVars()
@@ -47,7 +49,7 @@ describe.skipIf(!hasLiveCreds)('runSync [e2e:migrate-reconcile] against the live
       userAgentEmail: process.env.HARVEST_USER_AGENT_EMAIL || 'hello@ezacto.com',
     }
     await runAuth({ env, toolVersion: '0.0.0', snapshotDir: dir })
-    await runSync({ env, snapshotDir: dir })
+    const first = await runSync({ env, snapshotDir: dir })
     const afterFirst = await normalizedRaw(dir)
 
     const second = await runSync({ env, snapshotDir: dir })
@@ -58,5 +60,14 @@ describe.skipIf(!hasLiveCreds)('runSync [e2e:migrate-reconcile] against the live
     expect(second.deleted).toBe(0)
     expect(second.restored).toBe(0)
     expect(afterSecond).toEqual(afterFirst)
+    expect(first.complete).toBe(true)
+    expect(second.complete).toBe(true)
+    expect(second.unwitnessed).toEqual({})
+
+    const manifest = await readManifest(dir)
+    for (const step of RESOURCES) {
+      if (step.name === 'teammates' || (step.requires && !manifest.preflight[step.requires])) continue
+      expect(manifest.full_id_sweeps?.[step.name], `${step.name} must be deletion-witnessed`).toBeDefined()
+    }
   }, 900_000)
 })
