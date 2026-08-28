@@ -1,11 +1,45 @@
 /** @vitest-environment happy-dom */
 
-import type { GeneralResource, TimeEntry, TimeEntryInput, TimeEntryPatch } from '@ezacto/client'
+import {
+  EzactoApiError,
+  type AuthPrincipal,
+  type GeneralResource,
+  type Session,
+  type TimeEntry,
+  type TimeEntryInput,
+  type TimeEntryPatch,
+  type Whoami,
+} from '@ezacto/client'
 import { describe, expect, it, vi } from 'vitest'
 import { mountShell } from '../src/shell/browser.js'
 import { renderAppShell, type ShellApi } from '../src/index.js'
 
 const timestamp = '2026-08-28T12:00:00.000Z'
+
+const identity: Whoami = {
+  user_id: 1,
+  profile: 'administrator',
+  manager_grants: [],
+  authentication: { kind: 'session' },
+}
+
+const principal: AuthPrincipal = {
+  status: 'authenticated',
+  user_id: identity.user_id,
+  profile: identity.profile,
+  manager_grants: [],
+}
+
+const currentSession: Session = {
+  id: 7,
+  created_at: timestamp,
+  last_seen_at: timestamp,
+  idle_expires_at: timestamp,
+  absolute_expires_at: timestamp,
+  revoked_at: null,
+  revocation_reason: null,
+  current: true,
+}
 
 const resource = (id: number, name: string): GeneralResource => ({
   id,
@@ -54,7 +88,14 @@ const browserApi = (): ShellApi & {
   const api = {
     entries,
     failNextCreate: false,
-    whoami: vi.fn(async () => undefined),
+    whoami: vi.fn(async () => identity),
+    signIn: vi.fn(async () => principal),
+    logoutCurrentSession: vi.fn(async () => ({
+      ...currentSession,
+      current: false,
+      revoked_at: timestamp,
+      revocation_reason: 'user_revoked' as const,
+    })),
     listProjects: vi.fn(async () => ({
       data: [resource(1, 'Northpeak'), resource(2, 'Acme')],
       page: { next_cursor: null },
@@ -113,22 +154,43 @@ const edit = (input: HTMLInputElement, value: string): void => {
   input.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
+const renderBrowserShell = (): void => {
+  window.history.replaceState(null, '', '/')
+  document.open()
+  document.write(
+    renderAppShell({ environment: 'test', release: 'browser-test' })
+      .replace(
+        / {2}<link[^>]+(?:fonts\.googleapis|fonts\.gstatic|\/assets\/ezacto\.css)[^>]*>\n/gu,
+        '',
+      )
+      .replace(
+        '  <script type="module" src="/assets/ezacto.js"></script>\n',
+        '',
+      ),
+  )
+  document.close()
+}
+
+const authenticationError = (status: number, code: string): EzactoApiError =>
+  new EzactoApiError(
+    status,
+    { error: { code, message: 'server detail is not rendered', fields: [] } },
+    null,
+  )
+
+const submitSignIn = (email: string, password: string): void => {
+  const emailInput = document.querySelector<HTMLInputElement>('[name="email"]')!
+  const passwordInput = document.querySelector<HTMLInputElement>('[name="password"]')!
+  emailInput.value = email
+  passwordInput.value = password
+  document
+    .querySelector<HTMLFormElement>('[data-sign-in-form]')!
+    .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+}
+
 describe('week-grid browser behavior', () => {
   it('[e2e:track-week] preserves keyboard edits, notes, retry, copy, and phone-day writes', async () => {
-    window.history.replaceState(null, '', '/')
-    document.open()
-    document.write(
-      renderAppShell({ environment: 'test', release: 'browser-test' })
-        .replace(
-          / {2}<link[^>]+(?:fonts\.googleapis|fonts\.gstatic|\/assets\/ezacto\.css)[^>]*>\n/gu,
-          '',
-        )
-        .replace(
-          '  <script type="module" src="/assets/ezacto.js"></script>\n',
-          '',
-        ),
-    )
-    document.close()
+    renderBrowserShell()
     const api = browserApi()
 
     await mountShell(api)
@@ -227,5 +289,213 @@ describe('week-grid browser behavior', () => {
         expect.objectContaining({ spent_date: '2026-08-29', seconds: 900 }),
       ),
     )
+  })
+})
+
+describe('native browser authentication', () => {
+  it.each([
+    [401, 'invalid_credentials', 'Email or password is incorrect.'],
+    [403, 'email_verification_required', 'Verify your email before signing in.'],
+    [429, 'rate_limit_exceeded', 'Too many sign-in attempts. Wait a moment and try again.'],
+  ])(
+    '[unit] keeps signed-out data closed and renders the safe %s outcome',
+    async (status, code, expected) => {
+      renderBrowserShell()
+      const base = browserApi()
+      const api = {
+        ...base,
+        whoami: vi.fn(async () => {
+          throw authenticationError(401, 'authentication_required')
+        }),
+        signIn: vi.fn(async () => {
+          throw authenticationError(status, code)
+        }),
+      }
+
+      await mountShell(api)
+
+      expect(base.listProjects).not.toHaveBeenCalled()
+      expect(base.listTasks).not.toHaveBeenCalled()
+      expect(base.listTimeEntries).not.toHaveBeenCalled()
+      expect(document.querySelector<HTMLFormElement>('[data-sign-in-form]')?.hidden).toBe(false)
+      expect(document.querySelector<HTMLButtonElement>('[data-command-trigger]')?.disabled).toBe(
+        true,
+      )
+
+      submitSignIn('owner@example.test', 'do not persist me')
+      await vi.waitFor(() =>
+        expect(document.querySelector('[data-sign-in-result]')?.textContent).toBe(expected),
+      )
+      expect(document.querySelector<HTMLInputElement>('[name="password"]')?.value).toBe('')
+      expect(document.querySelector<HTMLButtonElement>('[data-sign-in-submit]')?.disabled).toBe(
+        false,
+      )
+      expect(document.body.textContent).not.toContain('server detail is not rendered')
+      expect(globalThis.location.href).not.toContain('do%20not%20persist%20me')
+      expect(document.documentElement.outerHTML).not.toContain('do not persist me')
+    },
+  )
+
+  it('[unit] clears the password and blocks a second submit while sign-in is pending', async () => {
+    renderBrowserShell()
+    const base = browserApi()
+    let rejectSignIn: ((error: unknown) => void) | undefined
+    const pending = new Promise<AuthPrincipal>((_resolve, reject) => {
+      rejectSignIn = reject
+    })
+    const api = {
+      ...base,
+      whoami: vi.fn(async () => {
+        throw authenticationError(401, 'authentication_required')
+      }),
+      signIn: vi.fn(() => pending),
+    }
+    await mountShell(api)
+
+    submitSignIn('owner@example.test', 'one request only')
+    submitSignIn('owner@example.test', 'one request only')
+    expect(api.signIn).toHaveBeenCalledTimes(1)
+    expect(document.querySelector<HTMLButtonElement>('[data-sign-in-submit]')?.disabled).toBe(
+      true,
+    )
+
+    rejectSignIn?.(authenticationError(401, 'invalid_credentials'))
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLInputElement>('[name="password"]')?.value).toBe(''),
+    )
+  })
+
+  it('[e2e:browser-auth] keeps a valid initial session signed in when week loading fails', async () => {
+    renderBrowserShell()
+    const base = browserApi()
+    let failWeek = true
+    const api = {
+      ...base,
+      listProjects: vi.fn(async (cursor?: string) => {
+        if (failWeek) throw new Error('catalog offline')
+        return base.listProjects(cursor)
+      }),
+    }
+
+    await mountShell(api)
+
+    expect(document.querySelector('[data-current-user-id]')?.textContent).toBe('1')
+    expect(document.querySelector<HTMLElement>('[data-current-identity]')?.hidden).toBe(false)
+    expect(document.querySelector<HTMLFormElement>('[data-sign-in-form]')?.hidden).toBe(true)
+    expect(document.querySelector('[data-session-status]')?.textContent).toContain(
+      'Signed in, but your week could not load',
+    )
+    expect(document.querySelector<HTMLButtonElement>('[data-retry-week]')?.hidden).toBe(false)
+    expect(document.querySelector<HTMLButtonElement>('[data-command-trigger]')?.disabled).toBe(
+      false,
+    )
+
+    failWeek = false
+    document.querySelector<HTMLButtonElement>('[data-retry-week]')!.click()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-session-status]')?.textContent).toContain('Connected'),
+    )
+    expect(document.querySelector<HTMLButtonElement>('[data-retry-week]')?.hidden).toBe(true)
+  })
+
+  it('[e2e:browser-auth] keeps a new session signed in when its first week load fails', async () => {
+    renderBrowserShell()
+    const base = browserApi()
+    let authenticated = false
+    const api = {
+      ...base,
+      whoami: vi.fn(async () => {
+        if (!authenticated) throw authenticationError(401, 'authentication_required')
+        return identity
+      }),
+      signIn: vi.fn(async () => {
+        authenticated = true
+        return principal
+      }),
+      listProjects: vi.fn(async () => {
+        throw new Error('catalog offline')
+      }),
+    }
+
+    await mountShell(api)
+    submitSignIn('owner@example.test', 'correct horse battery staple')
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-session-status]')?.textContent).toContain(
+        'Signed in, but your week could not load',
+      ),
+    )
+    expect(document.querySelector('[data-current-user-id]')?.textContent).toBe('1')
+    expect(document.querySelector<HTMLElement>('[data-current-identity]')?.hidden).toBe(false)
+    expect(document.querySelector<HTMLFormElement>('[data-sign-in-form]')?.hidden).toBe(true)
+    expect(document.querySelector('[data-sign-in-result]')?.textContent).toBe('')
+  })
+
+  it('[e2e:browser-auth] signs in, shows credential-safe identity, loads the week, and logs out', async () => {
+    renderBrowserShell()
+    const storage = vi.spyOn(Storage.prototype, 'setItem')
+    const href = globalThis.location.href
+    const base = browserApi()
+    let authenticated = false
+    const api = {
+      ...base,
+      whoami: vi.fn(async () => {
+        if (!authenticated) throw authenticationError(401, 'authentication_required')
+        return identity
+      }),
+      signIn: vi.fn(async () => {
+        authenticated = true
+        return principal
+      }),
+      logoutCurrentSession: vi.fn(async () => {
+        authenticated = false
+        return {
+          ...currentSession,
+          current: false,
+          revoked_at: timestamp,
+          revocation_reason: 'user_revoked' as const,
+        }
+      }),
+    }
+
+    await mountShell(api)
+    expect(base.listProjects).not.toHaveBeenCalled()
+    const email = document.querySelector<HTMLInputElement>('[name="email"]')!
+    email.focus()
+    expect(document.activeElement).toBe(email)
+
+    submitSignIn('owner@example.test', 'correct horse battery staple')
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-current-user-id]')?.textContent).toBe('1'),
+    )
+    expect(document.querySelector('[data-current-profile]')?.textContent).toBe('administrator')
+    expect(document.querySelector<HTMLElement>('[data-current-identity]')?.hidden).toBe(false)
+    expect(base.listProjects).toHaveBeenCalledTimes(1)
+    expect(base.listTasks).toHaveBeenCalledTimes(1)
+    expect(base.listTimeEntries).toHaveBeenCalled()
+    expect(document.querySelector<HTMLInputElement>('[name="password"]')?.value).toBe('')
+    expect(document.querySelector<HTMLButtonElement>('[data-command-trigger]')?.disabled).toBe(
+      false,
+    )
+    expect(globalThis.location.href).toBe(href)
+    expect(storage).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('correct horse battery staple'),
+    )
+    expect(document.body.textContent).not.toContain('correct horse battery staple')
+
+    const logout = document.querySelector<HTMLButtonElement>('[data-logout]')!
+    logout.focus()
+    expect(document.activeElement).toBe(logout)
+    logout.click()
+    await vi.waitFor(() => expect(api.logoutCurrentSession).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLFormElement>('[data-sign-in-form]')?.hidden).toBe(false),
+    )
+    expect(document.querySelector('[data-session-status]')?.textContent).toContain('Signed out')
+    expect(document.querySelector<HTMLButtonElement>('[data-command-trigger]')?.disabled).toBe(
+      true,
+    )
+    storage.mockRestore()
   })
 })

@@ -11,9 +11,21 @@ import {
   webAssets,
   type ShellApi,
 } from '../src/index.js'
-import type { GeneralResource, TimeEntry, TimeEntryInput, TimeEntryPatch } from '@ezacto/client'
+import type {
+  GeneralResource,
+  TimeEntry,
+  TimeEntryInput,
+  TimeEntryPatch,
+  Whoami,
+} from '@ezacto/client'
 
 const timestamp = '2026-08-28T12:00:00.000Z'
+const identity: Whoami = {
+  user_id: 1,
+  profile: 'administrator',
+  manager_grants: [],
+  authentication: { kind: 'session' },
+}
 const project: GeneralResource = {
   id: 1,
   name: 'Northpeak',
@@ -51,7 +63,23 @@ const memoryApi = (): ShellApi & { entries: TimeEntry[] } => {
   const entries: TimeEntry[] = []
   return {
     entries,
-    whoami: vi.fn(async () => undefined),
+    whoami: vi.fn(async () => identity),
+    signIn: vi.fn(async () => ({
+      status: 'authenticated' as const,
+      user_id: 1,
+      profile: 'administrator' as const,
+      manager_grants: [],
+    })),
+    logoutCurrentSession: vi.fn(async () => ({
+      id: 1,
+      created_at: timestamp,
+      last_seen_at: timestamp,
+      idle_expires_at: timestamp,
+      absolute_expires_at: timestamp,
+      revoked_at: timestamp,
+      revocation_reason: 'user_revoked' as const,
+      current: false,
+    })),
     listProjects: vi.fn(async () => ({
       data: [project],
       page: { next_cursor: null },
@@ -104,10 +132,17 @@ describe('S-1 through S-5 application shell', () => {
     expect(html).toContain('data-copy-last-week')
     expect(html).toContain('data-add-row-trigger')
     expect(html).toContain('data-note-dialog')
+    expect(html).toContain('data-sign-in-form')
+    expect(html).toContain('method="post" action="/auth/sign-in"')
+    expect(html).toContain('autocomplete="username"')
+    expect(html).toContain('autocomplete="current-password"')
+    expect(html).toContain('data-current-identity')
+    expect(html).toContain('data-logout')
     expect(html).toContain('name="viewport"')
     expect(webAssets.stylesheet).toContain('@media (max-width: 720px)')
     expect(webAssets.stylesheet).toContain('.timer-chip {')
     expect(webAssets.stylesheet).not.toMatch(/\.timer-chip\s*\{[^}]*display:\s*none/su)
+    expect(webAssets.javascript).toContain('credentials:"same-origin"')
   })
 
   it('[e2e:phone-week] swaps the seven-day table for a touch-sized day switcher', () => {
@@ -123,6 +158,12 @@ describe('S-1 through S-5 application shell', () => {
     )
     expect(webAssets.stylesheet).toMatch(
       /\.week-actions button,[\s\S]*\.day-switcher button \{[\s\S]*min-height: 44px;/u,
+    )
+    expect(webAssets.stylesheet).toMatch(
+      /@media \(max-width: 720px\)[\s\S]*\.sign-in-form \{[\s\S]*grid-template-columns: 1fr;/u,
+    )
+    expect(webAssets.stylesheet).toMatch(
+      /\.sign-in-form input \{[\s\S]*min-height: 44px;/u,
     )
   })
 

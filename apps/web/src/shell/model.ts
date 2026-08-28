@@ -1,9 +1,13 @@
 import {
   EzactoClient,
+  type AuthPrincipal,
   type GeneralResource,
+  type PasswordSignInInput,
+  type Session,
   type TimeEntry,
   type TimeEntryInput,
   type TimeEntryPatch,
+  type Whoami,
 } from '@ezacto/client'
 
 interface CursorPage<T> {
@@ -12,7 +16,9 @@ interface CursorPage<T> {
 }
 
 export interface ShellApi {
-  whoami(): Promise<void>
+  whoami(): Promise<Whoami>
+  signIn(credentials: PasswordSignInInput): Promise<AuthPrincipal>
+  logoutCurrentSession(): Promise<Session>
   listProjects(cursor?: string): Promise<CursorPage<GeneralResource>>
   listTasks(cursor?: string): Promise<CursorPage<GeneralResource>>
   listTimeEntries(query: {
@@ -265,7 +271,19 @@ export const startTimer = async (
 
 export const createShellApi = (client: EzactoClient): ShellApi => ({
   whoami: async () => {
-    await client.getWhoami()
+    return (await client.getWhoami()).data
+  },
+  signIn: async (credentials) => {
+    return (await client.signIn({ body: credentials })).data
+  },
+  logoutCurrentSession: async () => {
+    const current = (await client.listSessions()).data.find(
+      (session) => session.current,
+    )
+    if (current === undefined) {
+      throw new Error('The current session could not be found.')
+    }
+    return (await client.revokeSession({ sessionId: current.id })).data
   },
   listProjects: (cursor) =>
     client.listProjects({
@@ -310,4 +328,10 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
 })
 
 export const createSameOriginShellApi = (): ShellApi =>
-  createShellApi(new EzactoClient({ baseUrl: globalThis.location.origin }))
+  createShellApi(
+    new EzactoClient({
+      baseUrl: globalThis.location.origin,
+      fetch: (input, init) =>
+        globalThis.fetch(input, { ...init, credentials: 'same-origin' }),
+    }),
+  )

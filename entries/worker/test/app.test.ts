@@ -32,11 +32,17 @@ describe('worker entry', () => {
     expect(html).toContain('abc1234')
     expect(html).toContain('data-timer-chip')
     expect(html).toContain('data-command-dialog')
+    expect(html).toContain('data-sign-in-form')
+    expect(html).toContain('data-current-identity')
+    expect(html).toContain('data-logout')
     expect(html).toContain('/assets/ezacto.css')
     expect(html).toContain('/assets/ezacto.js')
     expect(html).toContain('name="robots" content="noindex"')
     expect(res.headers.get('content-security-policy')).toContain(
       "script-src 'self'",
+    )
+    expect(res.headers.get('content-security-policy')).toContain(
+      "form-action 'self'",
     )
   })
 
@@ -53,7 +59,10 @@ describe('worker entry', () => {
     expect(script.headers.get('content-type')).toBe(
       'text/javascript; charset=utf-8',
     )
-    expect((await script.text()).length).toBeGreaterThan(1_000)
+    const javascript = await script.text()
+    expect(javascript.length).toBeGreaterThan(1_000)
+    expect(javascript).toContain('/auth/sign-in')
+    expect(javascript).toContain('/api/v1/sessions')
   })
 
   it('publishes the versioned OpenAPI contract without database bindings', async () => {
