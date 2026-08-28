@@ -122,7 +122,7 @@ for (const [runtime, factory] of factories) {
       })
       await expect(
         current.store.claimAttempt(queued.id, 'http-provider', 'attempt-one', 30),
-      ).resolves.toBe(true)
+      ).resolves.toBe(1)
       await expect(
         current.store.markSent(
           queued.id,
@@ -168,10 +168,10 @@ for (const [runtime, factory] of factories) {
       const queued = await current.store.createQueued(message)
       await expect(
         current.store.claimAttempt(queued.id, 'http-provider', 'attempt-one', 30),
-      ).resolves.toBe(true)
+      ).resolves.toBe(1)
       await expect(
         current.store.claimAttempt(queued.id, 'http-provider', 'attempt-two', 30),
-      ).resolves.toBe(false)
+      ).resolves.toBeNull()
       await expect(
         current.store.markSent(
           queued.id,
@@ -184,7 +184,7 @@ for (const [runtime, factory] of factories) {
       current.setNow('2026-08-28T20:00:31.000Z')
       await expect(
         current.store.claimAttempt(queued.id, 'http-provider', 'attempt-two', 30),
-      ).resolves.toBe(true)
+      ).resolves.toBe(2)
       await expect(
         current.store.markSent(
           queued.id,
@@ -253,6 +253,70 @@ for (const [runtime, factory] of factories) {
         status: 'sent',
         attemptCount: 1,
         providerMessageId: 'provider-1',
+      })
+    })
+
+    it('[concurrency] excludes claim contention from the provider retry budget', async () => {
+      const current = await setup()
+      const queued = await current.store.createQueued(message)
+      const job: QueuedEmailJob = {
+        schemaVersion: 1,
+        deliveryId: queued.id,
+        message,
+      }
+      await expect(
+        current.store.claimAttempt(
+          queued.id,
+          'http-provider',
+          'abandoned-attempt',
+          30,
+        ),
+      ).resolves.toBe(1)
+
+      let providerCalls = 0
+      const provider: HttpEmailProvider = {
+        name: 'http-provider',
+        send: async () => {
+          providerCalls += 1
+          throw new Error('transient provider failure')
+        },
+      }
+      for (let queueAttempt = 1; queueAttempt <= 4; queueAttempt += 1) {
+        await expect(
+          processQueuedEmail(job, queueAttempt, current.store, provider, {
+            createAttemptId: () => `contender-${queueAttempt}`,
+          }),
+        ).resolves.toEqual({
+          action: 'retry',
+          delaySeconds: EMAIL_RETRY_POLICY.claimedRetryDelaySeconds,
+        })
+      }
+      expect(providerCalls).toBe(0)
+      await expect(current.store.get(queued.id)).resolves.toMatchObject({
+        status: 'queued',
+        attemptCount: 1,
+      })
+
+      await expect(
+        current.store.releaseAttempt(
+          queued.id,
+          'http-provider',
+          'abandoned-attempt',
+        ),
+      ).resolves.toBe(true)
+      await expect(
+        processQueuedEmail(job, 5, current.store, provider, {
+          createAttemptId: () => 'provider-attempt-two',
+        }),
+      ).resolves.toEqual({
+        action: 'retry',
+        delaySeconds: EMAIL_RETRY_POLICY.delaySeconds[1],
+      })
+      expect(providerCalls).toBe(1)
+      await expect(current.store.get(queued.id)).resolves.toMatchObject({
+        status: 'queued',
+        attemptCount: 2,
+        failureCode: null,
       })
     })
 

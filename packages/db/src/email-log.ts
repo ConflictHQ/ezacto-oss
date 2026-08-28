@@ -134,27 +134,30 @@ const createStore = (
       const leaseExpiresAt = new Date(
         Date.parse(at) + leaseSeconds * 1_000,
       ).toISOString()
-      return (
-        (await database.first<{ claimed: number }>(
-          `UPDATE email_log
+      const claimed = await database.first<{ attemptCount: number }>(
+        `UPDATE email_log
            SET provider = ?, attempt_count = attempt_count + 1,
              active_attempt_id = ?, attempt_lease_expires_at = ?, updated_at = ?
            WHERE id = ? AND status = 'queued'
              AND (provider IS NULL OR provider = ?)
              AND (active_attempt_id IS NULL
                OR julianday(attempt_lease_expires_at) <= julianday(?))
-           RETURNING 1 AS claimed`,
-          [
-            provider,
-            attemptId,
-            leaseExpiresAt,
-            at,
-            deliveryId,
-            provider,
-            at,
-          ],
-        )) !== null
+           RETURNING attempt_count AS attemptCount`,
+        [
+          provider,
+          attemptId,
+          leaseExpiresAt,
+          at,
+          deliveryId,
+          provider,
+          at,
+        ],
       )
+      if (claimed === null) return null
+      if (!Number.isSafeInteger(claimed.attemptCount) || claimed.attemptCount < 1) {
+        throw new Error('email delivery claim returned an invalid provider attempt count')
+      }
+      return claimed.attemptCount
     },
 
     async releaseAttempt(deliveryId, provider, attemptId) {

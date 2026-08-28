@@ -37,22 +37,28 @@ const record = (overrides: Partial<EmailLogRecord> = {}): EmailLogRecord => ({
   ...overrides,
 })
 
-const store = (): EmailLogStore => ({
-  createQueued: vi.fn(async () => record()),
-  get: vi.fn(async () => record()),
-  claimAttempt: vi.fn(async () => true),
-  releaseAttempt: vi.fn(async () => true),
-  markSent: vi.fn(async () =>
-    record({ status: 'sent', provider: 'test-http', providerMessageId: 'provider-7' }),
-  ),
-  markProviderFailed: vi.fn(async (_id, provider, failureCode) =>
-    record({ status: 'failed', provider, failureCode }),
-  ),
-  markQueueFailed: vi.fn(async () =>
-    record({ status: 'failed', failureCode: 'queue_unavailable' }),
-  ),
-  list: vi.fn(async () => []),
-})
+const store = (): EmailLogStore => {
+  let attemptCount = 0
+  return {
+    createQueued: vi.fn(async () => record()),
+    get: vi.fn(async () => record()),
+    claimAttempt: vi.fn(async () => {
+      attemptCount += 1
+      return attemptCount
+    }),
+    releaseAttempt: vi.fn(async () => true),
+    markSent: vi.fn(async () =>
+      record({ status: 'sent', provider: 'test-http', providerMessageId: 'provider-7' }),
+    ),
+    markProviderFailed: vi.fn(async (_id, provider, failureCode) =>
+      record({ status: 'failed', provider, failureCode }),
+    ),
+    markQueueFailed: vi.fn(async () =>
+      record({ status: 'failed', failureCode: 'queue_unavailable' }),
+    ),
+    list: vi.fn(async () => []),
+  }
+}
 
 const job: QueuedEmailJob = { schemaVersion: 1, deliveryId: 7, message }
 
@@ -118,6 +124,37 @@ describe('queued mailer', () => {
     )
   })
 
+  it('[unit] does not spend provider retries on queue claim contention', async () => {
+    const log = store()
+    vi.mocked(log.claimAttempt)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(1)
+    const provider: HttpEmailProvider = {
+      name: 'test-http',
+      send: vi.fn(async () => {
+        throw new Error('transient provider failure')
+      }),
+    }
+
+    for (let queueAttempt = 1; queueAttempt <= 4; queueAttempt += 1) {
+      await expect(
+        processQueuedEmail(job, queueAttempt, log, provider),
+      ).resolves.toEqual({
+        action: 'retry',
+        delaySeconds: EMAIL_RETRY_POLICY.claimedRetryDelaySeconds,
+      })
+    }
+    await expect(processQueuedEmail(job, 5, log, provider)).resolves.toEqual({
+      action: 'retry',
+      delaySeconds: EMAIL_RETRY_POLICY.delaySeconds[0],
+    })
+    expect(provider.send).toHaveBeenCalledTimes(1)
+    expect(log.markProviderFailed).not.toHaveBeenCalled()
+  })
+
   it('[unit] times out provider I/O without leaking the timeout into the enqueueing click', async () => {
     const log = store()
     let providerStarted = false
@@ -148,6 +185,9 @@ describe('queued mailer', () => {
 
   it('[unit] records provider timeout when the bounded retry policy is exhausted', async () => {
     const log = store()
+    vi.mocked(log.claimAttempt).mockResolvedValue(
+      EMAIL_RETRY_POLICY.maxAttempts,
+    )
     const provider: HttpEmailProvider = {
       name: 'slow-http',
       send: vi.fn(
@@ -207,7 +247,7 @@ describe('queued mailer', () => {
 
   it('[unit] acknowledges terminal log redelivery without sending twice', async () => {
     const log = store()
-    vi.mocked(log.claimAttempt).mockResolvedValue(false)
+    vi.mocked(log.claimAttempt).mockResolvedValue(null)
     vi.mocked(log.get).mockResolvedValue(
       record({ status: 'sent', provider: 'test-http', providerMessageId: 'provider-7' }),
     )

@@ -49,7 +49,7 @@ export interface EmailLogStore {
     provider: string,
     attemptId: string,
     leaseSeconds: number,
-  ): Promise<boolean>
+  ): Promise<number | null>
   releaseAttempt(
     deliveryId: number,
     provider: string,
@@ -220,7 +220,7 @@ const failureCode = (
 
 export const processQueuedEmail = async (
   job: QueuedEmailJob,
-  attempt: number,
+  queueAttempt: number,
   log: EmailLogStore,
   provider: HttpEmailProvider,
   options: {
@@ -236,7 +236,7 @@ export const processQueuedEmail = async (
   ) {
     throw new TypeError('queued email job is invalid')
   }
-  if (!Number.isSafeInteger(attempt) || attempt < 1) {
+  if (!Number.isSafeInteger(queueAttempt) || queueAttempt < 1) {
     throw new RangeError('queue attempt must be a positive safe integer')
   }
   const message = copyMessage(job.message)
@@ -266,13 +266,16 @@ export const processQueuedEmail = async (
     'email delivery attempt id',
     128,
   )
-  const claimed = await log.claimAttempt(
+  // The queue's delivery counter includes lease contention and persistence
+  // redeliveries. Only the atomically persisted provider-attempt count may
+  // consume the provider retry budget or select its backoff interval.
+  const providerAttempt = await log.claimAttempt(
     job.deliveryId,
     provider.name,
     attemptId,
     attemptLeaseSeconds,
   )
-  if (!claimed) {
+  if (providerAttempt === null) {
     const current = await log.get(job.deliveryId)
     if (current === null) throw new Error('queued email log does not exist')
     return current.status === 'queued'
@@ -292,7 +295,7 @@ export const processQueuedEmail = async (
       providerTimeoutMs,
     )
   } catch (error) {
-    if (attempt < EMAIL_RETRY_POLICY.maxAttempts) {
+    if (providerAttempt < EMAIL_RETRY_POLICY.maxAttempts) {
       if (!(await log.releaseAttempt(job.deliveryId, provider.name, attemptId))) {
         throw new Error('email delivery attempt ownership was lost before retry', {
           cause: error,
@@ -300,7 +303,7 @@ export const processQueuedEmail = async (
       }
       return {
         action: 'retry',
-        delaySeconds: EMAIL_RETRY_POLICY.delaySeconds[attempt - 1]!,
+        delaySeconds: EMAIL_RETRY_POLICY.delaySeconds[providerAttempt - 1]!,
       }
     }
     await log.markProviderFailed(

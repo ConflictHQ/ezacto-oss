@@ -5,6 +5,7 @@ import type {
   HttpEmailProvider,
   QueuedEmailJob,
 } from '@ezacto/mailer'
+import { EMAIL_RETRY_POLICY } from '@ezacto/mailer'
 import { createApp, type WorkerEnv } from '../src/app.js'
 import {
   consumeCloudflareEmailBatch,
@@ -119,6 +120,82 @@ describe('Worker email queue composition', () => {
         failureCode: 'provider_rejected',
       }) as EmailLogRecord,
     ])
+  })
+
+  it('[concurrency] does not spend provider retries on queue redelivery contention', async () => {
+    const env = {
+      DB: database,
+      API_CURSOR_SIGNING_KEY: cursorKey,
+      ENVIRONMENT: 'test',
+      RELEASE: 'mailer-test',
+    } satisfies WorkerEnv
+    const services = await createRuntimeServices(env)
+    const message = {
+      to: [{ email: 'retry-budget@example.test' }],
+      template: 'verify_email',
+      subject: 'Verify your ezacto email',
+      text: 'Open the link.',
+    } as const
+    const queued = await services.emailLog.createQueued(message)
+    await expect(
+      services.emailLog.claimAttempt(
+        queued.id,
+        'test-http',
+        'abandoned-worker-attempt',
+        30,
+      ),
+    ).resolves.toBe(1)
+
+    const provider: HttpEmailProvider = {
+      name: 'test-http',
+      send: vi.fn(async () => {
+        throw new Error('transient provider failure')
+      }),
+    }
+    const retry = vi.fn()
+    const ack = vi.fn()
+    const job: QueuedEmailJob = {
+      schemaVersion: 1,
+      deliveryId: queued.id,
+      message,
+    }
+    const consume = async (attempts: number) =>
+      consumeCloudflareEmailBatch(
+        {
+          messages: [{ body: job, attempts, retry, ack }],
+        } as unknown as MessageBatch<QueuedEmailJob>,
+        services.emailLog,
+        provider,
+      )
+
+    for (let attempts = 1; attempts <= 4; attempts += 1) {
+      await consume(attempts)
+    }
+    expect(retry).toHaveBeenCalledTimes(4)
+    expect(retry).toHaveBeenLastCalledWith({
+      delaySeconds: EMAIL_RETRY_POLICY.claimedRetryDelaySeconds,
+    })
+    expect(ack).not.toHaveBeenCalled()
+    expect(provider.send).not.toHaveBeenCalled()
+
+    await expect(
+      services.emailLog.releaseAttempt(
+        queued.id,
+        'test-http',
+        'abandoned-worker-attempt',
+      ),
+    ).resolves.toBe(true)
+    await consume(5)
+    expect(retry).toHaveBeenLastCalledWith({
+      delaySeconds: EMAIL_RETRY_POLICY.delaySeconds[1],
+    })
+    expect(ack).not.toHaveBeenCalled()
+    expect(provider.send).toHaveBeenCalledTimes(1)
+    await expect(services.emailLog.get(queued.id)).resolves.toMatchObject({
+      status: 'queued',
+      attemptCount: 2,
+      failureCode: null,
+    })
   })
 
   it('[api] keeps signup fail-closed before a queue and provider are both bound', async () => {
