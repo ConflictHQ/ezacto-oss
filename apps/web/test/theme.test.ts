@@ -68,12 +68,17 @@ describe('D16 theme token contract', () => {
     expect(request.mock.calls.flat().join(' ')).not.toMatch(/Space|Roboto|Unica/u)
   })
 
-  it('[unit] rejects literal colors from component source', async () => {
-    const componentFiles = (await filesUnder(resolve(root, 'src', 'components'))).filter(
+  it('[unit] rejects literal colors from component and shell source', async () => {
+    const sourceFiles = (
+      await Promise.all([
+        filesUnder(resolve(root, 'src', 'components')),
+        filesUnder(resolve(root, 'src', 'shell')),
+      ])
+    ).flat().filter(
       (path) => path.endsWith('.ts') || path.endsWith('.tsx') || path.endsWith('.css'),
     )
-    expect(componentFiles.length).toBeGreaterThan(0)
-    for (const path of componentFiles) {
+    expect(sourceFiles.length).toBeGreaterThan(0)
+    for (const path of sourceFiles) {
       const source = await readFile(path, 'utf8')
       expect(source, path).not.toMatch(/#[0-9a-fA-F]{3,8}\b/u)
     }

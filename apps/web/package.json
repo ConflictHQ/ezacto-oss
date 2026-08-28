@@ -5,18 +5,31 @@
   "private": true,
   "type": "module",
   "files": ["dist", "src", "generated", "theme-tokens.json"],
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "engines": { "node": ">=22" },
   "scripts": {
     "theme:generate": "node scripts/compile-theme-tokens.mjs",
     "theme:check": "node scripts/compile-theme-tokens.mjs --check",
-    "typecheck": "npm run theme:check && tsc --noEmit",
+    "shell:generate": "node scripts/compile-shell-assets.mjs",
+    "shell:check": "node scripts/compile-shell-assets.mjs --check",
+    "typecheck": "npm run theme:check && npm run shell:check && tsc --noEmit",
     "lint": "eslint .",
-    "test": "npm run theme:check && vitest run",
-    "build": "npm run theme:check && tsc -p tsconfig.build.json"
+    "test": "npm run theme:check && npm run shell:check && vitest run",
+    "build": "npm run theme:check && npm run shell:check && tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@ezacto/client": "0.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.10.0",
+    "esbuild": "^0.28.1",
     "eslint": "^10.9.1",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.68.0",
