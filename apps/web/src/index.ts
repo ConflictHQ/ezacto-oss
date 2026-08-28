@@ -1,2 +1,4 @@
 export * from './components/slots.js'
 export * from './theme.js'
+export * from './theme-contrast.js'
+export * from './theme-preference.js'
