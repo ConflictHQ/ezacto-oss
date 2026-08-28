@@ -1,9 +1,23 @@
 export { createApiApp } from './app.js'
+export {
+  apiAuthenticationMiddleware,
+  installApiTokenRoutes,
+  requireApiScope,
+  type ApiAuthentication,
+  type ApiSessionResolver,
+  type ApiTokenMetadata,
+  type ApiTokenService,
+  type AuthenticatedApiToken,
+  type IssuedApiToken,
+  type SessionPrincipal,
+} from './auth.js'
 export type {
   ApiContext,
   ApiInstaller,
   AppInstaller,
   CreateApiAppOptions,
+  UserPrincipal,
+  UserProfile,
 } from './context.js'
 export {
   ApiError,

@@ -34,14 +34,19 @@ describe('worker entry', () => {
     expect(html).toContain('name="robots" content="noindex"')
   })
 
-  it('mounts the shared API chassis at /api/v1', async () => {
+  it('fails the shared API closed until this deployment configures an auth store', async () => {
     const res = await app.request('/api/v1', {}, env)
 
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(401)
     expect(res.headers.get('x-request-id')).toBeTruthy()
+    expect(res.headers.get('www-authenticate')).toBe('Bearer realm="ezacto"')
     expect(await res.json()).toEqual({
-      data: { service: 'ezacto', version: 'v1' },
-      links: { self: '/api/v1' },
+      error: {
+        code: 'authentication_required',
+        message: 'A valid API token or user session is required.',
+        fields: [],
+      },
+      request_id: res.headers.get('x-request-id'),
     })
   })
 

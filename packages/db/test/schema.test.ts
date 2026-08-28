@@ -837,6 +837,7 @@ for (const [runtime, factory] of factories) {
         { id: '0007_expenses' },
         { id: '0008_retainer_ledger' },
         { id: '0009_three_axis_state' },
+        { id: '0011_api_tokens' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -867,6 +868,7 @@ for (const [runtime, factory] of factories) {
         { id: '0007_expenses' },
         { id: '0008_retainer_ledger' },
         { id: '0009_three_axis_state' },
+        { id: '0011_api_tokens' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -915,6 +917,7 @@ for (const [runtime, factory] of factories) {
         { id: '0007_expenses' },
         { id: '0008_retainer_ledger' },
         { id: '0009_three_axis_state' },
+        { id: '0011_api_tokens' },
       ])
       expect(
         await db.rows<{ name: string }>(
@@ -939,6 +942,7 @@ for (const [runtime, factory] of factories) {
         { id: '0007_expenses' },
         { id: '0008_retainer_ledger' },
         { id: '0009_three_axis_state' },
+        { id: '0011_api_tokens' },
       ])
     })
   })

@@ -4,6 +4,16 @@ const cursorSigningKey = new Uint8Array(32).fill(0x41)
 const runtimeRows = [1, 2, 3].map((id) => ({ id, label: `row-${id}`, internal: 'hidden' }))
 
 export const runtimeApp = createApiApp({
+  authentication: {
+    sessions: {
+      resolve: async () => ({
+        type: 'user',
+        userId: 1,
+        profile: 'administrator',
+        authentication: { kind: 'session', sessionId: 'runtime-test-session' },
+      }),
+    },
+  },
   installApi(api) {
     api.get('/runtime/echo/:value', (context) =>
       context.json({ data: { value: context.req.param('value') } }),
