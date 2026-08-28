@@ -1,6 +1,12 @@
 import { createApiTokenStore, createD1Database } from '@ezacto/db/d1'
 import { EzactoClient } from '@ezacto/client'
-import { createShellApi, loadShellSnapshot, quickAdd } from '@ezacto/web'
+import {
+  buildWeekGrid,
+  createShellApi,
+  loadShellSnapshot,
+  quickAdd,
+  saveWeekCellWithRetry,
+} from '@ezacto/web'
 import { build } from 'esbuild'
 import { Miniflare } from 'miniflare'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -209,10 +215,7 @@ describe('Worker D1 runtime composition', () => {
       'log 2h run runtimetask shell acceptance',
       new Date('2026-08-28T12:00:00.000Z'),
     )
-    const snapshot = await loadShellSnapshot(
-      api,
-      new Date('2026-08-28T12:00:00.000Z'),
-    )
+    const snapshot = await loadShellSnapshot(api, new Date('2026-08-28T12:00:00.000Z'))
 
     expect(created).toMatchObject({
       user_id: 2,
@@ -237,6 +240,48 @@ describe('Worker D1 runtime composition', () => {
         .first(),
     ).toEqual({ seconds: 7_200, notes: 'shell acceptance' })
   })
+
+  it('[e2e:track-week] saves all seven grid cells through the generated client and survives refresh', async () => {
+    const client = new EzactoClient({
+      baseUrl: 'https://worker.test',
+      token: bearer,
+      fetch: workerFetch,
+    })
+    const api = createShellApi(client)
+    const within = new Date('2026-09-09T12:00:00.000Z')
+    const empty = await loadShellSnapshot(api, within)
+    const editable = buildWeekGrid(empty, '2026-09-09', [{ projectId: 1, taskId: 1 }])
+
+    for (const [index, cell] of editable.rows[0]!.cells.entries()) {
+      await expect(
+        saveWeekCellWithRetry(api, cell, String(index + 1), `day ${index + 1}`),
+      ).resolves.toMatchObject({ state: 'saved' })
+    }
+
+    const refreshed = buildWeekGrid(await loadShellSnapshot(api, within), '2026-09-09')
+    expect(refreshed.rows[0]!.cells.map((cell) => cell.totalSeconds)).toEqual([
+      3_600, 7_200, 10_800, 14_400, 18_000, 21_600, 25_200,
+    ])
+    expect(refreshed.totalSeconds).toBe(100_800)
+    expect(refreshed.rows[0]!.cells.map((cell) => cell.notes)).toEqual([
+      'day 1',
+      'day 2',
+      'day 3',
+      'day 4',
+      'day 5',
+      'day 6',
+      'day 7',
+    ])
+    expect(
+      await database
+        .prepare(
+          `SELECT COUNT(*) AS count, SUM(seconds) AS seconds
+           FROM time_entries WHERE spent_date BETWEEN ? AND ?`,
+        )
+        .bind('2026-09-07', '2026-09-13')
+        .first(),
+    ).toEqual({ count: 7, seconds: 100_800 })
+  }, 20_000)
 })
 
 describe('cursor signing binding', () => {

@@ -12,7 +12,9 @@ body {
   background: var(--ez-ground);
 }
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 button {
@@ -20,7 +22,9 @@ button {
 }
 button:focus-visible,
 a:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
   outline: 3px solid var(--ez-data);
   outline-offset: 2px;
 }
@@ -185,16 +189,19 @@ dialog h2,
   color: var(--ez-ink);
 }
 .week-surface {
+  margin-inline: -32px;
   border: 1px solid var(--ez-border);
+  border-inline: 0;
   border-radius: var(--ez-radius);
   overflow: hidden;
 }
-.week-surface > header {
-  min-height: 48px;
+.week-toolbar {
+  min-height: 64px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
+  gap: 20px;
+  padding: 10px 32px;
   background: var(--ez-surface);
   border-bottom: 1px solid var(--ez-border);
 }
@@ -206,33 +213,245 @@ dialog h2,
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
-.table-wrap {
+.week-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.week-actions button,
+.day-switcher button {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.week-actions [data-add-row-trigger] {
+  border-color: var(--ez-action);
+  background: var(--ez-action);
+  color: var(--ez-action-fg);
+  font-weight: 600;
+}
+.week-actions [data-week-total] {
+  min-width: 72px;
+  padding-left: 10px;
+  text-align: right;
+}
+.week-grid-wrap {
   overflow-x: auto;
 }
-table {
+.week-grid-table {
   width: 100%;
+  min-width: 1100px;
   border-collapse: collapse;
   font-variant-numeric: tabular-nums;
 }
-th,
-td {
-  height: 40px;
-  padding: 0 16px;
+.week-grid-table th,
+.week-grid-table td {
+  height: 58px;
   border-bottom: 1px solid var(--ez-border);
   text-align: left;
   white-space: nowrap;
 }
-th {
+.week-grid-table thead th {
+  height: 44px;
+  padding: 0 8px;
   background: var(--ez-surface);
   color: var(--ez-muted);
   font-size: 13px;
   font-weight: 500;
+  text-align: center;
 }
-tbody tr:last-child td {
+.week-grid-table thead th:first-child,
+.week-grid-table tbody th,
+.week-grid-table tfoot th {
+  width: 224px;
+  min-width: 224px;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  padding: 0 16px 0 32px;
+  background: var(--ez-ground);
+  text-align: left;
+}
+.week-grid-table thead th:first-child {
+  z-index: 2;
+  background: var(--ez-surface);
+}
+.week-grid-table tbody th strong,
+.week-grid-table tbody th span,
+.day-row-label strong,
+.day-row-label span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.week-grid-table tbody th span,
+.day-row-label span {
+  margin-top: 2px;
+  color: var(--ez-muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+.week-grid-table tbody td {
+  width: 112px;
+  min-width: 112px;
+  padding: 0;
+  border-left: 1px solid var(--ez-border);
+}
+.week-grid-table tbody tr:last-child th,
+.week-grid-table tbody tr:last-child td {
   border-bottom: 0;
 }
-tbody tr[data-running="true"] {
+.week-grid-table tbody tr[data-running="true"] th {
   box-shadow: inset 3px 0 var(--ez-live);
+}
+.week-grid-table .row-total,
+.week-grid-table tfoot td {
+  padding: 0 12px;
+  color: var(--ez-muted);
+  font-family: var(--ez-font-mono), monospace;
+  text-align: right;
+}
+.week-grid-table tfoot th,
+.week-grid-table tfoot td {
+  height: 44px;
+  border-top: 1px solid var(--ez-border);
+  border-bottom: 0;
+  background: var(--ez-surface);
+  font-weight: 600;
+}
+.week-grid-table .grid-empty {
+  padding: 24px 32px;
+  color: var(--ez-muted);
+  text-align: center;
+}
+.week-cell {
+  min-height: 57px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  grid-template-rows: 36px 17px;
+  align-items: center;
+  padding: 2px 4px 0;
+  background: var(--ez-ground);
+}
+.week-cell input {
+  width: 100%;
+  height: 34px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: var(--ez-radius);
+  background: transparent;
+  color: var(--ez-ink);
+  font-family: var(--ez-font-mono), monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.week-cell input:hover:not(:disabled) {
+  border-color: var(--ez-border);
+}
+.week-cell input:focus {
+  border-color: var(--ez-data);
+  background: var(--ez-surface);
+}
+.week-cell input:disabled {
+  color: var(--ez-muted);
+  cursor: not-allowed;
+}
+.week-cell[data-running="true"] input {
+  box-shadow: inset 3px 0 var(--ez-live);
+}
+.week-cell[data-cell-state="saved"] input {
+  border-color: var(--ez-action);
+}
+.week-cell[data-cell-state="retry"] input,
+.week-cell[data-cell-state="conflict"] input {
+  border-color: var(--ez-live);
+}
+.week-cell[data-cell-state="running"] .cell-status {
+  color: var(--ez-live);
+}
+.cell-note {
+  width: 24px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ez-data);
+  font-weight: 700;
+}
+.cell-note:disabled {
+  color: var(--ez-border);
+  cursor: default;
+}
+.cell-status {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ez-muted);
+  font:
+    10px/1.2 var(--ez-font-mono),
+    monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.week-cell[data-cell-state="retry"] .cell-status,
+.week-cell[data-cell-state="conflict"] .cell-status {
+  color: var(--ez-live);
+}
+.cell-retry {
+  grid-column: 2;
+  grid-row: 2;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ez-data);
+  font-size: 10px;
+  font-weight: 600;
+}
+.day-list {
+  display: none;
+}
+.day-switcher {
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--ez-border);
+  background: var(--ez-ground);
+  text-align: center;
+}
+.day-row {
+  min-height: 72px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 132px;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--ez-border);
+}
+.day-row[data-running="true"] {
+  box-shadow: inset 3px 0 var(--ez-live);
+}
+.day-row-label {
+  min-width: 0;
+}
+.day-empty {
+  margin: 0;
+  padding: 28px 16px;
+  color: var(--ez-muted);
+  text-align: center;
+}
+html[data-time-view="day"] .week-grid-wrap {
+  display: none;
+}
+html[data-time-view="day"] .day-list {
+  display: block;
 }
 .data-quality {
   display: flex;
@@ -294,7 +513,9 @@ dialog label {
   font-size: 13px;
   color: var(--ez-muted);
 }
-dialog input {
+dialog input,
+dialog select,
+dialog textarea {
   width: 100%;
   min-height: 44px;
   padding: 8px 12px;
@@ -302,6 +523,9 @@ dialog input {
   border-radius: var(--ez-radius);
   background: var(--ez-surface);
   color: var(--ez-ink);
+}
+dialog textarea {
+  resize: vertical;
 }
 .hint,
 .form-result {
@@ -407,6 +631,31 @@ dialog input {
     margin-inline: -16px;
     border-inline: 0;
     border-radius: 0;
+  }
+  .week-toolbar {
+    align-items: flex-start;
+    padding: 12px 16px;
+  }
+  .week-actions {
+    max-width: 220px;
+  }
+  .week-actions button,
+  .day-switcher button {
+    min-height: 44px;
+  }
+  .week-actions [data-week-total] {
+    width: 100%;
+    padding: 4px 0 0;
+    text-align: right;
+  }
+  .week-grid-wrap {
+    display: none;
+  }
+  .day-list {
+    display: block;
+  }
+  .day-row .week-cell {
+    min-height: 58px;
   }
   dialog {
     width: 100vw;
