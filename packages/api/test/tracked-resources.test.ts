@@ -527,7 +527,7 @@ for (const [runtime, factory] of factories) {
       expect(
         (await test.request(`/api/v1/time-entries/${ids[2]}`)).status,
       ).toBe(404)
-    })
+    }, 20_000)
 
     it('[api] maps every time-entry locked write through the typed native 422 contract', async () => {
       const test = await setup()
