@@ -817,6 +817,13 @@ export const reconcileImportedInvoice = async (
     }
     throw new Error('import reconciliation expected source timestamp is stale')
   }
+  if (
+    !Number.isSafeInteger(invoice.version) ||
+    invoice.version < 0 ||
+    invoice.version >= Number.MAX_SAFE_INTEGER
+  ) {
+    throw new Error('invoice version cannot be incremented safely')
+  }
 
   const existingLines = await all<StoredLine>(database, {
     text: `SELECT id, harvest_id AS "harvestId", position, kind, description, quantity,

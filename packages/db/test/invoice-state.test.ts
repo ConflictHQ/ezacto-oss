@@ -457,6 +457,61 @@ for (const [runtime, factory] of factories) {
       ])
     })
 
+    it('[unit] rejects an import before receipt creation when version is exhausted', async () => {
+      database = await factory()
+      await installFixture(database)
+      await database.run(
+        `INSERT INTO invoices (
+          id, harvest_id, client_id, number, currency, issue_date, due_date, state,
+          version, source_updated_at, created_at, updated_at
+        ) VALUES (
+          3, 7003, 1, 'INV-EXHAUSTED-IMPORT', 'USD', '2026-08-01', '2026-08-31',
+          'open', 9007199254740991, ?, ?, ?
+        )`,
+        timestamp,
+        timestamp,
+        timestamp,
+      )
+
+      await expect(
+        reconcileImportedInvoice(database.orm, {
+          invoiceId: 3,
+          sourceBatchComplete: true,
+          expectedSourceUpdatedAt: timestamp,
+          sourceUpdatedAt: laterTimestamp,
+          sourceState: 'open',
+          sourceSentAt: null,
+          sourcePaidAt: null,
+          sourcePaidDate: null,
+          sourceClosedAt: null,
+          sourceAmountCents: 0,
+          sourceDueAmountCents: 0,
+          sourceTaxAmountCents: 0,
+          sourceTax2AmountCents: 0,
+          sourceDiscountAmountCents: 0,
+          sourcePaymentOptions: [],
+          sourceWrittenOffCents: 0,
+          lines: [],
+          messages: [],
+          payments: [],
+        }),
+      ).rejects.toThrow(/version cannot be incremented safely/)
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT version, source_updated_at,
+             (SELECT count(*) FROM invoice_import_reconciliations
+               WHERE invoice_id = invoices.id) AS receipts
+           FROM invoices WHERE id = 3`,
+        ),
+      ).toEqual([
+        {
+          version: Number.MAX_SAFE_INTEGER,
+          source_updated_at: timestamp,
+          receipts: 0,
+        },
+      ])
+    })
+
     it('[unit] atomically commits a lifecycle event and returns the original retry result', async () => {
       database = await factory()
       await installFixture(database)

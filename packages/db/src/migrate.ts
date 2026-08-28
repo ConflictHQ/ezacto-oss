@@ -157,7 +157,7 @@ const invoiceLifecycleMigration = [
       OR OLD.sent_from IS NOT NEW.sent_from OR OLD.sent_from_email IS NOT NEW.sent_from_email
     BEGIN SELECT RAISE(ABORT, 'invoice message sender snapshots are immutable'); END`,
   `ALTER TABLE invoices ADD COLUMN version INTEGER NOT NULL DEFAULT 0
-    CHECK (version >= 0)`,
+    CHECK (version BETWEEN 0 AND 9007199254740991)`,
   `ALTER TABLE invoices ADD COLUMN close_reason TEXT
     CHECK (close_reason IS NULL OR close_reason IN ('cancelled','written_off','source_closed'))`,
   `ALTER TABLE invoices ADD COLUMN close_write_off_cents INTEGER NOT NULL DEFAULT 0
@@ -244,7 +244,7 @@ const invoiceLifecycleMigration = [
     ),
     source_state TEXT NOT NULL CHECK (source_state IN ('draft','open','paid','closed')),
     target_state TEXT NOT NULL CHECK (target_state IN ('draft','open','paid','closed')),
-    target_version INTEGER NOT NULL CHECK (target_version >= 0),
+    target_version INTEGER NOT NULL CHECK (target_version BETWEEN 0 AND 9007199254740991),
     target_updated_at TEXT NOT NULL,
     target_close_reason TEXT CHECK (
       target_close_reason IS NULL
