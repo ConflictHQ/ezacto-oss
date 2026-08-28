@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "description": "ezacto — open-source time tracking & invoicing. Pre-build: knowledge, specs, and pipeline scaffolding.",
   "engines": { "node": ">=22" },
-  "workspaces": ["packages/*", "entries/*"],
+  "workspaces": ["packages/*", "entries/*", "apps/*"],
   "scripts": {
     "contract:generate": "npm run build -w @ezacto/api && node scripts/generate-api-contract.mjs",
     "contract:check": "npm run build -w @ezacto/api && node scripts/generate-api-contract.mjs --check",

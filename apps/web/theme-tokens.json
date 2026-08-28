@@ -1,0 +1,45 @@
+{
+  "$source": "ConflictHQ/ezacto knowledge/docs/theme-tokens.json at D16 Revision 2",
+  "$comment": "The OSS build localizes only tier=oss tokens. Parked, private, and commercial-pool themes remain in the engagement brain and are not shipped.",
+  "contract": {
+    "slots": [
+      "ground",
+      "surface",
+      "border",
+      "ink",
+      "muted",
+      "action",
+      "action_fg",
+      "live",
+      "data",
+      "money",
+      "status_bg",
+      "status_fg"
+    ],
+    "fonts": ["display", "body", "mono"],
+    "scalars": ["radius"]
+  },
+  "default_theme": "precision",
+  "themes": {
+    "precision": {
+      "label": "Precision",
+      "ground": "#FFFFFF",
+      "surface": "#F6F8FA",
+      "border": "#D8DEE4",
+      "ink": "#14161A",
+      "muted": "#676C74",
+      "action": "#0E7A4A",
+      "action_fg": "#FFFFFF",
+      "live": "#E8590C",
+      "data": "#1F6FEB",
+      "money": "#F0F4F8",
+      "status_bg": "#EDF1F5",
+      "status_fg": "#676C74",
+      "display": "IBM Plex Sans",
+      "body": "IBM Plex Sans",
+      "mono": "IBM Plex Mono",
+      "radius": 6,
+      "tier": "oss"
+    }
+  }
+}
