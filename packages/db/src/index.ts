@@ -1,6 +1,7 @@
 export * from './adapters.js'
 export * from './api-tokens.js'
 export * from './expenses.js'
+export * from './general-resources.js'
 export * from './invoice-state.js'
 export {
   canonicalizeHarvestPaymentDates,
@@ -17,4 +18,5 @@ export * from './recurring-invoices.js'
 export * from './retainers.js'
 export * from './schema.js'
 export * from './time-entries.js'
+export * from './tracked-resource-repository.js'
 export * from './tracked-state.js'

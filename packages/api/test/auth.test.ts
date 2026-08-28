@@ -141,6 +141,7 @@ describe('API authentication middleware', () => {
         type: 'user',
         userId: 42,
         profile: 'accounting',
+        managerGrants: [],
         authentication: { kind: 'token', tokenId: 1, scopes: ['reports:read'] },
       },
     })
@@ -153,6 +154,7 @@ describe('API authentication middleware', () => {
         type: 'user',
         userId: 42,
         profile: 'administrator',
+        managerGrants: [],
         authentication: { kind: 'session', sessionId: 'user-session' },
       },
     })

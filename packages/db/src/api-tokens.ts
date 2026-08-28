@@ -33,6 +33,7 @@ export interface AuthenticatedApiToken {
   tokenId: number
   userId: number
   profile: UserProfile
+  managerGrants: string[]
   scopes: string[]
 }
 
@@ -109,7 +110,8 @@ const normalizeScopes = (scopes: readonly string[]): ApiScope[] => {
     throw new RangeError('scopes must contain between 1 and 100 entries')
   }
   const normalized = [...new Set(scopes)]
-  if (normalized.length !== scopes.length) throw new RangeError('scopes must not contain duplicates')
+  if (normalized.length !== scopes.length)
+    throw new RangeError('scopes must not contain duplicates')
   for (const scope of normalized) {
     if (!isApiScope(scope)) {
       throw new RangeError(`invalid API token scope: ${scope}`)
@@ -126,7 +128,9 @@ const randomBase64Url = (byteLength: number): string => {
 }
 
 const sha256Hex = async (value: string): Promise<string> => {
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))
+  const digest = new Uint8Array(
+    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)),
+  )
   return [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
@@ -324,7 +328,12 @@ export const authenticateApiToken = async (
 
   // This conditional write is the revocation race boundary: middleware only
   // accepts the principal if the token is still active when last-use is recorded.
-  const updated = await database.all<{ id: number; userId: number; profile: UserProfile | null }>(sql`
+  const updated = await database.all<{
+    id: number
+    userId: number
+    profile: UserProfile | null
+    managerGrants: string | null
+  }>(sql`
     UPDATE api_tokens
     SET last_used_at = CASE
         WHEN last_used_at IS NULL AND julianday(created_at) > julianday(${usedAt}) THEN created_at
@@ -344,20 +353,33 @@ export const authenticateApiToken = async (
     )
     RETURNING id, user_id AS userId,
       (SELECT profile FROM users
-        WHERE users.id = api_tokens.user_id AND is_active = 1) AS profile
+        WHERE users.id = api_tokens.user_id AND is_active = 1) AS profile,
+      (SELECT manager_grants FROM users
+        WHERE users.id = api_tokens.user_id AND is_active = 1) AS managerGrants
   `)
   const current = updated[0]
   if (
     current === undefined ||
     current.profile === null ||
+    current.managerGrants === null ||
     !permittedProfiles.includes(current.profile)
   ) {
+    return null
+  }
+  let managerGrants: unknown
+  try {
+    managerGrants = JSON.parse(current.managerGrants)
+  } catch {
+    return null
+  }
+  if (!Array.isArray(managerGrants) || !managerGrants.every((grant) => typeof grant === 'string')) {
     return null
   }
   return {
     tokenId: current.id,
     userId: current.userId,
     profile: current.profile,
+    managerGrants,
     scopes: [...scopes],
   }
 }

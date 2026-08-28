@@ -223,6 +223,7 @@ for (const [runtime, factory] of factories) {
         tokenId: issued.id,
         userId: 7,
         profile: 'accounting',
+        managerGrants: [],
         scopes: ['reports:read', 'time_entries:read'],
       })
       expect((await listApiTokens(db.database, 7))[0]?.lastUsedAt).toBe(usedAt)
@@ -233,6 +234,21 @@ for (const [runtime, factory] of factories) {
         revokedAt,
       })
       expect(revoked?.revokedAt).toBe(revokedAt)
+      expect(await authenticateApiToken(db.database, issued.token, revokedAt)).toBeNull()
+    })
+
+    it('[security] resolves current manager grants at authentication time', async () => {
+      const db = await setup()
+      const issued = await issue(db)
+      await db.run(
+        `UPDATE users SET manager_grants = ?, updated_at = ? WHERE id = 7`,
+        '["billable_rates_manager"]',
+        usedAt,
+      )
+      expect(await authenticateApiToken(db.database, issued.token, usedAt)).toMatchObject({
+        managerGrants: ['billable_rates_manager'],
+      })
+      await db.run(`UPDATE users SET manager_grants = '[1]' WHERE id = 7`)
       expect(await authenticateApiToken(db.database, issued.token, revokedAt)).toBeNull()
     })
 

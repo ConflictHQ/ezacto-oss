@@ -26,6 +26,7 @@ export interface AuthenticatedApiToken {
   tokenId: number
   userId: number
   profile: UserProfile
+  managerGrants?: string[]
   scopes: string[]
 }
 
@@ -46,6 +47,7 @@ export type SessionPrincipal =
       type: 'user'
       userId: number
       profile: UserProfile
+      managerGrants?: string[]
       authentication: { kind: 'session'; sessionId: string }
     }
   | {
@@ -104,6 +106,7 @@ export const apiAuthenticationMiddleware = <Bindings extends object>(
         type: 'user',
         userId: authenticated.userId,
         profile: authenticated.profile,
+        managerGrants: [...(authenticated.managerGrants ?? [])],
         authentication: {
           kind: 'token',
           tokenId: authenticated.tokenId,
@@ -123,7 +126,10 @@ export const apiAuthenticationMiddleware = <Bindings extends object>(
         message: 'Contact sessions cannot access the organization API.',
       })
     }
-    context.set('principal', principal)
+    context.set('principal', {
+      ...principal,
+      managerGrants: [...(principal.managerGrants ?? [])],
+    })
     await next()
   }
 
@@ -148,7 +154,7 @@ export const requireApiScope = <Bindings extends object>(
   })
 }
 
-const requireSessionPrincipal = <Bindings extends object>(
+export const requireSessionPrincipal = <Bindings extends object>(
   context: Context<ApiContext<Bindings>>,
 ) => {
   const principal = context.get('principal')
@@ -156,7 +162,7 @@ const requireSessionPrincipal = <Bindings extends object>(
     throw new ApiError({
       status: 403,
       code: 'session_required',
-      message: 'API tokens can only be managed from an authenticated user session.',
+      message: 'This operation requires an authenticated user session.',
     })
   }
   return principal
