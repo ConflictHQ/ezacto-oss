@@ -1,6 +1,7 @@
 import {
   createApiApp,
   ApiError,
+  assertValidOidcProviderConfig,
   generateOpenApiDocument,
   installGeneralResourceRoutes,
   installOidcRoutes,
@@ -266,7 +267,10 @@ export const configuredSignInProviders = (
   env: WorkerEnv,
 ): readonly SignInProvider[] => {
   try {
-    return oidcProvider('google', env) === null ? [] : ['google']
+    const google = oidcProvider('google', env)
+    if (google === null) return []
+    assertValidOidcProviderConfig(google)
+    return ['google']
   } catch {
     // A partial or invalid deployment configuration must not advertise a flow
     // that cannot start. The fixed provider route continues to fail closed.

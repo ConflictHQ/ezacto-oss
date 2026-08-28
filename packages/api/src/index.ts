@@ -57,6 +57,7 @@ export {
   type PasswordSessionIssuer,
 } from './password-auth.js'
 export {
+  assertValidOidcProviderConfig,
   installOidcRoutes,
   OIDC_STATE_COOKIE_NAME,
   OIDC_START_RATE_WINDOW_MS,

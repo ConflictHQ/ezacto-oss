@@ -92,6 +92,105 @@ describe('worker entry', () => {
     expect(html).not.toContain('accounts.google.com')
   })
 
+  it.each([
+    {
+      name: 'missing credentials',
+      values: {},
+    },
+    {
+      name: 'partial credentials',
+      values: {
+        APP_BASE_URL: 'https://local-tunnel.example',
+        OIDC_GOOGLE_CLIENT_ID: 'private-google-client-id',
+      },
+    },
+    {
+      name: 'oversized client id',
+      values: {
+        ENVIRONMENT: 'dev',
+        OIDC_GOOGLE_CLIENT_ID: 'x'.repeat(513),
+        OIDC_GOOGLE_CLIENT_SECRET: 'private-google-client-secret',
+      },
+    },
+    {
+      name: 'oversized client secret',
+      values: {
+        ENVIRONMENT: 'prod',
+        OIDC_GOOGLE_CLIENT_ID: 'private-google-client-id',
+        OIDC_GOOGLE_CLIENT_SECRET: 'x'.repeat(4_097),
+      },
+    },
+    {
+      name: 'non-HTTPS origin',
+      values: {
+        APP_BASE_URL: 'http://localhost:8787',
+        OIDC_GOOGLE_CLIENT_ID: 'private-google-client-id',
+        OIDC_GOOGLE_CLIENT_SECRET: 'private-google-client-secret',
+      },
+    },
+    {
+      name: 'non-origin HTTPS URL',
+      values: {
+        APP_BASE_URL: 'https://local-tunnel.example/path',
+        OIDC_GOOGLE_CLIENT_ID: 'private-google-client-id',
+        OIDC_GOOGLE_CLIENT_SECRET: 'private-google-client-secret',
+      },
+    },
+    {
+      name: 'non-HTTPS scheme',
+      values: {
+        APP_BASE_URL: 'javascript:alert(1)',
+        OIDC_GOOGLE_CLIENT_ID: 'private-google-client-id',
+        OIDC_GOOGLE_CLIENT_SECRET: 'private-google-client-secret',
+      },
+    },
+  ])('[security] does not advertise Google for $name', async ({ values }) => {
+    const res = await app.request(
+      '/',
+      {},
+      {
+        ...env,
+        DB: {} as D1Database,
+        API_CURSOR_SIGNING_KEY: 'unused',
+        ...values,
+      },
+    )
+    const html = await res.text()
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    expect(html).not.toContain('data-oidc-provider')
+    expect(html).toContain('data-oidc-unavailable')
+    expect(html).toContain('method="post" action="/auth/sign-in"')
+  })
+
+  it('[security] does not leak provider availability across sequential Worker requests', async () => {
+    const configured = {
+      ...env,
+      ENVIRONMENT: 'dev',
+      DB: {} as D1Database,
+      API_CURSOR_SIGNING_KEY: 'unused',
+      OIDC_GOOGLE_CLIENT_ID: 'private-google-client-id',
+      OIDC_GOOGLE_CLIENT_SECRET: 'private-google-client-secret',
+    } satisfies WorkerEnv
+    const environments: WorkerEnv[] = [
+      configured,
+      { ...configured, OIDC_GOOGLE_CLIENT_SECRET: undefined },
+      { ...configured, OIDC_GOOGLE_CLIENT_ID: 'x'.repeat(513) },
+      configured,
+    ]
+
+    for (const [index, requestEnv] of environments.entries()) {
+      const res = await app.request('/', {}, requestEnv)
+      const html = await res.text()
+      const shouldAdvertise = index === 0 || index === environments.length - 1
+
+      expect(res.headers.get('cache-control')).toBe('no-store')
+      expect(html.includes('data-oidc-provider="google"')).toBe(shouldAdvertise)
+      expect(html.includes('data-oidc-unavailable')).toBe(!shouldAdvertise)
+    }
+  })
+
   it('publishes the versioned OpenAPI contract without database bindings', async () => {
     const res = await app.request('/openapi/v1.json', {}, env)
 
