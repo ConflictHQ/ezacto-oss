@@ -820,6 +820,7 @@ for (const [runtime, factory] of factories) {
         { id: '0001_clients' },
         { id: '0002_projects_time' },
         { id: '0003_rate_resolver' },
+        { id: '0004_invoice_foundation' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -844,6 +845,7 @@ for (const [runtime, factory] of factories) {
         { id: '0001_clients' },
         { id: '0002_projects_time' },
         { id: '0003_rate_resolver' },
+        { id: '0004_invoice_foundation' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -886,6 +888,7 @@ for (const [runtime, factory] of factories) {
         { id: '0001_clients' },
         { id: '0002_projects_time' },
         { id: '0003_rate_resolver' },
+        { id: '0004_invoice_foundation' },
       ])
       expect(
         await db.rows<{ name: string }>(
@@ -904,6 +907,7 @@ for (const [runtime, factory] of factories) {
         { id: '0001_clients' },
         { id: '0002_projects_time' },
         { id: '0003_rate_resolver' },
+        { id: '0004_invoice_foundation' },
       ])
     })
   })
@@ -975,6 +979,8 @@ describe('package contents', () => {
           'dist/migrations/0001_clients.js',
           'dist/migrations/0002_projects_time.js',
           'dist/migrations/0003_rate_resolver.js',
+          'dist/migrations/0004_invoice_foundation.js',
+          'dist/migrations/0004_invoice_foundation.d.ts',
           'dist/rate-resolver.js',
         ]),
       )

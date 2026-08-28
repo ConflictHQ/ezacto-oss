@@ -1,0 +1,21 @@
+{
+  "id": 6850124,
+  "sent_by": "Sanitized Creator",
+  "sent_by_email": "creator@example.invalid",
+  "sent_from": "Sanitized Billing",
+  "sent_from_email": "billing@example.invalid",
+  "recipients": [
+    { "name": "Sanitized Recipient", "email": "recipient@example.invalid" }
+  ],
+  "subject": "Invoice INV-2026-0042",
+  "body": "A sanitized invoice is attached.",
+  "include_link_to_client_invoice": true,
+  "attach_pdf": true,
+  "send_me_a_copy": false,
+  "thank_you": false,
+  "event_type": "send",
+  "reminder": false,
+  "send_reminder_on": null,
+  "created_at": "2026-08-16T15:30:00Z",
+  "updated_at": "2026-08-16T15:30:00Z"
+}
