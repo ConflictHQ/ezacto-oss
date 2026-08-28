@@ -69,6 +69,12 @@ export type RecurringInvoiceDefinition = typeof recurringInvoices.$inferSelect
 const centsLimit = 9_000_000_000_000
 const datePattern = /^(\d{4})-(\d{2})-(\d{2})$/
 const timestampPattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/
+const whitespaceCodePoints = new Set([
+  9, 10, 11, 12, 13, 32, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200,
+  8201, 8202, 8232, 8233, 8239, 8287, 12_288, 65_279,
+])
+const isWhitespaceOnly = (value: string): boolean =>
+  [...value].every((character) => whitespaceCodePoints.has(character.codePointAt(0)!))
 
 const assertPositiveSafeInteger = (value: number, field: string): void => {
   if (!Number.isSafeInteger(value) || value < 1) {
@@ -133,7 +139,7 @@ const assertFixedLine = (value: unknown, index: number): void => {
     [],
     field,
   )
-  if (typeof value.kind !== 'string' || value.kind.trim().length === 0) {
+  if (typeof value.kind !== 'string' || isWhitespaceOnly(value.kind)) {
     throw new TypeError(`${field}.kind must be a non-empty string`)
   }
   if (value.description !== null && typeof value.description !== 'string') {
@@ -226,7 +232,10 @@ export const createRecurringInvoiceDefinition = async (
   input: CreateRecurringInvoiceDefinitionInput,
 ): Promise<RecurringInvoiceDefinition> => {
   assertPositiveSafeInteger(input.clientId, 'clientId')
-  if (typeof input.subjectTemplate !== 'string' || input.subjectTemplate.trim().length === 0) {
+  if (
+    typeof input.subjectTemplate !== 'string' ||
+    isWhitespaceOnly(input.subjectTemplate)
+  ) {
     throw new TypeError('subjectTemplate must be a non-empty string')
   }
   if (typeof input.notesTemplate !== 'string') {

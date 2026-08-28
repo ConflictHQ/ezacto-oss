@@ -1,5 +1,5 @@
 import type BetterSqlite3 from 'better-sqlite3'
-import type { RecurringInvoiceDatabase } from '../recurring-invoices.js'
+import type { RecurringAmountConfig, RecurringInvoiceDatabase } from '../recurring-invoices.js'
 
 export interface EnsureHarvestRecurringInvoiceStubInput {
   invoiceId: number
@@ -9,19 +9,24 @@ export interface EnsureHarvestRecurringInvoiceStubInput {
   updatedAt: string
 }
 
-export interface HarvestRecurringInvoiceStub {
+export interface HarvestRecurringInvoiceDefinition {
   id: number
   harvestId: number
   clientId: number
-  definitionStatus: 'incomplete'
-  subjectTemplate: null
-  notesTemplate: null
-  everyNMonths: null
-  dayOfMonth: null
-  nextIssueOn: null
-  amountConfig: null
-  canDrawFromRetainerId: null
+  definitionStatus: 'complete' | 'incomplete'
+  subjectTemplate: string | null
+  notesTemplate: string | null
+  everyNMonths: number | null
+  dayOfMonth: number | null
+  nextIssueOn: string | null
+  amountConfig: RecurringAmountConfig | null
+  canDrawFromRetainerId: number | null
 }
+
+type HarvestRecurringInvoiceDefinitionRow = Omit<
+  HarvestRecurringInvoiceDefinition,
+  'amountConfig'
+> & { amountConfig: string | null }
 
 interface SqlStatement {
   text: string
@@ -90,11 +95,11 @@ const runAtomic = async (
   })()
 }
 
-/** Initial-load authority only: materialize one incomplete definition per dangling source id. */
+/** Import authority: materialize a missing stub or reuse the source definition already completed. */
 export const ensureHarvestRecurringInvoiceStub = async (
   database: RecurringInvoiceDatabase,
   input: EnsureHarvestRecurringInvoiceStubInput,
-): Promise<HarvestRecurringInvoiceStub> => {
+): Promise<HarvestRecurringInvoiceDefinition> => {
   assertPositiveSafeInteger(input.invoiceId, 'invoiceId')
   assertPositiveSafeInteger(input.harvestInvoiceId, 'harvestInvoiceId')
   assertPositiveSafeInteger(input.harvestRecurringInvoiceId, 'harvestRecurringInvoiceId')
@@ -156,7 +161,7 @@ export const ensureHarvestRecurringInvoiceStub = async (
     },
   ])
 
-  const stub = await first<HarvestRecurringInvoiceStub>(database, {
+  const definition = await first<HarvestRecurringInvoiceDefinitionRow>(database, {
     text: `SELECT recurring.id, recurring.harvest_id AS "harvestId",
         recurring.client_id AS "clientId",
         recurring.definition_status AS "definitionStatus",
@@ -170,13 +175,19 @@ export const ensureHarvestRecurringInvoiceStub = async (
       FROM invoices invoice
       JOIN recurring_invoices recurring ON recurring.id = invoice.recurring_invoice_id
       WHERE invoice.id = ? AND invoice.harvest_id = ?
-        AND recurring.harvest_id = ? AND recurring.definition_status = 'incomplete'`,
+        AND recurring.harvest_id = ?`,
     params: [input.invoiceId, input.harvestInvoiceId, input.harvestRecurringInvoiceId],
   })
-  if (stub === null) {
+  if (definition === null) {
     throw new Error(
       `imported invoice ${input.invoiceId} could not link Harvest recurring invoice ${input.harvestRecurringInvoiceId}`,
     )
   }
-  return stub
+  return {
+    ...definition,
+    amountConfig:
+      definition.amountConfig === null
+        ? null
+        : (JSON.parse(definition.amountConfig) as RecurringAmountConfig),
+  }
 }

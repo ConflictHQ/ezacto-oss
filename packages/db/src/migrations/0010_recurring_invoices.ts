@@ -1,5 +1,13 @@
 const centsLimit = 9_000_000_000_000
 const safeIntegerLimit = 9_007_199_254_740_991
+const whitespaceCharacters = [
+  9, 10, 11, 12, 13, 32, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200,
+  8201, 8202, 8232, 8233, 8239, 8287, 12_288, 65_279,
+]
+  .map((codePoint) => `char(${codePoint})`)
+  .join(' || ')
+
+const nonBlankText = (value: string) => `length(trim(${value}, ${whitespaceCharacters})) > 0`
 
 const canonicalTimestamp = (column: string) => `unixepoch(${column}) IS NOT NULL
       AND substr(${column}, 1, 19) = strftime('%Y-%m-%dT%H:%M:%S', ${column})
@@ -39,7 +47,7 @@ const fixedLinesValid = `json_type(NEW.amount_config, '$.schema_version') = 'int
             )
           )
           OR json_type(line.value, '$.kind') IS NOT 'text'
-          OR length(trim(json_extract(line.value, '$.kind'))) = 0
+          OR NOT (${nonBlankText("json_extract(line.value, '$.kind')")})
           OR (
             json_type(line.value, '$.description') IS NOT 'text'
             AND json_type(line.value, '$.description') IS NOT 'null'
@@ -188,7 +196,7 @@ export const recurringInvoicesMigration = [
     CHECK (
       (definition_status = 'complete'
         AND subject_template IS NOT NULL
-        AND length(trim(subject_template)) > 0
+        AND ${nonBlankText('subject_template')}
         AND notes_template IS NOT NULL
         AND every_n_months BETWEEN 1 AND ${safeIntegerLimit}
         AND day_of_month BETWEEN 1 AND 31
@@ -268,12 +276,41 @@ export const recurringInvoicesMigration = [
         AND recurring.client_id IS NOT NEW.client_id
     )
     BEGIN SELECT RAISE(ABORT, 'retainer client must match every recurring invoice'); END`,
+  `CREATE TRIGGER projects_recurring_invoice_client_insert
+    BEFORE INSERT ON projects
+    WHEN EXISTS (
+      SELECT 1 FROM projects existing
+      WHERE (
+        existing.id = NEW.id
+        OR (NEW.harvest_id IS NOT NULL AND existing.harvest_id = NEW.harvest_id)
+      )
+        AND EXISTS (
+          SELECT 1 FROM recurring_invoices recurring
+          WHERE recurring.definition_status = 'complete'
+            AND (
+              (json_extract(recurring.amount_config, '$.type') = 'fixed_lines' AND EXISTS (
+                SELECT 1 FROM json_each(recurring.amount_config, '$.line_items') line
+                WHERE json_extract(line.value, '$.project_id') = existing.id
+              ))
+              OR
+              (json_extract(recurring.amount_config, '$.type') = 'line_items_import' AND EXISTS (
+                SELECT 1
+                FROM json_each(recurring.amount_config, '$.project_ids') configured_project
+                WHERE configured_project.value = existing.id
+              ))
+            )
+            AND (existing.id IS NOT NEW.id OR recurring.client_id IS NOT NEW.client_id)
+        )
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'project replacement must preserve recurring invoice references');
+    END`,
   `CREATE TRIGGER projects_recurring_invoice_client_update
-    BEFORE UPDATE OF client_id ON projects
-    WHEN OLD.client_id IS NOT NEW.client_id AND EXISTS (
+    BEFORE UPDATE OF id, client_id ON projects
+    WHEN (OLD.id IS NOT NEW.id OR OLD.client_id IS NOT NEW.client_id) AND EXISTS (
       SELECT 1 FROM recurring_invoices recurring
       WHERE recurring.definition_status = 'complete'
-        AND recurring.client_id IS NOT NEW.client_id
+        AND (OLD.id IS NOT NEW.id OR recurring.client_id IS NOT NEW.client_id)
         AND (
           (json_extract(recurring.amount_config, '$.type') = 'fixed_lines' AND EXISTS (
             SELECT 1 FROM json_each(recurring.amount_config, '$.line_items') line

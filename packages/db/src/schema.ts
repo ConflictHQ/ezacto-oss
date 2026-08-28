@@ -34,6 +34,13 @@ const canonicalTimestamp = (column: AnySQLiteColumn) => sql`unixepoch(${column})
 const nullableCanonicalTimestamp = (column: AnySQLiteColumn) =>
   sql`${column} is null or (${canonicalTimestamp(column)})`
 
+const nonBlankText = (column: AnySQLiteColumn) => sql`length(trim(${column},
+  char(9) || char(10) || char(11) || char(12) || char(13) || char(32) || char(160)
+  || char(5760) || char(8192) || char(8193) || char(8194) || char(8195) || char(8196)
+  || char(8197) || char(8198) || char(8199) || char(8200) || char(8201) || char(8202)
+  || char(8232) || char(8233) || char(8239) || char(8287) || char(12288) || char(65279)
+)) > 0`
+
 export type InvoicePaymentOption =
   | 'stripe_checkout'
   | 'paypal_checkout'
@@ -585,7 +592,7 @@ export const recurringInvoices = sqliteTable(
       'recurring_invoices_definition_shape',
       sql`(${table.definitionStatus} = 'complete'
           and ${table.subjectTemplate} is not null
-          and length(trim(${table.subjectTemplate})) > 0
+          and ${nonBlankText(table.subjectTemplate)}
           and ${table.notesTemplate} is not null
           and ${table.everyNMonths} between 1 and 9007199254740991
           and ${table.dayOfMonth} between 1 and 31
