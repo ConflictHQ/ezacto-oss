@@ -451,7 +451,7 @@ for (const [runtime, factory] of factories) {
           outbox_count_before
         ) VALUES (
           1, ?, ?, ?, ?, ?, '[]', ?, '[]', ?, '[]', ?,
-          'closed', 'closed', 0, ?, 'source_closed', 0, 0,
+          'closed', 'closed', 1, ?, 'source_closed', 0, 0,
           NULL, NULL, NULL, ?, 0
         )`,
         sourceUpdatedAt,

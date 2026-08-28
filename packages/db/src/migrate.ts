@@ -624,7 +624,7 @@ const invoiceLifecycleMigration = [
         WHEN NOT EXISTS (
           SELECT 1 FROM invoices invoice
           WHERE invoice.id = NEW.invoice_id AND invoice.harvest_id IS NOT NULL
-            AND invoice.version = NEW.target_version
+            AND invoice.version + 1 = NEW.target_version
             AND invoice.source_updated_at IS NEW.expected_source_updated_at
             AND NEW.target_updated_at = NEW.source_updated_at
             AND ${timestampEpochMilliseconds('NEW.source_updated_at')}
@@ -779,7 +779,7 @@ const invoiceLifecycleMigration = [
         AND OLD.harvest_id IS NOT NULL AND NEW.harvest_id IS OLD.harvest_id
         AND OLD.source_updated_at IS import.expected_source_updated_at
         AND NEW.source_updated_at = import.source_updated_at
-        AND NEW.version = OLD.version AND NEW.version = import.target_version
+        AND NEW.version = OLD.version + 1 AND NEW.version = import.target_version
         AND NEW.updated_at = import.target_updated_at
     )
     BEGIN SELECT RAISE(ABORT, 'invoice source observation requires exact pending import authority'); END`,
@@ -1017,7 +1017,7 @@ const invoiceLifecycleMigration = [
           AND OLD.harvest_id IS NOT NULL AND NEW.harvest_id IS OLD.harvest_id
           AND OLD.source_updated_at IS import.expected_source_updated_at
           AND NEW.source_updated_at = import.source_updated_at
-          AND NEW.version = OLD.version AND NEW.version = import.target_version
+          AND NEW.version = OLD.version + 1 AND NEW.version = import.target_version
           AND NEW.updated_at = import.target_updated_at AND NEW.state = import.target_state
           AND NEW.close_reason IS import.target_close_reason
           AND NEW.close_write_off_cents = import.target_close_write_off_cents

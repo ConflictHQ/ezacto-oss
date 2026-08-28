@@ -24,12 +24,17 @@ import { invoicePaymentsTotalsMigration } from '../src/migrations/0005_invoice_p
 
 type OperationDatabase = Parameters<typeof executeInvoiceLifecycleCommand>[0]
 
+interface TestMutation {
+  text: string
+  params?: readonly unknown[]
+}
+
 interface TestDatabase {
   orm: OperationDatabase
   run(sql: string, ...params: unknown[]): Promise<void>
   rows<T>(sql: string, ...params: unknown[]): Promise<T[]>
   migrateAgain(): Promise<void>
-  mutateBeforeNextAtomic(sql: string, ...params: unknown[]): void
+  mutateBeforeNextAtomic(...mutations: TestMutation[]): void
   close(): Promise<void>
 }
 
@@ -87,17 +92,23 @@ const containerDatabase = (migrate = true): TestDatabase => {
     },
     rows: async <T>(sql: string, ...params: unknown[]) => sqlite.prepare(sql).all(...params) as T[],
     migrateAgain: async () => migrateContainer(sqlite),
-    mutateBeforeNextAtomic: (sql, ...params) => {
+    mutateBeforeNextAtomic: (...mutations) => {
       const mutable = sqlite as unknown as {
         transaction: (callback: () => unknown) => () => unknown
       }
       const original = mutable.transaction.bind(sqlite)
       mutable.transaction = (callback) => {
         mutable.transaction = original
-        return original(() => {
-          sqlite.prepare(sql).run(...params)
-          return callback()
+        const concurrent = original(() => {
+          for (const mutation of mutations) {
+            sqlite.prepare(mutation.text).run(...(mutation.params ?? []))
+          }
         })
+        const requested = original(callback)
+        return () => {
+          concurrent()
+          return requested()
+        }
       }
     },
     close: async () => {
@@ -131,17 +142,18 @@ const d1Database = async (migrate = true): Promise<TestDatabase> => {
           .all<T>()
       ).results,
     migrateAgain: async () => migrateD1(d1),
-    mutateBeforeNextAtomic: (sql, ...params) => {
+    mutateBeforeNextAtomic: (...mutations) => {
       const originalClient = orm.$client
       const proxied = new Proxy(originalClient, {
         get: (target, property) => {
           if (property === 'batch') {
             return async (statements: D1PreparedStatement[]) => {
               Object.defineProperty(orm, '$client', { value: originalClient, configurable: true })
-              await target
-                .prepare(sql)
-                .bind(...params)
-                .run()
+              await target.batch(
+                mutations.map((mutation) =>
+                  target.prepare(mutation.text).bind(...(mutation.params ?? [])),
+                ),
+              )
               return target.batch(statements)
             }
           }
@@ -298,10 +310,10 @@ for (const [runtime, factory] of factories) {
         messageId: 92,
         eventId: 'view-send-event',
       })
-      database.mutateBeforeNextAtomic(
-        `UPDATE invoices SET version = 7, updated_at = ? WHERE id = 1`,
-        laterTimestamp,
-      )
+      database.mutateBeforeNextAtomic({
+        text: `UPDATE invoices SET version = 7, updated_at = ? WHERE id = 1`,
+        params: [laterTimestamp],
+      })
       // The test-only hook runs after the operation's preliminary read but before its batch.
       // Dropping the transition guard lets the hook model another already-authorized writer.
       await database.run(`DROP TRIGGER invoices_d22_transition_guard`)
@@ -339,6 +351,110 @@ for (const [runtime, factory] of factories) {
       expect(Object.keys(payload.invoice.after).sort()).toEqual(invoicePayloadKeys)
       expect(payload.invoice.before).toEqual(payload.invoice.after)
       expect(payload.invoice.after).toMatchObject({ version: 7, updated_at: laterTimestamp })
+    })
+
+    it('[unit] rejects an online edit when a newer import commits after its read', async () => {
+      database = await factory()
+      await installFixture(database)
+      await database.run(
+        `INSERT INTO invoices (
+          id, harvest_id, client_id, number, currency, issue_date, due_date, state,
+          source_updated_at, created_at, updated_at
+        ) VALUES (
+          3, 7003, 1, 'INV-CONCURRENT-IMPORT', 'USD', '2026-08-01', '2026-08-31',
+          'open', ?, ?, ?
+        )`,
+        timestamp,
+        timestamp,
+        timestamp,
+      )
+
+      const fingerprint = `sha256:${'0'.repeat(64)}`
+      const sourceManifest = JSON.stringify({
+        invoice_id: 3,
+        source_updated_at: thirdTimestamp,
+      })
+      database.mutateBeforeNextAtomic(
+        {
+          text: `INSERT INTO invoice_import_reconciliations (
+              invoice_id, source_updated_at, expected_source_updated_at, input_fingerprint,
+              source_manifest_json, source_manifest_hash,
+              line_manifest_json, line_manifest_hash,
+              message_manifest_json, message_manifest_hash,
+              payment_manifest_json, payment_manifest_hash,
+              source_state, target_state, target_version, target_updated_at,
+              target_close_reason, target_close_write_off_cents, target_written_off_cents,
+              target_sent_at, target_paid_at, target_paid_date, target_closed_at,
+              outbox_count_before
+            ) VALUES (
+              3, ?, ?, ?, ?, ?, '[]', ?, '[]', ?, '[]', ?,
+              'open', 'open', 1, ?, NULL, 0, 0, ?, NULL, NULL, NULL, 0
+            )`,
+          params: [
+            thirdTimestamp,
+            timestamp,
+            fingerprint,
+            sourceManifest,
+            `sha256:${'1'.repeat(64)}`,
+            `sha256:${'2'.repeat(64)}`,
+            `sha256:${'3'.repeat(64)}`,
+            `sha256:${'4'.repeat(64)}`,
+            thirdTimestamp,
+            laterTimestamp,
+          ],
+        },
+        {
+          text: `UPDATE invoices SET source_updated_at = ?, updated_at = ?, sent_at = ?,
+              version = version + 1
+            WHERE id = 3 AND version = 0`,
+          params: [thirdTimestamp, thirdTimestamp, laterTimestamp],
+        },
+        {
+          text: `UPDATE invoice_import_reconciliations SET completed = 1
+            WHERE invoice_id = 3 AND source_updated_at = ? AND completed = 0`,
+          params: [thirdTimestamp],
+        },
+      )
+
+      await expect(
+        executeInvoiceEdit(database.orm, {
+          invoiceId: 3,
+          commandId: 'stale-after-import',
+          actor: { type: 'user', id: 1 },
+          authorize,
+          expectedVersion: 0,
+          occurredAt: fourthTimestamp,
+          eventIds: ['stale-after-import-event'],
+          edit: { type: 'header', subject: 'Must not overwrite imported evidence' },
+        }),
+      ).rejects.toMatchObject({
+        code: 'invoice_version_conflict',
+        expectedVersion: 0,
+        actualVersion: 1,
+      })
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT invoice.subject, invoice.sent_at, invoice.source_updated_at, invoice.version,
+             receipt.completed,
+             (SELECT count(*) FROM invoice_command_ledger
+               WHERE invoice_id = invoice.id) AS ledger,
+             (SELECT count(*) FROM event_outbox
+               WHERE aggregate_type = 'invoice' AND aggregate_id = invoice.id) AS outbox
+           FROM invoices invoice
+           JOIN invoice_import_reconciliations receipt ON receipt.invoice_id = invoice.id
+           WHERE invoice.id = 3`,
+        ),
+      ).toEqual([
+        {
+          subject: null,
+          sent_at: laterTimestamp,
+          source_updated_at: thirdTimestamp,
+          version: 1,
+          completed: 1,
+          ledger: 0,
+          outbox: 0,
+        },
+      ])
     })
 
     it('[unit] atomically commits a lifecycle event and returns the original retry result', async () => {
@@ -1838,7 +1954,7 @@ for (const [runtime, factory] of factories) {
              (SELECT count(*) FROM invoice_messages WHERE invoice_id = invoice.id) AS messages,
              (SELECT count(*) FROM event_outbox
                WHERE aggregate_type = 'invoice' AND aggregate_id = invoice.id) AS outbox,
-             receipt.completed
+             receipt.target_version, receipt.completed
            FROM invoices invoice
            JOIN invoice_import_reconciliations receipt ON receipt.invoice_id = invoice.id
            WHERE invoice.id = 3`,
@@ -1847,7 +1963,7 @@ for (const [runtime, factory] of factories) {
         {
           state: 'closed',
           close_reason: 'source_closed',
-          version: 0,
+          version: 1,
           paid_at: timestamp,
           paid_date: null,
           closed_at: null,
@@ -1858,6 +1974,7 @@ for (const [runtime, factory] of factories) {
           payments: 2,
           messages: 2,
           outbox: 0,
+          target_version: 1,
           completed: 1,
         },
       ])
@@ -1958,8 +2075,12 @@ for (const [runtime, factory] of factories) {
              (SELECT body FROM invoice_messages WHERE harvest_id = 7701) AS body,
              (SELECT description FROM invoice_line_items WHERE harvest_id = 7303)
                AS line_description,
+             (SELECT version FROM invoices WHERE id = 3) AS version,
+             (SELECT target_version FROM invoice_import_reconciliations
+               WHERE invoice_id = 3 AND source_updated_at = ?) AS target_version,
              (SELECT count(*) FROM event_outbox
                WHERE aggregate_type = 'invoice' AND aggregate_id = 3) AS outbox`,
+          thirdTimestamp,
         ),
       ).toEqual([
         {
@@ -1968,6 +2089,8 @@ for (const [runtime, factory] of factories) {
           messages: 1,
           body: 'Corrected source message',
           line_description: 'Corrected imported service',
+          version: 2,
+          target_version: 2,
           outbox: 0,
         },
       ])
@@ -2073,7 +2196,7 @@ for (const [runtime, factory] of factories) {
           paid_at: null,
           paid_date: '2026-08-27',
           updated_at: fourthTimestamp,
-          version: 0,
+          version: 1,
           outbox: 0,
         },
       ])
@@ -2126,13 +2249,20 @@ for (const [runtime, factory] of factories) {
       })
       expect(
         await database.rows<Record<string, unknown>>(
-          `SELECT state, paid_at, paid_date, updated_at,
+          `SELECT state, paid_at, paid_date, updated_at, version,
              (SELECT count(*) FROM event_outbox
                WHERE aggregate_type = 'invoice' AND aggregate_id = 4) AS outbox
            FROM invoices WHERE id = 4`,
         ),
       ).toEqual([
-        { state: 'open', paid_at: null, paid_date: null, updated_at: fifthTimestamp, outbox: 0 },
+        {
+          state: 'open',
+          paid_at: null,
+          paid_date: null,
+          updated_at: fifthTimestamp,
+          version: 2,
+          outbox: 0,
+        },
       ])
     })
   })

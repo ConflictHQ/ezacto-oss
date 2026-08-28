@@ -380,7 +380,7 @@ for (const [runtime, factory] of factories) {
           outbox_count_before
         ) VALUES (
           3, ?, ?, ?, ?, ?, '[]', ?, '[]', ?, '[]', ?,
-          'open', 'open', 0, ?, NULL, 0, 0,
+          'open', 'open', 1, ?, NULL, 0, 0,
           NULL, NULL, NULL, NULL, 0
         )`,
         laterTimestamp,

@@ -1010,7 +1010,7 @@ export const reconcileImportedInvoice = async (
           target_close_write_off_cents, target_written_off_cents, target_sent_at,
           target_paid_at, target_paid_date, target_closed_at, outbox_count_before
         )
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, invoice.version, ?, ?, 0, ?, ?, ?, ?, ?,
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, invoice.version + 1, ?, ?, 0, ?, ?, ?, ?, ?,
           (SELECT count(*) FROM event_outbox event
            WHERE event.aggregate_type = 'invoice' AND event.aggregate_id = invoice.id)
         FROM invoices invoice WHERE invoice.id = ?`,
@@ -1185,7 +1185,7 @@ export const reconcileImportedInvoice = async (
           source_discount_amount_cents = ?, source_payment_options = ?,
           source_updated_at = ?, updated_at = ?, state = ?,
           close_reason = ?, close_write_off_cents = 0, written_off_cents = ?,
-          sent_at = ?, paid_at = ?, paid_date = ?, closed_at = ?
+          sent_at = ?, paid_at = ?, paid_date = ?, closed_at = ?, version = version + 1
         WHERE id = ? AND version = ? AND source_updated_at IS ?`,
       params: [
         input.sourceAmountCents,
