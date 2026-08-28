@@ -737,6 +737,28 @@ const invoiceLifecycleMigration = [
   `CREATE TRIGGER invoice_import_reconciliations_delete_guard
     BEFORE DELETE ON invoice_import_reconciliations
     BEGIN SELECT RAISE(ABORT, 'invoice import reconciliation receipts are immutable'); END`,
+  `CREATE TRIGGER invoices_d22_source_observation_update
+    BEFORE UPDATE OF source_amount_cents, source_due_amount_cents,
+      source_tax_amount_cents, source_tax2_amount_cents, source_discount_amount_cents,
+      source_payment_options, source_updated_at ON invoices
+    WHEN (
+      OLD.source_amount_cents IS NOT NEW.source_amount_cents
+      OR OLD.source_due_amount_cents IS NOT NEW.source_due_amount_cents
+      OR OLD.source_tax_amount_cents IS NOT NEW.source_tax_amount_cents
+      OR OLD.source_tax2_amount_cents IS NOT NEW.source_tax2_amount_cents
+      OR OLD.source_discount_amount_cents IS NOT NEW.source_discount_amount_cents
+      OR OLD.source_payment_options IS NOT NEW.source_payment_options
+      OR OLD.source_updated_at IS NOT NEW.source_updated_at
+    ) AND NOT EXISTS (
+      SELECT 1 FROM invoice_import_reconciliations import
+      WHERE import.invoice_id = OLD.id AND import.completed = 0
+        AND OLD.harvest_id IS NOT NULL AND NEW.harvest_id IS OLD.harvest_id
+        AND OLD.source_updated_at IS import.expected_source_updated_at
+        AND NEW.source_updated_at = import.source_updated_at
+        AND NEW.version = OLD.version AND NEW.version = import.target_version
+        AND NEW.updated_at = import.target_updated_at
+    )
+    BEGIN SELECT RAISE(ABORT, 'invoice source observation requires exact pending import authority'); END`,
   `CREATE TRIGGER invoice_messages_d22_insert_guard
     BEFORE INSERT ON invoice_messages
     WHEN NOT (
@@ -830,9 +852,10 @@ const invoiceLifecycleMigration = [
       ))
     BEGIN SELECT RAISE(ABORT, 'invalid invoice lifecycle shape'); END`,
   `CREATE TRIGGER invoices_d22_transition_guard
-    BEFORE UPDATE OF version, state, close_reason, close_write_off_cents, written_off_cents,
-      sent_at, paid_at, paid_date, closed_at ON invoices
-    WHEN (OLD.version IS NOT NEW.version OR OLD.state IS NOT NEW.state
+    BEFORE UPDATE OF version, updated_at, state, close_reason, close_write_off_cents,
+      written_off_cents, sent_at, paid_at, paid_date, closed_at ON invoices
+    WHEN (OLD.version IS NOT NEW.version OR OLD.updated_at IS NOT NEW.updated_at
+      OR OLD.state IS NOT NEW.state
       OR OLD.close_reason IS NOT NEW.close_reason
       OR OLD.close_write_off_cents IS NOT NEW.close_write_off_cents
       OR OLD.sent_at IS NOT NEW.sent_at OR OLD.paid_at IS NOT NEW.paid_at
@@ -958,6 +981,10 @@ const invoiceLifecycleMigration = [
           AND NEW.paid_date IS import.target_paid_date AND NEW.closed_at IS import.target_closed_at
       )
     BEGIN SELECT RAISE(ABORT, 'invoice lifecycle mutation requires its pending command'); END`,
+  `CREATE TRIGGER invoices_d22_created_at_immutable
+    BEFORE UPDATE OF created_at ON invoices
+    WHEN OLD.created_at IS NOT NEW.created_at
+    BEGIN SELECT RAISE(ABORT, 'invoice created_at is immutable'); END`,
   `CREATE TRIGGER invoice_payments_d22_state_insert
     BEFORE INSERT ON invoice_payments
     WHEN NOT (
@@ -1031,8 +1058,9 @@ const invoiceLifecycleMigration = [
     ))
     BEGIN SELECT RAISE(ABORT, 'invoice payment delete requires its pending command'); END`,
   `CREATE TRIGGER invoice_header_d22_command_update
-    BEFORE UPDATE OF subject, purchase_order, notes, issue_date, due_date,
-      payment_terms, payment_options ON invoices
+    BEFORE UPDATE OF client_id, number, subject, purchase_order, notes, currency,
+      issue_date, due_date, payment_terms, project_id, reminder_policy,
+      payment_options, client_key, reference_token ON invoices
     WHEN NOT EXISTS (
       SELECT 1 FROM invoice_command_ledger command
       WHERE command.invoice_id = OLD.id AND command.completed = 0
@@ -1051,6 +1079,10 @@ const invoiceLifecycleMigration = [
       )
     )
     BEGIN SELECT RAISE(ABORT, 'invoice header mutation requires its pending command'); END`,
+  `CREATE TRIGGER invoice_period_d22_derived_update
+    BEFORE UPDATE OF period_start, period_end ON invoices
+    WHEN OLD.period_start IS NOT NEW.period_start OR OLD.period_end IS NOT NEW.period_end
+    BEGIN SELECT RAISE(ABORT, 'invoice period is derived and cannot be edited directly'); END`,
   `CREATE TRIGGER invoice_financials_d22_command_update
     BEFORE UPDATE OF tax_rate_ppm, tax2_rate_ppm, discount_rate_ppm ON invoices
     WHEN NOT EXISTS (

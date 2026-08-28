@@ -198,12 +198,17 @@ export interface DeleteInvoicePaymentCommand extends InvoiceMutationCommand {
 export type InvoiceEdit =
   | {
       type: 'header'
+      clientId?: number
+      number?: string
       subject?: string | null
       purchaseOrder?: string | null
       notes?: string | null
+      currency?: string
       issueDate?: string
       dueDate?: string
       paymentTerms?: 'upon_receipt' | 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'custom'
+      projectId?: number | null
+      reminderPolicy?: Readonly<Record<string, unknown>> | null
     }
   | { type: 'payment_options'; paymentOptions: readonly InvoicePaymentOption[] }
   | {
@@ -312,12 +317,17 @@ interface StoredBankDeposit {
 }
 
 interface StoredInvoiceDocument {
+  clientId: number
+  number: string
   subject: string | null
   purchaseOrder: string | null
   notes: string | null
+  currency: string
   issueDate: string
   dueDate: string
   paymentTerms: 'upon_receipt' | 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'custom'
+  projectId: number | null
+  reminderPolicy: string | null
   paymentOptions: string
 }
 
@@ -700,8 +710,10 @@ const readInvoiceDocument = async (
   invoiceId: number,
 ): Promise<StoredInvoiceDocument | null> =>
   first(database, {
-    text: `SELECT subject, purchase_order AS "purchaseOrder", notes,
+    text: `SELECT client_id AS "clientId", number, subject,
+        purchase_order AS "purchaseOrder", notes, currency,
         issue_date AS "issueDate", due_date AS "dueDate", payment_terms AS "paymentTerms",
+        project_id AS "projectId", reminder_policy AS "reminderPolicy",
         payment_options AS "paymentOptions"
       FROM invoices WHERE id = ?`,
     params: [invoiceId],
@@ -1406,8 +1418,8 @@ export const recordInvoicePayment = async (
           amount_cents: input.payment.amountCents,
           paid_at: input.payment.paidAt,
           paid_date: input.payment.paidDate,
-          notes: input.payment.notes ?? null,
-          recorded_by_user_id: input.payment.recordedByUserId ?? null,
+          notes: input.payment.notes,
+          recorded_by_user_id: input.payment.recordedByUserId,
         }
       : {
           type: 'bank_deposit',
@@ -1416,8 +1428,8 @@ export const recordInvoicePayment = async (
           expected_deposit_updated_at: input.payment.expectedDepositUpdatedAt,
           expected_match_state: input.payment.expectedMatchState,
           paid_at: input.payment.paidAt,
-          notes: input.payment.notes ?? null,
-          recorded_by_user_id: input.payment.recordedByUserId ?? null,
+          notes: input.payment.notes,
+          recorded_by_user_id: input.payment.recordedByUserId,
         }
   const fingerprint = await fingerprintCommand(input, commandKind, {
     expected_version: input.expectedVersion,
@@ -1635,8 +1647,8 @@ const mutateExistingInvoicePayment = async (
         amount_cents: (input as UpdateInvoicePaymentCommand).amountCents,
         paid_at: (input as UpdateInvoicePaymentCommand).paidAt,
         paid_date: (input as UpdateInvoicePaymentCommand).paidDate,
-        notes: (input as UpdateInvoicePaymentCommand).notes ?? null,
-        recorded_by_user_id: (input as UpdateInvoicePaymentCommand).recordedByUserId ?? null,
+        notes: (input as UpdateInvoicePaymentCommand).notes,
+        recorded_by_user_id: (input as UpdateInvoicePaymentCommand).recordedByUserId,
       }
     : {
         expected_version: input.expectedVersion,
@@ -1877,23 +1889,69 @@ export const executeInvoiceEdit = async (
   let triggerConflict: { lineId: number; expectedUpdatedAt: string } | null = null
 
   if (input.edit.type === 'header') {
+    if (
+      input.edit.clientId === undefined &&
+      input.edit.number === undefined &&
+      input.edit.subject === undefined &&
+      input.edit.purchaseOrder === undefined &&
+      input.edit.notes === undefined &&
+      input.edit.currency === undefined &&
+      input.edit.issueDate === undefined &&
+      input.edit.dueDate === undefined &&
+      input.edit.paymentTerms === undefined &&
+      input.edit.projectId === undefined &&
+      input.edit.reminderPolicy === undefined
+    ) {
+      invalidInput('an invoice header edit must change at least one field')
+    }
+    if (input.edit.clientId !== undefined) {
+      assertPositiveSafeInteger(input.edit.clientId, 'clientId')
+    }
+    if (input.edit.number !== undefined && input.edit.number.length === 0) {
+      invalidInput('invoice number must not be empty')
+    }
+    if (input.edit.currency !== undefined && !/^[A-Z]{3}$/.test(input.edit.currency)) {
+      invalidInput('invoice currency must be a three-letter uppercase code')
+    }
     if (input.edit.issueDate !== undefined) assertCanonicalDate(input.edit.issueDate, 'issueDate')
     if (input.edit.dueDate !== undefined) assertCanonicalDate(input.edit.dueDate, 'dueDate')
+    if (input.edit.projectId !== undefined && input.edit.projectId !== null) {
+      assertPositiveSafeInteger(input.edit.projectId, 'projectId')
+    }
+    if (
+      input.edit.reminderPolicy !== undefined &&
+      input.edit.reminderPolicy !== null &&
+      (typeof input.edit.reminderPolicy !== 'object' || Array.isArray(input.edit.reminderPolicy))
+    ) {
+      invalidInput('reminderPolicy must be a JSON object or null')
+    }
+    const reminderPolicy =
+      input.edit.reminderPolicy === undefined
+        ? document.reminderPolicy
+        : input.edit.reminderPolicy === null
+          ? null
+          : canonicalJson(input.edit.reminderPolicy)
     trigger = { type: 'invoice_header', id: input.invoiceId }
     triggerMutation = {
-      text: `UPDATE invoices SET subject = ?, purchase_order = ?, notes = ?,
-          issue_date = ?, due_date = ?, payment_terms = ?
+      text: `UPDATE invoices SET client_id = ?, number = ?, subject = ?,
+          purchase_order = ?, notes = ?, currency = ?, issue_date = ?, due_date = ?,
+          payment_terms = ?, project_id = ?, reminder_policy = ?
         WHERE id = ? AND version = ? AND EXISTS (
           SELECT 1 FROM invoice_command_ledger
           WHERE invoice_id = ? AND command_id = ? AND completed = 0
         )`,
       params: [
+        input.edit.clientId ?? document.clientId,
+        input.edit.number ?? document.number,
         input.edit.subject === undefined ? document.subject : input.edit.subject,
         input.edit.purchaseOrder === undefined ? document.purchaseOrder : input.edit.purchaseOrder,
         input.edit.notes === undefined ? document.notes : input.edit.notes,
+        input.edit.currency ?? document.currency,
         input.edit.issueDate ?? document.issueDate,
         input.edit.dueDate ?? document.dueDate,
         input.edit.paymentTerms ?? document.paymentTerms,
+        input.edit.projectId === undefined ? document.projectId : input.edit.projectId,
+        reminderPolicy,
         input.invoiceId,
         input.expectedVersion,
         input.invoiceId,

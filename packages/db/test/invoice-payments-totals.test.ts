@@ -608,8 +608,9 @@ for (const [runtime, factory] of factories) {
     })
 
     it('[unit] keeps source observations atomic, strictly newer, bounded, and separate', async () => {
-      database = await factory()
+      database = await factory(false)
       const db = database
+      await installThrough0005(db)
       await installBaseFixture(db)
       const fixture = JSON.parse(
         await readFile(new URL('fixtures/harvest-invoice.json', import.meta.url), 'utf8'),
@@ -817,7 +818,7 @@ for (const [runtime, factory] of factories) {
       ).rejects.toThrow(/invalid or unavailable|pending command/)
       await expect(
         db.run(`UPDATE invoices SET reference_token = NULL WHERE id = 1`),
-      ).rejects.toThrow(/requires a transfer option/)
+      ).rejects.toThrow(/requires a transfer option|pending command/)
       await setPaymentOptions(db, {
         invoiceId: 1,
         commandId: 'payment-options-clear-native',
@@ -836,11 +837,7 @@ for (const [runtime, factory] of factories) {
         timestamp,
         timestamp,
       )
-      await db.run(
-        `UPDATE invoices SET payment_options = '["bill_com_transfer"]', updated_at = ?
-         WHERE id = 3`,
-        laterTimestamp,
-      )
+      await db.run(`UPDATE invoices SET payment_options = '["bill_com_transfer"]' WHERE id = 3`)
       expect(
         await db.rows<{ payment_options: string; reference_token: string }>(
           `SELECT payment_options, reference_token FROM invoices WHERE id = 3`,
@@ -1056,7 +1053,7 @@ for (const [runtime, factory] of factories) {
         }),
       ).rejects.toThrow(/could not commit|missing|no longer matches/)
       await expect(db.run(`UPDATE invoices SET currency = 'EUR' WHERE id = 1`)).rejects.toThrow(
-        /currency is immutable/,
+        /currency is immutable|pending command/,
       )
       await deleteInvoicePayment(db.orm, {
         invoiceId: 1,

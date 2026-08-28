@@ -8,6 +8,7 @@ import {
   executeInvoiceLifecycleCommand,
   executeInvoiceEdit,
   InvoiceCommandReuseError,
+  InvoiceTriggerRowConflictError,
   InvoiceVersionConflictError,
   recordInvoicePayment,
   updateInvoicePayment,
@@ -38,6 +39,43 @@ const thirdTimestamp = '2026-08-27T12:00:02.000Z'
 const fourthTimestamp = '2026-08-27T12:00:03.000Z'
 const fifthTimestamp = '2026-08-27T12:00:04.000Z'
 const authorize = async (): Promise<boolean> => true
+const eventPayloadKeys = [
+  'actor',
+  'aggregate',
+  'command',
+  'event_id',
+  'event_type',
+  'invoice',
+  'occurred_at',
+  'payment',
+  'schema_version',
+  'trigger',
+]
+const invoicePayloadKeys = [
+  'amount_cents',
+  'close_reason',
+  'close_write_off_cents',
+  'closed_at',
+  'due_amount_cents',
+  'paid_at',
+  'paid_date',
+  'payment_count',
+  'payment_status',
+  'sent_at',
+  'state',
+  'updated_at',
+  'version',
+  'written_off_cents',
+]
+const paymentPayloadKeys = [
+  'amount_cents',
+  'currency',
+  'id',
+  'paid_at',
+  'paid_date',
+  'provider',
+  'shape',
+]
 
 const containerDatabase = (migrate = true): TestDatabase => {
   const sqlite = new BetterSqlite3(':memory:')
@@ -282,8 +320,23 @@ for (const [runtime, factory] of factories) {
         `SELECT payload_json FROM event_outbox WHERE id = 'view-current-event'`,
       )
       const payload = JSON.parse(row?.payload_json ?? '{}') as {
+        schema_version: number
+        aggregate: Record<string, unknown>
+        command: Record<string, unknown>
+        actor: Record<string, unknown>
+        trigger: Record<string, unknown>
         invoice: { before: Record<string, unknown>; after: Record<string, unknown> }
+        payment: Record<string, unknown>
       }
+      expect(Object.keys(payload).sort()).toEqual(eventPayloadKeys)
+      expect(payload.schema_version).toBe(1)
+      expect(payload.aggregate).toEqual({ type: 'invoice', id: 1, sequence: 2 })
+      expect(payload.command).toEqual({ id: 'view-current', kind: 'invoice.view', event_index: 0 })
+      expect(payload.actor).toEqual({ type: 'system', id: null })
+      expect(payload.trigger).toEqual({ type: 'invoice_message', id: 93 })
+      expect(payload.payment).toEqual({ before: null, after: null })
+      expect(Object.keys(payload.invoice.before).sort()).toEqual(invoicePayloadKeys)
+      expect(Object.keys(payload.invoice.after).sort()).toEqual(invoicePayloadKeys)
       expect(payload.invoice.before).toEqual(payload.invoice.after)
       expect(payload.invoice.after).toMatchObject({ version: 7, updated_at: laterTimestamp })
     })
@@ -397,6 +450,237 @@ for (const [runtime, factory] of factories) {
           eventId: 'event-illegal-view',
         }),
       ).rejects.toBeInstanceOf(InvoiceLifecycleError)
+    })
+
+    it('[unit] persists every legal lifecycle command across its state variants', async () => {
+      database = await factory()
+      await installFixture(database)
+      await database.run(
+        `INSERT INTO invoices
+          (id, client_id, number, currency, issue_date, due_date, created_at, updated_at)
+         VALUES (3, 1, 'INV-STATE-3', 'USD', '2026-08-01', '2026-08-31', ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+      await database.run(
+        `INSERT INTO invoice_line_items
+          (id, invoice_id, position, kind, quantity, unit_price_cents, amount_cents,
+           created_at, updated_at)
+         VALUES
+          (1101, 1, 0, 'Service', 1, 1000, 1000, ?, ?),
+          (1103, 3, 0, 'Service', 1, 1000, 1000, ?, ?)`,
+        timestamp,
+        timestamp,
+        timestamp,
+        timestamp,
+      )
+
+      let messageId = 1200
+      const lifecycle = async (
+        invoiceId: number,
+        commandId: string,
+        command: 'send' | 'view' | 'draft' | 'cancel' | 'write_off' | 'reopen' | 'source_close',
+        expectedVersion: number | undefined,
+        occurredAt: string,
+      ) =>
+        executeInvoiceLifecycleCommand(database!.orm, {
+          invoiceId,
+          commandId,
+          command,
+          actor: command === 'view' ? { type: 'system', id: null } : { type: 'user', id: 1 },
+          authorize,
+          ...(expectedVersion === undefined ? {} : { expectedVersion }),
+          occurredAt,
+          messageId: ++messageId,
+          eventId: `${commandId}-event`,
+        })
+
+      await lifecycle(1, 'matrix-send-draft', 'send', 0, timestamp)
+      await lifecycle(1, 'matrix-view-open', 'view', undefined, timestamp)
+      await lifecycle(1, 'matrix-send-open', 'send', 1, timestamp)
+      await lifecycle(1, 'matrix-draft-open', 'draft', 2, timestamp)
+      await lifecycle(1, 'matrix-send-again', 'send', 3, timestamp)
+      await lifecycle(1, 'matrix-write-off', 'write_off', 4, timestamp)
+      await lifecycle(1, 'matrix-view-closed', 'view', undefined, timestamp)
+      await lifecycle(1, 'matrix-reopen-written-off', 'reopen', 5, timestamp)
+      await lifecycle(1, 'matrix-source-close-open', 'source_close', 6, timestamp)
+      await lifecycle(1, 'matrix-reopen-source', 'reopen', 7, timestamp)
+      await lifecycle(1, 'matrix-cancel-open', 'cancel', 8, timestamp)
+      await lifecycle(1, 'matrix-reopen-cancelled', 'reopen', 9, timestamp)
+
+      await lifecycle(2, 'matrix-cancel-draft', 'cancel', 0, laterTimestamp)
+      await lifecycle(2, 'matrix-reopen-draft-cancel', 'reopen', 1, laterTimestamp)
+      await lifecycle(2, 'matrix-return-draft', 'draft', 2, laterTimestamp)
+      await lifecycle(2, 'matrix-source-close-draft', 'source_close', 3, laterTimestamp)
+
+      await lifecycle(3, 'matrix-send-paid', 'send', 0, thirdTimestamp)
+      await recordInvoicePayment(database.orm, {
+        invoiceId: 3,
+        commandId: 'matrix-record-paid',
+        actor: { type: 'user', id: 1 },
+        authorize,
+        expectedVersion: 1,
+        occurredAt: thirdTimestamp,
+        eventIds: ['matrix-record-paid-event', 'matrix-paid-event'],
+        payment: {
+          type: 'manual',
+          id: 1303,
+          currency: 'USD',
+          amountCents: 1000,
+          paidAt: thirdTimestamp,
+          paidDate: null,
+        },
+      })
+      await lifecycle(3, 'matrix-view-paid', 'view', undefined, thirdTimestamp)
+      await lifecycle(3, 'matrix-source-close-paid', 'source_close', 2, thirdTimestamp)
+      await lifecycle(3, 'matrix-reopen-paid', 'reopen', 3, thirdTimestamp)
+
+      for (const [invoiceId, command, expectedVersion] of [
+        [2, 'send', 4],
+        [3, 'draft', 4],
+        [3, 'cancel', 4],
+        [3, 'write_off', 4],
+        [1, 'reopen', 10],
+        [2, 'source_close', 4],
+      ] as const) {
+        await expect(
+          lifecycle(
+            invoiceId,
+            `matrix-illegal-${command}`,
+            command,
+            expectedVersion,
+            fourthTimestamp,
+          ),
+        ).rejects.toBeInstanceOf(InvoiceLifecycleError)
+      }
+
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT id, state, version, close_reason, close_write_off_cents,
+             written_off_cents, due_amount_cents, paid_at, paid_date, closed_at
+           FROM invoices ORDER BY id`,
+        ),
+      ).toEqual([
+        {
+          id: 1,
+          state: 'open',
+          version: 10,
+          close_reason: null,
+          close_write_off_cents: 0,
+          written_off_cents: 0,
+          due_amount_cents: 1000,
+          paid_at: null,
+          paid_date: null,
+          closed_at: null,
+        },
+        {
+          id: 2,
+          state: 'closed',
+          version: 4,
+          close_reason: 'source_closed',
+          close_write_off_cents: 0,
+          written_off_cents: 0,
+          due_amount_cents: 0,
+          paid_at: null,
+          paid_date: null,
+          closed_at: laterTimestamp,
+        },
+        {
+          id: 3,
+          state: 'paid',
+          version: 4,
+          close_reason: null,
+          close_write_off_cents: 0,
+          written_off_cents: 0,
+          due_amount_cents: 0,
+          paid_at: thirdTimestamp,
+          paid_date: null,
+          closed_at: null,
+        },
+      ])
+      expect(
+        await database.rows<{ event_type: string }>(
+          `SELECT event_type FROM event_outbox
+           WHERE aggregate_id = 1 ORDER BY aggregate_sequence`,
+        ),
+      ).toEqual(
+        [
+          'invoice.sent',
+          'invoice.viewed',
+          'invoice.sent',
+          'invoice.drafted',
+          'invoice.sent',
+          'invoice.written_off',
+          'invoice.viewed',
+          'invoice.reopened',
+          'invoice.closed',
+          'invoice.reopened',
+          'invoice.cancelled',
+          'invoice.reopened',
+        ].map((event_type) => ({ event_type })),
+      )
+      expect(
+        await database.rows<{ event_type: string }>(
+          `SELECT event_type FROM event_outbox
+           WHERE aggregate_id = 2 ORDER BY aggregate_sequence`,
+        ),
+      ).toEqual(
+        ['invoice.cancelled', 'invoice.reopened', 'invoice.drafted', 'invoice.closed'].map(
+          (event_type) => ({ event_type }),
+        ),
+      )
+      expect(
+        await database.rows<{ event_type: string }>(
+          `SELECT event_type FROM event_outbox
+           WHERE aggregate_id = 3 ORDER BY aggregate_sequence`,
+        ),
+      ).toEqual(
+        [
+          'invoice.sent',
+          'payment.recorded',
+          'invoice.paid',
+          'invoice.viewed',
+          'invoice.closed',
+          'invoice.reopened',
+        ].map((event_type) => ({ event_type })),
+      )
+      expect(
+        await database.rows<{ event_type: string }>(
+          `SELECT event_type FROM invoice_messages ORDER BY id`,
+        ),
+      ).toEqual(
+        [
+          'send',
+          'view',
+          'send',
+          'draft',
+          'send',
+          'write_off',
+          'view',
+          're-open',
+          'close',
+          're-open',
+          'cancel',
+          're-open',
+          'cancel',
+          're-open',
+          'draft',
+          'close',
+          'send',
+          'view',
+          'close',
+          're-open',
+        ].map((event_type) => ({ event_type })),
+      )
+      expect(
+        await database.rows<{ ledger: number; outbox: number }>(
+          `SELECT
+             (SELECT count(*) FROM invoice_command_ledger
+               WHERE command_id LIKE 'matrix-illegal-%') AS ledger,
+             (SELECT count(*) FROM event_outbox
+               WHERE command_id LIKE 'matrix-illegal-%') AS outbox`,
+        ),
+      ).toEqual([{ ledger: 0, outbox: 0 }])
     })
 
     it('[unit] rolls back a late outbox collision and permits a clean retry', async () => {
@@ -513,6 +797,26 @@ for (const [runtime, factory] of factories) {
         invoice: { version: 2, state: 'paid', due_amount_cents: 0, payment_count: 1 },
       })
       await expect(
+        recordInvoicePayment(database.orm, {
+          invoiceId: 1,
+          commandId: 'record-payment-1',
+          actor: { type: 'user', id: 1 },
+          authorize,
+          expectedVersion: 1,
+          occurredAt: laterTimestamp,
+          eventIds: ['unused-record-event', 'unused-paid-event'],
+          payment: {
+            type: 'manual',
+            id: 401,
+            currency: 'USD',
+            amountCents: 1000,
+            paidAt: laterTimestamp,
+            paidDate: null,
+            notes: null,
+          },
+        }),
+      ).rejects.toBeInstanceOf(InvoiceCommandReuseError)
+      await expect(
         database.run(`UPDATE invoice_payments SET notes = 'raw' WHERE id = 401`),
       ).rejects.toThrow(/pending command/)
       await expect(database.run(`DELETE FROM invoice_payments WHERE id = 401`)).rejects.toThrow(
@@ -537,6 +841,23 @@ for (const [runtime, factory] of factories) {
         event_ids: ['event-payment-updated', 'event-invoice-partial'],
         invoice: { version: 3, state: 'open', due_amount_cents: 500, payment_count: 1 },
       })
+      await expect(
+        updateInvoicePayment(database.orm, {
+          invoiceId: 1,
+          commandId: 'update-payment-1',
+          actor: { type: 'user', id: 1 },
+          authorize,
+          expectedVersion: 2,
+          occurredAt: thirdTimestamp,
+          eventIds: ['unused-update-event', 'unused-partial-event'],
+          paymentId: 401,
+          expectedPaymentUpdatedAt: laterTimestamp,
+          amountCents: 500,
+          paidAt: thirdTimestamp,
+          paidDate: null,
+          notes: null,
+        }),
+      ).rejects.toBeInstanceOf(InvoiceCommandReuseError)
 
       const deleted = await deleteInvoicePayment(database.orm, {
         invoiceId: 1,
@@ -568,6 +889,95 @@ for (const [runtime, factory] of factories) {
         { event_type: 'payment.deleted', event_index: 0 },
         { event_type: 'invoice.unpaid', event_index: 1 },
       ])
+      const payloadRows = await database.rows<{ command_id: string; payload_json: string }>(
+        `SELECT command_id, payload_json FROM event_outbox
+         WHERE aggregate_id = 1 AND event_index = 0 AND command_id IN
+           ('record-payment-1','update-payment-1','delete-payment-1')
+         ORDER BY aggregate_sequence`,
+      )
+      const payloads = payloadRows.map(({ payload_json: payloadJson }) =>
+        JSON.parse(payloadJson),
+      ) as Array<{
+        aggregate: Record<string, unknown>
+        command: Record<string, unknown>
+        actor: Record<string, unknown>
+        trigger: Record<string, unknown>
+        invoice: { before: Record<string, unknown>; after: Record<string, unknown> }
+        payment: { before: Record<string, unknown> | null; after: Record<string, unknown> | null }
+      }>
+      expect(payloadRows.map(({ command_id: commandId }) => commandId)).toEqual([
+        'record-payment-1',
+        'update-payment-1',
+        'delete-payment-1',
+      ])
+      for (const payload of payloads) {
+        expect(Object.keys(payload).sort()).toEqual(eventPayloadKeys)
+        expect(Object.keys(payload.invoice.before).sort()).toEqual(invoicePayloadKeys)
+        expect(Object.keys(payload.invoice.after).sort()).toEqual(invoicePayloadKeys)
+        expect(payload.actor).toEqual({ type: 'user', id: 1 })
+        expect(payload.trigger).toEqual({ type: 'invoice_payment', id: 401 })
+        if (payload.payment.before !== null) {
+          expect(Object.keys(payload.payment.before).sort()).toEqual(paymentPayloadKeys)
+        }
+        if (payload.payment.after !== null) {
+          expect(Object.keys(payload.payment.after).sort()).toEqual(paymentPayloadKeys)
+        }
+      }
+      expect(payloads[0]).toMatchObject({
+        aggregate: { type: 'invoice', id: 1, sequence: 2 },
+        command: { id: 'record-payment-1', kind: 'payment.record', event_index: 0 },
+        invoice: {
+          before: { version: 1, state: 'open', due_amount_cents: 1000, payment_count: 0 },
+          after: { version: 2, state: 'paid', due_amount_cents: 0, payment_count: 1 },
+        },
+        payment: {
+          before: null,
+          after: {
+            id: 401,
+            amount_cents: 1000,
+            currency: 'USD',
+            provider: 'manual',
+            shape: 'manual',
+            paid_at: laterTimestamp,
+            paid_date: null,
+          },
+        },
+      })
+      expect(payloads[1]?.payment).toEqual({
+        before: {
+          id: 401,
+          amount_cents: 1000,
+          currency: 'USD',
+          provider: 'manual',
+          shape: 'manual',
+          paid_at: laterTimestamp,
+          paid_date: null,
+        },
+        after: {
+          id: 401,
+          amount_cents: 500,
+          currency: 'USD',
+          provider: 'manual',
+          shape: 'manual',
+          paid_at: thirdTimestamp,
+          paid_date: null,
+        },
+      })
+      expect(payloads[2]?.payment).toEqual({
+        before: {
+          id: 401,
+          amount_cents: 500,
+          currency: 'USD',
+          provider: 'manual',
+          shape: 'manual',
+          paid_at: thirdTimestamp,
+          paid_date: null,
+        },
+        after: null,
+      })
+      expect(
+        payloadRows.map(({ payload_json: payloadJson }) => payloadJson).join('\n'),
+      ).not.toMatch(/recipients|message_body|sent_by_email|credential|card_data/i)
     })
 
     it('[unit] returns an exact bank-confirmation retry after the deposit is confirmed', async () => {
@@ -643,6 +1053,210 @@ for (const [runtime, factory] of factories) {
            FROM bank_deposits WHERE id = 8`,
         ),
       ).toEqual([{ match_state: 'confirmed', payments: 1, events: 2 }])
+    })
+
+    it('[unit] rejects stale mutable trigger rows without consuming ledger or outbox identity', async () => {
+      database = await factory(false)
+      await installThrough0005(database)
+      await installFixture(database)
+      await database.run(
+        `INSERT INTO invoice_line_items
+          (id, invoice_id, position, kind, quantity, unit_price_cents, amount_cents,
+           created_at, updated_at)
+         VALUES
+          (1501, 1, 0, 'Service', 1, 1000, 1000, ?, ?),
+          (1502, 2, 0, 'Service', 1, 1000, 1000, ?, ?)`,
+        timestamp,
+        timestamp,
+        timestamp,
+        timestamp,
+      )
+      await database.migrateAgain()
+
+      await executeInvoiceLifecycleCommand(database.orm, {
+        invoiceId: 1,
+        commandId: 'trigger-fixture-send-1',
+        command: 'send',
+        actor: { type: 'user', id: 1 },
+        authorize,
+        expectedVersion: 0,
+        occurredAt: timestamp,
+        messageId: 1501,
+        eventId: 'trigger-fixture-send-event-1',
+      })
+      await executeInvoiceLifecycleCommand(database.orm, {
+        invoiceId: 2,
+        commandId: 'trigger-fixture-send-2',
+        command: 'send',
+        actor: { type: 'user', id: 1 },
+        authorize,
+        expectedVersion: 0,
+        occurredAt: timestamp,
+        messageId: 1502,
+        eventId: 'trigger-fixture-send-event-2',
+      })
+      await recordInvoicePayment(database.orm, {
+        invoiceId: 1,
+        commandId: 'trigger-fixture-payment',
+        actor: { type: 'user', id: 1 },
+        authorize,
+        expectedVersion: 1,
+        occurredAt: laterTimestamp,
+        eventIds: ['trigger-fixture-payment-event', 'trigger-fixture-partial-event'],
+        payment: {
+          type: 'manual',
+          id: 1503,
+          currency: 'USD',
+          amountCents: 400,
+          paidAt: laterTimestamp,
+          paidDate: null,
+        },
+      })
+      await database.run(
+        `INSERT INTO payment_provider_accounts
+          (id, provider, provider_shape, external_account_id, created_at, updated_at)
+         VALUES (15, 'wise', 'reconciliation', 'account-15', ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+      await database.run(
+        `INSERT INTO bank_deposits
+          (id, provider_account_id, provider_transaction_id, currency, posted_at,
+           amount_cents, match_state, suggested_invoice_id, created_at, updated_at)
+         VALUES (15, 15, 'deposit-15', 'USD', ?, 1000, 'suggested', 2, ?, ?)`,
+        timestamp,
+        timestamp,
+        timestamp,
+      )
+
+      await expect(
+        updateInvoicePayment(database.orm, {
+          invoiceId: 1,
+          commandId: 'stale-trigger-payment-update',
+          actor: { type: 'user', id: 1 },
+          authorize,
+          expectedVersion: 2,
+          occurredAt: thirdTimestamp,
+          eventIds: ['stale-trigger-payment-update-event'],
+          paymentId: 1503,
+          expectedPaymentUpdatedAt: fifthTimestamp,
+          amountCents: 300,
+          paidAt: thirdTimestamp,
+          paidDate: null,
+        }),
+      ).rejects.toBeInstanceOf(InvoiceTriggerRowConflictError)
+      await expect(
+        deleteInvoicePayment(database.orm, {
+          invoiceId: 1,
+          commandId: 'stale-trigger-payment-delete',
+          actor: { type: 'user', id: 1 },
+          authorize,
+          expectedVersion: 2,
+          occurredAt: thirdTimestamp,
+          eventIds: ['stale-trigger-payment-delete-event'],
+          paymentId: 1503,
+          expectedPaymentUpdatedAt: fifthTimestamp,
+        }),
+      ).rejects.toBeInstanceOf(InvoiceTriggerRowConflictError)
+      await expect(
+        executeInvoiceEdit(database.orm, {
+          invoiceId: 1,
+          commandId: 'stale-trigger-line-update',
+          actor: { type: 'user', id: 1 },
+          authorize,
+          expectedVersion: 2,
+          occurredAt: thirdTimestamp,
+          eventIds: ['stale-trigger-line-update-event'],
+          edit: {
+            type: 'line_update',
+            lineId: 1501,
+            expectedLineUpdatedAt: fifthTimestamp,
+            position: 0,
+            kind: 'Service',
+            quantity: 1,
+            unitPriceCents: 900,
+            amountCents: 900,
+            taxed: false,
+            taxed2: false,
+          },
+        }),
+      ).rejects.toBeInstanceOf(InvoiceTriggerRowConflictError)
+      await expect(
+        executeInvoiceEdit(database.orm, {
+          invoiceId: 1,
+          commandId: 'stale-trigger-line-delete',
+          actor: { type: 'user', id: 1 },
+          authorize,
+          expectedVersion: 2,
+          occurredAt: thirdTimestamp,
+          eventIds: ['stale-trigger-line-delete-event'],
+          edit: {
+            type: 'line_delete',
+            lineId: 1501,
+            expectedLineUpdatedAt: fifthTimestamp,
+          },
+        }),
+      ).rejects.toBeInstanceOf(InvoiceTriggerRowConflictError)
+      await expect(
+        recordInvoicePayment(database.orm, {
+          invoiceId: 2,
+          commandId: 'stale-trigger-bank-record',
+          actor: { type: 'user', id: 1 },
+          authorize,
+          expectedVersion: 1,
+          occurredAt: thirdTimestamp,
+          eventIds: ['stale-trigger-bank-record-event'],
+          payment: {
+            type: 'bank_deposit',
+            id: 1504,
+            depositId: 15,
+            expectedDepositUpdatedAt: fifthTimestamp,
+            expectedMatchState: 'suggested',
+            paidAt: thirdTimestamp,
+          },
+        }),
+      ).rejects.toBeInstanceOf(InvoiceTriggerRowConflictError)
+
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT id, state, version, due_amount_cents,
+             (SELECT count(*) FROM invoice_payments payment
+               WHERE payment.invoice_id = invoices.id) AS payment_count
+           FROM invoices ORDER BY id`,
+        ),
+      ).toEqual([
+        { id: 1, state: 'open', version: 2, due_amount_cents: 600, payment_count: 1 },
+        { id: 2, state: 'open', version: 1, due_amount_cents: 1000, payment_count: 0 },
+      ])
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT id, amount_cents, updated_at FROM invoice_payments ORDER BY id`,
+        ),
+      ).toEqual([{ id: 1503, amount_cents: 400, updated_at: laterTimestamp }])
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT id, amount_cents, updated_at FROM invoice_line_items ORDER BY id`,
+        ),
+      ).toEqual([
+        { id: 1501, amount_cents: 1000, updated_at: timestamp },
+        { id: 1502, amount_cents: 1000, updated_at: timestamp },
+      ])
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT match_state,
+             (SELECT count(*) FROM invoice_payments WHERE bank_deposit_id = 15) AS payments
+           FROM bank_deposits WHERE id = 15`,
+        ),
+      ).toEqual([{ match_state: 'suggested', payments: 0 }])
+      expect(
+        await database.rows<{ ledger: number; outbox: number }>(
+          `SELECT
+             (SELECT count(*) FROM invoice_command_ledger
+               WHERE command_id LIKE 'stale-trigger-%') AS ledger,
+             (SELECT count(*) FROM event_outbox
+               WHERE command_id LIKE 'stale-trigger-%') AS outbox`,
+        ),
+      ).toEqual([{ ledger: 0, outbox: 0 }])
     })
 
     it('[unit] emits invoice.updated before a line edit payment outcome', async () => {
@@ -731,6 +1345,18 @@ for (const [runtime, factory] of factories) {
     it('[unit] applies the full draft edit surface and rejects closed edits', async () => {
       database = await factory()
       await installFixture(database)
+      await database.run(
+        `INSERT INTO clients (id, name, currency, created_at, updated_at)
+         VALUES (2, 'Second Client', 'EUR', ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+      await database.run(
+        `INSERT INTO projects (id, client_id, name, created_at, updated_at)
+         VALUES (2, 2, 'Second Client Project', ?, ?)`,
+        timestamp,
+        timestamp,
+      )
       const header = await executeInvoiceEdit(database.orm, {
         invoiceId: 1,
         commandId: 'edit-header',
@@ -741,11 +1367,16 @@ for (const [runtime, factory] of factories) {
         eventIds: ['edit-header-event'],
         edit: {
           type: 'header',
+          clientId: 2,
+          number: 'INV-STATE-EDITED',
           subject: 'Updated subject',
           purchaseOrder: 'PO-88',
+          currency: 'EUR',
           issueDate: '2026-08-02',
           dueDate: '2026-09-01',
           paymentTerms: 'net_15',
+          projectId: 2,
+          reminderPolicy: { first_after_days: 3, every_days: 7 },
         },
       })
       expect(header).toMatchObject({ event_count: 1, invoice: { state: 'draft', version: 1 } })
@@ -810,18 +1441,24 @@ for (const [runtime, factory] of factories) {
       expect(financials).toMatchObject({ event_count: 1, invoice: { state: 'draft', version: 5 } })
       expect(
         await database.rows<Record<string, unknown>>(
-          `SELECT subject, purchase_order, issue_date, due_date, payment_terms,
+          `SELECT client_id, number, subject, purchase_order, currency,
+             issue_date, due_date, payment_terms, project_id, reminder_policy,
              payment_options, tax_rate_ppm,
              (SELECT count(*) FROM invoice_line_items WHERE invoice_id = 1) AS lines
            FROM invoices WHERE id = 1`,
         ),
       ).toEqual([
         {
+          client_id: 2,
+          number: 'INV-STATE-EDITED',
           subject: 'Updated subject',
           purchase_order: 'PO-88',
+          currency: 'EUR',
           issue_date: '2026-08-02',
           due_date: '2026-09-01',
           payment_terms: 'net_15',
+          project_id: 2,
+          reminder_policy: '{"every_days":7,"first_after_days":3}',
           payment_options: '["wise_transfer"]',
           tax_rate_ppm: 100_000,
           lines: 0,
@@ -911,6 +1548,27 @@ for (const [runtime, factory] of factories) {
       await expect(
         database.run(`UPDATE invoices SET subject = 'raw' WHERE id = 1`),
       ).rejects.toThrow(/pending command/)
+      for (const mutation of [
+        `number = 'RAW-NUMBER'`,
+        `client_id = 2`,
+        `project_id = 999`,
+        `currency = 'EUR'`,
+        `reminder_policy = '{"first_after_days":1}'`,
+        `client_key = '${'a'.repeat(64)}'`,
+      ]) {
+        await expect(database.run(`UPDATE invoices SET ${mutation} WHERE id = 1`)).rejects.toThrow(
+          /pending command/,
+        )
+      }
+      await expect(
+        database.run(`UPDATE invoices SET period_start = '2026-08-02' WHERE id = 1`),
+      ).rejects.toThrow(/period is derived/)
+      await expect(
+        database.run(`UPDATE invoices SET updated_at = ? WHERE id = 1`, laterTimestamp),
+      ).rejects.toThrow(/pending command/)
+      await expect(
+        database.run(`UPDATE invoices SET created_at = ? WHERE id = 1`, laterTimestamp),
+      ).rejects.toThrow(/created_at is immutable/)
       await expect(
         database.run(`UPDATE invoices SET tax_rate_ppm = 1000 WHERE id = 1`),
       ).rejects.toThrow(/pending command/)
@@ -1101,7 +1759,7 @@ for (const [runtime, factory] of factories) {
           version: 0,
           paid_at: timestamp,
           paid_date: null,
-          closed_at: laterTimestamp,
+          closed_at: null,
           source_updated_at: laterTimestamp,
           source_amount_cents: 1000,
           source_due_amount_cents: 0,
@@ -1122,12 +1780,12 @@ for (const [runtime, factory] of factories) {
       await expect(database.run(`DELETE FROM invoice_payments WHERE id = 601`)).rejects.toThrow(
         /pending command/,
       )
-      await expect(
-        reconcileImportedInvoice(database.orm, {
+      expect(
+        await reconcileImportedInvoice(database.orm, {
           ...input,
           sourceWrittenOffCents: 1,
         }),
-      ).rejects.toThrow(/reused/)
+      ).toEqual(reconciled)
       expect(await reconcileImportedInvoice(database.orm, input)).toEqual(reconciled)
       await expect(
         reconcileImportedInvoice(database.orm, {

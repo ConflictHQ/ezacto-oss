@@ -1189,10 +1189,10 @@ for (const [runtime, factory] of factories) {
       )
       await expect(
         db.run(`UPDATE OR REPLACE invoices SET number = 'INV-REPLACE' WHERE id = 2`),
-      ).rejects.toThrow(/belongs to another row/)
+      ).rejects.toThrow(/belongs to another row|pending command/)
       await expect(
         db.run(`UPDATE OR REPLACE invoices SET client_key = ? WHERE id = 2`, existingClientKey),
-      ).rejects.toThrow(/belongs to another row/)
+      ).rejects.toThrow(/belongs to another row|pending command/)
       await expect(
         db.run(
           `INSERT OR REPLACE INTO invoices
@@ -1294,10 +1294,12 @@ for (const [runtime, factory] of factories) {
         await db.rows<{ count: number }>(`SELECT count(*) AS count FROM invoice_line_items`),
       ).toEqual([{ count: 1 }])
       const rotatedKey = 'a'.repeat(64)
-      await db.run(
-        `UPDATE invoices SET number = 'INV-OTHER-ROTATED', client_key = ? WHERE id = 2`,
-        rotatedKey,
-      )
+      await expect(
+        db.run(
+          `UPDATE invoices SET number = 'INV-OTHER-ROTATED', client_key = ? WHERE id = 2`,
+          rotatedKey,
+        ),
+      ).rejects.toThrow(/pending command/)
       await db.run(
         `UPDATE event_outbox SET available_at = '2026-08-27T00:01:00Z', published_at = ?,
            attempt_count = 1, last_error = 'retry'
@@ -1308,7 +1310,12 @@ for (const [runtime, factory] of factories) {
         await db.rows<{ number: string; client_key: string }>(
           `SELECT number, client_key FROM invoices WHERE id = 2`,
         ),
-      ).toEqual([{ number: 'INV-OTHER-ROTATED', client_key: rotatedKey }])
+      ).toEqual([
+        {
+          number: originalInvoices[1]?.number,
+          client_key: originalInvoices[1]?.client_key,
+        },
+      ])
       expect(
         await db.rows<{
           available_at: string

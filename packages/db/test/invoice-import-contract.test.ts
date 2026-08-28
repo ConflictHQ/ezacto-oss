@@ -3,6 +3,7 @@ import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import {
+  InvoiceImportBatchLimitError,
   reconcileImportedInvoice,
   type ImportedInvoiceLine,
   type ImportedInvoiceMessage,
@@ -33,6 +34,7 @@ interface ReceiptManifests {
 
 const initialTimestamp = '2026-08-27T12:00:00.000Z'
 const sourceTimestamp = '2026-08-27T12:00:01.000Z'
+const nextSourceTimestamp = '2026-08-27T12:00:02.000Z'
 
 const containerDatabase = (): TestDatabase => {
   const sqlite = new BetterSqlite3(':memory:')
@@ -328,7 +330,6 @@ for (const [runtime, factory] of factories) {
         input(2, {
           sourceState: 'closed',
           sourcePaidAt: paidAt,
-          sourceClosedAt: sourceTimestamp,
           sourceDueAmountCents: 1000,
         }),
       )
@@ -345,17 +346,99 @@ for (const [runtime, factory] of factories) {
 
       expect(
         await database.rows<Record<string, unknown>>(
-          `SELECT id, state, paid_at, paid_date, due_amount_cents
+          `SELECT id, state, paid_at, paid_date, closed_at, due_amount_cents
            FROM invoices WHERE id IN (2,3) ORDER BY id`,
         ),
       ).toEqual([
-        { id: 2, state: 'closed', paid_at: paidAt, paid_date: null, due_amount_cents: 1000 },
+        {
+          id: 2,
+          state: 'closed',
+          paid_at: paidAt,
+          paid_date: null,
+          closed_at: null,
+          due_amount_cents: 1000,
+        },
         {
           id: 3,
           state: 'closed',
           paid_at: null,
           paid_date: '2026-08-25',
+          closed_at: sourceTimestamp,
           due_amount_cents: 750,
+        },
+      ])
+    })
+
+    it('[unit] ignores equal or older observations and rejects sender provenance drift', async () => {
+      database = await factory()
+      await installFixture(database)
+      const firstInput = input(1, {
+        messages: [
+          message(11, {
+            sentBy: 'Original Sender',
+            sentByEmail: 'original@example.invalid',
+            sentFrom: 'Original Company',
+            sentFromEmail: 'billing@example.invalid',
+            body: 'Original body',
+          }),
+        ],
+      })
+      const first = await reconcileImportedInvoice(database.orm, firstInput)
+
+      const equal = await reconcileImportedInvoice(database.orm, {
+        ...firstInput,
+        sourceAmountCents: 999,
+        lines: [line(19, 999, { position: 0 })],
+        messages: [],
+      })
+      const older = await reconcileImportedInvoice(database.orm, {
+        ...firstInput,
+        sourceUpdatedAt: initialTimestamp,
+        expectedSourceUpdatedAt: sourceTimestamp,
+        sourceAmountCents: 1,
+        lines: [line(18, 1, { position: 0 })],
+        messages: [],
+      })
+      expect(equal).toEqual(first)
+      expect(older).toEqual(first)
+
+      await expect(
+        reconcileImportedInvoice(database.orm, {
+          ...firstInput,
+          expectedSourceUpdatedAt: sourceTimestamp,
+          sourceUpdatedAt: nextSourceTimestamp,
+          lines: firstInput.lines.map((item) => ({
+            ...item,
+            updatedAt: nextSourceTimestamp,
+          })),
+          messages: firstInput.messages.map((item) => ({
+            ...item,
+            sentBy: 'Changed Sender',
+            body: 'Changed body',
+            updatedAt: nextSourceTimestamp,
+          })),
+        }),
+      ).rejects.toThrow(/sender provenance drifted/)
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT invoice.source_updated_at, invoice.amount_cents,
+             message.sent_by, message.body,
+             (SELECT count(*) FROM invoice_import_reconciliations
+               WHERE invoice_id = invoice.id) AS receipts,
+             (SELECT count(*) FROM event_outbox
+               WHERE aggregate_id = invoice.id) AS outbox
+           FROM invoices invoice
+           JOIN invoice_messages message ON message.invoice_id = invoice.id
+           WHERE invoice.id = 1`,
+        ),
+      ).toEqual([
+        {
+          source_updated_at: sourceTimestamp,
+          amount_cents: 1000,
+          sent_by: 'Original Sender',
+          body: 'Original body',
+          receipts: 1,
+          outbox: 0,
         },
       ])
     })
@@ -413,5 +496,63 @@ for (const [runtime, factory] of factories) {
         },
       ])
     })
+
+    it('[unit] requires pending receipt authority for source observation updates', async () => {
+      database = await factory()
+      await installFixture(database)
+      await expect(
+        database.run(
+          `UPDATE invoices SET source_amount_cents = 999, source_updated_at = ?
+           WHERE id = 1`,
+          nextSourceTimestamp,
+        ),
+      ).rejects.toThrow(/exact pending import authority/)
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT source_amount_cents, source_updated_at, updated_at FROM invoices WHERE id = 1`,
+        ),
+      ).toEqual([
+        {
+          source_amount_cents: null,
+          source_updated_at: initialTimestamp,
+          updated_at: initialTimestamp,
+        },
+      ])
+    })
   })
 }
+
+it('[unit] rejects a D1 reconciliation that exceeds its deterministic statement budget', async () => {
+  const database = await d1Database()
+  try {
+    await installFixture(database)
+    const oversizedLines = Array.from({ length: 992 }, (_, index) =>
+      line(1000 + index, 1, { position: index }),
+    )
+    const rejection = await reconcileImportedInvoice(
+      database.orm,
+      input(1, {
+        sourceAmountCents: oversizedLines.length,
+        sourceDueAmountCents: oversizedLines.length,
+        lines: oversizedLines,
+      }),
+    ).catch((error: unknown) => error)
+    expect(rejection).toBeInstanceOf(InvoiceImportBatchLimitError)
+    expect(rejection).toMatchObject({
+      code: 'invoice_import_batch_limit',
+      plannedBatchStatements: 995,
+      maximumBatchStatements: 994,
+    })
+    expect(
+      await database.rows<Record<string, unknown>>(
+        `SELECT invoice.source_updated_at,
+           (SELECT count(*) FROM invoice_line_items WHERE invoice_id = invoice.id) AS lines,
+           (SELECT count(*) FROM invoice_import_reconciliations
+             WHERE invoice_id = invoice.id) AS receipts
+         FROM invoices invoice WHERE invoice.id = 1`,
+      ),
+    ).toEqual([{ source_updated_at: initialTimestamp, lines: 0, receipts: 0 }])
+  } finally {
+    await database.close()
+  }
+})

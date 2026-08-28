@@ -121,6 +121,7 @@ interface StoredInvoice {
   amountCents: number
   writtenOffCents: number
   version: number
+  state: SourceState
   sourceUpdatedAt: string | null
   taxRatePpm: number | null
   tax2RatePpm: number | null
@@ -213,6 +214,24 @@ interface NormalizedImportInput {
 interface Statement {
   text: string
   params: Array<string | number | null>
+}
+
+const d1StatementLimit = 1000
+const d1ReconciliationQueryOverhead = 6
+const d1AtomicStatementLimit = d1StatementLimit - d1ReconciliationQueryOverhead
+
+export class InvoiceImportBatchLimitError extends Error {
+  readonly code = 'invoice_import_batch_limit'
+
+  constructor(
+    readonly plannedBatchStatements: number,
+    readonly maximumBatchStatements: number,
+  ) {
+    super(
+      `invoice import requires ${plannedBatchStatements} atomic statements; D1 allows at most ${maximumBatchStatements} after reconciliation query overhead`,
+    )
+    this.name = 'InvoiceImportBatchLimitError'
+  }
 }
 
 const canonicalTimestamp = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/
@@ -406,6 +425,14 @@ const sameSourceMessage = (left: StoredMessage, right: StoredMessage): boolean =
   left.eventType === right.eventType &&
   left.createdAt === right.createdAt &&
   left.updatedAt === right.updatedAt
+
+const sameMessageIdentityAndSender = (left: StoredMessage, right: StoredMessage): boolean =>
+  left.id === right.id &&
+  left.harvestId === right.harvestId &&
+  left.sentBy === right.sentBy &&
+  left.sentByEmail === right.sentByEmail &&
+  left.sentFrom === right.sentFrom &&
+  left.sentFromEmail === right.sentFromEmail
 
 const canonicalLine = (line: ImportedInvoiceLine): StoredLine => {
   assertTimestamp(line.createdAt, 'line.createdAt')
@@ -677,7 +704,7 @@ const coveringEvidence = (
 /**
  * Package-internal Harvest reconciliation seam. The importer must supply the complete
  * source-owned message/payment sets only after its invoice source batch is complete.
- * The operation then replaces those sets and reconciles lifecycle state atomically,
+ * The operation then reconciles those sets and lifecycle state atomically,
  * without native command events. This module is deliberately absent from package-root
  * exports so ordinary application callers cannot reach the authority seam.
  */
@@ -719,6 +746,31 @@ export const reconcileImportedInvoice = async (
   const manifests = await buildManifests(input, normalized)
   const { inputFingerprint } = manifests
   const paidDateDiagnostics = paymentDateDiagnostics(input.invoiceId, normalized.payments)
+  const invoice = await first<StoredInvoice>(database, {
+    text: `SELECT id, harvest_id AS "harvestId", currency, amount_cents AS "amountCents",
+        written_off_cents AS "writtenOffCents", version, state,
+        source_updated_at AS "sourceUpdatedAt", tax_rate_ppm AS "taxRatePpm",
+        tax2_rate_ppm AS "tax2RatePpm", discount_rate_ppm AS "discountRatePpm"
+      FROM invoices WHERE id = ?`,
+    params: [input.invoiceId],
+  })
+  if (invoice === null || invoice.harvestId === null) {
+    throw new Error('import reconciliation requires an imported invoice')
+  }
+  if (
+    invoice.sourceUpdatedAt !== null &&
+    Date.parse(input.sourceUpdatedAt) <= Date.parse(invoice.sourceUpdatedAt)
+  ) {
+    return {
+      invoiceId: input.invoiceId,
+      sourceUpdatedAt: invoice.sourceUpdatedAt,
+      state: invoice.state,
+      diagnostics: [
+        ...sourceStateDiagnostics(input.invoiceId, input.sourceState, invoice.state),
+        ...paidDateDiagnostics,
+      ],
+    }
+  }
   const priorReceipt = await first<Receipt>(database, {
     text: `SELECT input_fingerprint AS "inputFingerprint", target_state AS "targetState", completed
       FROM invoice_import_reconciliations WHERE invoice_id = ? AND source_updated_at = ?`,
@@ -742,17 +794,6 @@ export const reconcileImportedInvoice = async (
     }
   }
 
-  const invoice = await first<StoredInvoice>(database, {
-    text: `SELECT id, harvest_id AS "harvestId", currency, amount_cents AS "amountCents",
-        written_off_cents AS "writtenOffCents", version,
-        source_updated_at AS "sourceUpdatedAt", tax_rate_ppm AS "taxRatePpm",
-        tax2_rate_ppm AS "tax2RatePpm", discount_rate_ppm AS "discountRatePpm"
-      FROM invoices WHERE id = ?`,
-    params: [input.invoiceId],
-  })
-  if (invoice === null || invoice.harvestId === null) {
-    throw new Error('import reconciliation requires an imported invoice')
-  }
   if (invoice.sourceUpdatedAt !== input.expectedSourceUpdatedAt) {
     const racedReceipt = await first<Receipt>(database, {
       text: `SELECT input_fingerprint AS "inputFingerprint", target_state AS "targetState", completed
@@ -885,6 +926,7 @@ export const reconcileImportedInvoice = async (
   const incomingMessages = normalized.messages
   const seenMessageHarvestIds = new Set<number>()
   const messageInserts: StoredMessage[] = []
+  const messageUpdates: StoredMessage[] = []
   const messageDeletes: StoredMessage[] = []
   for (const message of incomingMessages) {
     if (
@@ -901,12 +943,10 @@ export const reconcileImportedInvoice = async (
     const existing = messagesByHarvestId.get(harvestId)
     if (existing === undefined) messageInserts.push(message)
     else if (!sameSourceMessage(existing, message)) {
-      messageDeletes.push(existing)
-      messageInserts.push({
-        ...message,
-        deliveryStatus: existing.deliveryStatus,
-        providerMessageId: existing.providerMessageId,
-      })
+      if (!sameMessageIdentityAndSender(existing, message)) {
+        throw new Error('imported message identity or sender provenance drifted')
+      }
+      messageUpdates.push(message)
     }
   }
   for (const message of existingMessages) {
@@ -953,7 +993,7 @@ export const reconcileImportedInvoice = async (
     }
   }
   const closeReason = targetState === 'closed' ? 'source_closed' : null
-  const closedAt = targetState === 'closed' ? (input.sourceClosedAt ?? input.sourceUpdatedAt) : null
+  const closedAt = targetState === 'closed' ? input.sourceClosedAt : null
   const diagnostics: ImportReconciliationDiagnostic[] = [
     ...sourceStateDiagnostics(input.invoiceId, input.sourceState, targetState),
     ...paidDateDiagnostics,
@@ -1076,6 +1116,36 @@ export const reconcileImportedInvoice = async (
       params: [input.invoiceId, message.harvestId, message.id],
     })
   }
+  for (const message of messageUpdates) {
+    statements.push({
+      text: `UPDATE invoice_messages SET
+          sent_by = ?, sent_by_email = ?, sent_from = ?, sent_from_email = ?,
+          recipients = ?, subject = ?, body = ?, attach_pdf = ?, send_me_a_copy = ?,
+          thank_you = ?, reminder = ?, send_reminder_on = ?, event_type = ?,
+          created_at = ?, updated_at = ?
+        WHERE invoice_id = ? AND harvest_id = ? AND id = ?`,
+      params: [
+        message.sentBy,
+        message.sentByEmail,
+        message.sentFrom,
+        message.sentFromEmail,
+        message.recipients,
+        message.subject,
+        message.body,
+        message.attachPdf,
+        message.sendMeACopy,
+        message.thankYou,
+        message.reminder,
+        message.sendReminderOn,
+        message.eventType,
+        message.createdAt,
+        message.updatedAt,
+        input.invoiceId,
+        message.harvestId,
+        message.id,
+      ],
+    })
+  }
   for (const message of messageInserts) {
     statements.push({
       text: `INSERT INTO invoice_messages (
@@ -1144,6 +1214,9 @@ export const reconcileImportedInvoice = async (
       params: [input.invoiceId, input.sourceUpdatedAt],
     },
   )
+  if (isD1(database.$client) && statements.length > d1AtomicStatementLimit) {
+    throw new InvoiceImportBatchLimitError(statements.length, d1AtomicStatementLimit)
+  }
   try {
     await atomic(database, statements)
   } catch (error) {
