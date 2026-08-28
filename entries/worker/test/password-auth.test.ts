@@ -220,7 +220,10 @@ describe('Worker password authentication composition', () => {
 
     const revoked = await app.request(
       `/api/v1/sessions/${current!.id}`,
-      { method: 'DELETE', headers: { cookie: rotatedCookie } },
+      {
+        method: 'DELETE',
+        headers: { cookie: rotatedCookie, origin: 'http://localhost' },
+      },
       {
         DB: database,
         API_CURSOR_SIGNING_KEY: cursorKey,

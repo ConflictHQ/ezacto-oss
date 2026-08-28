@@ -193,7 +193,8 @@ const rowColumns = (alias = '') => {
 }
 
 const isSelectorCollision = (error: unknown): boolean =>
-  error instanceof Error && /UNIQUE constraint failed: sessions\.selector/i.test(error.message)
+  error instanceof Error &&
+  /(UNIQUE constraint failed: sessions\.selector|session selector collision)/i.test(error.message)
 
 const createSessionStore = (
   database: PortableDatabase,
@@ -265,16 +266,22 @@ const createSessionStore = (
     const rows = await database.atomic([
       {
         query: `UPDATE sessions SET
-            last_seen_at = ?,
+            last_seen_at = CASE
+              WHEN julianday(?) > julianday(last_seen_at) THEN ?
+              ELSE last_seen_at
+            END,
             idle_expires_at = CASE
+              WHEN julianday(?) <= julianday(idle_expires_at) THEN idle_expires_at
               WHEN julianday(?) < julianday(absolute_expires_at) THEN ?
               ELSE absolute_expires_at
             END,
-            updated_at = ?
+            updated_at = CASE
+              WHEN julianday(?) > julianday(updated_at) THEN ?
+              ELSE updated_at
+            END
           WHERE selector = ? AND secret_hash = ? AND revoked_at IS NULL
             AND julianday(idle_expires_at) > julianday(?)
             AND julianday(absolute_expires_at) > julianday(?)
-            AND julianday(?) >= julianday(last_seen_at)
             AND EXISTS (
               SELECT 1 FROM users user WHERE user.id = sessions.user_id
                 AND user.is_active = 1
@@ -284,12 +291,14 @@ const createSessionStore = (
           RETURNING ${rowColumns()}`,
         bindings: [
           timestamp,
+          timestamp,
           requestedIdleExpiry,
           requestedIdleExpiry,
+          requestedIdleExpiry,
+          timestamp,
           timestamp,
           prepared.selector,
           prepared.secretHash,
-          timestamp,
           timestamp,
           timestamp,
         ],

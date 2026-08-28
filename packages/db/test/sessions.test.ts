@@ -226,8 +226,79 @@ for (const [runtime, factory] of factories) {
       await expect(harness.store.authenticate(issued.token)).resolves.toBeNull()
 
       await expect(
-        harness.execute(`UPDATE sessions SET selector = ? WHERE id = ?`, 'A'.repeat(16), 1),
+        harness.execute(
+          `UPDATE sessions SET selector = ? WHERE id = ?`,
+          'A'.repeat(16),
+          issued.session.id,
+        ),
       ).rejects.toThrow(/immutable/i)
+
+      const [stored] = await harness.rows<{ selector: string }>(
+        `SELECT selector FROM sessions WHERE id = ?`,
+        issued.session.id,
+      )
+      expect(stored).toBeDefined()
+      const replacement = `INSERT OR REPLACE INTO sessions (
+          id, user_id, selector, secret_hash, profile_snapshot,
+          manager_grants_snapshot, created_at, last_seen_at,
+          idle_expires_at, absolute_expires_at, revoked_at,
+          revocation_reason, rotation_nonce, updated_at
+        )
+        SELECT ?, user_id, ?, secret_hash, profile_snapshot,
+          manager_grants_snapshot, created_at, last_seen_at,
+          idle_expires_at, absolute_expires_at, NULL, NULL, NULL, ?
+        FROM sessions WHERE id = ?`
+      await expect(
+        harness.execute(
+          replacement,
+          issued.session.id,
+          stored!.selector,
+          '2026-09-02T00:01:00.000Z',
+          issued.session.id,
+        ),
+      ).rejects.toThrow(/collision cannot replace/i)
+      await expect(
+        harness.execute(
+          replacement,
+          issued.session.id,
+          'Z'.repeat(16),
+          '2026-09-02T00:01:00.000Z',
+          issued.session.id,
+        ),
+      ).rejects.toThrow(/id collision cannot replace/i)
+      await expect(
+        harness.execute(
+          replacement,
+          issued.session.id + 10_000,
+          stored!.selector,
+          '2026-09-02T00:01:00.000Z',
+          issued.session.id,
+        ),
+      ).rejects.toThrow(/selector collision cannot replace/i)
+      await expect(harness.store.authenticate(issued.token)).resolves.toBeNull()
+    })
+
+    it('[security] accepts an older in-flight authentication without regressing timestamps', async () => {
+      harness.setNow('2026-09-03T00:00:00.000Z')
+      const issued = await harness.store.issue(1)
+      harness.setNow('2026-09-03T02:00:00.000Z')
+      const later = await harness.store.authenticate(issued.token)
+      expect(later).toMatchObject({
+        session: {
+          lastSeenAt: '2026-09-03T02:00:00.000Z',
+          idleExpiresAt: '2026-09-03T14:00:00.000Z',
+        },
+      })
+
+      harness.setNow('2026-09-03T01:00:00.000Z')
+      const olderInFlight = await harness.store.authenticate(issued.token)
+      expect(olderInFlight).toMatchObject({
+        session: {
+          lastSeenAt: '2026-09-03T02:00:00.000Z',
+          idleExpiresAt: '2026-09-03T14:00:00.000Z',
+          revokedAt: null,
+        },
+      })
     })
   })
 }

@@ -64,6 +64,17 @@ export const sessionsMigration = [
       SELECT 1 FROM json_each(NEW.manager_grants_snapshot) WHERE type <> 'text'
     )
     BEGIN SELECT RAISE(ABORT, 'session manager grants snapshot must contain strings'); END`,
+  `CREATE TRIGGER sessions_id_collision_guard BEFORE INSERT ON sessions
+    WHEN EXISTS (SELECT 1 FROM sessions current WHERE current.id = NEW.id)
+    BEGIN SELECT RAISE(ABORT, 'session id collision cannot replace identity'); END`,
+  `CREATE TRIGGER sessions_selector_collision_guard BEFORE INSERT ON sessions
+    WHEN EXISTS (SELECT 1 FROM sessions current WHERE current.selector = NEW.selector)
+    BEGIN SELECT RAISE(ABORT, 'session selector collision cannot replace identity'); END`,
+  `CREATE TRIGGER sessions_rotation_collision_guard BEFORE INSERT ON sessions
+    WHEN NEW.rotation_nonce IS NOT NULL AND EXISTS (
+      SELECT 1 FROM sessions current WHERE current.rotation_nonce = NEW.rotation_nonce
+    )
+    BEGIN SELECT RAISE(ABORT, 'session rotation collision cannot replace identity'); END`,
   `CREATE TRIGGER sessions_identity_immutable BEFORE UPDATE ON sessions
     WHEN OLD.id IS NOT NEW.id
       OR OLD.user_id IS NOT NEW.user_id

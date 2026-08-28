@@ -4,7 +4,8 @@ import { Miniflare } from 'miniflare'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { runtimeApp } from './fixtures/runtime-app.js'
 
-const runtimeBearer = 'ezacto_runtimeauthseed_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi1234567'
+const runtimeBearer =
+  'ezacto_runtimeauthseed_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi1234567'
 
 interface RuntimeResponse {
   status: number
@@ -12,7 +13,10 @@ interface RuntimeResponse {
   json(): Promise<unknown>
 }
 
-type RuntimeRequest = (path: string, init?: RequestInit) => Promise<RuntimeResponse>
+type RuntimeRequest = (
+  path: string,
+  init?: RequestInit,
+) => Promise<RuntimeResponse>
 
 let nodeServer: ReturnType<typeof serve>
 let nodeOrigin: string
@@ -26,7 +30,9 @@ beforeAll(async () => {
   })
 
   const bundled = await build({
-    entryPoints: [new URL('./fixtures/runtime-app.ts', import.meta.url).pathname],
+    entryPoints: [
+      new URL('./fixtures/runtime-app.ts', import.meta.url).pathname,
+    ],
     bundle: true,
     conditions: ['development'],
     format: 'esm',
@@ -56,18 +62,28 @@ afterAll(async () => {
 })
 
 const runtimes: readonly [string, RuntimeRequest][] = [
-  ['Node HTTP', (path, init) => fetch(`${nodeOrigin}${path}`, init)],
+  [
+    'Node HTTP',
+    (path, init) => {
+      const headers = new Headers(init?.headers)
+      if (!headers.has('origin')) headers.set('origin', nodeOrigin)
+      return fetch(`${nodeOrigin}${path}`, { ...init, headers })
+    },
+  ],
   [
     'workerd',
-    (path, init) =>
-      miniflare.dispatchFetch(
-        `https://worker.test${path}`,
-        init as never,
-      ) as unknown as Promise<RuntimeResponse>,
+    (path, init) => {
+      const headers = new Headers(init?.headers)
+      if (!headers.has('origin')) headers.set('origin', 'https://worker.test')
+      return miniflare.dispatchFetch(`https://worker.test${path}`, {
+        ...init,
+        headers,
+      } as never) as unknown as Promise<RuntimeResponse>
+    },
   ],
 ]
 
-describe.each(runtimes)('%s runtime', (_runtime, request) => {
+describe.each(runtimes)('%s runtime', (runtime, request) => {
   it('[unit] executes the shared success handler over the real adapter', async () => {
     const response = await request('/api/v1/runtime/echo/portable', {
       headers: { cookie: 'session=runtime-user' },
@@ -80,7 +96,10 @@ describe.each(runtimes)('%s runtime', (_runtime, request) => {
   it('[api] executes the shared validation/error handler over the real adapter', async () => {
     const response = await request('/api/v1/runtime/validate', {
       method: 'POST',
-      headers: { cookie: 'session=runtime-user', 'content-type': 'application/json' },
+      headers: {
+        cookie: 'session=runtime-user',
+        'content-type': 'application/json',
+      },
       body: '{}',
     })
     expect(response.status).toBe(422)
@@ -103,12 +122,35 @@ describe.each(runtimes)('%s runtime', (_runtime, request) => {
   it('[security] enforces the portable JSON byte boundary over the real adapter', async () => {
     const response = await request('/api/v1/runtime/validate', {
       method: 'POST',
-      headers: { cookie: 'session=runtime-user', 'content-type': 'application/json' },
+      headers: {
+        cookie: 'session=runtime-user',
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({ value: 'x'.repeat(256) }),
     })
     expect(response.status).toBe(413)
     expect(await response.json()).toMatchObject({
       error: { code: 'payload_too_large', fields: [] },
+    })
+  })
+
+  it('[security] rejects a valid cookie mutation from a different origin', async () => {
+    const attackerOrigin = (() => {
+      if (runtime === 'workerd') return 'https://evil.worker.test'
+      const url = new URL(nodeOrigin)
+      url.port = url.port === '1' ? '2' : '1'
+      return url.origin
+    })()
+    const response = await request('/api/v1/runtime/bodyless', {
+      method: 'POST',
+      headers: {
+        cookie: 'session=runtime-user',
+        origin: attackerOrigin,
+      },
+    })
+    expect(response.status).toBe(403)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'csrf_origin_mismatch', fields: [] },
     })
   })
 
@@ -137,7 +179,10 @@ describe.each(runtimes)('%s runtime', (_runtime, request) => {
 
   it('[security] enforces bearer precedence and authenticates a valid token', async () => {
     const malformed = await request('/api/v1/runtime/reports', {
-      headers: { authorization: 'Basic attacker', cookie: 'session=runtime-user' },
+      headers: {
+        authorization: 'Basic attacker',
+        cookie: 'session=runtime-user',
+      },
     })
     expect(malformed.status).toBe(401)
 
@@ -149,7 +194,10 @@ describe.each(runtimes)('%s runtime', (_runtime, request) => {
   })
 
   it('[security] rejects contact sessions before installed or unknown API routes', async () => {
-    for (const path of ['/api/v1/runtime/installer-bypass', '/api/v1/runtime/not-found']) {
+    for (const path of [
+      '/api/v1/runtime/installer-bypass',
+      '/api/v1/runtime/not-found',
+    ]) {
       const response = await request(path, {
         headers: { cookie: 'session=runtime-contact' },
       })
@@ -163,8 +211,14 @@ describe.each(runtimes)('%s runtime', (_runtime, request) => {
   it('[api] carries token issue, list, revoke, and immediate rejection over the adapter', async () => {
     const issuedResponse = await request('/api/v1/api-tokens', {
       method: 'POST',
-      headers: { cookie: 'session=runtime-user', 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'Runtime lifecycle', scopes: ['reports:read'] }),
+      headers: {
+        cookie: 'session=runtime-user',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: 'Runtime lifecycle',
+        scopes: ['reports:read'],
+      }),
     })
     expect(issuedResponse.status).toBe(201)
     const issued = (await issuedResponse.json()) as {
@@ -179,14 +233,20 @@ describe.each(runtimes)('%s runtime', (_runtime, request) => {
     expect(listedWire).not.toContain(issued.data.token)
     expect(JSON.parse(listedWire)).toMatchObject({
       data: expect.arrayContaining([
-        expect.objectContaining({ id: issued.data.id, name: 'Runtime lifecycle' }),
+        expect.objectContaining({
+          id: issued.data.id,
+          name: 'Runtime lifecycle',
+        }),
       ]),
     })
 
-    const revokeResponse = await request(`/api/v1/api-tokens/${issued.data.id}`, {
-      method: 'DELETE',
-      headers: { cookie: 'session=runtime-user' },
-    })
+    const revokeResponse = await request(
+      `/api/v1/api-tokens/${issued.data.id}`,
+      {
+        method: 'DELETE',
+        headers: { cookie: 'session=runtime-user' },
+      },
+    )
     expect(revokeResponse.status).toBe(200)
 
     const rejected = await request('/api/v1/runtime/reports', {

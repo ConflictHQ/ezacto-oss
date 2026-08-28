@@ -137,14 +137,14 @@ describe('browser sessions', () => {
 
     const revokedOther = await app.request('/api/v1/sessions/2', {
       method: 'DELETE',
-      headers: { cookie },
+      headers: { cookie, origin: 'http://localhost' },
     })
     expect(revokedOther.status).toBe(200)
     expect(revokedOther.headers.get('set-cookie')).toBeNull()
 
     const revokedCurrent = await app.request('/api/v1/sessions/1', {
       method: 'DELETE',
-      headers: { cookie },
+      headers: { cookie, origin: 'http://localhost' },
     })
     expect(revokedCurrent.status).toBe(200)
     expect(revokedCurrent.headers.get('set-cookie')).toContain('Max-Age=0')
@@ -152,7 +152,7 @@ describe('browser sessions', () => {
 
     const missing = await app.request('/api/v1/sessions/999', {
       method: 'DELETE',
-      headers: { cookie },
+      headers: { cookie, origin: 'http://localhost' },
     })
     expect(missing.status).toBe(404)
   })

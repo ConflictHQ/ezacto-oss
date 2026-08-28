@@ -8,10 +8,13 @@ import {
   type IssuedApiToken,
 } from '../src/index.js'
 
-const bearer = 'ezacto_abcdefghijklmnop_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi1234567'
+const bearer =
+  'ezacto_abcdefghijklmnop_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi1234567'
 const createdAt = '2026-08-28T12:00:00.000Z'
 
-const metadata = (changes: Partial<ApiTokenMetadata> = {}): ApiTokenMetadata => ({
+const metadata = (
+  changes: Partial<ApiTokenMetadata> = {},
+): ApiTokenMetadata => ({
   id: 1,
   name: 'CLI',
   scopes: ['reports:read'],
@@ -34,10 +37,15 @@ const tokenService = (
         ? { tokenId: 1, userId: 42, profile, scopes: [...current.scopes] }
         : null,
     issue: async (input): Promise<IssuedApiToken> => {
-      current = metadata({ name: input.name, scopes: [...input.scopes], expiresAt: input.expiresAt ?? null })
+      current = metadata({
+        name: input.name,
+        scopes: [...input.scopes],
+        expiresAt: input.expiresAt ?? null,
+      })
       return { ...current, token: bearer }
     },
-    list: async (userId) => (userId === 42 ? [{ ...current, scopes: [...current.scopes] }] : []),
+    list: async (userId) =>
+      userId === 42 ? [{ ...current, scopes: [...current.scopes] }] : [],
     revoke: async (userId, tokenId) => {
       if (userId !== 42 || tokenId !== current.id) return null
       current = metadata({ ...current, revokedAt: '2026-08-28T12:01:00.000Z' })
@@ -62,7 +70,10 @@ const sessionResolver = {
         type: 'contact' as const,
         contactId: 9,
         clientId: 3,
-        authentication: { kind: 'session' as const, sessionId: 'contact-session' },
+        authentication: {
+          kind: 'session' as const,
+          sessionId: 'contact-session',
+        },
       }
     }
     if (cookie === 'session=member') {
@@ -70,7 +81,10 @@ const sessionResolver = {
         type: 'user' as const,
         userId: 43,
         profile: 'member' as const,
-        authentication: { kind: 'session' as const, sessionId: 'member-session' },
+        authentication: {
+          kind: 'session' as const,
+          sessionId: 'member-session',
+        },
       }
     }
     return null
@@ -81,7 +95,9 @@ const createAuthApp = (tokens = tokenService()) =>
   createApiApp({
     authentication: { tokens, sessions: sessionResolver },
     installApi(api) {
-      api.get('/principal', (context) => context.json({ data: context.get('principal') }))
+      api.get('/principal', (context) =>
+        context.json({ data: context.get('principal') }),
+      )
       api.get('/reports', (context) => {
         requireApiScope(context, 'reports:read')
         return context.json({ data: { visible: true } })
@@ -94,6 +110,9 @@ const createAuthApp = (tokens = tokenService()) =>
         requireApiScope(context, 'invoices:write')
         return context.json({ data: { visible: true } })
       })
+      api.post('/mutation', (context) =>
+        context.json({ data: { mutated: true } }),
+      )
     },
   })
 
@@ -101,7 +120,9 @@ describe('API authentication middleware', () => {
   it('[api] fails closed with the uniform envelope and a bearer challenge', async () => {
     const response = await createAuthApp().request('/api/v1')
     expect(response.status).toBe(401)
-    expect(response.headers.get('www-authenticate')).toBe('Bearer realm="ezacto"')
+    expect(response.headers.get('www-authenticate')).toBe(
+      'Bearer realm="ezacto"',
+    )
     expect((await response.json()) as ApiErrorBody).toEqual({
       error: {
         code: 'authentication_required',
@@ -122,13 +143,54 @@ describe('API authentication middleware', () => {
     resolve.mockRestore()
   })
 
+  it('[security] requires exact same-origin browser context for cookie mutations', async () => {
+    const app = createAuthApp()
+    const resolve = vi.spyOn(sessionResolver, 'resolve')
+    for (const origin of [
+      undefined,
+      'null',
+      'https://attacker.test',
+      'http://evil.localhost',
+    ]) {
+      const response = await app.request('/api/v1/mutation', {
+        method: 'POST',
+        headers: {
+          cookie: 'session=user',
+          ...(origin === undefined ? {} : { origin }),
+        },
+      })
+      expect(response.status).toBe(403)
+      expect(await response.json()).toMatchObject({
+        error: { code: 'csrf_origin_mismatch' },
+      })
+    }
+    expect(resolve).not.toHaveBeenCalled()
+
+    const sameOrigin = await app.request('/api/v1/mutation', {
+      method: 'POST',
+      headers: { cookie: 'session=user', origin: 'http://localhost' },
+    })
+    expect(sameOrigin.status).toBe(200)
+    expect(resolve).toHaveBeenCalledTimes(1)
+
+    const bearerMutation = await app.request('/api/v1/mutation', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${bearer}` },
+    })
+    expect(bearerMutation.status).toBe(200)
+    expect(resolve).toHaveBeenCalledTimes(1)
+    resolve.mockRestore()
+  })
+
   it('[security] rejects token scopes that exceed the backend-returned current profile', async () => {
     const app = createAuthApp(tokenService(['invoices:write'], 'member'))
     const response = await app.request('/api/v1/principal', {
       headers: { authorization: `Bearer ${bearer}` },
     })
     expect(response.status).toBe(401)
-    expect(await response.json()).toMatchObject({ error: { code: 'authentication_required' } })
+    expect(await response.json()).toMatchObject({
+      error: { code: 'authentication_required' },
+    })
   })
 
   it('[api] resolves bearer and session authentication to the same user-principal shape', async () => {
@@ -216,7 +278,9 @@ describe('API authentication middleware', () => {
       headers: { authorization: `Bearer ${bearer}` },
     })
     expect(denied.status).toBe(403)
-    expect(await denied.json()).toMatchObject({ error: { code: 'insufficient_scope' } })
+    expect(await denied.json()).toMatchObject({
+      error: { code: 'insufficient_scope' },
+    })
 
     const session = await app.request('/api/v1/time', {
       headers: { cookie: 'session=user' },
@@ -227,7 +291,9 @@ describe('API authentication middleware', () => {
       headers: { cookie: 'session=member' },
     })
     expect(profileDenied.status).toBe(403)
-    expect(await profileDenied.json()).toMatchObject({ error: { code: 'profile_forbidden' } })
+    expect(await profileDenied.json()).toMatchObject({
+      error: { code: 'profile_forbidden' },
+    })
 
     const administrator = await app.request('/api/v1/project-admin', {
       headers: { cookie: 'session=user' },
@@ -237,8 +303,14 @@ describe('API authentication middleware', () => {
 
   it('[api] returns 403 for a contact on every /api/v1 path, including unknown resources', async () => {
     const app = createAuthApp()
-    for (const path of ['/api/v1', '/api/v1/principal', '/api/v1/not-a-route']) {
-      const response = await app.request(path, { headers: { cookie: 'session=contact' } })
+    for (const path of [
+      '/api/v1',
+      '/api/v1/principal',
+      '/api/v1/not-a-route',
+    ]) {
+      const response = await app.request(path, {
+        headers: { cookie: 'session=contact' },
+      })
       expect(response.status).toBe(403)
       expect(await response.json()).toMatchObject({
         error: { code: 'contact_api_forbidden', fields: [] },
@@ -252,7 +324,11 @@ describe('API token lifecycle routes', () => {
     const app = createAuthApp()
     const created = await app.request('/api/v1/api-tokens', {
       method: 'POST',
-      headers: { cookie: 'session=user', 'content-type': 'application/json' },
+      headers: {
+        cookie: 'session=user',
+        origin: 'http://localhost',
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({ name: 'Reports', scopes: ['reports:read'] }),
     })
     expect(created.status).toBe(201)
@@ -277,7 +353,11 @@ describe('API token lifecycle routes', () => {
     const name = '🙂'.repeat(60)
     const response = await createAuthApp().request('/api/v1/api-tokens', {
       method: 'POST',
-      headers: { cookie: 'session=user', 'content-type': 'application/json' },
+      headers: {
+        cookie: 'session=user',
+        origin: 'http://localhost',
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({ name, scopes: ['reports:read'] }),
     })
     expect(response.status).toBe(201)
@@ -293,7 +373,7 @@ describe('API token lifecycle routes', () => {
 
     const revoked = await app.request('/api/v1/api-tokens/1', {
       method: 'DELETE',
-      headers: { cookie: 'session=user' },
+      headers: { cookie: 'session=user', origin: 'http://localhost' },
     })
     expect(revoked.status).toBe(200)
     expect(await revoked.json()).toMatchObject({
@@ -304,7 +384,9 @@ describe('API token lifecycle routes', () => {
       headers: { authorization: `Bearer ${bearer}` },
     })
     expect(after.status).toBe(401)
-    expect(await after.json()).toMatchObject({ error: { code: 'authentication_required' } })
+    expect(await after.json()).toMatchObject({
+      error: { code: 'authentication_required' },
+    })
   })
 
   it('[security] requires a user session to manage tokens', async () => {
@@ -312,26 +394,46 @@ describe('API token lifecycle routes', () => {
       headers: { authorization: `Bearer ${bearer}` },
     })
     expect(response.status).toBe(403)
-    expect(await response.json()).toMatchObject({ error: { code: 'session_required' } })
+    expect(await response.json()).toMatchObject({
+      error: { code: 'session_required' },
+    })
   })
 
-  it.each([null, [], 'token'])('[api] rejects a non-object issue body: %j', async (body) => {
-    const response = await createAuthApp().request('/api/v1/api-tokens', {
-      method: 'POST',
-      headers: { cookie: 'session=user', 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    expect(response.status).toBe(422)
-    expect(await response.json()).toMatchObject({
-      error: { code: 'validation_failed', fields: [{ field: 'body', code: 'invalid' }] },
-    })
-  })
+  it.each([null, [], 'token'])(
+    '[api] rejects a non-object issue body: %j',
+    async (body) => {
+      const response = await createAuthApp().request('/api/v1/api-tokens', {
+        method: 'POST',
+        headers: {
+          cookie: 'session=user',
+          origin: 'http://localhost',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      })
+      expect(response.status).toBe(422)
+      expect(await response.json()).toMatchObject({
+        error: {
+          code: 'validation_failed',
+          fields: [{ field: 'body', code: 'invalid' }],
+        },
+      })
+    },
+  )
 
   it('[api] rejects unknown token-issue fields', async () => {
     const response = await createAuthApp().request('/api/v1/api-tokens', {
       method: 'POST',
-      headers: { cookie: 'session=user', 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'CLI', scopes: ['reports:read'], plaintext: bearer }),
+      headers: {
+        cookie: 'session=user',
+        origin: 'http://localhost',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: 'CLI',
+        scopes: ['reports:read'],
+        plaintext: bearer,
+      }),
     })
     expect(response.status).toBe(422)
     expect(await response.json()).toMatchObject({
@@ -348,21 +450,33 @@ describe('API token lifecycle routes', () => {
     for (const input of cases) {
       const response = await createAuthApp().request('/api/v1/api-tokens', {
         method: 'POST',
-        headers: { cookie: 'session=user', 'content-type': 'application/json' },
+        headers: {
+          cookie: 'session=user',
+          origin: 'http://localhost',
+          'content-type': 'application/json',
+        },
         body: JSON.stringify({ name: 'CLI', ...input }),
       })
       expect(response.status).toBe(422)
-      expect(await response.json()).toMatchObject({ error: { code: 'validation_failed' } })
+      expect(await response.json()).toMatchObject({
+        error: { code: 'validation_failed' },
+      })
     }
   })
 
   it('[security] prevents a session from minting scopes above its current profile', async () => {
     const response = await createAuthApp().request('/api/v1/api-tokens', {
       method: 'POST',
-      headers: { cookie: 'session=member', 'content-type': 'application/json' },
+      headers: {
+        cookie: 'session=member',
+        origin: 'http://localhost',
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({ name: 'Escalation', scopes: ['invoices:write'] }),
     })
     expect(response.status).toBe(403)
-    expect(await response.json()).toMatchObject({ error: { code: 'profile_forbidden' } })
+    expect(await response.json()).toMatchObject({
+      error: { code: 'profile_forbidden' },
+    })
   })
 })

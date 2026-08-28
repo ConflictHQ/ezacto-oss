@@ -14,8 +14,12 @@ interface TestBindings {
   RELEASE: string
 }
 
-const bindings: TestBindings = { ENVIRONMENT: 'test', RELEASE: 'abc1234def5678' }
-const requestIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+const bindings: TestBindings = {
+  ENVIRONMENT: 'test',
+  RELEASE: 'abc1234def5678',
+}
+const requestIdPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const authentication: ApiAuthentication = {
   sessions: {
     resolve: async () => ({
@@ -29,10 +33,16 @@ const authentication: ApiAuthentication = {
 
 const installTestRoutes: ApiInstaller<TestBindings> = (api) => {
   api.post('/validate', async (context) => {
-    const body = await readJsonBody<{ name?: unknown }>(context, { maxBytes: 128 })
+    const body = await readJsonBody<{ name?: unknown }>(context, {
+      maxBytes: 128,
+    })
     if (typeof body.name !== 'string' || body.name.trim().length === 0) {
       throw validationError([
-        { field: 'name', code: 'required', message: 'name must be a non-empty string' },
+        {
+          field: 'name',
+          code: 'required',
+          message: 'name must be a non-empty string',
+        },
       ])
     }
     return context.json({ data: { name: body.name } })
@@ -62,19 +72,31 @@ type RuntimeRequest = (path: string, init?: RequestInit) => Promise<Response>
 const runtimeFactories = [
   [
     'Hono app.request',
-    (app: App): RuntimeRequest => async (path, init) => app.request(path, init, bindings),
+    (app: App): RuntimeRequest =>
+      async (path, init) => {
+        const headers = new Headers(init?.headers)
+        headers.set('origin', 'http://localhost')
+        return app.request(path, { ...init, headers }, bindings)
+      },
   ],
   [
     'Hono fetch',
-    (app: App): RuntimeRequest => async (path, init) =>
-      app.fetch(
-        new Request(new URL(path, 'https://worker.test'), init),
-        bindings,
-        {
-          waitUntil() {},
-          passThroughOnException() {},
-        } as unknown as ExecutionContext,
-      ),
+    (app: App): RuntimeRequest =>
+      async (path, init) => {
+        const headers = new Headers(init?.headers)
+        headers.set('origin', 'https://worker.test')
+        return app.fetch(
+          new Request(new URL(path, 'https://worker.test'), {
+            ...init,
+            headers,
+          }),
+          bindings,
+          {
+            waitUntil() {},
+            passThroughOnException() {},
+          } as unknown as ExecutionContext,
+        )
+      },
   ],
 ] as const
 
@@ -90,7 +112,9 @@ for (const [runtime, requestFor] of runtimeFactories) {
       })
       expect(response.status).toBe(200)
       expect(response.headers.get('x-request-id')).toMatch(requestIdPattern)
-      expect(response.headers.get('x-request-id')).not.toBe('attacker-controlled')
+      expect(response.headers.get('x-request-id')).not.toBe(
+        'attacker-controlled',
+      )
       expect(await response.json()).toEqual({
         data: { service: 'ezacto', version: 'v1' },
         links: { self: '/api/v1' },
@@ -115,7 +139,10 @@ for (const [runtime, requestFor] of runtimeFactories) {
     it('[api] returns machine and field errors for 422 validation failures', async () => {
       const response = await request('/api/v1/validate', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          origin: 'http://localhost',
+          'content-type': 'application/json',
+        },
         body: '{}',
       })
       expect(response.status).toBe(422)
@@ -124,7 +151,11 @@ for (const [runtime, requestFor] of runtimeFactories) {
           code: 'validation_failed',
           message: 'The request contains invalid fields.',
           fields: [
-            { field: 'name', code: 'required', message: 'name must be a non-empty string' },
+            {
+              field: 'name',
+              code: 'required',
+              message: 'name must be a non-empty string',
+            },
           ],
         },
         request_id: response.headers.get('x-request-id'),
@@ -140,7 +171,10 @@ for (const [runtime, requestFor] of runtimeFactories) {
 
       const malformed = await request('/api/v1/validate', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          origin: 'http://localhost',
+          'content-type': 'application/json',
+        },
         body: '{',
       })
       expect(malformed.status).toBe(400)
@@ -150,7 +184,10 @@ for (const [runtime, requestFor] of runtimeFactories) {
 
       const unsupported = await request('/api/v1/validate', {
         method: 'POST',
-        headers: { 'content-type': 'text/plain' },
+        headers: {
+          origin: 'http://localhost',
+          'content-type': 'text/plain',
+        },
         body: '{}',
       })
       expect(unsupported.status).toBe(415)
@@ -177,7 +214,11 @@ for (const [runtime, requestFor] of runtimeFactories) {
     it('[security] bounds JSON bytes without trusting Content-Length', async () => {
       const response = await request('/api/v1/validate', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'content-length': '1' },
+        headers: {
+          origin: 'http://localhost',
+          'content-type': 'application/json',
+          'content-length': '1',
+        },
         body: JSON.stringify({ name: 'x'.repeat(256) }),
       })
       expect(response.status).toBe(413)

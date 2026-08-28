@@ -234,7 +234,11 @@ const harness = async (
   })
   return {
     database,
-    request: async (path, init) => app.request(path, init),
+    request: async (path, init) => {
+      const headers = new Headers(init?.headers)
+      headers.set('origin', 'http://localhost')
+      return app.request(path, { ...init, headers })
+    },
     locks,
     setBoundary: (boundary) => {
       current = { ...boundary }

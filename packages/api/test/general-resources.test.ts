@@ -128,8 +128,13 @@ const containerHarness = async (): Promise<Harness> => {
       }),
   });
   return {
-    request: (path, init) =>
-      Promise.resolve(app.request(`https://api.test/api/v1${path}`, init)),
+    request: (path, init) => {
+      const headers = new Headers(init?.headers);
+      headers.set("origin", "https://api.test");
+      return Promise.resolve(
+        app.request(`https://api.test/api/v1${path}`, { ...init, headers }),
+      );
+    },
     run: async (sql, ...params) => {
       sqlite.prepare(sql).run(...params);
     },
@@ -166,8 +171,13 @@ const d1Harness = async (): Promise<Harness> => {
       }),
   });
   return {
-    request: (path, init) =>
-      Promise.resolve(app.request(`https://api.test/api/v1${path}`, init)),
+    request: (path, init) => {
+      const headers = new Headers(init?.headers);
+      headers.set("origin", "https://api.test");
+      return Promise.resolve(
+        app.request(`https://api.test/api/v1${path}`, { ...init, headers }),
+      );
+    },
     run: async (sql, ...params) => {
       await d1
         .prepare(sql)

@@ -89,6 +89,20 @@ const bearerToken = (authorization: string): string | null => {
   return match?.[1] ?? null
 }
 
+const safeSessionMethods = new Set(['GET', 'HEAD', 'OPTIONS'])
+
+const requireSameOriginForUnsafeSessionRequest = (request: Request): void => {
+  if (safeSessionMethods.has(request.method.toUpperCase())) return
+  const origin = request.headers.get('origin')
+  if (origin !== null && origin === new URL(request.url).origin) return
+  throw new ApiError({
+    status: 403,
+    code: 'csrf_origin_mismatch',
+    message:
+      'Session-authenticated mutations require an exact same-origin request.',
+  })
+}
+
 /**
  * Resolves exactly one credential source. An Authorization header always wins:
  * malformed or invalid bearer credentials never fall back to a session cookie.
@@ -130,6 +144,7 @@ export const apiAuthenticationMiddleware =
       return
     }
 
+    requireSameOriginForUnsafeSessionRequest(context.req.raw)
     const resolved = await authentication?.sessions?.resolve(context.req.raw)
     if (resolved === undefined || resolved === null)
       return unauthorized(context)
