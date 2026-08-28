@@ -18,6 +18,8 @@ const fixedLinesValid = `json_type(NEW.amount_config, '$.schema_version') = 'int
       AND json_type(NEW.amount_config, '$.type') = 'text'
       AND json_extract(NEW.amount_config, '$.type') = 'fixed_lines'
       AND (SELECT count(*) FROM json_each(NEW.amount_config)) = 3
+      AND (SELECT count(*) FROM json_each(NEW.amount_config)) =
+        (SELECT count(DISTINCT key) FROM json_each(NEW.amount_config))
       AND NOT EXISTS (
         SELECT 1 FROM json_each(NEW.amount_config)
         WHERE key NOT IN ('schema_version','type','line_items')
@@ -28,6 +30,8 @@ const fixedLinesValid = `json_type(NEW.amount_config, '$.schema_version') = 'int
         SELECT 1 FROM json_each(NEW.amount_config, '$.line_items') line
         WHERE json_type(line.value) IS NOT 'object'
           OR (SELECT count(*) FROM json_each(line.value)) <> 7
+          OR (SELECT count(*) FROM json_each(line.value)) <>
+            (SELECT count(DISTINCT key) FROM json_each(line.value))
           OR EXISTS (
             SELECT 1 FROM json_each(line.value)
             WHERE key NOT IN (
@@ -72,6 +76,8 @@ const importConfigValid = `json_type(NEW.amount_config, '$.schema_version') = 'i
       AND json_type(NEW.amount_config, '$.type') = 'text'
       AND json_extract(NEW.amount_config, '$.type') = 'line_items_import'
       AND (SELECT count(*) FROM json_each(NEW.amount_config)) BETWEEN 4 AND 5
+      AND (SELECT count(*) FROM json_each(NEW.amount_config)) =
+        (SELECT count(DISTINCT key) FROM json_each(NEW.amount_config))
       AND NOT EXISTS (
         SELECT 1 FROM json_each(NEW.amount_config)
         WHERE key NOT IN ('schema_version','type','project_ids','time','expenses')
@@ -97,6 +103,8 @@ const importConfigValid = `json_type(NEW.amount_config, '$.schema_version') = 'i
         OR (
           json_type(NEW.amount_config, '$.time') = 'object'
           AND (SELECT count(*) FROM json_each(NEW.amount_config, '$.time')) = 1
+          AND (SELECT count(*) FROM json_each(NEW.amount_config, '$.time')) =
+            (SELECT count(DISTINCT key) FROM json_each(NEW.amount_config, '$.time'))
           AND NOT EXISTS (
             SELECT 1 FROM json_each(NEW.amount_config, '$.time')
             WHERE key <> 'summary_type'
@@ -110,6 +118,8 @@ const importConfigValid = `json_type(NEW.amount_config, '$.schema_version') = 'i
         OR (
           json_type(NEW.amount_config, '$.expenses') = 'object'
           AND (SELECT count(*) FROM json_each(NEW.amount_config, '$.expenses')) = 1
+          AND (SELECT count(*) FROM json_each(NEW.amount_config, '$.expenses')) =
+            (SELECT count(DISTINCT key) FROM json_each(NEW.amount_config, '$.expenses'))
           AND NOT EXISTS (
             SELECT 1 FROM json_each(NEW.amount_config, '$.expenses')
             WHERE key <> 'summary_type'
@@ -128,6 +138,35 @@ const amountConfigTrigger = (operation: 'INSERT' | 'UPDATE') => `CREATE TRIGGER
       ELSE 0
     END
     BEGIN SELECT RAISE(ABORT, 'recurring invoice amount config is invalid'); END`
+
+const amountProjectReferencesTrigger = (operation: 'INSERT' | 'UPDATE') => `CREATE TRIGGER
+    recurring_invoices_amount_projects_${operation.toLowerCase()}
+    BEFORE ${operation} ON recurring_invoices
+    WHEN NEW.definition_status = 'complete' AND CASE
+      WHEN json_valid(NEW.amount_config) AND json_type(NEW.amount_config) = 'object'
+      THEN coalesce(
+        (json_extract(NEW.amount_config, '$.type') = 'fixed_lines' AND EXISTS (
+          SELECT 1
+          FROM json_each(NEW.amount_config, '$.line_items') line
+          LEFT JOIN projects project
+            ON project.id = json_extract(line.value, '$.project_id')
+          WHERE json_type(line.value, '$.project_id') IS NOT 'null'
+            AND (project.id IS NULL OR project.client_id IS NOT NEW.client_id)
+        ))
+        OR
+        (json_extract(NEW.amount_config, '$.type') = 'line_items_import' AND EXISTS (
+          SELECT 1
+          FROM json_each(NEW.amount_config, '$.project_ids') configured_project
+          LEFT JOIN projects project ON project.id = configured_project.value
+          WHERE project.id IS NULL OR project.client_id IS NOT NEW.client_id
+        )),
+        0
+      )
+      ELSE 0
+    END
+    BEGIN
+      SELECT RAISE(ABORT, 'recurring invoice projects must exist and belong to its client');
+    END`
 
 export const recurringInvoicesMigration = [
   `CREATE TABLE recurring_invoices (
@@ -203,6 +242,8 @@ export const recurringInvoicesMigration = [
     BEGIN SELECT RAISE(ABORT, 'complete recurring invoice cannot become incomplete'); END`,
   amountConfigTrigger('INSERT'),
   amountConfigTrigger('UPDATE'),
+  amountProjectReferencesTrigger('INSERT'),
+  amountProjectReferencesTrigger('UPDATE'),
   `CREATE TRIGGER recurring_invoices_retainer_client_insert
     BEFORE INSERT ON recurring_invoices
     WHEN NEW.can_draw_from_retainer_id IS NOT NULL AND NOT EXISTS (
@@ -227,6 +268,45 @@ export const recurringInvoicesMigration = [
         AND recurring.client_id IS NOT NEW.client_id
     )
     BEGIN SELECT RAISE(ABORT, 'retainer client must match every recurring invoice'); END`,
+  `CREATE TRIGGER projects_recurring_invoice_client_update
+    BEFORE UPDATE OF client_id ON projects
+    WHEN OLD.client_id IS NOT NEW.client_id AND EXISTS (
+      SELECT 1 FROM recurring_invoices recurring
+      WHERE recurring.definition_status = 'complete'
+        AND recurring.client_id IS NOT NEW.client_id
+        AND (
+          (json_extract(recurring.amount_config, '$.type') = 'fixed_lines' AND EXISTS (
+            SELECT 1 FROM json_each(recurring.amount_config, '$.line_items') line
+            WHERE json_extract(line.value, '$.project_id') = OLD.id
+          ))
+          OR
+          (json_extract(recurring.amount_config, '$.type') = 'line_items_import' AND EXISTS (
+            SELECT 1 FROM json_each(recurring.amount_config, '$.project_ids') configured_project
+            WHERE configured_project.value = OLD.id
+          ))
+        )
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'project client must match every recurring invoice definition');
+    END`,
+  `CREATE TRIGGER projects_recurring_invoice_delete
+    BEFORE DELETE ON projects
+    WHEN EXISTS (
+      SELECT 1 FROM recurring_invoices recurring
+      WHERE recurring.definition_status = 'complete'
+        AND (
+          (json_extract(recurring.amount_config, '$.type') = 'fixed_lines' AND EXISTS (
+            SELECT 1 FROM json_each(recurring.amount_config, '$.line_items') line
+            WHERE json_extract(line.value, '$.project_id') = OLD.id
+          ))
+          OR
+          (json_extract(recurring.amount_config, '$.type') = 'line_items_import' AND EXISTS (
+            SELECT 1 FROM json_each(recurring.amount_config, '$.project_ids') configured_project
+            WHERE configured_project.value = OLD.id
+          ))
+        )
+    )
+    BEGIN SELECT RAISE(ABORT, 'project is referenced by a recurring invoice definition'); END`,
   `ALTER TABLE invoices ADD COLUMN recurring_invoice_id INTEGER
     REFERENCES recurring_invoices(id) ON DELETE RESTRICT`,
   `CREATE INDEX invoices_recurring_invoice_id ON invoices(recurring_invoice_id)`,

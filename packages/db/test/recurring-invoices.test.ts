@@ -172,6 +172,23 @@ const insertMoneyRetainer = async (
   )
 }
 
+const insertProject = async (
+  database: TestDatabase,
+  id: number,
+  clientId: number,
+): Promise<void> => {
+  await database.run(
+    `INSERT INTO projects (id, client_id, name, code, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    id,
+    clientId,
+    `Sanitized Project ${id}`,
+    `SAN-${id}`,
+    timestamp,
+    timestamp,
+  )
+}
+
 const fixedAmountConfig = {
   schema_version: 1 as const,
   type: 'fixed_lines' as const,
@@ -284,16 +301,25 @@ for (const [runtime, factory] of factories) {
       database = await factory()
       await seedClients(database)
       await insertMoneyRetainer(database, 1, 1)
+      await insertProject(database, 1001, 1)
+      await insertProject(database, 1002, 1)
+      const fixedProjectConfig = {
+        ...fixedAmountConfig,
+        line_items: fixedAmountConfig.line_items.map((line) => ({
+          ...line,
+          project_id: 1001,
+        })),
+      }
       const fixed = await createRecurringInvoiceDefinition(
         database.orm,
-        createInput({ canDrawFromRetainerId: 1 }),
+        createInput({ amountConfig: fixedProjectConfig, canDrawFromRetainerId: 1 }),
       )
       expect(fixed).toMatchObject({
         definitionStatus: 'complete',
         everyNMonths: 1,
         dayOfMonth: 31,
         canDrawFromRetainerId: 1,
-        amountConfig: fixedAmountConfig,
+        amountConfig: fixedProjectConfig,
       })
       const imported = await createRecurringInvoiceDefinition(
         database.orm,
@@ -342,6 +368,7 @@ for (const [runtime, factory] of factories) {
     it('[unit] rejects malformed, mixed, open, and unknown-version JSON contracts', async () => {
       database = await factory()
       await seedClients(database)
+      await insertProject(database, 1, 1)
       const insert = (id: number, config: string) =>
         database!.run(
           `INSERT INTO recurring_invoices (
@@ -397,6 +424,48 @@ for (const [runtime, factory] of factories) {
       ).toEqual([{ count: 0 }])
     })
 
+    it('[unit] rejects divergent duplicate names at every physical JSON object layer', async () => {
+      database = await factory()
+      await seedClients(database)
+      await insertProject(database, 1, 1)
+      const duplicateConfigs = [
+        `{"schema_version":1,"type":"line_items_import","project_ids":[1],"time":{"summary_type":"task"},"schema_version":2}`,
+        `{"schema_version":1,"type":"fixed_lines","line_items":[{"kind":"Service","kind":"Expense","description":null,"quantity":1,"unit_price_cents":100,"taxed":false,"taxed2":false,"project_id":null}]}`,
+        `{"schema_version":1,"type":"line_items_import","project_ids":[1],"time":{"summary_type":"task","summary_type":"detailed"}}`,
+        `{"schema_version":1,"type":"line_items_import","project_ids":[1],"expenses":{"summary_type":"category","summary_type":"people"}}`,
+      ]
+      expect(JSON.parse(duplicateConfigs[0]!) as { schema_version: number }).toMatchObject({
+        schema_version: 2,
+      })
+      expect(
+        JSON.parse(duplicateConfigs[1]!) as { line_items: Array<{ kind: string }> },
+      ).toMatchObject({ line_items: [{ kind: 'Expense' }] })
+      expect(JSON.parse(duplicateConfigs[2]!) as { time: { summary_type: string } }).toMatchObject({
+        time: { summary_type: 'detailed' },
+      })
+      expect(
+        JSON.parse(duplicateConfigs[3]!) as { expenses: { summary_type: string } },
+      ).toMatchObject({ expenses: { summary_type: 'people' } })
+
+      for (const [index, config] of duplicateConfigs.entries()) {
+        await expect(
+          database.run(
+            `INSERT INTO recurring_invoices (
+              id, client_id, subject_template, notes_template, every_n_months,
+              day_of_month, next_issue_on, amount_config, created_at, updated_at
+            ) VALUES (?, 1, 'Subject', '', 1, 1, '2026-09-01', ?, ?, ?)`,
+            300 + index,
+            config,
+            timestamp,
+            timestamp,
+          ),
+        ).rejects.toThrow()
+      }
+      expect(
+        await database.rows<{ count: number }>(`SELECT count(*) AS count FROM recurring_invoices`),
+      ).toEqual([{ count: 0 }])
+    })
+
     it('[unit] keeps dangling Harvest stubs incomplete, internal, deduplicated, and attributable', async () => {
       database = await factory()
       expect(nativeCreateHasNoPrivilegedKeys).toBeNull()
@@ -421,13 +490,15 @@ for (const [runtime, factory] of factories) {
           'utf8',
         ),
       ) as DanglingRecurringInvoice[]
+      const localInvoiceId = (fixture: DanglingRecurringInvoice) => fixture.id + 100_000
       for (const fixture of fixtures) {
-        await insertInvoice(database, fixture.id, 1, fixture.id, fixture.number)
+        expect(localInvoiceId(fixture)).not.toBe(fixture.id)
+        await insertInvoice(database, localInvoiceId(fixture), 1, fixture.id, fixture.number)
       }
       const stubs = await Promise.all(
         fixtures.map((fixture) =>
           ensureHarvestRecurringInvoiceStub(database!.orm, {
-            invoiceId: fixture.id,
+            invoiceId: localInvoiceId(fixture),
             harvestInvoiceId: fixture.id,
             harvestRecurringInvoiceId: fixture.recurring_invoice_id,
             createdAt: timestamp,
@@ -451,12 +522,14 @@ for (const [runtime, factory] of factories) {
       expect(
         await database.rows<{
           recurring_harvest_id: number
+          invoice_id: number
           invoice_harvest_id: number
           number: string
           client_id: number
         }>(
           `SELECT recurring.harvest_id AS recurring_harvest_id,
-              invoice.harvest_id AS invoice_harvest_id, invoice.number, invoice.client_id
+              invoice.id AS invoice_id, invoice.harvest_id AS invoice_harvest_id,
+              invoice.number, invoice.client_id
            FROM recurring_invoices recurring
            JOIN invoices invoice ON invoice.recurring_invoice_id = recurring.id
            ORDER BY invoice.id`,
@@ -464,6 +537,7 @@ for (const [runtime, factory] of factories) {
       ).toEqual(
         fixtures.map((fixture) => ({
           recurring_harvest_id: fixture.recurring_invoice_id,
+          invoice_id: localInvoiceId(fixture),
           invoice_harvest_id: fixture.id,
           number: fixture.number,
           client_id: 1,
@@ -496,16 +570,80 @@ for (const [runtime, factory] of factories) {
       await seedClients(database)
       await insertMoneyRetainer(database, 1, 1)
       await insertMoneyRetainer(database, 2, 2)
+      await insertProject(database, 10, 1)
+      await insertProject(database, 20, 2)
       await expect(
         createRecurringInvoiceDefinition(database.orm, createInput({ clientId: 999 })),
       ).rejects.toThrow()
       await expect(
         createRecurringInvoiceDefinition(database.orm, createInput({ canDrawFromRetainerId: 2 })),
       ).rejects.toThrow()
+      await expect(
+        createRecurringInvoiceDefinition(
+          database.orm,
+          createInput({
+            amountConfig: {
+              ...fixedAmountConfig,
+              line_items: fixedAmountConfig.line_items.map((line) => ({
+                ...line,
+                project_id: 20,
+              })),
+            },
+          }),
+        ),
+      ).rejects.toThrow()
+      await expect(
+        createRecurringInvoiceDefinition(
+          database.orm,
+          createInput({
+            amountConfig: {
+              schema_version: 1,
+              type: 'line_items_import',
+              project_ids: [999],
+              time: { summary_type: 'task' },
+            },
+          }),
+        ),
+      ).rejects.toThrow()
+      await expect(
+        createRecurringInvoiceDefinition(
+          database.orm,
+          createInput({
+            amountConfig: {
+              schema_version: 1,
+              type: 'line_items_import',
+              project_ids: [20],
+              expenses: { summary_type: 'category' },
+            },
+          }),
+        ),
+      ).rejects.toThrow()
       const recurring = await createRecurringInvoiceDefinition(
         database.orm,
-        createInput({ canDrawFromRetainerId: 1 }),
+        createInput({
+          canDrawFromRetainerId: 1,
+          amountConfig: {
+            ...fixedAmountConfig,
+            line_items: fixedAmountConfig.line_items.map((line) => ({
+              ...line,
+              project_id: 10,
+            })),
+          },
+        }),
       )
+      await expect(
+        database.run(
+          `UPDATE recurring_invoices SET amount_config = ? WHERE id = ?`,
+          JSON.stringify({
+            ...fixedAmountConfig,
+            line_items: fixedAmountConfig.line_items.map((line) => ({
+              ...line,
+              project_id: 20,
+            })),
+          }),
+          recurring.id,
+        ),
+      ).rejects.toThrow()
       await insertInvoice(database, 1, 2)
       await expect(
         database.run(`UPDATE invoices SET recurring_invoice_id = ? WHERE id = 1`, recurring.id),
@@ -515,6 +653,12 @@ for (const [runtime, factory] of factories) {
       ).rejects.toThrow()
       await expect(database.run(`UPDATE retainers SET client_id = 2 WHERE id = 1`)).rejects.toThrow(
         /match every recurring invoice/,
+      )
+      await expect(database.run(`UPDATE projects SET client_id = 2 WHERE id = 10`)).rejects.toThrow(
+        /match every recurring invoice definition/,
+      )
+      await expect(database.run(`DELETE FROM projects WHERE id = 10`)).rejects.toThrow(
+        /referenced by a recurring invoice definition/,
       )
       expect(await database.rows(`PRAGMA foreign_key_check`)).toEqual([])
     })
@@ -546,6 +690,43 @@ for (const [runtime, factory] of factories) {
           updatedAt: timestamp,
         }),
       ).rejects.toThrow(/could not link/)
+      expect(await database.rows(`PRAGMA foreign_key_check`)).toEqual([])
+    })
+
+    it('[unit] rolls back a conflicting source link without leaving a partial stub', async () => {
+      database = await factory()
+      await seedClients(database)
+      const nativeInvoiceId = 173_001
+      const harvestInvoiceId = 73_001
+      await insertInvoice(database, nativeInvoiceId, 1, harvestInvoiceId)
+      const original = await ensureHarvestRecurringInvoiceStub(database.orm, {
+        invoiceId: nativeInvoiceId,
+        harvestInvoiceId,
+        harvestRecurringInvoiceId: 94_001,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+      await expect(
+        ensureHarvestRecurringInvoiceStub(database.orm, {
+          invoiceId: nativeInvoiceId,
+          harvestInvoiceId,
+          harvestRecurringInvoiceId: 94_002,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }),
+      ).rejects.toThrow()
+      expect(
+        await database.rows<{ recurring_invoice_id: number }>(
+          `SELECT recurring_invoice_id FROM invoices WHERE id = ? AND harvest_id = ?`,
+          nativeInvoiceId,
+          harvestInvoiceId,
+        ),
+      ).toEqual([{ recurring_invoice_id: original.id }])
+      expect(
+        await database.rows<{ harvest_id: number }>(
+          `SELECT harvest_id FROM recurring_invoices ORDER BY harvest_id`,
+        ),
+      ).toEqual([{ harvest_id: 94_001 }])
       expect(await database.rows(`PRAGMA foreign_key_check`)).toEqual([])
     })
   })

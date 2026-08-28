@@ -22,6 +22,7 @@ export interface RecurringFixedLineV1 {
   unit_price_cents: number
   taxed: boolean
   taxed2: boolean
+  /** Real project id; when present it must belong to the definition's client. */
   project_id: number | null
 }
 
@@ -42,6 +43,7 @@ export interface RecurringExpenseImportV1 {
 export interface RecurringLineItemsImportConfigV1 {
   schema_version: 1
   type: 'line_items_import'
+  /** Real, unique project ids; every project must belong to the definition's client. */
   project_ids: number[]
   time?: RecurringTimeImportV1
   expenses?: RecurringExpenseImportV1
