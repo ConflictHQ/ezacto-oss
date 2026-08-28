@@ -1,9 +1,25 @@
-import { createApiApp } from '@ezacto/api'
+import {
+  createApiApp,
+  installTrackedResourceRoutes,
+  type ApiTokenService,
+  type TrackedResourceRepository,
+} from '@ezacto/api'
 
 /** Worker bindings stay entry-owned; the shared API package is runtime-agnostic. */
 export type Env = {
   ENVIRONMENT: string
   RELEASE: string
+}
+
+export type WorkerEnv = Env & {
+  DB: D1Database
+  API_CURSOR_SIGNING_KEY: string
+}
+
+export interface RuntimeServices {
+  tokens: ApiTokenService
+  trackedResources: TrackedResourceRepository
+  cursorSigningKey: Uint8Array
 }
 
 export type Health = {
@@ -13,8 +29,24 @@ export type Health = {
   release: string
 }
 
-export const createApp = () =>
+export const createApp = (services?: RuntimeServices) =>
   createApiApp<Env>({
+    ...(services === undefined
+      ? {}
+      : {
+          authentication: {
+            tokens: services.tokens,
+            // Native sessions are not implemented at this entry seam. Being
+            // explicit keeps cookies from becoming an accidental credential.
+            sessions: { resolve: async () => null },
+          },
+          installApi: (api) =>
+            installTrackedResourceRoutes(api, {
+              repository: services.trackedResources,
+              clock: systemClock,
+              cursorSigningKey: services.cursorSigningKey,
+            }),
+        }),
     installApp(app) {
       app.get('/healthz', (context) => {
         const body: Health = {
@@ -33,6 +65,17 @@ export const createApp = () =>
       )
     },
   })
+
+const systemClock = {
+  now() {
+    const instant = new Date().toISOString()
+    return {
+      instant,
+      date: instant.slice(0, 10),
+      time: instant.slice(11, 16),
+    }
+  },
+}
 
 /**
  * The instance-identity page. It states what this deployment is and what commit

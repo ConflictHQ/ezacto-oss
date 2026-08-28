@@ -18,6 +18,9 @@ MAIL_FROM_DOMAIN=go.ezacto.com
 # --- App ---
 APP_BASE_URL=http://localhost:8787
 SESSION_SECRET=
+# Canonical unpadded base64url encoding of exactly 32 random bytes. Keep the same
+# value across releases or outstanding API cursors become invalid.
+API_CURSOR_SIGNING_KEY=
 
 # --- migrate package (dev, against the live Harvest account) ---
 HARVEST_ACCOUNT_ID=

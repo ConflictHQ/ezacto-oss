@@ -12,7 +12,9 @@
 
   // Two environments, on purpose: our books, and the one everyone else sees.
   // No per-branch preview workers — deploy targets are hosts we own and name.
-  // D1/R2/Queues bindings land with the stories that use them (D17).
+  // The runtime reads a D1 binding named DB and an API_CURSOR_SIGNING_KEY
+  // secret. Environment-specific database ids are added only after the actual
+  // databases are provisioned; they are never fabricated in tracked config.
   "env": {
     // CONFLICT's own instance — the dogfood deployment, and the OSS gate.
     "prod": {
