@@ -20,7 +20,9 @@
     "shell:check": "node scripts/compile-shell-assets.mjs --check",
     "typecheck": "npm run theme:check && npm run shell:check && tsc --noEmit",
     "lint": "eslint .",
-    "test": "npm run theme:check && npm run shell:check && vitest run",
+    "browser:prepare": "npm run build -w @ezacto/core && npm run build -w @ezacto/db && npm run build -w @ezacto/api && npm run build -w @ezacto/client && npm run build -w @ezacto/mailer && npm run build -w @ezacto/web",
+    "test:browser": "npm run browser:prepare && playwright test --config playwright.config.ts",
+    "test": "npm run theme:check && npm run shell:check && vitest run && npm run test:browser",
     "build": "npm run theme:check && npm run shell:check && tsc -p tsconfig.build.json"
   },
   "dependencies": {
@@ -28,6 +30,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^22.10.0",
     "esbuild": "^0.28.1",
     "eslint": "^10.9.1",
