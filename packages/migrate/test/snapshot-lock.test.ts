@@ -6,6 +6,14 @@ import { acquireSnapshotLock, releaseSnapshotLock } from '../src/snapshot-lock.j
 
 let dir: string
 
+const deferred = (): { promise: Promise<void>; resolve: () => void } => {
+  let resolve!: () => void
+  const promise = new Promise<void>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
 describe('snapshot mutation lock', () => {
   beforeEach(async () => {
     dir = await mkdtemp('/tmp/ezacto-migrate-lock-')
@@ -31,24 +39,45 @@ describe('snapshot mutation lock', () => {
     await releaseSnapshotLock(lock)
   })
 
-  it('[unit] lets exactly one of two contenders claim the same stale lock', async () => {
-    const lockDir = join(dir, '.sync.lock')
-    await mkdir(lockDir)
-    await writeFile(
-      join(lockDir, 'owner.json'),
-      JSON.stringify({ pid: 2_147_483_647, host: hostname(), command: 'sync', started_at: '2026-08-26T00:00:00.000Z', token: 'stale' }),
-    )
+  it('[unit] lets exactly one delayed stale reader reclaim across repeated deterministic races', async () => {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const snapshotDir = join(dir, `race-${attempt}`)
+      const lockDir = join(snapshotDir, '.sync.lock')
+      await mkdir(lockDir, { recursive: true })
+      await writeFile(
+        join(lockDir, 'owner.json'),
+        JSON.stringify({
+          pid: 2_147_483_647,
+          host: hostname(),
+          command: 'sync',
+          started_at: '2026-08-26T00:00:00.000Z',
+          token: `stale-${attempt}`,
+        }),
+      )
 
-    const results = await Promise.allSettled([
-      acquireSnapshotLock(dir, 'auth'),
-      acquireSnapshotLock(dir, 'extract'),
-    ])
-    const acquired = results.filter(
-      (result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof acquireSnapshotLock>>> =>
-        result.status === 'fulfilled',
-    )
-    expect(acquired).toHaveLength(1)
-    await releaseSnapshotLock(acquired[0].value)
+      const staleRead = deferred()
+      const resumeDelayed = deferred()
+      const delayed = acquireSnapshotLock(snapshotDir, 'auth', {
+        beforeStaleRename: async () => {
+          staleRead.resolve()
+          await resumeDelayed.promise
+        },
+      })
+      await staleRead.promise
+
+      const winner = await acquireSnapshotLock(snapshotDir, 'extract')
+      const winnerOwner = await readFile(join(winner.path, 'owner.json'), 'utf8')
+      resumeDelayed.resolve()
+
+      const results = await Promise.allSettled([delayed, Promise.resolve(winner)])
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+      expect(results[0]).toMatchObject({
+        status: 'rejected',
+        reason: expect.objectContaining({ message: expect.stringContaining('another process') }),
+      })
+      expect(await readFile(join(winner.path, 'owner.json'), 'utf8')).toBe(winnerOwner)
+      await releaseSnapshotLock(winner)
+    }
   })
 
   it('[unit] never releases a lock whose owner token changed', async () => {
@@ -70,6 +99,7 @@ describe('snapshot mutation lock', () => {
       JSON.stringify({ pid: process.pid, host: hostname(), command: 'auth', started_at: '2026-08-26T00:00:00.000Z', token: 'live' }),
     )
     await expect(acquireSnapshotLock(dir, 'extract')).rejects.toThrow('snapshot is locked by auth')
+    expect(await readFile(join(lockDir, 'owner.json'), 'utf8')).toContain('live')
 
     await rm(lockDir, { recursive: true, force: true })
     await mkdir(lockDir)
@@ -78,5 +108,6 @@ describe('snapshot mutation lock', () => {
       JSON.stringify({ pid: 1, host: 'another-host', command: 'sync', started_at: '2026-08-26T00:00:00.000Z', token: 'remote' }),
     )
     await expect(acquireSnapshotLock(dir, 'extract')).rejects.toThrow('remove')
+    expect(await readFile(join(lockDir, 'owner.json'), 'utf8')).toContain('remote')
   })
 })
