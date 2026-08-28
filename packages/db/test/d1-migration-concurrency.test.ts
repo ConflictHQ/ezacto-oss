@@ -36,6 +36,7 @@ describe('D1 migration concurrency', () => {
       '0012_instance_bootstrap',
       '0013_password_auth',
       '0014_sessions',
+      '0015_oidc_transactions',
       '0016_email_log',
     ])
     expect(

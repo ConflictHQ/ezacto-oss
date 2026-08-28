@@ -99,7 +99,7 @@ for (const [runtime, factory] of factories) {
 
     const setup = async () => (harness = await factory())
 
-    it('[unit] supports sparse 0016 registration and idempotent migration', async () => {
+    it('[unit] registers 0015 and 0016 in order and migrates idempotently', async () => {
       const current = await setup()
       await current.migrateAgain()
       const ledger = await current.rows<{ id: string }>(
@@ -107,8 +107,39 @@ for (const [runtime, factory] of factories) {
       )
       expect(ledger).toEqual([
         { id: '0014_sessions' },
+        { id: '0015_oidc_transactions' },
         { id: '0016_email_log' },
       ])
+    })
+
+    it('[unit] backfills 0015 when a database already registered sparse 0016', async () => {
+      const current = await setup()
+      const queued = await current.store.createQueued(message)
+      await current.run(`DROP TABLE oidc_transactions`)
+      await current.run(
+        `DELETE FROM _ezacto_migrations WHERE id = '0015_oidc_transactions'`,
+      )
+
+      await current.migrateAgain()
+
+      expect(
+        await current.rows<{ id: string }>(
+          `SELECT id FROM _ezacto_migrations WHERE id >= '0015' ORDER BY id`,
+        ),
+      ).toEqual([
+        { id: '0015_oidc_transactions' },
+        { id: '0016_email_log' },
+      ])
+      expect(
+        await current.rows<{ name: string }>(
+          `SELECT name FROM sqlite_master WHERE type = 'table'
+           AND name IN ('oidc_transactions', 'email_log') ORDER BY name`,
+        ),
+      ).toEqual([{ name: 'email_log' }, { name: 'oidc_transactions' }])
+      await expect(current.store.get(queued.id)).resolves.toMatchObject({
+        id: queued.id,
+        status: 'queued',
+      })
     })
 
     it('[unit] records queued, attempted, sent, and failed outcomes without message body secrets', async () => {

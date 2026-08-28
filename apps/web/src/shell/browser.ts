@@ -1,4 +1,4 @@
-import { EzactoApiError } from '@ezacto/client'
+import { EzactoApiError, type Whoami } from '@ezacto/client'
 import {
   buildWeekGrid,
   formatCellHours,
@@ -37,6 +37,12 @@ interface CellSaveState {
 interface FocusTarget {
   readonly key: string
   readonly view: GridView
+}
+
+interface AuthOperation {
+  readonly generation: number
+  readonly signal: AbortSignal
+  readonly userId: number | null
 }
 
 interface GridHandlers {
@@ -94,6 +100,32 @@ const messageFor = (error: unknown): string => {
   if (error instanceof EzactoApiError && error.status === 401) return 'Sign in is required.'
   return error instanceof Error ? error.message : 'The request could not be completed.'
 }
+
+const apiErrorCode = (error: EzactoApiError): string | null => {
+  if (typeof error.body !== 'object' || error.body === null) return null
+  const detail = Reflect.get(error.body, 'error')
+  if (typeof detail !== 'object' || detail === null) return null
+  const code = Reflect.get(detail, 'code')
+  return typeof code === 'string' ? code : null
+}
+
+const signInMessage = (error: unknown): string => {
+  if (!(error instanceof EzactoApiError)) {
+    return 'Sign-in is unavailable right now. Try again.'
+  }
+  const code = apiErrorCode(error)
+  if (code === 'invalid_credentials') return 'Email or password is incorrect.'
+  if (code === 'email_verification_required') {
+    return 'Verify your email before signing in.'
+  }
+  if (code === 'rate_limit_exceeded' || error.status === 429) {
+    return 'Too many sign-in attempts. Wait a moment and try again.'
+  }
+  return 'Sign-in could not be completed. Try again.'
+}
+
+const profileLabel = (profile: Whoami['profile']): string =>
+  profile.replaceAll('_', ' ')
 
 const open = (dialog: HTMLDialogElement): void => {
   if (!dialog.open) dialog.showModal()
@@ -362,11 +394,14 @@ const renderTimer = (running: DisplayTimeEntry | null): void => {
   timerInterval = globalThis.setInterval(update, 1_000)
 }
 
-const storageKey = (within: string): string => `ezacto:week-rows:${weekDates(within)[0]}`
+const storageKey = (userId: number, within: string): string =>
+  `ezacto:user:${userId}:week-rows:${weekDates(within)[0]}`
 
-const loadSupplementalRows = (within: string): WeekRowSeed[] => {
+const loadSupplementalRows = (userId: number, within: string): WeekRowSeed[] => {
   try {
-    const value: unknown = JSON.parse(globalThis.localStorage.getItem(storageKey(within)) ?? '[]')
+    const value: unknown = JSON.parse(
+      globalThis.localStorage.getItem(storageKey(userId, within)) ?? '[]',
+    )
     if (!Array.isArray(value)) return []
     return value.flatMap((item): WeekRowSeed[] => {
       if (typeof item !== 'object' || item === null) return []
@@ -381,9 +416,16 @@ const loadSupplementalRows = (within: string): WeekRowSeed[] => {
   }
 }
 
-const saveSupplementalRows = (within: string, rows: readonly WeekRowSeed[]): void => {
+const saveSupplementalRows = (
+  userId: number,
+  within: string,
+  rows: readonly WeekRowSeed[],
+): void => {
   try {
-    globalThis.localStorage.setItem(storageKey(within), JSON.stringify(rows))
+    globalThis.localStorage.setItem(
+      storageKey(userId, within),
+      JSON.stringify(rows),
+    )
   } catch {
     // Empty-row layout is a convenience only; canonical time remains server-backed.
   }
@@ -449,6 +491,17 @@ const resourceLabel = (resource: Record<string, unknown>): string => {
 
 export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Promise<void> => {
   const status = required<HTMLElement>('[data-session-status]')
+  const statusMessage = required<HTMLElement>('[data-session-message]')
+  const retryWeek = required<HTMLButtonElement>('[data-retry-week]')
+  const authShell = required<HTMLElement>('[data-auth-shell]')
+  const signInForm = required<HTMLFormElement>('[data-sign-in-form]')
+  const signInEmail = required<HTMLInputElement>('[name="email"]')
+  const signInPassword = required<HTMLInputElement>('[name="password"]')
+  const signInSubmit = required<HTMLButtonElement>('[data-sign-in-submit]')
+  const signInResult = required<HTMLElement>('[data-sign-in-result]')
+  const currentIdentityPanel = required<HTMLElement>('[data-current-identity]')
+  const logout = required<HTMLButtonElement>('[data-logout]')
+  const logoutResult = required<HTMLElement>('[data-logout-result]')
   const commandDialog = required<HTMLDialogElement>('[data-command-dialog]')
   const timerDialog = required<HTMLDialogElement>('[data-timer-dialog]')
   const menuDialog = required<HTMLDialogElement>('[data-menu-dialog]')
@@ -468,11 +521,197 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   }
   const cellStates = new Map<string, CellSaveState>()
   let within = initialWithin()
-  let supplementalRows = loadSupplementalRows(within)
+  let supplementalRows: WeekRowSeed[] = []
   let selectedDay = Math.max(0, weekDates(within).indexOf(localDate()))
   let snapshot: ShellSnapshot | null = null
   let grid: WeekGrid | null = null
   let activeNote: { cell: WeekGridCell; view: GridView } | null = null
+  let currentIdentity: Whoami | null = null
+  let signingIn = false
+  let signingOut = false
+  let authGeneration = 0
+  let authController = new AbortController()
+
+  const beginAuthGeneration = (userId: number | null): AuthOperation => {
+    authController.abort()
+    authController = new AbortController()
+    authGeneration += 1
+    return {
+      generation: authGeneration,
+      signal: authController.signal,
+      userId,
+    }
+  }
+
+  const currentAuthOperation = (userId: number | null): AuthOperation => ({
+    generation: authGeneration,
+    signal: authController.signal,
+    userId,
+  })
+
+  const isGenerationCurrent = (operation: AuthOperation): boolean =>
+    operation.generation === authGeneration && !operation.signal.aborted
+
+  const isSessionCurrent = (operation: AuthOperation): boolean =>
+    isGenerationCurrent(operation) &&
+    operation.userId !== null &&
+    currentIdentity?.user_id === operation.userId
+
+  const sessionOperation = (): AuthOperation | null =>
+    currentIdentity === null
+      ? null
+      : currentAuthOperation(currentIdentity.user_id)
+
+  const setSessionStatus = (
+    message: string,
+    state: 'ready' | 'signed-out' | 'loading' | 'error',
+    retry = false,
+  ): void => {
+    statusMessage.textContent = message
+    status.dataset.state = state
+    retryWeek.hidden = !retry
+    retryWeek.disabled = false
+  }
+
+  const setApplicationAvailability = (available: boolean): void => {
+    for (const control of document.querySelectorAll<HTMLButtonElement>('[data-auth-action]')) {
+      control.disabled = !available
+    }
+  }
+
+  const clearFormState = (): void => {
+    signInForm.reset()
+    commandForm.reset()
+    timerForm.reset()
+    rowForm.reset()
+    noteForm.reset()
+    required<HTMLSelectElement>('[data-row-project]').replaceChildren()
+    required<HTMLSelectElement>('[data-row-task]').replaceChildren()
+    required<HTMLElement>('[data-command-result]').textContent = ''
+    required<HTMLElement>('[data-timer-result]').textContent = ''
+    required<HTMLElement>('[data-row-result]').textContent = ''
+    required<HTMLElement>('[data-note-result]').textContent = ''
+    required<HTMLElement>('[data-note-title]').textContent = 'Add a note'
+    required<HTMLElement>('[data-current-user-id]').textContent = '—'
+    required<HTMLElement>('[data-current-profile]').textContent = '—'
+    required<HTMLElement>('[data-timer-label]').textContent = 'Timer'
+    required<HTMLElement>('[data-timer-elapsed]').textContent = '—'
+    required<HTMLElement>('[data-week-total]').textContent = '—'
+    required<HTMLElement>('[data-week-grid-rows]').replaceChildren()
+    required<HTMLElement>('[data-week-grid-totals]').replaceChildren()
+    required<HTMLElement>('[data-day-rows]').replaceChildren()
+    activeNote = null
+    supplementalRows = []
+    snapshot = null
+    grid = null
+    cellStates.clear()
+    for (const dialog of [commandDialog, timerDialog, menuDialog, rowDialog, noteDialog]) {
+      if (dialog.open) dialog.close()
+    }
+    if (timerInterval !== undefined) {
+      globalThis.clearInterval(timerInterval)
+      timerInterval = undefined
+    }
+  }
+
+  const renderSignedOutWeek = (): void => {
+    snapshot = null
+    grid = null
+    cellStates.clear()
+    if (timerInterval !== undefined) globalThis.clearInterval(timerInterval)
+    required<HTMLButtonElement>('[data-timer-chip]').dataset.state = 'signed-out'
+    required<HTMLElement>('[data-timer-label]').textContent = 'Sign in required'
+    required<HTMLElement>('[data-timer-elapsed]').textContent = '—'
+    required<HTMLElement>('[data-week-label]').textContent = weekLabel(weekDates(within))
+    required<HTMLElement>('[data-week-total]').textContent = '—'
+    const unavailable = document.createElement('tr')
+    const cell = document.createElement('td')
+    cell.colSpan = 9
+    cell.className = 'grid-empty'
+    cell.textContent = 'Sign in to load and edit your week.'
+    unavailable.append(cell)
+    required<HTMLElement>('[data-week-grid-rows]').replaceChildren(unavailable)
+    required<HTMLElement>('[data-week-grid-totals]').replaceChildren()
+    const phoneUnavailable = document.createElement('p')
+    phoneUnavailable.className = 'day-empty'
+    phoneUnavailable.textContent = 'Sign in to load and edit your day.'
+    required<HTMLElement>('[data-day-rows]').replaceChildren(phoneUnavailable)
+  }
+
+  const renderWeekLoadFailure = (): void => {
+    snapshot = null
+    grid = null
+    cellStates.clear()
+    required<HTMLElement>('[data-week-label]').textContent = weekLabel(weekDates(within))
+    required<HTMLElement>('[data-week-total]').textContent = '—'
+    const unavailable = document.createElement('tr')
+    const cell = document.createElement('td')
+    cell.colSpan = 9
+    cell.className = 'grid-empty'
+    cell.textContent = 'Your week could not load. Retry when the connection is available.'
+    unavailable.append(cell)
+    required<HTMLElement>('[data-week-grid-rows]').replaceChildren(unavailable)
+    required<HTMLElement>('[data-week-grid-totals]').replaceChildren()
+    const phoneUnavailable = document.createElement('p')
+    phoneUnavailable.className = 'day-empty'
+    phoneUnavailable.textContent = 'Your day could not load. Retry when the connection is available.'
+    required<HTMLElement>('[data-day-rows]').replaceChildren(phoneUnavailable)
+  }
+
+  const transitionSignedOut = (
+    message = 'Sign in to load and edit your week.',
+  ): void => {
+    beginAuthGeneration(null)
+    currentIdentity = null
+    signingIn = false
+    signingOut = false
+    signInSubmit.disabled = false
+    logout.disabled = false
+    clearFormState()
+    authShell.dataset.state = 'signed-out'
+    signInForm.hidden = false
+    currentIdentityPanel.hidden = true
+    required<HTMLElement>('[data-current-user-id]').textContent = '—'
+    required<HTMLElement>('[data-current-profile]').textContent = '—'
+    signInResult.textContent = ''
+    logoutResult.textContent = ''
+    setSessionStatus(message, 'signed-out')
+    setApplicationAvailability(false)
+    renderSignedOutWeek()
+  }
+
+  const showAuthenticated = (identity: Whoami): AuthOperation => {
+    const operation = beginAuthGeneration(identity.user_id)
+    clearFormState()
+    currentIdentity = identity
+    signingIn = false
+    signingOut = false
+    signInSubmit.disabled = false
+    logout.disabled = false
+    supplementalRows = loadSupplementalRows(identity.user_id, within)
+    authShell.dataset.state = 'ready'
+    signInForm.hidden = true
+    currentIdentityPanel.hidden = false
+    required<HTMLElement>('[data-current-user-id]').textContent = String(identity.user_id)
+    required<HTMLElement>('[data-current-profile]').textContent = profileLabel(identity.profile)
+    signInResult.textContent = ''
+    logoutResult.textContent = ''
+    setApplicationAvailability(true)
+    return operation
+  }
+
+  const handleSessionFailure = (
+    error: unknown,
+    operation: AuthOperation,
+  ): boolean => {
+    if (!isSessionCurrent(operation)) return true
+    if (error instanceof EzactoApiError && error.status === 401) {
+      transitionSignedOut('Your session ended. Sign in again to continue.')
+      signInEmail.focus()
+      return true
+    }
+    return false
+  }
 
   const updateRowOptions = (): void => {
     if (snapshot === null) return
@@ -501,10 +740,47 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     updateRowOptions()
   }
 
-  const refresh = async (focus: FocusTarget | undefined = focusedCell()): Promise<void> => {
-    snapshot = await loadShellSnapshot(api, new Date(`${within}T12:00:00`))
+  const refresh = async (
+    operation: AuthOperation,
+    focus: FocusTarget | undefined = focusedCell(),
+  ): Promise<boolean> => {
+    const requestedWithin = within
+    const loaded = await loadShellSnapshot(
+      api,
+      new Date(`${requestedWithin}T12:00:00`),
+      operation.signal,
+    )
+    if (!isSessionCurrent(operation) || within !== requestedWithin) return false
+    snapshot = loaded
     render()
     focusCell(focus)
+    return true
+  }
+
+  const loadWeek = async (operation: AuthOperation): Promise<void> => {
+    if (!isSessionCurrent(operation)) return
+    setSessionStatus('Loading your week…', 'loading')
+    try {
+      if (!(await refresh(operation))) return
+      setSessionStatus('Connected. Changes save directly to ezacto.', 'ready')
+    } catch (error) {
+      if (handleSessionFailure(error, operation)) return
+      renderWeekLoadFailure()
+      setSessionStatus(
+        'Signed in, but your week could not load. Check the connection and retry.',
+        'error',
+        true,
+      )
+    }
+  }
+
+  const loadAuthenticatedShell = async (
+    operation: AuthOperation,
+  ): Promise<void> => {
+    const identity = await api.whoami(operation.signal)
+    if (!isGenerationCurrent(operation)) return
+    const authenticated = showAuthenticated(identity)
+    await loadWeek(authenticated)
   }
 
   async function commitCell(
@@ -513,6 +789,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     view: GridView,
     focus?: FocusTarget,
   ): Promise<boolean> {
+    const operation = sessionOperation()
+    if (operation === null) return false
     const current = cellStates.get(cell.key)
     if (current?.state === 'saving') return false
     const rawValue = input.value
@@ -526,8 +804,16 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       ...(current?.notes === undefined ? {} : { notes: current.notes }),
     })
     render()
-    const result = await saveWeekCellWithRetry(api, cell, rawValue, current?.notes)
+    const result = await saveWeekCellWithRetry(
+      api,
+      cell,
+      rawValue,
+      current?.notes,
+      operation.signal,
+    )
+    if (!isSessionCurrent(operation)) return false
     if (result.state === 'retry') {
+      if (handleSessionFailure(result.error, operation)) return false
       cellStates.set(cell.key, {
         state: 'retry',
         rawValue: result.rawValue,
@@ -540,17 +826,26 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       return false
     }
     cellStates.set(cell.key, { state: 'saved', rawValue })
-    await refresh(focus)
+    try {
+      await refresh(operation, focus)
+    } catch (error) {
+      handleSessionFailure(error, operation)
+      return false
+    }
     return true
   }
 
   async function retryCell(cell: WeekGridCell, view: GridView): Promise<void> {
+    const operation = sessionOperation()
+    if (operation === null) return
     const failed = cellStates.get(cell.key)
     if (failed?.state !== 'retry' || failed.retry === undefined) return
     cellStates.set(cell.key, { ...failed, state: 'saving' })
     render()
     const result = await failed.retry()
+    if (!isSessionCurrent(operation)) return
     if (result.state === 'retry') {
+      if (handleSessionFailure(result.error, operation)) return
       cellStates.set(cell.key, {
         ...failed,
         state: 'retry',
@@ -562,11 +857,21 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       return
     }
     cellStates.set(cell.key, { state: 'saved', rawValue: failed.rawValue })
-    await refresh({ key: cell.key, view })
+    try {
+      await refresh(operation, { key: cell.key, view })
+    } catch (error) {
+      handleSessionFailure(error, operation)
+    }
   }
 
   function openNote(cell: WeekGridCell, view: GridView): void {
-    if (cell.entries.length !== 1 || cell.isConflict || cell.isLocked) return
+    if (
+      currentIdentity === null ||
+      cell.entries.length !== 1 ||
+      cell.isConflict ||
+      cell.isLocked
+    )
+      return
     activeNote = { cell, view }
     required<HTMLElement>('[data-note-title]').textContent =
       `${dayLabel(cell.date)} · ${cell.entries[0]!.project_label}`
@@ -577,22 +882,28 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   }
 
   for (const trigger of document.querySelectorAll<HTMLElement>('[data-command-trigger]')) {
-    trigger.addEventListener('click', () => open(commandDialog))
+    trigger.addEventListener('click', () => {
+      if (currentIdentity !== null) open(commandDialog)
+    })
   }
-  required<HTMLButtonElement>('[data-timer-chip]').addEventListener('click', () =>
-    open(timerDialog),
-  )
+  required<HTMLButtonElement>('[data-timer-chip]').addEventListener('click', () => {
+    if (currentIdentity !== null) open(timerDialog)
+  })
   required<HTMLButtonElement>('[data-menu-trigger]').addEventListener('click', () =>
     open(menuDialog),
   )
-  required<HTMLButtonElement>('[data-add-row-trigger]').addEventListener('click', () =>
-    open(rowDialog),
-  )
+  required<HTMLButtonElement>('[data-add-row-trigger]').addEventListener('click', () => {
+    if (currentIdentity !== null) open(rowDialog)
+  })
   for (const close of document.querySelectorAll<HTMLButtonElement>('[data-dialog-close]')) {
     close.addEventListener('click', () => close.closest('dialog')?.close())
   }
   document.addEventListener('keydown', (event) => {
-    if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase('en-US') === 'k') {
+    if (
+      currentIdentity !== null &&
+      (event.metaKey || event.ctrlKey) &&
+      event.key.toLocaleLowerCase('en-US') === 'k'
+    ) {
       event.preventDefault()
       open(commandDialog)
     }
@@ -600,6 +911,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
 
   commandForm.addEventListener('submit', (event) => {
     event.preventDefault()
+    const operation = sessionOperation()
+    if (operation === null) return
     const result = required<HTMLElement>('[data-command-result]')
     const command = new FormData(commandForm).get('command')
     if (typeof command !== 'string') return
@@ -609,37 +922,45 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       return
     }
     result.textContent = 'Logging time…'
-    void quickAdd(api, command)
+    void quickAdd(api, command, new Date(), operation.signal)
       .then(async (entry) => {
-        await refresh()
+        if (!isSessionCurrent(operation)) return
+        if (!(await refresh(operation))) return
         result.textContent = `Logged ${formatSeconds(entry.seconds)}.`
         document.dispatchEvent(new CustomEvent('ezacto:time-entry-created', { detail: entry }))
       })
       .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
         result.textContent = messageFor(error)
       })
   })
 
   timerForm.addEventListener('submit', (event) => {
     event.preventDefault()
+    const operation = sessionOperation()
+    if (operation === null) return
     const result = required<HTMLElement>('[data-timer-result]')
     const form = new FormData(timerForm)
     const project = form.get('project')
     const task = form.get('task')
     if (typeof project !== 'string' || typeof task !== 'string') return
     result.textContent = 'Starting timer…'
-    void startTimer(api, project, task)
+    void startTimer(api, project, task, new Date(), operation.signal)
       .then(async (entry) => {
-        await refresh()
+        if (!isSessionCurrent(operation)) return
+        if (!(await refresh(operation))) return
         result.textContent = 'Timer started.'
         document.dispatchEvent(new CustomEvent('ezacto:time-entry-created', { detail: entry }))
       })
       .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
         result.textContent = messageFor(error)
       })
   })
 
   required<HTMLButtonElement>('[data-stop-timer]').addEventListener('click', () => {
+    const operation = sessionOperation()
+    if (operation === null) return
     const result = required<HTMLElement>('[data-timer-result]')
     if (snapshot?.running === null || snapshot === null) {
       result.textContent = 'No timer is running.'
@@ -647,18 +968,22 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
     result.textContent = 'Stopping timer…'
     void api
-      .stopTimeEntry(snapshot.running.id)
+      .stopTimeEntry(snapshot.running.id, operation.signal)
       .then(async () => {
-        await refresh()
+        if (!isSessionCurrent(operation)) return
+        if (!(await refresh(operation))) return
         result.textContent = 'Timer stopped.'
       })
       .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
         result.textContent = messageFor(error)
       })
   })
 
   rowForm.addEventListener('submit', (event) => {
     event.preventDefault()
+    const operation = sessionOperation()
+    if (operation === null || operation.userId === null) return
     const data = new FormData(rowForm)
     const projectId = Number(data.get('project'))
     const taskId = Number(data.get('task'))
@@ -672,7 +997,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         ]),
       ).values(),
     ]
-    saveSupplementalRows(within, supplementalRows)
+    saveSupplementalRows(operation.userId, within, supplementalRows)
     render()
     rowDialog.close()
     required<HTMLElement>('[data-row-result]').textContent = ''
@@ -682,7 +1007,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
 
   noteForm.addEventListener('submit', (event) => {
     event.preventDefault()
-    if (activeNote === null) return
+    const operation = sessionOperation()
+    if (operation === null || activeNote === null) return
     const notes = new FormData(noteForm).get('notes')
     if (typeof notes !== 'string') return
     const input = [...document.querySelectorAll<HTMLInputElement>('input[data-cell-key]')].find(
@@ -702,6 +1028,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       key: activeNote.cell.key,
       view: activeNote.view,
     }).then((saved) => {
+      if (!isSessionCurrent(operation)) return
       if (saved) {
         result.textContent = 'Saved.'
         noteDialog.close()
@@ -711,85 +1038,171 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   })
 
   const moveWeek = (days: number): void => {
+    const operation = sessionOperation()
+    if (operation === null || operation.userId === null) return
     within = shiftDate(within, days)
-    supplementalRows = loadSupplementalRows(within)
+    supplementalRows = loadSupplementalRows(operation.userId, within)
     selectedDay = 0
     cellStates.clear()
     setWeekUrl(within)
-    status.textContent = 'Loading week…'
-    void refresh()
-      .then(() => {
-        status.textContent = 'Connected. Changes save directly to ezacto.'
+    setSessionStatus('Loading week…', 'loading')
+    void refresh(operation)
+      .then((loaded) => {
+        if (!loaded || !isSessionCurrent(operation)) return
+        setSessionStatus('Connected. Changes save directly to ezacto.', 'ready')
       })
       .catch((error: unknown) => {
-        status.textContent = messageFor(error)
+        if (handleSessionFailure(error, operation)) return
+        renderWeekLoadFailure()
+        setSessionStatus(
+          'Signed in, but your week could not load. Check the connection and retry.',
+          'error',
+          true,
+        )
       })
   }
   required<HTMLButtonElement>('[data-week-previous]').addEventListener('click', () => moveWeek(-7))
   required<HTMLButtonElement>('[data-week-next]').addEventListener('click', () => moveWeek(7))
   required<HTMLButtonElement>('[data-week-current]').addEventListener('click', () => {
+    const operation = sessionOperation()
+    if (operation === null || operation.userId === null) return
     within = localDate()
-    supplementalRows = loadSupplementalRows(within)
+    supplementalRows = loadSupplementalRows(operation.userId, within)
     selectedDay = Math.max(0, weekDates(within).indexOf(localDate()))
     cellStates.clear()
     setWeekUrl(within)
-    void refresh()
+    void loadWeek(operation)
   })
   const moveDay = (offset: number): void => {
+    if (currentIdentity === null) return
     selectedDay = (selectedDay + offset + 7) % 7
     render()
   }
   required<HTMLButtonElement>('[data-day-previous]').addEventListener('click', () => moveDay(-1))
   required<HTMLButtonElement>('[data-day-next]').addEventListener('click', () => moveDay(1))
   required<HTMLButtonElement>('[data-copy-last-week]').addEventListener('click', () => {
-    if (grid === null) return
-    status.textContent = 'Copying project/task rows from last week…'
+    const operation = sessionOperation()
+    if (operation === null || operation.userId === null || grid === null) return
+    setSessionStatus('Copying project/task rows from last week…', 'loading')
     const previousMonday = shiftDate(grid.dates[0]!, -7)
     void api
-      .listTimeEntries(weekRange(previousMonday))
+      .listTimeEntries(weekRange(previousMonday), operation.signal)
       .then((entries) => {
+        if (!isSessionCurrent(operation)) return
         const copied = seedsFromEntries(entries)
         supplementalRows = [
           ...new Map(
             [...supplementalRows, ...copied].map((row) => [`${row.projectId}:${row.taskId}`, row]),
           ).values(),
         ]
-        saveSupplementalRows(within, supplementalRows)
+        saveSupplementalRows(operation.userId!, within, supplementalRows)
         render()
-        status.textContent =
+        setSessionStatus(
           copied.length === 0
             ? 'Last week has no project/task rows to copy.'
-            : `Copied ${copied.length} project/task ${copied.length === 1 ? 'row' : 'rows'} without copying hours.`
+            : `Copied ${copied.length} project/task ${copied.length === 1 ? 'row' : 'rows'} without copying hours.`,
+          'ready',
+        )
       })
       .catch((error: unknown) => {
-        status.textContent = messageFor(error)
+        if (handleSessionFailure(error, operation)) return
+        setSessionStatus(messageFor(error), 'error')
       })
   })
 
+  retryWeek.addEventListener('click', () => {
+    const operation = sessionOperation()
+    if (operation === null) return
+    retryWeek.disabled = true
+    void loadWeek(operation)
+  })
+
+  signInForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    if (signingIn) {
+      signInPassword.value = ''
+      return
+    }
+    const email = signInEmail.value.trim()
+    const password = signInPassword.value
+    if (email === '' || password === '') {
+      signInResult.textContent = 'Enter your email and password.'
+      return
+    }
+    const operation = beginAuthGeneration(null)
+    signingIn = true
+    signInSubmit.disabled = true
+    signInResult.textContent = 'Signing in…'
+    let request: Promise<unknown>
+    try {
+      request = api.signIn({ email, password }, operation.signal)
+    } catch (error) {
+      signInResult.textContent = signInMessage(error)
+      signingIn = false
+      signInSubmit.disabled = false
+      return
+    } finally {
+      signInPassword.value = ''
+    }
+    void request
+      .then(async () => {
+        if (!isGenerationCurrent(operation)) return
+        await loadAuthenticatedShell(operation)
+      })
+      .catch((error: unknown) => {
+        if (!isGenerationCurrent(operation)) return
+        signInResult.textContent = signInMessage(error)
+      })
+      .finally(() => {
+        if (!isGenerationCurrent(operation)) return
+        signingIn = false
+        signInSubmit.disabled = false
+      })
+  })
+
+  logout.addEventListener('click', () => {
+    if (currentIdentity === null || signingOut) return
+    const operation = beginAuthGeneration(null)
+    signingOut = true
+    currentIdentity = null
+    setApplicationAvailability(false)
+    logout.disabled = true
+    clearFormState()
+    authShell.dataset.state = 'loading'
+    signInForm.hidden = true
+    currentIdentityPanel.hidden = true
+    setSessionStatus('Signing out and revoking this session…', 'loading')
+    void api
+      .logoutCurrentSession(operation.signal)
+      .then(() => {
+        if (!isGenerationCurrent(operation)) return
+        transitionSignedOut('Signed out. Sign in to load and edit your week.')
+        signInEmail.focus()
+      })
+      .catch((error: unknown) => {
+        if (!isGenerationCurrent(operation)) return
+        if (error instanceof EzactoApiError && error.status === 401) {
+          transitionSignedOut('Your session ended. Sign in again to continue.')
+          signInEmail.focus()
+          return
+        }
+        transitionSignedOut(
+          'Sign-out could not be confirmed. Sign in again or retry when connected.',
+        )
+      })
+      .finally(() => {
+        if (!isGenerationCurrent(operation)) return
+        signingOut = false
+        logout.disabled = false
+      })
+  })
+
+  const initialOperation = currentAuthOperation(null)
   try {
-    await api.whoami()
-    await refresh()
-    status.textContent = 'Connected. Changes save directly to ezacto.'
-    status.dataset.state = 'ready'
+    await loadAuthenticatedShell(initialOperation)
   } catch (error) {
-    const message = messageFor(error)
-    status.textContent = `${message} Native browser sessions are the next delivery dependency.`
-    status.dataset.state = 'signed-out'
-    required<HTMLButtonElement>('[data-timer-chip]').dataset.state = 'signed-out'
-    required<HTMLElement>('[data-timer-label]').textContent = 'Sign in required'
-    required<HTMLElement>('[data-timer-elapsed]').textContent = '—'
-    required<HTMLElement>('[data-week-label]').textContent = weekLabel(weekDates(within))
-    required<HTMLElement>('[data-week-total]').textContent = '—'
-    const unavailable = document.createElement('tr')
-    const cell = document.createElement('td')
-    cell.colSpan = 9
-    cell.className = 'grid-empty'
-    cell.textContent = 'Sign in to load and edit your week.'
-    unavailable.append(cell)
-    required<HTMLElement>('[data-week-grid-rows]').replaceChildren(unavailable)
-    const phoneUnavailable = document.createElement('p')
-    phoneUnavailable.className = 'day-empty'
-    phoneUnavailable.textContent = 'Sign in to load and edit your day.'
-    required<HTMLElement>('[data-day-rows]').replaceChildren(phoneUnavailable)
+    if (!isGenerationCurrent(initialOperation)) return
+    if (error instanceof EzactoApiError && error.status === 401) transitionSignedOut()
+    else transitionSignedOut('Ezacto could not check your session. You can try signing in.')
   }
 }

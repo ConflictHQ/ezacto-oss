@@ -2,6 +2,8 @@ import {
   bootstrapInstanceD1,
   createApiTokenStore,
   createD1Database,
+  createD1IdentityStore,
+  createD1OidcTransactionStore,
   createGeneralResourceRepository,
   createD1EmailLogStore,
   createD1PasswordAuthService,
@@ -115,10 +117,10 @@ export const createRuntimeServices = async (
   const emailLog = createD1EmailLogStore(database)
   const authMailer =
     env.EMAIL_QUEUE === undefined ||
-    env.APP_ORIGIN === undefined ||
+    env.APP_BASE_URL === undefined ||
     options.emailProvider === undefined
       ? undefined
-      : createWorkerAuthMailer(env.EMAIL_QUEUE, emailLog, env.APP_ORIGIN)
+      : createWorkerAuthMailer(env.EMAIL_QUEUE, emailLog, env.APP_BASE_URL)
   return {
     bootstrap: (input) => bootstrapInstanceD1(database, input),
     tokens: createApiTokenStore(drizzle),
@@ -131,6 +133,8 @@ export const createRuntimeServices = async (
     passwordAuth: createD1PasswordAuthService(database),
     sessions,
     emailLog,
+    identities: createD1IdentityStore(database),
+    oidcTransactions: createD1OidcTransactionStore(database),
     ...(authMailer === undefined ? {} : { authMailer }),
   }
 }

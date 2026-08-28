@@ -63,7 +63,7 @@ describe('Worker email queue composition', () => {
       DB: database,
       API_CURSOR_SIGNING_KEY: cursorKey,
       EMAIL_QUEUE: queue,
-      APP_ORIGIN: 'https://ezacto.example',
+      APP_BASE_URL: 'https://ezacto.example',
       ENVIRONMENT: 'test',
       RELEASE: 'mailer-test',
     } satisfies WorkerEnv

@@ -85,7 +85,28 @@ const apiFor = (
     entries.splice(index, 1)
   })
   return {
-    whoami: vi.fn(async () => undefined),
+    whoami: vi.fn(async () => ({
+      user_id: 1,
+      profile: 'administrator' as const,
+      manager_grants: [],
+      authentication: { kind: 'session' as const },
+    })),
+    signIn: vi.fn(async () => ({
+      status: 'authenticated' as const,
+      user_id: 1,
+      profile: 'administrator' as const,
+      manager_grants: [],
+    })),
+    logoutCurrentSession: vi.fn(async () => ({
+      id: 1,
+      created_at: timestamp,
+      last_seen_at: timestamp,
+      idle_expires_at: timestamp,
+      absolute_expires_at: timestamp,
+      revoked_at: timestamp,
+      revocation_reason: 'user_revoked' as const,
+      current: false,
+    })),
     listProjects: vi.fn(),
     listTasks: vi.fn(),
     listTimeEntries: vi.fn(),

@@ -1038,6 +1038,7 @@ for (const [runtime, factory] of factories) {
         '0012_instance_bootstrap',
         '0013_password_auth',
         '0014_sessions',
+        '0015_oidc_transactions',
         '0016_email_log',
       ])
       expect(firstLedger.slice(0, 2).map(({ applied_at: appliedAt }) => appliedAt)).toEqual([
@@ -1114,6 +1115,7 @@ for (const [runtime, factory] of factories) {
         { id: '0012_instance_bootstrap' },
         { id: '0013_password_auth' },
         { id: '0014_sessions' },
+        { id: '0015_oidc_transactions' },
         { id: '0016_email_log' },
       ])
       expect(

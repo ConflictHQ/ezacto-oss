@@ -44,6 +44,13 @@ const path = (name: string): ApiContractParameter => ({
   required: true,
 });
 
+const stringPath = (name: string): ApiContractParameter => ({
+  name,
+  location: "path",
+  schema: stringSchema,
+  required: true,
+});
+
 const pageParameters = [
   query("cursor"),
   query("per_page", { type: "integer", minimum: 1, maximum: 200 }),
@@ -377,6 +384,28 @@ const expenseOperations: ApiContractOperation[] = [
 ];
 
 export const apiContractOperations: readonly ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/auth/oidc/:provider",
+    operationId: "startOidcSignIn",
+    summary: "Start an OpenID Connect sign-in",
+    tag: "authentication",
+    responseStatus: 302,
+    public: true,
+    parameters: [stringPath("provider")],
+    generateClient: false,
+  },
+  {
+    method: "get",
+    path: "/auth/oidc/:provider/callback",
+    operationId: "completeOidcSignIn",
+    summary: "Complete an OpenID Connect sign-in",
+    tag: "authentication",
+    responseStatus: 303,
+    public: true,
+    parameters: [stringPath("provider"), query("code"), query("state")],
+    generateClient: false,
+  },
   {
     method: "post",
     path: "/auth/signup",
@@ -1187,15 +1216,30 @@ const errorResponse = (description: string): Record<string, unknown> => ({
   },
 });
 
+const successResponse = (
+  operation: ApiContractOperation,
+): Record<string, unknown> => {
+  if (operation.responseStatus === 204) return { description: "No content" };
+  if (operation.responseStatus >= 300 && operation.responseStatus < 400) {
+    return {
+      description: "Redirect response",
+      headers: {
+        Location: {
+          description: "Redirect target",
+          schema: stringSchema,
+        },
+      },
+    };
+  }
+  return schemaResponse(operation.responseSchema ?? "ErrorEnvelope");
+};
+
 export const generateOpenApiDocument = (): Record<string, unknown> => {
   const paths: Record<string, Record<string, unknown>> = {};
   for (const operation of apiContractOperations) {
     const route = openApiPath(operation.path);
     const responses: Record<string, unknown> = {
-      [operation.responseStatus]:
-        operation.responseStatus === 204
-          ? { description: "No content" }
-          : schemaResponse(operation.responseSchema ?? "ErrorEnvelope"),
+      [operation.responseStatus]: successResponse(operation),
       "400": { $ref: "#/components/responses/MalformedRequest" },
       "401": { $ref: "#/components/responses/AuthenticationRequired" },
       "403": { $ref: "#/components/responses/InsufficientPermission" },

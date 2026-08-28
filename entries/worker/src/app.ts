@@ -4,6 +4,7 @@ import {
   generateOpenApiDocument,
   installEmailLogRoutes,
   installGeneralResourceRoutes,
+  installOidcRoutes,
   installPasswordAuthRoutes,
   installSessionRoutes,
   installTrackedResourceRoutes,
@@ -13,6 +14,9 @@ import {
   type AuthMailer,
   type ApiSessionService,
   type GeneralResourceRouteOptions,
+  type OidcIdentityResolver,
+  type OidcProviderConfig,
+  type OidcTransactionStorePort,
   type PasswordAuthService,
   type TrackedResourceRepository,
 } from '@ezacto/api'
@@ -35,7 +39,9 @@ export type WorkerEnv = Env & {
   API_CURSOR_SIGNING_KEY: string
   /** Bound together with a provider implementation; absent deployments fail auth email closed. */
   EMAIL_QUEUE?: Queue<QueuedEmailJob>
-  APP_ORIGIN?: string
+  APP_BASE_URL?: string
+  OIDC_GOOGLE_CLIENT_ID?: string
+  OIDC_GOOGLE_CLIENT_SECRET?: string
   /** Temporary Worker secret installed only while the operator workflow runs. */
   EZACTO_BOOTSTRAP_TOKEN?: string
 }
@@ -49,6 +55,8 @@ export interface RuntimeServices {
   passwordAuth: PasswordAuthService
   sessions: ApiSessionService
   emailLog: EmailLogStore
+  identities: OidcIdentityResolver
+  oidcTransactions: OidcTransactionStorePort
   authMailer?: AuthMailer
 }
 
@@ -84,6 +92,14 @@ export const createApp = (services?: RuntimeServices) =>
         }),
     installApp(app) {
       if (services !== undefined) {
+        installOidcRoutes(app, {
+          transactions: services.oidcTransactions,
+          identities: services.identities,
+          sessions: services.sessions,
+          provider: oidcProvider,
+          clientKey: (request) =>
+            request.headers.get('cf-connecting-ip') ?? 'unknown-client',
+        })
         installPasswordAuthRoutes(app, {
           service: services.passwordAuth,
           sessions: services.sessions,
@@ -211,6 +227,45 @@ export const createApp = (services?: RuntimeServices) =>
     },
   })
 
+const configuredCredential = (value: string | undefined): string | null => {
+  if (value === undefined) return null
+  const normalized = value.trim()
+  return normalized === '' ? null : normalized
+}
+
+const redirectOrigin = (env: WorkerEnv): string => {
+  if (env.ENVIRONMENT === 'dev') return 'https://ezacto.io'
+  if (env.ENVIRONMENT === 'prod') return 'https://app.example.com'
+  const configured = configuredCredential(env.APP_BASE_URL)
+  if (configured === null) {
+    throw new TypeError('APP_BASE_URL is required for OIDC outside live environments')
+  }
+  return configured
+}
+
+/** Application-owned provider registry. Request input never selects an issuer. */
+export const oidcProvider = (
+  key: string,
+  env: WorkerEnv,
+): OidcProviderConfig | null => {
+  if (key !== 'google') return null
+  const clientId = configuredCredential(env.OIDC_GOOGLE_CLIENT_ID)
+  const clientSecret = configuredCredential(env.OIDC_GOOGLE_CLIENT_SECRET)
+  if (clientId === null && clientSecret === null) return null
+  if (clientId === null || clientSecret === null) {
+    throw new TypeError('Google OIDC client id and secret must be configured together')
+  }
+  return {
+    issuer: 'https://accounts.google.com',
+    clientId,
+    clientSecret,
+    redirectOrigin: redirectOrigin(env),
+    clientAuthentication: 'client_secret_post',
+    idTokenSigningAlgorithm: 'RS256',
+    scopes: ['openid', 'email', 'profile'],
+  }
+}
+
 type BootstrapBody = Omit<InstanceBootstrapInput, 'token'>
 
 const bootstrapFields = [
@@ -295,5 +350,6 @@ const shellContentSecurityPolicy = [
   "img-src 'self' data:",
   "object-src 'none'",
   "base-uri 'none'",
+  "form-action 'self'",
   "frame-ancestors 'none'",
 ].join('; ')

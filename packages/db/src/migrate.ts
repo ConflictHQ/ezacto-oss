@@ -13,6 +13,7 @@ import { apiTokensMigration } from './migrations/0011_api_tokens.js'
 import { instanceBootstrapMigration } from './migrations/0012_instance_bootstrap.js'
 import { passwordAuthMigration } from './migrations/0013_password_auth.js'
 import { sessionsMigration } from './migrations/0014_sessions.js'
+import { oidcTransactionsMigration } from './migrations/0015_oidc_transactions.js'
 import { emailLogMigration } from './migrations/0016_email_log.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
@@ -1331,7 +1332,7 @@ const migrations = [
   { id: '0012_instance_bootstrap', statements: instanceBootstrapMigration },
   { id: '0013_password_auth', statements: passwordAuthMigration },
   { id: '0014_sessions', statements: sessionsMigration },
-  // 0015 is intentionally available to the concurrently planned OIDC transaction schema.
+  { id: '0015_oidc_transactions', statements: oidcTransactionsMigration },
   { id: '0016_email_log', statements: emailLogMigration },
 ] as const
 

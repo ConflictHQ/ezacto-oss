@@ -16,6 +16,13 @@ export {
 } from './email-log.js'
 export { createD1IdentityStore, type IdentityStore, type IdentityStoreOptions } from './identity.js'
 export {
+  createD1OidcTransactionStore,
+  type CreateOidcTransactionInput,
+  type OidcTransaction,
+  type OidcTransactionCreation,
+  type OidcTransactionStore,
+} from './oidc-transactions.js'
+export {
   createD1PasswordAuthService,
   AuthRateLimitError,
   FirstRunSignupUnavailableError,

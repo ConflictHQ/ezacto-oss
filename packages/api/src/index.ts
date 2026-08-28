@@ -60,6 +60,20 @@ export {
   type PasswordAuthService,
   type PasswordSessionIssuer,
 } from './password-auth.js'
+export {
+  installOidcRoutes,
+  OIDC_STATE_COOKIE_NAME,
+  OIDC_START_RATE_WINDOW_MS,
+  OIDC_TRANSACTION_TTL_MS,
+  OIDC_TRANSACTION_RETENTION_MS,
+  type OidcClientAuthentication,
+  type OidcIdentityResolver,
+  type OidcProviderConfig,
+  type OidcRouteOptions,
+  type OidcSessionIssuer,
+  type OidcTransaction,
+  type OidcTransactionStorePort,
+} from './oidc.js'
 export * from './resources/index.js'
 export { serializeMany, serializeOne, type Serializer } from './serializer.js'
 export {
