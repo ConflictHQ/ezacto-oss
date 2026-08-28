@@ -640,6 +640,14 @@ for (const [runtime, factory] of factories) {
       // identity domain: SQLite permits this schema-valid negative local id.
       await insertMoneyRetainer(database, -1)
       await insertMoneyRetainer(database, 70_001)
+      await database.run(
+        `INSERT INTO retainers (
+          id, harvest_id, client_id, state, denomination, amount_cents, seconds,
+          on_exhaustion, created_at, updated_at
+        ) VALUES (70002, 93000, 1, 'ongoing', 'money', 100000, NULL, 'block', ?, ?)`,
+        timestamp,
+        timestamp,
+      )
       await database.run(`UPDATE invoices SET retainer_id = 70001 WHERE id = 73000`)
 
       await expect(
@@ -657,10 +665,10 @@ for (const [runtime, factory] of factories) {
         ),
       ).toEqual([{ retainer_id: 70_001 }])
       expect(
-        await database.rows<{ count: number }>(
-          `SELECT count(*) AS count FROM retainers WHERE harvest_id = 93000`,
+        await database.rows<{ id: number }>(
+          `SELECT id FROM retainers WHERE harvest_id = 93000`,
         ),
-      ).toEqual([{ count: 0 }])
+      ).toEqual([{ id: 70_002 }])
       expect(await database.rows(`PRAGMA foreign_key_check`)).toEqual([])
     }, 20_000)
   })
