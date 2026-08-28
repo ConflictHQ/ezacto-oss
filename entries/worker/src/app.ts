@@ -1,5 +1,6 @@
 import {
   createApiApp,
+  generateOpenApiDocument,
   installGeneralResourceRoutes,
   installTrackedResourceRoutes,
   type ApiTokenService,
@@ -66,6 +67,12 @@ export const createApp = (services?: RuntimeServices) =>
         return context.json(body, 200, { 'cache-control': 'no-store' })
       })
 
+      app.get('/openapi/v1.json', (context) =>
+        context.json(generateOpenApiDocument(), 200, {
+          'cache-control': 'public, max-age=300',
+        }),
+      )
+
       app.get('/', (context) =>
         context.html(page(context.env.ENVIRONMENT, context.env.RELEASE), 200, {
           'cache-control': 'no-store',
@@ -117,6 +124,7 @@ function page(environment: string, release: string) {
     <dt>environment</dt><dd>${escapeHtml(environment)}</dd>
     <dt>release</dt><dd>${escapeHtml(short)}</dd>
     <dt>health</dt><dd><a href="/healthz">/healthz</a></dd>
+    <dt>contract</dt><dd><a href="/openapi/v1.json">/openapi/v1.json</a></dd>
   </dl>
 </main>
 </html>`
