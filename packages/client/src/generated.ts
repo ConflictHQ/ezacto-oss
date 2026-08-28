@@ -17,6 +17,51 @@ export type ErrorEnvelope = {
   "request_id": string;
 };
 
+export type SignupInput = {
+  "organization_name": string;
+  "first_name": string;
+  "last_name": string;
+  "email": string;
+  "password": string;
+};
+
+export type AuthTokenInput = {
+  "token": string;
+};
+
+export type PasswordSignInInput = {
+  "email": string;
+  "password": string;
+};
+
+export type EmailInput = {
+  "email": string;
+};
+
+export type PasswordResetInput = {
+  "token": string;
+  "password": string;
+};
+
+export type AuthAccepted = {
+  "status": "verification_sent" | "reset_requested";
+};
+
+export type AuthAcceptedEnvelope = {
+  "data": AuthAccepted;
+};
+
+export type AuthPrincipal = {
+  "status": "verified" | "authenticated" | "password_reset";
+  "user_id": number;
+  "profile": "member" | "project_manager" | "people_admin" | "accounting" | "executive_manager" | "administrator";
+  "manager_grants": Array<string>;
+};
+
+export type AuthPrincipalEnvelope = {
+  "data": AuthPrincipal;
+};
+
 export type Links = {
   "self": string;
 };
@@ -362,6 +407,46 @@ export class EzactoClient {
       );
     }
     return body as T;
+  }
+
+  async signup(args: { body: SignupInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<AuthAcceptedEnvelope> {
+    return this.request<AuthAcceptedEnvelope>("POST", "/auth/signup", {
+      body: args.body,
+      signal: args.signal,
+      headers: args.headers,
+    });
+  }
+
+  async verifyEmail(args: { body: AuthTokenInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<AuthPrincipalEnvelope> {
+    return this.request<AuthPrincipalEnvelope>("POST", "/auth/verify-email", {
+      body: args.body,
+      signal: args.signal,
+      headers: args.headers,
+    });
+  }
+
+  async signIn(args: { body: PasswordSignInInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<AuthPrincipalEnvelope> {
+    return this.request<AuthPrincipalEnvelope>("POST", "/auth/sign-in", {
+      body: args.body,
+      signal: args.signal,
+      headers: args.headers,
+    });
+  }
+
+  async requestPasswordReset(args: { body: EmailInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<AuthAcceptedEnvelope> {
+    return this.request<AuthAcceptedEnvelope>("POST", "/auth/password/forgot", {
+      body: args.body,
+      signal: args.signal,
+      headers: args.headers,
+    });
+  }
+
+  async resetPassword(args: { body: PasswordResetInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<AuthPrincipalEnvelope> {
+    return this.request<AuthPrincipalEnvelope>("POST", "/auth/password/reset", {
+      body: args.body,
+      signal: args.signal,
+      headers: args.headers,
+    });
   }
 
   async getApiRoot(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ServiceEnvelope> {

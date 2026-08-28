@@ -48,5 +48,12 @@ export {
   type CursorSource,
   type CursorWindow,
 } from './pagination.js'
+export {
+  installPasswordAuthRoutes,
+  type AuthDelivery,
+  type AuthMailer,
+  type PasswordAuthRouteOptions,
+  type PasswordAuthService,
+} from './password-auth.js'
 export * from './resources/index.js'
 export { serializeMany, serializeOne, type Serializer } from './serializer.js'

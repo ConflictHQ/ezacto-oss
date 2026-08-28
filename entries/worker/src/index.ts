@@ -5,7 +5,13 @@ const publicApp = createApp()
 
 const isDataRequest = (request: Request): boolean => {
   const path = new URL(request.url).pathname
-  return path === '/__ezacto/bootstrap' || path === '/api/v1' || path.startsWith('/api/v1/')
+  return (
+    path === '/__ezacto/bootstrap' ||
+    path === '/api/v1' ||
+    path.startsWith('/api/v1/') ||
+    path === '/auth' ||
+    path.startsWith('/auth/')
+  )
 }
 
 const unavailable = (): Response => {

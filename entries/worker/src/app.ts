@@ -3,11 +3,14 @@ import {
   ApiError,
   generateOpenApiDocument,
   installGeneralResourceRoutes,
+  installPasswordAuthRoutes,
   installTrackedResourceRoutes,
   readJsonBody,
   validationError,
   type ApiTokenService,
+  type AuthMailer,
   type GeneralResourceRouteOptions,
+  type PasswordAuthService,
   type TrackedResourceRepository,
 } from '@ezacto/api'
 import {
@@ -36,6 +39,8 @@ export interface RuntimeServices {
   generalResources: GeneralResourceRouteOptions['repository']
   trackedResources: TrackedResourceRepository
   cursorSigningKey: Uint8Array
+  passwordAuth: PasswordAuthService
+  authMailer?: AuthMailer
 }
 
 export type Health = {
@@ -69,6 +74,17 @@ export const createApp = (services?: RuntimeServices) =>
           },
         }),
     installApp(app) {
+      if (services !== undefined) {
+        installPasswordAuthRoutes(app, {
+          service: services.passwordAuth,
+          ...(services.authMailer === undefined
+            ? {}
+            : { mailer: services.authMailer }),
+          clientKey: (request) =>
+            request.headers.get('cf-connecting-ip') ?? 'unknown-client',
+        })
+      }
+
       app.get('/healthz', (context) => {
         const body: Health = {
           status: 'ok',
@@ -101,7 +117,10 @@ export const createApp = (services?: RuntimeServices) =>
             ? authorization.slice('Bearer '.length)
             : ''
           if (!(await secureTokenEqual(expected, presented))) {
-            context.header('www-authenticate', 'Bearer realm="ezacto-bootstrap"')
+            context.header(
+              'www-authenticate',
+              'Bearer realm="ezacto-bootstrap"',
+            )
             throw new ApiError({
               status: 401,
               code: 'authentication_required',
@@ -131,7 +150,8 @@ export const createApp = (services?: RuntimeServices) =>
               throw new ApiError({
                 status: 409,
                 code: 'bootstrap_state_conflict',
-                message: 'The instance identity state does not match this bootstrap.',
+                message:
+                  'The instance identity state does not match this bootstrap.',
               })
             }
             if (error instanceof RangeError || error instanceof TypeError) {
@@ -203,7 +223,10 @@ const parseBootstrapBody = async (
   const allowed = new Set<string>(bootstrapFields)
   const fields = [
     ...bootstrapFields
-      .filter((field) => typeof record[field] !== 'string' || record[field].trim() === '')
+      .filter(
+        (field) =>
+          typeof record[field] !== 'string' || record[field].trim() === '',
+      )
       .map((field) => ({
         field,
         code: 'required',
@@ -226,9 +249,14 @@ const parseBootstrapBody = async (
   }
 }
 
-const secureTokenEqual = async (expected: string, presented: string): Promise<boolean> => {
+const secureTokenEqual = async (
+  expected: string,
+  presented: string,
+): Promise<boolean> => {
   const digest = async (value: string): Promise<Uint8Array> =>
-    new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))
+    new Uint8Array(
+      await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)),
+    )
   const [left, right] = await Promise.all([digest(expected), digest(presented)])
   let difference = left.length ^ right.length
   for (let index = 0; index < left.length; index += 1) {

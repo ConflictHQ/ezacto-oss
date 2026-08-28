@@ -222,7 +222,7 @@ for (const [runtime, factory] of factories) {
         await database.rows<{ id: string }>(
           `SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`,
         ),
-      ).toEqual([{ id: '0012_instance_bootstrap' }])
+      ).toEqual([{ id: '0013_password_auth' }])
       await database.close()
       database = await factory(false)
       await installThrough0005(database)
@@ -665,9 +665,7 @@ for (const [runtime, factory] of factories) {
         ),
       ).toEqual([{ retainer_id: 70_001 }])
       expect(
-        await database.rows<{ id: number }>(
-          `SELECT id FROM retainers WHERE harvest_id = 93000`,
-        ),
+        await database.rows<{ id: number }>(`SELECT id FROM retainers WHERE harvest_id = 93000`),
       ).toEqual([{ id: 70_002 }])
       expect(await database.rows(`PRAGMA foreign_key_check`)).toEqual([])
     }, 20_000)

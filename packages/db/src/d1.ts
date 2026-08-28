@@ -12,6 +12,15 @@ export {
 export { createGeneralResourceRepository } from './general-resources.js'
 export { createD1IdentityStore, type IdentityStore, type IdentityStoreOptions } from './identity.js'
 export {
+  createD1PasswordAuthService,
+  AuthRateLimitError,
+  FirstRunSignupUnavailableError,
+  InvalidAuthTokenError,
+  type AuthDelivery,
+  type PasswordAuthService,
+  type PasswordAuthServiceOptions,
+} from './password-auth.js'
+export {
   bootstrapInstanceD1,
   InstanceBootstrapConflictError,
   type InstanceBootstrapInput,

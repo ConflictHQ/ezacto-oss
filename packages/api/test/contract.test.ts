@@ -5,8 +5,11 @@ import {
   createApiApp,
   generateOpenApiDocument,
   installGeneralResourceRoutes,
+  installPasswordAuthRoutes,
   installTrackedResourceRoutes,
+  type AuthMailer,
   type ApiTokenService,
+  type PasswordAuthService,
   type TrackedResourceRepository,
 } from "../src/index.js";
 
@@ -19,14 +22,23 @@ const trackedRepository = new Proxy(
   {},
   { get: () => unavailable },
 ) as TrackedResourceRepository;
-const tokens = new Proxy(
+const tokens = new Proxy({}, { get: () => unavailable }) as ApiTokenService;
+const passwordAuth = new Proxy(
   {},
   { get: () => unavailable },
-) as ApiTokenService;
+) as PasswordAuthService;
+const authMailer = new Proxy({}, { get: () => unavailable }) as AuthMailer;
 
 const documentedApp = () =>
   createApiApp({
     authentication: { tokens },
+    installApp: (app) => {
+      installPasswordAuthRoutes(app, {
+        service: passwordAuth,
+        mailer: authMailer,
+        clientKey: () => "contract-fixture",
+      });
+    },
     installApi: (api) => {
       installGeneralResourceRoutes(api, {
         repository: generalRepository,
@@ -48,10 +60,11 @@ const documentedApp = () =>
 
 describe("OpenAPI contract", () => {
   it("[api] documents every mounted native API method exactly once", () => {
-    const mounted = documentedApp().routes
-      .filter(
+    const mounted = documentedApp()
+      .routes.filter(
         (route) =>
-          route.method !== "ALL" && route.path.startsWith("/api/v1"),
+          route.method !== "ALL" &&
+          (route.path.startsWith("/api/v1") || route.path.startsWith("/auth")),
       )
       .map((route) => `${route.method.toLowerCase()} ${route.path}`)
       .sort();

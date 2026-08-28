@@ -19,6 +19,7 @@ export interface ApiContractOperation {
   requestSchema?: string;
   requestRequired?: boolean;
   sessionOnly?: boolean;
+  public?: boolean;
   parameters?: readonly ApiContractParameter[];
   generateClient?: boolean;
 }
@@ -206,17 +207,18 @@ const rateOperations = (): ApiContractOperation[] =>
     const tag = "user-rates";
     const identifiers = [path("userId")];
     const memberIdentifiers = [path("userId"), path("id")];
-    const rejected = (method: "patch" | "delete", route: string) => ({
-      method,
-      path: route,
-      operationId: `${method}${title}${route === collection ? "Collection" : ""}NotAllowed`,
-      summary: `${title} records are append-only`,
-      tag,
-      responseStatus: 405,
-      responseSchema: "ErrorEnvelope",
-      parameters: route === collection ? identifiers : memberIdentifiers,
-      generateClient: false,
-    }) satisfies ApiContractOperation;
+    const rejected = (method: "patch" | "delete", route: string) =>
+      ({
+        method,
+        path: route,
+        operationId: `${method}${title}${route === collection ? "Collection" : ""}NotAllowed`,
+        summary: `${title} records are append-only`,
+        tag,
+        responseStatus: 405,
+        responseSchema: "ErrorEnvelope",
+        parameters: route === collection ? identifiers : memberIdentifiers,
+        generateClient: false,
+      }) satisfies ApiContractOperation;
     return [
       {
         method: "get",
@@ -376,6 +378,66 @@ const expenseOperations: ApiContractOperation[] = [
 
 export const apiContractOperations: readonly ApiContractOperation[] = [
   {
+    method: "post",
+    path: "/auth/signup",
+    operationId: "signup",
+    summary: "Create the first owner and send email verification",
+    tag: "authentication",
+    responseStatus: 202,
+    responseSchema: "AuthAcceptedEnvelope",
+    requestSchema: "SignupInput",
+    requestRequired: true,
+    public: true,
+  },
+  {
+    method: "post",
+    path: "/auth/verify-email",
+    operationId: "verifyEmail",
+    summary: "Verify an email address",
+    tag: "authentication",
+    responseStatus: 200,
+    responseSchema: "AuthPrincipalEnvelope",
+    requestSchema: "AuthTokenInput",
+    requestRequired: true,
+    public: true,
+  },
+  {
+    method: "post",
+    path: "/auth/sign-in",
+    operationId: "signIn",
+    summary: "Authenticate a verified email and password",
+    tag: "authentication",
+    responseStatus: 200,
+    responseSchema: "AuthPrincipalEnvelope",
+    requestSchema: "PasswordSignInInput",
+    requestRequired: true,
+    public: true,
+  },
+  {
+    method: "post",
+    path: "/auth/password/forgot",
+    operationId: "requestPasswordReset",
+    summary: "Request a password-reset email",
+    tag: "authentication",
+    responseStatus: 202,
+    responseSchema: "AuthAcceptedEnvelope",
+    requestSchema: "EmailInput",
+    requestRequired: true,
+    public: true,
+  },
+  {
+    method: "post",
+    path: "/auth/password/reset",
+    operationId: "resetPassword",
+    summary: "Consume a password-reset token",
+    tag: "authentication",
+    responseStatus: 200,
+    responseSchema: "AuthPrincipalEnvelope",
+    requestSchema: "PasswordResetInput",
+    requestRequired: true,
+    public: true,
+  },
+  {
     method: "get",
     path: "/api/v1",
     operationId: "getApiRoot",
@@ -503,6 +565,98 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       error: reference("ErrorDetail"),
       request_id: stringSchema,
     },
+    additionalProperties: false,
+  },
+  SignupInput: {
+    type: "object",
+    required: [
+      "organization_name",
+      "first_name",
+      "last_name",
+      "email",
+      "password",
+    ],
+    properties: {
+      organization_name: stringSchema,
+      first_name: stringSchema,
+      last_name: stringSchema,
+      email: { type: "string", format: "email" },
+      password: stringSchema,
+    },
+    additionalProperties: false,
+  },
+  AuthTokenInput: {
+    type: "object",
+    required: ["token"],
+    properties: { token: stringSchema },
+    additionalProperties: false,
+  },
+  PasswordSignInInput: {
+    type: "object",
+    required: ["email", "password"],
+    properties: {
+      email: { type: "string", format: "email" },
+      password: stringSchema,
+    },
+    additionalProperties: false,
+  },
+  EmailInput: {
+    type: "object",
+    required: ["email"],
+    properties: { email: { type: "string", format: "email" } },
+    additionalProperties: false,
+  },
+  PasswordResetInput: {
+    type: "object",
+    required: ["token", "password"],
+    properties: { token: stringSchema, password: stringSchema },
+    additionalProperties: false,
+  },
+  AuthAccepted: {
+    type: "object",
+    required: ["status"],
+    properties: {
+      status: {
+        type: "string",
+        enum: ["verification_sent", "reset_requested"],
+      },
+    },
+    additionalProperties: false,
+  },
+  AuthAcceptedEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("AuthAccepted") },
+    additionalProperties: false,
+  },
+  AuthPrincipal: {
+    type: "object",
+    required: ["status", "user_id", "profile", "manager_grants"],
+    properties: {
+      status: {
+        type: "string",
+        enum: ["verified", "authenticated", "password_reset"],
+      },
+      user_id: integerSchema,
+      profile: {
+        type: "string",
+        enum: [
+          "member",
+          "project_manager",
+          "people_admin",
+          "accounting",
+          "executive_manager",
+          "administrator",
+        ],
+      },
+      manager_grants: { type: "array", items: stringSchema },
+    },
+    additionalProperties: false,
+  },
+  AuthPrincipalEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("AuthPrincipal") },
     additionalProperties: false,
   },
   Links: {
@@ -717,8 +871,14 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       rounded_seconds: { type: "integer", minimum: 0 },
       is_running: booleanSchema,
       timer_started_at: nullable(timestampSchema),
-      started_time: nullable({ type: "string", pattern: "^[0-2][0-9]:[0-5][0-9]$" }),
-      ended_time: nullable({ type: "string", pattern: "^[0-2][0-9]:[0-5][0-9]$" }),
+      started_time: nullable({
+        type: "string",
+        pattern: "^[0-2][0-9]:[0-5][0-9]$",
+      }),
+      ended_time: nullable({
+        type: "string",
+        pattern: "^[0-2][0-9]:[0-5][0-9]$",
+      }),
       notes: nullable(stringSchema),
       billable: booleanSchema,
       budgeted: booleanSchema,
@@ -732,7 +892,10 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       locked_reason_code: nullable(stringSchema),
       locked_reason: nullable(stringSchema),
       external_ref: nullable({ type: "object", additionalProperties: true }),
-      calendar_event_ref: nullable({ type: "object", additionalProperties: true }),
+      calendar_event_ref: nullable({
+        type: "object",
+        additionalProperties: true,
+      }),
       billable_rate_cents: nullable({ type: "integer", minimum: 0 }),
       cost_rate_cents: nullable({ type: "integer", minimum: 0 }),
       created_at: timestampSchema,
@@ -753,7 +916,10 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       notes: nullable(stringSchema),
       budgeted: booleanSchema,
       external_ref: nullable({ type: "object", additionalProperties: true }),
-      calendar_event_ref: nullable({ type: "object", additionalProperties: true }),
+      calendar_event_ref: nullable({
+        type: "object",
+        additionalProperties: true,
+      }),
     },
     additionalProperties: false,
   },
@@ -770,7 +936,10 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       notes: nullable(stringSchema),
       budgeted: booleanSchema,
       external_ref: nullable({ type: "object", additionalProperties: true }),
-      calendar_event_ref: nullable({ type: "object", additionalProperties: true }),
+      calendar_event_ref: nullable({
+        type: "object",
+        additionalProperties: true,
+      }),
     },
     additionalProperties: false,
   },
@@ -888,15 +1057,20 @@ export const generateOpenApiDocument = (): Record<string, unknown> => {
       "401": { $ref: "#/components/responses/AuthenticationRequired" },
       "403": { $ref: "#/components/responses/InsufficientPermission" },
       "404": { $ref: "#/components/responses/ResourceNotFound" },
+      "409": { $ref: "#/components/responses/StateConflict" },
       "422": { $ref: "#/components/responses/ValidationFailed" },
+      "429": { $ref: "#/components/responses/RateLimited" },
+      "503": { $ref: "#/components/responses/ServiceUnavailable" },
     };
     const entry: Record<string, unknown> = {
       operationId: operation.operationId,
       summary: operation.summary,
       tags: [operation.tag],
-      security: operation.sessionOnly
-        ? [{ cookieSession: [] }]
-        : [{ bearerAuth: [] }, { cookieSession: [] }],
+      security: operation.public
+        ? []
+        : operation.sessionOnly
+          ? [{ cookieSession: [] }]
+          : [{ bearerAuth: [] }, { cookieSession: [] }],
       responses,
       "x-ezacto-runtime-path": operation.path,
       "x-ezacto-generate-client": operation.generateClient !== false,
@@ -939,7 +1113,10 @@ export const generateOpenApiDocument = (): Record<string, unknown> => {
         AuthenticationRequired: errorResponse("Authentication required"),
         InsufficientPermission: errorResponse("Insufficient permission"),
         ResourceNotFound: errorResponse("Resource not found"),
+        StateConflict: errorResponse("State conflict"),
         ValidationFailed: errorResponse("Validation failed"),
+        RateLimited: errorResponse("Rate limited"),
+        ServiceUnavailable: errorResponse("Service unavailable"),
       },
       schemas: apiContractSchemas,
     },

@@ -11,6 +11,296 @@
     }
   ],
   "paths": {
+    "/auth/signup": {
+      "post": {
+        "operationId": "signup",
+        "summary": "Create the first owner and send email verification",
+        "tags": [
+          "authentication"
+        ],
+        "security": [],
+        "responses": {
+          "202": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthAcceptedEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/auth/signup",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignupInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/verify-email": {
+      "post": {
+        "operationId": "verifyEmail",
+        "summary": "Verify an email address",
+        "tags": [
+          "authentication"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthPrincipalEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/auth/verify-email",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthTokenInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/sign-in": {
+      "post": {
+        "operationId": "signIn",
+        "summary": "Authenticate a verified email and password",
+        "tags": [
+          "authentication"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthPrincipalEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/auth/sign-in",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordSignInInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/password/forgot": {
+      "post": {
+        "operationId": "requestPasswordReset",
+        "summary": "Request a password-reset email",
+        "tags": [
+          "authentication"
+        ],
+        "security": [],
+        "responses": {
+          "202": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthAcceptedEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/auth/password/forgot",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/password/reset": {
+      "post": {
+        "operationId": "resetPassword",
+        "summary": "Consume a password-reset token",
+        "tags": [
+          "authentication"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthPrincipalEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/auth/password/reset",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordResetInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1": {
       "get": {
         "operationId": "getApiRoot",
@@ -49,8 +339,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1",
@@ -95,8 +394,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/whoami",
@@ -138,8 +446,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/api-tokens",
@@ -179,8 +496,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/api-tokens",
@@ -232,8 +558,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/api-tokens/:tokenId",
@@ -289,8 +624,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/clients",
@@ -388,8 +732,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/clients",
@@ -444,8 +797,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/clients/:id",
@@ -499,8 +861,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/clients/:id",
@@ -557,8 +928,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/clients/:id",
@@ -614,8 +994,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/contacts",
@@ -696,8 +1085,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/contacts",
@@ -752,8 +1150,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/contacts/:id",
@@ -807,8 +1214,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/contacts/:id",
@@ -865,8 +1281,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/contacts/:id",
@@ -922,8 +1347,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/projects",
@@ -1012,8 +1446,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/projects",
@@ -1068,8 +1511,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/projects/:id",
@@ -1123,8 +1575,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/projects/:id",
@@ -1181,8 +1642,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/projects/:id",
@@ -1238,8 +1708,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/tasks",
@@ -1319,8 +1798,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/tasks",
@@ -1375,8 +1863,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/tasks/:id",
@@ -1430,8 +1927,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/tasks/:id",
@@ -1488,8 +1994,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/tasks/:id",
@@ -1545,8 +2060,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/task-assignments",
@@ -1644,8 +2168,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/task-assignments",
@@ -1700,8 +2233,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/task-assignments/:id",
@@ -1755,8 +2297,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/task-assignments/:id",
@@ -1813,8 +2364,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/task-assignments/:id",
@@ -1870,8 +2430,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/user-assignments",
@@ -1966,8 +2535,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/user-assignments",
@@ -2022,8 +2600,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/user-assignments/:id",
@@ -2074,8 +2661,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/user-assignments/:id",
@@ -2129,8 +2725,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/user-assignments/:id",
@@ -2186,8 +2791,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/users",
@@ -2288,8 +2902,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/users",
@@ -2344,8 +2967,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/users/:id",
@@ -2396,8 +3028,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/users/:id",
@@ -2451,8 +3092,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/users/:id",
@@ -2508,8 +3158,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/roles",
@@ -2569,8 +3228,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/roles",
@@ -2625,8 +3293,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/roles/:id",
@@ -2677,8 +3354,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/roles/:id",
@@ -2732,8 +3418,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/roles/:id",
@@ -2789,8 +3484,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/users/:userId/billable-rates",
@@ -2859,8 +3563,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/users/:userId/billable-rates",
@@ -2924,8 +3637,17 @@
               }
             }
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/users/:userId/billable-rates",
@@ -2979,8 +3701,17 @@
               }
             }
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/users/:userId/billable-rates",
@@ -3036,8 +3767,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/users/:userId/billable-rates/:id",
@@ -3100,8 +3840,17 @@
               }
             }
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/users/:userId/billable-rates/:id",
@@ -3164,8 +3913,17 @@
               }
             }
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/users/:userId/billable-rates/:id",
@@ -3230,8 +3988,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/users/:userId/cost-rates",
@@ -3300,8 +4067,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/users/:userId/cost-rates",
@@ -3365,8 +4141,17 @@
               }
             }
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/users/:userId/cost-rates",
@@ -3420,8 +4205,17 @@
               }
             }
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/users/:userId/cost-rates",
@@ -3477,8 +4271,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/users/:userId/cost-rates/:id",
@@ -3541,8 +4344,17 @@
               }
             }
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/users/:userId/cost-rates/:id",
@@ -3605,8 +4417,17 @@
               }
             }
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/users/:userId/cost-rates/:id",
@@ -3671,8 +4492,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/time-entries",
@@ -3869,8 +4699,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/time-entries",
@@ -3925,8 +4764,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/time-entries/:id",
@@ -3980,8 +4828,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/time-entries/:id",
@@ -4045,8 +4902,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/time-entries/:id",
@@ -4102,8 +4968,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/time-entries/:id/stop",
@@ -4159,8 +5034,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/time-entries/:id/restart",
@@ -4216,8 +5100,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/expenses",
@@ -4412,8 +5305,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/expenses",
@@ -4468,8 +5370,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/expenses/:id",
@@ -4523,8 +5434,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/expenses/:id",
@@ -4588,8 +5508,17 @@
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "x-ezacto-runtime-path": "/api/v1/expenses/:id",
@@ -4661,8 +5590,38 @@
           }
         }
       },
+      "StateConflict": {
+        "description": "State conflict",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
       "ValidationFailed": {
         "description": "Validation failed",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Rate limited",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "ServiceUnavailable": {
+        "description": "Service unavailable",
         "content": {
           "application/json": {
             "schema": {
@@ -4728,6 +5687,174 @@
           },
           "request_id": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SignupInput": {
+        "type": "object",
+        "required": [
+          "organization_name",
+          "first_name",
+          "last_name",
+          "email",
+          "password"
+        ],
+        "properties": {
+          "organization_name": {
+            "type": "string"
+          },
+          "first_name": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "password": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuthTokenInput": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PasswordSignInInput": {
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "password": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EmailInput": {
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PasswordResetInput": {
+        "type": "object",
+        "required": [
+          "token",
+          "password"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuthAccepted": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "verification_sent",
+              "reset_requested"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuthAcceptedEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AuthAccepted"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuthPrincipal": {
+        "type": "object",
+        "required": [
+          "status",
+          "user_id",
+          "profile",
+          "manager_grants"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "verified",
+              "authenticated",
+              "password_reset"
+            ]
+          },
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "profile": {
+            "type": "string",
+            "enum": [
+              "member",
+              "project_manager",
+              "people_admin",
+              "accounting",
+              "executive_manager",
+              "administrator"
+            ]
+          },
+          "manager_grants": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuthPrincipalEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AuthPrincipal"
           }
         },
         "additionalProperties": false

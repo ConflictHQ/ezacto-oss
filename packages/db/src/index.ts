@@ -15,6 +15,7 @@ export {
 } from './invoice-payments.js'
 export * from './migrate.js'
 export * from './operations.js'
+export * from './password-auth.js'
 export * from './rate-resolver.js'
 export * from './recurring-invoices.js'
 export * from './retainers.js'
