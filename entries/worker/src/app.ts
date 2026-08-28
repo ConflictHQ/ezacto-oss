@@ -1,13 +1,8 @@
-import { Hono } from 'hono'
+import { createApiApp } from '@ezacto/api'
 
-/**
- * Bindings the entry needs today. D1/R2/Queues land with the stories that use
- * them (D17) — an unused binding is a lie in the config, so they are not here yet.
- */
+/** Worker bindings stay entry-owned; the shared API package is runtime-agnostic. */
 export type Env = {
-  /** Which deployment this is: `dev` or `prod`. Set per environment in wrangler.jsonc. */
   ENVIRONMENT: string
-  /** Git commit this Worker was built from. CI passes the real SHA at deploy. */
   RELEASE: string
 }
 
@@ -18,30 +13,26 @@ export type Health = {
   release: string
 }
 
-export function createApp() {
-  const app = new Hono<{ Bindings: Env }>()
+export const createApp = () =>
+  createApiApp<Env>({
+    installApp(app) {
+      app.get('/healthz', (context) => {
+        const body: Health = {
+          status: 'ok',
+          service: 'ezacto',
+          environment: context.env.ENVIRONMENT,
+          release: context.env.RELEASE,
+        }
+        return context.json(body, 200, { 'cache-control': 'no-store' })
+      })
 
-  app.get('/healthz', (c) => {
-    const body: Health = {
-      status: 'ok',
-      service: 'ezacto',
-      environment: c.env.ENVIRONMENT,
-      release: c.env.RELEASE,
-    }
-    // Never cached: the point of this endpoint is to say what is running *now*.
-    return c.json(body, 200, { 'cache-control': 'no-store' })
+      app.get('/', (context) =>
+        context.html(page(context.env.ENVIRONMENT, context.env.RELEASE), 200, {
+          'cache-control': 'no-store',
+        }),
+      )
+    },
   })
-
-  app.get('/', (c) =>
-    c.html(
-      page(c.env.ENVIRONMENT, c.env.RELEASE),
-      200,
-      { 'cache-control': 'no-store' },
-    ),
-  )
-
-  return app
-}
 
 /**
  * The instance-identity page. It states what this deployment is and what commit
