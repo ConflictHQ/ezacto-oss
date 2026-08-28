@@ -21,6 +21,11 @@
       "name": "ezacto",
       "routes": [{ "pattern": "app.example.com", "custom_domain": true }],
       "vars": { "ENVIRONMENT": "prod", "RELEASE": "unknown" },
+      "d1_databases": [{
+        "binding": "DB",
+        "database_name": "ezacto-prod",
+        "database_id": "00000000-0000-0000-0000-000000000000"
+      }],
       "workers_dev": false,
       "observability": { "enabled": true }
     },
@@ -30,6 +35,11 @@
       "name": "ezacto-dev",
       "routes": [{ "pattern": "ezacto.io", "custom_domain": true }],
       "vars": { "ENVIRONMENT": "dev", "RELEASE": "unknown" },
+      "d1_databases": [{
+        "binding": "DB",
+        "database_name": "ezacto-dev",
+        "database_id": "00000000-0000-0000-0000-000000000000"
+      }],
       "workers_dev": false,
       "observability": { "enabled": true }
     }
