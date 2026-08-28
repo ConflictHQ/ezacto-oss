@@ -1,4 +1,6 @@
 import { createApiTokenStore, createD1Database } from '@ezacto/db/d1'
+import { EzactoClient } from '@ezacto/client'
+import { createShellApi, loadShellSnapshot, quickAdd } from '@ezacto/web'
 import { build } from 'esbuild'
 import { Miniflare } from 'miniflare'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -126,7 +128,7 @@ beforeAll(async () => {
     await store.issue({
       userId: 2,
       name: 'Runtime fetch test',
-      scopes: ['projects:read', 'time_entries:read'],
+      scopes: ['projects:read', 'time_entries:read', 'time_entries:write'],
     })
   ).token
   expect(await store.authenticate(bearer)).toMatchObject({ profile: 'member' })
@@ -193,6 +195,48 @@ describe('Worker D1 runtime composition', () => {
     expect(project.data).toMatchObject({ id: 1, name: 'Runtime Project' })
     expect(project.data).not.toHaveProperty('hourly_rate_cents')
   })
+
+  it('[e2e:quick-add] sends the shell command through the generated client and refreshes D1 state', async () => {
+    const client = new EzactoClient({
+      baseUrl: 'https://worker.test',
+      token: bearer,
+      fetch: workerFetch,
+    })
+    const api = createShellApi(client)
+
+    const created = await quickAdd(
+      api,
+      'log 2h run runtimetask shell acceptance',
+      new Date('2026-08-28T12:00:00.000Z'),
+    )
+    const snapshot = await loadShellSnapshot(
+      api,
+      new Date('2026-08-28T12:00:00.000Z'),
+    )
+
+    expect(created).toMatchObject({
+      user_id: 2,
+      project_id: 1,
+      task_id: 1,
+      spent_date: '2026-08-28',
+      seconds: 7_200,
+      notes: 'shell acceptance',
+    })
+    expect(snapshot.entries).toContainEqual(
+      expect.objectContaining({
+        id: created.id,
+        project_label: 'Runtime Project',
+        task_label: 'Runtime Task',
+        seconds: 7_200,
+      }),
+    )
+    expect(
+      await database
+        .prepare('SELECT seconds, notes FROM time_entries WHERE id = ?')
+        .bind(created.id)
+        .first(),
+    ).toEqual({ seconds: 7_200, notes: 'shell acceptance' })
+  })
 })
 
 describe('cursor signing binding', () => {
@@ -209,4 +253,17 @@ function encodeBase64Url(bytes: Uint8Array): string {
   let binary = ''
   for (const byte of bytes) binary += String.fromCharCode(byte)
   return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
+}
+
+const workerFetch: typeof globalThis.fetch = async (input, init) => {
+  const outbound = new Request(input, init)
+  const body =
+    outbound.method === 'GET' || outbound.method === 'HEAD'
+      ? undefined
+      : await outbound.arrayBuffer()
+  return request(outbound.url, {
+    method: outbound.method,
+    headers: outbound.headers,
+    ...(body === undefined ? {} : { body }),
+  })
 }

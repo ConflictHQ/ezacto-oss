@@ -107,7 +107,7 @@ describe('S-1 through S-5 application shell', () => {
     ).toBe(90)
   })
 
-  it('[e2e:quick-add] creates a real entry and the refreshed week snapshot reflects it', async () => {
+  it('[unit] creates an entry and the refreshed week snapshot reflects it', async () => {
     const api = memoryApi()
     expect(parseQuickAdd('log 2h northpeak devops')).toEqual({
       seconds: 7_200,
