@@ -1,12 +1,15 @@
 {
-  "name": "@ezacto/db",
+  "name": "@ezacto/core",
   "version": "0.0.0",
-  "description": "Ezacto's shared Drizzle SQLite schema and D1/container adapters.",
+  "description": "Ezacto's pure domain logic and invariant-preserving resolvers.",
   "type": "module",
-  "files": ["dist"],
+  "files": ["dist", "src"],
   "exports": {
-    ".": "./dist/index.js",
-    "./schema": "./dist/schema.js"
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
   },
   "engines": { "node": ">=22" },
   "scripts": {
@@ -16,18 +19,10 @@
     "build": "tsc -p tsconfig.build.json",
     "prepack": "npm run build"
   },
-  "dependencies": {
-    "@ezacto/core": "0.0.0",
-    "better-sqlite3": "^13.0.3",
-    "drizzle-orm": "^0.45.2"
-  },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260826.1",
     "@eslint/js": "^10.0.1",
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.0",
     "eslint": "^10.9.1",
-    "miniflare": "^4.20260730.0",
     "prettier": "^3.9.6",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.68.0",
