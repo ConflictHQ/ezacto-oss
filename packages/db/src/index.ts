@@ -1,5 +1,13 @@
 export * from './adapters.js'
-export * from './invoice-payments.js'
+export * from './invoice-state.js'
+export {
+  canonicalizeHarvestPaymentDates,
+  percentageToRatePpm,
+  reemitHarvestPaymentDates,
+  type CanonicalPaymentDates,
+  type HarvestPaymentDateEvidence,
+  type InvoicePaymentOption,
+} from './invoice-payments.js'
 export * from './migrate.js'
 export * from './operations.js'
 export * from './rate-resolver.js'

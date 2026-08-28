@@ -42,6 +42,11 @@ export type InvoicePaymentOption =
   | 'bill_com_checkout'
   | 'bill_com_transfer'
 
+export interface InvoiceReminderPolicy {
+  first_after_days: number
+  every_days: number
+}
+
 export const organizations = sqliteTable(
   'organizations',
   {
@@ -57,7 +62,9 @@ export const organizations = sqliteTable(
     timeFormat: text('time_format', { enum: ['decimal', 'hours_minutes'] })
       .notNull()
       .default('decimal'),
-    clock: text('clock', { enum: ['12h', '24h'] }).notNull().default('12h'),
+    clock: text('clock', { enum: ['12h', '24h'] })
+      .notNull()
+      .default('12h'),
     dateFormat: text('date_format').notNull().default('%Y-%m-%d'),
     currency: text('currency').notNull().default('USD'),
     currencyCodeDisplay: text('currency_code_display', {
@@ -74,8 +81,10 @@ export const organizations = sqliteTable(
     thousandsSeparator: text('thousands_separator').notNull().default(','),
     weeklyCapacityDefault: integer('weekly_capacity_default').notNull().default(126_000),
     fiscalYearStartMonth: integer('fiscal_year_start_month').notNull().default(1),
-    timesheetDeadline: text('timesheet_deadline', { mode: 'json' })
-      .$type<{ day: string; time: string } | null>(),
+    timesheetDeadline: text('timesheet_deadline', { mode: 'json' }).$type<{
+      day: string
+      time: string
+    } | null>(),
     reminderPolicy: text('reminder_policy', { mode: 'json' }).$type<Record<string, unknown>>(),
     autoLock: integer('auto_lock', { mode: 'boolean' }).notNull().default(false),
     autoSubmit: integer('auto_submit', { mode: 'boolean' }).notNull().default(false),
@@ -94,10 +103,7 @@ export const organizations = sqliteTable(
   },
   (table) => [
     check('organizations_singleton', sql`${table.id} = 1`),
-    check(
-      'organizations_fiscal_month',
-      sql`${table.fiscalYearStartMonth} between 1 and 12`,
-    ),
+    check('organizations_fiscal_month', sql`${table.fiscalYearStartMonth} between 1 and 12`),
     check('organizations_capacity_nonnegative', sql`${table.weeklyCapacityDefault} >= 0`),
     check('organizations_modules_json', sql`json_valid(${table.modules})`),
     check(
@@ -149,15 +155,14 @@ export const users = sqliteTable(
   },
   (table) => [
     uniqueIndex('users_harvest_id_unique').on(table.harvestId),
-    uniqueIndex('users_single_owner').on(table.isOwner).where(sql`${table.isOwner} = 1`),
+    uniqueIndex('users_single_owner')
+      .on(table.isOwner)
+      .where(sql`${table.isOwner} = 1`),
     check('users_capacity_nonnegative', sql`${table.weeklyCapacity} >= 0`),
     check('users_manager_grants_json', sql`json_valid(${table.managerGrants})`),
     check('users_is_contractor_boolean', sql`${table.isContractor} in (0, 1)`),
     check('users_is_active_boolean', sql`${table.isActive} in (0, 1)`),
-    check(
-      'users_future_projects_boolean',
-      sql`${table.hasAccessToAllFutureProjects} in (0, 1)`,
-    ),
+    check('users_future_projects_boolean', sql`${table.hasAccessToAllFutureProjects} in (0, 1)`),
     check('users_is_owner_boolean', sql`${table.isOwner} in (0, 1)`),
     check('users_saml_exempt_boolean', sql`${table.samlExempt} in (0, 1)`),
     check(
@@ -300,15 +305,11 @@ const rateColumns = () => ({
   updatedAt: text('updated_at').notNull(),
 })
 
-export const userBillableRates = sqliteTable(
-  'user_billable_rates',
-  rateColumns(),
-  (table) => [
-    uniqueIndex('user_billable_rates_user_start_unique').on(table.userId, table.startDate),
-    index('user_billable_rates_user_id').on(table.userId),
-    check('user_billable_rates_amount_nonnegative', sql`${table.amountCents} >= 0`),
-  ],
-)
+export const userBillableRates = sqliteTable('user_billable_rates', rateColumns(), (table) => [
+  uniqueIndex('user_billable_rates_user_start_unique').on(table.userId, table.startDate),
+  index('user_billable_rates_user_id').on(table.userId),
+  check('user_billable_rates_amount_nonnegative', sql`${table.amountCents} >= 0`),
+])
 
 export const userCostRates = sqliteTable('user_cost_rates', rateColumns(), (table) => [
   uniqueIndex('user_cost_rates_user_start_unique').on(table.userId, table.startDate),
@@ -509,6 +510,11 @@ export const invoices = sqliteTable(
     state: text('state', { enum: ['draft', 'open', 'paid', 'closed'] })
       .notNull()
       .default('draft'),
+    version: integer('version').notNull().default(0),
+    closeReason: text('close_reason', {
+      enum: ['cancelled', 'written_off', 'source_closed'],
+    }),
+    closeWriteOffCents: integer('close_write_off_cents').notNull().default(0),
     sentAt: text('sent_at'),
     paidAt: text('paid_at'),
     paidDate: text('paid_date'),
@@ -519,7 +525,7 @@ export const invoices = sqliteTable(
       .notNull()
       .default(sql`lower(hex(randomblob(32)))`),
     projectId: integer('project_id').references(() => projects.id, { onDelete: 'restrict' }),
-    reminderPolicy: text('reminder_policy', { mode: 'json' }).$type<Record<string, unknown>>(),
+    reminderPolicy: text('reminder_policy', { mode: 'json' }).$type<InvoiceReminderPolicy>(),
     taxRatePpm: integer('tax_rate_ppm'),
     tax2RatePpm: integer('tax2_rate_ppm'),
     discountRatePpm: integer('discount_rate_ppm'),
@@ -579,6 +585,29 @@ export const invoices = sqliteTable(
     check('invoices_created_at_canonical', canonicalTimestamp(table.createdAt)),
     check('invoices_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
     check(
+      'invoices_version_safe_integer',
+      sql`${table.version} between 0 and 9007199254740991`,
+    ),
+    check(
+      'invoices_closure_shape',
+      sql`(${table.state} = 'closed') = (${table.closeReason} is not null)`,
+    ),
+    check(
+      'invoices_close_write_off_shape',
+      sql`(${table.closeReason} = 'written_off'
+          and ${table.closeWriteOffCents} between 1 and ${table.writtenOffCents})
+        or (${table.closeReason} is not 'written_off' and ${table.closeWriteOffCents} = 0)`,
+    ),
+    check(
+      'invoices_paid_timestamp_shape',
+      sql`(${table.state} = 'paid'
+          and ((${table.paidAt} is null) <> (${table.paidDate} is null)))
+        or (${table.state} in ('draft','open')
+          and ${table.paidAt} is null and ${table.paidDate} is null)
+        or (${table.state} = 'closed'
+          and not (${table.paidAt} is not null and ${table.paidDate} is not null))`,
+    ),
+    check(
       'invoices_tax_rate_ppm_range',
       sql`${table.taxRatePpm} is null or ${table.taxRatePpm} between 0 and 1000000`,
     ),
@@ -598,10 +627,7 @@ export const invoices = sqliteTable(
       'invoices_discount_amount_bound',
       sql`abs(${table.discountAmountCents}) <= 9000000000000`,
     ),
-    check(
-      'invoices_written_off_bound',
-      sql`${table.writtenOffCents} between 0 and 9000000000000`,
-    ),
+    check('invoices_written_off_bound', sql`${table.writtenOffCents} between 0 and 9000000000000`),
     check(
       'invoices_payment_options_json',
       sql`json_valid(${table.paymentOptions}) and json_type(${table.paymentOptions}) = 'array'`,
@@ -625,11 +651,26 @@ export const invoices = sqliteTable(
       'invoices_source_updated_at_canonical',
       nullableCanonicalTimestamp(table.sourceUpdatedAt),
     ),
-    check('invoices_source_amount_bound', sql`${table.sourceAmountCents} is null or abs(${table.sourceAmountCents}) <= 9000000000000`),
-    check('invoices_source_due_bound', sql`${table.sourceDueAmountCents} is null or abs(${table.sourceDueAmountCents}) <= 9000000000000`),
-    check('invoices_source_tax_bound', sql`${table.sourceTaxAmountCents} is null or abs(${table.sourceTaxAmountCents}) <= 9000000000000`),
-    check('invoices_source_tax2_bound', sql`${table.sourceTax2AmountCents} is null or abs(${table.sourceTax2AmountCents}) <= 9000000000000`),
-    check('invoices_source_discount_bound', sql`${table.sourceDiscountAmountCents} is null or abs(${table.sourceDiscountAmountCents}) <= 9000000000000`),
+    check(
+      'invoices_source_amount_bound',
+      sql`${table.sourceAmountCents} is null or abs(${table.sourceAmountCents}) <= 9000000000000`,
+    ),
+    check(
+      'invoices_source_due_bound',
+      sql`${table.sourceDueAmountCents} is null or abs(${table.sourceDueAmountCents}) <= 9000000000000`,
+    ),
+    check(
+      'invoices_source_tax_bound',
+      sql`${table.sourceTaxAmountCents} is null or abs(${table.sourceTaxAmountCents}) <= 9000000000000`,
+    ),
+    check(
+      'invoices_source_tax2_bound',
+      sql`${table.sourceTax2AmountCents} is null or abs(${table.sourceTax2AmountCents}) <= 9000000000000`,
+    ),
+    check(
+      'invoices_source_discount_bound',
+      sql`${table.sourceDiscountAmountCents} is null or abs(${table.sourceDiscountAmountCents}) <= 9000000000000`,
+    ),
     check(
       'invoices_source_observation_import_only',
       sql`${table.harvestId} is not null or (
@@ -665,14 +706,8 @@ export const invoiceItemCategories = sqliteTable(
     uniqueIndex('invoice_item_categories_name_unique').on(table.name),
     check('invoice_item_categories_service_boolean', sql`${table.useAsService} in (0, 1)`),
     check('invoice_item_categories_expense_boolean', sql`${table.useAsExpense} in (0, 1)`),
-    check(
-      'invoice_item_categories_created_at_canonical',
-      canonicalTimestamp(table.createdAt),
-    ),
-    check(
-      'invoice_item_categories_updated_at_canonical',
-      canonicalTimestamp(table.updatedAt),
-    ),
+    check('invoice_item_categories_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('invoice_item_categories_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
   ],
 )
 
@@ -697,10 +732,7 @@ export const invoiceLineItems = sqliteTable(
   },
   (table) => [
     uniqueIndex('invoice_line_items_harvest_id_unique').on(table.harvestId),
-    uniqueIndex('invoice_line_items_invoice_position_unique').on(
-      table.invoiceId,
-      table.position,
-    ),
+    uniqueIndex('invoice_line_items_invoice_position_unique').on(table.invoiceId, table.position),
     index('invoice_line_items_invoice_id').on(table.invoiceId),
     index('invoice_line_items_project_id').on(table.projectId),
     check('invoice_line_items_position_nonnegative', sql`${table.position} >= 0`),
@@ -734,7 +766,9 @@ export const invoiceMessages = sqliteTable(
     thankYou: integer('thank_you', { mode: 'boolean' }).notNull().default(false),
     reminder: integer('reminder', { mode: 'boolean' }).notNull().default(false),
     sendReminderOn: text('send_reminder_on'),
-    eventType: text('event_type', { enum: ['send', 'close', 're-open', 'draft'] }),
+    eventType: text('event_type', {
+      enum: ['send', 'view', 'draft', 'cancel', 'write_off', 're-open', 'close'],
+    }),
     deliveryStatus: text('delivery_status', {
       enum: ['queued', 'sent', 'bounced', 'complained', 'failed'],
     }),
@@ -743,11 +777,7 @@ export const invoiceMessages = sqliteTable(
   },
   (table) => [
     uniqueIndex('invoice_messages_harvest_id_unique').on(table.harvestId),
-    index('invoice_messages_invoice_created_id').on(
-      table.invoiceId,
-      table.createdAt,
-      table.id,
-    ),
+    index('invoice_messages_invoice_created_id').on(table.invoiceId, table.createdAt, table.id),
     index('invoice_messages_provider_message_id')
       .on(table.providerMessageId)
       .where(sql`${table.providerMessageId} is not null`),
@@ -776,6 +806,8 @@ export const eventOutbox = sqliteTable(
     aggregateId: integer('aggregate_id').notNull(),
     aggregateSequence: integer('aggregate_sequence').notNull(),
     eventType: text('event_type').notNull(),
+    commandId: text('command_id'),
+    eventIndex: integer('event_index'),
     payloadJson: text('payload_json', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
     occurredAt: text('occurred_at').notNull(),
     availableAt: text('available_at').notNull(),
@@ -789,6 +821,9 @@ export const eventOutbox = sqliteTable(
       table.aggregateId,
       table.aggregateSequence,
     ),
+    uniqueIndex('event_outbox_command_event_unique')
+      .on(table.aggregateType, table.aggregateId, table.commandId, table.eventIndex)
+      .where(sql`${table.commandId} is not null`),
     index('event_outbox_dequeue').on(
       table.publishedAt,
       table.availableAt,
@@ -797,10 +832,102 @@ export const eventOutbox = sqliteTable(
     ),
     check('event_outbox_payload_json', sql`json_valid(${table.payloadJson})`),
     check('event_outbox_sequence_positive', sql`${table.aggregateSequence} >= 1`),
+    check(
+      'event_outbox_command_id_format',
+      sql`${table.commandId} is null or (
+        length(${table.commandId}) between 1 and 128
+        and ${table.commandId} not glob '*[^A-Za-z0-9._:-]*'
+      )`,
+    ),
+    check(
+      'event_outbox_causation_shape',
+      sql`(${table.commandId} is null and ${table.eventIndex} is null)
+        or (${table.commandId} is not null and ${table.eventIndex} between 0 and 1)`,
+    ),
     check('event_outbox_attempt_count_nonnegative', sql`${table.attemptCount} >= 0`),
     check('event_outbox_occurred_at_canonical', canonicalTimestamp(table.occurredAt)),
     check('event_outbox_available_at_canonical', canonicalTimestamp(table.availableAt)),
     check('event_outbox_published_at_canonical', nullableCanonicalTimestamp(table.publishedAt)),
+  ],
+)
+
+export const invoiceCommandLedger = sqliteTable(
+  'invoice_command_ledger',
+  {
+    invoiceId: integer('invoice_id').notNull(),
+    commandId: text('command_id').notNull(),
+    commandKind: text('command_kind', {
+      enum: [
+        'invoice.send',
+        'invoice.view',
+        'invoice.draft',
+        'invoice.cancel',
+        'invoice.write_off',
+        'invoice.reopen',
+        'invoice.source_close',
+        'invoice.update',
+        'invoice.line_insert',
+        'invoice.line_update',
+        'invoice.line_delete',
+        'invoice.financials_update',
+        'payment.record',
+        'payment.update',
+        'payment.delete',
+      ],
+    }).notNull(),
+    inputFingerprint: text('input_fingerprint').notNull(),
+    actorType: text('actor_type', { enum: ['user', 'contact', 'system'] }).notNull(),
+    actorId: integer('actor_id'),
+    expectedInvoiceVersion: integer('expected_invoice_version'),
+    occurredAt: text('occurred_at').notNull(),
+    eventCount: integer('event_count'),
+    completed: integer('completed', { mode: 'boolean' }).notNull().default(false),
+    firstAggregateSequence: integer('first_aggregate_sequence'),
+    resultJson: text('result_json', { mode: 'json' }).$type<Record<string, unknown>>(),
+    completedAt: text('completed_at'),
+  },
+  (table) => [
+    primaryKey({ columns: [table.invoiceId, table.commandId] }),
+    uniqueIndex('invoice_command_ledger_pending_invoice_unique')
+      .on(table.invoiceId)
+      .where(sql`${table.completed} = 0`),
+    check(
+      'invoice_command_ledger_command_id_format',
+      sql`length(${table.commandId}) between 1 and 128
+        and ${table.commandId} not glob '*[^A-Za-z0-9._:-]*'`,
+    ),
+    check(
+      'invoice_command_ledger_fingerprint_format',
+      sql`length(${table.inputFingerprint}) = 71
+        and substr(${table.inputFingerprint}, 1, 7) = 'sha256:'
+        and substr(${table.inputFingerprint}, 8) not glob '*[^0-9a-f]*'`,
+    ),
+    check(
+      'invoice_command_ledger_actor_shape',
+      sql`(${table.actorType} = 'system' and ${table.actorId} is null)
+        or (${table.actorType} in ('user','contact') and ${table.actorId} is not null)`,
+    ),
+    check(
+      'invoice_command_ledger_expected_version_shape',
+      sql`(${table.commandKind} = 'invoice.view' and ${table.expectedInvoiceVersion} is null)
+        or (${table.commandKind} <> 'invoice.view' and ${table.expectedInvoiceVersion} >= 0)`,
+    ),
+    check('invoice_command_ledger_occurred_at_canonical', canonicalTimestamp(table.occurredAt)),
+    check('invoice_command_ledger_completed_boolean', sql`${table.completed} in (0, 1)`),
+    check(
+      'invoice_command_ledger_completion_shape',
+      sql`(${table.completed} = 0 and ${table.eventCount} is null
+          and ${table.firstAggregateSequence} is null and ${table.resultJson} is null
+          and ${table.completedAt} is null)
+        or (${table.completed} = 1 and ${table.eventCount} between 1 and 2
+          and ${table.firstAggregateSequence} >= 1 and ${table.resultJson} is not null
+          and json_valid(${table.resultJson}) and json_extract(${table.resultJson}, '$.schema_version') = 1
+          and ${table.completedAt} is not null)`,
+    ),
+    check(
+      'invoice_command_ledger_completed_at_canonical',
+      nullableCanonicalTimestamp(table.completedAt),
+    ),
   ],
 )
 
@@ -869,16 +996,16 @@ export const bankDeposits = sqliteTable(
     ),
     index('bank_deposits_suggested_invoice_id').on(table.suggestedInvoiceId),
     index('bank_deposits_match_posted_id').on(table.matchState, table.postedAt, table.id),
-    check('bank_deposits_provider_transaction_nonempty', sql`length(${table.providerTransactionId}) > 0`),
+    check(
+      'bank_deposits_provider_transaction_nonempty',
+      sql`length(${table.providerTransactionId}) > 0`,
+    ),
     check(
       'bank_deposits_currency',
       sql`length(${table.currency}) = 3 and ${table.currency} = upper(${table.currency})
         and ${table.currency} not glob '*[^A-Z]*'`,
     ),
-    check(
-      'bank_deposits_amount_bound',
-      sql`${table.amountCents} between 1 and 9000000000000`,
-    ),
+    check('bank_deposits_amount_bound', sql`${table.amountCents} between 1 and 9000000000000`),
     check(
       'bank_deposits_match_shape',
       sql`(${table.matchState} = 'unmatched' and ${table.suggestedInvoiceId} is null)
@@ -919,10 +1046,9 @@ export const invoicePayments = sqliteTable(
     providerShape: text('provider_shape', {
       enum: ['manual', 'checkout', 'reconciliation'],
     }).notNull(),
-    providerAccountId: integer('provider_account_id').references(
-      () => paymentProviderAccounts.id,
-      { onDelete: 'restrict' },
-    ),
+    providerAccountId: integer('provider_account_id').references(() => paymentProviderAccounts.id, {
+      onDelete: 'restrict',
+    }),
     providerTransactionId: text('provider_transaction_id'),
     bankDepositId: integer('bank_deposit_id')
       .unique()
@@ -943,10 +1069,7 @@ export const invoicePayments = sqliteTable(
       sql`length(${table.currency}) = 3 and ${table.currency} = upper(${table.currency})
         and ${table.currency} not glob '*[^A-Z]*'`,
     ),
-    check(
-      'invoice_payments_amount_bound',
-      sql`${table.amountCents} between 1 and 9000000000000`,
-    ),
+    check('invoice_payments_amount_bound', sql`${table.amountCents} between 1 and 9000000000000`),
     check(
       'invoice_payments_paid_shape',
       sql`(${table.paidAt} is null) <> (${table.paidDate} is null)`,
@@ -1300,18 +1423,12 @@ export const timeEntries = sqliteTable(
       foreignColumns: [taskAssignments.id, taskAssignments.projectId, taskAssignments.taskId],
       name: 'time_entries_task_assignment_fk',
     }).onDelete('restrict'),
-    check(
-      'time_entries_seconds_safe',
-      sql`${table.seconds} between 0 and 9007199254740991`,
-    ),
+    check('time_entries_seconds_safe', sql`${table.seconds} between 0 and 9007199254740991`),
     check(
       'time_entries_checkpoint_safe',
       sql`${table.secondsWithoutTimer} between 0 and 9007199254740991`,
     ),
-    check(
-      'time_entries_rounded_safe',
-      sql`${table.roundedSeconds} between 0 and 9007199254740991`,
-    ),
+    check('time_entries_rounded_safe', sql`${table.roundedSeconds} between 0 and 9007199254740991`),
     check('time_entries_billable_boolean', sql`${table.billable} in (0, 1)`),
     check('time_entries_budgeted_boolean', sql`${table.budgeted} in (0, 1)`),
     check(

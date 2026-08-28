@@ -8,6 +8,7 @@ import { clientsMigration } from '../src/migrations/0001_clients.js'
 import { projectsTimeMigration } from '../src/migrations/0002_projects_time.js'
 import { rateResolverMigration } from '../src/migrations/0003_rate_resolver.js'
 import { invoiceFoundationMigration } from '../src/migrations/0004_invoice_foundation.js'
+import { invoicePaymentsTotalsMigration } from '../src/migrations/0005_invoice_payments_totals.js'
 
 interface TestDatabase {
   run(sql: string, ...params: unknown[]): Promise<void>
@@ -82,10 +83,13 @@ const migrationsThrough0003 = [
   ['0003_rate_resolver', rateResolverMigration],
 ] as const
 
+const invoiceMigrationsThrough0005 = [
+  ['0004_invoice_foundation', invoiceFoundationMigration],
+  ['0005_invoice_payments_totals', invoicePaymentsTotalsMigration],
+] as const
+
 const loadFixture = async <T>(name: string): Promise<T> =>
-  JSON.parse(
-    await readFile(new URL(`fixtures/${name}`, import.meta.url), 'utf8'),
-  ) as T
+  JSON.parse(await readFile(new URL(`fixtures/${name}`, import.meta.url), 'utf8')) as T
 
 const containerDatabase = (migrate = true): TestDatabase => {
   const sqlite = new BetterSqlite3(':memory:')
@@ -112,10 +116,18 @@ const d1Database = async (migrate = true): Promise<TestDatabase> => {
   if (migrate) await migrateD1(d1)
   return {
     run: async (sql, ...params) => {
-      await d1.prepare(sql).bind(...params).run()
+      await d1
+        .prepare(sql)
+        .bind(...params)
+        .run()
     },
     rows: async <T>(sql: string, ...params: unknown[]) =>
-      (await d1.prepare(sql).bind(...params).all<T>()).results,
+      (
+        await d1
+          .prepare(sql)
+          .bind(...params)
+          .all<T>()
+      ).results,
     migrateAgain: async () => migrateD1(d1),
     close: async () => miniflare.dispose(),
   }
@@ -133,6 +145,17 @@ const installThrough0003 = async (database: TestDatabase): Promise<void> => {
     ) STRICT`,
   )
   for (const [id, statements] of migrationsThrough0003) {
+    for (const statement of statements) await database.run(statement)
+    await database.run(
+      `INSERT INTO _ezacto_migrations (id, applied_at) VALUES (?, ?)`,
+      id,
+      timestamp,
+    )
+  }
+}
+
+const installInvoiceMigrationsThrough0005 = async (database: TestDatabase): Promise<void> => {
+  for (const [id, statements] of invoiceMigrationsThrough0005) {
     for (const statement of statements) await database.run(statement)
     await database.run(
       `INSERT INTO _ezacto_migrations (id, applied_at) VALUES (?, ?)`,
@@ -269,9 +292,9 @@ for (const [runtime, factory] of factories) {
         'file_objects',
         'attachments',
       ]
-      expect(tables.map(({ name }) => name).filter((name) => forbiddenTables.includes(name))).toEqual(
-        [],
-      )
+      expect(
+        tables.map(({ name }) => name).filter((name) => forbiddenTables.includes(name)),
+      ).toEqual([])
 
       const invoiceColumns = await db.rows<{ name: string }>(`PRAGMA table_info(invoices)`)
       expect(invoiceColumns.map(({ name }) => name)).toEqual([
@@ -319,6 +342,9 @@ for (const [runtime, factory] of factories) {
         'source_discount_amount_cents',
         'source_payment_options',
         'source_updated_at',
+        'version',
+        'close_reason',
+        'close_write_off_cents',
       ])
       expect(
         (await db.rows<{ name: string }>(`PRAGMA table_info(invoice_item_categories)`)).map(
@@ -459,7 +485,9 @@ for (const [runtime, factory] of factories) {
       }
 
       expect(
-        (await db.rows<{ name: string }>(`PRAGMA table_info(time_entries)`)).map(({ name }) => name),
+        (await db.rows<{ name: string }>(`PRAGMA table_info(time_entries)`)).map(
+          ({ name }) => name,
+        ),
       ).toContain('invoice_id')
       expect(
         (await db.rows<{ name: string }>(`PRAGMA table_info(project_milestones)`)).map(
@@ -467,9 +495,11 @@ for (const [runtime, factory] of factories) {
         ),
       ).toContain('invoiced_invoice_id')
 
-      const outboxColumns = await db.rows<{ name: string; type: string; dflt_value: string | null }>(
-        `PRAGMA table_info(event_outbox)`,
-      )
+      const outboxColumns = await db.rows<{
+        name: string
+        type: string
+        dflt_value: string | null
+      }>(`PRAGMA table_info(event_outbox)`)
       expect(outboxColumns.map(({ name }) => name)).toEqual([
         'id',
         'aggregate_type',
@@ -482,20 +512,22 @@ for (const [runtime, factory] of factories) {
         'published_at',
         'attempt_count',
         'last_error',
+        'command_id',
+        'event_index',
       ])
       expect(outboxColumns.find(({ name }) => name === 'event_type')?.type).toBe('TEXT')
       expect(outboxColumns.find(({ name }) => name === 'id')?.dflt_value).toBeNull()
       expect(outboxColumns.find(({ name }) => name === 'attempt_count')?.dflt_value).toBe('0')
       expect(
-        (
-          await db.rows<{ name: string }>(`PRAGMA index_info('event_outbox_dequeue')`)
-        ).map(({ name }) => name),
+        (await db.rows<{ name: string }>(`PRAGMA index_info('event_outbox_dequeue')`)).map(
+          ({ name }) => name,
+        ),
       ).toEqual(['published_at', 'available_at', 'occurred_at', 'id'])
       await db.run(
         `INSERT INTO event_outbox
           (id, aggregate_type, aggregate_id, aggregate_sequence, event_type, payload_json,
            occurred_at, available_at)
-         VALUES ('event-1', 'invoice', 1, 1, 'invoice.future_event', '{}', ?, ?)`,
+         VALUES ('event-1', 'future', 1, 1, 'invoice.future_event', '{}', ?, ?)`,
         timestamp,
         timestamp,
       )
@@ -504,7 +536,7 @@ for (const [runtime, factory] of factories) {
           `INSERT INTO event_outbox
             (id, aggregate_type, aggregate_id, aggregate_sequence, event_type, payload_json,
              occurred_at, available_at)
-           VALUES ('event-2', 'invoice', 1, 1, 'another.future.event', '{}', ?, ?)`,
+           VALUES ('event-2', 'future', 1, 1, 'another.future.event', '{}', ?, ?)`,
           timestamp,
           timestamp,
         ),
@@ -514,7 +546,7 @@ for (const [runtime, factory] of factories) {
           `INSERT INTO event_outbox
             (id, aggregate_type, aggregate_id, aggregate_sequence, event_type, payload_json,
              occurred_at, available_at)
-           VALUES ('event-zero', 'invoice', 2, 0, 'invoice.created', '{}', ?, ?)`,
+           VALUES ('event-zero', 'future', 2, 0, 'invoice.created', '{}', ?, ?)`,
           timestamp,
           timestamp,
         ),
@@ -524,7 +556,7 @@ for (const [runtime, factory] of factories) {
           `INSERT INTO event_outbox
             (id, aggregate_type, aggregate_id, aggregate_sequence, event_type, payload_json,
              occurred_at, available_at, attempt_count)
-           VALUES ('event-negative', 'invoice', 2, 1, 'invoice.created', '{}', ?, ?, -1)`,
+           VALUES ('event-negative', 'future', 2, 1, 'invoice.created', '{}', ?, ?, -1)`,
           timestamp,
           timestamp,
         ),
@@ -534,7 +566,7 @@ for (const [runtime, factory] of factories) {
           `INSERT INTO event_outbox
             (id, aggregate_type, aggregate_id, aggregate_sequence, event_type, payload_json,
              occurred_at, available_at)
-           VALUES ('event-json', 'invoice', 2, 1, 'invoice.created', '{', ?, ?)`,
+           VALUES ('event-json', 'future', 2, 1, 'invoice.created', '{', ?, ?)`,
           timestamp,
           timestamp,
         ),
@@ -544,7 +576,7 @@ for (const [runtime, factory] of factories) {
           `INSERT INTO event_outbox
             (aggregate_type, aggregate_id, aggregate_sequence, event_type, payload_json,
              occurred_at, available_at)
-           VALUES ('invoice', 3, 1, 'invoice.created', '{}', ?, ?)`,
+           VALUES ('future', 3, 1, 'invoice.created', '{}', ?, ?)`,
           timestamp,
           timestamp,
         ),
@@ -554,7 +586,7 @@ for (const [runtime, factory] of factories) {
           `INSERT INTO event_outbox
             (id, aggregate_type, aggregate_id, aggregate_sequence, event_type, payload_json,
              occurred_at, available_at)
-           VALUES ('event-offset', 'invoice', 4, 1, 'invoice.created', '{}',
+           VALUES ('event-offset', 'future', 4, 1, 'invoice.created', '{}',
              '2026-08-27T00:00:00+00:00', ?)`,
           timestamp,
         ),
@@ -564,7 +596,7 @@ for (const [runtime, factory] of factories) {
           `INSERT INTO event_outbox
             (id, aggregate_type, aggregate_id, aggregate_sequence, event_type, payload_json,
              occurred_at, available_at, published_at)
-           VALUES ('event-hour', 'invoice', 4, 1, 'invoice.created', '{}', ?, ?,
+           VALUES ('event-hour', 'future', 4, 1, 'invoice.created', '{}', ?, ?,
              '2026-08-27T24:00:00Z')`,
           timestamp,
           timestamp,
@@ -589,10 +621,11 @@ for (const [runtime, factory] of factories) {
         '0003_rate_resolver',
         '0004_invoice_foundation',
         '0005_invoice_payments_totals',
+        '0006_invoice_state_events',
       ])
-      expect(firstLedger.slice(0, 4).every(({ applied_at: appliedAt }) => appliedAt === timestamp)).toBe(
-        true,
-      )
+      expect(
+        firstLedger.slice(0, 4).every(({ applied_at: appliedAt }) => appliedAt === timestamp),
+      ).toBe(true)
       expect(
         await db.rows<{ id: number; harvest_id: string; invoice_id: number | null }>(
           `SELECT id, harvest_id, invoice_id FROM time_entries`,
@@ -682,7 +715,9 @@ for (const [runtime, factory] of factories) {
         ),
       ).toEqual([])
       expect(
-        (await db.rows<{ name: string }>(`PRAGMA table_info(time_entries)`)).map(({ name }) => name),
+        (await db.rows<{ name: string }>(`PRAGMA table_info(time_entries)`)).map(
+          ({ name }) => name,
+        ),
       ).not.toContain('invoice_id')
       expect(
         (await db.rows<{ name: string }>(`PRAGMA table_info(project_milestones)`)).map(
@@ -732,7 +767,9 @@ for (const [runtime, factory] of factories) {
         timestamp,
         timestamp,
       )
-      await expect(db.run(`UPDATE time_entries SET invoice_id = 999 WHERE id = 1`)).rejects.toThrow()
+      await expect(
+        db.run(`UPDATE time_entries SET invoice_id = 999 WHERE id = 1`),
+      ).rejects.toThrow()
       await expect(
         db.run(`UPDATE project_milestones SET invoiced_invoice_id = 999 WHERE id = 1`),
       ).rejects.toThrow()
@@ -766,9 +803,9 @@ for (const [runtime, factory] of factories) {
       )
       await db.run(`UPDATE projects SET client_id = 1 WHERE id = 1`)
       await db.run(`UPDATE invoices SET client_id = 1 WHERE id = 1`)
-      await expect(
-        db.run(`UPDATE projects SET client_id = 2 WHERE id IN (1, 2)`),
-      ).rejects.toThrow(/immutable/)
+      await expect(db.run(`UPDATE projects SET client_id = 2 WHERE id IN (1, 2)`)).rejects.toThrow(
+        /immutable/,
+      )
       expect(
         await db.rows<{ id: number; client_id: number }>(
           `SELECT id, client_id FROM projects ORDER BY id`,
@@ -799,20 +836,21 @@ for (const [runtime, factory] of factories) {
       const db = database
       await installThrough0003(db)
       await installProjectsTimeFixture(db)
-      await db.migrateAgain()
+      await installInvoiceMigrationsThrough0005(db)
       await db.run(
         `INSERT INTO invoices
           (id, harvest_id, client_id, created_by_user_id, source_creator_id,
            source_creator_name, number, currency, issue_date, due_date, project_id,
            reminder_policy, created_at, updated_at)
          VALUES (1, 101, 1, 1, 1782959, 'Sanitized Creator', 'INV-VALID', 'USD',
-           '2026-08-01', '2026-08-31', 1, '{}', ?, ?)`,
+           '2026-08-01', '2026-08-31', 1,
+           '{"first_after_days":3,"every_days":7}', ?, ?)`,
         timestamp,
         timestamp,
       )
-      expect(await db.rows<{ count: number }>(`SELECT count(*) AS count FROM event_outbox`)).toEqual([
-        { count: 0 },
-      ])
+      expect(
+        await db.rows<{ count: number }>(`SELECT count(*) AS count FROM event_outbox`),
+      ).toEqual([{ count: 0 }])
       const invalidInvoices = [
         `INSERT INTO invoices
           (id, client_id, number, currency, issue_date, due_date, created_at, updated_at)
@@ -1010,6 +1048,17 @@ for (const [runtime, factory] of factories) {
           timestamp,
         ),
       ).rejects.toThrow()
+      await db.migrateAgain()
+      expect(
+        await db.rows<{
+          quantity: number
+          unit_price_cents: number
+          amount_cents: number
+        }>(
+          `SELECT quantity, unit_price_cents, amount_cents
+           FROM invoice_line_items WHERE id = 1`,
+        ),
+      ).toEqual([{ quantity: -1, unit_price_cents: -10000, amount_cents: -10000 }])
       expect(await db.rows(`PRAGMA foreign_key_check`)).toEqual([])
     })
 
@@ -1018,7 +1067,7 @@ for (const [runtime, factory] of factories) {
       const db = database
       await installThrough0003(db)
       await installProjectsTimeFixture(db)
-      await db.migrateAgain()
+      await installInvoiceMigrationsThrough0005(db)
       await db.run(
         `INSERT INTO invoices
           (id, harvest_id, client_id, source_creator_id, source_creator_name, number,
@@ -1066,13 +1115,14 @@ for (const [runtime, factory] of factories) {
           (id, aggregate_type, aggregate_id, aggregate_sequence, event_type, payload_json,
            occurred_at, available_at)
          VALUES
-          ('event-1', 'invoice', 1, 1, 'invoice.created', '{"invoice":1}', ?, ?),
-          ('event-2', 'invoice', 2, 1, 'invoice.created', '{"invoice":2}', ?, ?)`,
+          ('event-1', 'fixture', 1, 1, 'invoice.created', '{"invoice":1}', ?, ?),
+          ('event-2', 'fixture', 2, 1, 'invoice.created', '{"invoice":2}', ?, ?)`,
         timestamp,
         timestamp,
         timestamp,
         timestamp,
       )
+      await db.migrateAgain()
       const originalInvoices = await db.rows<Record<string, unknown>>(
         `SELECT id, harvest_id, number, source_creator_id, source_creator_name, client_key
          FROM invoices ORDER BY id`,
@@ -1131,19 +1181,19 @@ for (const [runtime, factory] of factories) {
           timestamp,
           timestamp,
         ),
-      ).rejects.toThrow(/identity already exists/)
+      ).rejects.toThrow(/exact pending authority/)
       await expect(
         db.run(`UPDATE OR REPLACE invoices SET harvest_id = 501 WHERE id = 2`),
-      ).rejects.toThrow(/belongs to another row/)
+      ).rejects.toThrow(/belongs to another row|immutable/)
       await expect(db.run(`UPDATE OR REPLACE invoices SET id = 1 WHERE id = 2`)).rejects.toThrow(
-        /belongs to another row/,
+        /belongs to another row|immutable/,
       )
       await expect(
         db.run(`UPDATE OR REPLACE invoices SET number = 'INV-REPLACE' WHERE id = 2`),
-      ).rejects.toThrow(/belongs to another row/)
+      ).rejects.toThrow(/belongs to another row|pending command/)
       await expect(
         db.run(`UPDATE OR REPLACE invoices SET client_key = ? WHERE id = 2`, existingClientKey),
-      ).rejects.toThrow(/belongs to another row/)
+      ).rejects.toThrow(/belongs to another row|pending command/)
       await expect(
         db.run(
           `INSERT OR REPLACE INTO invoices
@@ -1165,7 +1215,7 @@ for (const [runtime, factory] of factories) {
           timestamp,
           timestamp,
         ),
-      ).rejects.toThrow(/identity already exists/)
+      ).rejects.toThrow(/exact pending authority/)
       await expect(
         db.run(
           `INSERT OR REPLACE INTO invoice_messages
@@ -1174,19 +1224,19 @@ for (const [runtime, factory] of factories) {
           timestamp,
           timestamp,
         ),
-      ).rejects.toThrow(/identity already exists/)
+      ).rejects.toThrow(/exact pending authority/)
       await expect(
         db.run(`UPDATE OR REPLACE invoice_messages SET harvest_id = 601 WHERE id = 2`),
-      ).rejects.toThrow(/belongs to another row/)
+      ).rejects.toThrow(/belongs to another row|exact import authority/)
       await expect(
         db.run(`UPDATE OR REPLACE invoice_messages SET id = 1 WHERE id = 2`),
-      ).rejects.toThrow(/belongs to another row/)
+      ).rejects.toThrow(/belongs to another row|exact import authority/)
       await expect(
         db.run(
           `INSERT OR REPLACE INTO event_outbox
             (id, aggregate_type, aggregate_id, aggregate_sequence, event_type, payload_json,
              occurred_at, available_at)
-           VALUES ('event-1', 'invoice', 1, 1, 'forged', '{}', ?, ?)`,
+           VALUES ('event-1', 'fixture', 1, 1, 'forged', '{}', ?, ?)`,
           timestamp,
           timestamp,
         ),
@@ -1196,20 +1246,20 @@ for (const [runtime, factory] of factories) {
           `INSERT OR REPLACE INTO event_outbox
             (id, aggregate_type, aggregate_id, aggregate_sequence, event_type, payload_json,
              occurred_at, available_at)
-           VALUES ('event-3', 'invoice', 1, 1, 'forged', '{}', ?, ?)`,
+           VALUES ('event-3', 'fixture', 1, 1, 'forged', '{}', ?, ?)`,
           timestamp,
           timestamp,
         ),
       ).rejects.toThrow(/identity already exists/)
       await expect(
         db.run(`UPDATE OR REPLACE event_outbox SET id = 'event-1' WHERE id = 'event-2'`),
-      ).rejects.toThrow(/belongs to another row|event identity and payload are immutable/)
+      ).rejects.toThrow(/belongs to another row|outbox event identity.*payload are immutable/)
       await expect(
         db.run(
           `UPDATE OR REPLACE event_outbox
            SET aggregate_id = 1, aggregate_sequence = 1 WHERE id = 'event-2'`,
         ),
-      ).rejects.toThrow(/belongs to another row|event identity and payload are immutable/)
+      ).rejects.toThrow(/belongs to another row|outbox event identity.*payload are immutable/)
       for (const update of [
         `id = 'event-fresh'`,
         `aggregate_type = 'forged'`,
@@ -1221,7 +1271,7 @@ for (const [runtime, factory] of factories) {
       ]) {
         await expect(
           db.run(`UPDATE event_outbox SET ${update} WHERE id = 'event-1'`),
-        ).rejects.toThrow(/outbox event identity and payload are immutable/)
+        ).rejects.toThrow(/outbox event identity.*payload are immutable/)
       }
       expect(
         await db.rows<Record<string, unknown>>(
@@ -1245,10 +1295,12 @@ for (const [runtime, factory] of factories) {
         await db.rows<{ count: number }>(`SELECT count(*) AS count FROM invoice_line_items`),
       ).toEqual([{ count: 1 }])
       const rotatedKey = 'a'.repeat(64)
-      await db.run(
-        `UPDATE invoices SET number = 'INV-OTHER-ROTATED', client_key = ? WHERE id = 2`,
-        rotatedKey,
-      )
+      await expect(
+        db.run(
+          `UPDATE invoices SET number = 'INV-OTHER-ROTATED', client_key = ? WHERE id = 2`,
+          rotatedKey,
+        ),
+      ).rejects.toThrow(/pending command/)
       await db.run(
         `UPDATE event_outbox SET available_at = '2026-08-27T00:01:00Z', published_at = ?,
            attempt_count = 1, last_error = 'retry'
@@ -1259,7 +1311,12 @@ for (const [runtime, factory] of factories) {
         await db.rows<{ number: string; client_key: string }>(
           `SELECT number, client_key FROM invoices WHERE id = 2`,
         ),
-      ).toEqual([{ number: 'INV-OTHER-ROTATED', client_key: rotatedKey }])
+      ).toEqual([
+        {
+          number: originalInvoices[1]?.number,
+          client_key: originalInvoices[1]?.client_key,
+        },
+      ])
       expect(
         await db.rows<{
           available_at: string
@@ -1286,7 +1343,7 @@ for (const [runtime, factory] of factories) {
       const db = database
       await installThrough0003(db)
       await installProjectsTimeFixture(db)
-      await db.migrateAgain()
+      await installInvoiceMigrationsThrough0005(db)
       const invoice = await loadFixture<HarvestInvoice>('harvest-invoice.json')
       const message = await loadFixture<HarvestInvoiceMessage>('harvest-invoice-message.json')
       const creator = invoice.creator
@@ -1383,6 +1440,7 @@ for (const [runtime, factory] of factories) {
         message.created_at,
         message.updated_at,
       )
+      await db.migrateAgain()
 
       const storedInvoice = (
         await db.rows<Record<string, unknown>>(
@@ -1474,8 +1532,10 @@ for (const [runtime, factory] of factories) {
           source_creator_name = source_creator_name WHERE id = 1`,
       )
       await expect(
-        db.run(`UPDATE invoice_messages SET sent_from_email = 'changed@example.invalid' WHERE id = 1`),
-      ).rejects.toThrow(/immutable/)
+        db.run(
+          `UPDATE invoice_messages SET sent_from_email = 'changed@example.invalid' WHERE id = 1`,
+        ),
+      ).rejects.toThrow(/exact import authority/)
       await db.run(
         `UPDATE invoice_messages SET sent_by = sent_by, sent_by_email = sent_by_email,
           sent_from = sent_from, sent_from_email = sent_from_email WHERE id = 1`,
@@ -1496,7 +1556,7 @@ for (const [runtime, factory] of factories) {
       const db = database
       await installThrough0003(db)
       await installProjectsTimeFixture(db)
-      await db.migrateAgain()
+      await installInvoiceMigrationsThrough0005(db)
       await db.run(
         `INSERT INTO invoices
           (id, client_id, created_by_user_id, source_creator_id, source_creator_name,
@@ -1567,13 +1627,16 @@ for (const [runtime, factory] of factories) {
           timestamp,
         ),
       ).rejects.toThrow(/CHECK constraint/i)
+      await db.migrateAgain()
       expect(
         await db.rows<{ delivery_status: string }>(
           `SELECT delivery_status FROM invoice_messages ORDER BY id`,
         ),
       ).toEqual(statuses.map((delivery_status) => ({ delivery_status })))
       expect(
-        (await db.rows<{ name: string }>(`PRAGMA table_info(event_outbox)`)).map(({ name }) => name),
+        (await db.rows<{ name: string }>(`PRAGMA table_info(event_outbox)`)).map(
+          ({ name }) => name,
+        ),
       ).not.toContain('delivery_status')
       expect(await db.rows(`PRAGMA foreign_key_check`)).toEqual([])
     })
