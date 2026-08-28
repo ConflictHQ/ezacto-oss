@@ -14,6 +14,7 @@ import { instanceBootstrapMigration } from './migrations/0012_instance_bootstrap
 import { passwordAuthMigration } from './migrations/0013_password_auth.js'
 import { sessionsMigration } from './migrations/0014_sessions.js'
 import { oidcTransactionsMigration } from './migrations/0015_oidc_transactions.js'
+import { emailLogMigration } from './migrations/0016_email_log.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL
@@ -1332,6 +1333,7 @@ const migrations = [
   { id: '0013_password_auth', statements: passwordAuthMigration },
   { id: '0014_sessions', statements: sessionsMigration },
   { id: '0015_oidc_transactions', statements: oidcTransactionsMigration },
+  { id: '0016_email_log', statements: emailLogMigration },
 ] as const
 
 export const migrateContainer = (database: BetterSqlite3.Database): void => {

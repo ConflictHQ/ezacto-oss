@@ -82,6 +82,32 @@ export type SessionPage = {
   "links": Links;
 };
 
+export type EmailRecipient = {
+  "email": string;
+  "name"?: string;
+};
+
+export type EmailLog = {
+  "id": number;
+  "to": Array<EmailRecipient>;
+  "template": string;
+  "subject": string;
+  "provider": string | null;
+  "provider_message_id": string | null;
+  "status": "queued" | "sent" | "bounced" | "complained" | "failed";
+  "related_type": string | null;
+  "related_id": number | null;
+  "attempt_count": number;
+  "failure_code": "queue_unavailable" | "provider_timeout" | "provider_rejected" | null;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type EmailLogPage = {
+  "data": Array<EmailLog>;
+  "links": Links;
+};
+
 export type Links = {
   "self": string;
 };
@@ -471,6 +497,14 @@ export class EzactoClient {
 
   async listSessions(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<SessionPage> {
     return this.request<SessionPage>("GET", "/api/v1/sessions", {
+      signal: args.signal,
+      headers: args.headers,
+    });
+  }
+
+  async listEmailLog(args: { query?: { "status"?: "queued" | "sent" | "bounced" | "complained" | "failed"; "per_page"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<EmailLogPage> {
+    return this.request<EmailLogPage>("GET", "/api/v1/email-log", {
+      query: args.query,
       signal: args.signal,
       headers: args.headers,
     });

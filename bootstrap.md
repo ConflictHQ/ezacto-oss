@@ -18,6 +18,7 @@ One workspace, planned packages — created only when their build story starts:
 packages/core       domain logic: rate resolver, three-axis state, state machines
 packages/db         Drizzle schema + migrations (SQLite dialect: D1 + file)
 packages/api        Hono: /api/v1 + /harvest/v2 shim; publishes OpenAPI
+packages/mailer     provider-neutral queued email seam + retry policy
 packages/migrate    the wedge: auth·extract·verify·load·reconcile·sync (standalone CLI)
 packages/cli        ez — generated client over the OpenAPI
 packages/mcp        MCP server (read tools first)
