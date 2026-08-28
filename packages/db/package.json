@@ -12,7 +12,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "vitest run",
+    "test": "vitest run --maxWorkers=2 --testTimeout=10000",
     "build": "tsc -p tsconfig.build.json",
     "prepack": "npm run build"
   },

@@ -1,0 +1,14 @@
+[
+  {
+    "id": 73001,
+    "number": "SAN-73001",
+    "client": { "id": 41001, "name": "Sanitized Client" },
+    "recurring_invoice_id": 94001
+  },
+  {
+    "id": 73002,
+    "number": "SAN-73002",
+    "client": { "id": 41001, "name": "Sanitized Client" },
+    "recurring_invoice_id": 94001
+  }
+]
