@@ -86,6 +86,15 @@ export const retainerLedgerMigration = [
       SELECT 1 FROM projects WHERE id = NEW.project_id AND client_id = NEW.client_id
     )
     BEGIN SELECT RAISE(ABORT, 'retainer project must belong to retainer client'); END`,
+  `CREATE TRIGGER projects_client_consistent_with_retainers_update
+    BEFORE UPDATE OF client_id ON projects
+    WHEN OLD.client_id IS NOT NEW.client_id AND EXISTS (
+      SELECT 1 FROM retainers retainer
+      WHERE retainer.project_id = OLD.id
+        AND retainer.client_id IS NOT NULL
+        AND retainer.client_id IS NOT NEW.client_id
+    )
+    BEGIN SELECT RAISE(ABORT, 'project client must match every linked retainer'); END`,
   `ALTER TABLE invoices ADD COLUMN retainer_id INTEGER
     REFERENCES retainers(id) ON DELETE RESTRICT`,
   `CREATE INDEX invoices_retainer_id ON invoices(retainer_id)`,

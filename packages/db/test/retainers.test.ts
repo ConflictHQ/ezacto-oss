@@ -236,6 +236,24 @@ for (const [runtime, factory] of factories) {
         ),
       ).toEqual([{ id: 1, retainer_id: null }])
       await insertMoneyRetainer(database, 1)
+      await database.run(
+        `INSERT INTO projects (id, client_id, name, code, created_at, updated_at)
+         VALUES (1, 1, 'Retainer project', 'RET', ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+      await database.run(`UPDATE retainers SET project_id = 1 WHERE id = 1`)
+      await expect(database.run(`UPDATE projects SET client_id = 2 WHERE id = 1`)).rejects.toThrow(
+        /project client must match every linked retainer/,
+      )
+      expect(
+        await database.rows<{ retainer_client: number; project_client: number }>(
+          `SELECT retainer.client_id AS retainer_client, project.client_id AS project_client
+           FROM retainers retainer
+           JOIN projects project ON project.id = retainer.project_id
+           WHERE retainer.id = 1`,
+        ),
+      ).toEqual([{ retainer_client: 1, project_client: 1 }])
       await database.run(`UPDATE invoices SET retainer_id = 1 WHERE id = 1`)
       await expect(
         database.run(`UPDATE invoices SET retainer_id = 999 WHERE id = 1`),
@@ -611,6 +629,39 @@ for (const [runtime, factory] of factories) {
           `SELECT count(*) AS count FROM retainers WHERE harvest_id = 92000`,
         ),
       ).toEqual([{ count: 0 }])
+    }, 20_000)
+
+    it('[unit] rolls back a conflicting Harvest stub link without partial rows', async () => {
+      database = await factory()
+      await installOrganizationAndClients(database)
+      await insertInvoice(database, 73_000, 1, 73_000)
+
+      // Prove the importer cannot rely on a numeric sentinel missing from the
+      // identity domain: SQLite permits this schema-valid negative local id.
+      await insertMoneyRetainer(database, -1)
+      await insertMoneyRetainer(database, 70_001)
+      await database.run(`UPDATE invoices SET retainer_id = 70001 WHERE id = 73000`)
+
+      await expect(
+        ensureHarvestRetainerStub(database.orm, {
+          invoiceId: 73_000,
+          harvestInvoiceId: 73_000,
+          harvestRetainerId: 93_000,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }),
+      ).rejects.toThrow()
+      expect(
+        await database.rows<{ retainer_id: number }>(
+          `SELECT retainer_id FROM invoices WHERE id = 73000`,
+        ),
+      ).toEqual([{ retainer_id: 70_001 }])
+      expect(
+        await database.rows<{ count: number }>(
+          `SELECT count(*) AS count FROM retainers WHERE harvest_id = 93000`,
+        ),
+      ).toEqual([{ count: 0 }])
+      expect(await database.rows(`PRAGMA foreign_key_check`)).toEqual([])
     }, 20_000)
   })
 }

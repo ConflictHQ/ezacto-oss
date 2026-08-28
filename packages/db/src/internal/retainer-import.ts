@@ -130,7 +130,7 @@ export const ensureHarvestRetainerStub = async (
         SET retainer_id = CASE
           WHEN retainer_id IS NULL OR retainer_id = ${retainerIdLookup}
             THEN ${retainerIdLookup}
-          ELSE -1
+          ELSE 'retainer-link-conflict'
         END
         WHERE id = ? AND harvest_id = ? AND version = 0
           AND NOT EXISTS (
