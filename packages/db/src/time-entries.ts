@@ -4,6 +4,7 @@ import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
 import { resolveEntryRates } from './rate-resolver.js'
 import { organizations, taskAssignments, timeEntries } from './schema.js'
+import { executeAtomicTrackedMutation, type TrackedEntityReference } from './tracked-state.js'
 
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
 
@@ -329,8 +330,14 @@ export const stopTimeEntry = async (
   database: Database,
   timeEntryId: number,
   boundary: TimeBoundary,
+  policyLocked: boolean,
 ): Promise<TimeEntry> => {
   validateBoundary(boundary)
+  const mutationReference: TrackedEntityReference = {
+    entityType: 'time_entry',
+    entityId: timeEntryId,
+    policyLocked,
+  }
   const settings = await getTimeSettings(database)
   const entry = await getTimeEntry(database, timeEntryId)
   let seconds: number
@@ -353,45 +360,63 @@ export const stopTimeEntry = async (
   } else {
     throw new Error(`time entry ${timeEntryId} is not running`)
   }
-  const [stopped] = await database
-    .update(timeEntries)
-    .set({
-      seconds,
-      secondsWithoutTimer: seconds,
-      roundedSeconds: roundSeconds(seconds, settings.timeRounding),
-      timerStartedAt: null,
-      endedTime,
-      updatedAt: boundary.instant,
-    })
-    .where(and(eq(timeEntries.id, timeEntryId), runningWhere))
-    .returning()
-  if (!stopped) throw new Error(`time entry ${timeEntryId} stopped concurrently`)
-  return stopped
+  return executeAtomicTrackedMutation(
+    database,
+    mutationReference,
+    async (mutationPredicate) => {
+      const [stopped] = await database
+        .update(timeEntries)
+        .set({
+          seconds,
+          secondsWithoutTimer: seconds,
+          roundedSeconds: roundSeconds(seconds, settings.timeRounding),
+          timerStartedAt: null,
+          endedTime,
+          updatedAt: boundary.instant,
+        })
+        .where(and(runningWhere, mutationPredicate))
+        .returning()
+      return stopped
+    },
+    () => new Error(`time entry ${timeEntryId} stopped concurrently`),
+  )
 }
 
 export const restartTimeEntry = async (
   database: Database,
   timeEntryId: number,
   boundary: TimeBoundary,
+  policyLocked: boolean,
 ): Promise<TimeEntry> => {
   validateBoundary(boundary)
+  const mutationReference: TrackedEntityReference = {
+    entityType: 'time_entry',
+    entityId: timeEntryId,
+    policyLocked,
+  }
   const settings = await getTimeSettings(database)
   const entry = await getTimeEntry(database, timeEntryId)
   if (entry.timerStartedAt !== null || (entry.startedTime !== null && entry.endedTime === null)) {
     throw new Error(`time entry ${timeEntryId} is already running`)
   }
-  const [restarted] = await database
-    .update(timeEntries)
-    .set({
-      spentDate: settings.timeEntryMode === 'start_end' ? boundary.date : entry.spentDate,
-      secondsWithoutTimer: entry.seconds,
-      timerStartedAt: settings.timeEntryMode === 'duration' ? boundary.instant : null,
-      startedTime: settings.timeEntryMode === 'start_end' ? boundary.time : null,
-      endedTime: null,
-      updatedAt: boundary.instant,
-    })
-    .where(eq(timeEntries.id, timeEntryId))
-    .returning()
-  if (!restarted) throw new Error(`time entry ${timeEntryId} could not be restarted`)
-  return restarted
+  return executeAtomicTrackedMutation(
+    database,
+    mutationReference,
+    async (mutationPredicate) => {
+      const [restarted] = await database
+        .update(timeEntries)
+        .set({
+          spentDate: settings.timeEntryMode === 'start_end' ? boundary.date : entry.spentDate,
+          secondsWithoutTimer: entry.seconds,
+          timerStartedAt: settings.timeEntryMode === 'duration' ? boundary.instant : null,
+          startedTime: settings.timeEntryMode === 'start_end' ? boundary.time : null,
+          endedTime: null,
+          updatedAt: boundary.instant,
+        })
+        .where(mutationPredicate)
+        .returning()
+      return restarted
+    },
+    () => new Error(`time entry ${timeEntryId} could not be restarted`),
+  )
 }

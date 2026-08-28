@@ -4,11 +4,13 @@ import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
+import { expenses } from '../src/schema.js'
 import {
+  executeAtomicTrackedMutation,
   getTrackedState,
-  guardTrackedEntityMutation,
   type TrackedEntityReference,
 } from '../src/tracked-state.js'
+import { restartTimeEntry, stopTimeEntry, type TimeBoundary } from '../src/time-entries.js'
 
 type OrmDatabase = Parameters<typeof getTrackedState>[0]
 
@@ -80,6 +82,12 @@ const reference = (
   entityType,
   entityId: entityType === 'time_entry' ? 1 : 2,
   policyLocked,
+})
+
+const boundary = (time: string, instant: string): TimeBoundary => ({
+  date: '2026-08-28',
+  time,
+  instant,
 })
 
 const installFixture = async (database: TestDatabase): Promise<void> => {
@@ -281,24 +289,54 @@ for (const [runtime, factory] of factories) {
       })
     })
 
-    it('[unit] returns the typed reason before either locked mutation changes data', async () => {
+    it('[unit] atomically rejects every locked stop and restart without changing data', async () => {
       const db = await setup()
-      await db.run(`UPDATE time_entries SET approval_status = 'approved'`)
-      await db.run(`UPDATE expenses SET approval_status = 'approved'`)
-
-      const updateNotes = async (entityType: TrackedEntityReference['entityType']) => {
-        await guardTrackedEntityMutation(db.orm, reference(entityType))
-        const table = entityType === 'time_entry' ? 'time_entries' : 'expenses'
+      const snapshot = async () =>
+        db.rows<Record<string, unknown>>(`SELECT * FROM time_entries WHERE id = 1`)
+      const unlock = async () => {
         await db.run(
-          `UPDATE ${table} SET notes = 'after' WHERE id = ?`,
-          reference(entityType).entityId,
+          `UPDATE time_entries SET invoice_id = NULL, approval_status = 'unsubmitted' WHERE id = 1`,
         )
+        await db.run(`UPDATE clients SET is_active = 1 WHERE id = 1`)
+        await db.run(`UPDATE projects SET is_active = 1 WHERE id = 1`)
+        await db.run(`UPDATE tasks SET is_active = 1 WHERE id = 1`)
       }
-
-      for (const entityType of ['time_entry', 'expense'] as const) {
+      const lockCases = [
+        {
+          reasonCode: 'invoiced',
+          policyLocked: false,
+          lock: () => db.run(`UPDATE time_entries SET invoice_id = 1 WHERE id = 1`),
+        },
+        {
+          reasonCode: 'approved',
+          policyLocked: false,
+          lock: () => db.run(`UPDATE time_entries SET approval_status = 'approved' WHERE id = 1`),
+        },
+        {
+          reasonCode: 'policy_locked',
+          policyLocked: true,
+          lock: async () => undefined,
+        },
+        {
+          reasonCode: 'client_archived',
+          policyLocked: false,
+          lock: () => db.run(`UPDATE clients SET is_active = 0 WHERE id = 1`),
+        },
+        {
+          reasonCode: 'project_archived',
+          policyLocked: false,
+          lock: () => db.run(`UPDATE projects SET is_active = 0 WHERE id = 1`),
+        },
+        {
+          reasonCode: 'task_archived',
+          policyLocked: false,
+          lock: () => db.run(`UPDATE tasks SET is_active = 0 WHERE id = 1`),
+        },
+      ] as const
+      const expectLocked = async (mutation: () => Promise<unknown>, reasonCode: string) => {
         let caught: unknown
         try {
-          await updateNotes(entityType)
+          await mutation()
         } catch (error) {
           caught = error
         }
@@ -306,16 +344,111 @@ for (const [runtime, factory] of factories) {
         expect(caught).toMatchObject({
           name: 'TrackedMutationLockedError',
           code: 'tracked_mutation_locked',
-          reasonCode: 'approved',
-          reason: 'Approved',
+          reasonCode,
         })
       }
-      expect(await db.rows<{ notes: string }>(`SELECT notes FROM time_entries`)).toEqual([
-        { notes: 'time before' },
-      ])
-      expect(await db.rows<{ notes: string }>(`SELECT notes FROM expenses`)).toEqual([
-        { notes: 'expense before' },
-      ])
+
+      await db.run(
+        `UPDATE time_entries
+         SET timer_started_at = '2026-08-28T09:00:00.000Z', updated_at = ?
+         WHERE id = 1`,
+        timestamp,
+      )
+      for (const lockCase of lockCases) {
+        await unlock()
+        await lockCase.lock()
+        const before = await snapshot()
+        await expectLocked(
+          () =>
+            stopTimeEntry(
+              db.orm,
+              1,
+              boundary('09:05', '2026-08-28T09:05:00.000Z'),
+              lockCase.policyLocked,
+            ),
+          lockCase.reasonCode,
+        )
+        expect(await snapshot()).toEqual(before)
+      }
+
+      await unlock()
+      await stopTimeEntry(db.orm, 1, boundary('09:05', '2026-08-28T09:05:00.000Z'), false)
+      for (const lockCase of lockCases) {
+        await unlock()
+        await lockCase.lock()
+        const before = await snapshot()
+        await expectLocked(
+          () =>
+            restartTimeEntry(
+              db.orm,
+              1,
+              boundary('10:00', '2026-08-28T10:00:00.000Z'),
+              lockCase.policyLocked,
+            ),
+          lockCase.reasonCode,
+        )
+        expect(await snapshot()).toEqual(before)
+      }
+
+      const expenseSnapshot = async () =>
+        db.rows<Record<string, unknown>>(`SELECT * FROM expenses WHERE id = 2`)
+      const unlockExpense = async () => {
+        await db.run(
+          `UPDATE expenses SET invoice_id = NULL, approval_status = 'unsubmitted' WHERE id = 2`,
+        )
+        await db.run(`UPDATE clients SET is_active = 1 WHERE id = 1`)
+        await db.run(`UPDATE projects SET is_active = 1 WHERE id = 1`)
+      }
+      const expenseLockCases = [
+        {
+          reasonCode: 'invoiced',
+          policyLocked: false,
+          lock: () => db.run(`UPDATE expenses SET invoice_id = 1 WHERE id = 2`),
+        },
+        {
+          reasonCode: 'approved',
+          policyLocked: false,
+          lock: () => db.run(`UPDATE expenses SET approval_status = 'approved' WHERE id = 2`),
+        },
+        {
+          reasonCode: 'policy_locked',
+          policyLocked: true,
+          lock: async () => undefined,
+        },
+        {
+          reasonCode: 'client_archived',
+          policyLocked: false,
+          lock: () => db.run(`UPDATE clients SET is_active = 0 WHERE id = 1`),
+        },
+        {
+          reasonCode: 'project_archived',
+          policyLocked: false,
+          lock: () => db.run(`UPDATE projects SET is_active = 0 WHERE id = 1`),
+        },
+      ] as const
+      for (const lockCase of expenseLockCases) {
+        await unlockExpense()
+        await lockCase.lock()
+        const before = await expenseSnapshot()
+        await expectLocked(
+          () =>
+            executeAtomicTrackedMutation(
+              db.orm,
+              reference('expense', lockCase.policyLocked),
+              async (mutationPredicate) => {
+                const [updated] = await db.orm
+                  .update(expenses)
+                  .set({ notes: 'after' })
+                  .where(mutationPredicate)
+                  .returning()
+                return updated
+              },
+              () => new Error('expense changed concurrently'),
+            ),
+          lockCase.reasonCode,
+        )
+        expect(await expenseSnapshot()).toEqual(before)
+      }
     })
   })
 }

@@ -5,10 +5,11 @@ import {
   type TrackedState,
   type TrackedStateFacts,
 } from '@ezacto/core'
-import { sql } from 'drizzle-orm'
+import { sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
+import { clients, expenses, projects, tasks, timeEntries } from './schema.js'
 
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
 
@@ -49,6 +50,52 @@ const assertReference = (reference: TrackedEntityReference): void => {
   if (typeof reference.policyLocked !== 'boolean') {
     throw new TypeError('policyLocked must be an already-computed boolean fact')
   }
+}
+
+/**
+ * The authorization half of a mutation must live in the UPDATE statement that
+ * changes the row. A prior guard read is useful for rendering an error, but it
+ * cannot authorize a later write without a time-of-check/time-of-use race.
+ */
+const atomicTrackedMutationPredicate = (reference: TrackedEntityReference): SQL => {
+  assertReference(reference)
+  const policyAllowsMutation = reference.policyLocked ? 0 : 1
+  if (reference.entityType === 'time_entry') {
+    return sql`
+      ${timeEntries.id} = ${reference.entityId}
+      AND ${policyAllowsMutation} = 1
+      AND ${timeEntries.invoiceId} IS NULL
+      AND ${timeEntries.approvalStatus} <> 'approved'
+      AND EXISTS (
+        SELECT 1
+        FROM ${projects}
+        JOIN ${clients} ON ${clients.id} = ${projects.clientId}
+        WHERE ${projects.id} = ${timeEntries.projectId}
+          AND ${projects.isActive} = 1
+          AND ${clients.isActive} = 1
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM ${tasks}
+        WHERE ${tasks.id} = ${timeEntries.taskId}
+          AND ${tasks.isActive} = 1
+      )
+    `
+  }
+  return sql`
+    ${expenses.id} = ${reference.entityId}
+    AND ${policyAllowsMutation} = 1
+    AND ${expenses.invoiceId} IS NULL
+    AND ${expenses.approvalStatus} <> 'approved'
+    AND EXISTS (
+      SELECT 1
+      FROM ${projects}
+      JOIN ${clients} ON ${clients.id} = ${projects.clientId}
+      WHERE ${projects.id} = ${expenses.projectId}
+        AND ${projects.isActive} = 1
+        AND ${clients.isActive} = 1
+    )
+  `
 }
 
 /** Loads only persisted and parent facts. Policy remains an explicit caller-owned input. */
@@ -99,9 +146,19 @@ export const getTrackedState = async (
   reference: TrackedEntityReference,
 ): Promise<TrackedState> => deriveTrackedState(await loadTrackedStateFacts(database, reference))
 
-/** Shared native guard seam used by both entity families before any mutation. */
-export const guardTrackedEntityMutation = async (
+/**
+ * Executes one mutation whose UPDATE embeds the supplied predicate. A zero-row
+ * result is classified afterward so callers receive the typed lock reason; the
+ * classification read never authorizes the write.
+ */
+export const executeAtomicTrackedMutation = async <Result>(
   database: Database,
   reference: TrackedEntityReference,
-): Promise<TrackedState> =>
+  mutate: (predicate: SQL) => Promise<Result | undefined>,
+  unlockedFailure: () => Error,
+): Promise<Result> => {
+  const result = await mutate(atomicTrackedMutationPredicate(reference))
+  if (result !== undefined) return result
   assertTrackedMutationAllowed(await loadTrackedStateFacts(database, reference))
+  throw unlockedFailure()
+}
