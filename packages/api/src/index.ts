@@ -36,4 +36,5 @@ export {
   type CursorSource,
   type CursorWindow,
 } from './pagination.js'
+export * from './resources/index.js'
 export { serializeMany, serializeOne, type Serializer } from './serializer.js'
