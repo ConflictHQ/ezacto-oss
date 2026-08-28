@@ -167,6 +167,32 @@ describe('S-1 through S-5 application shell', () => {
     )
   })
 
+  it('[acceptance] renders only configured fixed-path OIDC providers with password fallback', () => {
+    const configured = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      signInProviders: ['google'],
+    })
+    expect(configured).toContain('data-oidc-provider="google"')
+    expect(configured).toContain('href="/auth/oidc/google"')
+    expect(configured).toContain('Continue with Google')
+    expect(configured).toContain('method="post" action="/auth/sign-in"')
+    expect(configured).not.toContain('accounts.google.com')
+    expect(configured).not.toContain('client_secret')
+
+    const unavailable = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+    })
+    expect(unavailable).not.toContain('data-oidc-provider')
+    expect(unavailable).toContain('data-oidc-unavailable')
+    expect(unavailable).toContain('Use your email and password.')
+    expect(webAssets.stylesheet).toMatch(/\.oidc-sign-in \{[\s\S]*min-height: 44px;/u)
+    expect(webAssets.stylesheet).toMatch(
+      /@media \(max-width: 720px\)[\s\S]*\.oidc-entry \{[\s\S]*flex-direction: column;/u,
+    )
+  })
+
   it('[unit] resolves K-bar navigation and computes a live timer counter', () => {
     expect(navigationDestination('go reports')).toBe('/reports')
     expect(navigationDestination('GO time')).toBe('/')
