@@ -1,6 +1,7 @@
 import {
   createApiApp,
   ApiError,
+  assertValidOidcProviderConfig,
   generateOpenApiDocument,
   installEmailLogRoutes,
   installGeneralResourceRoutes,
@@ -25,7 +26,7 @@ import {
   type InstanceBootstrapInput,
   type InstanceBootstrapResult,
 } from '@ezacto/db/d1'
-import { renderAppShell, webAssets } from '@ezacto/web'
+import { renderAppShell, webAssets, type SignInProvider } from '@ezacto/web'
 import type { EmailLogStore, QueuedEmailJob } from '@ezacto/mailer'
 
 /** Worker bindings stay entry-owned; the shared API package is runtime-agnostic. */
@@ -213,6 +214,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            signInProviders: configuredSignInProviders(context.env),
           }),
           200,
           {
@@ -263,6 +265,22 @@ export const oidcProvider = (
     clientAuthentication: 'client_secret_post',
     idTokenSigningAlgorithm: 'RS256',
     scopes: ['openid', 'email', 'profile'],
+  }
+}
+
+/** Public shell availability contains provider keys only, never credentials. */
+export const configuredSignInProviders = (
+  env: WorkerEnv,
+): readonly SignInProvider[] => {
+  try {
+    const google = oidcProvider('google', env)
+    if (google === null) return []
+    assertValidOidcProviderConfig(google)
+    return ['google']
+  } catch {
+    // A partial or invalid deployment configuration must not advertise a flow
+    // that cannot start. The fixed provider route continues to fail closed.
+    return []
   }
 }
 

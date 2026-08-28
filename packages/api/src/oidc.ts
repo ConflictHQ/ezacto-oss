@@ -198,6 +198,13 @@ const normalizedProvider = (config: OidcProviderConfig): NormalizedProvider => {
   }
 }
 
+/** Validate provider configuration with the same contract used by OIDC routes. */
+export const assertValidOidcProviderConfig = (
+  config: OidcProviderConfig,
+): void => {
+  normalizedProvider(config)
+}
+
 const transport = (provider: NormalizedProvider) => ({
   signal: () => AbortSignal.timeout(provider.timeoutMs),
   ...(provider.fetch === undefined

@@ -24,6 +24,8 @@ jobs:
       - name: install
         run: |
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
+      - name: install Chromium for browser acceptance
+        run: npx playwright install --with-deps --only-shell chromium
       - name: verify (typecheck + lint + test)
         run: npm run verify
       - name: publish versioned OpenAPI artifact
