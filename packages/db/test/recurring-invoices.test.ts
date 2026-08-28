@@ -788,6 +788,59 @@ for (const [runtime, factory] of factories) {
       expect(await database.rows(`PRAGMA foreign_key_check`)).toEqual([])
     })
 
+    it('[unit] rejects UPDATE OR REPLACE collisions with referenced project identities', async () => {
+      database = await factory()
+      await seedClients(database)
+      await insertProject(database, 10, 1)
+      await insertProject(database, 11, 1)
+      await insertProject(database, 30, 2)
+      await insertProject(database, 31, 1)
+      await createRecurringInvoiceDefinition(
+        database.orm,
+        createInput({
+          amountConfig: {
+            ...fixedAmountConfig,
+            line_items: fixedAmountConfig.line_items.map((line) => ({
+              ...line,
+              project_id: 10,
+            })),
+          },
+        }),
+      )
+      await createRecurringInvoiceDefinition(
+        database.orm,
+        createInput({
+          amountConfig: {
+            schema_version: 1,
+            type: 'line_items_import',
+            project_ids: [11],
+            time: { summary_type: 'task' },
+          },
+        }),
+      )
+
+      await expect(
+        database.run(`UPDATE OR REPLACE projects SET id = 10 WHERE id = 30`),
+      ).rejects.toThrow(/preserve recurring invoice references/)
+
+      await database.run(`UPDATE projects SET harvest_id = 51011 WHERE id = 11`)
+      await expect(
+        database.run(`UPDATE OR REPLACE projects SET harvest_id = 51011 WHERE id = 31`),
+      ).rejects.toThrow(/preserve recurring invoice references/)
+
+      expect(
+        await database.rows<{ id: number; harvest_id: number | null; client_id: number }>(
+          `SELECT id, harvest_id, client_id FROM projects WHERE id IN (10, 11, 30, 31) ORDER BY id`,
+        ),
+      ).toEqual([
+        { id: 10, harvest_id: null, client_id: 1 },
+        { id: 11, harvest_id: 51_011, client_id: 1 },
+        { id: 30, harvest_id: null, client_id: 2 },
+        { id: 31, harvest_id: null, client_id: 1 },
+      ])
+      expect(await database.rows(`PRAGMA foreign_key_check`)).toEqual([])
+    })
+
     it('[unit] refuses stub linking outside exact virgin Harvest invoice authority', async () => {
       database = await factory()
       await seedClients(database)

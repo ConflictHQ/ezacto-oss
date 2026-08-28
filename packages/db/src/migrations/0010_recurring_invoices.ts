@@ -305,6 +305,36 @@ export const recurringInvoicesMigration = [
     BEGIN
       SELECT RAISE(ABORT, 'project replacement must preserve recurring invoice references');
     END`,
+  `CREATE TRIGGER projects_recurring_invoice_target_update
+    BEFORE UPDATE OF id, harvest_id, client_id ON projects
+    WHEN EXISTS (
+      SELECT 1 FROM projects existing
+      WHERE existing.id IS NOT OLD.id
+        AND (
+          existing.id = NEW.id
+          OR (NEW.harvest_id IS NOT NULL AND existing.harvest_id = NEW.harvest_id)
+        )
+        AND EXISTS (
+          SELECT 1 FROM recurring_invoices recurring
+          WHERE recurring.definition_status = 'complete'
+            AND (
+              (json_extract(recurring.amount_config, '$.type') = 'fixed_lines' AND EXISTS (
+                SELECT 1 FROM json_each(recurring.amount_config, '$.line_items') line
+                WHERE json_extract(line.value, '$.project_id') = existing.id
+              ))
+              OR
+              (json_extract(recurring.amount_config, '$.type') = 'line_items_import' AND EXISTS (
+                SELECT 1
+                FROM json_each(recurring.amount_config, '$.project_ids') configured_project
+                WHERE configured_project.value = existing.id
+              ))
+            )
+            AND (existing.id IS NOT NEW.id OR recurring.client_id IS NOT NEW.client_id)
+        )
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'project replacement must preserve recurring invoice references');
+    END`,
   `CREATE TRIGGER projects_recurring_invoice_client_update
     BEFORE UPDATE OF id, client_id ON projects
     WHEN (OLD.id IS NOT NEW.id OR OLD.client_id IS NOT NEW.client_id) AND EXISTS (
