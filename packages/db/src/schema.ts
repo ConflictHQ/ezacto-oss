@@ -808,6 +808,90 @@ export const invoiceLineItems = sqliteTable(
   ],
 )
 
+export const expenseCategories = sqliteTable(
+  'expense_categories',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: integer('harvest_id'),
+    name: text('name').notNull(),
+    unitName: text('unit_name'),
+    unitPriceCents: integer('unit_price_cents'),
+    isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('expense_categories_harvest_id_unique').on(table.harvestId),
+    check(
+      'expense_categories_unit_price_bound',
+      sql`${table.unitPriceCents} is null or ${table.unitPriceCents} between 0 and 9000000000000`,
+    ),
+    check('expense_categories_is_active_boolean', sql`${table.isActive} in (0, 1)`),
+    check('expense_categories_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('expense_categories_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+  ],
+)
+
+export const expenses = sqliteTable(
+  'expenses',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: integer('harvest_id'),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'restrict' }),
+    expenseCategoryId: integer('expense_category_id')
+      .notNull()
+      .references(() => expenseCategories.id, { onDelete: 'restrict' }),
+    spentDate: text('spent_date').notNull(),
+    notes: text('notes'),
+    units: integer('units'),
+    totalCostCents: integer('total_cost_cents').notNull(),
+    billable: integer('billable', { mode: 'boolean' }).notNull().default(true),
+    approvalStatus: text('approval_status', {
+      enum: ['unsubmitted', 'submitted', 'approved'],
+    })
+      .notNull()
+      .default('unsubmitted'),
+    invoiceId: integer('invoice_id').references(() => invoices.id, { onDelete: 'restrict' }),
+    reimbursable: integer('reimbursable', { mode: 'boolean' }).notNull().default(false),
+    reimbursementStatus: text('reimbursement_status', {
+      enum: ['none', 'pending', 'approved', 'paid'],
+    })
+      .notNull()
+      .default('none'),
+    payoutRef: text('payout_ref'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('expenses_harvest_id_unique').on(table.harvestId),
+    index('expenses_user_spent_date').on(table.userId, table.spentDate),
+    index('expenses_project_spent_date').on(table.projectId, table.spentDate),
+    index('expenses_expense_category_id').on(table.expenseCategoryId),
+    index('expenses_invoice_id').on(table.invoiceId),
+    check(
+      'expenses_units_safe_integer',
+      sql`${table.units} is null or ${table.units} between 0 and 9007199254740991`,
+    ),
+    check('expenses_total_cost_bound', sql`abs(${table.totalCostCents}) <= 9000000000000`),
+    check('expenses_billable_boolean', sql`${table.billable} in (0, 1)`),
+    check(
+      'expenses_approval_status_valid',
+      sql`${table.approvalStatus} in ('unsubmitted', 'submitted', 'approved')`,
+    ),
+    check('expenses_reimbursable_boolean', sql`${table.reimbursable} in (0, 1)`),
+    check(
+      'expenses_reimbursement_status_valid',
+      sql`${table.reimbursementStatus} in ('none', 'pending', 'approved', 'paid')`,
+    ),
+    check('expenses_spent_date_canonical', sql`date(${table.spentDate}) is ${table.spentDate}`),
+    check('expenses_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('expenses_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+  ],
+)
+
 export const invoiceMessages = sqliteTable(
   'invoice_messages',
   {

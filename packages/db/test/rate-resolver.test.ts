@@ -441,6 +441,7 @@ for (const [runtime, factory] of factories) {
         '0004_invoice_foundation',
         '0005_invoice_payments_totals',
         '0006_invoice_state_events',
+        '0007_expenses',
         '0008_retainer_ledger',
       ])
       expect(firstLedger.slice(0, 3).map(({ applied_at: appliedAt }) => appliedAt)).toEqual([
@@ -492,6 +493,7 @@ for (const [runtime, factory] of factories) {
         { id: '0004_invoice_foundation' },
         { id: '0005_invoice_payments_totals' },
         { id: '0006_invoice_state_events' },
+        { id: '0007_expenses' },
         { id: '0008_retainer_ledger' },
       ])
     })
