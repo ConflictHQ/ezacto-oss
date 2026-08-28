@@ -65,17 +65,24 @@ const createHarness = () => {
       return principal
     }),
   }
+  const sessions = {
+    issue: vi.fn(async () => ({
+      setCookie:
+        '__Host-ezacto_session=test-session; Path=/; HttpOnly; Secure; SameSite=Lax',
+    })),
+  }
   const app = createApiApp({
     installApp(app) {
       installPasswordAuthRoutes(app, {
         service,
+        sessions,
         mailer: { enqueue: async (delivery) => void deliveries.push(delivery) },
         clientKey: (request) =>
           request.headers.get('cf-connecting-ip') ?? 'test-client',
       })
     },
   })
-  return { app, service, deliveries }
+  return { app, service, sessions, deliveries }
 }
 
 const post = (
@@ -134,6 +141,9 @@ describe('password authentication routes', () => {
       password: 'correct password',
     })
     expect(authenticated.status).toBe(200)
+    expect(authenticated.headers.get('set-cookie')).toContain(
+      '__Host-ezacto_session=test-session',
+    )
     expect(await authenticated.json()).toEqual({
       data: {
         status: 'authenticated',
@@ -209,6 +219,7 @@ describe('password authentication routes', () => {
       installApp(app) {
         installPasswordAuthRoutes(app, {
           service,
+          sessions: { issue: async () => ({ setCookie: 'unused' }) },
           clientKey: () => 'test-client',
         })
       },

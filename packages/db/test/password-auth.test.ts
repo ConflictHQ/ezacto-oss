@@ -9,9 +9,15 @@ import {
   type PasswordAuthService,
 } from '../src/password-auth.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
+import {
+  createContainerSessionStore,
+  createD1SessionStore,
+  type SessionStore,
+} from '../src/sessions.js'
 
 interface Harness {
   service: PasswordAuthService
+  sessions: SessionStore
   setNow(value: string): void
   rows<T>(query: string, ...bindings: unknown[]): Promise<T[]>
   execute(query: string, ...bindings: unknown[]): Promise<void>
@@ -28,6 +34,7 @@ const containerHarness = async (): Promise<Harness> => {
   let currentTime = initialTime
   return {
     service: createContainerPasswordAuthService(database, { now: () => currentTime }),
+    sessions: createContainerSessionStore(database, { now: () => currentTime }),
     setNow: (value) => {
       currentTime = value
     },
@@ -53,6 +60,7 @@ const d1Harness = async (): Promise<Harness> => {
   let currentTime = initialTime
   return {
     service: createD1PasswordAuthService(database, { now: () => currentTime }),
+    sessions: createD1SessionStore(database, { now: () => currentTime }),
     setNow: (value) => {
       currentTime = value
     },
@@ -133,6 +141,7 @@ for (const [runtime, factory] of factories) {
         status: 'authenticated',
         principal: { userId: 1, profile: 'administrator', managerGrants: [] },
       })
+      const activeSession = await harness.sessions.issue(1)
       await expect(
         harness.service.signIn({
           email: 'owner@example.test',
@@ -159,6 +168,13 @@ for (const [runtime, factory] of factories) {
       await expect(
         harness.service.resetPassword(reset!.token, replacementPassword, '198.51.100.10'),
       ).resolves.toEqual({ userId: 1, profile: 'administrator', managerGrants: [] })
+      await expect(harness.sessions.authenticate(activeSession.token)).resolves.toBeNull()
+      await expect(harness.sessions.list(1)).resolves.toContainEqual(
+        expect.objectContaining({
+          id: activeSession.session.id,
+          revocationReason: 'password_reset',
+        }),
+      )
       await expect(
         harness.service.resetPassword(reset!.token, replacementPassword, '198.51.100.10'),
       ).rejects.toBeInstanceOf(InvalidAuthTokenError)

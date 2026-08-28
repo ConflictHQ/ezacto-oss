@@ -21,6 +21,17 @@ export {
   type PasswordAuthServiceOptions,
 } from './password-auth.js'
 export {
+  createD1SessionStore,
+  SESSION_ABSOLUTE_TTL_MS,
+  SESSION_IDLE_TTL_MS,
+  type AuthenticatedSession,
+  type IssuedSession,
+  type SessionMetadata,
+  type SessionRevocationReason,
+  type SessionStore,
+  type SessionStoreOptions,
+} from './sessions.js'
+export {
   bootstrapInstanceD1,
   InstanceBootstrapConflictError,
   type InstanceBootstrapInput,

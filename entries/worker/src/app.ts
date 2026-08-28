@@ -4,11 +4,13 @@ import {
   generateOpenApiDocument,
   installGeneralResourceRoutes,
   installPasswordAuthRoutes,
+  installSessionRoutes,
   installTrackedResourceRoutes,
   readJsonBody,
   validationError,
   type ApiTokenService,
   type AuthMailer,
+  type ApiSessionService,
   type GeneralResourceRouteOptions,
   type PasswordAuthService,
   type TrackedResourceRepository,
@@ -40,6 +42,7 @@ export interface RuntimeServices {
   trackedResources: TrackedResourceRepository
   cursorSigningKey: Uint8Array
   passwordAuth: PasswordAuthService
+  sessions: ApiSessionService
   authMailer?: AuthMailer
 }
 
@@ -57,11 +60,10 @@ export const createApp = (services?: RuntimeServices) =>
       : {
           authentication: {
             tokens: services.tokens,
-            // Native sessions are not implemented at this entry seam. Being
-            // explicit keeps cookies from becoming an accidental credential.
-            sessions: { resolve: async () => null },
+            sessions: services.sessions,
           },
           installApi: (api) => {
+            installSessionRoutes(api, services.sessions)
             installGeneralResourceRoutes(api, {
               repository: services.generalResources,
               cursorSigningKey: services.cursorSigningKey,
@@ -77,6 +79,7 @@ export const createApp = (services?: RuntimeServices) =>
       if (services !== undefined) {
         installPasswordAuthRoutes(app, {
           service: services.passwordAuth,
+          sessions: services.sessions,
           ...(services.authMailer === undefined
             ? {}
             : { mailer: services.authMailer }),

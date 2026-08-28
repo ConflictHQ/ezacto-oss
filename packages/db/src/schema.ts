@@ -311,6 +311,47 @@ export const authFirstRun = sqliteTable(
   (table) => [check('auth_first_run_singleton', sql`${table.id} = 1`)],
 )
 
+export const sessions = sqliteTable(
+  'sessions',
+  {
+    id: integer('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    selector: text('selector').notNull().unique(),
+    secretHash: text('secret_hash').notNull(),
+    profileSnapshot: text('profile_snapshot', {
+      enum: [
+        'member',
+        'project_manager',
+        'people_admin',
+        'accounting',
+        'executive_manager',
+        'administrator',
+      ],
+    }).notNull(),
+    managerGrantsSnapshot: text('manager_grants_snapshot').notNull(),
+    createdAt: text('created_at').notNull(),
+    lastSeenAt: text('last_seen_at').notNull(),
+    idleExpiresAt: text('idle_expires_at').notNull(),
+    absoluteExpiresAt: text('absolute_expires_at').notNull(),
+    revokedAt: text('revoked_at'),
+    revocationReason: text('revocation_reason', {
+      enum: ['user_revoked', 'privilege_change', 'password_reset', 'user_disabled'],
+    }),
+    rotationNonce: text('rotation_nonce').unique(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    index('sessions_user_created_id').on(table.userId, table.createdAt, table.id),
+    index('sessions_active_expiry').on(table.idleExpiresAt, table.absoluteExpiresAt),
+    check(
+      'sessions_revocation_pair',
+      sql`(${table.revokedAt} is null) = (${table.revocationReason} is null)`,
+    ),
+  ],
+)
+
 export const apiTokens = sqliteTable(
   'api_tokens',
   {

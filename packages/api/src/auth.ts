@@ -1,11 +1,12 @@
 import type { Context, Hono, MiddlewareHandler } from 'hono'
-import {
-  canProfileUseApiScope,
-  isApiScope,
-  type ApiScope,
-} from '@ezacto/core'
+import { canProfileUseApiScope, isApiScope, type ApiScope } from '@ezacto/core'
 import type { ApiContext, UserProfile } from './context.js'
-import { ApiError, readJsonBody, validationError, type FieldError } from './errors.js'
+import {
+  ApiError,
+  readJsonBody,
+  validationError,
+  type FieldError,
+} from './errors.js'
 
 export interface ApiTokenMetadata {
   id: number
@@ -58,7 +59,13 @@ export type SessionPrincipal =
     }
 
 export interface ApiSessionResolver {
-  resolve(request: Request): Promise<SessionPrincipal | null>
+  resolve(
+    request: Request,
+  ): Promise<
+    | SessionPrincipal
+    | { principal: SessionPrincipal; setCookie?: string }
+    | null
+  >
 }
 
 export interface ApiAuthentication {
@@ -66,7 +73,9 @@ export interface ApiAuthentication {
   sessions?: ApiSessionResolver
 }
 
-const unauthorized = <Bindings extends object>(context: Context<ApiContext<Bindings>>): never => {
+const unauthorized = <Bindings extends object>(
+  context: Context<ApiContext<Bindings>>,
+): never => {
   context.header('www-authenticate', 'Bearer realm="ezacto"')
   throw new ApiError({
     status: 401,
@@ -80,25 +89,43 @@ const bearerToken = (authorization: string): string | null => {
   return match?.[1] ?? null
 }
 
+const safeSessionMethods = new Set(['GET', 'HEAD', 'OPTIONS'])
+
+const requireSameOriginForUnsafeSessionRequest = (request: Request): void => {
+  if (safeSessionMethods.has(request.method.toUpperCase())) return
+  const origin = request.headers.get('origin')
+  if (origin !== null && origin === new URL(request.url).origin) return
+  throw new ApiError({
+    status: 403,
+    code: 'csrf_origin_mismatch',
+    message:
+      'Session-authenticated mutations require an exact same-origin request.',
+  })
+}
+
 /**
  * Resolves exactly one credential source. An Authorization header always wins:
  * malformed or invalid bearer credentials never fall back to a session cookie.
  */
-export const apiAuthenticationMiddleware = <Bindings extends object>(
-  authentication: ApiAuthentication | undefined,
-): MiddlewareHandler<ApiContext<Bindings>> =>
+export const apiAuthenticationMiddleware =
+  <Bindings extends object>(
+    authentication: ApiAuthentication | undefined,
+  ): MiddlewareHandler<ApiContext<Bindings>> =>
   async (context, next) => {
     const authorization = context.req.header('authorization')
     if (authorization !== undefined) {
       const token = bearerToken(authorization)
       const tokenService = authentication?.tokens
-      if (token === null || tokenService === undefined) return unauthorized(context)
+      if (token === null || tokenService === undefined)
+        return unauthorized(context)
       const authenticated = await tokenService.authenticate(token)
       if (authenticated === null) return unauthorized(context)
       const scopes = authenticated.scopes
       if (
         !scopes.every(isApiScope) ||
-        !scopes.every((scope) => canProfileUseApiScope(authenticated.profile, scope as ApiScope))
+        !scopes.every((scope) =>
+          canProfileUseApiScope(authenticated.profile, scope as ApiScope),
+        )
       ) {
         return unauthorized(context)
       }
@@ -117,8 +144,11 @@ export const apiAuthenticationMiddleware = <Bindings extends object>(
       return
     }
 
-    const principal = await authentication?.sessions?.resolve(context.req.raw)
-    if (principal === undefined || principal === null) return unauthorized(context)
+    requireSameOriginForUnsafeSessionRequest(context.req.raw)
+    const resolved = await authentication?.sessions?.resolve(context.req.raw)
+    if (resolved === undefined || resolved === null)
+      return unauthorized(context)
+    const principal = 'principal' in resolved ? resolved.principal : resolved
     if (principal.type === 'contact') {
       throw new ApiError({
         status: 403,
@@ -130,6 +160,9 @@ export const apiAuthenticationMiddleware = <Bindings extends object>(
       ...principal,
       managerGrants: [...(principal.managerGrants ?? [])],
     })
+    if ('principal' in resolved && resolved.setCookie !== undefined) {
+      context.header('set-cookie', resolved.setCookie, { append: true })
+    }
     await next()
   }
 
@@ -156,7 +189,9 @@ export const requireApiScope = <Bindings extends object>(
 
 export const requireSessionPrincipal = <Bindings extends object>(
   context: Context<ApiContext<Bindings>>,
-) => {
+): ApiContext<Bindings>['Variables']['principal'] & {
+  authentication: { kind: 'session'; sessionId: string }
+} => {
   const principal = context.get('principal')
   if (principal.authentication.kind !== 'session') {
     throw new ApiError({
@@ -165,7 +200,9 @@ export const requireSessionPrincipal = <Bindings extends object>(
       message: 'This operation requires an authenticated user session.',
     })
   }
-  return principal
+  return principal as ApiContext<Bindings>['Variables']['principal'] & {
+    authentication: { kind: 'session'; sessionId: string }
+  }
 }
 
 const tokenData = (token: ApiTokenMetadata) => ({
@@ -203,10 +240,15 @@ const issueFields = (body: Record<string, unknown>): FieldError[] => {
   const allowedKeys = new Set(['name', 'scopes', 'expires_at'])
   for (const key of Object.keys(body)) {
     if (!allowedKeys.has(key)) {
-      fields.push({ field: key, code: 'unknown', message: `${key} is not accepted` })
+      fields.push({
+        field: key,
+        code: 'unknown',
+        message: `${key} is not accepted`,
+      })
     }
   }
-  const nameLength = typeof body.name === 'string' ? [...body.name.trim()].length : 0
+  const nameLength =
+    typeof body.name === 'string' ? [...body.name.trim()].length : 0
   if (typeof body.name !== 'string' || nameLength < 1 || nameLength > 100) {
     fields.push({
       field: 'name',
@@ -248,7 +290,10 @@ const issueFields = (body: Record<string, unknown>): FieldError[] => {
       code: 'invalid',
       message: 'expires_at must be a canonical UTC timestamp or null',
     })
-  } else if (typeof body.expires_at === 'string' && !isCanonicalTimestamp(body.expires_at)) {
+  } else if (
+    typeof body.expires_at === 'string' &&
+    !isCanonicalTimestamp(body.expires_at)
+  ) {
     fields.push({
       field: 'expires_at',
       code: 'invalid',
@@ -302,18 +347,25 @@ export const installApiTokenRoutes = <Bindings extends object>(
     const parsed = await readJsonBody<unknown>(context)
     if (!isJsonObject(parsed)) {
       throw validationError([
-        { field: 'body', code: 'invalid', message: 'request body must be a JSON object' },
+        {
+          field: 'body',
+          code: 'invalid',
+          message: 'request body must be a JSON object',
+        },
       ])
     }
     const body = parsed
     const fields = issueFields(body)
     if (fields.length > 0) throw validationError(fields)
     const scopes = body.scopes as ApiScope[]
-    if (!scopes.every((scope) => canProfileUseApiScope(principal.profile, scope))) {
+    if (
+      !scopes.every((scope) => canProfileUseApiScope(principal.profile, scope))
+    ) {
       throw new ApiError({
         status: 403,
         code: 'profile_forbidden',
-        message: 'The acting user profile cannot grant one or more requested scopes.',
+        message:
+          'The acting user profile cannot grant one or more requested scopes.',
       })
     }
     try {
@@ -321,7 +373,9 @@ export const installApiTokenRoutes = <Bindings extends object>(
         userId: principal.userId,
         name: (body.name as string).trim(),
         scopes,
-        ...('expires_at' in body ? { expiresAt: body.expires_at as string | null } : {}),
+        ...('expires_at' in body
+          ? { expiresAt: body.expires_at as string | null }
+          : {}),
       })
       return context.json(
         { data: { ...tokenData(issued), token: issued.token } },
@@ -331,7 +385,9 @@ export const installApiTokenRoutes = <Bindings extends object>(
     } catch (error) {
       if (error instanceof RangeError) {
         const field = /scope/.test(error.message) ? 'scopes' : 'expires_at'
-        throw validationError([{ field, code: 'invalid', message: error.message }])
+        throw validationError([
+          { field, code: 'invalid', message: error.message },
+        ])
       }
       throw error
     }
@@ -339,7 +395,10 @@ export const installApiTokenRoutes = <Bindings extends object>(
 
   api.delete('/api-tokens/:tokenId', async (context) => {
     const principal = requireSessionPrincipal(context)
-    const revoked = await tokens.revoke(principal.userId, tokenId(context.req.param('tokenId')))
+    const revoked = await tokens.revoke(
+      principal.userId,
+      tokenId(context.req.param('tokenId')),
+    )
     if (revoked === null) {
       throw new ApiError({
         status: 404,
@@ -347,6 +406,8 @@ export const installApiTokenRoutes = <Bindings extends object>(
         message: 'The requested API token does not exist.',
       })
     }
-    return context.json({ data: tokenData(revoked) }, 200, { 'cache-control': 'no-store' })
+    return context.json({ data: tokenData(revoked) }, 200, {
+      'cache-control': 'no-store',
+    })
   })
 }

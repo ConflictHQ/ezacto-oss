@@ -439,6 +439,27 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   },
   {
     method: "get",
+    path: "/api/v1/sessions",
+    operationId: "listSessions",
+    summary: "List sessions for the acting user",
+    tag: "authentication",
+    responseStatus: 200,
+    responseSchema: "SessionPage",
+    sessionOnly: true,
+  },
+  {
+    method: "delete",
+    path: "/api/v1/sessions/:sessionId",
+    operationId: "revokeSession",
+    summary: "Revoke a session for the acting user",
+    tag: "authentication",
+    responseStatus: 200,
+    responseSchema: "SessionEnvelope",
+    sessionOnly: true,
+    parameters: [path("sessionId")],
+  },
+  {
+    method: "get",
     path: "/api/v1",
     operationId: "getApiRoot",
     summary: "Get API service metadata",
@@ -657,6 +678,53 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object",
     required: ["data"],
     properties: { data: reference("AuthPrincipal") },
+    additionalProperties: false,
+  },
+  Session: {
+    type: "object",
+    required: [
+      "id",
+      "created_at",
+      "last_seen_at",
+      "idle_expires_at",
+      "absolute_expires_at",
+      "revoked_at",
+      "revocation_reason",
+      "current",
+    ],
+    properties: {
+      id: integerSchema,
+      created_at: timestampSchema,
+      last_seen_at: timestampSchema,
+      idle_expires_at: timestampSchema,
+      absolute_expires_at: timestampSchema,
+      revoked_at: nullable(timestampSchema),
+      revocation_reason: nullable({
+        type: "string",
+        enum: [
+          "user_revoked",
+          "privilege_change",
+          "password_reset",
+          "user_disabled",
+        ],
+      }),
+      current: booleanSchema,
+    },
+    additionalProperties: false,
+  },
+  SessionEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("Session") },
+    additionalProperties: false,
+  },
+  SessionPage: {
+    type: "object",
+    required: ["data", "links"],
+    properties: {
+      data: { type: "array", items: reference("Session") },
+      links: reference("Links"),
+    },
     additionalProperties: false,
   },
   Links: {
@@ -1106,7 +1174,11 @@ export const generateOpenApiDocument = (): Record<string, unknown> => {
     components: {
       securitySchemes: {
         bearerAuth: { type: "http", scheme: "bearer" },
-        cookieSession: { type: "apiKey", in: "cookie", name: "session" },
+        cookieSession: {
+          type: "apiKey",
+          in: "cookie",
+          name: "__Host-ezacto_session",
+        },
       },
       responses: {
         MalformedRequest: errorResponse("Malformed request"),

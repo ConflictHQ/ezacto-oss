@@ -54,6 +54,16 @@ export {
   type AuthMailer,
   type PasswordAuthRouteOptions,
   type PasswordAuthService,
+  type PasswordSessionIssuer,
 } from './password-auth.js'
 export * from './resources/index.js'
 export { serializeMany, serializeOne, type Serializer } from './serializer.js'
+export {
+  createApiSessionService,
+  installSessionRoutes,
+  SESSION_COOKIE_NAME,
+  type ApiSessionService,
+  type SessionMetadata,
+  type SessionRevocationReason,
+  type SessionStorePort,
+} from './sessions.js'

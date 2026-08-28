@@ -577,6 +577,17 @@ const createPasswordAuthService = (
           nonce,
         ],
       },
+      {
+        query: `UPDATE sessions SET revoked_at = ?, revocation_reason = 'password_reset',
+            updated_at = ?
+          WHERE user_id = (
+            SELECT email.user_id FROM auth_tokens token
+            JOIN user_emails email ON email.id = token.user_email_id
+            WHERE token.selector = ? AND token.secret_hash = ? AND token.used_nonce = ?
+          ) AND revoked_at IS NULL
+          RETURNING id`,
+        bindings: [timestamp, timestamp, prepared.selector, prepared.secretHash, nonce],
+      },
     ])
     const consumed = rows[0]?.[0] as { userEmailId?: number } | undefined
     const updated = rows[1]?.[0] as { userId?: number } | undefined

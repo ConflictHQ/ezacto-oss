@@ -62,6 +62,26 @@ export type AuthPrincipalEnvelope = {
   "data": AuthPrincipal;
 };
 
+export type Session = {
+  "id": number;
+  "created_at": string;
+  "last_seen_at": string;
+  "idle_expires_at": string;
+  "absolute_expires_at": string;
+  "revoked_at": string | null;
+  "revocation_reason": "user_revoked" | "privilege_change" | "password_reset" | "user_disabled" | null;
+  "current": boolean;
+};
+
+export type SessionEnvelope = {
+  "data": Session;
+};
+
+export type SessionPage = {
+  "data": Array<Session>;
+  "links": Links;
+};
+
 export type Links = {
   "self": string;
 };
@@ -444,6 +464,20 @@ export class EzactoClient {
   async resetPassword(args: { body: PasswordResetInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<AuthPrincipalEnvelope> {
     return this.request<AuthPrincipalEnvelope>("POST", "/auth/password/reset", {
       body: args.body,
+      signal: args.signal,
+      headers: args.headers,
+    });
+  }
+
+  async listSessions(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<SessionPage> {
+    return this.request<SessionPage>("GET", "/api/v1/sessions", {
+      signal: args.signal,
+      headers: args.headers,
+    });
+  }
+
+  async revokeSession(args: { "sessionId": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<SessionEnvelope> {
+    return this.request<SessionEnvelope>("DELETE", "/api/v1/sessions/:sessionId".replace(":sessionId", encodeURIComponent(String(args["sessionId"]))), {
       signal: args.signal,
       headers: args.headers,
     });
