@@ -13,6 +13,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core'
 import type { RecurringAmountConfig } from './recurring-invoices.js'
+import type { EmailFailureCode, EmailRecipient } from '@ezacto/mailer'
 
 const timestamps = {
   createdAt: text('created_at').notNull(),
@@ -1264,6 +1265,66 @@ export const invoiceMessages = sqliteTable(
     ),
     check('invoice_messages_created_at_canonical', canonicalTimestamp(table.createdAt)),
     check('invoice_messages_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+  ],
+)
+
+export const emailLog = sqliteTable(
+  'email_log',
+  {
+    id: integer('id').primaryKey(),
+    to: text('to_json', { mode: 'json' }).$type<EmailRecipient[]>().notNull(),
+    template: text('template').notNull(),
+    subject: text('subject').notNull(),
+    provider: text('provider'),
+    providerMessageId: text('provider_message_id'),
+    status: text('status', {
+      enum: ['queued', 'sent', 'bounced', 'complained', 'failed'],
+    })
+      .notNull()
+      .default('queued'),
+    relatedType: text('related_type'),
+    relatedId: integer('related_id'),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    activeAttemptId: text('active_attempt_id'),
+    attemptLeaseExpiresAt: text('attempt_lease_expires_at'),
+    failureCode: text('failure_code').$type<EmailFailureCode | null>(),
+    ...timestamps,
+  },
+  (table) => [
+    index('email_log_status_created_id').on(
+      table.status,
+      table.createdAt,
+      table.id,
+    ),
+    index('email_log_related_created_id')
+      .on(table.relatedType, table.relatedId, table.createdAt, table.id)
+      .where(sql`${table.relatedType} is not null`),
+    index('email_log_provider_message_id')
+      .on(table.provider, table.providerMessageId)
+      .where(sql`${table.providerMessageId} is not null`),
+    check(
+      'email_log_to_json',
+      sql`json_valid(${table.to}) and json_type(${table.to}) = 'array'
+        and json_array_length(${table.to}) between 1 and 100`,
+    ),
+    check(
+      'email_log_related_pair',
+      sql`(${table.relatedType} is null) = (${table.relatedId} is null)`,
+    ),
+    check(
+      'email_log_attempt_count_safe',
+      sql`${table.attemptCount} between 0 and 9007199254740991`,
+    ),
+    check(
+      'email_log_attempt_lease_pair',
+      sql`(${table.activeAttemptId} is null) = (${table.attemptLeaseExpiresAt} is null)`,
+    ),
+    check(
+      'email_log_attempt_lease_expires_at_canonical',
+      nullableCanonicalTimestamp(table.attemptLeaseExpiresAt),
+    ),
+    check('email_log_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('email_log_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
   ],
 )
 

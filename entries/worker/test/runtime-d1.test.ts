@@ -149,8 +149,8 @@ describe('Worker D1 runtime composition', () => {
     const migrations = await database
       .prepare('SELECT id FROM _ezacto_migrations ORDER BY id')
       .all<{ id: string }>()
-    expect(migrations.results.at(-1)?.id).toBe('0015_oidc_transactions')
-    expect(migrations.results).toHaveLength(16)
+    expect(migrations.results.at(-1)?.id).toBe('0016_email_log')
+    expect(migrations.results).toHaveLength(17)
   })
 
   it('[security] keeps unverified session-like cookies fail-closed', async () => {

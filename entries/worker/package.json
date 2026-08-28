@@ -17,6 +17,7 @@
   "dependencies": {
     "@ezacto/api": "0.0.0",
     "@ezacto/db": "0.0.0",
+    "@ezacto/mailer": "0.0.0",
     "@ezacto/web": "0.0.0"
   },
   "devDependencies": {
