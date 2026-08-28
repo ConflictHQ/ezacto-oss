@@ -30,6 +30,20 @@ const principal: AuthPrincipal = {
   manager_grants: [],
 }
 
+const secondIdentity: Whoami = {
+  user_id: 2,
+  profile: 'member',
+  manager_grants: [],
+  authentication: { kind: 'session' },
+}
+
+const secondPrincipal: AuthPrincipal = {
+  status: 'authenticated',
+  user_id: 2,
+  profile: 'member',
+  manager_grants: [],
+}
+
 const currentSession: Session = {
   id: 7,
   created_at: timestamp,
@@ -177,6 +191,20 @@ const authenticationError = (status: number, code: string): EzactoApiError =>
     { error: { code, message: 'server detail is not rendered', fields: [] } },
     null,
   )
+
+const deferred = <Value>() => {
+  let resolve: ((value: Value) => void) | undefined
+  let reject: ((error: unknown) => void) | undefined
+  const promise = new Promise<Value>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return {
+    promise,
+    resolve: (value: Value) => resolve?.(value),
+    reject: (error: unknown) => reject?.(error),
+  }
+}
 
 const submitSignIn = (email: string, password: string): void => {
   const emailInput = document.querySelector<HTMLInputElement>('[name="email"]')!
@@ -365,6 +393,103 @@ describe('native browser authentication', () => {
     )
   })
 
+  it('[security] clears the password before a post-sign-in identity check settles', async () => {
+    renderBrowserShell()
+    const base = browserApi()
+    const identityCheck = deferred<Whoami>()
+    let signedIn = false
+    const api = {
+      ...base,
+      whoami: vi.fn(async () => {
+        if (!signedIn) throw authenticationError(401, 'authentication_required')
+        return identityCheck.promise
+      }),
+      signIn: vi.fn(async () => {
+        signedIn = true
+        return principal
+      }),
+    }
+    await mountShell(api)
+
+    submitSignIn('owner@example.test', 'clear before whoami')
+    await vi.waitFor(() => expect(api.whoami).toHaveBeenCalledTimes(2))
+    expect(document.querySelector<HTMLInputElement>('[name="password"]')?.value).toBe('')
+    expect(document.querySelector<HTMLButtonElement>('[data-sign-in-submit]')?.disabled).toBe(
+      true,
+    )
+
+    identityCheck.resolve(identity)
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-current-user-id]')?.textContent).toBe('1'),
+    )
+  })
+
+  it('[security] sends a cell retry 401 through the shared signed-out transition', async () => {
+    renderBrowserShell()
+    const base = browserApi()
+    let creates = 0
+    const api = {
+      ...base,
+      createTimeEntry: vi.fn(async () => {
+        creates += 1
+        if (creates === 1) throw new Error('temporary network failure')
+        throw authenticationError(401, 'authentication_required')
+      }),
+    }
+    await mountShell(api)
+
+    const monday = desktopInputs()[0]!
+    edit(monday, '0.5')
+    monday.blur()
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLButtonElement>('.cell-retry')).not.toBeNull(),
+    )
+    document.querySelector<HTMLButtonElement>('.cell-retry')!.click()
+
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLFormElement>('[data-sign-in-form]')?.hidden).toBe(false),
+    )
+    expect(document.querySelector('[data-session-status]')?.textContent).toContain(
+      'session ended',
+    )
+    expect(document.querySelector<HTMLButtonElement>('[data-command-trigger]')?.disabled).toBe(
+      true,
+    )
+    expect(desktopInputs()).toHaveLength(0)
+  })
+
+  it('[security] sends a command 401 through the shared signed-out transition', async () => {
+    renderBrowserShell()
+    const base = browserApi()
+    let projectLoads = 0
+    const api = {
+      ...base,
+      listProjects: vi.fn(async (cursor?: string) => {
+        projectLoads += 1
+        if (projectLoads > 1) {
+          throw authenticationError(401, 'authentication_required')
+        }
+        return base.listProjects(cursor)
+      }),
+    }
+    await mountShell(api)
+
+    document.querySelector<HTMLButtonElement>('[data-command-trigger]')!.click()
+    const input = document.querySelector<HTMLInputElement>('[name="command"]')!
+    input.value = 'log 1h northpeak development'
+    document
+      .querySelector<HTMLFormElement>('[data-command-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLFormElement>('[data-sign-in-form]')?.hidden).toBe(false),
+    )
+    expect(document.querySelector('[data-session-status]')?.textContent).toContain(
+      'session ended',
+    )
+    expect(input.value).toBe('')
+  })
+
   it('[e2e:browser-auth] keeps a valid initial session signed in when week loading fails', async () => {
     renderBrowserShell()
     const base = browserApi()
@@ -497,5 +622,124 @@ describe('native browser authentication', () => {
       true,
     )
     storage.mockRestore()
+  })
+
+  it('[security] aborts and ignores prior-account work across logout and a different sign-in', async () => {
+    renderBrowserShell()
+    const stored = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key: string) => stored.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => void stored.set(key, value)),
+    })
+    const base = browserApi()
+    const priorAccountProjects = deferred<{
+      data: GeneralResource[]
+      page: { next_cursor: null }
+    }>()
+    let account = 1
+    let projectLoads = 0
+    let priorSignal: AbortSignal | undefined
+    const api = {
+      ...base,
+      whoami: vi.fn(async () => (account === 1 ? identity : secondIdentity)),
+      signIn: vi.fn(async () => {
+        account = 2
+        return secondPrincipal
+      }),
+      logoutCurrentSession: vi.fn(async () => ({
+        ...currentSession,
+        current: false,
+        revoked_at: timestamp,
+        revocation_reason: 'user_revoked' as const,
+      })),
+      listProjects: vi.fn(async (_cursor?: string, signal?: AbortSignal) => {
+        projectLoads += 1
+        if (projectLoads === 2) {
+          priorSignal = signal
+          return priorAccountProjects.promise
+        }
+        return {
+          data: [
+            resource(
+              1,
+              account === 1 ? 'First Account Project' : 'Second Account Project',
+            ),
+            resource(2, account === 1 ? 'Private First Row' : 'Second Extra Row'),
+          ],
+          page: { next_cursor: null as null },
+        }
+      }),
+    }
+
+    await mountShell(api)
+    expect(document.body.textContent).toContain('First Account Project')
+
+    document.querySelector<HTMLButtonElement>('[data-add-row-trigger]')!.click()
+    const project = document.querySelector<HTMLSelectElement>('[data-row-project]')!
+    const task = document.querySelector<HTMLSelectElement>('[data-row-task]')!
+    project.value = '2'
+    task.value = '2'
+    document
+      .querySelector<HTMLFormElement>('[data-row-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    expect([...stored.keys()]).toContain(
+      'ezacto:user:1:week-rows:2026-08-24',
+    )
+
+    const command = document.querySelector<HTMLInputElement>('[name="command"]')!
+    command.value = 'private first command'
+    document.querySelector<HTMLInputElement>('[name="email"]')!.value =
+      'first-private@example.test'
+    const timerProject = document.querySelector<HTMLInputElement>(
+      '[data-timer-form] [name="project"]',
+    )!
+    timerProject.value = 'private first timer'
+    const oldNote = document.querySelector<HTMLButtonElement>('[data-note-cell]')!
+    oldNote.click()
+    document.querySelector<HTMLTextAreaElement>('[data-note-input]')!.value =
+      'private first note'
+
+    document.querySelector<HTMLButtonElement>('[data-week-previous]')!.click()
+    await vi.waitFor(() => expect(api.listProjects).toHaveBeenCalledTimes(2))
+    const logoutButton = document.querySelector<HTMLButtonElement>('[data-logout]')!
+    logoutButton.click()
+    expect(document.querySelector<HTMLButtonElement>('[data-command-trigger]')?.disabled).toBe(
+      true,
+    )
+    expect(priorSignal?.aborted).toBe(true)
+
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLFormElement>('[data-sign-in-form]')?.hidden).toBe(false),
+    )
+    expect(document.body.textContent).not.toContain('First Account Project')
+    expect(command.value).toBe('')
+    expect(timerProject.value).toBe('')
+    expect(document.querySelector<HTMLTextAreaElement>('[data-note-input]')?.value).toBe('')
+    expect(document.querySelectorAll('[data-row-project] option')).toHaveLength(0)
+    expect(document.querySelectorAll('dialog[open]')).toHaveLength(0)
+    expect(document.querySelector<HTMLInputElement>('[name="email"]')?.value).toBe('')
+
+    submitSignIn('second@example.test', 'second account password')
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-current-user-id]')?.textContent).toBe('2'),
+    )
+    expect(document.body.textContent).toContain('Second Account Project')
+    expect(document.body.textContent).not.toContain('Private First Row')
+    expect(desktopInputs()).toHaveLength(7)
+
+    priorAccountProjects.resolve({
+      data: [resource(1, 'Late First Account Project')],
+      page: { next_cursor: null },
+    })
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 0))
+    expect(document.querySelector('[data-current-user-id]')?.textContent).toBe('2')
+    expect(document.body.textContent).not.toContain('Late First Account Project')
+
+    document.querySelector<HTMLTextAreaElement>('[data-note-input]')!.value = 'must not save'
+    document
+      .querySelector<HTMLFormElement>('[data-note-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    expect(base.updateTimeEntry).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
   })
 })

@@ -39,6 +39,12 @@ interface FocusTarget {
   readonly view: GridView
 }
 
+interface AuthOperation {
+  readonly generation: number
+  readonly signal: AbortSignal
+  readonly userId: number | null
+}
+
 interface GridHandlers {
   readonly cellStates: Map<string, CellSaveState>
   commit(
@@ -388,11 +394,14 @@ const renderTimer = (running: DisplayTimeEntry | null): void => {
   timerInterval = globalThis.setInterval(update, 1_000)
 }
 
-const storageKey = (within: string): string => `ezacto:week-rows:${weekDates(within)[0]}`
+const storageKey = (userId: number, within: string): string =>
+  `ezacto:user:${userId}:week-rows:${weekDates(within)[0]}`
 
-const loadSupplementalRows = (within: string): WeekRowSeed[] => {
+const loadSupplementalRows = (userId: number, within: string): WeekRowSeed[] => {
   try {
-    const value: unknown = JSON.parse(globalThis.localStorage.getItem(storageKey(within)) ?? '[]')
+    const value: unknown = JSON.parse(
+      globalThis.localStorage.getItem(storageKey(userId, within)) ?? '[]',
+    )
     if (!Array.isArray(value)) return []
     return value.flatMap((item): WeekRowSeed[] => {
       if (typeof item !== 'object' || item === null) return []
@@ -407,9 +416,16 @@ const loadSupplementalRows = (within: string): WeekRowSeed[] => {
   }
 }
 
-const saveSupplementalRows = (within: string, rows: readonly WeekRowSeed[]): void => {
+const saveSupplementalRows = (
+  userId: number,
+  within: string,
+  rows: readonly WeekRowSeed[],
+): void => {
   try {
-    globalThis.localStorage.setItem(storageKey(within), JSON.stringify(rows))
+    globalThis.localStorage.setItem(
+      storageKey(userId, within),
+      JSON.stringify(rows),
+    )
   } catch {
     // Empty-row layout is a convenience only; canonical time remains server-backed.
   }
@@ -505,7 +521,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   }
   const cellStates = new Map<string, CellSaveState>()
   let within = initialWithin()
-  let supplementalRows = loadSupplementalRows(within)
+  let supplementalRows: WeekRowSeed[] = []
   let selectedDay = Math.max(0, weekDates(within).indexOf(localDate()))
   let snapshot: ShellSnapshot | null = null
   let grid: WeekGrid | null = null
@@ -513,6 +529,38 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   let currentIdentity: Whoami | null = null
   let signingIn = false
   let signingOut = false
+  let authGeneration = 0
+  let authController = new AbortController()
+
+  const beginAuthGeneration = (userId: number | null): AuthOperation => {
+    authController.abort()
+    authController = new AbortController()
+    authGeneration += 1
+    return {
+      generation: authGeneration,
+      signal: authController.signal,
+      userId,
+    }
+  }
+
+  const currentAuthOperation = (userId: number | null): AuthOperation => ({
+    generation: authGeneration,
+    signal: authController.signal,
+    userId,
+  })
+
+  const isGenerationCurrent = (operation: AuthOperation): boolean =>
+    operation.generation === authGeneration && !operation.signal.aborted
+
+  const isSessionCurrent = (operation: AuthOperation): boolean =>
+    isGenerationCurrent(operation) &&
+    operation.userId !== null &&
+    currentIdentity?.user_id === operation.userId
+
+  const sessionOperation = (): AuthOperation | null =>
+    currentIdentity === null
+      ? null
+      : currentAuthOperation(currentIdentity.user_id)
 
   const setSessionStatus = (
     message: string,
@@ -528,6 +576,41 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const setApplicationAvailability = (available: boolean): void => {
     for (const control of document.querySelectorAll<HTMLButtonElement>('[data-auth-action]')) {
       control.disabled = !available
+    }
+  }
+
+  const clearFormState = (): void => {
+    signInForm.reset()
+    commandForm.reset()
+    timerForm.reset()
+    rowForm.reset()
+    noteForm.reset()
+    required<HTMLSelectElement>('[data-row-project]').replaceChildren()
+    required<HTMLSelectElement>('[data-row-task]').replaceChildren()
+    required<HTMLElement>('[data-command-result]').textContent = ''
+    required<HTMLElement>('[data-timer-result]').textContent = ''
+    required<HTMLElement>('[data-row-result]').textContent = ''
+    required<HTMLElement>('[data-note-result]').textContent = ''
+    required<HTMLElement>('[data-note-title]').textContent = 'Add a note'
+    required<HTMLElement>('[data-current-user-id]').textContent = '—'
+    required<HTMLElement>('[data-current-profile]').textContent = '—'
+    required<HTMLElement>('[data-timer-label]').textContent = 'Timer'
+    required<HTMLElement>('[data-timer-elapsed]').textContent = '—'
+    required<HTMLElement>('[data-week-total]').textContent = '—'
+    required<HTMLElement>('[data-week-grid-rows]').replaceChildren()
+    required<HTMLElement>('[data-week-grid-totals]').replaceChildren()
+    required<HTMLElement>('[data-day-rows]').replaceChildren()
+    activeNote = null
+    supplementalRows = []
+    snapshot = null
+    grid = null
+    cellStates.clear()
+    for (const dialog of [commandDialog, timerDialog, menuDialog, rowDialog, noteDialog]) {
+      if (dialog.open) dialog.close()
+    }
+    if (timerInterval !== undefined) {
+      globalThis.clearInterval(timerInterval)
+      timerInterval = undefined
     }
   }
 
@@ -575,8 +658,16 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     required<HTMLElement>('[data-day-rows]').replaceChildren(phoneUnavailable)
   }
 
-  const showSignedOut = (message = 'Sign in to load and edit your week.'): void => {
+  const transitionSignedOut = (
+    message = 'Sign in to load and edit your week.',
+  ): void => {
+    beginAuthGeneration(null)
     currentIdentity = null
+    signingIn = false
+    signingOut = false
+    signInSubmit.disabled = false
+    logout.disabled = false
+    clearFormState()
     authShell.dataset.state = 'signed-out'
     signInForm.hidden = false
     currentIdentityPanel.hidden = true
@@ -586,14 +677,18 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     logoutResult.textContent = ''
     setSessionStatus(message, 'signed-out')
     setApplicationAvailability(false)
-    for (const dialog of [commandDialog, timerDialog, rowDialog, noteDialog]) {
-      if (dialog.open) dialog.close()
-    }
     renderSignedOutWeek()
   }
 
-  const showAuthenticated = (identity: Whoami): void => {
+  const showAuthenticated = (identity: Whoami): AuthOperation => {
+    const operation = beginAuthGeneration(identity.user_id)
+    clearFormState()
     currentIdentity = identity
+    signingIn = false
+    signingOut = false
+    signInSubmit.disabled = false
+    logout.disabled = false
+    supplementalRows = loadSupplementalRows(identity.user_id, within)
     authShell.dataset.state = 'ready'
     signInForm.hidden = true
     currentIdentityPanel.hidden = false
@@ -602,6 +697,20 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     signInResult.textContent = ''
     logoutResult.textContent = ''
     setApplicationAvailability(true)
+    return operation
+  }
+
+  const handleSessionFailure = (
+    error: unknown,
+    operation: AuthOperation,
+  ): boolean => {
+    if (!isSessionCurrent(operation)) return true
+    if (error instanceof EzactoApiError && error.status === 401) {
+      transitionSignedOut('Your session ended. Sign in again to continue.')
+      signInEmail.focus()
+      return true
+    }
+    return false
   }
 
   const updateRowOptions = (): void => {
@@ -631,22 +740,31 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     updateRowOptions()
   }
 
-  const refresh = async (focus: FocusTarget | undefined = focusedCell()): Promise<void> => {
-    snapshot = await loadShellSnapshot(api, new Date(`${within}T12:00:00`))
+  const refresh = async (
+    operation: AuthOperation,
+    focus: FocusTarget | undefined = focusedCell(),
+  ): Promise<boolean> => {
+    const requestedWithin = within
+    const loaded = await loadShellSnapshot(
+      api,
+      new Date(`${requestedWithin}T12:00:00`),
+      operation.signal,
+    )
+    if (!isSessionCurrent(operation) || within !== requestedWithin) return false
+    snapshot = loaded
     render()
     focusCell(focus)
+    return true
   }
 
-  const loadWeek = async (): Promise<void> => {
+  const loadWeek = async (operation: AuthOperation): Promise<void> => {
+    if (!isSessionCurrent(operation)) return
     setSessionStatus('Loading your week…', 'loading')
     try {
-      await refresh()
+      if (!(await refresh(operation))) return
       setSessionStatus('Connected. Changes save directly to ezacto.', 'ready')
     } catch (error) {
-      if (error instanceof EzactoApiError && error.status === 401) {
-        showSignedOut('Your session ended. Sign in again to continue.')
-        return
-      }
+      if (handleSessionFailure(error, operation)) return
       renderWeekLoadFailure()
       setSessionStatus(
         'Signed in, but your week could not load. Check the connection and retry.',
@@ -656,10 +774,13 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
   }
 
-  const loadAuthenticatedShell = async (): Promise<void> => {
-    const identity = await api.whoami()
-    showAuthenticated(identity)
-    await loadWeek()
+  const loadAuthenticatedShell = async (
+    operation: AuthOperation,
+  ): Promise<void> => {
+    const identity = await api.whoami(operation.signal)
+    if (!isGenerationCurrent(operation)) return
+    const authenticated = showAuthenticated(identity)
+    await loadWeek(authenticated)
   }
 
   async function commitCell(
@@ -668,6 +789,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     view: GridView,
     focus?: FocusTarget,
   ): Promise<boolean> {
+    const operation = sessionOperation()
+    if (operation === null) return false
     const current = cellStates.get(cell.key)
     if (current?.state === 'saving') return false
     const rawValue = input.value
@@ -681,8 +804,16 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       ...(current?.notes === undefined ? {} : { notes: current.notes }),
     })
     render()
-    const result = await saveWeekCellWithRetry(api, cell, rawValue, current?.notes)
+    const result = await saveWeekCellWithRetry(
+      api,
+      cell,
+      rawValue,
+      current?.notes,
+      operation.signal,
+    )
+    if (!isSessionCurrent(operation)) return false
     if (result.state === 'retry') {
+      if (handleSessionFailure(result.error, operation)) return false
       cellStates.set(cell.key, {
         state: 'retry',
         rawValue: result.rawValue,
@@ -695,17 +826,26 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       return false
     }
     cellStates.set(cell.key, { state: 'saved', rawValue })
-    await refresh(focus)
+    try {
+      await refresh(operation, focus)
+    } catch (error) {
+      handleSessionFailure(error, operation)
+      return false
+    }
     return true
   }
 
   async function retryCell(cell: WeekGridCell, view: GridView): Promise<void> {
+    const operation = sessionOperation()
+    if (operation === null) return
     const failed = cellStates.get(cell.key)
     if (failed?.state !== 'retry' || failed.retry === undefined) return
     cellStates.set(cell.key, { ...failed, state: 'saving' })
     render()
     const result = await failed.retry()
+    if (!isSessionCurrent(operation)) return
     if (result.state === 'retry') {
+      if (handleSessionFailure(result.error, operation)) return
       cellStates.set(cell.key, {
         ...failed,
         state: 'retry',
@@ -717,11 +857,21 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       return
     }
     cellStates.set(cell.key, { state: 'saved', rawValue: failed.rawValue })
-    await refresh({ key: cell.key, view })
+    try {
+      await refresh(operation, { key: cell.key, view })
+    } catch (error) {
+      handleSessionFailure(error, operation)
+    }
   }
 
   function openNote(cell: WeekGridCell, view: GridView): void {
-    if (cell.entries.length !== 1 || cell.isConflict || cell.isLocked) return
+    if (
+      currentIdentity === null ||
+      cell.entries.length !== 1 ||
+      cell.isConflict ||
+      cell.isLocked
+    )
+      return
     activeNote = { cell, view }
     required<HTMLElement>('[data-note-title]').textContent =
       `${dayLabel(cell.date)} · ${cell.entries[0]!.project_label}`
@@ -761,7 +911,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
 
   commandForm.addEventListener('submit', (event) => {
     event.preventDefault()
-    if (currentIdentity === null) return
+    const operation = sessionOperation()
+    if (operation === null) return
     const result = required<HTMLElement>('[data-command-result]')
     const command = new FormData(commandForm).get('command')
     if (typeof command !== 'string') return
@@ -771,39 +922,45 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       return
     }
     result.textContent = 'Logging time…'
-    void quickAdd(api, command)
+    void quickAdd(api, command, new Date(), operation.signal)
       .then(async (entry) => {
-        await refresh()
+        if (!isSessionCurrent(operation)) return
+        if (!(await refresh(operation))) return
         result.textContent = `Logged ${formatSeconds(entry.seconds)}.`
         document.dispatchEvent(new CustomEvent('ezacto:time-entry-created', { detail: entry }))
       })
       .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
         result.textContent = messageFor(error)
       })
   })
 
   timerForm.addEventListener('submit', (event) => {
     event.preventDefault()
-    if (currentIdentity === null) return
+    const operation = sessionOperation()
+    if (operation === null) return
     const result = required<HTMLElement>('[data-timer-result]')
     const form = new FormData(timerForm)
     const project = form.get('project')
     const task = form.get('task')
     if (typeof project !== 'string' || typeof task !== 'string') return
     result.textContent = 'Starting timer…'
-    void startTimer(api, project, task)
+    void startTimer(api, project, task, new Date(), operation.signal)
       .then(async (entry) => {
-        await refresh()
+        if (!isSessionCurrent(operation)) return
+        if (!(await refresh(operation))) return
         result.textContent = 'Timer started.'
         document.dispatchEvent(new CustomEvent('ezacto:time-entry-created', { detail: entry }))
       })
       .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
         result.textContent = messageFor(error)
       })
   })
 
   required<HTMLButtonElement>('[data-stop-timer]').addEventListener('click', () => {
-    if (currentIdentity === null) return
+    const operation = sessionOperation()
+    if (operation === null) return
     const result = required<HTMLElement>('[data-timer-result]')
     if (snapshot?.running === null || snapshot === null) {
       result.textContent = 'No timer is running.'
@@ -811,19 +968,22 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
     result.textContent = 'Stopping timer…'
     void api
-      .stopTimeEntry(snapshot.running.id)
+      .stopTimeEntry(snapshot.running.id, operation.signal)
       .then(async () => {
-        await refresh()
+        if (!isSessionCurrent(operation)) return
+        if (!(await refresh(operation))) return
         result.textContent = 'Timer stopped.'
       })
       .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
         result.textContent = messageFor(error)
       })
   })
 
   rowForm.addEventListener('submit', (event) => {
     event.preventDefault()
-    if (currentIdentity === null) return
+    const operation = sessionOperation()
+    if (operation === null || operation.userId === null) return
     const data = new FormData(rowForm)
     const projectId = Number(data.get('project'))
     const taskId = Number(data.get('task'))
@@ -837,7 +997,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         ]),
       ).values(),
     ]
-    saveSupplementalRows(within, supplementalRows)
+    saveSupplementalRows(operation.userId, within, supplementalRows)
     render()
     rowDialog.close()
     required<HTMLElement>('[data-row-result]').textContent = ''
@@ -847,7 +1007,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
 
   noteForm.addEventListener('submit', (event) => {
     event.preventDefault()
-    if (currentIdentity === null || activeNote === null) return
+    const operation = sessionOperation()
+    if (operation === null || activeNote === null) return
     const notes = new FormData(noteForm).get('notes')
     if (typeof notes !== 'string') return
     const input = [...document.querySelectorAll<HTMLInputElement>('input[data-cell-key]')].find(
@@ -867,6 +1028,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       key: activeNote.cell.key,
       view: activeNote.view,
     }).then((saved) => {
+      if (!isSessionCurrent(operation)) return
       if (saved) {
         result.textContent = 'Saved.'
         noteDialog.close()
@@ -876,22 +1038,21 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   })
 
   const moveWeek = (days: number): void => {
-    if (currentIdentity === null) return
+    const operation = sessionOperation()
+    if (operation === null || operation.userId === null) return
     within = shiftDate(within, days)
-    supplementalRows = loadSupplementalRows(within)
+    supplementalRows = loadSupplementalRows(operation.userId, within)
     selectedDay = 0
     cellStates.clear()
     setWeekUrl(within)
     setSessionStatus('Loading week…', 'loading')
-    void refresh()
-      .then(() => {
+    void refresh(operation)
+      .then((loaded) => {
+        if (!loaded || !isSessionCurrent(operation)) return
         setSessionStatus('Connected. Changes save directly to ezacto.', 'ready')
       })
       .catch((error: unknown) => {
-        if (error instanceof EzactoApiError && error.status === 401) {
-          showSignedOut('Your session ended. Sign in again to continue.')
-          return
-        }
+        if (handleSessionFailure(error, operation)) return
         renderWeekLoadFailure()
         setSessionStatus(
           'Signed in, but your week could not load. Check the connection and retry.',
@@ -903,34 +1064,38 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   required<HTMLButtonElement>('[data-week-previous]').addEventListener('click', () => moveWeek(-7))
   required<HTMLButtonElement>('[data-week-next]').addEventListener('click', () => moveWeek(7))
   required<HTMLButtonElement>('[data-week-current]').addEventListener('click', () => {
-    if (currentIdentity === null) return
+    const operation = sessionOperation()
+    if (operation === null || operation.userId === null) return
     within = localDate()
-    supplementalRows = loadSupplementalRows(within)
+    supplementalRows = loadSupplementalRows(operation.userId, within)
     selectedDay = Math.max(0, weekDates(within).indexOf(localDate()))
     cellStates.clear()
     setWeekUrl(within)
-    void refresh()
+    void loadWeek(operation)
   })
   const moveDay = (offset: number): void => {
+    if (currentIdentity === null) return
     selectedDay = (selectedDay + offset + 7) % 7
     render()
   }
   required<HTMLButtonElement>('[data-day-previous]').addEventListener('click', () => moveDay(-1))
   required<HTMLButtonElement>('[data-day-next]').addEventListener('click', () => moveDay(1))
   required<HTMLButtonElement>('[data-copy-last-week]').addEventListener('click', () => {
-    if (currentIdentity === null || grid === null) return
+    const operation = sessionOperation()
+    if (operation === null || operation.userId === null || grid === null) return
     setSessionStatus('Copying project/task rows from last week…', 'loading')
     const previousMonday = shiftDate(grid.dates[0]!, -7)
     void api
-      .listTimeEntries(weekRange(previousMonday))
+      .listTimeEntries(weekRange(previousMonday), operation.signal)
       .then((entries) => {
+        if (!isSessionCurrent(operation)) return
         const copied = seedsFromEntries(entries)
         supplementalRows = [
           ...new Map(
             [...supplementalRows, ...copied].map((row) => [`${row.projectId}:${row.taskId}`, row]),
           ).values(),
         ]
-        saveSupplementalRows(within, supplementalRows)
+        saveSupplementalRows(operation.userId!, within, supplementalRows)
         render()
         setSessionStatus(
           copied.length === 0
@@ -940,38 +1105,56 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         )
       })
       .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
         setSessionStatus(messageFor(error), 'error')
       })
   })
 
   retryWeek.addEventListener('click', () => {
-    if (currentIdentity === null) return
+    const operation = sessionOperation()
+    if (operation === null) return
     retryWeek.disabled = true
-    void loadWeek()
+    void loadWeek(operation)
   })
 
   signInForm.addEventListener('submit', (event) => {
     event.preventDefault()
-    if (signingIn) return
+    if (signingIn) {
+      signInPassword.value = ''
+      return
+    }
     const email = signInEmail.value.trim()
     const password = signInPassword.value
     if (email === '' || password === '') {
       signInResult.textContent = 'Enter your email and password.'
       return
     }
+    const operation = beginAuthGeneration(null)
     signingIn = true
     signInSubmit.disabled = true
     signInResult.textContent = 'Signing in…'
-    void api
-      .signIn({ email, password })
+    let request: Promise<unknown>
+    try {
+      request = api.signIn({ email, password }, operation.signal)
+    } catch (error) {
+      signInResult.textContent = signInMessage(error)
+      signingIn = false
+      signInSubmit.disabled = false
+      return
+    } finally {
+      signInPassword.value = ''
+    }
+    void request
       .then(async () => {
-        await loadAuthenticatedShell()
+        if (!isGenerationCurrent(operation)) return
+        await loadAuthenticatedShell(operation)
       })
       .catch((error: unknown) => {
+        if (!isGenerationCurrent(operation)) return
         signInResult.textContent = signInMessage(error)
       })
       .finally(() => {
-        signInPassword.value = ''
+        if (!isGenerationCurrent(operation)) return
         signingIn = false
         signInSubmit.disabled = false
       })
@@ -979,33 +1162,47 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
 
   logout.addEventListener('click', () => {
     if (currentIdentity === null || signingOut) return
+    const operation = beginAuthGeneration(null)
     signingOut = true
+    currentIdentity = null
+    setApplicationAvailability(false)
     logout.disabled = true
-    logoutResult.textContent = 'Signing out…'
+    clearFormState()
+    authShell.dataset.state = 'loading'
+    signInForm.hidden = true
+    currentIdentityPanel.hidden = true
+    setSessionStatus('Signing out and revoking this session…', 'loading')
     void api
-      .logoutCurrentSession()
+      .logoutCurrentSession(operation.signal)
       .then(() => {
-        showSignedOut('Signed out. Sign in to load and edit your week.')
+        if (!isGenerationCurrent(operation)) return
+        transitionSignedOut('Signed out. Sign in to load and edit your week.')
         signInEmail.focus()
       })
       .catch((error: unknown) => {
+        if (!isGenerationCurrent(operation)) return
         if (error instanceof EzactoApiError && error.status === 401) {
-          showSignedOut('Your session ended. Sign in again to continue.')
+          transitionSignedOut('Your session ended. Sign in again to continue.')
           signInEmail.focus()
           return
         }
-        logoutResult.textContent = 'Sign-out could not be completed. Try again.'
+        transitionSignedOut(
+          'Sign-out could not be confirmed. Sign in again or retry when connected.',
+        )
       })
       .finally(() => {
+        if (!isGenerationCurrent(operation)) return
         signingOut = false
         logout.disabled = false
       })
   })
 
+  const initialOperation = currentAuthOperation(null)
   try {
-    await loadAuthenticatedShell()
+    await loadAuthenticatedShell(initialOperation)
   } catch (error) {
-    if (error instanceof EzactoApiError && error.status === 401) showSignedOut()
-    else showSignedOut('Ezacto could not check your session. You can try signing in.')
+    if (!isGenerationCurrent(initialOperation)) return
+    if (error instanceof EzactoApiError && error.status === 401) transitionSignedOut()
+    else transitionSignedOut('Ezacto could not check your session. You can try signing in.')
   }
 }

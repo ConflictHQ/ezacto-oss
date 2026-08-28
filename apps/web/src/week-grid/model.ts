@@ -43,6 +43,7 @@ export type WeekCellSaveResult =
       readonly state: 'retry'
       readonly rawValue: string
       readonly message: string
+      readonly error: unknown
       retry(): Promise<WeekCellSaveResult>
     }
 
@@ -171,6 +172,7 @@ const saveWeekCell = async (
   cell: WeekGridCell,
   rawValue: string,
   notes?: string | null,
+  signal?: AbortSignal,
 ): Promise<TimeEntry | null> => {
   if (cell.isConflict) throw new Error('multiple entries share this cell; edit them in day view')
   if (cell.isLocked) throw new Error('this cell is locked')
@@ -178,22 +180,31 @@ const saveWeekCell = async (
   const seconds = parseCellSeconds(rawValue)
   const existing = cell.entries[0]
   if (seconds === 0) {
-    if (existing !== undefined) await api.deleteTimeEntry(existing.id)
+    if (existing !== undefined) {
+      if (signal === undefined) await api.deleteTimeEntry(existing.id)
+      else await api.deleteTimeEntry(existing.id, signal)
+    }
     return null
   }
   if (existing === undefined) {
-    return api.createTimeEntry({
+    const input = {
       project_id: cell.projectId,
       task_id: cell.taskId,
       spent_date: cell.date,
       seconds,
       ...(notes === undefined ? {} : { notes }),
-    })
+    }
+    return signal === undefined
+      ? api.createTimeEntry(input)
+      : api.createTimeEntry(input, signal)
   }
-  return api.updateTimeEntry(existing.id, {
+  const patch = {
     seconds,
     ...(notes === undefined ? {} : { notes }),
-  })
+  }
+  return signal === undefined
+    ? api.updateTimeEntry(existing.id, patch)
+    : api.updateTimeEntry(existing.id, patch, signal)
 }
 
 export const saveWeekCellWithRetry = async (
@@ -201,11 +212,12 @@ export const saveWeekCellWithRetry = async (
   cell: WeekGridCell,
   rawValue: string,
   notes?: string | null,
+  signal?: AbortSignal,
 ): Promise<WeekCellSaveResult> => {
   try {
     return {
       state: 'saved',
-      entry: await saveWeekCell(api, cell, rawValue, notes),
+      entry: await saveWeekCell(api, cell, rawValue, notes, signal),
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'time could not be saved'
@@ -213,7 +225,8 @@ export const saveWeekCellWithRetry = async (
       state: 'retry',
       rawValue,
       message,
-      retry: () => saveWeekCellWithRetry(api, cell, rawValue, notes),
+      error,
+      retry: () => saveWeekCellWithRetry(api, cell, rawValue, notes, signal),
     }
   }
 }

@@ -75,16 +75,17 @@ describe('browser authentication API composition', () => {
         fetch: fetchImplementation,
       }),
     )
+    const controller = new AbortController()
 
     await api.signIn({
       email: 'owner@example.test',
       password: 'never put this in a URL',
-    })
-    await expect(api.whoami()).resolves.toMatchObject({
+    }, controller.signal)
+    await expect(api.whoami(controller.signal)).resolves.toMatchObject({
       user_id: 7,
       authentication: { kind: 'session' },
     })
-    await expect(api.logoutCurrentSession()).resolves.toMatchObject({
+    await expect(api.logoutCurrentSession(controller.signal)).resolves.toMatchObject({
       id: 41,
       revocation_reason: 'user_revoked',
     })
@@ -103,5 +104,8 @@ describe('browser authentication API composition', () => {
       password: 'never put this in a URL',
     })
     expect(requests.slice(1).every((request) => request.body === null)).toBe(true)
+    expect(requests.every((request) => !request.signal.aborted)).toBe(true)
+    controller.abort()
+    expect(requests.every((request) => request.signal.aborted)).toBe(true)
   })
 })
