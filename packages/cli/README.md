@@ -11,6 +11,11 @@ printf '%s\n' "$EZACTO_TOKEN" | ez login --token-stdin --org conflict
 ez whoami
 ez whoami --json
 ez config
+ez log 2h northpeak devops -m 'release work'
+ez timer start northpeak devops -m 'incident follow-up'
+ez timer status
+ez timer stop
+ez week
 ez logout
 ```
 
@@ -25,3 +30,10 @@ Writes are atomic and the credential file is mode `0600`; command output never
 prints the token. `--token` is supported for automation but `--token-stdin` or
 the `EZACTO_TOKEN` environment variable avoids exposing a token in process lists
 and shell history.
+
+Time commands resolve project names/codes and task names through the native API.
+Durations accept compact hour/minute forms such as `2h`, `90m`, and `1h30m`.
+`--date` selects the spent date for `log` or `timer start`; `--week` accepts any
+date in the Monday–Sunday week to render. Starting a timer relies on the same API
+invariant as the web app: the previous running timer is stopped atomically before
+the new one starts.

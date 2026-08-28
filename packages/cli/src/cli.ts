@@ -19,6 +19,14 @@ import {
   type CliConfig,
   type OrganizationConfig,
 } from './config.js'
+import {
+  logTime,
+  showWeek,
+  startTimer,
+  stopTimer,
+  timerStatus,
+  type TimeCommandResult,
+} from './time.js'
 
 const USAGE = `ez <command> [options]
 
@@ -27,6 +35,9 @@ Commands:
   whoami   Show the user and scopes of the stored credential
   config   Show the active organization config with the token redacted
   logout   Remove the stored credential for an organization
+  log      Log a duration: ez log 2h northpeak devops -m "note"
+  timer    Start, stop, or inspect the one running timer
+  week     Show the Monday–Sunday time grid
 
 Options:
   --org <name>        Organization config name (default: active or "default")
@@ -34,6 +45,9 @@ Options:
   --token <token>     API token to store; prefer --token-stdin or EZACTO_TOKEN
   --token-stdin       Read the API token from stdin
   --config <path>     Override the config file (or set EZACTO_CONFIG)
+  --message, -m <text> Notes for ez log or ez timer start
+  --date <yyyy-mm-dd> Spent date for ez log or ez timer start (default: today)
+  --week <yyyy-mm-dd> A date in the week to show (default: today)
   --json              Emit machine-readable JSON
   --help              Show this help
 `
@@ -82,6 +96,20 @@ const requireConfig = async (path: string): Promise<CliConfig> => {
   const config = await readConfig(path)
   if (config === null) throw new Error(`not logged in; run ez login (config: ${path})`)
   return config
+}
+
+const selectedClient = async (configPath: string, org?: string) => {
+  const selected = selectOrganization(await requireConfig(configPath), org)
+  return { ...selected, client: clientFor(selected.organization) }
+}
+
+const printTimeResult = (
+  result: TimeCommandResult,
+  machineReadable: boolean,
+  runtime: CliRuntime,
+): number => {
+  runtime.stdout(machineReadable ? json(result.json) : result.human)
+  return 0
 }
 
 const login = async (
@@ -251,6 +279,9 @@ export const runCli = async (
       token: { type: 'string' },
       'token-stdin': { type: 'boolean', default: false },
       config: { type: 'string' },
+      message: { type: 'string', short: 'm' },
+      date: { type: 'string' },
+      week: { type: 'string' },
       json: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
     },
@@ -259,8 +290,8 @@ export const runCli = async (
     runtime.stdout(USAGE.trimEnd())
     return values.help ? 0 : 1
   }
-  if (positionals.length !== 1) throw new Error('expected exactly one command')
   const command = positionals[0]
+  const commandArguments = positionals.slice(1)
   const configPath = values.config ?? resolveConfigPath(runtime.environment)
   const options = {
     ...(values.org === undefined ? {} : { org: values.org }),
@@ -268,7 +299,8 @@ export const runCli = async (
     json: values.json,
   }
 
-  if (command === 'login')
+  if (command === 'login') {
+    if (commandArguments.length !== 0) throw new Error('ez login accepts no positional arguments')
     return login(
       {
         ...options,
@@ -280,9 +312,80 @@ export const runCli = async (
       },
       runtime,
     )
+  }
   if (values['base-url'] !== undefined || values.token !== undefined || values['token-stdin']) {
     throw new Error('--base-url and token options are valid only with ez login')
   }
+  if (command === 'log') {
+    if (commandArguments.length !== 3) {
+      throw new Error('usage: ez log <duration> <project> <task> [-m note] [--date yyyy-mm-dd]')
+    }
+    if (values.week !== undefined) throw new Error('--week is valid only with ez week')
+    const selected = await selectedClient(configPath, values.org)
+    return printTimeResult(
+      await logTime(selected.client, {
+        duration: commandArguments[0]!,
+        project: commandArguments[1]!,
+        task: commandArguments[2]!,
+        ...(values.date === undefined ? {} : { date: values.date }),
+        ...(values.message === undefined ? {} : { message: values.message }),
+      }),
+      values.json,
+      runtime,
+    )
+  }
+  if (command === 'timer') {
+    const action = commandArguments[0]
+    const selected = await selectedClient(configPath, values.org)
+    if (action === 'start') {
+      if (commandArguments.length !== 3) {
+        throw new Error('usage: ez timer start <project> <task> [-m note] [--date yyyy-mm-dd]')
+      }
+      if (values.week !== undefined) throw new Error('--week is valid only with ez week')
+      return printTimeResult(
+        await startTimer(selected.client, {
+          project: commandArguments[1]!,
+          task: commandArguments[2]!,
+          ...(values.date === undefined ? {} : { date: values.date }),
+          ...(values.message === undefined ? {} : { message: values.message }),
+        }),
+        values.json,
+        runtime,
+      )
+    }
+    if (action !== 'stop' && action !== 'status') {
+      throw new Error('usage: ez timer <start|stop|status>')
+    }
+    if (commandArguments.length !== 1) {
+      throw new Error(`ez timer ${action} accepts no additional arguments`)
+    }
+    if (values.message !== undefined || values.date !== undefined || values.week !== undefined) {
+      throw new Error(`message/date/week options are not valid with ez timer ${action}`)
+    }
+    return printTimeResult(
+      await (action === 'stop' ? stopTimer(selected.client) : timerStatus(selected.client)),
+      values.json,
+      runtime,
+    )
+  }
+  if (command === 'week') {
+    if (commandArguments.length !== 0) throw new Error('ez week accepts no positional arguments')
+    if (values.message !== undefined || values.date !== undefined) {
+      throw new Error('--message and --date are not valid with ez week')
+    }
+    const selected = await selectedClient(configPath, values.org)
+    return printTimeResult(
+      await showWeek(selected.client, {
+        ...(values.week === undefined ? {} : { within: values.week }),
+      }),
+      values.json,
+      runtime,
+    )
+  }
+  if (values.message !== undefined || values.date !== undefined || values.week !== undefined) {
+    throw new Error('message/date/week options are valid only with time commands')
+  }
+  if (commandArguments.length !== 0) throw new Error(`${command} accepts no positional arguments`)
   if (command === 'whoami') return whoami(options, runtime)
   if (command === 'config') return showConfig(options, runtime)
   if (command === 'logout') return logout(options, runtime)
