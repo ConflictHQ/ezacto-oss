@@ -10,6 +10,7 @@ export {
   type CreateApiTokenStoreOptions,
 } from './api-tokens.js'
 export { createGeneralResourceRepository } from './general-resources.js'
+export { createD1IdentityStore, type IdentityStore, type IdentityStoreOptions } from './identity.js'
 export {
   bootstrapInstanceD1,
   InstanceBootstrapConflictError,
