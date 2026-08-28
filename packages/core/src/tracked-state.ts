@@ -61,6 +61,47 @@ export class TrackedMutationLockedError extends Error {
   }
 }
 
+/** API-neutral failures emitted by a tracked-resource persistence adapter. */
+export class TrackedResourceNotFoundError extends Error {
+  readonly code = "tracked_resource_not_found" as const;
+
+  constructor(readonly resource: "time entry" | "expense") {
+    super(`The requested ${resource} does not exist.`);
+    this.name = "TrackedResourceNotFoundError";
+  }
+}
+
+export class TrackedResourceAssignmentError extends Error {
+  readonly code = "project_assignment_required" as const;
+
+  constructor() {
+    super("The acting user is not assigned to the active project and task.");
+    this.name = "TrackedResourceAssignmentError";
+  }
+}
+
+export class TrackedResourceConflictError extends Error {
+  readonly code = "version_conflict" as const;
+
+  constructor(readonly resource: "time entry" | "expense") {
+    super(`The ${resource} changed before this request completed.`);
+    this.name = "TrackedResourceConflictError";
+  }
+}
+
+export class TrackedResourceInputError extends Error {
+  readonly code = "tracked_resource_input_invalid" as const;
+
+  constructor(
+    readonly field: string,
+    readonly reasonCode: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "TrackedResourceInputError";
+  }
+}
+
 const deriveLockReasonCode = (
   facts: TrackedStateFacts,
 ): TrackedLockReasonCode | null => {
