@@ -843,7 +843,8 @@ for (const [runtime, factory] of factories) {
            source_creator_name, number, currency, issue_date, due_date, project_id,
            reminder_policy, created_at, updated_at)
          VALUES (1, 101, 1, 1, 1782959, 'Sanitized Creator', 'INV-VALID', 'USD',
-           '2026-08-01', '2026-08-31', 1, '{}', ?, ?)`,
+           '2026-08-01', '2026-08-31', 1,
+           '{"first_after_days":3,"every_days":7}', ?, ?)`,
         timestamp,
         timestamp,
       )

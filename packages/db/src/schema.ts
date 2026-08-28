@@ -85,7 +85,7 @@ export const organizations = sqliteTable(
       day: string
       time: string
     } | null>(),
-    reminderPolicy: text('reminder_policy', { mode: 'json' }).$type<InvoiceReminderPolicy>(),
+    reminderPolicy: text('reminder_policy', { mode: 'json' }).$type<Record<string, unknown>>(),
     autoLock: integer('auto_lock', { mode: 'boolean' }).notNull().default(false),
     autoSubmit: integer('auto_submit', { mode: 'boolean' }).notNull().default(false),
     timeEntryNotesRequired: integer('time_entry_notes_required', { mode: 'boolean' })
@@ -525,7 +525,7 @@ export const invoices = sqliteTable(
       .notNull()
       .default(sql`lower(hex(randomblob(32)))`),
     projectId: integer('project_id').references(() => projects.id, { onDelete: 'restrict' }),
-    reminderPolicy: text('reminder_policy', { mode: 'json' }).$type<Record<string, unknown>>(),
+    reminderPolicy: text('reminder_policy', { mode: 'json' }).$type<InvoiceReminderPolicy>(),
     taxRatePpm: integer('tax_rate_ppm'),
     tax2RatePpm: integer('tax2_rate_ppm'),
     discountRatePpm: integer('discount_rate_ppm'),

@@ -30,7 +30,7 @@ const timestampEpochMilliseconds = (column: string) =>
     END)`
 
 const invoiceLifecyclePreflight = `WITH payment_counts AS (
-    SELECT invoice.id, invoice.state, invoice.due_amount_cents,
+    SELECT invoice.id, invoice.state, invoice.due_amount_cents, invoice.reminder_policy,
       invoice.paid_at, invoice.paid_date, count(payment.id) AS payment_count
     FROM invoices invoice
     LEFT JOIN invoice_payments payment ON payment.invoice_id = invoice.id
@@ -51,9 +51,33 @@ const invoiceLifecyclePreflight = `WITH payment_counts AS (
     SELECT id, 4, 'paid_timestamp_conflict'
     FROM payment_counts WHERE paid_at IS NOT NULL AND paid_date IS NOT NULL
     UNION ALL
-    SELECT id, 5, 'active_nonpaid_timestamp_present'
+    SELECT id,
+      CASE
+        WHEN state IN ('draft','open') AND (paid_at IS NOT NULL OR paid_date IS NOT NULL)
+          THEN 5
+        ELSE 6
+      END,
+      CASE
+        WHEN state IN ('draft','open') AND (paid_at IS NOT NULL OR paid_date IS NOT NULL)
+          THEN 'active_nonpaid_timestamp_present'
+        ELSE 'invalid_reminder_policy'
+      END
     FROM payment_counts
-    WHERE state IN ('draft','open') AND (paid_at IS NOT NULL OR paid_date IS NOT NULL)
+    WHERE (state IN ('draft','open') AND (paid_at IS NOT NULL OR paid_date IS NOT NULL))
+      OR (reminder_policy IS NOT NULL AND NOT (
+        json_valid(reminder_policy) AND json_type(reminder_policy) = 'object'
+        AND (SELECT count(*) FROM json_each(reminder_policy)) = 2
+        AND NOT EXISTS (
+          SELECT 1 FROM json_each(reminder_policy)
+          WHERE key NOT IN ('first_after_days','every_days')
+        )
+        AND json_type(reminder_policy, '$.first_after_days') = 'integer'
+        AND json_extract(reminder_policy, '$.first_after_days')
+          BETWEEN 0 AND 9007199254740991
+        AND json_type(reminder_policy, '$.every_days') = 'integer'
+        AND json_extract(reminder_policy, '$.every_days')
+          BETWEEN 1 AND 9007199254740991
+      ))
   ), selected AS (
     SELECT code FROM violations ORDER BY priority, id LIMIT 1
   )

@@ -183,8 +183,10 @@ for (const [runtime, factory] of factories) {
       await insertInvoice(database, 3, 'paid')
       await insertInvoice(database, 4, 'closed', timestamp, '2026-08-27')
       await insertInvoice(database, 5, 'open', timestamp)
+      await insertInvoice(database, 6, 'open')
       await insertPayment(database, 1, 1)
       await insertPayment(database, 3, 3)
+      await database.run(`UPDATE invoices SET reminder_policy = '{}' WHERE id = 6`)
 
       const assertFailure = async (code: string): Promise<void> => {
         await expect(database!.migrate()).rejects.toThrow(`code=${code}`)
@@ -210,6 +212,12 @@ for (const [runtime, factory] of factories) {
       await database.run(`UPDATE invoices SET paid_date = NULL WHERE id = 4`)
       await assertFailure('active_nonpaid_timestamp_present')
       await database.run(`UPDATE invoices SET paid_at = NULL WHERE id = 5`)
+      await assertFailure('invalid_reminder_policy')
+      await database.run(
+        `UPDATE invoices
+         SET reminder_policy = '{"first_after_days":3,"every_days":7}'
+         WHERE id = 6`,
+      )
 
       await database.migrate()
       expect(
