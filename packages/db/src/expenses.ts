@@ -13,18 +13,14 @@ export type ExpenseApprovalStatus = 'unsubmitted' | 'submitted' | 'approved'
 export type ReimbursementStatus = 'none' | 'pending' | 'approved' | 'paid'
 
 interface ExpenseBaseInput {
-  harvestId?: number | null
   userId: number
   projectId: number
   expenseCategoryId: number
   spentDate: string
   notes?: string | null
   billable?: boolean
-  approvalStatus?: ExpenseApprovalStatus
-  invoiceId?: number | null
+  /** Marks reimbursement eligibility; workflow state still starts at none. */
   reimbursable?: boolean
-  reimbursementStatus?: ReimbursementStatus
-  payoutRef?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -79,6 +75,7 @@ export const createExpense = async (
   input: CreateExpenseInput,
 ): Promise<Expense> => {
   const usesUnits = input.units !== undefined
+  const reimbursable = input.reimbursable ?? false
   if (usesUnits && input.totalCostCents !== undefined) {
     throw new Error('unit-priced expense categories compute totalCostCents from units')
   }
@@ -101,16 +98,17 @@ export const createExpense = async (
       reimbursable, reimbursement_status, payout_ref, created_at, updated_at
     )
     SELECT
-      ${input.harvestId ?? null}, ${input.userId}, ${input.projectId}, category.id,
+      NULL, ${input.userId}, ${input.projectId}, category.id,
       ${input.spentDate}, ${input.notes ?? null},
       ${usesUnits ? input.units! : null},
       ${usesUnits ? sql`${input.units!} * category.unit_price_cents` : input.totalCostCents!},
-      ${(input.billable ?? true) ? 1 : 0}, ${input.approvalStatus ?? 'unsubmitted'},
-      ${input.invoiceId ?? null}, ${(input.reimbursable ?? false) ? 1 : 0},
-      ${input.reimbursementStatus ?? 'none'}, ${input.payoutRef ?? null},
+      ${(input.billable ?? true) ? 1 : 0}, 'unsubmitted',
+      NULL, ${reimbursable ? 1 : 0},
+      'none', NULL,
       ${input.createdAt}, ${input.updatedAt}
     FROM expense_categories category
     WHERE category.id = ${input.expenseCategoryId}
+      AND category.is_active = 1
       AND ${usesUnits ? sql`category.unit_price_cents IS NOT NULL` : sql`category.unit_price_cents IS NULL`}
       AND ${usesUnits ? sql`${input.units!} * category.unit_price_cents BETWEEN 0 AND ${moneyUpperBound}` : sql`1`}
     RETURNING id
@@ -123,6 +121,8 @@ export const createExpense = async (
       .where(eq(expenseCategories.id, input.expenseCategoryId))
       .limit(1)
     if (!category) throw new Error(`expense category ${input.expenseCategoryId} does not exist`)
+    if (!category.isActive)
+      throw new Error(`expense category ${input.expenseCategoryId} is inactive`)
     computeExpenseTotalCents(category.unitPriceCents, input)
     throw new RangeError('computed totalCostCents exceeds the supported money range')
   }

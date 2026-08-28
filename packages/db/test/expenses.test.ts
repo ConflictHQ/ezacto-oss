@@ -3,7 +3,7 @@ import { Miniflare } from 'miniflare'
 import { readFile } from 'node:fs/promises'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
-import { createExpense } from '../src/expenses.js'
+import { createExpense, type CreateExpenseInput } from '../src/expenses.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import { orgPeopleMigration } from '../src/migrations/0000_org_people.js'
 import { clientsMigration } from '../src/migrations/0001_clients.js'
@@ -13,6 +13,13 @@ import { invoiceFoundationMigration } from '../src/migrations/0004_invoice_found
 import { invoicePaymentsTotalsMigration } from '../src/migrations/0005_invoice_payments_totals.js'
 
 type OrmDatabase = Parameters<typeof createExpense>[0]
+type PrivilegedExpenseCreateKey = Extract<
+  keyof CreateExpenseInput,
+  'harvestId' | 'approvalStatus' | 'invoiceId' | 'reimbursementStatus' | 'payoutRef'
+>
+type AssertNever<T extends never> = T
+
+const nativeCreateHasNoPrivilegedKeys: AssertNever<PrivilegedExpenseCreateKey> | null = null
 
 interface TestDatabase {
   orm: OrmDatabase
@@ -429,6 +436,8 @@ for (const [runtime, factory] of factories) {
       await insertCategory(db, 2, 'Travel', null)
       await insertCategory(db, 3, 'Zero price', 0)
       await insertCategory(db, 4, 'Maximum price', 9_000_000_000_000)
+      await insertCategory(db, 5, 'Archived travel', null)
+      await db.run(`UPDATE expense_categories SET is_active = 0 WHERE id = 5`)
       const base = {
         userId: 1,
         projectId: 1,
@@ -442,12 +451,52 @@ for (const [runtime, factory] of factories) {
         units: 125,
       })
       expect(unitExpense).toMatchObject({ units: 125, totalCostCents: 8125, billable: true })
+      expect(unitExpense).toMatchObject({
+        harvestId: null,
+        approvalStatus: 'unsubmitted',
+        invoiceId: null,
+        reimbursable: false,
+        reimbursementStatus: 'none',
+        payoutRef: null,
+      })
       const directExpense = await createExpense(db.orm, {
         ...base,
         expenseCategoryId: 2,
         totalCostCents: 4500,
       })
       expect(directExpense).toMatchObject({ units: null, totalCostCents: 4500 })
+      const reimbursableExpense = await createExpense(db.orm, {
+        ...base,
+        expenseCategoryId: 2,
+        totalCostCents: 700,
+        reimbursable: true,
+      })
+      expect(reimbursableExpense).toMatchObject({
+        approvalStatus: 'unsubmitted',
+        invoiceId: null,
+        reimbursable: true,
+        reimbursementStatus: 'none',
+        payoutRef: null,
+      })
+      const privilegedAttempt = {
+        ...base,
+        expenseCategoryId: 2,
+        totalCostCents: 800,
+        harvestId: 999_999,
+        approvalStatus: 'approved',
+        invoiceId: 1,
+        reimbursementStatus: 'paid',
+        payoutRef: 'attacker-selected-payout',
+      } as CreateExpenseInput
+      expect(await createExpense(db.orm, privilegedAttempt)).toMatchObject({
+        harvestId: null,
+        approvalStatus: 'unsubmitted',
+        invoiceId: null,
+        reimbursable: false,
+        reimbursementStatus: 'none',
+        payoutRef: null,
+      })
+      expect(nativeCreateHasNoPrivilegedKeys).toBeNull()
       await expect(
         createExpense(db.orm, { ...base, expenseCategoryId: 1, totalCostCents: 8125 }),
       ).rejects.toThrow(/compute totalCostCents/)
@@ -472,6 +521,9 @@ for (const [runtime, factory] of factories) {
       await expect(
         createExpense(db.orm, { ...base, expenseCategoryId: 2, totalCostCents: -1 }),
       ).rejects.toThrow(/non-negative/)
+      await expect(
+        createExpense(db.orm, { ...base, expenseCategoryId: 5, totalCostCents: 100 }),
+      ).rejects.toThrow(/inactive/)
 
       await db.run(`UPDATE expense_categories SET unit_price_cents = 70 WHERE id = 1`)
       await db.run(
