@@ -276,6 +276,7 @@ for (const [runtime, factory] of factories) {
           'invoice_line_items',
           'invoice_messages',
           'event_outbox',
+          'recurring_invoices',
         ]),
       )
       const forbiddenTables = [
@@ -284,7 +285,6 @@ for (const [runtime, factory] of factories) {
         'estimate_line_items',
         'estimate_item_categories',
         'estimate_messages',
-        'recurring_invoices',
         'file_objects',
         'attachments',
       ]
@@ -342,6 +342,7 @@ for (const [runtime, factory] of factories) {
         'close_reason',
         'close_write_off_cents',
         'retainer_id',
+        'recurring_invoice_id',
       ])
       expect(
         (await db.rows<{ name: string }>(`PRAGMA table_info(invoice_item_categories)`)).map(
@@ -458,6 +459,12 @@ for (const [runtime, factory] of factories) {
             on_delete: 'SET NULL',
           },
           { from: 'project_id', table: 'projects', to: 'id', on_delete: 'RESTRICT' },
+          {
+            from: 'recurring_invoice_id',
+            table: 'recurring_invoices',
+            to: 'id',
+            on_delete: 'RESTRICT',
+          },
         ]),
       )
       expect(await foreignKeys('invoice_line_items')).toEqual(
@@ -471,7 +478,6 @@ for (const [runtime, factory] of factories) {
       ])
       for (const forbidden of [
         'estimate_id',
-        'recurring_invoice_id',
         'tax_pct',
         'tax2_pct',
         'discount_pct',
@@ -620,16 +626,28 @@ for (const [runtime, factory] of factories) {
         '0006_invoice_state_events',
         '0007_expenses',
         '0008_retainer_ledger',
+        '0009_three_axis_state',
+        '0010_recurring_invoices',
         '0011_api_tokens',
       ])
       expect(
         firstLedger.slice(0, 4).every(({ applied_at: appliedAt }) => appliedAt === timestamp),
       ).toBe(true)
       expect(
-        await db.rows<{ id: number; harvest_id: string; invoice_id: number | null }>(
-          `SELECT id, harvest_id, invoice_id FROM time_entries`,
-        ),
-      ).toEqual([{ id: 1, harvest_id: 'legacy-entry', invoice_id: null }])
+        await db.rows<{
+          id: number
+          harvest_id: string
+          invoice_id: number | null
+          approval_status: string
+        }>(`SELECT id, harvest_id, invoice_id, approval_status FROM time_entries`),
+      ).toEqual([
+        {
+          id: 1,
+          harvest_id: 'legacy-entry',
+          invoice_id: null,
+          approval_status: 'unsubmitted',
+        },
+      ])
       expect(
         await db.rows<{ id: number; name: string; client_id: number }>(
           `SELECT id, name, client_id FROM projects ORDER BY id`,
