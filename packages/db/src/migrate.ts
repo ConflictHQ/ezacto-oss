@@ -1354,8 +1354,12 @@ export const migrateContainer = (database: BetterSqlite3.Database): void => {
 }
 
 export const migrateD1 = async (database: D1Database): Promise<void> => {
-  // D1 migrations are a serialized deploy/admin operation; batch supplies each
-  // migration's atomic boundary, while the ledger remains its concurrency contract.
+  // The ledger insert leads the atomic batch. If two Worker isolates observe a
+  // migration as absent, D1 serializes their batches: one commits the complete
+  // migration and the other's unique ledger insert aborts before any DDL runs.
+  // Re-reading the ledger distinguishes that safe race from a real migration
+  // failure. This retains the deploy/admin seam while making a cold runtime's
+  // fail-closed readiness check safe and idempotent.
   await database.exec('PRAGMA foreign_keys = ON')
   await database.prepare(ledger).run()
   for (const migration of migrations) {
@@ -1372,11 +1376,19 @@ export const migrateD1 = async (database: D1Database): Promise<void> => {
         (await database.prepare(migration.preflight).all<MigrationPreflightRow>()).results,
       )
     }
-    await database.batch([
-      ...migration.statements.map((sql) => database.prepare(sql)),
-      database
-        .prepare('INSERT INTO _ezacto_migrations (id, applied_at) VALUES (?, ?)')
-        .bind(migration.id, new Date().toISOString()),
-    ])
+    try {
+      await database.batch([
+        database
+          .prepare('INSERT INTO _ezacto_migrations (id, applied_at) VALUES (?, ?)')
+          .bind(migration.id, new Date().toISOString()),
+        ...migration.statements.map((sql) => database.prepare(sql)),
+      ])
+    } catch (error) {
+      const completed = await database
+        .prepare('SELECT 1 FROM _ezacto_migrations WHERE id = ?')
+        .bind(migration.id)
+        .first()
+      if (completed === null) throw error
+    }
   }
 }
