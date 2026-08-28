@@ -5,12 +5,15 @@ import {
   createApiApp,
   generateOpenApiDocument,
   installGeneralResourceRoutes,
+  installOidcRoutes,
   installPasswordAuthRoutes,
   installSessionRoutes,
   installTrackedResourceRoutes,
   type ApiSessionService,
   type AuthMailer,
   type ApiTokenService,
+  type OidcIdentityResolver,
+  type OidcTransactionStorePort,
   type PasswordAuthService,
   type TrackedResourceRepository,
 } from "../src/index.js";
@@ -31,11 +34,26 @@ const passwordAuth = new Proxy(
 ) as PasswordAuthService;
 const authMailer = new Proxy({}, { get: () => unavailable }) as AuthMailer;
 const sessions = new Proxy({}, { get: () => unavailable }) as ApiSessionService;
+const identities = new Proxy(
+  {},
+  { get: () => unavailable },
+) as OidcIdentityResolver;
+const oidcTransactions = new Proxy(
+  {},
+  { get: () => unavailable },
+) as OidcTransactionStorePort;
 
 const documentedApp = () =>
   createApiApp({
     authentication: { tokens, sessions },
     installApp: (app) => {
+      installOidcRoutes(app, {
+        transactions: oidcTransactions,
+        identities,
+        sessions,
+        provider: () => null,
+        clientKey: () => "contract-fixture",
+      });
       installPasswordAuthRoutes(app, {
         service: passwordAuth,
         sessions: { issue: unavailable },

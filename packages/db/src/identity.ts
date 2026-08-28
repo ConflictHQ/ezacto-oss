@@ -92,8 +92,14 @@ const createUser = (
   input: NormalizedProviderIdentityAssertion,
   userId: number,
   timestamp: string,
-): Operation => ({
-  query: `INSERT INTO users (
+): Operation => {
+  if (input.firstName === undefined || input.lastName === undefined) {
+    throw new RangeError(
+      'provider profile firstName and lastName are required to create a user',
+    )
+  }
+  return {
+    query: `INSERT INTO users (
       id, first_name, last_name, timezone, is_contractor, is_active,
       has_access_to_all_future_projects, weekly_capacity, profile,
       manager_grants, is_owner, saml_exempt, created_at, updated_at
@@ -113,7 +119,8 @@ const createUser = (
     input.provider,
     input.subject,
   ],
-})
+  }
+}
 
 const createEmail = (
   input: NormalizedProviderIdentityAssertion,
@@ -281,11 +288,32 @@ export const createD1IdentityStore = (
       .first<IdentityRow>()
     if (existing !== null) return parseIdentity(existing, 'subject')
 
+    const link = linkVerifiedEmail(input, timestamp)
+    const linked = await database
+      .prepare(link.query)
+      .bind(...link.bindings)
+      .first<{ userId: number }>()
+    if (linked !== null) {
+      const row = await database
+        .prepare(identityQuery)
+        .bind(input.provider, input.subject)
+        .first<IdentityRow>()
+      return parseIdentity(row ?? undefined, 'verified_email')
+    }
+
+    // A concurrent resolver may have linked this subject between the first
+    // lookup and our conditional insert. Re-read before requiring mutable
+    // profile claims that existing users do not need.
+    const concurrentlyLinked = await database
+      .prepare(identityQuery)
+      .bind(input.provider, input.subject)
+      .first<IdentityRow>()
+    if (concurrentlyLinked !== null) return parseIdentity(concurrentlyLinked, 'subject')
+
     for (let attempt = 0; attempt < 4; attempt += 1) {
       const next = await database.prepare(nextUserIdQuery).first<{ userId: number }>()
       if (next === null) throw new Error('identity store could not allocate a user id')
       const operations = [
-        linkVerifiedEmail(input, timestamp),
         createUser(input, next.userId, timestamp),
         createEmail(input, next.userId, timestamp),
         linkCreatedUser(input, next.userId, timestamp),
@@ -294,14 +322,12 @@ export const createD1IdentityStore = (
         const results = await database.batch(
           operations.map(({ query, bindings }) => database.prepare(query).bind(...bindings)),
         )
-        const linked = results[0]?.results[0] as { userId: number } | undefined
-        const created = results[1]?.results[0] as { userId: number } | undefined
+        const created = results[0]?.results[0] as { userId: number } | undefined
         const row = await database
           .prepare(identityQuery)
           .bind(input.provider, input.subject)
           .first<IdentityRow>()
-        const matchedBy: ProviderIdentityMatch =
-          linked !== undefined ? 'verified_email' : created !== undefined ? 'created' : 'subject'
+        const matchedBy: ProviderIdentityMatch = created !== undefined ? 'created' : 'subject'
         return parseIdentity(row ?? undefined, matchedBy)
       } catch (error) {
         if (!isUserIdCollision(error) || attempt === 3) throw error

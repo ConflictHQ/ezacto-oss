@@ -2,6 +2,8 @@ import {
   bootstrapInstanceD1,
   createApiTokenStore,
   createD1Database,
+  createD1IdentityStore,
+  createD1OidcTransactionStore,
   createGeneralResourceRepository,
   createD1PasswordAuthService,
   createD1SessionStore,
@@ -119,5 +121,7 @@ export const createRuntimeServices = async (
     cursorSigningKey,
     passwordAuth: createD1PasswordAuthService(database),
     sessions,
+    identities: createD1IdentityStore(database),
+    oidcTransactions: createD1OidcTransactionStore(database),
   }
 }

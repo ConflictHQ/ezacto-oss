@@ -6,6 +6,12 @@
 ACCESS_TEAM_DOMAIN=https://<team>.cloudflareaccess.com
 ACCESS_POLICY_AUD=
 
+# --- Browser identity: provider-generic OIDC with Google configured first ---
+# These values must be present as a pair. Use a dedicated Web client per live
+# environment; local sign-in needs an HTTPS APP_BASE_URL registered as a callback.
+OIDC_GOOGLE_CLIENT_ID=
+OIDC_GOOGLE_CLIENT_SECRET=
+
 # --- Mailer seam: Mailgun implementation (D14) ---
 # HTTP-first, which is what the Worker target requires (Workers cannot SMTP).
 # Sending domain is a subdomain so app mail and human mail do not share one
@@ -16,6 +22,7 @@ MAILGUN_REGION=us
 MAIL_FROM_DOMAIN=go.ezacto.com
 
 # --- App ---
+# OIDC callbacks require HTTPS. Use an HTTPS local tunnel when exercising OIDC.
 APP_BASE_URL=http://localhost:8787
 SESSION_SECRET=
 # Canonical unpadded base64url encoding of exactly 32 random bytes. Keep the same

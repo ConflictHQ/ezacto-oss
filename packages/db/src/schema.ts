@@ -352,6 +352,36 @@ export const sessions = sqliteTable(
   ],
 )
 
+export const oidcTransactions = sqliteTable(
+  'oidc_transactions',
+  {
+    id: integer('id').primaryKey(),
+    provider: text('provider').notNull(),
+    issuer: text('issuer').notNull(),
+    clientId: text('client_id').notNull(),
+    clientKeyHash: text('client_key_hash').notNull(),
+    stateHash: text('state_hash').notNull().unique(),
+    codeVerifier: text('code_verifier').notNull(),
+    nonce: text('nonce').notNull(),
+    redirectUri: text('redirect_uri').notNull(),
+    expiresAt: text('expires_at').notNull(),
+    consumedAt: text('consumed_at'),
+    consumeNonce: text('consume_nonce').unique(),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    index('oidc_transactions_active_expiry')
+      .on(table.expiresAt)
+      .where(sql`${table.consumedAt} is null`),
+    index('oidc_transactions_client_created').on(table.clientKeyHash, table.createdAt),
+    check(
+      'oidc_transactions_consumed_pair',
+      sql`(${table.consumedAt} is null) = (${table.consumeNonce} is null)`,
+    ),
+  ],
+)
+
 export const apiTokens = sqliteTable(
   'api_tokens',
   {
