@@ -9,22 +9,101 @@ import { createGeneralResourceRepository } from "../../db/src/general-resources.
 import { migrateContainer, migrateD1 } from "../../db/src/migrate.js";
 import { createApiApp, installGeneralResourceRoutes } from "../src/index.js";
 import type { ApiAuthentication } from "../src/auth.js";
+import type { UserProfile } from "../src/context.js";
 
 interface Harness {
   request(path: string, init?: RequestInit): Promise<Response>;
+  run(sql: string, ...params: unknown[]): Promise<void>;
+  rows<T>(sql: string, ...params: unknown[]): Promise<T[]>;
   close(): Promise<void>;
 }
 
 const signingKey = new Uint8Array(32).fill(0x71);
 const now = "2026-08-28T12:00:00.000Z";
+const profiles: ReadonlySet<string> = new Set([
+  "member",
+  "project_manager",
+  "people_admin",
+  "accounting",
+  "executive_manager",
+  "administrator",
+]);
+
+const bearerPrincipals: Readonly<
+  Record<
+    string,
+    {
+      profile: UserProfile;
+      managerGrants: string[];
+      scopes: string[];
+    }
+  >
+> = {
+  "member-projects": {
+    profile: "member",
+    managerGrants: [],
+    scopes: ["projects:read"],
+  },
+  "people-team": {
+    profile: "people_admin",
+    managerGrants: [],
+    scopes: ["team:read"],
+  },
+  "accounting-reports": {
+    profile: "accounting",
+    managerGrants: [],
+    scopes: ["reports:read"],
+  },
+  "administrator-reports": {
+    profile: "administrator",
+    managerGrants: [],
+    scopes: ["reports:read"],
+  },
+  "manager-billable": {
+    profile: "project_manager",
+    managerGrants: ["billable_rates_manager"],
+    scopes: ["projects:read"],
+  },
+};
+
 const authentication: ApiAuthentication = {
+  tokens: {
+    authenticate: async (token) => {
+      const principal = bearerPrincipals[token];
+      return principal === undefined
+        ? null
+        : {
+            tokenId: 1,
+            userId: 1,
+            profile: principal.profile,
+            managerGrants: [...principal.managerGrants],
+            scopes: [...principal.scopes],
+          };
+    },
+    issue: async () => {
+      throw new Error("not used by this fixture");
+    },
+    list: async () => [],
+    revoke: async () => null,
+  },
   sessions: {
-    resolve: async () => ({
-      type: "user",
-      userId: 1,
-      profile: "administrator",
-      authentication: { kind: "session", sessionId: "general-resource-test" },
-    }),
+    resolve: async (request) => {
+      const requested =
+        request.headers.get("x-test-profile") ?? "administrator";
+      if (!profiles.has(requested)) return null;
+      return {
+        type: "user",
+        userId: 1,
+        profile: requested as UserProfile,
+        managerGrants: (request.headers.get("x-test-manager-grants") ?? "")
+          .split(",")
+          .filter(Boolean),
+        authentication: {
+          kind: "session",
+          sessionId: "general-resource-test",
+        },
+      };
+    },
   },
 };
 
@@ -51,6 +130,11 @@ const containerHarness = async (): Promise<Harness> => {
   return {
     request: (path, init) =>
       Promise.resolve(app.request(`https://api.test/api/v1${path}`, init)),
+    run: async (sql, ...params) => {
+      sqlite.prepare(sql).run(...params);
+    },
+    rows: async <T>(sql: string, ...params: unknown[]) =>
+      sqlite.prepare(sql).all(...params) as T[],
     close: async () => {
       sqlite.close();
     },
@@ -84,6 +168,19 @@ const d1Harness = async (): Promise<Harness> => {
   return {
     request: (path, init) =>
       Promise.resolve(app.request(`https://api.test/api/v1${path}`, init)),
+    run: async (sql, ...params) => {
+      await d1
+        .prepare(sql)
+        .bind(...params)
+        .run();
+    },
+    rows: async <T>(sql: string, ...params: unknown[]) =>
+      (
+        await d1
+          .prepare(sql)
+          .bind(...params)
+          .all<T>()
+      ).results,
     close: async () => {
       await miniflare.dispose();
     },
@@ -100,6 +197,24 @@ const json = (body: unknown, method = "POST"): RequestInit => ({
   headers: { "content-type": "application/json" },
   body: JSON.stringify(body),
 });
+
+const asProfile = (
+  profile: UserProfile,
+  init: RequestInit = {},
+  managerGrants: readonly string[] = [],
+): RequestInit => {
+  const headers = new Headers(init.headers);
+  headers.set("x-test-profile", profile);
+  if (managerGrants.length > 0)
+    headers.set("x-test-manager-grants", managerGrants.join(","));
+  return { ...init, headers };
+};
+
+const asBearer = (token: string, init: RequestInit = {}): RequestInit => {
+  const headers = new Headers(init.headers);
+  headers.set("authorization", `Bearer ${token}`);
+  return { ...init, headers };
+};
 
 const data = async (response: Response): Promise<Record<string, unknown>> => {
   expect(response.status, await response.clone().text()).toBeLessThan(300);
@@ -480,6 +595,344 @@ for (const [runtime, createHarness] of factories) {
       expect((await harness.request("/users/999/billable-rates")).status).toBe(
         404,
       );
+    }, 20_000);
+
+    it("[security] enforces scopes, team mutation boundaries, and serializer redaction", async () => {
+      const client = await data(
+        await harness.request("/clients", json({ name: "Secure client" })),
+      );
+      const project = await data(
+        await harness.request(
+          "/projects",
+          json({
+            client_id: client.id,
+            name: "Sensitive project",
+            hourly_rate_cents: 20_000,
+            fee_cents: 100_000,
+            cost_budget_cents: 50_000,
+            notes: "administrator-only note",
+          }),
+        ),
+      );
+      const projectPath = `/projects/${project.id as number}`;
+
+      const member = await harness.request(projectPath, asProfile("member"));
+      expect(member.status).toBe(200);
+      expect(
+        ((await member.json()) as { data: Record<string, unknown> }).data,
+      ).toEqual(
+        expect.not.objectContaining({
+          hourly_rate_cents: expect.anything(),
+          fee_cents: expect.anything(),
+          cost_budget_cents: expect.anything(),
+          notes: expect.anything(),
+        }),
+      );
+      const memberWrite = await harness.request(
+        projectPath,
+        asProfile("member", json({ name: "Escalated" }, "PATCH")),
+      );
+      expect(memberWrite.status).toBe(403);
+      expect(await memberWrite.json()).toMatchObject({
+        error: { code: "profile_forbidden" },
+      });
+
+      const accounting = await harness.request(
+        projectPath,
+        asProfile("accounting"),
+      );
+      expect(accounting.status).toBe(200);
+      expect(
+        ((await accounting.json()) as { data: Record<string, unknown> }).data,
+      ).toMatchObject({
+        hourly_rate_cents: 20_000,
+        fee_cents: 100_000,
+        cost_budget_cents: 50_000,
+      });
+      expect(
+        (
+          (await (
+            await harness.request(projectPath, asProfile("accounting"))
+          ).json()) as { data: Record<string, unknown> }
+        ).data,
+      ).not.toHaveProperty("notes");
+
+      const manager = await harness.request(
+        projectPath,
+        asProfile("project_manager", {}, ["billable_rates_manager"]),
+      );
+      expect(
+        ((await manager.json()) as { data: Record<string, unknown> }).data,
+      ).toMatchObject({ hourly_rate_cents: 20_000, fee_cents: 100_000 });
+      expect(
+        (
+          (await (
+            await harness.request(
+              projectPath,
+              asProfile("project_manager", {}, ["billable_rates_manager"]),
+            )
+          ).json()) as { data: Record<string, unknown> }
+        ).data,
+      ).not.toHaveProperty("cost_budget_cents");
+
+      expect(
+        (
+          (await (await harness.request(projectPath)).json()) as {
+            data: Record<string, unknown>;
+          }
+        ).data,
+      ).toMatchObject({ notes: "administrator-only note" });
+
+      const user = await data(
+        await harness.request(
+          "/users",
+          json({
+            first_name: "Rate",
+            last_name: "Viewer",
+            email: "secure-rate@example.test",
+            manager_grants: ["billable_rates_manager"],
+            saml_exempt: true,
+          }),
+        ),
+      );
+      const userPath = `/users/${user.id as number}`;
+      const peopleRead = await harness.request(
+        userPath,
+        asProfile("people_admin"),
+      );
+      expect(peopleRead.status).toBe(200);
+      const peopleData = (
+        (await peopleRead.json()) as {
+          data: Record<string, unknown>;
+        }
+      ).data;
+      expect(peopleData).not.toHaveProperty("manager_grants");
+      expect(peopleData).not.toHaveProperty("saml_exempt");
+
+      const ordinaryCreate = await harness.request(
+        "/users",
+        asProfile(
+          "people_admin",
+          json({
+            first_name: "Ordinary",
+            last_name: "Member",
+            email: "ordinary@example.test",
+          }),
+        ),
+      );
+      expect(ordinaryCreate.status, await ordinaryCreate.clone().text()).toBe(
+        201,
+      );
+      const privilegeEscalation = await harness.request(
+        "/users",
+        asProfile(
+          "people_admin",
+          json({
+            first_name: "Escalated",
+            last_name: "Admin",
+            email: "escalated@example.test",
+            profile: "administrator",
+          }),
+        ),
+      );
+      expect(privilegeEscalation.status).toBe(403);
+      expect(await privilegeEscalation.json()).toMatchObject({
+        error: { code: "profile_forbidden" },
+      });
+      const tokenTeamWrite = await harness.request(
+        "/users",
+        asBearer(
+          "people-team",
+          json({
+            first_name: "Token",
+            last_name: "Writer",
+            email: "token-writer@example.test",
+          }),
+        ),
+      );
+      expect(tokenTeamWrite.status).toBe(403);
+      expect(await tokenTeamWrite.json()).toMatchObject({
+        error: { code: "session_required" },
+      });
+
+      const billablePath = `/users/${user.id as number}/billable-rates`;
+      const costPath = `/users/${user.id as number}/cost-rates`;
+      expect(
+        (
+          await harness.request(
+            billablePath,
+            json({ amount_cents: 12_500, start_date: null }),
+          )
+        ).status,
+      ).toBe(201);
+      expect(
+        (
+          await harness.request(
+            costPath,
+            json({ amount_cents: 8_000, start_date: null }),
+          )
+        ).status,
+      ).toBe(201);
+      expect(
+        (await harness.request(billablePath, asProfile("accounting"))).status,
+      ).toBe(200);
+      expect(
+        (await harness.request(costPath, asProfile("accounting"))).status,
+      ).toBe(403);
+      expect(
+        (
+          await harness.request(
+            billablePath,
+            asProfile(
+              "accounting",
+              json({ amount_cents: 13_000, start_date: "2026-08-28" }),
+            ),
+          )
+        ).status,
+      ).toBe(403);
+      expect(
+        (await harness.request(billablePath, asProfile("project_manager")))
+          .status,
+      ).toBe(403);
+      expect(
+        (
+          await harness.request(
+            billablePath,
+            asProfile("project_manager", {}, ["billable_rates_manager"]),
+          )
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await harness.request(
+            billablePath,
+            asProfile(
+              "project_manager",
+              json({ amount_cents: 15_000, start_date: "2026-08-28" }),
+              ["billable_rates_manager"],
+            ),
+          )
+        ).status,
+      ).toBe(201);
+      expect(
+        (await harness.request(billablePath, asBearer("accounting-reports")))
+          .status,
+      ).toBe(200);
+      expect(
+        (await harness.request(billablePath, asBearer("manager-billable")))
+          .status,
+      ).toBe(200);
+      expect(
+        (await harness.request(costPath, asBearer("administrator-reports")))
+          .status,
+      ).toBe(200);
+      expect(
+        (await harness.request("/users", asBearer("member-projects"))).status,
+      ).toBe(403);
+    }, 20_000);
+
+    it("[api] rolls back every multi-statement relationship mutation on failure", async () => {
+      const originalUser = await data(
+        await harness.request(
+          "/users",
+          json({
+            first_name: "Atomic",
+            last_name: "Original",
+            email: "atomic-original@example.test",
+          }),
+        ),
+      );
+      const otherUser = await data(
+        await harness.request(
+          "/users",
+          json({
+            first_name: "Atomic",
+            last_name: "Other",
+            email: "atomic-other@example.test",
+          }),
+        ),
+      );
+      const role = await data(
+        await harness.request(
+          "/roles",
+          json({ name: "Atomic role", user_ids: [originalUser.id] }),
+        ),
+      );
+
+      const invalidRoleUpdate = await harness.request(
+        `/roles/${role.id as number}`,
+        json({ name: "Partially changed", user_ids: [999_999] }, "PATCH"),
+      );
+      expect(invalidRoleUpdate.status).toBe(422);
+      expect(
+        await data(await harness.request(`/roles/${role.id as number}`)),
+      ).toMatchObject({
+        name: "Atomic role",
+        user_ids: [originalUser.id],
+      });
+
+      const conflictingEmailUpdate = await harness.request(
+        `/users/${originalUser.id as number}`,
+        json(
+          { telephone: "+506-partial", email: "atomic-other@example.test" },
+          "PATCH",
+        ),
+      );
+      expect(conflictingEmailUpdate.status).toBe(409);
+      expect(
+        await data(
+          await harness.request(`/users/${originalUser.id as number}`),
+        ),
+      ).toMatchObject({
+        email: "atomic-original@example.test",
+        telephone: null,
+      });
+
+      await harness.run(`CREATE TRIGGER force_user_email_failure
+        BEFORE INSERT ON user_emails
+        WHEN NEW.address = 'atomic-failure@example.test'
+        BEGIN SELECT RAISE(ABORT, 'forced general atomicity failure'); END`);
+      const failedUserCreate = await harness.request(
+        "/users",
+        json({
+          first_name: "Must",
+          last_name: "Rollback",
+          email: "atomic-failure@example.test",
+        }),
+      );
+      expect(failedUserCreate.status).toBeGreaterThanOrEqual(400);
+      expect(
+        await harness.rows<{ total: number }>(
+          "SELECT count(*) AS total FROM users WHERE first_name = ? AND last_name = ?",
+          "Must",
+          "Rollback",
+        ),
+      ).toEqual([{ total: 0 }]);
+
+      const client = await data(
+        await harness.request("/clients", json({ name: "Atomic client" })),
+      );
+      await data(
+        await harness.request(
+          "/tasks",
+          json({ name: "Atomic default", is_default: true }),
+        ),
+      );
+      await harness.run(`CREATE TRIGGER force_default_assignment_failure
+        BEFORE INSERT ON task_assignments
+        BEGIN SELECT RAISE(ABORT, 'forced general atomicity failure'); END`);
+      const failedProjectCreate = await harness.request(
+        "/projects",
+        json({ client_id: client.id, name: "Must rollback project" }),
+      );
+      expect(failedProjectCreate.status).toBeGreaterThanOrEqual(400);
+      expect(
+        await harness.rows<{ total: number }>(
+          "SELECT count(*) AS total FROM projects WHERE name = ?",
+          "Must rollback project",
+        ),
+      ).toEqual([{ total: 0 }]);
+      expect(otherUser.id).not.toBe(originalUser.id);
     }, 20_000);
 
     it("[api] rejects unknown/non-combinable query inputs and translates DB constraints", async () => {

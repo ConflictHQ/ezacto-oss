@@ -10,7 +10,8 @@ import {
   type UserRateRecord,
 } from "@ezacto/core";
 import type { Context, Hono } from "hono";
-import type { ApiContext } from "./context.js";
+import { requireApiScope, requireSessionPrincipal } from "./auth.js";
+import type { ApiContext, UserPrincipal, UserProfile } from "./context.js";
 import {
   ApiError,
   readJsonBody,
@@ -48,6 +49,16 @@ interface ResourceRouteDefinition {
   required: ReadonlySet<string>;
   filters: Readonly<Record<string, keyof GeneralResourceFilters>>;
 }
+
+const managerGrantValues = [
+  "project_creator",
+  "billable_rates_manager",
+  "managed_projects_invoice_drafter",
+  "managed_projects_invoice_manager",
+  "client_and_task_manager",
+  "time_and_expenses_manager",
+  "estimates_manager",
+] as const;
 
 const string = { type: "string" } as const;
 const nullableString = { type: "nullable-string" } as const;
@@ -214,7 +225,7 @@ const routeDefinitions: Readonly<
         "executive_manager",
         "administrator",
       ),
-      manager_grants: { type: "string-array" },
+      manager_grants: { type: "string-array", values: managerGrantValues },
       avatar_url: nullableString,
       saml_exempt: bool,
     },
@@ -246,7 +257,7 @@ const canonicalDate = (value: string): boolean => {
   );
 };
 
-const serialize = (
+const serializeRaw = (
   record: Readonly<GeneralResourceRecord | UserRateRecord>,
 ): Record<string, GeneralValue> => {
   const output: Record<string, GeneralValue> = {};
@@ -255,6 +266,62 @@ const serialize = (
     output[snake(field)] = value;
   }
   return output;
+};
+
+const moneyProfiles: ReadonlySet<UserProfile> = new Set([
+  "accounting",
+  "executive_manager",
+  "administrator",
+]);
+
+const canSeeBillableMoney = (viewer: Readonly<UserPrincipal>): boolean =>
+  moneyProfiles.has(viewer.profile) ||
+  (viewer.profile === "project_manager" &&
+    viewer.managerGrants.includes("billable_rates_manager"));
+
+const canSeeMoneyBudgets = (viewer: Readonly<UserPrincipal>): boolean =>
+  moneyProfiles.has(viewer.profile);
+
+const hiddenGeneralField = (
+  kind: GeneralResourceKind,
+  field: string,
+  viewer: Readonly<UserPrincipal>,
+): boolean => {
+  if (kind === "projects") {
+    if (field === "notes") return viewer.profile !== "administrator";
+    if (field === "hourlyRateCents" || field === "feeCents")
+      return !canSeeBillableMoney(viewer);
+    if (field === "costBudgetCents") return !canSeeMoneyBudgets(viewer);
+  }
+  if (
+    (kind === "tasks" && field === "defaultHourlyRateCents") ||
+    ((kind === "task-assignments" || kind === "user-assignments") &&
+      field === "hourlyRateCents")
+  ) {
+    return !canSeeBillableMoney(viewer);
+  }
+  if (kind === "task-assignments" && field === "budgetCents")
+    return !canSeeMoneyBudgets(viewer);
+  if (
+    kind === "users" &&
+    (field === "managerGrants" || field === "samlExempt")
+  ) {
+    return viewer.profile !== "administrator";
+  }
+  return false;
+};
+
+const serializeGeneral = (
+  kind: GeneralResourceKind,
+  record: Readonly<GeneralResourceRecord>,
+  viewer: Readonly<UserPrincipal>,
+): Record<string, GeneralValue> => {
+  const visible = Object.fromEntries(
+    Object.entries(record).filter(
+      ([field]) => !hiddenGeneralField(kind, field, viewer),
+    ),
+  ) as GeneralResourceRecord;
+  return serializeRaw(visible);
 };
 
 const objectBody = async <Bindings extends object>(
@@ -350,9 +417,17 @@ const parseField = (
         );
   if (spec.type === "string-array")
     return Array.isArray(value) &&
-      value.every((item) => typeof item === "string")
+      value.every(
+        (item) =>
+          typeof item === "string" &&
+          (spec.values === undefined || spec.values.includes(item)),
+      ) &&
+      new Set(value).size === value.length
       ? (value as string[])
-      : invalid("invalid_array", `${field} must be an array of strings`);
+      : invalid(
+          "invalid_array",
+          `${field} must contain distinct accepted strings`,
+        );
   return Array.isArray(value) &&
     value.every((item) => Number.isSafeInteger(item) && item > 0) &&
     new Set(value).size === value.length
@@ -398,12 +473,6 @@ const parseMutation = async <Bindings extends object>(
       code: "empty",
       message: "at least one field is required",
     });
-  if (
-    create &&
-    definition === routeDefinitions.users &&
-    !Object.hasOwn(output, "managerGrants")
-  )
-    output.managerGrants = [];
   if (errors.length > 0) throw validationError(errors);
   return output;
 };
@@ -511,11 +580,147 @@ const translate = (error: unknown): never => {
   ]);
 };
 
+const profileForbidden = (): never => {
+  throw new ApiError({
+    status: 403,
+    code: "profile_forbidden",
+    message: "The acting user profile cannot perform this operation.",
+  });
+};
+
+const sessionWriteProfiles: Readonly<
+  Partial<Record<GeneralResourceKind, ReadonlySet<UserProfile>>>
+> = {
+  "user-assignments": new Set([
+    "project_manager",
+    "people_admin",
+    "executive_manager",
+    "administrator",
+  ]),
+  users: new Set(["people_admin", "executive_manager", "administrator"]),
+  roles: new Set(["people_admin", "executive_manager", "administrator"]),
+};
+
+const resourceScopes: Readonly<
+  Record<
+    Exclude<GeneralResourceKind, "user-assignments" | "users" | "roles">,
+    {
+      read: "clients:read" | "projects:read";
+      write: "clients:write" | "projects:write";
+    }
+  >
+> = {
+  clients: { read: "clients:read", write: "clients:write" },
+  contacts: { read: "clients:read", write: "clients:write" },
+  projects: { read: "projects:read", write: "projects:write" },
+  tasks: { read: "projects:read", write: "projects:write" },
+  "task-assignments": { read: "projects:read", write: "projects:write" },
+};
+
+const requireResourceRead = <Bindings extends object>(
+  context: Context<ApiContext<Bindings>>,
+  kind: GeneralResourceKind,
+): UserPrincipal => {
+  const access = resourceScopes[kind as keyof typeof resourceScopes] as
+    (typeof resourceScopes)[keyof typeof resourceScopes] | undefined;
+  requireApiScope(context, access?.read ?? "team:read");
+  return context.get("principal");
+};
+
+const requireResourceWrite = <Bindings extends object>(
+  context: Context<ApiContext<Bindings>>,
+  kind: GeneralResourceKind,
+): UserPrincipal => {
+  const profiles = sessionWriteProfiles[kind];
+  if (profiles !== undefined) {
+    const principal = requireSessionPrincipal(context);
+    if (!profiles.has(principal.profile)) return profileForbidden();
+    return principal;
+  }
+  const access = resourceScopes[kind as keyof typeof resourceScopes]!;
+  requireApiScope(context, access.write);
+  return context.get("principal");
+};
+
+const authorizeMutationFields = (
+  kind: GeneralResourceKind,
+  input: Readonly<GeneralMutationInput>,
+  principal: Readonly<UserPrincipal>,
+): void => {
+  const fields = new Set(Object.keys(input));
+  if (
+    kind === "users" &&
+    ["profile", "managerGrants", "samlExempt"].some((field) =>
+      fields.has(field),
+    ) &&
+    principal.profile !== "administrator"
+  ) {
+    return profileForbidden();
+  }
+  if (
+    kind === "projects" &&
+    fields.has("notes") &&
+    principal.profile !== "administrator"
+  ) {
+    return profileForbidden();
+  }
+  if (
+    ((kind === "projects" &&
+      (fields.has("hourlyRateCents") || fields.has("feeCents"))) ||
+      (kind === "tasks" && fields.has("defaultHourlyRateCents")) ||
+      ((kind === "task-assignments" || kind === "user-assignments") &&
+        fields.has("hourlyRateCents"))) &&
+    !canSeeBillableMoney(principal)
+  ) {
+    return profileForbidden();
+  }
+  if (
+    ((kind === "projects" && fields.has("costBudgetCents")) ||
+      (kind === "task-assignments" && fields.has("budgetCents"))) &&
+    !canSeeMoneyBudgets(principal)
+  ) {
+    return profileForbidden();
+  }
+};
+
+const requireRateRead = <Bindings extends object>(
+  context: Context<ApiContext<Bindings>>,
+  kind: UserRateKind,
+): UserPrincipal => {
+  const principal = context.get("principal");
+  if (kind === "cost") {
+    if (principal.profile !== "administrator") return profileForbidden();
+    requireApiScope(context, "reports:read");
+    return principal;
+  }
+  if (!canSeeBillableMoney(principal)) return profileForbidden();
+  requireApiScope(
+    context,
+    principal.profile === "project_manager" ? "projects:read" : "reports:read",
+  );
+  return principal;
+};
+
+const requireRateWrite = <Bindings extends object>(
+  context: Context<ApiContext<Bindings>>,
+  kind: UserRateKind,
+): UserPrincipal => {
+  const principal = requireSessionPrincipal(context);
+  const allowed =
+    principal.profile === "administrator" ||
+    (kind === "billable" &&
+      principal.profile === "project_manager" &&
+      principal.managerGrants.includes("billable_rates_manager"));
+  if (!allowed) return profileForbidden();
+  return principal;
+};
+
 const envelope = (
   kind: GeneralResourceKind,
   record: GeneralResourceRecord,
+  viewer: Readonly<UserPrincipal>,
 ) => ({
-  data: serialize(record),
+  data: serializeGeneral(kind, record, viewer),
   links: { self: `/api/v1/${kind}/${record.id}` },
 });
 
@@ -526,15 +731,16 @@ const installResource = <Bindings extends object>(
 ): void => {
   const definition = routeDefinitions[kind];
   api.get(`/${kind}`, async (context) => {
+    const principal = requireResourceRead(context, kind);
     const filters = parseFilters(new URL(context.req.url), definition);
     try {
       return context.json(
         await cursorPage({
           requestUrl: new URL(context.req.url),
           cursorSigningKey: options.cursorSigningKey,
-          viewer: {},
+          viewer: principal,
           serializer: (record: Readonly<GeneralResourceRecord>) =>
-            serialize(record),
+            serializeGeneral(kind, record, principal),
           source: {
             highWatermark: () =>
               options.repository.highWatermark(kind, filters),
@@ -547,19 +753,22 @@ const installResource = <Bindings extends object>(
     }
   });
   api.post(`/${kind}`, async (context) => {
+    const principal = requireResourceWrite(context, kind);
     const input = await parseMutation(context, definition, true);
+    authorizeMutationFields(kind, input, principal);
     try {
       const record = await options.repository.create(
         kind,
         input,
         options.clock(),
       );
-      return context.json(envelope(kind, record), 201);
+      return context.json(envelope(kind, record, principal), 201);
     } catch (error) {
       return translate(error);
     }
   });
   api.get(`/${kind}/:id`, async (context) => {
+    const principal = requireResourceRead(context, kind);
     try {
       return context.json(
         envelope(
@@ -568,6 +777,7 @@ const installResource = <Bindings extends object>(
             kind,
             resourceId(context.req.param("id")),
           ),
+          principal,
         ),
       );
     } catch (error) {
@@ -575,7 +785,9 @@ const installResource = <Bindings extends object>(
     }
   });
   api.patch(`/${kind}/:id`, async (context) => {
+    const principal = requireResourceWrite(context, kind);
     const input = await parseMutation(context, definition, false);
+    authorizeMutationFields(kind, input, principal);
     try {
       const record = await options.repository.update(
         kind,
@@ -583,12 +795,13 @@ const installResource = <Bindings extends object>(
         input,
         options.clock(),
       );
-      return context.json(envelope(kind, record));
+      return context.json(envelope(kind, record, principal));
     } catch (error) {
       return translate(error);
     }
   });
   api.delete(`/${kind}/:id`, async (context) => {
+    requireResourceWrite(context, kind);
     try {
       await options.repository.remove(
         kind,
@@ -609,6 +822,7 @@ const installRates = <Bindings extends object>(
 ): void => {
   const segment = `${kind}-rates`;
   api.get(`/users/:userId/${segment}`, async (context) => {
+    const principal = requireRateRead(context, kind);
     const userId = resourceId(context.req.param("userId"));
     const url = new URL(context.req.url);
     const allowed = new Set(["per_page", "cursor"]);
@@ -622,8 +836,9 @@ const installRates = <Bindings extends object>(
         await cursorPage({
           requestUrl: url,
           cursorSigningKey: options.cursorSigningKey,
-          viewer: {},
-          serializer: (record: Readonly<UserRateRecord>) => serialize(record),
+          viewer: principal,
+          serializer: (record: Readonly<UserRateRecord>) =>
+            serializeRaw(record),
           source: {
             highWatermark: () =>
               options.repository.highWatermarkRates(userId, kind),
@@ -637,6 +852,7 @@ const installRates = <Bindings extends object>(
     }
   });
   api.post(`/users/:userId/${segment}`, async (context) => {
+    requireRateWrite(context, kind);
     const body = await objectBody(context);
     const errors: FieldError[] = [];
     for (const field of Object.keys(body))
@@ -677,7 +893,7 @@ const installRates = <Bindings extends object>(
       );
       return context.json(
         {
-          data: serialize(record),
+          data: serializeRaw(record),
           links: {
             self: `/api/v1/users/${record.userId}/${segment}/${record.id}`,
           },
@@ -689,6 +905,7 @@ const installRates = <Bindings extends object>(
     }
   });
   api.get(`/users/:userId/${segment}/:id`, async (context) => {
+    requireRateRead(context, kind);
     try {
       const record = await options.repository.getRate(
         resourceId(context.req.param("userId")),
@@ -696,7 +913,7 @@ const installRates = <Bindings extends object>(
         resourceId(context.req.param("id")),
       );
       return context.json({
-        data: serialize(record),
+        data: serializeRaw(record),
         links: {
           self: `/api/v1/users/${record.userId}/${segment}/${record.id}`,
         },

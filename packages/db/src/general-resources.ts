@@ -8,12 +8,19 @@ import {
   type GeneralValue,
   type UserRateRecord,
 } from '@ezacto/core'
+import type BetterSqlite3 from 'better-sqlite3'
 import { sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
 
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
+type NativeClient = BetterSqlite3.Database | D1Database
+
+interface AtomicStatement {
+  text: string
+  params: unknown[]
+}
 
 interface ResourceDefinition {
   table: string
@@ -206,6 +213,31 @@ const definitions: Readonly<Record<GeneralResourceKind, ResourceDefinition>> = {
 
 const identifier = (name: string) => sql.identifier(name)
 
+const isD1Client = (client: NativeClient): client is D1Database => 'batch' in client
+
+const nativeClient = (database: Database): NativeClient =>
+  (database as Database & { $client: NativeClient }).$client
+
+const runAtomic = async (
+  database: Database,
+  statements: readonly AtomicStatement[],
+): Promise<Record<string, unknown>[][]> => {
+  const client = nativeClient(database)
+  if (isD1Client(client)) {
+    const results = await client.batch(
+      statements.map((statement) => client.prepare(statement.text).bind(...statement.params)),
+    )
+    return results.map((result) => (result.results ?? []) as Record<string, unknown>[])
+  }
+  const execute = client.transaction(() =>
+    statements.map(
+      (statement) =>
+        client.prepare(statement.text).all(...statement.params) as Record<string, unknown>[],
+    ),
+  )
+  return execute.immediate()
+}
+
 const whereFor = (
   definition: ResourceDefinition,
   filters: Readonly<GeneralResourceFilters>,
@@ -350,13 +382,11 @@ const hydrate = async (
   return records
 }
 
-const replaceRoleUsers = async (
+const validatedRoleUserIds = async (
   database: Database,
-  roleId: number,
   values: GeneralValue | undefined,
-  now: string,
-): Promise<void> => {
-  if (values === undefined) return
+): Promise<readonly number[] | undefined> => {
+  if (values === undefined) return undefined
   const ids = (values as readonly string[]).map(Number)
   const existing =
     ids.length === 0
@@ -373,26 +403,20 @@ const replaceRoleUsers = async (
       'One or more role users do not exist.',
       'userIds',
     )
-  await database.all(sql`DELETE FROM user_roles WHERE role_id = ${roleId} RETURNING user_id`)
-  if (ids.length > 0) {
-    await database.all(
-      sql`INSERT INTO user_roles (user_id, role_id, created_at, updated_at) SELECT CAST(value AS INTEGER), ${roleId}, ${now}, ${now} FROM json_each(${JSON.stringify(ids)}) RETURNING user_id`,
-    )
-  }
+  return ids
 }
 
-const replaceUserEmail = async (
+const validatedUserEmail = async (
   database: Database,
   userId: number,
   value: GeneralValue | undefined,
-  now: string,
-): Promise<void> => {
-  if (value === undefined) return
+): Promise<string | undefined> => {
+  if (value === undefined) return undefined
   const address = String(value)
   const current = await database.all<{ address: string }>(
     sql`SELECT address FROM user_emails WHERE user_id = ${userId} AND is_primary = 1 AND invalidated_at IS NULL LIMIT 1`,
   )
-  if (current[0]?.address.toLowerCase() === address.toLowerCase()) return
+  if (current[0]?.address.toLowerCase() === address.toLowerCase()) return undefined
   const collision = await database.all<{ id: number }>(
     sql`SELECT id FROM user_emails WHERE lower(address) = lower(${address}) AND verified_at IS NOT NULL AND invalidated_at IS NULL AND user_id <> ${userId} LIMIT 1`,
   )
@@ -402,12 +426,7 @@ const replaceUserEmail = async (
       'The email address belongs to another user.',
       'email',
     )
-  await database.all(
-    sql`UPDATE user_emails SET is_primary = 0, updated_at = ${now} WHERE user_id = ${userId} AND is_primary = 1 RETURNING id`,
-  )
-  await database.all(
-    sql`INSERT INTO user_emails (user_id, address, verified_at, is_primary, created_at, updated_at) VALUES (${userId}, ${address}, ${now}, 1, ${now}, ${now}) RETURNING id`,
-  )
+  return address
 }
 
 export const createGeneralResourceRepository = (database: Database): GeneralResourceRepository => ({
@@ -451,6 +470,9 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
     const relationUsers = input.userIds
     const relationEmail = input.email
     const effectiveInput: Record<string, GeneralValue> = { ...input }
+    if (kind === 'users' && effectiveInput.managerGrants === undefined) {
+      effectiveInput.managerGrants = []
+    }
     if (kind === 'clients' && effectiveInput.currency === undefined) {
       const organizations = await database.all<{ currency: string }>(
         sql`SELECT currency FROM organizations WHERE id = 1 LIMIT 1`,
@@ -486,6 +508,8 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
         )
       effectiveInput.billable = rows[0]!.billable_by_default === 1
     }
+    const roleUserIds =
+      kind === 'roles' ? await validatedRoleUserIds(database, relationUsers) : undefined
     const entries = Object.entries(effectiveInput).filter(
       ([field]) => !definition.columns[field]?.startsWith('__'),
     )
@@ -500,26 +524,70 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
       sql`${now}`,
     ]
     try {
-      const rows = await database.all<Record<string, unknown>>(
-        sql`INSERT INTO ${identifier(definition.table)} (${sql.join(columns, sql`, `)}) VALUES (${sql.join(values, sql`, `)}) RETURNING *`,
-      )
+      let rows: Record<string, unknown>[]
+      if (kind === 'roles' || kind === 'users' || kind === 'projects') {
+        const columnNames = [
+          ...entries.map(([field]) => definition.columns[field]!),
+          'created_at',
+          'updated_at',
+        ]
+        const statements: AtomicStatement[] = [
+          {
+            text: `INSERT INTO ${definition.table} (${columnNames.join(', ')}) VALUES (${columnNames.map(() => '?').join(', ')}) RETURNING *`,
+            params: [
+              ...entries.map(([field, value]) => storedValue(definition, field, value)),
+              now,
+              now,
+            ],
+          },
+        ]
+        if (kind === 'roles' && roleUserIds !== undefined && roleUserIds.length > 0) {
+          statements.push({
+            text: `INSERT INTO user_roles (user_id, role_id, created_at, updated_at)
+              SELECT CAST(requested.value AS INTEGER), role.id, ?, ?
+              FROM json_each(?) AS requested CROSS JOIN roles AS role
+              WHERE role.name = ? RETURNING user_id`,
+            params: [now, now, JSON.stringify(roleUserIds), String(effectiveInput.name)],
+          })
+        }
+        if (kind === 'users' && relationEmail !== undefined) {
+          statements.push({
+            text: `INSERT INTO user_emails
+              (user_id, address, verified_at, is_primary, created_at, updated_at)
+              VALUES (last_insert_rowid(), ?, ?, 1, ?, ?) RETURNING id`,
+            params: [String(relationEmail), now, now, now],
+          })
+        }
+        if (kind === 'projects') {
+          statements.push({
+            text: `WITH new_project(id) AS MATERIALIZED (VALUES(last_insert_rowid()))
+              INSERT INTO task_assignments
+                (project_id, task_id, billable, hourly_rate_cents, created_at, updated_at)
+              SELECT new_project.id, task.id, task.billable_by_default,
+                task.default_hourly_rate_cents, ?, ?
+              FROM tasks AS task CROSS JOIN new_project
+              WHERE task.is_default = 1 AND task.is_active = 1
+              ORDER BY task.id RETURNING id`,
+            params: [now, now],
+          })
+        }
+        const atomicRows = await runAtomic(database, statements)
+        rows = atomicRows[0] ?? []
+      } else {
+        rows = await database.all<Record<string, unknown>>(
+          sql`INSERT INTO ${identifier(definition.table)} (${sql.join(columns, sql`, `)}) VALUES (${sql.join(values, sql`, `)}) RETURNING *`,
+        )
+      }
       const insertedId = Number(rows[0]!.id)
       const storedRows = await database.all<Record<string, unknown>>(
         sql`SELECT * FROM ${identifier(definition.table)} WHERE id = ${insertedId} LIMIT 1`,
       )
       const record = recordFromRow(definition, storedRows[0]!)
       if (kind === 'roles') {
-        await replaceRoleUsers(database, record.id, relationUsers, now)
         return hydrateRole(database, record)
       }
       if (kind === 'users') {
-        await replaceUserEmail(database, record.id, relationEmail, now)
         return hydrateUser(database, record)
-      }
-      if (kind === 'projects') {
-        await database.all(
-          sql`INSERT INTO task_assignments (project_id, task_id, billable, hourly_rate_cents, created_at, updated_at) SELECT ${record.id}, id, billable_by_default, default_hourly_rate_cents, ${now}, ${now} FROM tasks WHERE is_default = 1 AND is_active = 1 ORDER BY id RETURNING id`,
-        )
       }
       return record
     } catch (error) {
@@ -539,6 +607,13 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
     }
     const relationUsers = input.userIds
     const relationEmail = input.email
+    const roleUserIds =
+      kind === 'roles' ? await validatedRoleUserIds(database, relationUsers) : undefined
+    const emailAddress =
+      kind === 'users' ? await validatedUserEmail(database, id, relationEmail) : undefined
+    const storedEntries = Object.entries(input).filter(
+      ([field]) => !definition.columns[field]?.startsWith('__'),
+    )
     const assignments = Object.entries(input)
       .filter(([field]) => !definition.columns[field]?.startsWith('__'))
       .map(
@@ -547,18 +622,68 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
       )
     assignments.push(sql`updated_at = ${now}`)
     try {
-      const rows = await database.all<Record<string, unknown>>(
-        sql`UPDATE ${identifier(definition.table)} SET ${sql.join(assignments, sql`, `)} WHERE id = ${id} RETURNING *`,
-      )
+      let rows: Record<string, unknown>[]
+      if (
+        (kind === 'roles' && roleUserIds !== undefined) ||
+        (kind === 'users' && emailAddress !== undefined)
+      ) {
+        const statements: AtomicStatement[] = [
+          {
+            text: `UPDATE ${definition.table} SET ${[
+              ...storedEntries.map(([field]) => `${definition.columns[field]} = ?`),
+              'updated_at = ?',
+            ].join(', ')} WHERE id = ? RETURNING *`,
+            params: [
+              ...storedEntries.map(([field, value]) => storedValue(definition, field, value)),
+              now,
+              id,
+            ],
+          },
+        ]
+        if (kind === 'roles' && roleUserIds !== undefined) {
+          statements.push({
+            text: 'DELETE FROM user_roles WHERE role_id = ? RETURNING user_id',
+            params: [id],
+          })
+          if (roleUserIds.length > 0) {
+            statements.push({
+              text: `INSERT INTO user_roles (user_id, role_id, created_at, updated_at)
+                SELECT CAST(requested.value AS INTEGER), role.id, ?, ?
+                FROM json_each(?) AS requested CROSS JOIN roles AS role
+                WHERE role.id = ? RETURNING user_id`,
+              params: [now, now, JSON.stringify(roleUserIds), id],
+            })
+          }
+        }
+        if (kind === 'users' && emailAddress !== undefined) {
+          statements.push(
+            {
+              text: `UPDATE user_emails SET is_primary = 0, updated_at = ?
+                WHERE user_id = ? AND is_primary = 1 RETURNING id`,
+              params: [now, id],
+            },
+            {
+              text: `INSERT INTO user_emails
+                (user_id, address, verified_at, is_primary, created_at, updated_at)
+                SELECT id, ?, ?, 1, ?, ? FROM users WHERE id = ? RETURNING id`,
+              params: [emailAddress, now, now, now, id],
+            },
+          )
+        }
+        const atomicRows = await runAtomic(database, statements)
+        rows = atomicRows[0] ?? []
+      } else {
+        rows = await database.all<Record<string, unknown>>(
+          sql`UPDATE ${identifier(definition.table)} SET ${sql.join(assignments, sql`, `)} WHERE id = ${id} RETURNING *`,
+        )
+      }
       if (rows.length === 0)
         throw new GeneralResourceError('not_found', 'The resource does not exist.')
       const record = recordFromRow(definition, rows[0]!)
       if (kind === 'roles') {
-        await replaceRoleUsers(database, id, relationUsers, now)
         return hydrateRole(database, record)
       }
       if (kind === 'users') {
-        await replaceUserEmail(database, id, relationEmail, now)
         return hydrateUser(database, record)
       }
       return record

@@ -8,6 +8,7 @@ export type UserPrincipal = {
   type: 'user'
   userId: number
   profile: UserProfile
+  managerGrants: string[]
   authentication:
     | { kind: 'session'; sessionId: string }
     | { kind: 'token'; tokenId: number; scopes: string[] }
