@@ -200,7 +200,8 @@ const issueFields = (body: Record<string, unknown>): FieldError[] => {
       fields.push({ field: key, code: 'unknown', message: `${key} is not accepted` })
     }
   }
-  if (typeof body.name !== 'string' || body.name.trim().length < 1 || body.name.trim().length > 100) {
+  const nameLength = typeof body.name === 'string' ? [...body.name.trim()].length : 0
+  if (typeof body.name !== 'string' || nameLength < 1 || nameLength > 100) {
     fields.push({
       field: 'name',
       code: 'invalid',

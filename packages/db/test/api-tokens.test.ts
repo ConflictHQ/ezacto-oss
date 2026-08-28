@@ -184,6 +184,38 @@ for (const [runtime, factory] of factories) {
       ).rejects.toThrow(/CHECK constraint/i)
     })
 
+    it('[api] measures token names in Unicode code points at native and physical boundaries', async () => {
+      const db = await setup()
+      const acceptedName = '🙂'.repeat(60)
+      const issued = await issueApiToken(db.database, {
+        userId: 7,
+        name: acceptedName,
+        scopes: ['reports:read'],
+        createdAt,
+      })
+      expect(issued.name).toBe(acceptedName)
+
+      await expect(
+        issueApiToken(db.database, {
+          userId: 7,
+          name: '🙂'.repeat(101),
+          scopes: ['reports:read'],
+          createdAt,
+        }),
+      ).rejects.toThrow(/between 1 and 100 characters/)
+      await expect(
+        db.run(
+          `INSERT INTO api_tokens (
+            user_id, selector, secret_hash, name, scopes, created_at, updated_at
+          ) VALUES (7, 'eeeeeeeeeeeeeeee', ?, ?, '["reports:read"]', ?, ?)`,
+          '0'.repeat(64),
+          '🙂'.repeat(101),
+          createdAt,
+          createdAt,
+        ),
+      ).rejects.toThrow(/CHECK constraint/i)
+    })
+
     it('[api] records last use and rejects a revoked token on the very next request', async () => {
       const db = await setup()
       const issued = await issue(db)
@@ -281,6 +313,103 @@ for (const [runtime, factory] of factories) {
         db.run(`UPDATE api_tokens SET revoked_at = NULL WHERE id = ?`, issued.id),
       ).rejects.toThrow(/revocation is irreversible/)
       expect(await authenticateApiToken(db.database, issued.token, usedAt)).toBeNull()
+    })
+
+    it('[security] cannot reactivate a revoked identity through INSERT OR REPLACE', async () => {
+      const db = await setup()
+      const issued = await issue(db)
+      await revokeApiToken(db.database, {
+        userId: 7,
+        tokenId: issued.id,
+        revokedAt,
+      })
+
+      const replaceAttempts = [
+        `INSERT OR REPLACE INTO api_tokens (
+          id, user_id, selector, secret_hash, name, scopes, last_used_at,
+          expires_at, revoked_at, created_at, updated_at
+        ) SELECT id, user_id, selector, secret_hash, name, scopes, last_used_at,
+          expires_at, NULL, created_at, updated_at
+        FROM api_tokens WHERE id = ?`,
+        `INSERT OR REPLACE INTO api_tokens (
+          id, user_id, selector, secret_hash, name, scopes, last_used_at,
+          expires_at, revoked_at, created_at, updated_at
+        ) SELECT id + 1000, user_id, selector, secret_hash, name, scopes, last_used_at,
+          expires_at, NULL, created_at, updated_at
+        FROM api_tokens WHERE id = ?`,
+        `INSERT OR REPLACE INTO api_tokens (
+          id, user_id, selector, secret_hash, name, scopes, last_used_at,
+          expires_at, revoked_at, created_at, updated_at
+        ) SELECT id, user_id, 'replacementselector', secret_hash, name, scopes, last_used_at,
+          expires_at, NULL, created_at, updated_at
+        FROM api_tokens WHERE id = ?`,
+      ]
+      for (const statement of replaceAttempts) {
+        await expect(db.run(statement, issued.id)).rejects.toThrow(/identity cannot be replaced/)
+        expect(await authenticateApiToken(db.database, issued.token, revokedAt)).toBeNull()
+      }
+    })
+
+    it('[security] keeps token ids immutable before UPDATE OR REPLACE conflict handling', async () => {
+      const db = await setup()
+      const revoked = await issueApiToken(db.database, {
+        userId: 7,
+        name: 'Revoked identity',
+        scopes: ['reports:read'],
+        createdAt,
+      })
+      await revokeApiToken(db.database, {
+        userId: 7,
+        tokenId: revoked.id,
+        revokedAt,
+      })
+      const active = await issueApiToken(db.database, {
+        userId: 7,
+        name: 'Active identity',
+        scopes: ['reports:read'],
+        createdAt,
+      })
+
+      await expect(
+        db.run(`UPDATE api_tokens SET id = id + 1000 WHERE id = ?`, active.id),
+      ).rejects.toThrow(/identity and scopes are immutable/)
+      await expect(
+        db.run(`UPDATE OR REPLACE api_tokens SET id = ? WHERE id = ?`, revoked.id, active.id),
+      ).rejects.toThrow(/identity and scopes are immutable/)
+
+      expect(
+        await db.rows<{ id: number; name: string; revoked_at: string | null }>(
+          `SELECT id, name, revoked_at FROM api_tokens WHERE user_id = 7 ORDER BY id`,
+        ),
+      ).toEqual([
+        { id: revoked.id, name: 'Revoked identity', revoked_at: revokedAt },
+        { id: active.id, name: 'Active identity', revoked_at: null },
+      ])
+      expect(await authenticateApiToken(db.database, revoked.token, revokedAt)).toBeNull()
+      expect(await authenticateApiToken(db.database, active.token, revokedAt)).toMatchObject({
+        tokenId: active.id,
+      })
+    })
+
+    it('[security] cannot extend or clear an expired token lifetime through raw SQL', async () => {
+      const db = await setup()
+      const expiresAt = '2026-08-28T12:00:00.500Z'
+      const expired = await issueApiToken(db.database, {
+        userId: 7,
+        name: 'Short lived',
+        scopes: ['reports:read'],
+        expiresAt,
+        createdAt,
+      })
+      expect(await authenticateApiToken(db.database, expired.token, usedAt)).toBeNull()
+
+      for (const replacement of [null, '2026-08-29T12:00:00.000Z']) {
+        await expect(
+          db.run(`UPDATE api_tokens SET expires_at = ? WHERE id = ?`, replacement, expired.id),
+        ).rejects.toThrow(/identity and scopes are immutable/)
+        expect(await authenticateApiToken(db.database, expired.token, usedAt)).toBeNull()
+      }
+      expect((await listApiTokens(db.database, 7))[0]?.expiresAt).toBe(expiresAt)
     })
 
     it('[security] clamps a clock-skewed first use to token creation time', async () => {

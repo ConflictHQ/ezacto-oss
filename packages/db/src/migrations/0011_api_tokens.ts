@@ -58,11 +58,20 @@ export const apiTokensMigration = [
   `CREATE INDEX api_tokens_active_expiry
     ON api_tokens(expires_at) WHERE revoked_at IS NULL`,
   `CREATE TRIGGER api_tokens_identity_immutable
-    BEFORE UPDATE OF user_id, selector, secret_hash, scopes, created_at ON api_tokens
-    WHEN OLD.user_id IS NOT NEW.user_id OR OLD.selector IS NOT NEW.selector
-      OR OLD.secret_hash IS NOT NEW.secret_hash OR OLD.scopes IS NOT NEW.scopes
+    BEFORE UPDATE OF id, user_id, selector, secret_hash, scopes, expires_at, created_at
+      ON api_tokens
+    WHEN OLD.id IS NOT NEW.id OR OLD.user_id IS NOT NEW.user_id
+      OR OLD.selector IS NOT NEW.selector OR OLD.secret_hash IS NOT NEW.secret_hash
+      OR OLD.scopes IS NOT NEW.scopes OR OLD.expires_at IS NOT NEW.expires_at
       OR OLD.created_at IS NOT NEW.created_at
     BEGIN SELECT RAISE(ABORT, 'API token identity and scopes are immutable'); END`,
+  `CREATE TRIGGER api_tokens_identity_collision_guard
+    BEFORE INSERT ON api_tokens
+    WHEN EXISTS (
+      SELECT 1 FROM api_tokens existing
+      WHERE existing.id = NEW.id OR existing.selector = NEW.selector
+    )
+    BEGIN SELECT RAISE(ABORT, 'API token identity cannot be replaced'); END`,
   `CREATE TRIGGER api_tokens_last_used_monotonic
     BEFORE UPDATE OF last_used_at ON api_tokens
     WHEN OLD.last_used_at IS NOT NULL AND (

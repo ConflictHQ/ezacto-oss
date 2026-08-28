@@ -236,6 +236,17 @@ describe('API token lifecycle routes', () => {
     })
   })
 
+  it('[api] measures token names in Unicode code points like SQLite', async () => {
+    const name = '🙂'.repeat(60)
+    const response = await createAuthApp().request('/api/v1/api-tokens', {
+      method: 'POST',
+      headers: { cookie: 'session=user', 'content-type': 'application/json' },
+      body: JSON.stringify({ name, scopes: ['reports:read'] }),
+    })
+    expect(response.status).toBe(201)
+    expect(await response.json()).toMatchObject({ data: { name } })
+  })
+
   it('[api] makes a revoked token return 401 on the next request', async () => {
     const app = createAuthApp()
     const before = await app.request('/api/v1/reports', {

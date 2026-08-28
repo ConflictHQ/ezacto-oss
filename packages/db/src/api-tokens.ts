@@ -178,7 +178,8 @@ export const issueApiToken = async (
   assertPositiveSafeInteger(input.userId, 'userId')
   assertCanonicalTimestamp(input.createdAt, 'createdAt')
   const name = input.name.trim()
-  if (name.length < 1 || name.length > 100) {
+  const nameLength = [...name].length
+  if (nameLength < 1 || nameLength > 100) {
     throw new RangeError('name must contain between 1 and 100 characters')
   }
   const scopes = normalizeScopes(input.scopes)

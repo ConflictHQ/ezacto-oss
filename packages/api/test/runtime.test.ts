@@ -28,6 +28,7 @@ beforeAll(async () => {
   const bundled = await build({
     entryPoints: [new URL('./fixtures/runtime-app.ts', import.meta.url).pathname],
     bundle: true,
+    conditions: ['development'],
     format: 'esm',
     platform: 'browser',
     target: 'es2022',
@@ -42,12 +43,16 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  await Promise.all([
-    new Promise<void>((resolve, reject) => {
-      nodeServer.close((error) => (error ? reject(error) : resolve()))
-    }),
-    miniflare.dispose(),
-  ])
+  const cleanup: Promise<void>[] = []
+  if (nodeServer !== undefined) {
+    cleanup.push(
+      new Promise<void>((resolve, reject) => {
+        nodeServer.close((error) => (error ? reject(error) : resolve()))
+      }),
+    )
+  }
+  if (miniflare !== undefined) cleanup.push(miniflare.dispose())
+  await Promise.all(cleanup)
 })
 
 const runtimes: readonly [string, RuntimeRequest][] = [

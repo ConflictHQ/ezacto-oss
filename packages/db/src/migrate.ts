@@ -8,6 +8,7 @@ import { invoicePaymentsTotalsMigration } from './migrations/0005_invoice_paymen
 import { expensesMigration } from './migrations/0007_expenses.js'
 import { retainerLedgerMigration } from './migrations/0008_retainer_ledger.js'
 import { threeAxisStateMigration } from './migrations/0009_three_axis_state.js'
+import { recurringInvoicesMigration } from './migrations/0010_recurring_invoices.js'
 import { apiTokensMigration } from './migrations/0011_api_tokens.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
@@ -1321,6 +1322,7 @@ const migrations = [
   { id: '0007_expenses', statements: expensesMigration },
   { id: '0008_retainer_ledger', statements: retainerLedgerMigration },
   { id: '0009_three_axis_state', statements: threeAxisStateMigration },
+  { id: '0010_recurring_invoices', statements: recurringInvoicesMigration },
   { id: '0011_api_tokens', statements: apiTokensMigration },
 ] as const
 
