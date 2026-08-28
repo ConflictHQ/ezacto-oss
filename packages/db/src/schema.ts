@@ -42,6 +42,11 @@ export type InvoicePaymentOption =
   | 'bill_com_checkout'
   | 'bill_com_transfer'
 
+export interface InvoiceReminderPolicy {
+  first_after_days: number
+  every_days: number
+}
+
 export const organizations = sqliteTable(
   'organizations',
   {
@@ -80,7 +85,7 @@ export const organizations = sqliteTable(
       day: string
       time: string
     } | null>(),
-    reminderPolicy: text('reminder_policy', { mode: 'json' }).$type<Record<string, unknown>>(),
+    reminderPolicy: text('reminder_policy', { mode: 'json' }).$type<InvoiceReminderPolicy>(),
     autoLock: integer('auto_lock', { mode: 'boolean' }).notNull().default(false),
     autoSubmit: integer('auto_submit', { mode: 'boolean' }).notNull().default(false),
     timeEntryNotesRequired: integer('time_entry_notes_required', { mode: 'boolean' })

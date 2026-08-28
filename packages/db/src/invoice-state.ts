@@ -15,7 +15,7 @@ import type BetterSqlite3 from 'better-sqlite3'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
-import type { InvoicePaymentOption } from './schema.js'
+import type { InvoicePaymentOption, InvoiceReminderPolicy } from './schema.js'
 
 type ContainerDatabase = BetterSQLite3Database<typeof schema> & {
   $client: BetterSqlite3.Database
@@ -208,7 +208,7 @@ export type InvoiceEdit =
       dueDate?: string
       paymentTerms?: 'upon_receipt' | 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'custom'
       projectId?: number | null
-      reminderPolicy?: Readonly<Record<string, unknown>> | null
+      reminderPolicy?: Readonly<InvoiceReminderPolicy> | null
     }
   | { type: 'payment_options'; paymentOptions: readonly InvoicePaymentOption[] }
   | {
@@ -1830,6 +1830,26 @@ const assertCanonicalDate = (value: string, field: string): void => {
   }
 }
 
+const assertReminderPolicy: (value: unknown) => asserts value is InvoiceReminderPolicy = (
+  value,
+) => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    invalidInput('reminderPolicy must contain first_after_days and every_days')
+  }
+  const policy = value as Record<string, unknown>
+  if (
+    Object.keys(policy).sort().join(',') !== 'every_days,first_after_days' ||
+    !Number.isSafeInteger(policy.first_after_days) ||
+    (policy.first_after_days as number) < 0 ||
+    !Number.isSafeInteger(policy.every_days) ||
+    (policy.every_days as number) <= 0
+  ) {
+    invalidInput(
+      'reminderPolicy requires non-negative integer first_after_days and positive integer every_days',
+    )
+  }
+}
+
 const editCommandKind = (edit: InvoiceEdit): InvoiceCommandKind => {
   switch (edit.type) {
     case 'line_insert':
@@ -1918,12 +1938,8 @@ export const executeInvoiceEdit = async (
     if (input.edit.projectId !== undefined && input.edit.projectId !== null) {
       assertPositiveSafeInteger(input.edit.projectId, 'projectId')
     }
-    if (
-      input.edit.reminderPolicy !== undefined &&
-      input.edit.reminderPolicy !== null &&
-      (typeof input.edit.reminderPolicy !== 'object' || Array.isArray(input.edit.reminderPolicy))
-    ) {
-      invalidInput('reminderPolicy must be a JSON object or null')
+    if (input.edit.reminderPolicy !== undefined && input.edit.reminderPolicy !== null) {
+      assertReminderPolicy(input.edit.reminderPolicy)
     }
     const reminderPolicy =
       input.edit.reminderPolicy === undefined

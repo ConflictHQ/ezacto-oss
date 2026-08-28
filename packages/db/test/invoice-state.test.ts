@@ -1357,6 +1357,40 @@ for (const [runtime, factory] of factories) {
         timestamp,
         timestamp,
       )
+      const invalidReminderPolicies: unknown[] = [
+        {},
+        { first_after_days: 3 },
+        { first_after_days: -1, every_days: 7 },
+        { first_after_days: 3, every_days: 0 },
+        { first_after_days: 3.5, every_days: 7 },
+        { first_after_days: 3, every_days: 7, unknown: true },
+      ]
+      for (const [index, reminderPolicy] of invalidReminderPolicies.entries()) {
+        await expect(
+          executeInvoiceEdit(database.orm, {
+            invoiceId: 1,
+            commandId: `edit-invalid-reminder-${index}`,
+            actor: { type: 'user', id: 1 },
+            authorize,
+            expectedVersion: 0,
+            occurredAt: timestamp,
+            eventIds: [`edit-invalid-reminder-${index}-event`],
+            edit: {
+              type: 'header',
+              reminderPolicy: reminderPolicy as {
+                first_after_days: number
+                every_days: number
+              },
+            },
+          }),
+        ).rejects.toMatchObject({ code: 'invalid_command_input' })
+      }
+      await expect(
+        database.run(
+          `UPDATE invoices
+           SET reminder_policy = '{"first_after_days":-1,"every_days":7}' WHERE id = 2`,
+        ),
+      ).rejects.toThrow(/reminder policy shape is invalid/)
       const header = await executeInvoiceEdit(database.orm, {
         invoiceId: 1,
         commandId: 'edit-header',
@@ -1439,6 +1473,15 @@ for (const [runtime, factory] of factories) {
         },
       })
       expect(financials).toMatchObject({ event_count: 1, invoice: { state: 'draft', version: 5 } })
+      expect(
+        await database.rows<{ ledger: number; outbox: number }>(
+          `SELECT
+             (SELECT count(*) FROM invoice_command_ledger
+               WHERE command_id LIKE 'edit-invalid-reminder-%') AS ledger,
+             (SELECT count(*) FROM event_outbox
+               WHERE command_id LIKE 'edit-invalid-reminder-%') AS outbox`,
+        ),
+      ).toEqual([{ ledger: 0, outbox: 0 }])
       expect(
         await database.rows<Record<string, unknown>>(
           `SELECT client_id, number, subject, purchase_order, currency,
@@ -1545,6 +1588,12 @@ for (const [runtime, factory] of factories) {
         messageId: 980,
         eventId: 'guard-send-owner-event',
       })
+      await expect(database.run(`UPDATE invoices SET id = 22 WHERE id = 2`)).rejects.toThrow(
+        /storage identity and origin are immutable/,
+      )
+      await expect(
+        database.run(`UPDATE invoices SET harvest_id = 7002 WHERE id = 2`),
+      ).rejects.toThrow(/storage identity and origin are immutable/)
       await expect(
         database.run(`UPDATE invoices SET subject = 'raw' WHERE id = 1`),
       ).rejects.toThrow(/pending command/)
@@ -1557,7 +1606,7 @@ for (const [runtime, factory] of factories) {
         `client_key = '${'a'.repeat(64)}'`,
       ]) {
         await expect(database.run(`UPDATE invoices SET ${mutation} WHERE id = 1`)).rejects.toThrow(
-          /pending command/,
+          /pending command|reminder policy shape is invalid/,
         )
       }
       await expect(
@@ -1631,6 +1680,48 @@ for (const [runtime, factory] of factories) {
           laterTimestamp,
         ),
       ).rejects.toThrow(/pending command/)
+    })
+
+    it('[unit] keeps creator relations tied to exact source provenance and FK deletion', async () => {
+      database = await factory()
+      await installFixture(database)
+      await database.run(
+        `INSERT INTO users
+          (id, harvest_id, first_name, last_name, manager_grants, created_at, updated_at)
+         VALUES (2, 7202, 'Imported', 'Creator', '[]', ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+      await database.run(
+        `INSERT INTO invoices
+          (id, harvest_id, client_id, created_by_user_id, source_creator_id,
+           source_creator_name, number, currency, issue_date, due_date, created_at, updated_at)
+         VALUES (3, 7303, 1, NULL, 7202, 'Imported Creator', 'INV-CREATOR-3',
+           'USD', '2026-08-01', '2026-08-31', ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+
+      await expect(
+        database.run(`UPDATE invoices SET created_by_user_id = 1 WHERE id = 2`),
+      ).rejects.toThrow(/exact provenance/)
+      await database.run(`UPDATE invoices SET created_by_user_id = 2 WHERE id = 3`)
+      await expect(
+        database.run(`UPDATE invoices SET created_by_user_id = 1 WHERE id = 3`),
+      ).rejects.toThrow(/exact provenance/)
+      await database.run(`DELETE FROM users WHERE id = 2`)
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT created_by_user_id, source_creator_id, source_creator_name
+           FROM invoices WHERE id = 3`,
+        ),
+      ).toEqual([
+        {
+          created_by_user_id: null,
+          source_creator_id: 7202,
+          source_creator_name: 'Imported Creator',
+        },
+      ])
     })
 
     it('[unit] reconciles a closed import through an immutable event-free receipt', async () => {

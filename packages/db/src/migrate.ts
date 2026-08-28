@@ -837,6 +837,27 @@ const invoiceLifecycleMigration = [
       OR (NEW.state IN ('draft','open') AND (NEW.paid_at IS NOT NULL OR NEW.paid_date IS NOT NULL))
       OR (NEW.state = 'closed' AND NEW.paid_at IS NOT NULL AND NEW.paid_date IS NOT NULL)
     BEGIN SELECT RAISE(ABORT, 'invalid invoice lifecycle shape'); END`,
+  `CREATE TRIGGER invoices_d22_identity_immutable
+    BEFORE UPDATE OF id, harvest_id ON invoices
+    WHEN OLD.id IS NOT NEW.id OR OLD.harvest_id IS NOT NEW.harvest_id
+    BEGIN SELECT RAISE(ABORT, 'invoice storage identity and origin are immutable'); END`,
+  `CREATE TRIGGER invoices_d22_creator_relation_update
+    BEFORE UPDATE OF created_by_user_id ON invoices
+    WHEN OLD.created_by_user_id IS NOT NEW.created_by_user_id
+      AND NOT (
+        OLD.harvest_id IS NOT NULL AND OLD.created_by_user_id IS NULL
+        AND NEW.created_by_user_id IS NOT NULL AND OLD.source_creator_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM users user
+          WHERE user.id = NEW.created_by_user_id
+            AND user.harvest_id = OLD.source_creator_id
+        )
+      )
+      AND NOT (
+        OLD.created_by_user_id IS NOT NULL AND NEW.created_by_user_id IS NULL
+        AND NOT EXISTS (SELECT 1 FROM users user WHERE user.id = OLD.created_by_user_id)
+      )
+    BEGIN SELECT RAISE(ABORT, 'invoice creator relation requires exact provenance'); END`,
   `CREATE TRIGGER invoices_d22_shape_update
     BEFORE UPDATE ON invoices
     WHEN ((NEW.state = 'closed') <> (NEW.close_reason IS NOT NULL))
@@ -1079,6 +1100,41 @@ const invoiceLifecycleMigration = [
       )
     )
     BEGIN SELECT RAISE(ABORT, 'invoice header mutation requires its pending command'); END`,
+  `CREATE TRIGGER invoices_d22_reminder_policy_insert
+    BEFORE INSERT ON invoices
+    WHEN NEW.reminder_policy IS NOT NULL AND NOT (
+      json_valid(NEW.reminder_policy) AND json_type(NEW.reminder_policy) = 'object'
+      AND (SELECT count(*) FROM json_each(NEW.reminder_policy)) = 2
+      AND NOT EXISTS (
+        SELECT 1 FROM json_each(NEW.reminder_policy)
+        WHERE key NOT IN ('first_after_days','every_days')
+      )
+      AND json_type(NEW.reminder_policy, '$.first_after_days') = 'integer'
+      AND json_extract(NEW.reminder_policy, '$.first_after_days')
+        BETWEEN 0 AND 9007199254740991
+      AND json_type(NEW.reminder_policy, '$.every_days') = 'integer'
+      AND json_extract(NEW.reminder_policy, '$.every_days')
+        BETWEEN 1 AND 9007199254740991
+    )
+    BEGIN SELECT RAISE(ABORT, 'invoice reminder policy shape is invalid'); END`,
+  `CREATE TRIGGER invoices_d22_reminder_policy_update
+    BEFORE UPDATE OF reminder_policy ON invoices
+    WHEN OLD.reminder_policy IS NOT NEW.reminder_policy AND NEW.reminder_policy IS NOT NULL
+      AND NOT (
+        json_valid(NEW.reminder_policy) AND json_type(NEW.reminder_policy) = 'object'
+        AND (SELECT count(*) FROM json_each(NEW.reminder_policy)) = 2
+        AND NOT EXISTS (
+          SELECT 1 FROM json_each(NEW.reminder_policy)
+          WHERE key NOT IN ('first_after_days','every_days')
+        )
+        AND json_type(NEW.reminder_policy, '$.first_after_days') = 'integer'
+        AND json_extract(NEW.reminder_policy, '$.first_after_days')
+          BETWEEN 0 AND 9007199254740991
+        AND json_type(NEW.reminder_policy, '$.every_days') = 'integer'
+        AND json_extract(NEW.reminder_policy, '$.every_days')
+          BETWEEN 1 AND 9007199254740991
+      )
+    BEGIN SELECT RAISE(ABORT, 'invoice reminder policy shape is invalid'); END`,
   `CREATE TRIGGER invoice_period_d22_derived_update
     BEFORE UPDATE OF period_start, period_end ON invoices
     WHEN OLD.period_start IS NOT NEW.period_start OR OLD.period_end IS NOT NEW.period_end

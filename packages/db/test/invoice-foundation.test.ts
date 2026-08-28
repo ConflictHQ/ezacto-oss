@@ -1183,9 +1183,9 @@ for (const [runtime, factory] of factories) {
       ).rejects.toThrow(/exact pending authority/)
       await expect(
         db.run(`UPDATE OR REPLACE invoices SET harvest_id = 501 WHERE id = 2`),
-      ).rejects.toThrow(/belongs to another row/)
+      ).rejects.toThrow(/belongs to another row|immutable/)
       await expect(db.run(`UPDATE OR REPLACE invoices SET id = 1 WHERE id = 2`)).rejects.toThrow(
-        /belongs to another row/,
+        /belongs to another row|immutable/,
       )
       await expect(
         db.run(`UPDATE OR REPLACE invoices SET number = 'INV-REPLACE' WHERE id = 2`),
