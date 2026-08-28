@@ -126,44 +126,94 @@ const createStore = (
       return row === null ? null : rowRecord(row)
     },
 
-    async recordAttempt(deliveryId, provider) {
+    async claimAttempt(deliveryId, provider, attemptId, leaseSeconds) {
+      if (!Number.isSafeInteger(leaseSeconds) || leaseSeconds < 1 || leaseSeconds > 3_600) {
+        throw new RangeError('email delivery attempt lease must be between 1 and 3600 seconds')
+      }
       const at = timestamp()
-      return rowRecord(
-        await database.first<EmailLogRow>(
+      const leaseExpiresAt = new Date(
+        Date.parse(at) + leaseSeconds * 1_000,
+      ).toISOString()
+      return (
+        (await database.first<{ claimed: number }>(
           `UPDATE email_log
-           SET provider = ?, attempt_count = attempt_count + 1, updated_at = ?
+           SET provider = ?, attempt_count = attempt_count + 1,
+             active_attempt_id = ?, attempt_lease_expires_at = ?, updated_at = ?
            WHERE id = ? AND status = 'queued'
              AND (provider IS NULL OR provider = ?)
-           RETURNING ${columns}`,
-          [provider, at, deliveryId, provider],
-        ),
+             AND (active_attempt_id IS NULL
+               OR julianday(attempt_lease_expires_at) <= julianday(?))
+           RETURNING 1 AS claimed`,
+          [
+            provider,
+            attemptId,
+            leaseExpiresAt,
+            at,
+            deliveryId,
+            provider,
+            at,
+          ],
+        )) !== null
       )
     },
 
-    async markSent(deliveryId, provider, providerMessageId) {
+    async releaseAttempt(deliveryId, provider, attemptId) {
+      const at = timestamp()
+      return (
+        (await database.first<{ released: number }>(
+          `UPDATE email_log
+           SET active_attempt_id = NULL, attempt_lease_expires_at = NULL,
+             updated_at = ?
+           WHERE id = ? AND status = 'queued' AND provider = ?
+             AND active_attempt_id = ?
+           RETURNING 1 AS released`,
+          [at, deliveryId, provider, attemptId],
+        )) !== null
+      )
+    },
+
+    async markSent(deliveryId, provider, providerMessageId, attemptId) {
       const at = timestamp()
       return rowRecord(
         await database.first<EmailLogRow>(
           `UPDATE email_log
-           SET status = 'sent', provider = ?, provider_message_id = ?, updated_at = ?
+           SET status = 'sent', provider = ?, provider_message_id = ?,
+             active_attempt_id = NULL, attempt_lease_expires_at = NULL,
+             updated_at = ?
            WHERE id = ? AND status = 'queued' AND attempt_count > 0
-             AND provider = ?
+             AND provider = ? AND active_attempt_id = ?
            RETURNING ${columns}`,
-          [provider, providerMessageId, at, deliveryId, provider],
+          [provider, providerMessageId, at, deliveryId, provider, attemptId],
         ),
       )
     },
 
-    async markFailed(deliveryId, provider, failureCode) {
+    async markProviderFailed(deliveryId, provider, failureCode, attemptId) {
       const at = timestamp()
       return rowRecord(
         await database.first<EmailLogRow>(
           `UPDATE email_log
-           SET status = 'failed', provider = ?, failure_code = ?, updated_at = ?
-           WHERE id = ? AND status = 'queued'
-             AND (provider IS NULL OR email_log.provider IS NULL OR email_log.provider = ?)
+           SET status = 'failed', provider = ?, failure_code = ?,
+             active_attempt_id = NULL, attempt_lease_expires_at = NULL,
+             updated_at = ?
+           WHERE id = ? AND status = 'queued' AND provider = ?
+             AND active_attempt_id = ?
            RETURNING ${columns}`,
-          [provider, failureCode, at, deliveryId, provider],
+          [provider, failureCode, at, deliveryId, provider, attemptId],
+        ),
+      )
+    },
+
+    async markQueueFailed(deliveryId) {
+      const at = timestamp()
+      return rowRecord(
+        await database.first<EmailLogRow>(
+          `UPDATE email_log
+           SET status = 'failed', failure_code = 'queue_unavailable', updated_at = ?
+           WHERE id = ? AND status = 'queued' AND provider IS NULL
+             AND active_attempt_id IS NULL
+           RETURNING ${columns}`,
+          [at, deliveryId],
         ),
       )
     },

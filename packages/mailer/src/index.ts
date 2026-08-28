@@ -44,17 +44,30 @@ export type EmailFailureCode =
 export interface EmailLogStore {
   createQueued(message: EmailMessage): Promise<EmailLogRecord>
   get(deliveryId: number): Promise<EmailLogRecord | null>
-  recordAttempt(deliveryId: number, provider: string): Promise<EmailLogRecord>
+  claimAttempt(
+    deliveryId: number,
+    provider: string,
+    attemptId: string,
+    leaseSeconds: number,
+  ): Promise<boolean>
+  releaseAttempt(
+    deliveryId: number,
+    provider: string,
+    attemptId: string,
+  ): Promise<boolean>
   markSent(
     deliveryId: number,
     provider: string,
     providerMessageId: string,
+    attemptId: string,
   ): Promise<EmailLogRecord>
-  markFailed(
+  markProviderFailed(
     deliveryId: number,
-    provider: string | null,
-    failureCode: EmailFailureCode,
+    provider: string,
+    failureCode: Exclude<EmailFailureCode, 'queue_unavailable'>,
+    attemptId: string,
   ): Promise<EmailLogRecord>
+  markQueueFailed(deliveryId: number): Promise<EmailLogRecord>
   list(input?: {
     status?: EmailDeliveryStatus
     limit?: number
@@ -99,6 +112,8 @@ export const EMAIL_RETRY_POLICY = {
   maxAttempts: 5,
   delaySeconds: [60, 300, 900, 3_600] as const,
   providerTimeoutMs: 10_000,
+  attemptLeaseSeconds: 30,
+  claimedRetryDelaySeconds: 5,
 } as const
 
 const text = (value: string, field: string, maximum: number): string => {
@@ -158,7 +173,7 @@ export const createQueuedMailer = (
         message: safeMessage,
       })
     } catch {
-      await log.markFailed(delivery.id, null, 'queue_unavailable')
+      await log.markQueueFailed(delivery.id)
       throw new EmailQueueUnavailableError()
     }
     return delivery
@@ -196,7 +211,9 @@ const providerCall = async (
   }
 }
 
-const failureCode = (error: unknown): EmailFailureCode =>
+const failureCode = (
+  error: unknown,
+): Exclude<EmailFailureCode, 'queue_unavailable'> =>
   error instanceof DOMException && error.name === 'TimeoutError'
     ? 'provider_timeout'
     : 'provider_rejected'
@@ -206,7 +223,11 @@ export const processQueuedEmail = async (
   attempt: number,
   log: EmailLogStore,
   provider: HttpEmailProvider,
-  options: { providerTimeoutMs?: number } = {},
+  options: {
+    providerTimeoutMs?: number
+    attemptLeaseSeconds?: number
+    createAttemptId?: () => string
+  } = {},
 ): Promise<EmailQueueDisposition> => {
   if (
     job.schemaVersion !== 1 ||
@@ -219,33 +240,88 @@ export const processQueuedEmail = async (
     throw new RangeError('queue attempt must be a positive safe integer')
   }
   const message = copyMessage(job.message)
-  const current = await log.get(job.deliveryId)
-  if (current === null) throw new Error('queued email log does not exist')
-  if (current.status !== 'queued') return { action: 'ack' }
-  await log.recordAttempt(job.deliveryId, provider.name)
+  const providerTimeoutMs =
+    options.providerTimeoutMs ?? EMAIL_RETRY_POLICY.providerTimeoutMs
+  const attemptLeaseSeconds =
+    options.attemptLeaseSeconds ?? EMAIL_RETRY_POLICY.attemptLeaseSeconds
+  if (
+    !Number.isSafeInteger(providerTimeoutMs) ||
+    providerTimeoutMs < 1 ||
+    providerTimeoutMs > 3_000_000
+  ) {
+    throw new RangeError('email provider timeout must be between 1 and 3000000 milliseconds')
+  }
+  if (
+    !Number.isSafeInteger(attemptLeaseSeconds) ||
+    attemptLeaseSeconds < 1 ||
+    attemptLeaseSeconds > 3_600 ||
+    attemptLeaseSeconds * 1_000 <= providerTimeoutMs
+  ) {
+    throw new RangeError(
+      'email delivery attempt lease must exceed the provider timeout and be at most 3600 seconds',
+    )
+  }
+  const attemptId = text(
+    options.createAttemptId?.() ?? crypto.randomUUID(),
+    'email delivery attempt id',
+    128,
+  )
+  const claimed = await log.claimAttempt(
+    job.deliveryId,
+    provider.name,
+    attemptId,
+    attemptLeaseSeconds,
+  )
+  if (!claimed) {
+    const current = await log.get(job.deliveryId)
+    if (current === null) throw new Error('queued email log does not exist')
+    return current.status === 'queued'
+      ? {
+          action: 'retry',
+          delaySeconds: EMAIL_RETRY_POLICY.claimedRetryDelaySeconds,
+        }
+      : { action: 'ack' }
+  }
+
+  let delivered: { messageId: string }
   try {
-    const delivered = await providerCall(
+    delivered = await providerCall(
       provider,
       message,
       job.deliveryId,
-      options.providerTimeoutMs ?? EMAIL_RETRY_POLICY.providerTimeoutMs,
+      providerTimeoutMs,
     )
-    await log.markSent(
-      job.deliveryId,
-      provider.name,
-      text(delivered.messageId, 'provider message id', 512),
-    )
-    return { action: 'ack' }
   } catch (error) {
     if (attempt < EMAIL_RETRY_POLICY.maxAttempts) {
+      if (!(await log.releaseAttempt(job.deliveryId, provider.name, attemptId))) {
+        throw new Error('email delivery attempt ownership was lost before retry', {
+          cause: error,
+        })
+      }
       return {
         action: 'retry',
         delaySeconds: EMAIL_RETRY_POLICY.delaySeconds[attempt - 1]!,
       }
     }
-    await log.markFailed(job.deliveryId, provider.name, failureCode(error))
+    await log.markProviderFailed(
+      job.deliveryId,
+      provider.name,
+      failureCode(error),
+      attemptId,
+    )
     return { action: 'ack' }
   }
+
+  // A provider success and the durable receipt are different failure domains.
+  // Persistence errors escape to the queue; they must never be relabelled as a
+  // provider rejection or overwrite another attempt's terminal outcome.
+  await log.markSent(
+    job.deliveryId,
+    provider.name,
+    text(delivered.messageId, 'provider message id', 512),
+    attemptId,
+  )
+  return { action: 'ack' }
 }
 
 export type InProcessEmailConsumer = (

@@ -1255,6 +1255,8 @@ export const emailLog = sqliteTable(
     relatedType: text('related_type'),
     relatedId: integer('related_id'),
     attemptCount: integer('attempt_count').notNull().default(0),
+    activeAttemptId: text('active_attempt_id'),
+    attemptLeaseExpiresAt: text('attempt_lease_expires_at'),
     failureCode: text('failure_code').$type<EmailFailureCode | null>(),
     ...timestamps,
   },
@@ -1282,6 +1284,14 @@ export const emailLog = sqliteTable(
     check(
       'email_log_attempt_count_safe',
       sql`${table.attemptCount} between 0 and 9007199254740991`,
+    ),
+    check(
+      'email_log_attempt_lease_pair',
+      sql`(${table.activeAttemptId} is null) = (${table.attemptLeaseExpiresAt} is null)`,
+    ),
+    check(
+      'email_log_attempt_lease_expires_at_canonical',
+      nullableCanonicalTimestamp(table.attemptLeaseExpiresAt),
     ),
     check('email_log_created_at_canonical', canonicalTimestamp(table.createdAt)),
     check('email_log_updated_at_canonical', canonicalTimestamp(table.updatedAt)),

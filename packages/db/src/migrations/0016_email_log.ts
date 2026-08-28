@@ -35,6 +35,15 @@ export const emailLogMigration = [
     attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (
       attempt_count BETWEEN 0 AND 9007199254740991
     ),
+    active_attempt_id TEXT CHECK (
+      active_attempt_id IS NULL OR (
+        length(active_attempt_id) BETWEEN 1 AND 128
+        AND active_attempt_id NOT GLOB '*[^A-Za-z0-9._:-]*'
+      )
+    ),
+    attempt_lease_expires_at TEXT CHECK (
+      attempt_lease_expires_at IS NULL OR (${canonicalTimestamp('attempt_lease_expires_at')})
+    ),
     failure_code TEXT CHECK (
       failure_code IS NULL OR failure_code IN (
         'queue_unavailable','provider_timeout','provider_rejected'
@@ -43,14 +52,20 @@ export const emailLogMigration = [
     created_at TEXT NOT NULL CHECK (${canonicalTimestamp('created_at')}),
     updated_at TEXT NOT NULL CHECK (${canonicalTimestamp('updated_at')}),
     CHECK ((related_type IS NULL) = (related_id IS NULL)),
+    CHECK ((active_attempt_id IS NULL) = (attempt_lease_expires_at IS NULL)),
+    CHECK (active_attempt_id IS NULL OR (
+      status = 'queued' AND provider IS NOT NULL AND attempt_count > 0
+    )),
     CHECK (julianday(updated_at) >= julianday(created_at)),
     CHECK (
       (status = 'queued' AND provider_message_id IS NULL AND failure_code IS NULL)
       OR (status = 'sent' AND provider IS NOT NULL AND provider_message_id IS NOT NULL
-        AND failure_code IS NULL)
+        AND failure_code IS NULL AND active_attempt_id IS NULL)
       OR (status IN ('bounced','complained') AND provider IS NOT NULL
-        AND provider_message_id IS NOT NULL AND failure_code IS NULL)
-      OR (status = 'failed' AND provider_message_id IS NULL AND failure_code IS NOT NULL)
+        AND provider_message_id IS NOT NULL AND failure_code IS NULL
+        AND active_attempt_id IS NULL)
+      OR (status = 'failed' AND provider_message_id IS NULL AND failure_code IS NOT NULL
+        AND active_attempt_id IS NULL)
     )
   ) STRICT`,
   `CREATE INDEX email_log_status_created_id
@@ -65,8 +80,12 @@ export const emailLogMigration = [
     WHEN EXISTS (
       SELECT 1 FROM json_each(NEW.to_json) recipient
       WHERE recipient.type <> 'object'
-        OR json_type(recipient.value, '$.email') <> 'text'
+        OR (SELECT count(*) FROM json_each(recipient.value) field
+          WHERE field.key = 'email') <> 1
+        OR json_type(recipient.value, '$.email') IS NOT 'text'
         OR length(trim(json_extract(recipient.value, '$.email'))) NOT BETWEEN 3 AND 254
+        OR (SELECT count(*) FROM json_each(recipient.value) field
+          WHERE field.key = 'name') > 1
         OR EXISTS (
           SELECT 1 FROM json_each(recipient.value) field
           WHERE field.key NOT IN ('email','name')

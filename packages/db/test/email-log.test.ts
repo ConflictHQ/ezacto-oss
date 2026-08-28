@@ -1,7 +1,14 @@
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { EmailLogStore, EmailMessage } from '@ezacto/mailer'
+import {
+  EMAIL_RETRY_POLICY,
+  processQueuedEmail,
+  type EmailLogStore,
+  type EmailMessage,
+  type HttpEmailProvider,
+  type QueuedEmailJob,
+} from '@ezacto/mailer'
 import {
   createContainerEmailLogStore,
   createD1EmailLogStore,
@@ -13,6 +20,7 @@ interface Harness {
   rows<T>(query: string, ...bindings: unknown[]): Promise<T[]>
   run(query: string, ...bindings: unknown[]): Promise<void>
   migrateAgain(): Promise<void>
+  setNow(value: string): void
   close(): Promise<void>
 }
 
@@ -28,14 +36,18 @@ const message: EmailMessage = {
 const containerHarness = async (): Promise<Harness> => {
   const database = new BetterSqlite3(':memory:')
   migrateContainer(database)
+  let currentNow = now
   return {
-    store: createContainerEmailLogStore(database, { now: () => now }),
+    store: createContainerEmailLogStore(database, { now: () => currentNow }),
     rows: async <T>(query: string, ...bindings: unknown[]) =>
       database.prepare(query).all(...bindings) as T[],
     run: async (query, ...bindings) => {
       database.prepare(query).run(...bindings)
     },
     migrateAgain: async () => migrateContainer(database),
+    setNow: (value) => {
+      currentNow = value
+    },
     close: async () => {
       database.close()
     },
@@ -50,8 +62,9 @@ const d1Harness = async (): Promise<Harness> => {
   })
   const database = await miniflare.getD1Database('DB')
   await migrateD1(database)
+  let currentNow = now
   return {
-    store: createD1EmailLogStore(database, { now: () => now }),
+    store: createD1EmailLogStore(database, { now: () => currentNow }),
     rows: async <T>(query: string, ...bindings: unknown[]) =>
       (
         await database
@@ -66,6 +79,9 @@ const d1Harness = async (): Promise<Harness> => {
         .run()
     },
     migrateAgain: async () => migrateD1(database),
+    setNow: (value) => {
+      currentNow = value
+    },
     close: async () => miniflare.dispose(),
   }
 }
@@ -104,14 +120,19 @@ for (const [runtime, factory] of factories) {
         attemptCount: 0,
         to: [{ email: 'owner@example.test', name: 'Avery' }],
       })
-      await expect(current.store.recordAttempt(queued.id, 'http-provider')).resolves.toMatchObject({
-        attemptCount: 1,
-        provider: 'http-provider',
-      })
       await expect(
-        current.store.markSent(queued.id, 'http-provider', 'provider-1'),
+        current.store.claimAttempt(queued.id, 'http-provider', 'attempt-one', 30),
+      ).resolves.toBe(true)
+      await expect(
+        current.store.markSent(
+          queued.id,
+          'http-provider',
+          'provider-1',
+          'attempt-one',
+        ),
       ).resolves.toMatchObject({
         status: 'sent',
+        attemptCount: 1,
         providerMessageId: 'provider-1',
       })
 
@@ -119,12 +140,18 @@ for (const [runtime, factory] of factories) {
         ...message,
         template: 'password_reset',
       })
-      await current.store.recordAttempt(second.id, 'http-provider')
+      await current.store.claimAttempt(
+        second.id,
+        'http-provider',
+        'attempt-two',
+        30,
+      )
       await expect(
-        current.store.markFailed(
+        current.store.markProviderFailed(
           second.id,
           'http-provider',
           'provider_rejected',
+          'attempt-two',
         ),
       ).resolves.toMatchObject({
         status: 'failed',
@@ -134,6 +161,99 @@ for (const [runtime, factory] of factories) {
       expect(JSON.stringify(await current.rows(`SELECT * FROM email_log`))).not.toContain(
         'ezacto_verify_secret',
       )
+    })
+
+    it('[concurrency] leases one provider attempt and fences stale terminal writers', async () => {
+      const current = await setup()
+      const queued = await current.store.createQueued(message)
+      await expect(
+        current.store.claimAttempt(queued.id, 'http-provider', 'attempt-one', 30),
+      ).resolves.toBe(true)
+      await expect(
+        current.store.claimAttempt(queued.id, 'http-provider', 'attempt-two', 30),
+      ).resolves.toBe(false)
+      await expect(
+        current.store.markSent(
+          queued.id,
+          'http-provider',
+          'forged-receipt',
+          'attempt-two',
+        ),
+      ).rejects.toThrow(/state transition did not match/i)
+
+      current.setNow('2026-08-28T20:00:31.000Z')
+      await expect(
+        current.store.claimAttempt(queued.id, 'http-provider', 'attempt-two', 30),
+      ).resolves.toBe(true)
+      await expect(
+        current.store.markSent(
+          queued.id,
+          'http-provider',
+          'stale-receipt',
+          'attempt-one',
+        ),
+      ).rejects.toThrow(/state transition did not match/i)
+      await expect(
+        current.store.markSent(
+          queued.id,
+          'http-provider',
+          'provider-1',
+          'attempt-two',
+        ),
+      ).resolves.toMatchObject({
+        status: 'sent',
+        providerMessageId: 'provider-1',
+        attemptCount: 2,
+      })
+    })
+
+    it('[concurrency] overlapping consumers invoke the provider exactly once', async () => {
+      const current = await setup()
+      const queued = await current.store.createQueued(message)
+      const job: QueuedEmailJob = {
+        schemaVersion: 1,
+        deliveryId: queued.id,
+        message,
+      }
+      let providerCalls = 0
+      let providerStartedResolve: (() => void) | undefined
+      const providerStarted = new Promise<void>((resolve) => {
+        providerStartedResolve = resolve
+      })
+      let providerRelease: (() => void) | undefined
+      const providerBlocked = new Promise<void>((resolve) => {
+        providerRelease = resolve
+      })
+      const provider: HttpEmailProvider = {
+        name: 'http-provider',
+        send: async () => {
+          providerCalls += 1
+          providerStartedResolve?.()
+          await providerBlocked
+          return { messageId: 'provider-1' }
+        },
+      }
+
+      const first = processQueuedEmail(job, 1, current.store, provider, {
+        createAttemptId: () => 'attempt-one',
+      })
+      await providerStarted
+      await expect(
+        processQueuedEmail(job, 1, current.store, provider, {
+          createAttemptId: () => 'attempt-two',
+        }),
+      ).resolves.toEqual({
+        action: 'retry',
+        delaySeconds: EMAIL_RETRY_POLICY.claimedRetryDelaySeconds,
+      })
+      expect(providerCalls).toBe(1)
+      providerRelease?.()
+      await expect(first).resolves.toEqual({ action: 'ack' })
+      await expect(current.store.get(queued.id)).resolves.toMatchObject({
+        status: 'sent',
+        attemptCount: 1,
+        providerMessageId: 'provider-1',
+      })
     })
 
     it('[security] rejects replacement and metadata rewrites of a delivery log', async () => {
@@ -152,6 +272,29 @@ for (const [runtime, factory] of factories) {
       await expect(
         current.run(`UPDATE email_log SET subject = 'changed' WHERE id = 1`),
       ).rejects.toThrow(/metadata is immutable/i)
+    })
+
+    it('[security] rejects missing, duplicate, and wrong-typed recipient fields', async () => {
+      const current = await setup()
+      for (const recipients of [
+        '[{}]',
+        '[{"name":"No Email"}]',
+        '[{"email":"owner@example.test","email":123}]',
+        '[{"email":"owner@example.test","name":"Avery","name":123}]',
+        '[{"email":123}]',
+        '[{"email":"owner@example.test","name":123}]',
+      ]) {
+        await expect(
+          current.run(
+            `INSERT INTO email_log (
+               to_json, template, subject, created_at, updated_at
+             ) VALUES (?, 'verify_email', 'Verify', ?, ?)`,
+            recipients,
+            now,
+            now,
+          ),
+        ).rejects.toThrow(/recipients are invalid/i)
+      }
     })
   })
 }

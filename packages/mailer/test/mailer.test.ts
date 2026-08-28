@@ -40,12 +40,16 @@ const record = (overrides: Partial<EmailLogRecord> = {}): EmailLogRecord => ({
 const store = (): EmailLogStore => ({
   createQueued: vi.fn(async () => record()),
   get: vi.fn(async () => record()),
-  recordAttempt: vi.fn(async () => record({ provider: 'test-http', attemptCount: 1 })),
+  claimAttempt: vi.fn(async () => true),
+  releaseAttempt: vi.fn(async () => true),
   markSent: vi.fn(async () =>
     record({ status: 'sent', provider: 'test-http', providerMessageId: 'provider-7' }),
   ),
-  markFailed: vi.fn(async (_id, provider, failureCode) =>
+  markProviderFailed: vi.fn(async (_id, provider, failureCode) =>
     record({ status: 'failed', provider, failureCode }),
+  ),
+  markQueueFailed: vi.fn(async () =>
+    record({ status: 'failed', failureCode: 'queue_unavailable' }),
   ),
   list: vi.fn(async () => []),
 })
@@ -83,7 +87,7 @@ describe('queued mailer', () => {
     await expect(mailer.enqueue(message)).rejects.toBeInstanceOf(
       EmailQueueUnavailableError,
     )
-    expect(log.markFailed).toHaveBeenCalledWith(7, null, 'queue_unavailable')
+    expect(log.markQueueFailed).toHaveBeenCalledWith(7)
   })
 
   it('[unit] retries provider failure with the bounded queue policy, then records failed', async () => {
@@ -103,12 +107,13 @@ describe('queued mailer', () => {
     await expect(
       processQueuedEmail(job, EMAIL_RETRY_POLICY.maxAttempts, log, provider),
     ).resolves.toEqual({ action: 'ack' })
-    expect(log.markFailed).toHaveBeenCalledWith(
+    expect(log.markProviderFailed).toHaveBeenCalledWith(
       7,
       'test-http',
       'provider_rejected',
+      expect.any(String),
     )
-    expect(JSON.stringify(vi.mocked(log.markFailed).mock.calls)).not.toContain(
+    expect(JSON.stringify(vi.mocked(log.markProviderFailed).mock.calls)).not.toContain(
       'secret detail',
     )
   })
@@ -155,10 +160,11 @@ describe('queued mailer', () => {
         providerTimeoutMs: 1,
       }),
     ).resolves.toEqual({ action: 'ack' })
-    expect(log.markFailed).toHaveBeenCalledWith(
+    expect(log.markProviderFailed).toHaveBeenCalledWith(
       7,
       'slow-http',
       'provider_timeout',
+      expect.any(String),
     )
   })
 
@@ -171,15 +177,37 @@ describe('queued mailer', () => {
     await expect(processQueuedEmail(job, 1, log, provider)).resolves.toEqual({
       action: 'ack',
     })
-    expect(log.markSent).toHaveBeenCalledWith(7, 'test-http', 'provider-7')
+    expect(log.markSent).toHaveBeenCalledWith(
+      7,
+      'test-http',
+      'provider-7',
+      expect.any(String),
+    )
     expect(provider.send).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ idempotencyKey: 'ezacto-email-7' }),
     )
   })
 
+  it('[unit] never relabels a post-send receipt persistence failure as provider failure', async () => {
+    const log = store()
+    vi.mocked(log.markSent).mockRejectedValue(new Error('database unavailable'))
+    const provider: HttpEmailProvider = {
+      name: 'test-http',
+      send: vi.fn(async () => ({ messageId: 'provider-7' })),
+    }
+
+    await expect(processQueuedEmail(job, 5, log, provider)).rejects.toThrow(
+      'database unavailable',
+    )
+    expect(provider.send).toHaveBeenCalledTimes(1)
+    expect(log.markProviderFailed).not.toHaveBeenCalled()
+    expect(log.releaseAttempt).not.toHaveBeenCalled()
+  })
+
   it('[unit] acknowledges terminal log redelivery without sending twice', async () => {
     const log = store()
+    vi.mocked(log.claimAttempt).mockResolvedValue(false)
     vi.mocked(log.get).mockResolvedValue(
       record({ status: 'sent', provider: 'test-http', providerMessageId: 'provider-7' }),
     )
