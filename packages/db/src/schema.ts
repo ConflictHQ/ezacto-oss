@@ -584,7 +584,10 @@ export const invoices = sqliteTable(
     check('invoices_closed_at_canonical', nullableCanonicalTimestamp(table.closedAt)),
     check('invoices_created_at_canonical', canonicalTimestamp(table.createdAt)),
     check('invoices_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
-    check('invoices_version_nonnegative', sql`${table.version} >= 0`),
+    check(
+      'invoices_version_safe_integer',
+      sql`${table.version} between 0 and 9007199254740991`,
+    ),
     check(
       'invoices_closure_shape',
       sql`(${table.state} = 'closed') = (${table.closeReason} is not null)`,
