@@ -126,7 +126,7 @@ beforeAll(async () => {
     await store.issue({
       userId: 2,
       name: 'Runtime fetch test',
-      scopes: ['time_entries:read'],
+      scopes: ['projects:read', 'time_entries:read'],
     })
   ).token
   expect(await store.authenticate(bearer)).toMatchObject({ profile: 'member' })
@@ -182,6 +182,16 @@ describe('Worker D1 runtime composition', () => {
       .prepare('SELECT last_used_at AS lastUsedAt FROM api_tokens')
       .first<{ lastUsedAt: string | null }>()
     expect(used?.lastUsedAt).not.toBeNull()
+
+    const projectResponse = await request('/api/v1/projects/1', {
+      headers: { authorization: `Bearer ${bearer}` },
+    })
+    expect(projectResponse.status).toBe(200)
+    const project = (await projectResponse.json()) as {
+      data: Record<string, unknown>
+    }
+    expect(project.data).toMatchObject({ id: 1, name: 'Runtime Project' })
+    expect(project.data).not.toHaveProperty('hourly_rate_cents')
   })
 })
 

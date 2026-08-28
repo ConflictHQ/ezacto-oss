@@ -9,6 +9,7 @@ export {
   type ApiTokenStore,
   type CreateApiTokenStoreOptions,
 } from './api-tokens.js'
+export { createGeneralResourceRepository } from './general-resources.js'
 export { migrateD1 } from './migrate.js'
 export {
   DrizzleTrackedResourceRepository,

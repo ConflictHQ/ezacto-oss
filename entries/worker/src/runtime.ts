@@ -1,6 +1,7 @@
 import {
   createApiTokenStore,
   createD1Database,
+  createGeneralResourceRepository,
   DrizzleTrackedResourceRepository,
   migrateD1,
   type TrackedPolicyResolver,
@@ -95,6 +96,7 @@ export const createRuntimeServices = async (env: WorkerEnv): Promise<RuntimeServ
   const drizzle = createD1Database(database)
   return {
     tokens: createApiTokenStore(drizzle),
+    generalResources: createGeneralResourceRepository(drizzle),
     trackedResources: new DrizzleTrackedResourceRepository(drizzle, organizationPolicy),
     cursorSigningKey,
   }

@@ -1,7 +1,9 @@
 import {
   createApiApp,
+  installGeneralResourceRoutes,
   installTrackedResourceRoutes,
   type ApiTokenService,
+  type GeneralResourceRouteOptions,
   type TrackedResourceRepository,
 } from '@ezacto/api'
 
@@ -18,6 +20,7 @@ export type WorkerEnv = Env & {
 
 export interface RuntimeServices {
   tokens: ApiTokenService
+  generalResources: GeneralResourceRouteOptions['repository']
   trackedResources: TrackedResourceRepository
   cursorSigningKey: Uint8Array
 }
@@ -40,12 +43,17 @@ export const createApp = (services?: RuntimeServices) =>
             // explicit keeps cookies from becoming an accidental credential.
             sessions: { resolve: async () => null },
           },
-          installApi: (api) =>
+          installApi: (api) => {
+            installGeneralResourceRoutes(api, {
+              repository: services.generalResources,
+              cursorSigningKey: services.cursorSigningKey,
+            })
             installTrackedResourceRoutes(api, {
               repository: services.trackedResources,
               clock: systemClock,
               cursorSigningKey: services.cursorSigningKey,
-            }),
+            })
+          },
         }),
     installApp(app) {
       app.get('/healthz', (context) => {
