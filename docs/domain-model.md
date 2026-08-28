@@ -1,5 +1,5 @@
 > Localized copy for the build. Source of truth: ezacto `knowledge/docs/`.
-> Synced 2026-08-25 — if editing, edit the brain copy and re-sync.
+> Synced 2026-08-27 — if editing, edit the brain copy and re-sync.
 
 ---
 title: ezacto — Domain Model Specification
@@ -85,7 +85,7 @@ Harvest's `company` + the Preferences/Modules settings surface (UI inventory §3
 | `reminder_policy` | json | Offsets + capacity-threshold %, per UI 30b. |
 | `auto_lock` / `auto_submit` | bool | Harvest "NEW" prefs. |
 | `time_entry_notes_required` | bool | |
-| `time_rounding` | enum `none\|up_6\|up_15\|up_30\|nearest_15\|…` | Drives `rounded_seconds` (§3.4). Exact rung list fixed at implementation from Harvest's option set. |
+| `time_rounding` | enum `none\|nearest_6\|nearest_15\|nearest_30\|up_6\|up_15\|up_30` | The complete setting set evidenced by [Harvest's Preferences controls](https://support.getharvest.com/hc/en-us/articles/360048179912-Customizing-account-preferences). Drives native `rounded_seconds` (§3.4). |
 | `modules` | json | Feature flags: `expenses, invoices, estimates, approval, team, client_portal, activity_log`. Disabled modules disappear from nav (UI §38 Modules — keep this). |
 | `require_2fa` / `require_sso` | bool | Commercial-tier enforcement; columns exist in OSS, enforcement is Identity-seam concern (D4). |
 
@@ -181,6 +181,10 @@ Contacts are reassignable between clients (Harvest parity).
 | `tags` | m2m → `project_tag` | UI 28/23a; not in Harvest API — import n/a. |
 | `billing_currency` | text nullable | UI 28: project rate currency; costs always org currency. |
 
+`project_tag`: `name`; projects and tags use a many-to-many join whose primary key is
+`(project_id, project_tag_id)`. Tags are native metadata: Harvest exposes no project-tag
+API, so migration does not synthesize them.
+
 **Milestones** (Harvest "What's new" Aug 2026): `project_milestone` table
 `{project_id, name, amount_cents, due_on, invoiced_invoice_id}` — fixed-fee schedule
 billing. In scope for the model, later phase for UI.
@@ -215,20 +219,25 @@ reproduces Harvest's inconsistency.
 | `user_id`, `project_id`, `task_id` | fk | `user_assignment_id`, `task_assignment_id` resolved and stored too (fast joins + Harvest-shaped embeds). |
 | `spent_date` | date | |
 | `seconds` | int | Truth. Decimal `hours` is a serialization. |
-| `seconds_without_timer` | int | Checkpoint before current timer run. Live elapsed = this + (now − `timer_started_at`). |
+| `seconds_without_timer` | int | Non-null elapsed checkpoint for both tracking modes. While stopped it equals `seconds`; while running it is the accumulated duration before the current run. Live elapsed adds `(now − timer_started_at)` in duration mode or `(now − spent_date+started_time)` in start/end mode. |
 | `rounded_seconds` | int | **Stored, not computed at read** (§3.4). |
 | `timer_started_at` | timestamp nullable | Non-null ⇔ running (duration mode). |
 | `started_time`, `ended_time` | time nullable | Start/end mode. Canonical `HH:MM`. Running ⇔ `ended_time` null. |
 | `notes` | text | Org may require (`time_entry_notes_required`). |
 | `billable` | bool | Inherited from task_assignment at creation; never client-supplied on create (compat). |
 | `budgeted` | bool | Independent of billable. |
-| `billable_rate_cents`, `cost_rate_cents` | int | **Snapshots** (§3.3). |
+| `billable_rate_cents`, `cost_rate_cents` | int nullable | Exactly two independent snapshots (§3.3). Null means unresolved or not applicable; never substitute zero. |
 | `approval_status` | enum `unsubmitted\|submitted\|approved` | Axis 1. |
 | `invoice_id` | fk nullable | Axis 2; `is_billed` ⇔ non-null. |
 | `external_ref` | json nullable | `{id, group_id, account_id, permalink}` + derived `{service, service_icon_url}` from a service registry keyed on permalink host. `id` indexed **as text**. |
 | `calendar_event_ref` | json nullable | UI 33/39 "Pull in a calendar event". |
 
 `is_locked` and `locked_reason` are **derived, never stored** (§3.2).
+
+Invoice-FK staging: the projects/time migration does not create bare or unconstrained
+`time_entry.invoice_id` or `project_milestone.invoiced_invoice_id` columns. The money
+migration creates `invoice` first, then adds both columns as nullable real foreign keys.
+The entity catalog describes the resulting final schema.
 
 Timer semantics (hard compat requirement): creating an entry while omitting the
 terminating field (`hours`/`seconds` in duration mode, `ended_time` in start/end mode)
@@ -239,12 +248,13 @@ running entry per user; starting a new one stops the previous (Harvest behavior)
 machine-readable reason. The compat shim reproduces Harvest's silent field-drop for
 locked expenses only, because clients depend on it.
 
-### 2.13 `expense` / `expense_category` / `receipt`
+### 2.13 `expense` / `expense_category` / `attachment`
 
 `expense`: `user_id`, `project_id`, `expense_category_id`, `spent_date`, `notes`,
 `units` nullable, `total_cost_cents`, `billable` (default **true**), same three-axis
 state as time entries (shared implementation), `invoice_id` nullable,
-`receipt_id` nullable.
+with attachments related through the shared attachment model rather than a dedicated
+receipt column.
 
 Unit rule: category has `unit_price_cents` ⇒ client sends `units`, we compute
 `total_cost = units × unit_price`; else client sends `total_cost` directly.
@@ -252,7 +262,14 @@ Unit rule: category has `unit_price_cents` ⇒ client sends `units`, we compute
 `expense_category`: `name`, `unit_name`, `unit_price_cents` nullable, `is_active`.
 Delete disabled while referenced (UI 07) — enforce with FK RESTRICT + archive path.
 
-`receipt`: `file_key` (R2/disk), `file_name`, `file_size`, `content_type`. The one
+`file_object` is content-addressed binary identity: content hash, `file_key` on
+R2/disk, file size, and content type. `attachment` is the logical file name,
+uploader, and reference to that object. Owner-specific join tables use real foreign
+keys for invoice, recurring definition, estimate, expense, or project ownership;
+there is no unchecked generic `owner_type/owner_id`. A Harvest receipt is an
+expense-owned attachment in native storage; `receipt` survives only as a Harvest
+shim/extract vocabulary. Static recurring attachment policy belongs to this model;
+generated-report attachments remain downstream of F2 + F6. This is the one
 multipart surface in the API.
 
 Reimbursement (UI 06, gated in Harvest): `reimbursable` bool, `reimbursement_status`
@@ -264,6 +281,7 @@ later; lane-C rules from D13 apply.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `client_id` | fk | |
+| `created_by_user_id` | fk nullable | Native creator when resolvable; imports also retain immutable source creator id/name provenance so deleted Harvest users do not erase attribution. |
 | `number` | text unique | Auto-sequence when omitted. |
 | `subject`, `purchase_order`, `notes` | text | |
 | `currency` | text | |
@@ -277,6 +295,12 @@ later; lane-C rules from D13 apply.
 | `reminder_policy` | json nullable | `{first_after_days, every_days}` (UI 19). Scheduled via queue jobs (D14). |
 | `payment_options` | json | Enabled checkout methods for lane B (D13): subset of `[stripe, paypal, quickbooks, mercury_transfer]`. Shim maps Harvest's `[ach, credit_card, paypal]`. |
 | Derived (read-only): `amount_cents`, `due_amount_cents`, `tax_amount_cents`, `tax2_amount_cents`, `discount_amount_cents`, `written_off_cents` | | Computed from line items + payments; stored for query speed, recomputed on any mutation in the same transaction. |
+
+**Open totals decision.** The sources establish integer-cent storage and the
+aggregate formula, but do not establish the exact discount/tax ordering or the
+rounding rule at fractional-cent boundaries. The payments/totals story must decide
+and document that order and a deterministic tie rule before implementation; it must
+not infer Harvest parity from the formula alone.
 
 `invoice_line_item`: `invoice_id`, `position`, `kind` (**denormalized category name
 string** — loose coupling is Harvest-correct and we keep it), `description` (rich
@@ -297,12 +321,19 @@ correctness bug class; this write is the reason invoice creation is transactiona
 
 ### 2.15 `invoice_message` / `estimate_message`
 
-First-class records (they drive the state machines): `sent_by`, `sent_from`
-(references `sender_identity`), `recipients` json `[{name,email}]`, `subject`,
-`body`, `attach_pdf`, `send_me_a_copy`, `thank_you`, `reminder`, `send_reminder_on`,
-`event_type` nullable, **plus delivery outcome** `delivery_status` enum
+First-class records (they drive the state machines): immutable scalar sender
+snapshots `sent_by`, `sent_by_email`, `sent_from`, `sent_from_email`; a nullable
+real `sender_identity_id` relation may be added when the email schema exists, but is
+never required for historical provenance and is never a bare placeholder.
+Common fields are `recipients` json `[{name,email}]`, `subject`, `body`,
+`send_me_a_copy`, and nullable `event_type`, **plus delivery outcome**
+`delivery_status` enum
 `queued|sent|bounced|complained|failed` and `provider_message_id` (D14 feedback loop —
 our addition; Harvest has nothing).
+
+Invoice messages additionally carry `attach_pdf`, `thank_you`, `reminder`, and
+`send_reminder_on`. Estimate messages do not grow those invoice-only columns, and
+their recipients are required on native sends, matching the source contract.
 
 Writable invoice `event_type`: `send|close|re-open|draft`. Estimate:
 `send|accept|decline|re-open`; `view` and `invoice` are **system-emitted only** and
@@ -327,7 +358,8 @@ deposit matching.
 
 ### 2.17 `estimate` + `estimate_line_item` + `estimate_item_category`
 
-As Harvest (research §11), with two fixes: `quantity` is real (consistent with
+As Harvest (research §11), including nullable `created_by_user_id` plus immutable
+source creator id/name provenance on import, with two fixes: `quantity` is real (consistent with
 invoices — the shim serializes int for estimates), and **estimate → invoice
 conversion is a first-class operation** (market research: named user complaint;
 Harvest emits `event_type: invoice` but has no conversion API). Conversion copies
@@ -342,14 +374,28 @@ flags this as a top-four v1 requirement. Ours:
 | --- | --- |
 | `client_id`, `project_id` nullable | fk |
 | `state` | enum `ongoing\|closed` |
-| `balance_cents` | derived from ledger |
+| `denomination` | enum `money\|hours` |
+| `amount_cents` | nullable; required only for a money-denominated contract |
+| `seconds` | nullable; required only for an hours-denominated contract (API hours convert per DV-2) |
+| `locked_rate_cents`, `rate_locked_at` | nullable pair; hours only |
+| `period`, `rollover`, `expires_at`, `on_exhaustion` | F5 policy (`on_exhaustion = overflow` is the explicit overdraw permission) |
 
-`retainer_ledger`: append-only `{retainer_id, kind: deposit|drawdown|refund|adjustment,
-amount_cents, invoice_id nullable, occurred_on, notes}`. Deposits arrive via
-deposit-invoices; drawdowns link the drawing invoice. Balance is a SUM, history is
-the UI (fixes "retainers is a stub", UI critique §5.t). Accounting treatment:
-deposits are **deferred revenue**, recognized on drawdown — this is what makes the
-Profitability report honest where Harvest's is not.
+For v1 a retainer has **exactly one denomination**: exactly one of `amount_cents` or
+`seconds` is populated. The dual-cap form (for example, 100 hours or $15,000,
+whichever comes first) is explicitly deferred beyond v1; it must not be approximated
+with two balances or two linked retainers in this schema. The deferred contract is
+named `retainer-dual-cap-contract`; it has no v1 plan node until that later decision
+is shaped.
+
+`retainer_ledger` is append-only: `{retainer_id, kind:
+deposit|drawdown|expiry|reset|adjustment, amount, invoice_id nullable, occurred_on,
+notes}`. `amount` is cents for a money retainer and seconds for an hours retainer; an
+entry must use its parent's denomination. Deposits arrive via deposit-invoices;
+drawdowns link the drawing invoice. Balance is a SUM in that denomination and is
+never stored; history is the UI (fixes "retainers is a stub", UI critique §5.t).
+Accounting treatment for money retainers: deposits are **deferred revenue**,
+recognized on drawdown — this is what makes the Profitability report honest where
+Harvest's is not.
 
 ### 2.19 `recurring_invoice` — first-class (Harvest gap #2)
 
@@ -360,6 +406,20 @@ fixing the "can't generate on the 1st" complaint), `next_issue_on`, `amount` mod
 (fixed lines json or `line_items_import` config), `auto_send` bool,
 `can_draw_from_retainer_id` nullable — recurring invoices **can** draw retainers,
 which Harvest documents as impossible. Generation is a scheduled queue job.
+
+**Shared transactional outbox storage (D13 rev / D17; not a recurring-invoice
+child):** `event_outbox` has `id` (text
+primary key and stable downstream idempotency key), `aggregate_type`,
+`aggregate_id`, `aggregate_sequence`, `event_type` (TEXT, intentionally
+extensible), `payload_json`, `occurred_at`,
+`available_at`, `published_at` nullable, `attempt_count` default 0, and `last_error`
+nullable. A unique constraint on `(aggregate_type, aggregate_id,
+aggregate_sequence)` makes producer retries idempotent and fixes per-aggregate
+order. An index on `(published_at, available_at, occurred_at, id)` supports the
+ready-event dequeue; the unique constraint supplies the aggregate-order lookup.
+The invoice state machine owns writing events in the same batch as transitions;
+the later drainer owns subscriber delivery records and their unique
+`(subscriber_id, event_id)` receipt.
 
 ### 2.20 `saved_report`
 
@@ -400,24 +460,47 @@ Axes are independent; conflating them is the classic clone mistake.
    axis is invisible).
 2. **Invoicing**: `invoice_id` nullable. `is_billed` is `invoice_id IS NOT NULL`.
 3. **Editability**: `locked = derived(entry)` — true when invoiced, approved,
-   auto-locked by org policy, or any parent (project/task/client) is archived.
-   `locked_reason` is rendered text naming the cause. Never stored; a stored copy
-   would go stale the moment a parent unarchives.
+   an already-computed policy-lock fact is present, or any parent
+   (project/task/client) is archived. The policy subsystem owns auto/manual lock
+   boundaries and supplies the fact; this derivation does not recalculate policy.
+
+`locked_reason_code` is derived with this stable precedence when more than one cause
+applies: `invoiced`, `approved`, `policy_locked`, `client_archived`,
+`project_archived`, `task_archived`. Rendered `locked_reason` text is selected from
+that code. Neither value is stored; a stored copy would go stale when approval,
+invoice linkage, policy, or parent activity changes.
 
 ### 3.3 Rate snapshotting
 
-`billable_rate_cents` and `cost_rate_cents` are **copied onto the entry at write
-time** by the §4 resolver and never recomputed on read. A retro rate change updates
-future entries only, unless an explicit "reprice period" operation is run (which
-rewrites snapshots and is auditable). This is what keeps historical reports stable —
-Harvest gets this right and we keep it.
+`billable_rate_cents` and `cost_rate_cents` are the two independent, nullable rate
+snapshots. Native entry writes copy the §4 resolver's results verbatim; either result
+may be null and null is never converted to zero. They are never recomputed on read.
+An explicit, auditable reprice operation may rewrite them using the same resolver and
+the entry's `spent_date`.
+
+Imported entries instead copy Harvest's historical `billable_rate` and `cost_rate`
+verbatim. Import never re-resolves them.
 
 ### 3.4 Rounding
 
-`rounded_seconds` = `round(seconds, org.time_rounding)` — stored at write, restored on
-setting change only via explicit reprice. Invoices and summary reports consume
-`rounded_seconds`; detailed views and timesheets show raw. (Harvest parity; the
-uninvoiced report must agree exactly with invoice generation.)
+The supported settings are exactly:
+
+`none | nearest_6 | nearest_15 | nearest_30 | up_6 | up_15 | up_30`
+
+For a non-negative native duration `s` and increment `q = minutes × 60`:
+
+- `none`: `s`
+- `up`: `ceil(s / q) × q`
+- `nearest`: `floor((s + q / 2) / q) × q`
+
+At an exact positive midpoint, `nearest` therefore rounds upward. This midpoint
+half-up behavior is the proposed ezacto-native rule; Harvest's official controls
+establish the available modes and increments, not its undocumented tie behavior.
+Tests and documentation must not describe the tie rule as confirmed Harvest parity.
+
+Imported `rounded_hours` is converted and stored verbatim as `rounded_seconds`; it is
+not recomputed using the native rule. Invoices and summary reports consume the stored
+rounded value; detailed views and timesheets show raw duration.
 
 ---
 
@@ -481,6 +564,13 @@ transaction as the triggering record. `paid` is entered automatically when payme
 `POST /invoices/{id}/transitions` sugar that creates the equivalent message —
 one mechanism, two spellings.
 
+**Open event-mapping decision.** D13's native vocabulary distinguishes
+`invoice.cancelled` from `invoice.written_off`, while Harvest's `close` event and the
+current `closed` state collapse those meanings. No authoritative source decides how
+the two native events map to state transitions. The outbox therefore stores an
+extensible text event type, and the invoice-state story must settle and document
+that mapping before it claims those two events; schema work must not invent it.
+
 ---
 
 ## 7. Harvest compatibility mapping (shim contract)
@@ -521,7 +611,7 @@ re-verifies the aggregate ones against imported data.
 7. `project.client_id` immutable while any invoice links the project.
 8. Rate tables are append-only; `end_date` always equals next `start_date − 1` or null.
 9. Entry snapshots never change except via explicit reprice operations (which are logged).
-10. `retainer.balance = Σ ledger` and never negative without an explicit allow-overdraw flag.
+10. `retainer.balance = Σ ledger` in its single denomination and never negative unless `on_exhaustion = overflow` explicitly permits overdraw.
 11. Uninvoiced report totals ≡ what invoice generation would produce for the same filter, to the cent.
 12. Exactly one `user.is_owner`.
 13. Cross-org anything is impossible by construction (separate databases) — the test is that no code path accepts a database handle plus a foreign org id.

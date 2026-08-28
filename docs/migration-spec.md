@@ -1,5 +1,5 @@
 > Localized copy for the build. Source of truth: ezacto `knowledge/docs/`.
-> Synced 2026-08-25 — if editing, edit the brain copy and re-sync.
+> Synced 2026-08-27 — if editing, edit the brain copy and re-sync.
 
 ---
 title: ezacto-migrate — Harvest Extraction & Migration Specification
@@ -94,7 +94,7 @@ snapshot/
 │                          # tool version, per-resource counts + page counts,
 │                          # updated_since watermark per resource
 ├── raw/<resource>.jsonl   # one Harvest object per line, verbatim, unmodified
-├── receipts/<expense_id>.<ext>
+├── receipts/<expense_id>.<ext> # Harvest vocabulary; loads as an expense attachment
 └── checksums.json         # step-14 report aggregates (§6)
 ```
 
@@ -123,12 +123,15 @@ Key mappings (details in domain-model §7):
 | --- | --- | --- |
 | ids | `harvest_id` columns | Native ids assigned fresh; every table keeps the Harvest id, unique-indexed — this is what makes `sync` upserts and the shim's id echo possible. |
 | decimal hours | `seconds` | ×3600, round half-even, record residue in load report if any. |
+| entry `rounded_hours` | `rounded_seconds` | Convert the imported value to seconds and store it verbatim; never apply native rounding during load. |
 | money decimals | cents | ×100 exact; **fail loudly** on >2 decimal places, never round silently. |
 | `started_time` "8:00am" | `HH:MM` | Parse per snapshot `company.clock`. |
 | `access_roles` array | `profile` + `manager_grants` | Per domain-model §2.2. |
 | `is_billable`+`is_fixed_fee` | `billing_method` | Truth table; conflicting combos (billable=false, fixed_fee=true) recorded as anomalies, imported as `non_billable`. |
 | billable/cost rate rows | append-only tables | Verify Harvest's derived `end_date` chain matches ours (invariant 8); mismatch = anomaly, ours wins. |
 | entry `billable_rate`/`cost_rate` | snapshot columns | **Copied verbatim from Harvest, never re-resolved** — Harvest's historical resolution is truth for imported rows. |
+| invoice/estimate `creator {id,name}` | nullable real creator-user FK + immutable source creator id/name provenance | Resolve the FK when the imported user exists; never discard source attribution or create a bare/mandatory placeholder when it does not. |
+| invoice/estimate message sender scalars | immutable `sent_by`, `sent_by_email`, `sent_from`, `sent_from_email` snapshots | Copy verbatim; a later nullable sender-identity relation is enrichment, not historical truth. |
 | `payment_gateway`/`transaction_id` | `provider=manual` + `provider_transaction_id` | Historical payments import as manual records. |
 | invoice `state` + timestamps | same | States imported as-is; state machine governs post-import mutations only. |
 
@@ -140,14 +143,22 @@ Key mappings (details in domain-model §7):
   a queued, checkpointed job consuming the snapshot from R2; local SQLite loads have
   no such ceiling and are the default dev path.
 - 30 s query duration ⇒ no mega-transactions; chunk per-resource with a
-  load-progress table so a resumed load is idempotent (INSERT OR REPLACE keyed on
-  `harvest_id`).
+  load-progress table so a resumed load is idempotent. Invoice and invoice-message
+  imports must never use `INSERT OR REPLACE` or `ON CONFLICT DO UPDATE`: their
+  identity-collision guards intentionally reject both shortcuts because replacement
+  can delete children, rotate a native `client_key`, or bypass immutable provenance.
+  In one container transaction or D1 batch, issue an `UPDATE ... WHERE harvest_id = ?`
+  followed by `INSERT ... SELECT ... WHERE NOT EXISTS (...)`. Omit `client_key` so
+  SQLite generates a new native bearer secret, and include creator/sender provenance
+  in the update so any historical drift fails loudly rather than being hidden.
 
 ## 4. Receipts
 
 Download every `receipt.url` binary; store under content hash; verify
 `file_size` matches. Failures are anomalies, not fatal (Harvest serves receipts
-through time-limited URLs — re-extract refreshes them).
+through time-limited URLs — re-extract refreshes them). On load, a Harvest receipt
+becomes an expense-owned row in the shared `attachment` model; there is no separate
+native receipt table or `expense.receipt_id`.
 
 ## 5. The `sync` loop (parallel-run)
 
@@ -184,7 +195,7 @@ the gate is zero UNEXPLAINED.
 
 | Gap | Handling |
 | --- | --- |
-| **Retainers: no API.** Invoices reference dangling `retainer.id`s. | Create stub `retainer` rows from the distinct ids found on invoices; balances unknowable via API. `migrate finish-retainers` prints a worksheet (client, linked invoices) for manual balance entry from the Harvest UI (a small account will have one or two — minutes of typing). Ledger opens with a manual `adjustment` entry. |
+| **Retainers: no API.** Invoices reference dangling `retainer.id`s. | Create money-denominated stub `retainer` rows from the distinct ids found on invoices; balances are unknowable via API. `migrate finish-retainers` prints a worksheet (client, linked invoices) for manual balance entry from the Harvest UI. Ledger opens with a cents-denominated manual `adjustment` entry. |
 | **Recurring invoices: no API.** `recurring_invoice_id` dangles. | Same: stub rows + worksheet from the UI's 3 visible definitions (subject template, cadence, amount are all on screen — HRVST20/15). |
 | **Estimates/approval/activity-log modules disabled** on our account | Nothing to extract; extractor skips per company feature flags and says so. |
 | Report-only fields (utilization) | Derived, not stored — recomputed by ezacto; reconciled in A. |

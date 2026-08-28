@@ -3,6 +3,7 @@ import { orgPeopleMigration } from './migrations/0000_org_people.js'
 import { clientsMigration } from './migrations/0001_clients.js'
 import { projectsTimeMigration } from './migrations/0002_projects_time.js'
 import { rateResolverMigration } from './migrations/0003_rate_resolver.js'
+import { invoiceFoundationMigration } from './migrations/0004_invoice_foundation.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL
@@ -13,6 +14,7 @@ const migrations = [
   { id: '0001_clients', statements: clientsMigration },
   { id: '0002_projects_time', statements: projectsTimeMigration },
   { id: '0003_rate_resolver', statements: rateResolverMigration },
+  { id: '0004_invoice_foundation', statements: invoiceFoundationMigration },
 ] as const
 
 export const migrateContainer = (database: BetterSqlite3.Database): void => {

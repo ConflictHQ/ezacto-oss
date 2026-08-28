@@ -5,6 +5,7 @@ import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import { orgPeopleMigration } from '../src/migrations/0000_org_people.js'
 import { clientsMigration } from '../src/migrations/0001_clients.js'
+import { projectsTimeMigration } from '../src/migrations/0002_projects_time.js'
 import {
   createStoppedTimeEntry,
   elapsedDurationSeconds,
@@ -812,7 +813,7 @@ for (const [runtime, factory] of factories) {
       expect(() => roundSeconds(1, 'nearest_5' as TimeRounding)).toThrow(/unsupported/)
     })
 
-    it('[unit] exposes exactly two independently nullable rate snapshots and no lock/invoice placeholders', async () => {
+    it('[unit] exposes two nullable rate snapshots and stages real invoice links only in 0004', async () => {
       const db = await setup('duration')
       const columns = await db.rows<{
         name: string
@@ -855,17 +856,30 @@ for (const [runtime, factory] of factories) {
       )
       expect(bigintEntry.harvestId).toBe('9007199254740993')
 
-      const milestoneColumns = await db.rows<{ name: string }>(
+      const milestoneColumns = await db.rows<{
+        name: string
+        notnull: number
+        dflt_value: string | null
+      }>(
         `PRAGMA table_info(project_milestones)`,
       )
       const allNames = [...columns, ...milestoneColumns].map(({ name }) => name)
-      for (const forbidden of ['invoice_id', 'invoiced_invoice_id', 'is_locked', 'locked_reason']) {
+      expect(columns.find(({ name }) => name === 'invoice_id')).toMatchObject({
+        notnull: 0,
+        dflt_value: null,
+      })
+      expect(milestoneColumns.find(({ name }) => name === 'invoiced_invoice_id')).toMatchObject({
+        notnull: 0,
+        dflt_value: null,
+      })
+      for (const forbidden of ['is_locked', 'locked_reason']) {
         expect(allNames).not.toContain(forbidden)
       }
       const definitions = await db.rows<{ sql: string | null }>(
         `SELECT sql FROM sqlite_master WHERE sql IS NOT NULL`,
       )
-      expect(definitions.map(({ sql }) => sql).join('\n')).not.toMatch(
+      expect(definitions.map(({ sql }) => sql).join('\n')).not.toMatch(/\b(?:is_locked|locked_reason)\b/)
+      expect(projectsTimeMigration.join('\n')).not.toMatch(
         /\b(?:invoice_id|invoiced_invoice_id|is_locked|locked_reason)\b/,
       )
     })
@@ -964,6 +978,7 @@ for (const [runtime, factory] of factories) {
         '0001_clients',
         '0002_projects_time',
         '0003_rate_resolver',
+        '0004_invoice_foundation',
       ])
       expect(firstLedger.slice(0, 2).map(({ applied_at: appliedAt }) => appliedAt)).toEqual([
         originalAppliedAt,
@@ -1028,6 +1043,7 @@ for (const [runtime, factory] of factories) {
         { id: '0001_clients' },
         { id: '0002_projects_time' },
         { id: '0003_rate_resolver' },
+        { id: '0004_invoice_foundation' },
       ])
       expect(
         await db.rows<{ name: string }>(

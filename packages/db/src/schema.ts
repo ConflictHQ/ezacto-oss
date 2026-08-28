@@ -18,6 +18,21 @@ const timestamps = {
   updatedAt: text('updated_at').notNull(),
 }
 
+const canonicalTimestamp = (column: AnySQLiteColumn) => sql`unixepoch(${column}) is not null
+  and substr(${column}, 1, 19) = strftime('%Y-%m-%dT%H:%M:%S', ${column})
+  and cast(substr(${column}, 12, 2) as integer) between 0 and 23
+  and cast(substr(${column}, 15, 2) as integer) between 0 and 59
+  and cast(substr(${column}, 18, 2) as integer) between 0 and 59
+  and (
+    ${column} glob '????-??-??T??:??:??Z'
+    or ${column} glob '????-??-??T??:??:??.[0-9]Z'
+    or ${column} glob '????-??-??T??:??:??.[0-9][0-9]Z'
+    or ${column} glob '????-??-??T??:??:??.[0-9][0-9][0-9]Z'
+  )`
+
+const nullableCanonicalTimestamp = (column: AnySQLiteColumn) =>
+  sql`${column} is null or (${canonicalTimestamp(column)})`
+
 export const organizations = sqliteTable(
   'organizations',
   {
@@ -457,6 +472,236 @@ export const projectTags = sqliteTable('project_tags', {
   ...timestamps,
 })
 
+export const invoices = sqliteTable(
+  'invoices',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: integer('harvest_id'),
+    clientId: integer('client_id')
+      .notNull()
+      .references(() => clients.id, { onDelete: 'restrict' }),
+    createdByUserId: integer('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    sourceCreatorId: integer('source_creator_id'),
+    sourceCreatorName: text('source_creator_name'),
+    number: text('number').notNull(),
+    subject: text('subject'),
+    purchaseOrder: text('purchase_order'),
+    notes: text('notes'),
+    currency: text('currency').notNull(),
+    issueDate: text('issue_date').notNull(),
+    dueDate: text('due_date').notNull(),
+    paymentTerms: text('payment_terms', {
+      enum: ['upon_receipt', 'net_15', 'net_30', 'net_45', 'net_60', 'custom'],
+    })
+      .notNull()
+      .default('custom'),
+    state: text('state', { enum: ['draft', 'open', 'paid', 'closed'] })
+      .notNull()
+      .default('draft'),
+    sentAt: text('sent_at'),
+    paidAt: text('paid_at'),
+    paidDate: text('paid_date'),
+    closedAt: text('closed_at'),
+    periodStart: text('period_start'),
+    periodEnd: text('period_end'),
+    clientKey: text('client_key')
+      .notNull()
+      .default(sql`lower(hex(randomblob(32)))`),
+    projectId: integer('project_id').references(() => projects.id, { onDelete: 'restrict' }),
+    reminderPolicy: text('reminder_policy', { mode: 'json' }).$type<Record<string, unknown>>(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('invoices_harvest_id_unique').on(table.harvestId),
+    uniqueIndex('invoices_number_unique').on(table.number),
+    uniqueIndex('invoices_client_key_unique').on(table.clientKey),
+    index('invoices_client_id').on(table.clientId),
+    index('invoices_project_id').on(table.projectId),
+    index('invoices_created_by_user_id').on(table.createdByUserId),
+    check(
+      'invoices_reminder_policy_json',
+      sql`${table.reminderPolicy} is null or (
+        json_valid(${table.reminderPolicy}) and json_type(${table.reminderPolicy}) = 'object'
+      )`,
+    ),
+    check('invoices_issue_date_canonical', sql`date(${table.issueDate}) is ${table.issueDate}`),
+    check('invoices_due_date_canonical', sql`date(${table.dueDate}) is ${table.dueDate}`),
+    check(
+      'invoices_paid_date_canonical',
+      sql`${table.paidDate} is null or date(${table.paidDate}) is ${table.paidDate}`,
+    ),
+    check(
+      'invoices_period_start_canonical',
+      sql`${table.periodStart} is null or date(${table.periodStart}) is ${table.periodStart}`,
+    ),
+    check(
+      'invoices_period_end_canonical',
+      sql`${table.periodEnd} is null or date(${table.periodEnd}) is ${table.periodEnd}`,
+    ),
+    check('invoices_sent_at_canonical', nullableCanonicalTimestamp(table.sentAt)),
+    check('invoices_paid_at_canonical', nullableCanonicalTimestamp(table.paidAt)),
+    check('invoices_closed_at_canonical', nullableCanonicalTimestamp(table.closedAt)),
+    check('invoices_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('invoices_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+  ],
+)
+
+export const invoiceItemCategories = sqliteTable(
+  'invoice_item_categories',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: integer('harvest_id'),
+    name: text('name').notNull(),
+    useAsService: integer('use_as_service', { mode: 'boolean' }).notNull().default(false),
+    useAsExpense: integer('use_as_expense', { mode: 'boolean' }).notNull().default(false),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('invoice_item_categories_harvest_id_unique').on(table.harvestId),
+    uniqueIndex('invoice_item_categories_name_unique').on(table.name),
+    check('invoice_item_categories_service_boolean', sql`${table.useAsService} in (0, 1)`),
+    check('invoice_item_categories_expense_boolean', sql`${table.useAsExpense} in (0, 1)`),
+    check(
+      'invoice_item_categories_created_at_canonical',
+      canonicalTimestamp(table.createdAt),
+    ),
+    check(
+      'invoice_item_categories_updated_at_canonical',
+      canonicalTimestamp(table.updatedAt),
+    ),
+  ],
+)
+
+export const invoiceLineItems = sqliteTable(
+  'invoice_line_items',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: integer('harvest_id'),
+    invoiceId: integer('invoice_id')
+      .notNull()
+      .references(() => invoices.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    kind: text('kind').notNull(),
+    description: text('description'),
+    quantity: real('quantity').notNull(),
+    unitPriceCents: integer('unit_price_cents').notNull(),
+    amountCents: integer('amount_cents').notNull(),
+    taxed: integer('taxed', { mode: 'boolean' }).notNull().default(false),
+    taxed2: integer('taxed2', { mode: 'boolean' }).notNull().default(false),
+    projectId: integer('project_id').references(() => projects.id, { onDelete: 'restrict' }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('invoice_line_items_harvest_id_unique').on(table.harvestId),
+    uniqueIndex('invoice_line_items_invoice_position_unique').on(
+      table.invoiceId,
+      table.position,
+    ),
+    index('invoice_line_items_invoice_id').on(table.invoiceId),
+    index('invoice_line_items_project_id').on(table.projectId),
+    check('invoice_line_items_position_nonnegative', sql`${table.position} >= 0`),
+    check('invoice_line_items_taxed_boolean', sql`${table.taxed} in (0, 1)`),
+    check('invoice_line_items_taxed2_boolean', sql`${table.taxed2} in (0, 1)`),
+    check('invoice_line_items_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('invoice_line_items_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+  ],
+)
+
+export const invoiceMessages = sqliteTable(
+  'invoice_messages',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: integer('harvest_id'),
+    invoiceId: integer('invoice_id')
+      .notNull()
+      .references(() => invoices.id, { onDelete: 'cascade' }),
+    sentBy: text('sent_by'),
+    sentByEmail: text('sent_by_email'),
+    sentFrom: text('sent_from'),
+    sentFromEmail: text('sent_from_email'),
+    recipients: text('recipients', { mode: 'json' })
+      .$type<Array<{ name: string; email: string }>>()
+      .notNull()
+      .default([]),
+    subject: text('subject'),
+    body: text('body'),
+    attachPdf: integer('attach_pdf', { mode: 'boolean' }).notNull().default(false),
+    sendMeACopy: integer('send_me_a_copy', { mode: 'boolean' }).notNull().default(false),
+    thankYou: integer('thank_you', { mode: 'boolean' }).notNull().default(false),
+    reminder: integer('reminder', { mode: 'boolean' }).notNull().default(false),
+    sendReminderOn: text('send_reminder_on'),
+    eventType: text('event_type', { enum: ['send', 'close', 're-open', 'draft'] }),
+    deliveryStatus: text('delivery_status', {
+      enum: ['queued', 'sent', 'bounced', 'complained', 'failed'],
+    }),
+    providerMessageId: text('provider_message_id'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('invoice_messages_harvest_id_unique').on(table.harvestId),
+    index('invoice_messages_invoice_created_id').on(
+      table.invoiceId,
+      table.createdAt,
+      table.id,
+    ),
+    index('invoice_messages_provider_message_id')
+      .on(table.providerMessageId)
+      .where(sql`${table.providerMessageId} is not null`),
+    check(
+      'invoice_messages_recipients_json',
+      sql`json_valid(${table.recipients}) and json_type(${table.recipients}) = 'array'`,
+    ),
+    check('invoice_messages_attach_pdf_boolean', sql`${table.attachPdf} in (0, 1)`),
+    check('invoice_messages_copy_boolean', sql`${table.sendMeACopy} in (0, 1)`),
+    check('invoice_messages_thank_you_boolean', sql`${table.thankYou} in (0, 1)`),
+    check('invoice_messages_reminder_boolean', sql`${table.reminder} in (0, 1)`),
+    check(
+      'invoice_messages_send_reminder_on_canonical',
+      sql`${table.sendReminderOn} is null or date(${table.sendReminderOn}) is ${table.sendReminderOn}`,
+    ),
+    check('invoice_messages_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('invoice_messages_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+  ],
+)
+
+export const eventOutbox = sqliteTable(
+  'event_outbox',
+  {
+    id: text('id').primaryKey(),
+    aggregateType: text('aggregate_type').notNull(),
+    aggregateId: integer('aggregate_id').notNull(),
+    aggregateSequence: integer('aggregate_sequence').notNull(),
+    eventType: text('event_type').notNull(),
+    payloadJson: text('payload_json', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+    occurredAt: text('occurred_at').notNull(),
+    availableAt: text('available_at').notNull(),
+    publishedAt: text('published_at'),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    lastError: text('last_error'),
+  },
+  (table) => [
+    uniqueIndex('event_outbox_aggregate_sequence_unique').on(
+      table.aggregateType,
+      table.aggregateId,
+      table.aggregateSequence,
+    ),
+    index('event_outbox_dequeue').on(
+      table.publishedAt,
+      table.availableAt,
+      table.occurredAt,
+      table.id,
+    ),
+    check('event_outbox_payload_json', sql`json_valid(${table.payloadJson})`),
+    check('event_outbox_sequence_positive', sql`${table.aggregateSequence} >= 1`),
+    check('event_outbox_attempt_count_nonnegative', sql`${table.attemptCount} >= 0`),
+    check('event_outbox_occurred_at_canonical', canonicalTimestamp(table.occurredAt)),
+    check('event_outbox_available_at_canonical', canonicalTimestamp(table.availableAt)),
+    check('event_outbox_published_at_canonical', nullableCanonicalTimestamp(table.publishedAt)),
+  ],
+)
+
 export const projectTagAssignments = sqliteTable(
   'project_tag_assignments',
   {
@@ -485,11 +730,15 @@ export const projectMilestones = sqliteTable(
     name: text('name').notNull(),
     amountCents: integer('amount_cents').notNull(),
     dueOn: text('due_on'),
+    invoicedInvoiceId: integer('invoiced_invoice_id').references(() => invoices.id, {
+      onDelete: 'restrict',
+    }),
     ...timestamps,
   },
   (table) => [
     uniqueIndex('project_milestones_harvest_id_unique').on(table.harvestId),
     index('project_milestones_project_id').on(table.projectId),
+    index('project_milestones_invoiced_invoice_id').on(table.invoicedInvoiceId),
     check('project_milestones_amount_nonnegative', sql`${table.amountCents} >= 0`),
   ],
 )
@@ -631,6 +880,7 @@ export const timeEntries = sqliteTable(
     budgeted: integer('budgeted', { mode: 'boolean' }).notNull().default(false),
     billableRateCents: integer('billable_rate_cents'),
     costRateCents: integer('cost_rate_cents'),
+    invoiceId: integer('invoice_id').references(() => invoices.id, { onDelete: 'restrict' }),
     externalRef: text('external_ref', { mode: 'json' }).$type<Record<string, unknown>>(),
     calendarEventRef: text('calendar_event_ref', { mode: 'json' }).$type<Record<string, unknown>>(),
     ...timestamps,
@@ -639,6 +889,7 @@ export const timeEntries = sqliteTable(
     uniqueIndex('time_entries_harvest_id_unique').on(table.harvestId),
     index('time_entries_user_spent_date').on(table.userId, table.spentDate),
     index('time_entries_project_spent_date').on(table.projectId, table.spentDate),
+    index('time_entries_invoice_id').on(table.invoiceId),
     index('time_entries_external_ref_id')
       .on(sql`cast(json_extract(${table.externalRef}, '$.id') as text)`)
       .where(sql`${table.externalRef} is not null`),
