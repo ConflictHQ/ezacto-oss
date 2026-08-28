@@ -10,6 +10,13 @@ const canonicalTimestamp = (column: string) => `unixepoch(${column}) IS NOT NULL
         OR ${column} GLOB '????-??-??T??:??:??.[0-9][0-9][0-9]Z'
       )`
 
+const ecmaScriptWhitespace = [
+  9, 10, 11, 12, 13, 32, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200,
+  8201, 8202, 8232, 8233, 8239, 8287, 12_288, 65_279,
+]
+  .map((codePoint) => `char(${codePoint})`)
+  .join(' || ')
+
 /**
  * Reserved after #94's 0009 and #126's 0010. Those migrations intentionally do
  * not exist on this branch yet; this number must not be collapsed into the gap.
@@ -26,7 +33,9 @@ export const apiTokensMigration = [
     secret_hash TEXT NOT NULL CHECK (
       length(secret_hash) = 64 AND secret_hash NOT GLOB '*[^0-9a-f]*'
     ),
-    name TEXT NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 100),
+    name TEXT NOT NULL CHECK (
+      name = trim(name, ${ecmaScriptWhitespace}) AND length(name) BETWEEN 1 AND 100
+    ),
     scopes TEXT NOT NULL CHECK (
       json_valid(scopes) AND json_type(scopes) = 'array'
     ),
@@ -61,6 +70,13 @@ export const apiTokensMigration = [
       OR julianday(NEW.last_used_at) < julianday(OLD.last_used_at)
     )
     BEGIN SELECT RAISE(ABORT, 'API token last_used_at cannot move backward'); END`,
+  `CREATE TRIGGER api_tokens_revocation_irreversible
+    BEFORE UPDATE OF revoked_at ON api_tokens
+    WHEN OLD.revoked_at IS NOT NULL AND (
+      NEW.revoked_at IS NULL
+      OR julianday(NEW.revoked_at) < julianday(OLD.revoked_at)
+    )
+    BEGIN SELECT RAISE(ABORT, 'API token revocation is irreversible'); END`,
   `CREATE TRIGGER api_tokens_scopes_insert_guard
     BEFORE INSERT ON api_tokens
     WHEN json_valid(NEW.scopes) AND json_type(NEW.scopes) = 'array' AND (

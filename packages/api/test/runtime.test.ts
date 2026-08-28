@@ -4,6 +4,8 @@ import { Miniflare } from 'miniflare'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { runtimeApp } from './fixtures/runtime-app.js'
 
+const runtimeBearer = 'ezacto_runtimeauthseed_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi1234567'
+
 interface RuntimeResponse {
   status: number
   headers: { get(name: string): string | null }
@@ -62,7 +64,9 @@ const runtimes: readonly [string, RuntimeRequest][] = [
 
 describe.each(runtimes)('%s runtime', (_runtime, request) => {
   it('[unit] executes the shared success handler over the real adapter', async () => {
-    const response = await request('/api/v1/runtime/echo/portable')
+    const response = await request('/api/v1/runtime/echo/portable', {
+      headers: { cookie: 'session=runtime-user' },
+    })
     expect(response.status).toBe(200)
     expect(response.headers.get('x-request-id')).toBeTruthy()
     expect(await response.json()).toEqual({ data: { value: 'portable' } })
@@ -71,7 +75,7 @@ describe.each(runtimes)('%s runtime', (_runtime, request) => {
   it('[api] executes the shared validation/error handler over the real adapter', async () => {
     const response = await request('/api/v1/runtime/validate', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { cookie: 'session=runtime-user', 'content-type': 'application/json' },
       body: '{}',
     })
     expect(response.status).toBe(422)
@@ -94,7 +98,7 @@ describe.each(runtimes)('%s runtime', (_runtime, request) => {
   it('[security] enforces the portable JSON byte boundary over the real adapter', async () => {
     const response = await request('/api/v1/runtime/validate', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { cookie: 'session=runtime-user', 'content-type': 'application/json' },
       body: JSON.stringify({ value: 'x'.repeat(256) }),
     })
     expect(response.status).toBe(413)
@@ -104,7 +108,9 @@ describe.each(runtimes)('%s runtime', (_runtime, request) => {
   })
 
   it('[api] signs and consumes cursor pages over the real adapter', async () => {
-    const firstResponse = await request('/api/v1/runtime/items?per_page=2')
+    const firstResponse = await request('/api/v1/runtime/items?per_page=2', {
+      headers: { cookie: 'session=runtime-user' },
+    })
     const first = (await firstResponse.json()) as {
       data: { id: number; label: string }[]
       links: { next: string | null }
@@ -115,10 +121,72 @@ describe.each(runtimes)('%s runtime', (_runtime, request) => {
     ])
     expect(first.links.next).not.toBeNull()
 
-    const secondResponse = await request(first.links.next!)
+    const secondResponse = await request(first.links.next!, {
+      headers: { cookie: 'session=runtime-user' },
+    })
     expect(await secondResponse.json()).toMatchObject({
       data: [{ id: 3, label: 'row-3' }],
       links: { next: null },
     })
+  })
+
+  it('[security] enforces bearer precedence and authenticates a valid token', async () => {
+    const malformed = await request('/api/v1/runtime/reports', {
+      headers: { authorization: 'Basic attacker', cookie: 'session=runtime-user' },
+    })
+    expect(malformed.status).toBe(401)
+
+    const bearer = await request('/api/v1/runtime/reports', {
+      headers: { authorization: `bEaReR ${runtimeBearer}` },
+    })
+    expect(bearer.status).toBe(200)
+    expect(await bearer.json()).toEqual({ data: { visible: true } })
+  })
+
+  it('[security] rejects contact sessions before installed or unknown API routes', async () => {
+    for (const path of ['/api/v1/runtime/installer-bypass', '/api/v1/runtime/not-found']) {
+      const response = await request(path, {
+        headers: { cookie: 'session=runtime-contact' },
+      })
+      expect(response.status).toBe(403)
+      expect(await response.json()).toMatchObject({
+        error: { code: 'contact_api_forbidden', fields: [] },
+      })
+    }
+  })
+
+  it('[api] carries token issue, list, revoke, and immediate rejection over the adapter', async () => {
+    const issuedResponse = await request('/api/v1/api-tokens', {
+      method: 'POST',
+      headers: { cookie: 'session=runtime-user', 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Runtime lifecycle', scopes: ['reports:read'] }),
+    })
+    expect(issuedResponse.status).toBe(201)
+    const issued = (await issuedResponse.json()) as {
+      data: { id: number; token: string }
+    }
+
+    const listResponse = await request('/api/v1/api-tokens', {
+      headers: { cookie: 'session=runtime-user' },
+    })
+    expect(listResponse.status).toBe(200)
+    const listedWire = JSON.stringify(await listResponse.json())
+    expect(listedWire).not.toContain(issued.data.token)
+    expect(JSON.parse(listedWire)).toMatchObject({
+      data: expect.arrayContaining([
+        expect.objectContaining({ id: issued.data.id, name: 'Runtime lifecycle' }),
+      ]),
+    })
+
+    const revokeResponse = await request(`/api/v1/api-tokens/${issued.data.id}`, {
+      method: 'DELETE',
+      headers: { cookie: 'session=runtime-user' },
+    })
+    expect(revokeResponse.status).toBe(200)
+
+    const rejected = await request('/api/v1/runtime/reports', {
+      headers: { authorization: `Bearer ${issued.data.token}` },
+    })
+    expect(rejected.status).toBe(401)
   })
 })

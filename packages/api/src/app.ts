@@ -15,12 +15,20 @@ export const createApiApp = <Bindings extends object = object>(
     await next()
   })
 
+  const authenticateApi = apiAuthenticationMiddleware<Bindings>(options.authentication)
+  app.use('*', (context, next) => {
+    const path = context.req.path
+    if (path === '/api/v1' || path.startsWith('/api/v1/')) {
+      return authenticateApi(context, next)
+    }
+    return next()
+  })
+
   app.onError((error, context) => errorResponse(error, context))
   app.notFound((context) => notFoundResponse(context))
   options.installApp?.(app)
 
   const api = new Hono<ApiContext<Bindings>>()
-  api.use('*', apiAuthenticationMiddleware(options.authentication))
   api.get('/', (context) =>
     context.json({
       data: { service: 'ezacto', version: 'v1' },

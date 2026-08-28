@@ -326,6 +326,7 @@ export const authenticateApiToken = async (
   const updated = await database.all<{ id: number; userId: number; profile: UserProfile | null }>(sql`
     UPDATE api_tokens
     SET last_used_at = CASE
+        WHEN last_used_at IS NULL AND julianday(created_at) > julianday(${usedAt}) THEN created_at
         WHEN last_used_at IS NULL OR julianday(last_used_at) < julianday(${usedAt}) THEN ${usedAt}
         ELSE last_used_at
       END,
