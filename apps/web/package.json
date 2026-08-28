@@ -1,0 +1,25 @@
+{
+  "name": "@ezacto/web",
+  "version": "0.0.0",
+  "description": "Responsive ezacto web application and theme runtime.",
+  "private": true,
+  "type": "module",
+  "files": ["dist", "src", "generated", "theme-tokens.json"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "theme:generate": "node scripts/compile-theme-tokens.mjs",
+    "theme:check": "node scripts/compile-theme-tokens.mjs --check",
+    "typecheck": "npm run theme:check && tsc --noEmit",
+    "lint": "eslint .",
+    "test": "npm run theme:check && vitest run",
+    "build": "npm run theme:check && tsc -p tsconfig.build.json"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.10.0",
+    "eslint": "^10.9.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.68.0",
+    "vitest": "^4.1.11"
+  }
+}
