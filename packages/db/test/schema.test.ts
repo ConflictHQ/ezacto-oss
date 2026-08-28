@@ -760,6 +760,17 @@ for (const [runtime, factory] of factories) {
       const db = await setup()
       await insertUser(db, 1)
       await insertUser(db, 2)
+      expect(
+        await db.rows<{ id: number; profile: string; is_owner: number }>(
+          `SELECT id, profile, is_owner FROM users ORDER BY id`,
+        ),
+      ).toEqual([
+        { id: 1, profile: 'administrator', is_owner: 1 },
+        { id: 2, profile: 'member', is_owner: 0 },
+      ])
+      await expect(db.run(`UPDATE users SET profile = 'member' WHERE id = 1`)).rejects.toThrow(
+        /check constraint/i,
+      )
       await expect(db.run(`UPDATE users SET is_owner = 1 WHERE id = 2`)).rejects.toThrow(/derived/)
       await db.run(`UPDATE organization_owner SET user_id = 2, updated_at = ? WHERE id = 1`, now)
       await db.run(`UPDATE organization_owner SET user_id = 2, updated_at = ? WHERE id = 1`, now)
@@ -771,6 +782,13 @@ for (const [runtime, factory] of factories) {
       expect(await db.rows<{ id: number }>(`SELECT id FROM users WHERE is_owner = 1`)).toEqual([
         { id: 2 },
       ])
+      expect(await db.rows<{ profile: string }>(`SELECT profile FROM users WHERE id = 2`)).toEqual([
+        { profile: 'administrator' },
+      ])
+      await expect(db.run(`UPDATE users SET profile = 'accounting' WHERE id = 2`)).rejects.toThrow(
+        /check constraint/i,
+      )
+      await expect(db.run(`DELETE FROM users WHERE id = 2`)).rejects.toThrow(/foreign key/i)
       await expect(db.run(`DELETE FROM organization_owner WHERE id = 1`)).rejects.toThrow(
         /exactly one owner/,
       )
