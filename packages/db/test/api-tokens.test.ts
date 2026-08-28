@@ -128,7 +128,12 @@ for (const [runtime, factory] of factories) {
 
     it('[security] persists only a digest and lists sorted scopes without the bearer secret', async () => {
       const db = await setup()
-      const issued = await issue(db)
+      const issued = await issueApiToken(db.database, {
+        userId: 7,
+        name: '  MCP reports  ',
+        scopes: ['reports:read', 'time_entries:read'],
+        createdAt,
+      })
       expect(issued.token).toMatch(/^ezacto_[A-Za-z0-9_-]{16}_[A-Za-z0-9_-]{43}$/)
       expect(issued.scopes).toEqual(['reports:read', 'time_entries:read'])
 
@@ -155,6 +160,28 @@ for (const [runtime, factory] of factories) {
           revokedAt: null,
         },
       ])
+
+      await expect(
+        db.run(
+          `INSERT INTO api_tokens (
+            user_id, selector, secret_hash, name, scopes, created_at, updated_at
+          ) VALUES (7, 'cccccccccccccccc', ?, ' Raw ', '["reports:read"]', ?, ?)`,
+          '0'.repeat(64),
+          createdAt,
+          createdAt,
+        ),
+      ).rejects.toThrow(/CHECK constraint/i)
+      await expect(
+        db.run(
+          `INSERT INTO api_tokens (
+            user_id, selector, secret_hash, name, scopes, created_at, updated_at
+          ) VALUES (7, 'dddddddddddddddd', ?, ?, '["reports:read"]', ?, ?)`,
+          '0'.repeat(64),
+          '\t\n\u00a0',
+          createdAt,
+          createdAt,
+        ),
+      ).rejects.toThrow(/CHECK constraint/i)
     })
 
     it('[api] records last use and rejects a revoked token on the very next request', async () => {
@@ -250,6 +277,18 @@ for (const [runtime, factory] of factories) {
       })
       expect(revoked?.revokedAt).toBe(usedAt)
       expect(await authenticateApiToken(db.database, issued.token, usedAt)).toBeNull()
+      await expect(
+        db.run(`UPDATE api_tokens SET revoked_at = NULL WHERE id = ?`, issued.id),
+      ).rejects.toThrow(/revocation is irreversible/)
+      expect(await authenticateApiToken(db.database, issued.token, usedAt)).toBeNull()
+    })
+
+    it('[security] clamps a clock-skewed first use to token creation time', async () => {
+      const db = await setup()
+      const issued = await issue(db)
+      const skewedUse = '2026-08-28T11:59:59.900Z'
+      expect(await authenticateApiToken(db.database, issued.token, skewedUse)).not.toBeNull()
+      expect((await listApiTokens(db.database, 7))[0]?.lastUsedAt).toBe(createdAt)
     })
 
     it('[security] rechecks the current active profile at the authentication write boundary', async () => {

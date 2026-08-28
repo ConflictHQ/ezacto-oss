@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  apiScopeProfiles,
   apiScopes,
   canProfileUseApiScope,
   isApiScope,
@@ -21,10 +22,88 @@ describe('API scope/profile policy', () => {
   })
 
   it('[unit] derives the atomic issuance/authentication ceiling for a scope set', () => {
-    expect(profilesAllowedEveryApiScope(['reports:read'])).toContain('member')
-    expect(profilesAllowedEveryApiScope(['reports:read', 'invoices:write'])).toEqual([
+    expect(profilesAllowedEveryApiScope(['reports:read'])).toEqual([
       'accounting',
+      'executive_manager',
       'administrator',
     ])
+    expect(profilesAllowedEveryApiScope(['reports:read', 'invoices:write'])).toEqual([
+      'accounting',
+      'executive_manager',
+      'administrator',
+    ])
+  })
+
+  it('[security] exactly encodes the authoritative six-profile capability grid', () => {
+    expect(apiScopeProfiles).toEqual({
+      'time_entries:read': [
+        'member',
+        'project_manager',
+        'people_admin',
+        'accounting',
+        'executive_manager',
+        'administrator',
+      ],
+      'time_entries:write': [
+        'member',
+        'project_manager',
+        'people_admin',
+        'accounting',
+        'executive_manager',
+        'administrator',
+      ],
+      'projects:read': [
+        'member',
+        'project_manager',
+        'people_admin',
+        'accounting',
+        'executive_manager',
+        'administrator',
+      ],
+      'projects:write': ['project_manager', 'executive_manager', 'administrator'],
+      'clients:read': [
+        'member',
+        'project_manager',
+        'people_admin',
+        'accounting',
+        'executive_manager',
+        'administrator',
+      ],
+      'clients:write': [
+        'project_manager',
+        'accounting',
+        'executive_manager',
+        'administrator',
+      ],
+      'invoices:read': ['accounting', 'executive_manager', 'administrator'],
+      'invoices:write': ['accounting', 'executive_manager', 'administrator'],
+      'expenses:read': [
+        'member',
+        'project_manager',
+        'people_admin',
+        'accounting',
+        'executive_manager',
+        'administrator',
+      ],
+      'expenses:write': [
+        'member',
+        'project_manager',
+        'people_admin',
+        'accounting',
+        'executive_manager',
+        'administrator',
+      ],
+      'team:read': ['project_manager', 'people_admin', 'executive_manager', 'administrator'],
+      'schedule:read': [
+        'member',
+        'project_manager',
+        'people_admin',
+        'accounting',
+        'executive_manager',
+        'administrator',
+      ],
+      'schedule:write': ['project_manager', 'executive_manager', 'administrator'],
+      'reports:read': ['accounting', 'executive_manager', 'administrator'],
+    })
   })
 })

@@ -74,7 +74,7 @@ const unauthorized = <Bindings extends object>(context: Context<ApiContext<Bindi
 }
 
 const bearerToken = (authorization: string): string | null => {
-  const match = /^Bearer ([^\s]+)$/.exec(authorization)
+  const match = /^Bearer ([^\s]+)$/i.exec(authorization)
   return match?.[1] ?? null
 }
 

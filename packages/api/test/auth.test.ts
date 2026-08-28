@@ -158,6 +158,16 @@ describe('API authentication middleware', () => {
     })
   })
 
+  it.each(['bearer', 'BEARER', 'BeArEr'])(
+    '[api] accepts the case-insensitive %s authentication scheme',
+    async (scheme) => {
+      const response = await createAuthApp().request('/api/v1/reports', {
+        headers: { authorization: `${scheme} ${bearer}` },
+      })
+      expect(response.status).toBe(200)
+    },
+  )
+
   it('[api] enforces exact token scopes while user sessions retain their profile authority', async () => {
     const app = createAuthApp()
     const allowed = await app.request('/api/v1/reports', {

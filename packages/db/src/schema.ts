@@ -264,7 +264,15 @@ export const apiTokens = sqliteTable(
       'api_tokens_secret_hash_shape',
       sql`length(${table.secretHash}) = 64 and ${table.secretHash} not glob '*[^0-9a-f]*'`,
     ),
-    check('api_tokens_name_present', sql`length(trim(${table.name})) between 1 and 100`),
+    check(
+      'api_tokens_name_canonical',
+      sql`${table.name} = trim(${table.name},
+        char(9) || char(10) || char(11) || char(12) || char(13) || char(32) || char(160)
+        || char(5760) || char(8192) || char(8193) || char(8194) || char(8195) || char(8196)
+        || char(8197) || char(8198) || char(8199) || char(8200) || char(8201) || char(8202)
+        || char(8232) || char(8233) || char(8239) || char(8287) || char(12288) || char(65279)
+      ) and length(${table.name}) between 1 and 100`,
+    ),
     check(
       'api_tokens_scopes_json',
       sql`json_valid(${table.scopes}) and json_type(${table.scopes}) = 'array'`,

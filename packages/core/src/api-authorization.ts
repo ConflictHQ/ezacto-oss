@@ -33,7 +33,17 @@ const everyProfile: readonly UserProfile[] = [
   'executive_manager',
   'administrator',
 ]
-const projectManagement: readonly UserProfile[] = ['project_manager', 'administrator']
+const projectManagement: readonly UserProfile[] = [
+  'project_manager',
+  'executive_manager',
+  'administrator',
+]
+const clientManagement: readonly UserProfile[] = [
+  'project_manager',
+  'accounting',
+  'executive_manager',
+  'administrator',
+]
 const peopleVisibility: readonly UserProfile[] = [
   'project_manager',
   'people_admin',
@@ -41,12 +51,11 @@ const peopleVisibility: readonly UserProfile[] = [
   'administrator',
 ]
 const moneyRead: readonly UserProfile[] = [
-  'project_manager',
   'accounting',
   'executive_manager',
   'administrator',
 ]
-const moneyWrite: readonly UserProfile[] = ['accounting', 'administrator']
+const reports: readonly UserProfile[] = ['accounting', 'executive_manager', 'administrator']
 
 /**
  * The shared scope/profile ceiling. Resource handlers still enforce assignment,
@@ -58,15 +67,15 @@ export const apiScopeProfiles: Readonly<Record<ApiScope, readonly UserProfile[]>
   'projects:read': everyProfile,
   'projects:write': projectManagement,
   'clients:read': everyProfile,
-  'clients:write': moneyWrite,
+  'clients:write': clientManagement,
   'invoices:read': moneyRead,
-  'invoices:write': moneyWrite,
+  'invoices:write': moneyRead,
   'expenses:read': everyProfile,
   'expenses:write': everyProfile,
   'team:read': peopleVisibility,
   'schedule:read': everyProfile,
   'schedule:write': projectManagement,
-  'reports:read': everyProfile,
+  'reports:read': reports,
 }
 
 const apiScopeSet: ReadonlySet<string> = new Set(apiScopes)
