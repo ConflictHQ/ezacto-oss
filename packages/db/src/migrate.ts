@@ -12,6 +12,7 @@ import { recurringInvoicesMigration } from './migrations/0010_recurring_invoices
 import { apiTokensMigration } from './migrations/0011_api_tokens.js'
 import { instanceBootstrapMigration } from './migrations/0012_instance_bootstrap.js'
 import { passwordAuthMigration } from './migrations/0013_password_auth.js'
+import { sessionsMigration } from './migrations/0014_sessions.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL
@@ -1328,6 +1329,7 @@ const migrations = [
   { id: '0011_api_tokens', statements: apiTokensMigration },
   { id: '0012_instance_bootstrap', statements: instanceBootstrapMigration },
   { id: '0013_password_auth', statements: passwordAuthMigration },
+  { id: '0014_sessions', statements: sessionsMigration },
 ] as const
 
 export const migrateContainer = (database: BetterSqlite3.Database): void => {

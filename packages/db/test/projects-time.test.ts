@@ -1037,6 +1037,7 @@ for (const [runtime, factory] of factories) {
         '0011_api_tokens',
         '0012_instance_bootstrap',
         '0013_password_auth',
+        '0014_sessions',
       ])
       expect(firstLedger.slice(0, 2).map(({ applied_at: appliedAt }) => appliedAt)).toEqual([
         originalAppliedAt,
@@ -1111,6 +1112,7 @@ for (const [runtime, factory] of factories) {
         { id: '0011_api_tokens' },
         { id: '0012_instance_bootstrap' },
         { id: '0013_password_auth' },
+        { id: '0014_sessions' },
       ])
       expect(
         await db.rows<{ name: string }>(

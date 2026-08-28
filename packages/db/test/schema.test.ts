@@ -841,6 +841,7 @@ for (const [runtime, factory] of factories) {
         { id: '0011_api_tokens' },
         { id: '0012_instance_bootstrap' },
         { id: '0013_password_auth' },
+        { id: '0014_sessions' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -875,6 +876,7 @@ for (const [runtime, factory] of factories) {
         { id: '0011_api_tokens' },
         { id: '0012_instance_bootstrap' },
         { id: '0013_password_auth' },
+        { id: '0014_sessions' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -927,6 +929,7 @@ for (const [runtime, factory] of factories) {
         { id: '0011_api_tokens' },
         { id: '0012_instance_bootstrap' },
         { id: '0013_password_auth' },
+        { id: '0014_sessions' },
       ])
       expect(
         await db.rows<{ name: string }>(
@@ -955,6 +958,7 @@ for (const [runtime, factory] of factories) {
         { id: '0011_api_tokens' },
         { id: '0012_instance_bootstrap' },
         { id: '0013_password_auth' },
+        { id: '0014_sessions' },
       ])
     })
   })
@@ -1044,6 +1048,8 @@ describe('package contents', () => {
         'dist/migrations/0012_instance_bootstrap.d.ts',
         'dist/migrations/0013_password_auth.js',
         'dist/migrations/0013_password_auth.d.ts',
+        'dist/migrations/0014_sessions.js',
+        'dist/migrations/0014_sessions.d.ts',
         'dist/instance-bootstrap.js',
         'dist/instance-bootstrap.d.ts',
         'dist/invoice-payments.js',

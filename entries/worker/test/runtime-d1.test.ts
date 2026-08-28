@@ -149,13 +149,13 @@ describe('Worker D1 runtime composition', () => {
     const migrations = await database
       .prepare('SELECT id FROM _ezacto_migrations ORDER BY id')
       .all<{ id: string }>()
-    expect(migrations.results.at(-1)?.id).toBe('0013_password_auth')
-    expect(migrations.results).toHaveLength(14)
+    expect(migrations.results.at(-1)?.id).toBe('0014_sessions')
+    expect(migrations.results).toHaveLength(15)
   })
 
   it('[security] keeps unverified session-like cookies fail-closed', async () => {
     const response = await request('/api/v1/time-entries', {
-      headers: { cookie: 'session=attacker; CF_Authorization=unverified' },
+      headers: { cookie: '__Host-ezacto_session=attacker; CF_Authorization=unverified' },
     })
     expect(response.status).toBe(401)
     expect(await response.json()).toMatchObject({

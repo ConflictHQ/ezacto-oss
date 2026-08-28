@@ -6,7 +6,9 @@ import {
   generateOpenApiDocument,
   installGeneralResourceRoutes,
   installPasswordAuthRoutes,
+  installSessionRoutes,
   installTrackedResourceRoutes,
+  type ApiSessionService,
   type AuthMailer,
   type ApiTokenService,
   type PasswordAuthService,
@@ -28,18 +30,21 @@ const passwordAuth = new Proxy(
   { get: () => unavailable },
 ) as PasswordAuthService;
 const authMailer = new Proxy({}, { get: () => unavailable }) as AuthMailer;
+const sessions = new Proxy({}, { get: () => unavailable }) as ApiSessionService;
 
 const documentedApp = () =>
   createApiApp({
-    authentication: { tokens },
+    authentication: { tokens, sessions },
     installApp: (app) => {
       installPasswordAuthRoutes(app, {
         service: passwordAuth,
+        sessions: { issue: unavailable },
         mailer: authMailer,
         clientKey: () => "contract-fixture",
       });
     },
     installApi: (api) => {
+      installSessionRoutes(api, sessions);
       installGeneralResourceRoutes(api, {
         repository: generalRepository,
         cursorSigningKey: new Uint8Array(32),

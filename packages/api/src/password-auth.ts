@@ -52,8 +52,13 @@ export interface AuthMailer {
   enqueue(delivery: AuthDelivery): Promise<void>
 }
 
+export interface PasswordSessionIssuer {
+  issue(userId: number): Promise<{ setCookie: string }>
+}
+
 export interface PasswordAuthRouteOptions {
   service: PasswordAuthService
+  sessions: PasswordSessionIssuer
   mailer?: AuthMailer
   clientKey(request: Request): string
 }
@@ -225,6 +230,8 @@ export const installPasswordAuthRoutes = <Bindings extends object>(
           message: 'Verify this email address before signing in.',
         })
       }
+      const session = await options.sessions.issue(result.principal.userId)
+      context.header('set-cookie', session.setCookie, { append: true })
       return context.json(
         {
           data: {

@@ -4,10 +4,12 @@ import {
   createD1Database,
   createGeneralResourceRepository,
   createD1PasswordAuthService,
+  createD1SessionStore,
   DrizzleTrackedResourceRepository,
   migrateD1,
   type TrackedPolicyResolver,
 } from '@ezacto/db/d1'
+import { createApiSessionService } from '@ezacto/api'
 import type { RuntimeServices } from './app.js'
 import type { WorkerEnv } from './app.js'
 
@@ -105,6 +107,7 @@ export const createRuntimeServices = async (
   const cursorSigningKey = parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY)
   await ensureRuntimeDatabaseReady(database)
   const drizzle = createD1Database(database)
+  const sessions = createApiSessionService(createD1SessionStore(database))
   return {
     bootstrap: (input) => bootstrapInstanceD1(database, input),
     tokens: createApiTokenStore(drizzle),
@@ -115,5 +118,6 @@ export const createRuntimeServices = async (
     ),
     cursorSigningKey,
     passwordAuth: createD1PasswordAuthService(database),
+    sessions,
   }
 }
