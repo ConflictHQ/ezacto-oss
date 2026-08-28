@@ -482,6 +482,72 @@ export const projectTags = sqliteTable('project_tags', {
   ...timestamps,
 })
 
+export const retainers = sqliteTable(
+  'retainers',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: integer('harvest_id'),
+    clientId: integer('client_id').references(() => clients.id, { onDelete: 'restrict' }),
+    projectId: integer('project_id').references(() => projects.id, { onDelete: 'restrict' }),
+    state: text('state', { enum: ['ongoing', 'closed'] })
+      .notNull()
+      .default('ongoing'),
+    denomination: text('denomination', { enum: ['money', 'hours'] }).notNull(),
+    amountCents: integer('amount_cents'),
+    seconds: integer('seconds'),
+    lockedRateCents: integer('locked_rate_cents'),
+    rateLockedAt: text('rate_locked_at'),
+    period: text('period'),
+    rollover: text('rollover', { enum: ['carry', 'expire', 'cap'] }),
+    expiresAt: text('expires_at'),
+    onExhaustion: text('on_exhaustion', { enum: ['block', 'warn', 'overflow'] })
+      .notNull()
+      .default('block'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('retainers_harvest_id_unique').on(table.harvestId),
+    index('retainers_client_id').on(table.clientId),
+    index('retainers_project_id').on(table.projectId),
+    check(
+      'retainers_harvest_id_safe_integer',
+      sql`${table.harvestId} is null or ${table.harvestId} between 1 and 9007199254740991`,
+    ),
+    check('retainers_state', sql`${table.state} in ('ongoing','closed')`),
+    check('retainers_denomination', sql`${table.denomination} in ('money','hours')`),
+    check(
+      'retainers_denomination_shape',
+      sql`(${table.denomination} = 'money'
+          and ${table.amountCents} between 0 and 9000000000000
+          and ${table.seconds} is null
+          and ${table.lockedRateCents} is null
+          and ${table.rateLockedAt} is null)
+        or (${table.denomination} = 'hours'
+          and ${table.amountCents} is null
+          and ${table.seconds} between 0 and 9007199254740991
+          and ((${table.lockedRateCents} is null and ${table.rateLockedAt} is null)
+            or (${table.lockedRateCents} between 0 and 9000000000000
+              and ${table.rateLockedAt} is not null)))`,
+    ),
+    check(
+      'retainers_period_nonempty',
+      sql`${table.period} is null or length(trim(${table.period})) between 1 and 64`,
+    ),
+    check(
+      'retainers_rollover',
+      sql`${table.rollover} is null or ${table.rollover} in ('carry','expire','cap')`,
+    ),
+    check('retainers_on_exhaustion', sql`${table.onExhaustion} in ('block','warn','overflow')`),
+    check(
+      'retainers_expires_at_canonical',
+      sql`${table.expiresAt} is null or date(${table.expiresAt}) is ${table.expiresAt}`,
+    ),
+    check('retainers_rate_locked_at_canonical', nullableCanonicalTimestamp(table.rateLockedAt)),
+    check('retainers_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('retainers_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+  ],
+)
+
 export const invoices = sqliteTable(
   'invoices',
   {
@@ -525,6 +591,7 @@ export const invoices = sqliteTable(
       .notNull()
       .default(sql`lower(hex(randomblob(32)))`),
     projectId: integer('project_id').references(() => projects.id, { onDelete: 'restrict' }),
+    retainerId: integer('retainer_id').references(() => retainers.id, { onDelete: 'restrict' }),
     reminderPolicy: text('reminder_policy', { mode: 'json' }).$type<InvoiceReminderPolicy>(),
     taxRatePpm: integer('tax_rate_ppm'),
     tax2RatePpm: integer('tax2_rate_ppm'),
@@ -558,6 +625,7 @@ export const invoices = sqliteTable(
       .where(sql`${table.referenceToken} is not null`),
     index('invoices_client_id').on(table.clientId),
     index('invoices_project_id').on(table.projectId),
+    index('invoices_retainer_id').on(table.retainerId),
     index('invoices_created_by_user_id').on(table.createdByUserId),
     check(
       'invoices_reminder_policy_json',
@@ -584,10 +652,7 @@ export const invoices = sqliteTable(
     check('invoices_closed_at_canonical', nullableCanonicalTimestamp(table.closedAt)),
     check('invoices_created_at_canonical', canonicalTimestamp(table.createdAt)),
     check('invoices_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
-    check(
-      'invoices_version_safe_integer',
-      sql`${table.version} between 0 and 9007199254740991`,
-    ),
+    check('invoices_version_safe_integer', sql`${table.version} between 0 and 9007199254740991`),
     check(
       'invoices_closure_shape',
       sql`(${table.state} = 'closed') = (${table.closeReason} is not null)`,
@@ -881,6 +946,79 @@ export const invoiceMessages = sqliteTable(
     check('invoice_messages_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
   ],
 )
+
+export const retainerLedger = sqliteTable(
+  'retainer_ledger',
+  {
+    id: text('id').primaryKey(),
+    retainerId: integer('retainer_id')
+      .notNull()
+      .references(() => retainers.id, { onDelete: 'restrict' }),
+    kind: text('kind', {
+      enum: ['deposit', 'drawdown', 'expiry', 'reset', 'adjustment'],
+    }).notNull(),
+    unit: text('unit', { enum: ['cents', 'seconds'] }).notNull(),
+    amount: integer('amount').notNull(),
+    invoiceId: integer('invoice_id').references(() => invoices.id, { onDelete: 'restrict' }),
+    occurredOn: text('occurred_on').notNull(),
+    notes: text('notes'),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('retainer_ledger_retainer_occurred_id').on(table.retainerId, table.occurredOn, table.id),
+    index('retainer_ledger_invoice_id').on(table.invoiceId),
+    check(
+      'retainer_ledger_id_format',
+      sql`length(${table.id}) between 1 and 128
+        and ${table.id} not glob '*[^A-Za-z0-9._:-]*'`,
+    ),
+    check(
+      'retainer_ledger_kind',
+      sql`${table.kind} in ('deposit','drawdown','expiry','reset','adjustment')`,
+    ),
+    check('retainer_ledger_unit', sql`${table.unit} in ('cents','seconds')`),
+    check(
+      'retainer_ledger_amount_bound',
+      sql`(${table.unit} = 'cents'
+          and ${table.amount} between -9000000000000 and 9000000000000)
+        or (${table.unit} = 'seconds'
+          and ${table.amount} between -9007199254740991 and 9007199254740991)`,
+    ),
+    check('retainer_ledger_amount_nonzero', sql`${table.amount} <> 0`),
+    check(
+      'retainer_ledger_kind_sign',
+      sql`(${table.kind} = 'deposit' and ${table.amount} > 0)
+        or (${table.kind} in ('drawdown','expiry') and ${table.amount} < 0)
+        or ${table.kind} in ('reset','adjustment')`,
+    ),
+    check(
+      'retainer_ledger_adjustment_reason',
+      sql`${table.kind} <> 'adjustment'
+        or (${table.notes} is not null and length(trim(${table.notes})) > 0)`,
+    ),
+    check(
+      'retainer_ledger_invoice_provenance',
+      sql`${table.kind} not in ('deposit','drawdown') or ${table.invoiceId} is not null`,
+    ),
+    check(
+      'retainer_ledger_occurred_on_canonical',
+      sql`date(${table.occurredOn}) is ${table.occurredOn}`,
+    ),
+    check('retainer_ledger_created_at_canonical', canonicalTimestamp(table.createdAt)),
+  ],
+)
+
+export const retainerBalances = sqliteView('retainer_balances', {
+  retainerId: integer('retainer_id').notNull(),
+  denomination: text('denomination', { enum: ['money', 'hours'] }).notNull(),
+  balance: integer('balance').notNull(),
+}).as(sql`
+  SELECT retainer.id AS retainer_id, retainer.denomination,
+    COALESCE(SUM(entry.amount), 0) AS balance
+  FROM ${retainers} retainer
+  LEFT JOIN ${retainerLedger} entry ON entry.retainer_id = retainer.id
+  GROUP BY retainer.id, retainer.denomination
+`)
 
 export const eventOutbox = sqliteTable(
   'event_outbox',
