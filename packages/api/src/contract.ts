@@ -386,6 +386,15 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   },
   {
     method: "get",
+    path: "/api/v1/whoami",
+    operationId: "getWhoami",
+    summary: "Get the authenticated user and credential authority",
+    tag: "identity",
+    responseStatus: 200,
+    responseSchema: "WhoamiEnvelope",
+  },
+  {
+    method: "get",
     path: "/api/v1/api-tokens",
     operationId: "listApiTokens",
     summary: "List API tokens for the acting user",
@@ -524,6 +533,49 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   ServiceEnvelope: envelope("Service"),
+  TokenAuthentication: {
+    type: "object",
+    required: ["kind", "token_id", "scopes"],
+    properties: {
+      kind: { const: "token" },
+      token_id: integerSchema,
+      scopes: { type: "array", items: { type: "string", enum: apiScopes } },
+    },
+    additionalProperties: false,
+  },
+  SessionAuthentication: {
+    type: "object",
+    required: ["kind"],
+    properties: { kind: { const: "session" } },
+    additionalProperties: false,
+  },
+  Whoami: {
+    type: "object",
+    required: ["user_id", "profile", "manager_grants", "authentication"],
+    properties: {
+      user_id: integerSchema,
+      profile: {
+        type: "string",
+        enum: [
+          "member",
+          "project_manager",
+          "people_admin",
+          "accounting",
+          "executive_manager",
+          "administrator",
+        ],
+      },
+      manager_grants: { type: "array", items: stringSchema },
+      authentication: {
+        oneOf: [
+          reference("TokenAuthentication"),
+          reference("SessionAuthentication"),
+        ],
+      },
+    },
+    additionalProperties: false,
+  },
+  WhoamiEnvelope: envelope("Whoami"),
   GeneralResource: {
     type: "object",
     required: ["id", "created_at", "updated_at"],

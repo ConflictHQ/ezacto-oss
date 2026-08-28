@@ -35,6 +35,29 @@ export const createApiApp = <Bindings extends object = object>(
       links: { self: '/api/v1' },
     }),
   )
+  api.get('/whoami', (context) => {
+    const principal = context.get('principal')
+    return context.json(
+      {
+        data: {
+          user_id: principal.userId,
+          profile: principal.profile,
+          manager_grants: [...principal.managerGrants],
+          authentication:
+            principal.authentication.kind === 'token'
+              ? {
+                  kind: 'token' as const,
+                  token_id: principal.authentication.tokenId,
+                  scopes: [...principal.authentication.scopes],
+                }
+              : { kind: 'session' as const },
+        },
+        links: { self: '/api/v1/whoami' },
+      },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
   if (options.authentication?.tokens !== undefined) {
     installApiTokenRoutes(api, options.authentication.tokens)
   }
