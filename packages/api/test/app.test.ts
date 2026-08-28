@@ -6,6 +6,7 @@ import {
   validationError,
   type ApiErrorBody,
   type ApiInstaller,
+  type ApiAuthentication,
 } from '../src/index.js'
 
 interface TestBindings {
@@ -15,6 +16,16 @@ interface TestBindings {
 
 const bindings: TestBindings = { ENVIRONMENT: 'test', RELEASE: 'abc1234def5678' }
 const requestIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+const authentication: ApiAuthentication = {
+  sessions: {
+    resolve: async () => ({
+      type: 'user',
+      userId: 1,
+      profile: 'administrator',
+      authentication: { kind: 'session', sessionId: 'test-session' },
+    }),
+  },
+}
 
 const installTestRoutes: ApiInstaller<TestBindings> = (api) => {
   api.post('/validate', async (context) => {
@@ -69,7 +80,9 @@ const runtimeFactories = [
 
 for (const [runtime, requestFor] of runtimeFactories) {
   describe(`/api/v1 chassis in-process (${runtime})`, () => {
-    const request = requestFor(createApiApp({ installApi: installTestRoutes }))
+    const request = requestFor(
+      createApiApp({ authentication, installApi: installTestRoutes }),
+    )
 
     it('[unit] serves the same version root with a server-generated request id', async () => {
       const response = await request('/api/v1', {

@@ -234,6 +234,67 @@ export const userIdentities = sqliteTable(
   ],
 )
 
+export const apiTokens = sqliteTable(
+  'api_tokens',
+  {
+    id: integer('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    selector: text('selector').notNull(),
+    secretHash: text('secret_hash').notNull(),
+    name: text('name').notNull(),
+    scopes: text('scopes', { mode: 'json' }).$type<string[]>().notNull(),
+    lastUsedAt: text('last_used_at'),
+    expiresAt: text('expires_at'),
+    revokedAt: text('revoked_at'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('api_tokens_selector_unique').on(table.selector),
+    index('api_tokens_user_created_id').on(table.userId, table.createdAt, table.id),
+    index('api_tokens_active_expiry')
+      .on(table.expiresAt)
+      .where(sql`${table.revokedAt} is null`),
+    check(
+      'api_tokens_selector_shape',
+      sql`length(${table.selector}) = 16 and ${table.selector} not glob '*[^A-Za-z0-9_-]*'`,
+    ),
+    check(
+      'api_tokens_secret_hash_shape',
+      sql`length(${table.secretHash}) = 64 and ${table.secretHash} not glob '*[^0-9a-f]*'`,
+    ),
+    check('api_tokens_name_present', sql`length(trim(${table.name})) between 1 and 100`),
+    check(
+      'api_tokens_scopes_json',
+      sql`json_valid(${table.scopes}) and json_type(${table.scopes}) = 'array'`,
+    ),
+    check(
+      'api_tokens_last_used_at_canonical',
+      nullableCanonicalTimestamp(table.lastUsedAt),
+    ),
+    check('api_tokens_expires_at_canonical', nullableCanonicalTimestamp(table.expiresAt)),
+    check('api_tokens_revoked_at_canonical', nullableCanonicalTimestamp(table.revokedAt)),
+    check('api_tokens_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('api_tokens_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+    check(
+      'api_tokens_expiry_after_create',
+      sql`${table.expiresAt} is null
+        or julianday(${table.expiresAt}) > julianday(${table.createdAt})`,
+    ),
+    check(
+      'api_tokens_last_use_after_create',
+      sql`${table.lastUsedAt} is null
+        or julianday(${table.lastUsedAt}) >= julianday(${table.createdAt})`,
+    ),
+    check(
+      'api_tokens_revoke_after_create',
+      sql`${table.revokedAt} is null
+        or julianday(${table.revokedAt}) >= julianday(${table.createdAt})`,
+    ),
+  ],
+)
+
 export const roles = sqliteTable('roles', {
   id: integer('id').primaryKey(),
   harvestId: integer('harvest_id').unique(),

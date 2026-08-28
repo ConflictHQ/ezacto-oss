@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { apiAuthenticationMiddleware, installApiTokenRoutes } from './auth.js'
 import type { ApiContext, CreateApiAppOptions } from './context.js'
 import { errorResponse, notFoundResponse } from './errors.js'
 
@@ -19,12 +20,16 @@ export const createApiApp = <Bindings extends object = object>(
   options.installApp?.(app)
 
   const api = new Hono<ApiContext<Bindings>>()
+  api.use('*', apiAuthenticationMiddleware(options.authentication))
   api.get('/', (context) =>
     context.json({
       data: { service: 'ezacto', version: 'v1' },
       links: { self: '/api/v1' },
     }),
   )
+  if (options.authentication?.tokens !== undefined) {
+    installApiTokenRoutes(api, options.authentication.tokens)
+  }
   options.installApi?.(api)
   app.route('/api/v1', api)
 
