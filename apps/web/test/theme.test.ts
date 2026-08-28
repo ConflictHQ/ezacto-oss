@@ -73,10 +73,11 @@ describe('D16 theme token contract', () => {
       await Promise.all([
         filesUnder(resolve(root, 'src', 'components')),
         filesUnder(resolve(root, 'src', 'shell')),
+        filesUnder(resolve(root, 'src', 'week-grid')),
       ])
-    ).flat().filter(
-      (path) => path.endsWith('.ts') || path.endsWith('.tsx') || path.endsWith('.css'),
     )
+      .flat()
+      .filter((path) => path.endsWith('.ts') || path.endsWith('.tsx') || path.endsWith('.css'))
     expect(sourceFiles.length).toBeGreaterThan(0)
     for (const path of sourceFiles) {
       const source = await readFile(path, 'utf8')

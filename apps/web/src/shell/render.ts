@@ -5,8 +5,7 @@ export interface AppShellOptions {
   readonly environment: string
   readonly release: string
   readonly brand?: string
-  readonly activeSection?:
-    'Time' | 'Expenses' | 'Projects' | 'Clients' | 'Invoices' | 'Reports'
+  readonly activeSection?: 'Time' | 'Expenses' | 'Projects' | 'Clients' | 'Invoices' | 'Reports'
 }
 
 export interface DataQualityBannerOptions {
@@ -19,9 +18,7 @@ const escapeHtml = (value: string): string =>
   value.replace(
     /[&<>"']/gu,
     (character) =>
-      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[
-        character
-      ]!,
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!,
   )
 
 const safePath = (value: string): string => {
@@ -31,9 +28,7 @@ const safePath = (value: string): string => {
   return value
 }
 
-export const renderDataQualityBanner = (
-  options: DataQualityBannerOptions,
-): string =>
+export const renderDataQualityBanner = (options: DataQualityBannerOptions): string =>
   `<aside class="data-quality" role="status" data-data-quality-banner>` +
   `<span>${escapeHtml(options.message)}</span>` +
   `<a href="${escapeHtml(safePath(options.fixHref))}">${escapeHtml(options.fixLabel)}</a>` +
@@ -49,14 +44,7 @@ export const renderDocumentShell = (title: string, content: string): string =>
   `<main><h1>${escapeHtml(title)}</h1><div class="document-content">${escapeHtml(content)}</div>` +
   `</main></article>`
 
-const sections = [
-  'Time',
-  'Expenses',
-  'Projects',
-  'Clients',
-  'Invoices',
-  'Reports',
-] as const
+const sections = ['Time', 'Expenses', 'Projects', 'Clients', 'Invoices', 'Reports'] as const
 
 const hrefFor = (section: (typeof sections)[number]): string =>
   section === 'Time' ? '/' : `/${section.toLocaleLowerCase('en-US')}`
@@ -109,12 +97,34 @@ export const renderAppShell = (options: AppShellOptions): string => {
     </header>
     <aside class="session-status" data-session-status role="status">Connecting to your ezacto session…</aside>
     <section class="week-surface" aria-labelledby="week-heading">
-      <header><h2 id="week-heading">Week entries</h2><span data-week-total>—</span></header>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Project</th><th>Task</th><th>Date</th><th>Hours</th><th>Status</th></tr></thead>
-          <tbody data-entry-rows><tr><td colspan="5">Loading time entries…</td></tr></tbody>
+      <header class="week-toolbar">
+        <div>
+          <p class="eyebrow">Monday–Sunday</p>
+          <h2 id="week-heading">Week of <span data-week-label>—</span></h2>
+        </div>
+        <div class="week-actions">
+          <button type="button" data-week-previous aria-label="Previous week">←</button>
+          <button type="button" data-week-current>This week</button>
+          <button type="button" data-week-next aria-label="Next week">→</button>
+          <button type="button" data-copy-last-week>Copy last week</button>
+          <button type="button" data-add-row-trigger>Add row</button>
+          <strong data-week-total>—</strong>
+        </div>
+      </header>
+      <div class="week-grid-wrap" data-week-grid data-view="desktop">
+        <table class="week-grid-table">
+          <thead data-week-grid-head><tr><th>Project / task</th><th colspan="8">Loading week…</th></tr></thead>
+          <tbody data-week-grid-rows><tr><td colspan="9">Loading time entries…</td></tr></tbody>
+          <tfoot data-week-grid-totals></tfoot>
         </table>
+      </div>
+      <div class="day-list" data-day-list data-view="phone">
+        <header class="day-switcher">
+          <button type="button" data-day-previous aria-label="Previous day">←</button>
+          <strong data-day-label>—</strong>
+          <button type="button" data-day-next aria-label="Next day">→</button>
+        </header>
+        <div data-day-rows><p class="day-empty">Loading time entries…</p></div>
       </div>
     </section>
   </main>
@@ -140,6 +150,23 @@ export const renderAppShell = (options: AppShellOptions): string => {
   <dialog class="menu-dialog" data-menu-dialog aria-labelledby="menu-title">
     <header><h2 id="menu-title">Navigate</h2><button type="button" data-dialog-close aria-label="Close">×</button></header>
     <nav aria-label="Mobile primary">${navigation}</nav>
+  </dialog>
+  <dialog class="row-dialog" data-row-dialog aria-labelledby="row-title">
+    <form data-row-form>
+      <header><div><p class="eyebrow">Timesheet row</p><h2 id="row-title">Add project and task</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
+      <label>Project<select name="project" data-row-project required></select></label>
+      <label>Task<select name="task" data-row-task required></select></label>
+      <p class="form-result" data-row-result role="status"></p>
+      <button class="primary-action" type="submit">Add row</button>
+    </form>
+  </dialog>
+  <dialog class="note-dialog" data-note-dialog aria-labelledby="note-title">
+    <form data-note-form>
+      <header><div><p class="eyebrow">Cell note</p><h2 id="note-title" data-note-title>Add a note</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
+      <label>Note<textarea name="notes" data-note-input rows="5" maxlength="65535"></textarea></label>
+      <p class="form-result" data-note-result role="status"></p>
+      <button class="primary-action" type="submit">Save note</button>
+    </form>
   </dialog>
   <noscript>${renderEmptyState('JavaScript is required', 'The ezacto app uses JavaScript to read and write your time safely.')}</noscript>
   <footer class="build-stamp">${escapeHtml(options.environment)} · ${escapeHtml(shortRelease)}</footer>

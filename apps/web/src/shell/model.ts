@@ -3,6 +3,7 @@ import {
   type GeneralResource,
   type TimeEntry,
   type TimeEntryInput,
+  type TimeEntryPatch,
 } from '@ezacto/client'
 
 interface CursorPage<T> {
@@ -20,6 +21,8 @@ export interface ShellApi {
     readonly is_running?: boolean
   }): Promise<readonly TimeEntry[]>
   createTimeEntry(input: TimeEntryInput): Promise<TimeEntry>
+  updateTimeEntry(id: number, patch: TimeEntryPatch): Promise<TimeEntry>
+  deleteTimeEntry(id: number): Promise<void>
   stopTimeEntry(id: number): Promise<TimeEntry>
 }
 
@@ -38,6 +41,10 @@ export interface DisplayTimeEntry extends TimeEntry {
 export interface ShellSnapshot {
   readonly entries: readonly DisplayTimeEntry[]
   readonly running: DisplayTimeEntry | null
+  readonly catalog: {
+    readonly projects: readonly GeneralResource[]
+    readonly tasks: readonly GeneralResource[]
+  }
 }
 
 const navigation = new Map([
@@ -211,7 +218,11 @@ export const loadShellSnapshot = async (
   const displayedRunning = displayEntries(running, resources)
   if (displayedRunning.length > 1)
     throw new Error('more than one timer is running')
-  return { entries: displayedEntries, running: displayedRunning[0] ?? null }
+  return {
+    entries: displayedEntries,
+    running: displayedRunning[0] ?? null,
+    catalog: resources,
+  }
 }
 
 export const quickAdd = async (
@@ -290,6 +301,11 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   },
   createTimeEntry: async (input) =>
     (await client.createTimeEntry({ body: input })).data,
+  updateTimeEntry: async (id, patch) =>
+    (await client.updateTimeEntry({ id, body: patch })).data,
+  deleteTimeEntry: async (id) => {
+    await client.deleteTimeEntry({ id })
+  },
   stopTimeEntry: async (id) => (await client.stopTimeEntry({ id })).data,
 })
 

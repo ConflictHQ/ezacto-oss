@@ -9,7 +9,7 @@ const outputPath = resolve(root, 'src', 'generated', 'shell-assets.ts')
 const check = process.argv.includes('--check')
 
 const bundle = await build({
-  entryPoints: [resolve(root, 'src', 'shell', 'browser.ts')],
+  entryPoints: [resolve(root, 'src', 'shell', 'browser-entry.ts')],
   bundle: true,
   write: false,
   platform: 'browser',

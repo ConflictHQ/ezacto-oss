@@ -11,7 +11,7 @@ import {
   webAssets,
   type ShellApi,
 } from '../src/index.js'
-import type { GeneralResource, TimeEntry, TimeEntryInput } from '@ezacto/client'
+import type { GeneralResource, TimeEntry, TimeEntryInput, TimeEntryPatch } from '@ezacto/client'
 
 const timestamp = '2026-08-28T12:00:00.000Z'
 const project: GeneralResource = {
@@ -61,14 +61,24 @@ const memoryApi = (): ShellApi & { entries: TimeEntry[] } => {
       page: { next_cursor: null },
     })),
     listTimeEntries: vi.fn(async (query) =>
-      query.is_running === true
-        ? entries.filter((item) => item.is_running)
-        : [...entries],
+      query.is_running === true ? entries.filter((item) => item.is_running) : [...entries],
     ),
     createTimeEntry: vi.fn(async (input) => {
       const created = entry(input, entries.length + 1)
       entries.push(created)
       return created
+    }),
+    updateTimeEntry: vi.fn(async (id, patch: TimeEntryPatch) => {
+      const current = entries.find((item) => item.id === id)
+      if (current === undefined) throw new Error('entry not found')
+      const updated = { ...current, ...patch, updated_at: timestamp }
+      entries.splice(entries.indexOf(current), 1, updated)
+      return updated
+    }),
+    deleteTimeEntry: vi.fn(async (id) => {
+      const index = entries.findIndex((item) => item.id === id)
+      if (index === -1) throw new Error('entry not found')
+      entries.splice(index, 1)
     }),
     stopTimeEntry: vi.fn(async (id) => {
       const current = entries.find((item) => item.id === id)
@@ -89,11 +99,30 @@ describe('S-1 through S-5 application shell', () => {
     expect(html).toContain('data-timer-chip')
     expect(html).toContain('data-timer-dialog')
     expect(html).toContain('data-menu-dialog')
+    expect(html).toContain('data-week-grid')
+    expect(html).toContain('data-day-list')
+    expect(html).toContain('data-copy-last-week')
+    expect(html).toContain('data-add-row-trigger')
+    expect(html).toContain('data-note-dialog')
     expect(html).toContain('name="viewport"')
     expect(webAssets.stylesheet).toContain('@media (max-width: 720px)')
     expect(webAssets.stylesheet).toContain('.timer-chip {')
-    expect(webAssets.stylesheet).not.toMatch(
-      /\.timer-chip\s*\{[^}]*display:\s*none/su,
+    expect(webAssets.stylesheet).not.toMatch(/\.timer-chip\s*\{[^}]*display:\s*none/su)
+  })
+
+  it('[e2e:phone-week] swaps the seven-day table for a touch-sized day switcher', () => {
+    const html = renderAppShell({ environment: 'test', release: 'abcdef012345' })
+    expect(html).toContain('class="day-switcher"')
+    expect(html).toContain('data-day-previous')
+    expect(html).toContain('data-day-next')
+    expect(webAssets.stylesheet).toMatch(
+      /@media \(max-width: 720px\)[\s\S]*\.week-grid-wrap \{[\s\S]*display: none;/u,
+    )
+    expect(webAssets.stylesheet).toMatch(
+      /@media \(max-width: 720px\)[\s\S]*\.day-list \{[\s\S]*display: block;/u,
+    )
+    expect(webAssets.stylesheet).toMatch(
+      /\.week-actions button,[\s\S]*\.day-switcher button \{[\s\S]*min-height: 44px;/u,
     )
   })
 
@@ -102,9 +131,7 @@ describe('S-1 through S-5 application shell', () => {
     expect(navigationDestination('GO time')).toBe('/')
     expect(navigationDestination('log 2h northpeak devops')).toBeNull()
     const running = entry({ project_id: 1, task_id: 1 }, 1)
-    expect(
-      runningElapsedSeconds(running, new Date('2026-08-28T12:01:30.000Z')),
-    ).toBe(90)
+    expect(runningElapsedSeconds(running, new Date('2026-08-28T12:01:30.000Z'))).toBe(90)
   })
 
   it('[unit] creates an entry and the refreshed week snapshot reflects it', async () => {
@@ -151,10 +178,7 @@ describe('S-1 through S-5 application shell', () => {
   })
 
   it('[unit] renders money artifacts in the chromeless pinned document shell', () => {
-    const html = renderDocumentShell(
-      'Invoice <123>',
-      '<script>unsafe()</script>',
-    )
+    const html = renderDocumentShell('Invoice <123>', '<script>unsafe()</script>')
     expect(html).toContain('data-document-shell')
     expect(html).toContain('data-ez-theme="precision"')
     expect(html).toContain('Invoice &lt;123&gt;')
