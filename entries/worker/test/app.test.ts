@@ -34,6 +34,17 @@ describe('worker entry', () => {
     expect(html).toContain('name="robots" content="noindex"')
   })
 
+  it('mounts the shared API chassis at /api/v1', async () => {
+    const res = await app.request('/api/v1', {}, env)
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('x-request-id')).toBeTruthy()
+    expect(await res.json()).toEqual({
+      data: { service: 'ezacto', version: 'v1' },
+      links: { self: '/api/v1' },
+    })
+  })
+
   it('escapes binding values rather than interpolating them into the page raw', async () => {
     const res = await app.request('/', {}, { ENVIRONMENT: '<script>x</script>', RELEASE: 'deadbeef' })
 
