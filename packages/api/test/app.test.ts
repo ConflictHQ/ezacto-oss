@@ -18,7 +18,7 @@ const requestIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3
 
 const installTestRoutes: ApiInstaller<TestBindings> = (api) => {
   api.post('/validate', async (context) => {
-    const body = await readJsonBody<{ name?: unknown }>(context)
+    const body = await readJsonBody<{ name?: unknown }>(context, { maxBytes: 128 })
     if (typeof body.name !== 'string' || body.name.trim().length === 0) {
       throw validationError([
         { field: 'name', code: 'required', message: 'name must be a non-empty string' },
@@ -36,6 +36,13 @@ const installTestRoutes: ApiInstaller<TestBindings> = (api) => {
   api.get('/explode', () => {
     throw new Error('internal-debug-detail-must-never-reach-the-response')
   })
+  api.get('/deliberate-500', () => {
+    throw new ApiError({
+      status: 503,
+      code: 'database_unavailable',
+      message: 'postgres://service:credential@internal/database',
+    })
+  })
 }
 
 type App = ReturnType<typeof createApiApp<TestBindings>>
@@ -43,11 +50,11 @@ type RuntimeRequest = (path: string, init?: RequestInit) => Promise<Response>
 
 const runtimeFactories = [
   [
-    'node',
+    'Hono app.request',
     (app: App): RuntimeRequest => async (path, init) => app.request(path, init, bindings),
   ],
   [
-    'Worker',
+    'Hono fetch',
     (app: App): RuntimeRequest => async (path, init) =>
       app.fetch(
         new Request(new URL(path, 'https://worker.test'), init),
@@ -61,7 +68,7 @@ const runtimeFactories = [
 ] as const
 
 for (const [runtime, requestFor] of runtimeFactories) {
-  describe(`/api/v1 chassis (${runtime})`, () => {
+  describe(`/api/v1 chassis in-process (${runtime})`, () => {
     const request = requestFor(createApiApp({ installApi: installTestRoutes }))
 
     it('[unit] serves the same version root with a server-generated request id', async () => {
@@ -144,6 +151,39 @@ for (const [runtime, requestFor] of runtimeFactories) {
       const wire = await response.text()
       expect(response.status).toBe(500)
       expect(wire).not.toContain('internal-debug-detail')
+      expect(JSON.parse(wire)).toEqual({
+        error: {
+          code: 'internal_error',
+          message: 'The request could not be completed.',
+          fields: [],
+        },
+        request_id: response.headers.get('x-request-id'),
+      })
+    })
+
+    it('[security] bounds JSON bytes without trusting Content-Length', async () => {
+      const response = await request('/api/v1/validate', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-length': '1' },
+        body: JSON.stringify({ name: 'x'.repeat(256) }),
+      })
+      expect(response.status).toBe(413)
+      expect(await response.json()).toEqual({
+        error: {
+          code: 'payload_too_large',
+          message: 'Request body exceeds the 128-byte limit.',
+          fields: [],
+        },
+        request_id: response.headers.get('x-request-id'),
+      })
+    })
+
+    it('[security] sanitizes deliberate 5xx failures as well as unknown ones', async () => {
+      const response = await request('/api/v1/deliberate-500')
+      const wire = await response.text()
+      expect(response.status).toBe(503)
+      expect(wire).not.toContain('credential')
+      expect(wire).not.toContain('database_unavailable')
       expect(JSON.parse(wire)).toEqual({
         error: {
           code: 'internal_error',

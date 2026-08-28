@@ -7,12 +7,14 @@ export type {
 } from './context.js'
 export {
   ApiError,
+  DEFAULT_MAX_JSON_BODY_BYTES,
   errorResponse,
   notFoundResponse,
   readJsonBody,
   validationError,
   type ApiErrorBody,
   type FieldError,
+  type JsonBodyOptions,
 } from './errors.js'
 export {
   cursorPage,

@@ -4,7 +4,8 @@ import { serializeMany, type Serializer } from './serializer.js'
 const defaultPageSize = 50
 const maximumPageSize = 200
 const cursorVersion = 1
-const cursorPattern = /^[A-Za-z0-9_-]+$/
+const cursorPartPattern = /^[A-Za-z0-9_-]+$/
+const minimumSigningKeyBytes = 32
 
 interface CursorPayload {
   v: typeof cursorVersion
@@ -46,6 +47,8 @@ interface CursorPageOptions<Row extends { id: number }, Output, Viewer> {
   source: CursorSource<Row>
   viewer: Readonly<Viewer>
   serializer: Serializer<Row, Output, Viewer>
+  /** Server-owned HMAC key. At least 32 bytes and stable across a traversal. */
+  cursorSigningKey: Uint8Array
 }
 
 export const cursorPage = async <Row extends { id: number }, Output, Viewer>({
@@ -53,14 +56,20 @@ export const cursorPage = async <Row extends { id: number }, Output, Viewer>({
   source,
   viewer,
   serializer,
+  cursorSigningKey,
 }: CursorPageOptions<Row, Output, Viewer>): Promise<CursorPageEnvelope<Output>> => {
+  assertSigningKey(cursorSigningKey)
   const perPageValues = requestUrl.searchParams.getAll('per_page')
   const cursorValues = requestUrl.searchParams.getAll('cursor')
   if (perPageValues.length > 1) throw invalidField('per_page', 'duplicate', 'per_page may appear once')
   if (cursorValues.length > 1) throw invalidField('cursor', 'duplicate', 'cursor may appear once')
 
   const requestedPageSize = parsePageSize(perPageValues[0])
-  const cursor = cursorValues[0] === undefined ? null : decodeCursor(cursorValues[0])
+  const scope = cursorScope(requestUrl)
+  const cursor =
+    cursorValues[0] === undefined
+      ? null
+      : await decodeCursor(cursorValues[0], cursorSigningKey, scope)
   if (cursor !== null && requestedPageSize !== null && requestedPageSize !== cursor.s) {
     throw invalidField(
       'per_page',
@@ -86,12 +95,12 @@ export const cursorPage = async <Row extends { id: number }, Output, Viewer>({
   const visible = rows.slice(0, pageSize)
   const hasNext = rows.length > pageSize
   const nextCursor = hasNext
-    ? encodeCursor({
+    ? await encodeCursor({
         v: cursorVersion,
         a: visible.at(-1)!.id,
         t: throughId,
         s: pageSize,
-      })
+      }, cursorSigningKey, scope)
     : null
 
   return {
@@ -123,22 +132,42 @@ const parsePageSize = (raw: string | undefined): number | null => {
 const invalidField = (field: string, code: string, message: string) =>
   validationError([{ field, code, message }])
 
-const encodeCursor = (payload: CursorPayload): string =>
-  btoa(JSON.stringify(payload)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
+const encodeCursor = async (
+  payload: CursorPayload,
+  signingKey: Uint8Array,
+  scope: string,
+): Promise<string> => {
+  const encodedPayload = encodeBase64Url(new TextEncoder().encode(JSON.stringify(payload)))
+  const signature = await sign(encodedPayload, signingKey, scope)
+  return `${encodedPayload}.${encodeBase64Url(signature)}`
+}
 
-const decodeCursor = (raw: string): CursorPayload => {
+const decodeCursor = async (
+  raw: string,
+  signingKey: Uint8Array,
+  scope: string,
+): Promise<CursorPayload> => {
   try {
-    if (raw.length === 0 || raw.length > 256 || !cursorPattern.test(raw)) throw new Error()
-    const padded = raw
-      .replaceAll('-', '+')
-      .replaceAll('_', '/')
-      .padEnd(Math.ceil(raw.length / 4) * 4, '=')
-    const parsed = JSON.parse(atob(padded)) as Partial<CursorPayload>
+    if (raw.length === 0 || raw.length > 512) throw new Error()
+    const parts = raw.split('.')
+    if (parts.length !== 2) throw new Error()
+    const encodedPayload = parts[0]!
+    const encodedSignature = parts[1]!
+    if (!cursorPartPattern.test(encodedPayload) || !cursorPartPattern.test(encodedSignature)) {
+      throw new Error()
+    }
+    const signature = decodeBase64Url(encodedSignature)
+    if (!(await verify(encodedPayload, signature, signingKey, scope))) throw new Error()
+    const parsed = JSON.parse(
+      new TextDecoder('utf-8', { fatal: true }).decode(decodeBase64Url(encodedPayload)),
+    ) as Partial<CursorPayload>
     if (
       parsed.v !== cursorVersion ||
       !Number.isSafeInteger(parsed.a) ||
       !Number.isSafeInteger(parsed.t) ||
       !Number.isSafeInteger(parsed.s) ||
+      parsed.a! < 1 ||
+      parsed.t! < 1 ||
       parsed.s! < 1 ||
       parsed.s! > maximumPageSize ||
       parsed.a! >= parsed.t!
@@ -146,11 +175,83 @@ const decodeCursor = (raw: string): CursorPayload => {
       throw new Error()
     }
     const payload: CursorPayload = { v: cursorVersion, a: parsed.a!, t: parsed.t!, s: parsed.s! }
-    if (encodeCursor(payload) !== raw) throw new Error()
+    const canonicalPayload = encodeBase64Url(new TextEncoder().encode(JSON.stringify(payload)))
+    if (canonicalPayload !== encodedPayload) throw new Error()
     return payload
   } catch {
     throw invalidField('cursor', 'invalid', 'cursor is malformed or unsupported')
   }
+}
+
+const assertSigningKey = (key: Uint8Array): void => {
+  if (!(key instanceof Uint8Array) || key.byteLength < minimumSigningKeyBytes) {
+    throw new TypeError(`cursor signing key must contain at least ${minimumSigningKeyBytes} bytes`)
+  }
+}
+
+const cursorScope = (requestUrl: URL): string => {
+  const scoped = new URL(requestUrl)
+  scoped.searchParams.delete('cursor')
+  scoped.searchParams.delete('per_page')
+  scoped.searchParams.sort()
+  return `${scoped.pathname}${scoped.search}`
+}
+
+const importSigningKey = (key: Uint8Array): Promise<CryptoKey> =>
+  crypto.subtle.importKey('raw', copyBuffer(key), { name: 'HMAC', hash: 'SHA-256' }, false, [
+    'sign',
+    'verify',
+  ])
+
+const signedMessage = (encodedPayload: string, scope: string): ArrayBuffer =>
+  copyBuffer(new TextEncoder().encode(`${scope}\n${encodedPayload}`))
+
+const sign = async (
+  encodedPayload: string,
+  keyBytes: Uint8Array,
+  scope: string,
+): Promise<Uint8Array> => {
+  const key = await importSigningKey(keyBytes)
+  return new Uint8Array(await crypto.subtle.sign('HMAC', key, signedMessage(encodedPayload, scope)))
+}
+
+const verify = async (
+  encodedPayload: string,
+  signature: Uint8Array,
+  keyBytes: Uint8Array,
+  scope: string,
+): Promise<boolean> => {
+  const key = await importSigningKey(keyBytes)
+  return crypto.subtle.verify(
+    'HMAC',
+    key,
+    copyBuffer(signature),
+    signedMessage(encodedPayload, scope),
+  )
+}
+
+const copyBuffer = (bytes: Uint8Array): ArrayBuffer => {
+  const copy = new Uint8Array(bytes.byteLength)
+  copy.set(bytes)
+  return copy.buffer
+}
+
+const encodeBase64Url = (bytes: Uint8Array): string => {
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
+}
+
+const decodeBase64Url = (encoded: string): Uint8Array => {
+  if (encoded.length === 0 || !cursorPartPattern.test(encoded)) throw new Error()
+  const padded = encoded
+    .replaceAll('-', '+')
+    .replaceAll('_', '/')
+    .padEnd(Math.ceil(encoded.length / 4) * 4, '=')
+  const binary = atob(padded)
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
+  if (encodeBase64Url(bytes) !== encoded) throw new Error()
+  return bytes
 }
 
 const validateRows = <Row extends { id: number }>(
@@ -171,7 +272,9 @@ const validateRows = <Row extends { id: number }>(
 }
 
 const assertSafeInteger = (value: number, label: string): void => {
-  if (!Number.isSafeInteger(value)) throw new Error(`${label} must be a safe integer`)
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`${label} must be a positive safe integer`)
+  }
 }
 
 const relativeLink = (url: URL): string => `${url.pathname}${url.search}`

@@ -26,6 +26,13 @@ interface ApiErrorOptions {
   fields?: readonly FieldError[]
 }
 
+export interface JsonBodyOptions {
+  /** Maximum UTF-8 bytes accepted before JSON parsing. Defaults to 1 MiB. */
+  maxBytes?: number
+}
+
+export const DEFAULT_MAX_JSON_BODY_BYTES = 1024 * 1024
+
 /** A deliberate HTTP failure. Unknown exceptions are never serialized verbatim. */
 export class ApiError extends Error {
   readonly status: ContentfulStatusCode
@@ -68,7 +75,13 @@ export const validationError = (
 
 type JsonRequestContext = Pick<Context, 'req'>
 
-export const readJsonBody = async <T>(context: JsonRequestContext): Promise<T> => {
+export const readJsonBody = async <T>(
+  context: JsonRequestContext,
+  { maxBytes = DEFAULT_MAX_JSON_BODY_BYTES }: JsonBodyOptions = {},
+): Promise<T> => {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
+    throw new RangeError('JSON body byte limit must be a positive safe integer')
+  }
   const contentType = context.req.header('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
   if (
     contentType === undefined ||
@@ -80,8 +93,23 @@ export const readJsonBody = async <T>(context: JsonRequestContext): Promise<T> =
       message: 'Request body must use an application/json content type.',
     })
   }
+
+  const declaredLength = context.req.header('content-length')
+  if (declaredLength !== undefined) {
+    if (!/^(0|[1-9][0-9]*)$/.test(declaredLength)) {
+      throw new ApiError({
+        status: 400,
+        code: 'invalid_content_length',
+        message: 'Content-Length must be a non-negative decimal byte count.',
+      })
+    }
+    if (Number(declaredLength) > maxBytes) throw payloadTooLarge(maxBytes)
+  }
+
+  const bytes = await readLimitedBody(context.req.raw.body, maxBytes)
   try {
-    return await context.req.json<T>()
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    return JSON.parse(text) as T
   } catch {
     throw new ApiError({
       status: 400,
@@ -89,6 +117,45 @@ export const readJsonBody = async <T>(context: JsonRequestContext): Promise<T> =
       message: 'Request body is not valid JSON.',
     })
   }
+}
+
+const payloadTooLarge = (maxBytes: number): ApiError =>
+  new ApiError({
+    status: 413,
+    code: 'payload_too_large',
+    message: `Request body exceeds the ${maxBytes}-byte limit.`,
+  })
+
+const readLimitedBody = async (
+  body: ReadableStream<Uint8Array> | null,
+  maxBytes: number,
+): Promise<Uint8Array> => {
+  if (body === null) return new Uint8Array()
+  const reader = body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      size += value.byteLength
+      if (size > maxBytes) {
+        await reader.cancel().catch(() => undefined)
+        throw payloadTooLarge(maxBytes)
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+
+  const bytes = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return bytes
 }
 
 const bodyFor = <Bindings extends object>(
@@ -105,7 +172,7 @@ export const errorResponse = <Bindings extends object>(
   error: Error,
   context: Context<ApiContext<Bindings>>,
 ): Response => {
-  if (error instanceof ApiError) {
+  if (error instanceof ApiError && error.status < 500) {
     return context.json(
       bodyFor(context, error.code, error.message, error.fields),
       error.status,
@@ -114,7 +181,7 @@ export const errorResponse = <Bindings extends object>(
   }
   return context.json(
     bodyFor(context, 'internal_error', 'The request could not be completed.', []),
-    500,
+    error instanceof ApiError ? error.status : 500,
     { 'cache-control': 'no-store' },
   )
 }

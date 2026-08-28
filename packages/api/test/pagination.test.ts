@@ -7,6 +7,8 @@ interface StoredRow {
   secret: string
 }
 
+const cursorSigningKey = new Uint8Array(32).fill(0x5a)
+
 const sourceFor = (
   rows: StoredRow[],
   highWatermarkCalls: { count: number },
@@ -42,6 +44,7 @@ describe('cursor pagination', () => {
       source,
       viewer: { includeSecret: false },
       serializer: serialize,
+      cursorSigningKey,
     })
     expect(first.data).toEqual([
       { id: 1, label: 'row-1' },
@@ -60,6 +63,7 @@ describe('cursor pagination', () => {
       source,
       viewer: { includeSecret: false },
       serializer: serialize,
+      cursorSigningKey,
     })
     expect(second.data).toEqual([
       { id: 3, label: 'row-3' },
@@ -83,6 +87,7 @@ describe('cursor pagination', () => {
       },
       viewer: {},
       serializer: (row: { id: number }) => row,
+      cursorSigningKey,
     })
     expect(page).toEqual({
       data: [],
@@ -107,6 +112,7 @@ describe('cursor pagination', () => {
         source,
         viewer: {},
         serializer: (row) => row,
+        cursorSigningKey,
       }).catch((caught: unknown) => caught)
       expect(error).toBeInstanceOf(ApiError)
       expect((error as ApiError).status).toBe(422)
@@ -127,7 +133,66 @@ describe('cursor pagination', () => {
         },
         viewer: {},
         serializer: (row) => row,
+        cursorSigningKey,
       }),
     ).rejects.toThrow(/stable window/)
+  })
+
+  it('[security] rejects cursor tampering and replay across collection scopes', async () => {
+    const rows: StoredRow[] = [1, 2, 3, 4].map((id) => ({
+      id,
+      label: `row-${id}`,
+      secret: `secret-${id}`,
+    }))
+    const source = sourceFor(rows, { count: 0 })
+    const first = await cursorPage({
+      requestUrl: new URL('https://api.test/api/v1/things?active=true&per_page=2'),
+      source,
+      viewer: { includeSecret: false },
+      serializer: serialize,
+      cursorSigningKey,
+    })
+    const cursor = first.page.next_cursor!
+    const [encodedPayload, signature] = cursor.split('.') as [string, string]
+    const payload = JSON.parse(
+      atob(encodedPayload.replaceAll('-', '+').replaceAll('_', '/')),
+    ) as { v: number; a: number; t: number; s: number }
+    payload.t = 6
+    const forgedPayload = btoa(JSON.stringify(payload))
+      .replaceAll('+', '-')
+      .replaceAll('/', '_')
+      .replace(/=+$/, '')
+    rows.push(
+      { id: 5, label: 'concurrent-5', secret: 'new-5' },
+      { id: 6, label: 'concurrent-6', secret: 'new-6' },
+    )
+
+    for (const requestUrl of [
+      `https://api.test/api/v1/things?active=true&per_page=2&cursor=${forgedPayload}.${signature}`,
+      `https://api.test/api/v1/other?active=true&per_page=2&cursor=${cursor}`,
+      `https://api.test/api/v1/things?active=false&per_page=2&cursor=${cursor}`,
+    ]) {
+      await expect(
+        cursorPage({
+          requestUrl: new URL(requestUrl),
+          source,
+          viewer: { includeSecret: false },
+          serializer: serialize,
+          cursorSigningKey,
+        }),
+      ).rejects.toMatchObject({ status: 422, code: 'validation_failed' })
+    }
+  })
+
+  it('[unit] refuses undersized cursor signing keys', async () => {
+    await expect(
+      cursorPage({
+        requestUrl: new URL('https://api.test/api/v1/things'),
+        source: sourceFor([], { count: 0 }),
+        viewer: {},
+        serializer: (row) => row,
+        cursorSigningKey: new Uint8Array(31),
+      }),
+    ).rejects.toThrow(/at least 32 bytes/)
   })
 })
