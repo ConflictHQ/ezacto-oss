@@ -26,6 +26,12 @@ jobs:
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
       - name: verify (typecheck + lint + test)
         run: npm run verify
+      - name: publish versioned OpenAPI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ezacto-openapi-v1-${{ github.sha }}
+          path: openapi/ezacto-v1.openapi.json
+          if-no-files-found: error
       - name: gitleaks (E12 — secrets never in git)
         run: |
           curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz | tar -xz gitleaks

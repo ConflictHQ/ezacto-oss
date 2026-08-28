@@ -1,5 +1,13 @@
 export { createApiApp } from './app.js'
 export {
+  apiContractOperations,
+  apiContractSchemas,
+  generateOpenApiDocument,
+  type ApiContractMethod,
+  type ApiContractOperation,
+  type ApiContractParameter,
+} from './contract.js'
+export {
   apiAuthenticationMiddleware,
   installApiTokenRoutes,
   requireApiScope,

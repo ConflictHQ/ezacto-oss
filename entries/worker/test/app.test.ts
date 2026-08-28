@@ -30,8 +30,25 @@ describe('worker entry', () => {
     const html = await res.text()
     expect(html).toContain('<title>ezacto — test</title>')
     expect(html).toContain('abc1234')
+    expect(html).toContain('/openapi/v1.json')
     // Deployments are not for search engines until the product is real.
     expect(html).toContain('name="robots" content="noindex"')
+  })
+
+  it('publishes the versioned OpenAPI contract without database bindings', async () => {
+    const res = await app.request('/openapi/v1.json', {}, env)
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('public, max-age=300')
+    const document = (await res.json()) as {
+      openapi: string
+      info: { version: string }
+      paths: Record<string, unknown>
+    }
+    expect(document.openapi).toBe('3.1.0')
+    expect(document.info.version).toBe('1.0.0')
+    expect(document.paths).toHaveProperty('/api/v1/time-entries')
+    expect(document.paths).toHaveProperty('/api/v1/projects')
   })
 
   it('fails the shared API closed until this deployment configures an auth store', async () => {

@@ -55,6 +55,27 @@ Every returned record passes through the supplied serializer before entering
 `data`. Permission and money-field redaction extend that seam rather than being
 implemented ad hoc in routes.
 
+## OpenAPI and generated clients
+
+`packages/api/src/contract.ts` is the executable v1 contract definition. It emits
+the committed `openapi/ezacto-v1.openapi.json` artifact and the
+`@ezacto/client` TypeScript client from the same operation and schema registry:
+
+```sh
+npm run contract:generate
+```
+
+`npm run contract:check` regenerates both outputs in memory and fails on any
+diff. It is part of `npm run verify`, so route or schema changes cannot merge
+with stale artifacts. The API contract test independently compares every
+documented method to the methods actually mounted by Hono.
+
+CI uploads the versioned JSON document as an artifact named for the commit. A
+running Worker also serves the current v1 document at `/openapi/v1.json` without
+requiring database bindings. Consumers import `EzactoClient` from
+`@ezacto/client`; direct edits to `packages/client/src/generated.ts` are replaced
+by the generator.
+
 The contract suite dispatches the same fixture handlers through a real Node HTTP
 server adapter and a Miniflare/workerd isolate. In-process Hono tests remain unit
 tests and are not treated as proof of runtime parity.

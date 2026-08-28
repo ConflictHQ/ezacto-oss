@@ -4,8 +4,9 @@
 the Harvest replacement. Single org, free, no billing, no telemetry. Private now;
 **public at the OSS gate** (CONFLICT's real books running on ezacto).
 
-**Current state: knowledge + specs only. No code yet, deliberately.** The build
-starts here in its own sessions, bottom-up, per `PLAN.md`. The umbrella brain
+**Current state: active private pre-release build.** The database, native API,
+Worker entry, and generated API client now exist; remaining product lanes build
+bottom-up per `PLAN.md`. The umbrella brain
 (`ezacto` (the umbrella)) holds the full research corpus and decision records; this repo
 carries localized copies of everything needed to build.
 

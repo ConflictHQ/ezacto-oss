@@ -6,10 +6,12 @@
   "engines": { "node": ">=22" },
   "workspaces": ["packages/*", "entries/*"],
   "scripts": {
+    "contract:generate": "npm run build -w @ezacto/api && node scripts/generate-api-contract.mjs",
+    "contract:check": "npm run build -w @ezacto/api && node scripts/generate-api-contract.mjs --check",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "build": "npm run build --workspaces --if-present",
-    "verify": "npm run typecheck && npm run lint && npm run test && npm run build"
+    "verify": "npm run contract:check && npm run typecheck && npm run lint && npm run test && npm run build"
   }
 }
