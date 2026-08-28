@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@ezacto/core": "0.0.0",
+    "@ezacto/mailer": "0.0.0",
     "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.2"
   },
