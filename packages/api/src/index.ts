@@ -11,6 +11,10 @@ export {
   type IssuedApiToken,
   type SessionPrincipal,
 } from './auth.js'
+export {
+  installGeneralResourceRoutes,
+  type GeneralResourceRouteOptions,
+} from './general-resources.js'
 export type {
   ApiContext,
   ApiInstaller,
