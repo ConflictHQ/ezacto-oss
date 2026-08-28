@@ -279,8 +279,6 @@ for (const [runtime, factory] of factories) {
         ]),
       )
       const forbiddenTables = [
-        'expenses',
-        'expense_categories',
         'receipts',
         'estimates',
         'estimate_line_items',
@@ -622,6 +620,7 @@ for (const [runtime, factory] of factories) {
         '0004_invoice_foundation',
         '0005_invoice_payments_totals',
         '0006_invoice_state_events',
+        '0007_expenses',
       ])
       expect(
         firstLedger.slice(0, 4).every(({ applied_at: appliedAt }) => appliedAt === timestamp),

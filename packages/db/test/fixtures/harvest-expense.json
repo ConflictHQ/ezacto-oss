@@ -1,0 +1,45 @@
+{
+  "id": 152975211,
+  "client": {
+    "id": 5735776,
+    "name": "Sanitized Client",
+    "currency": "USD"
+  },
+  "project": {
+    "id": 14308069,
+    "name": "Migration",
+    "code": "MIG"
+  },
+  "expense_category": {
+    "id": 4195926,
+    "name": "Sanitized Mileage",
+    "unit_price": 0.65,
+    "unit_name": "mile"
+  },
+  "user": {
+    "id": 1782959,
+    "name": "Sanitized Creator"
+  },
+  "invoice": {
+    "id": 12000001,
+    "number": "INV-EXPENSE"
+  },
+  "receipt": {
+    "url": "https://example.invalid/sanitized-receipt",
+    "file_name": "sanitized-receipt.pdf",
+    "file_size": 2048,
+    "content_type": "application/pdf"
+  },
+  "notes": "Sanitized project travel",
+  "units": 125,
+  "total_cost": 81.25,
+  "billable": true,
+  "is_closed": false,
+  "approval_status": "submitted",
+  "is_locked": true,
+  "is_billed": true,
+  "locked_reason": "Invoiced",
+  "spent_date": "2026-08-15",
+  "created_at": "2026-08-16T12:00:00Z",
+  "updated_at": "2026-08-17T12:00:00Z"
+}
