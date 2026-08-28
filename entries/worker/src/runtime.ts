@@ -1,4 +1,5 @@
 import {
+  bootstrapInstanceD1,
   createApiTokenStore,
   createD1Database,
   createGeneralResourceRepository,
@@ -95,6 +96,7 @@ export const createRuntimeServices = async (env: WorkerEnv): Promise<RuntimeServ
   await ensureRuntimeDatabaseReady(database)
   const drizzle = createD1Database(database)
   return {
+    bootstrap: (input) => bootstrapInstanceD1(database, input),
     tokens: createApiTokenStore(drizzle),
     generalResources: createGeneralResourceRepository(drizzle),
     trackedResources: new DrizzleTrackedResourceRepository(drizzle, organizationPolicy),

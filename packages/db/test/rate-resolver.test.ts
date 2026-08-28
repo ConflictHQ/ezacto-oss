@@ -451,6 +451,7 @@ for (const [runtime, factory] of factories) {
         '0009_three_axis_state',
         '0010_recurring_invoices',
         '0011_api_tokens',
+        '0012_instance_bootstrap',
       ])
       expect(firstLedger.slice(0, 3).map(({ applied_at: appliedAt }) => appliedAt)).toEqual([
         timestamp,
@@ -506,6 +507,7 @@ for (const [runtime, factory] of factories) {
         { id: '0009_three_axis_state' },
         { id: '0010_recurring_invoices' },
         { id: '0011_api_tokens' },
+        { id: '0012_instance_bootstrap' },
       ])
     })
   })

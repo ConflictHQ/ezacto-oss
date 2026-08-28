@@ -839,6 +839,7 @@ for (const [runtime, factory] of factories) {
         { id: '0009_three_axis_state' },
         { id: '0010_recurring_invoices' },
         { id: '0011_api_tokens' },
+        { id: '0012_instance_bootstrap' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -871,6 +872,7 @@ for (const [runtime, factory] of factories) {
         { id: '0009_three_axis_state' },
         { id: '0010_recurring_invoices' },
         { id: '0011_api_tokens' },
+        { id: '0012_instance_bootstrap' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -921,6 +923,7 @@ for (const [runtime, factory] of factories) {
         { id: '0009_three_axis_state' },
         { id: '0010_recurring_invoices' },
         { id: '0011_api_tokens' },
+        { id: '0012_instance_bootstrap' },
       ])
       expect(
         await db.rows<{ name: string }>(
@@ -947,6 +950,7 @@ for (const [runtime, factory] of factories) {
         { id: '0009_three_axis_state' },
         { id: '0010_recurring_invoices' },
         { id: '0011_api_tokens' },
+        { id: '0012_instance_bootstrap' },
       ])
     })
   })
@@ -1032,6 +1036,10 @@ describe('package contents', () => {
         'dist/migrations/0010_recurring_invoices.d.ts',
         'dist/migrations/0011_api_tokens.js',
         'dist/migrations/0011_api_tokens.d.ts',
+        'dist/migrations/0012_instance_bootstrap.js',
+        'dist/migrations/0012_instance_bootstrap.d.ts',
+        'dist/instance-bootstrap.js',
+        'dist/instance-bootstrap.d.ts',
         'dist/invoice-payments.js',
         'dist/invoice-payments.d.ts',
         'dist/rate-resolver.js',

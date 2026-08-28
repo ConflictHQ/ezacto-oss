@@ -3,9 +3,9 @@ import { createRuntimeServices } from './runtime.js'
 
 const publicApp = createApp()
 
-const isApiRequest = (request: Request): boolean => {
+const isDataRequest = (request: Request): boolean => {
   const path = new URL(request.url).pathname
-  return path === '/api/v1' || path.startsWith('/api/v1/')
+  return path === '/__ezacto/bootstrap' || path === '/api/v1' || path.startsWith('/api/v1/')
 }
 
 const unavailable = (): Response => {
@@ -32,7 +32,7 @@ const unavailable = (): Response => {
 
 export const worker: ExportedHandler<WorkerEnv> = {
   async fetch(request, env, executionContext) {
-    if (!isApiRequest(request)) {
+    if (!isDataRequest(request)) {
       return publicApp.fetch(request, env, executionContext)
     }
     try {

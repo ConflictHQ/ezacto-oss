@@ -311,6 +311,48 @@ export const apiTokens = sqliteTable(
   ],
 )
 
+export const instanceBootstrap = sqliteTable(
+  'instance_bootstrap',
+  {
+    id: integer('id').primaryKey().default(1),
+    organizationName: text('organization_name').notNull(),
+    ownerFirstName: text('owner_first_name').notNull(),
+    ownerLastName: text('owner_last_name').notNull(),
+    ownerEmail: text('owner_email').notNull(),
+    tokenSelector: text('token_selector').notNull(),
+    tokenSecretHash: text('token_secret_hash').notNull(),
+    tokenName: text('token_name').notNull(),
+    tokenScopes: text('token_scopes', { mode: 'json' }).$type<string[]>().notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    check('instance_bootstrap_singleton', sql`${table.id} = 1`),
+    check('instance_bootstrap_organization_name', nonBlankText(table.organizationName)),
+    check('instance_bootstrap_owner_first_name', nonBlankText(table.ownerFirstName)),
+    check('instance_bootstrap_owner_last_name', nonBlankText(table.ownerLastName)),
+    check(
+      'instance_bootstrap_owner_email',
+      sql`${table.ownerEmail} = lower(${table.ownerEmail})
+        and length(${table.ownerEmail}) between 3 and 254`,
+    ),
+    check(
+      'instance_bootstrap_token_selector',
+      sql`length(${table.tokenSelector}) = 16
+        and ${table.tokenSelector} not glob '*[^A-Za-z0-9_-]*'`,
+    ),
+    check(
+      'instance_bootstrap_token_secret_hash',
+      sql`length(${table.tokenSecretHash}) = 64
+        and ${table.tokenSecretHash} not glob '*[^0-9a-f]*'`,
+    ),
+    check(
+      'instance_bootstrap_token_scopes',
+      sql`json_valid(${table.tokenScopes}) and json_type(${table.tokenScopes}) = 'array'`,
+    ),
+    check('instance_bootstrap_created_at', canonicalTimestamp(table.createdAt)),
+  ],
+)
+
 export const roles = sqliteTable('roles', {
   id: integer('id').primaryKey(),
   harvestId: integer('harvest_id').unique(),

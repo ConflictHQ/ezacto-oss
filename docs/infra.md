@@ -60,6 +60,15 @@ bytes. `deploy.yml` installs it through `wrangler secret put` before every deplo
 so tracked config never contains secret material. The two environments must not
 share a key.
 
+Each environment also holds one `EZACTO_BOOTSTRAP_TOKEN`, a canonical `ezacto_`
+bearer generated independently for that instance. It is the first owner token,
+not a general deployment secret: `bootstrap-instance.yml` temporarily installs
+it on the Worker, persists only its selector and SHA-256 digest, proves the live
+API and compiled CLI can authenticate, and removes the Worker copy in an
+`always()` cleanup step. Store the original bearer in the operator's local CLI
+or credential manager when it is generated: GitHub retains it for automation but
+will not reveal it later. Workflow logs and artifacts never contain it.
+
 The Cloudflare token cannot touch any other zone, and cannot create zones. Rotate
 it by issuing a new token and replacing the repository secret; revoke the old one
 after the first green deploy.
@@ -75,6 +84,19 @@ ID for each environment, and installs that environment's cursor-signing secret.
 Commit the reported IDs under the matching `env.dev` and `env.prod`
 `d1_databases` entries in `entries/worker/wrangler.jsonc`. The normal deployment
 then applies the binding and its smoke gate proves the exact release is live.
+
+## Instance bootstrap
+
+After the D1 binding is deployed, run the manual `bootstrap instance` workflow
+for that environment with the organization and owner identity. The database must
+already be migrated and its organization, user, email, and token tables must be
+empty. The workflow creates exactly one organization, active administrator owner,
+verified primary email, and all-scope owner API token in one D1 batch transaction.
+
+The first statement claims a singleton audit record; the last statement asserts
+the complete seeded state. An identical retry is a no-op, while different input,
+pre-existing identity rows, or a partial write fails closed. Successful completion
+requires both live `/api/v1/whoami` and the compiled `ez login`/`ez whoami` path.
 
 ## CI (`.github/workflows/ci.yml`)
 
