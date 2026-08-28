@@ -46,16 +46,35 @@ secrets never in git; production secrets only via `wrangler secret put` or CI
 secrets; every new env var lands in `.dev.vars.example` in the same PR that
 reads it.
 
-CI holds exactly two repo secrets, both consumed only by `deploy.yml`:
+CI holds two repository-wide Cloudflare credentials. They are consumed only by
+`deploy.yml` and the manual `provision-d1.yml` workflow:
 
 | Secret | What |
 | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | scoped deploy token — account: Workers Scripts Write, Workers Observability Write, Account Settings Read; zone: Zone Read, Workers Routes Write, DNS Write, **limited to `example.com` and `ezacto.io`** |
+| `CLOUDFLARE_API_TOKEN` | scoped deploy/provision token — account: Workers Scripts Write, Workers Observability Write, Account Settings Read, **D1 Edit**; zone: Zone Read, Workers Routes Write, DNS Write, **limited to `example.com` and `ezacto.io`** |
 | `CLOUDFLARE_ACCOUNT_ID` | CONFLICT LLC account id (not secret; a secret only to keep it out of the tracked config) |
 
-The token cannot touch any other zone, and cannot create zones. Rotate by
-issuing a new token and replacing the secret; revoke the old one after the first
-green deploy.
+Each GitHub environment (`dev`, `prod`) also holds its own
+`API_CURSOR_SIGNING_KEY`: canonical unpadded base64url for exactly 32 random
+bytes. `deploy.yml` installs it through `wrangler secret put` before every deploy,
+so tracked config never contains secret material. The two environments must not
+share a key.
+
+The Cloudflare token cannot touch any other zone, and cannot create zones. Rotate
+it by issuing a new token and replacing the repository secret; revoke the old one
+after the first green deploy.
+
+## D1 provisioning
+
+Run the manual `provision D1` workflow once before adding bindings. It converges
+the exact databases `ezacto-dev` and `ezacto-prod`: an existing exact-name match
+is reused, no match is created, and duplicates fail closed. The workflow uploads
+a short-lived JSON artifact and job summary containing the non-secret database
+ID for each environment, and installs that environment's cursor-signing secret.
+
+Commit the reported IDs under the matching `env.dev` and `env.prod`
+`d1_databases` entries in `entries/worker/wrangler.jsonc`. The normal deployment
+then applies the binding and its smoke gate proves the exact release is live.
 
 ## CI (`.github/workflows/ci.yml`)
 
