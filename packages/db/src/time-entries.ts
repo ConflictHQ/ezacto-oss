@@ -1,10 +1,14 @@
-import { and, eq, isNotNull, isNull, or } from 'drizzle-orm'
+import { and, eq, getTableColumns, isNotNull, isNull, or, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
 import { resolveEntryRates } from './rate-resolver.js'
 import { organizations, taskAssignments, timeEntries } from './schema.js'
-import { executeAtomicTrackedMutation, type TrackedEntityReference } from './tracked-state.js'
+import {
+  executeAtomicTrackedMutation,
+  type RunningTimeEntryReplacementReference,
+  type TrackedEntityReference,
+} from './tracked-state.js'
 
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
 
@@ -214,16 +218,20 @@ const getTimeEntry = async (database: Database, timeEntryId: number): Promise<Ti
   return entry
 }
 
+const mapReturnedTimeEntry = (row: Record<string, unknown>): TimeEntry =>
+  Object.fromEntries(
+    Object.entries(getTableColumns(timeEntries)).map(([property, column]) => {
+      const value = row[column.name]
+      return [property, value === null ? null : column.mapFromDriverValue(value)]
+    }),
+  ) as TimeEntry
+
 const runningWhere = or(
   isNotNull(timeEntries.timerStartedAt),
   and(isNotNull(timeEntries.startedTime), isNull(timeEntries.endedTime)),
 )
 
-const valuesFromBase = async (
-  database: Database,
-  input: TimeEntryBaseInput,
-  spentDate: string,
-) => {
+const valuesFromBase = async (database: Database, input: TimeEntryBaseInput, spentDate: string) => {
   const [billable, rates] = await Promise.all([
     getTaskBillable(database, input.taskAssignmentId),
     resolveEntryRates(database, { ...input, spentDate }),
@@ -249,27 +257,55 @@ export const startTimeEntry = async (
   database: Database,
   input: StartTimeEntryInput,
   boundary: TimeBoundary,
+  runningEntryPolicyLocked: boolean,
 ): Promise<TimeEntry> => {
   validateBoundary(boundary)
   const settings = await getTimeSettings(database)
   const base = await valuesFromBase(database, input, boundary.date)
-  const [created] = await database
-    .insert(timeEntries)
-    .values({
-      ...base,
-      spentDate: boundary.date,
-      seconds: 0,
-      secondsWithoutTimer: 0,
-      roundedSeconds: 0,
-      timerStartedAt: settings.timeEntryMode === 'duration' ? boundary.instant : null,
-      startedTime: settings.timeEntryMode === 'start_end' ? boundary.time : null,
-      endedTime: null,
-      createdAt: boundary.instant,
-      updatedAt: boundary.instant,
-    })
-    .returning()
-  if (!created) throw new Error('time entry creation did not return a row')
-  return created
+  const replacementReference: RunningTimeEntryReplacementReference = {
+    entityType: 'running_time_entry_replacement',
+    userId: input.userId,
+    policyLocked: runningEntryPolicyLocked,
+  }
+  const created = await executeAtomicTrackedMutation(
+    database,
+    replacementReference,
+    (mutationPredicate) =>
+      database
+        .insert(timeEntries)
+        .select(
+          sql`SELECT
+          ${null},
+          ${base.harvestId},
+          ${base.userId},
+          ${base.projectId},
+          ${base.taskId},
+          ${base.userAssignmentId},
+          ${base.taskAssignmentId},
+          ${boundary.date},
+          ${0},
+          ${0},
+          ${0},
+          ${settings.timeEntryMode === 'duration' ? boundary.instant : null},
+          ${settings.timeEntryMode === 'start_end' ? boundary.time : null},
+          ${null},
+          ${base.notes},
+          ${base.billable ? 1 : 0},
+          ${base.budgeted ? 1 : 0},
+          ${base.billableRateCents},
+          ${base.costRateCents},
+          ${'unsubmitted'},
+          ${null},
+          ${base.externalRef === null ? null : JSON.stringify(base.externalRef)},
+          ${base.calendarEventRef === null ? null : JSON.stringify(base.calendarEventRef)},
+          ${boundary.instant},
+          ${boundary.instant}
+        WHERE ${mutationPredicate}`,
+        )
+        .returning(),
+    () => new Error('time entry could not be started'),
+  )
+  return mapReturnedTimeEntry(created)
 }
 
 export const createStoppedTimeEntry = async (
@@ -360,11 +396,22 @@ export const stopTimeEntry = async (
   } else {
     throw new Error(`time entry ${timeEntryId} is not running`)
   }
-  return executeAtomicTrackedMutation(
+  const expectedCheckpoint = sql`
+    ${timeEntries.userId} = ${entry.userId}
+    AND
+    ${timeEntries.spentDate} = ${entry.spentDate}
+    AND ${timeEntries.seconds} = ${entry.seconds}
+    AND ${timeEntries.secondsWithoutTimer} = ${entry.secondsWithoutTimer}
+    AND ${timeEntries.timerStartedAt} IS ${entry.timerStartedAt}
+    AND ${timeEntries.startedTime} IS ${entry.startedTime}
+    AND ${timeEntries.endedTime} IS ${entry.endedTime}
+    AND ${timeEntries.updatedAt} = ${entry.updatedAt}
+  `
+  const stopped = await executeAtomicTrackedMutation(
     database,
     mutationReference,
-    async (mutationPredicate) => {
-      const [stopped] = await database
+    (mutationPredicate) =>
+      database
         .update(timeEntries)
         .set({
           seconds,
@@ -374,12 +421,11 @@ export const stopTimeEntry = async (
           endedTime,
           updatedAt: boundary.instant,
         })
-        .where(and(runningWhere, mutationPredicate))
-        .returning()
-      return stopped
-    },
+        .where(and(runningWhere, expectedCheckpoint, mutationPredicate))
+        .returning(),
     () => new Error(`time entry ${timeEntryId} stopped concurrently`),
   )
+  return mapReturnedTimeEntry(stopped)
 }
 
 export const restartTimeEntry = async (
@@ -387,6 +433,7 @@ export const restartTimeEntry = async (
   timeEntryId: number,
   boundary: TimeBoundary,
   policyLocked: boolean,
+  runningEntryPolicyLocked: boolean,
 ): Promise<TimeEntry> => {
   validateBoundary(boundary)
   const mutationReference: TrackedEntityReference = {
@@ -399,11 +446,27 @@ export const restartTimeEntry = async (
   if (entry.timerStartedAt !== null || (entry.startedTime !== null && entry.endedTime === null)) {
     throw new Error(`time entry ${timeEntryId} is already running`)
   }
-  return executeAtomicTrackedMutation(
+  const replacementReference: RunningTimeEntryReplacementReference = {
+    entityType: 'running_time_entry_replacement',
+    userId: entry.userId,
+    policyLocked: runningEntryPolicyLocked,
+  }
+  const expectedCheckpoint = sql`
+    ${timeEntries.userId} = ${entry.userId}
+    AND
+    ${timeEntries.spentDate} = ${entry.spentDate}
+    AND ${timeEntries.seconds} = ${entry.seconds}
+    AND ${timeEntries.secondsWithoutTimer} = ${entry.secondsWithoutTimer}
+    AND ${timeEntries.timerStartedAt} IS ${entry.timerStartedAt}
+    AND ${timeEntries.startedTime} IS ${entry.startedTime}
+    AND ${timeEntries.endedTime} IS ${entry.endedTime}
+    AND ${timeEntries.updatedAt} = ${entry.updatedAt}
+  `
+  const restarted = await executeAtomicTrackedMutation(
     database,
-    mutationReference,
-    async (mutationPredicate) => {
-      const [restarted] = await database
+    [mutationReference, replacementReference],
+    (mutationPredicate) =>
+      database
         .update(timeEntries)
         .set({
           spentDate: settings.timeEntryMode === 'start_end' ? boundary.date : entry.spentDate,
@@ -413,10 +476,9 @@ export const restartTimeEntry = async (
           endedTime: null,
           updatedAt: boundary.instant,
         })
-        .where(mutationPredicate)
-        .returning()
-      return restarted
-    },
+        .where(and(expectedCheckpoint, mutationPredicate))
+        .returning(),
     () => new Error(`time entry ${timeEntryId} could not be restarted`),
   )
+  return mapReturnedTimeEntry(restarted)
 }

@@ -206,11 +206,16 @@ for (const [runtime, factory] of factories) {
       const june = await createStoppedTimeEntry(db.drizzle, stoppedInput())
       expect([june.billableRateCents, june.costRateCents]).toEqual([10_000, 3_000])
 
-      const august = await startTimeEntry(db.drizzle, stoppedInput(1, 1, '2026-08-27'), {
-        date: '2026-08-27',
-        time: '09:00',
-        instant: '2026-08-27T09:00:00.000Z',
-      })
+      const august = await startTimeEntry(
+        db.drizzle,
+        stoppedInput(1, 1, '2026-08-27'),
+        {
+          date: '2026-08-27',
+          time: '09:00',
+          instant: '2026-08-27T09:00:00.000Z',
+        },
+        false,
+      )
       expect([august.billableRateCents, august.costRateCents]).toEqual([20_000, 4_000])
 
       const live = await resolveEntryRates(db.drizzle, stoppedInput())

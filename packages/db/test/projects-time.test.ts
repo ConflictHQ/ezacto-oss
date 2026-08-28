@@ -244,11 +244,13 @@ for (const [runtime, factory] of factories) {
         db.drizzle,
         baseInput,
         boundary('09:00', '2026-08-27T09:00:00.000Z'),
+        false,
       )
       const second = await startTimeEntry(
         db.drizzle,
         { ...baseInput, taskId: 2, taskAssignmentId: 2 },
         boundary('09:03', '2026-08-27T09:03:00.000Z'),
+        false,
       )
 
       expect(
@@ -291,6 +293,7 @@ for (const [runtime, factory] of factories) {
           db.drizzle,
           { ...baseInput, taskId: 2, taskAssignmentId: 2 },
           boundary('09:02', '2026-08-27T09:02:00.000Z'),
+          false,
         ),
       ).rejects.toThrow()
       expect(
@@ -304,6 +307,7 @@ for (const [runtime, factory] of factories) {
           db.drizzle,
           { ...baseInput, userAssignmentId: 2 },
           boundary('09:05', '2026-08-27T09:05:00.000Z'),
+          false,
         ),
       ).rejects.toThrow()
       expect(
@@ -338,11 +342,13 @@ for (const [runtime, factory] of factories) {
         db.drizzle,
         baseInput,
         boundary('09:10', '2026-08-27T09:10:00.900Z'),
+        false,
       )
       await startTimeEntry(
         db.drizzle,
         { ...baseInput, taskId: 2, taskAssignmentId: 2 },
         boundary('09:10', '2026-08-27T09:10:01.100Z'),
+        false,
       )
       expect(
         await db.rows<{ seconds: number }>(
@@ -373,6 +379,7 @@ for (const [runtime, factory] of factories) {
         stopped.id,
         boundary('10:00', '2026-08-27T10:00:00.000Z'),
         false,
+        false,
       )
       expect(restarted.secondsWithoutTimer).toBe(120)
       const finalized = await stopTimeEntry(
@@ -393,7 +400,12 @@ for (const [runtime, factory] of factories) {
       const db = await setup('duration')
 
       await expect(
-        startTimeEntry(db.drizzle, baseInput, boundary('09:00', '2026-08-27T09:00:00.0001Z')),
+        startTimeEntry(
+          db.drizzle,
+          baseInput,
+          boundary('09:00', '2026-08-27T09:00:00.0001Z'),
+          false,
+        ),
       ).rejects.toThrow()
       expect(() =>
         elapsedDurationSeconds(0, '2026-08-27T09:00:00.1234Z', '2026-08-27T09:00:01.000Z'),
@@ -442,6 +454,7 @@ for (const [runtime, factory] of factories) {
           db.drizzle,
           baseInput,
           boundary(`${hour}:00`, `2026-08-27T${hour}:00:00.000Z`),
+          false,
         )
         await db.run(
           `UPDATE time_entries
@@ -478,6 +491,7 @@ for (const [runtime, factory] of factories) {
           db.drizzle,
           baseInput,
           boundary(`${hour}:00`, `2026-08-27T${hour}:00:00.000Z`),
+          false,
         )
         await db.run(
           `UPDATE time_entries
@@ -493,6 +507,7 @@ for (const [runtime, factory] of factories) {
           db.drizzle,
           { ...baseInput, taskId: 2, taskAssignmentId: 2 },
           boundary(`${hour}:00`, `2026-08-27T${hour}:00:01.000Z`),
+          false,
         )
         expect(
           await db.rows<{
@@ -528,6 +543,7 @@ for (const [runtime, factory] of factories) {
         db.drizzle,
         baseInput,
         boundary('09:00', '2026-08-27T09:00:00.000Z'),
+        false,
       )
 
       await expect(
@@ -562,6 +578,7 @@ for (const [runtime, factory] of factories) {
         db.drizzle,
         baseInput,
         boundary('10:00', '2026-08-27T10:00:00.000Z'),
+        false,
       )
       await expect(
         db.run(`UPDATE organizations SET time_entry_mode = 'duration' WHERE id = 1`),
@@ -608,6 +625,7 @@ for (const [runtime, factory] of factories) {
         db.drizzle,
         baseInput,
         boundary('09:00', '2026-08-27T09:00:00.000Z'),
+        false,
       )
       await db.run(
         `UPDATE time_entries
@@ -624,6 +642,7 @@ for (const [runtime, factory] of factories) {
           db.drizzle,
           { ...baseInput, taskId: 2, taskAssignmentId: 2 },
           boundary('09:00', '2026-08-27T09:00:01.000Z'),
+          false,
         ),
       ).rejects.toThrow()
       expect(
@@ -653,6 +672,7 @@ for (const [runtime, factory] of factories) {
           db.drizzle,
           stopped.id,
           boundary('09:00', '2026-08-27T09:00:01.000Z'),
+          false,
           false,
         ),
       ).rejects.toThrow()
@@ -688,11 +708,13 @@ for (const [runtime, factory] of factories) {
         db.drizzle,
         baseInput,
         boundary('09:00', '2026-08-27T09:00:00.000Z'),
+        false,
       )
       const second = await startTimeEntry(
         db.drizzle,
         { ...baseInput, taskId: 2, taskAssignmentId: 2 },
         boundary('09:30', '2026-08-27T09:30:00.000Z'),
+        false,
       )
       expect(
         await db.rows<{
@@ -740,6 +762,7 @@ for (const [runtime, factory] of factories) {
         first.id,
         boundary('11:00', '2026-08-27T11:00:00.000Z'),
         false,
+        false,
       )
       expect(restarted).toMatchObject({
         seconds: 1_800,
@@ -767,6 +790,7 @@ for (const [runtime, factory] of factories) {
         db.drizzle,
         { ...baseInput, taskId: 2, taskAssignmentId: 2 },
         boundary('12:00', '2026-08-27T12:00:00.000Z'),
+        false,
       )
       const stoppedAfterModeChange = await stopTimeEntry(
         db.drizzle,

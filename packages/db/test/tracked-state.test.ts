@@ -10,7 +10,12 @@ import {
   getTrackedState,
   type TrackedEntityReference,
 } from '../src/tracked-state.js'
-import { restartTimeEntry, stopTimeEntry, type TimeBoundary } from '../src/time-entries.js'
+import {
+  restartTimeEntry,
+  startTimeEntry,
+  stopTimeEntry,
+  type TimeBoundary,
+} from '../src/time-entries.js'
 
 type OrmDatabase = Parameters<typeof getTrackedState>[0]
 
@@ -18,6 +23,7 @@ interface TestDatabase {
   orm: OrmDatabase
   run(sql: string, ...params: unknown[]): Promise<void>
   rows<T>(sql: string, ...params: unknown[]): Promise<T[]>
+  interleaveAtomic(phase: 'before' | 'after', sql: string, ...params: unknown[]): OrmDatabase
   migrateAgain(): Promise<void>
   close(): Promise<void>
 }
@@ -25,16 +31,48 @@ interface TestDatabase {
 const timestamp = '2026-08-28T00:00:00.000Z'
 const modules = JSON.stringify({ expenses: true, invoices: true })
 
+const ormWithNativeClient = (orm: OrmDatabase, client: unknown): OrmDatabase =>
+  new Proxy(orm, {
+    get(target, property) {
+      if (property === '$client') return client
+      const value: unknown = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+
 const containerDatabase = (): TestDatabase => {
   const sqlite = new BetterSqlite3(':memory:')
   migrateContainer(sqlite)
+  const orm = createContainerDatabase(sqlite)
   return {
-    orm: createContainerDatabase(sqlite),
+    orm,
     run: async (statement, ...params) => {
       sqlite.prepare(statement).run(...params)
     },
     rows: async <T>(statement: string, ...params: unknown[]) =>
       sqlite.prepare(statement).all(...params) as T[],
+    interleaveAtomic: (phase, statement, ...params) => {
+      const client = new Proxy(sqlite, {
+        get(target, property) {
+          if (property === 'transaction') {
+            return (callback: () => unknown) => {
+              const transaction = target.transaction(callback)
+              return {
+                immediate: () => {
+                  if (phase === 'before') target.prepare(statement).run(...params)
+                  const result = transaction.immediate()
+                  if (phase === 'after') target.prepare(statement).run(...params)
+                  return result
+                },
+              }
+            }
+          }
+          const value: unknown = Reflect.get(target, property, target)
+          return typeof value === 'function' ? value.bind(target) : value
+        },
+      })
+      return ormWithNativeClient(orm, client)
+    },
     migrateAgain: async () => migrateContainer(sqlite),
     close: async () => {
       sqlite.close()
@@ -50,8 +88,9 @@ const d1Database = async (): Promise<TestDatabase> => {
   })
   const d1 = await miniflare.getD1Database('DB')
   await migrateD1(d1)
+  const orm = createD1Database(d1)
   return {
-    orm: createD1Database(d1),
+    orm,
     run: async (statement, ...params) => {
       await d1
         .prepare(statement)
@@ -65,6 +104,33 @@ const d1Database = async (): Promise<TestDatabase> => {
           .bind(...params)
           .all<T>()
       ).results,
+    interleaveAtomic: (phase, statement, ...params) => {
+      const client = new Proxy(d1, {
+        get(target, property) {
+          if (property === 'batch') {
+            return async (statements: D1PreparedStatement[]) => {
+              if (phase === 'before') {
+                await target
+                  .prepare(statement)
+                  .bind(...params)
+                  .run()
+              }
+              const results = await target.batch(statements)
+              if (phase === 'after') {
+                await target
+                  .prepare(statement)
+                  .bind(...params)
+                  .run()
+              }
+              return results
+            }
+          }
+          const value: unknown = Reflect.get(target, property, target)
+          return typeof value === 'function' ? value.bind(target) : value
+        },
+      })
+      return ormWithNativeClient(orm, client)
+    },
     migrateAgain: async () => migrateD1(d1),
     close: async () => miniflare.dispose(),
   }
@@ -384,6 +450,7 @@ for (const [runtime, factory] of factories) {
               1,
               boundary('10:00', '2026-08-28T10:00:00.000Z'),
               lockCase.policyLocked,
+              false,
             ),
           lockCase.reasonCode,
         )
@@ -435,20 +502,253 @@ for (const [runtime, factory] of factories) {
             executeAtomicTrackedMutation(
               db.orm,
               reference('expense', lockCase.policyLocked),
-              async (mutationPredicate) => {
-                const [updated] = await db.orm
+              (mutationPredicate) =>
+                db.orm
                   .update(expenses)
                   .set({ notes: 'after' })
                   .where(mutationPredicate)
-                  .returning()
-                return updated
-              },
+                  .returning(),
               () => new Error('expense changed concurrently'),
             ),
           lockCase.reasonCode,
         )
         expect(await expenseSnapshot()).toEqual(before)
       }
+    })
+
+    it('[unit] rejects locked trigger-driven timer replacement without changing either entry', async () => {
+      const db = await setup()
+      const startInput = {
+        userId: 1,
+        projectId: 1,
+        taskId: 1,
+        userAssignmentId: 1,
+        taskAssignmentId: 1,
+        notes: 'replacement',
+      }
+      const snapshot = async () =>
+        db.rows<Record<string, unknown>>(`SELECT * FROM time_entries ORDER BY id`)
+      const expectLocked = async (mutation: () => Promise<unknown>, reasonCode: string) => {
+        let caught: unknown
+        try {
+          await mutation()
+        } catch (error) {
+          caught = error
+        }
+        expect(caught).toBeInstanceOf(TrackedMutationLockedError)
+        expect(caught).toMatchObject({ reasonCode })
+      }
+      const unlock = async () => {
+        await db.run(
+          `UPDATE time_entries
+           SET invoice_id = NULL, approval_status = 'unsubmitted',
+               timer_started_at = '2026-08-28T09:00:00.000Z',
+               started_time = NULL, ended_time = NULL
+           WHERE id = 1`,
+        )
+        await db.run(`UPDATE clients SET is_active = 1 WHERE id = 1`)
+        await db.run(`UPDATE projects SET is_active = 1 WHERE id = 1`)
+        await db.run(`UPDATE tasks SET is_active = 1 WHERE id = 1`)
+      }
+      const lockCases = [
+        {
+          reasonCode: 'invoiced',
+          policyLocked: false,
+          lock: () => db.run(`UPDATE time_entries SET invoice_id = 1 WHERE id = 1`),
+        },
+        {
+          reasonCode: 'approved',
+          policyLocked: false,
+          lock: () => db.run(`UPDATE time_entries SET approval_status = 'approved' WHERE id = 1`),
+        },
+        {
+          reasonCode: 'policy_locked',
+          policyLocked: true,
+          lock: async () => undefined,
+        },
+        {
+          reasonCode: 'client_archived',
+          policyLocked: false,
+          lock: () => db.run(`UPDATE clients SET is_active = 0 WHERE id = 1`),
+        },
+        {
+          reasonCode: 'project_archived',
+          policyLocked: false,
+          lock: () => db.run(`UPDATE projects SET is_active = 0 WHERE id = 1`),
+        },
+        {
+          reasonCode: 'task_archived',
+          policyLocked: false,
+          lock: () => db.run(`UPDATE tasks SET is_active = 0 WHERE id = 1`),
+        },
+      ] as const
+
+      for (const lockCase of lockCases) {
+        await unlock()
+        await lockCase.lock()
+        const before = await snapshot()
+        await expectLocked(
+          () =>
+            startTimeEntry(
+              db.orm,
+              startInput,
+              boundary('09:05', '2026-08-28T09:05:00.000Z'),
+              lockCase.policyLocked,
+            ),
+          lockCase.reasonCode,
+        )
+        expect(await snapshot()).toEqual(before)
+      }
+
+      await unlock()
+      await db.run(
+        `UPDATE time_entries
+         SET timer_started_at = NULL, approval_status = 'unsubmitted', invoice_id = NULL
+         WHERE id = 1`,
+      )
+      await db.run(
+        `INSERT INTO time_entries
+          (id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+           spent_date, seconds, seconds_without_timer, rounded_seconds,
+           timer_started_at, notes, billable, approval_status, created_at, updated_at)
+         VALUES
+          (3, 1, 1, 1, 1, 1, '2026-08-28', 0, 0, 0,
+           '2026-08-28T09:30:00.000Z', 'current running', 1, 'approved', ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+      const beforeRestart = await snapshot()
+      await expectLocked(
+        () =>
+          restartTimeEntry(db.orm, 1, boundary('10:00', '2026-08-28T10:00:00.000Z'), false, false),
+        'approved',
+      )
+      expect(await snapshot()).toEqual(beforeRestart)
+    })
+
+    it('[unit] classifies denial from its atomic snapshot and returns its exact success row', async () => {
+      const db = await setup()
+      await db.run(
+        `UPDATE time_entries
+         SET timer_started_at = '2026-08-28T09:00:00.000Z',
+             approval_status = 'approved', updated_at = ?
+         WHERE id = 1`,
+        timestamp,
+      )
+      const unlockAfterDenial = db.interleaveAtomic(
+        'after',
+        `UPDATE time_entries SET approval_status = 'unsubmitted' WHERE id = 1`,
+      )
+      let caught: unknown
+      try {
+        await stopTimeEntry(
+          unlockAfterDenial,
+          1,
+          boundary('09:05', '2026-08-28T09:05:00.000Z'),
+          false,
+        )
+      } catch (error) {
+        caught = error
+      }
+      expect(caught).toBeInstanceOf(TrackedMutationLockedError)
+      expect(caught).toMatchObject({ reasonCode: 'approved' })
+      expect(
+        await db.rows<Record<string, unknown>>(
+          `SELECT seconds, seconds_without_timer, timer_started_at, updated_at
+           FROM time_entries WHERE id = 1`,
+        ),
+      ).toEqual([
+        {
+          seconds: 60,
+          seconds_without_timer: 60,
+          timer_started_at: '2026-08-28T09:00:00.000Z',
+          updated_at: timestamp,
+        },
+      ])
+
+      const mutateAfterSuccess = db.interleaveAtomic(
+        'after',
+        `UPDATE time_entries SET notes = 'later writer' WHERE id = 1`,
+      )
+      const returned = await stopTimeEntry(
+        mutateAfterSuccess,
+        1,
+        boundary('09:05', '2026-08-28T09:05:00.000Z'),
+        false,
+      )
+      expect(returned).toMatchObject({ notes: 'time before', timerStartedAt: null, seconds: 360 })
+      expect(
+        await db.rows<{ notes: string }>(`SELECT notes FROM time_entries WHERE id = 1`),
+      ).toEqual([{ notes: 'later writer' }])
+    })
+
+    it('[unit] rejects stale stop and restart checkpoints with no additional mutation', async () => {
+      const db = await setup()
+      await db.run(
+        `UPDATE time_entries
+         SET timer_started_at = '2026-08-28T09:00:00.000Z', updated_at = ?
+         WHERE id = 1`,
+        timestamp,
+      )
+      const staleStop = db.interleaveAtomic(
+        'before',
+        `UPDATE time_entries
+         SET timer_started_at = '2026-08-28T09:02:00.000Z', updated_at = '2026-08-28T09:02:00.000Z'
+         WHERE id = 1`,
+      )
+      await expect(
+        stopTimeEntry(staleStop, 1, boundary('09:05', '2026-08-28T09:05:00.000Z'), false),
+      ).rejects.toThrow('time entry 1 stopped concurrently')
+      expect(
+        await db.rows<Record<string, unknown>>(
+          `SELECT seconds, seconds_without_timer, timer_started_at, updated_at
+           FROM time_entries WHERE id = 1`,
+        ),
+      ).toEqual([
+        {
+          seconds: 60,
+          seconds_without_timer: 60,
+          timer_started_at: '2026-08-28T09:02:00.000Z',
+          updated_at: '2026-08-28T09:02:00.000Z',
+        },
+      ])
+
+      await db.run(
+        `UPDATE time_entries
+         SET timer_started_at = NULL, seconds = 60, seconds_without_timer = 60,
+             updated_at = ?
+         WHERE id = 1`,
+        timestamp,
+      )
+      const staleRestart = db.interleaveAtomic(
+        'before',
+        `UPDATE time_entries
+         SET seconds = 120, seconds_without_timer = 120,
+             updated_at = '2026-08-28T09:30:00.000Z'
+         WHERE id = 1`,
+      )
+      await expect(
+        restartTimeEntry(
+          staleRestart,
+          1,
+          boundary('10:00', '2026-08-28T10:00:00.000Z'),
+          false,
+          false,
+        ),
+      ).rejects.toThrow('time entry 1 could not be restarted')
+      expect(
+        await db.rows<Record<string, unknown>>(
+          `SELECT seconds, seconds_without_timer, timer_started_at, updated_at
+           FROM time_entries WHERE id = 1`,
+        ),
+      ).toEqual([
+        {
+          seconds: 120,
+          seconds_without_timer: 120,
+          timer_started_at: null,
+          updated_at: '2026-08-28T09:30:00.000Z',
+        },
+      ])
     })
   })
 }
