@@ -815,7 +815,12 @@ for (const [runtime, factory] of factories) {
       await db.migrateAgain()
       expect(
         await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id`),
-      ).toEqual([{ id: '0000_org_people' }, { id: '0001_clients' }, { id: '0002_projects_time' }])
+      ).toEqual([
+        { id: '0000_org_people' },
+        { id: '0001_clients' },
+        { id: '0002_projects_time' },
+        { id: '0003_rate_resolver' },
+      ])
       expect(
         await db.rows<{ applied_at: string }>(
           `SELECT applied_at FROM _ezacto_migrations WHERE id = '0000_org_people'`,
@@ -834,7 +839,12 @@ for (const [runtime, factory] of factories) {
       await db.migrateAgain()
       expect(
         await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id`),
-      ).toEqual([{ id: '0000_org_people' }, { id: '0001_clients' }, { id: '0002_projects_time' }])
+      ).toEqual([
+        { id: '0000_org_people' },
+        { id: '0001_clients' },
+        { id: '0002_projects_time' },
+        { id: '0003_rate_resolver' },
+      ])
       expect(
         await db.rows<{ applied_at: string }>(
           `SELECT applied_at FROM _ezacto_migrations WHERE id = '0000_org_people'`,
@@ -871,7 +881,12 @@ for (const [runtime, factory] of factories) {
       await db.migrateAgain()
       expect(
         await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id`),
-      ).toEqual([{ id: '0000_org_people' }, { id: '0001_clients' }, { id: '0002_projects_time' }])
+      ).toEqual([
+        { id: '0000_org_people' },
+        { id: '0001_clients' },
+        { id: '0002_projects_time' },
+        { id: '0003_rate_resolver' },
+      ])
       expect(
         await db.rows<{ name: string }>(
           `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('clients', 'contacts') ORDER BY name`,
@@ -884,7 +899,12 @@ for (const [runtime, factory] of factories) {
       await db.migrateAgain()
       expect(
         await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id`),
-      ).toEqual([{ id: '0000_org_people' }, { id: '0001_clients' }, { id: '0002_projects_time' }])
+      ).toEqual([
+        { id: '0000_org_people' },
+        { id: '0001_clients' },
+        { id: '0002_projects_time' },
+        { id: '0003_rate_resolver' },
+      ])
     })
   })
 }
@@ -954,6 +974,8 @@ describe('package contents', () => {
           'dist/schema.js',
           'dist/migrations/0001_clients.js',
           'dist/migrations/0002_projects_time.js',
+          'dist/migrations/0003_rate_resolver.js',
+          'dist/rate-resolver.js',
         ]),
       )
     },

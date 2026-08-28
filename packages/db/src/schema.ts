@@ -718,3 +718,51 @@ export const timeEntries = sqliteTable(
     ),
   ],
 )
+
+export const timeEntryRateReprices = sqliteTable(
+  'time_entry_rate_reprices',
+  {
+    id: integer('id').primaryKey(),
+    timeEntryId: integer('time_entry_id')
+      .notNull()
+      .references(() => timeEntries.id, { onDelete: 'restrict' }),
+    previousBillableRateCents: integer('previous_billable_rate_cents'),
+    billableRateCents: integer('billable_rate_cents'),
+    previousCostRateCents: integer('previous_cost_rate_cents'),
+    costRateCents: integer('cost_rate_cents'),
+    reason: text('reason').notNull(),
+    repricedAt: text('repriced_at').notNull(),
+  },
+  (table) => [
+    index('time_entry_rate_reprices_entry_id').on(table.timeEntryId, table.id),
+    check(
+      'time_entry_rate_reprices_previous_billable_nonnegative',
+      sql`${table.previousBillableRateCents} is null or ${table.previousBillableRateCents} >= 0`,
+    ),
+    check(
+      'time_entry_rate_reprices_billable_nonnegative',
+      sql`${table.billableRateCents} is null or ${table.billableRateCents} >= 0`,
+    ),
+    check(
+      'time_entry_rate_reprices_previous_cost_nonnegative',
+      sql`${table.previousCostRateCents} is null or ${table.previousCostRateCents} >= 0`,
+    ),
+    check(
+      'time_entry_rate_reprices_cost_nonnegative',
+      sql`${table.costRateCents} is null or ${table.costRateCents} >= 0`,
+    ),
+    check(
+      'time_entry_rate_reprices_reason_present',
+      sql`length(trim(${table.reason})) between 1 and 500`,
+    ),
+    check(
+      'time_entry_rate_reprices_timestamp_canonical',
+      sql`unixepoch(${table.repricedAt}) is not null
+        and substr(${table.repricedAt}, 1, 19) = strftime('%Y-%m-%dT%H:%M:%S', ${table.repricedAt})
+        and cast(substr(${table.repricedAt}, 12, 2) as integer) between 0 and 23
+        and cast(substr(${table.repricedAt}, 15, 2) as integer) between 0 and 59
+        and cast(substr(${table.repricedAt}, 18, 2) as integer) between 0 and 59
+        and ${table.repricedAt} glob '????-??-??T??:??:??.[0-9][0-9][0-9]Z'`,
+    ),
+  ],
+)

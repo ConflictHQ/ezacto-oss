@@ -2,6 +2,7 @@ import { and, eq, isNotNull, isNull, or } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
+import { resolveEntryRates } from './rate-resolver.js'
 import { organizations, taskAssignments, timeEntries } from './schema.js'
 
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
@@ -217,21 +218,31 @@ const runningWhere = or(
   and(isNotNull(timeEntries.startedTime), isNull(timeEntries.endedTime)),
 )
 
-const valuesFromBase = async (database: Database, input: TimeEntryBaseInput) => ({
-  harvestId: input.harvestId ?? null,
-  userId: input.userId,
-  projectId: input.projectId,
-  taskId: input.taskId,
-  userAssignmentId: input.userAssignmentId,
-  taskAssignmentId: input.taskAssignmentId,
-  notes: input.notes ?? null,
-  billable: await getTaskBillable(database, input.taskAssignmentId),
-  budgeted: input.budgeted ?? false,
-  billableRateCents: null,
-  costRateCents: null,
-  externalRef: input.externalRef ?? null,
-  calendarEventRef: input.calendarEventRef ?? null,
-})
+const valuesFromBase = async (
+  database: Database,
+  input: TimeEntryBaseInput,
+  spentDate: string,
+) => {
+  const [billable, rates] = await Promise.all([
+    getTaskBillable(database, input.taskAssignmentId),
+    resolveEntryRates(database, { ...input, spentDate }),
+  ])
+  return {
+    harvestId: input.harvestId ?? null,
+    userId: input.userId,
+    projectId: input.projectId,
+    taskId: input.taskId,
+    userAssignmentId: input.userAssignmentId,
+    taskAssignmentId: input.taskAssignmentId,
+    notes: input.notes ?? null,
+    billable,
+    budgeted: input.budgeted ?? false,
+    billableRateCents: rates.billableRateCents,
+    costRateCents: rates.costRateCents,
+    externalRef: input.externalRef ?? null,
+    calendarEventRef: input.calendarEventRef ?? null,
+  }
+}
 
 export const startTimeEntry = async (
   database: Database,
@@ -240,7 +251,7 @@ export const startTimeEntry = async (
 ): Promise<TimeEntry> => {
   validateBoundary(boundary)
   const settings = await getTimeSettings(database)
-  const base = await valuesFromBase(database, input)
+  const base = await valuesFromBase(database, input, boundary.date)
   const [created] = await database
     .insert(timeEntries)
     .values({
@@ -294,7 +305,7 @@ export const createStoppedTimeEntry = async (
       true,
     )
   }
-  const base = await valuesFromBase(database, input)
+  const base = await valuesFromBase(database, input, input.spentDate)
   const [created] = await database
     .insert(timeEntries)
     .values({

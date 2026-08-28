@@ -963,6 +963,7 @@ for (const [runtime, factory] of factories) {
         '0000_org_people',
         '0001_clients',
         '0002_projects_time',
+        '0003_rate_resolver',
       ])
       expect(firstLedger.slice(0, 2).map(({ applied_at: appliedAt }) => appliedAt)).toEqual([
         originalAppliedAt,
@@ -1022,7 +1023,12 @@ for (const [runtime, factory] of factories) {
       await db.migrateAgain()
       expect(
         await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id`),
-      ).toEqual([{ id: '0000_org_people' }, { id: '0001_clients' }, { id: '0002_projects_time' }])
+      ).toEqual([
+        { id: '0000_org_people' },
+        { id: '0001_clients' },
+        { id: '0002_projects_time' },
+        { id: '0003_rate_resolver' },
+      ])
       expect(
         await db.rows<{ name: string }>(
           `SELECT name FROM sqlite_master
