@@ -4,7 +4,7 @@
 import { mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 interface SnapshotLockOwner {
   pid: number
@@ -17,6 +17,10 @@ interface SnapshotLockOwner {
 export interface SnapshotLock {
   path: string
   token: string
+}
+
+interface SnapshotLockHooks {
+  beforeStaleRename?: () => Promise<void>
 }
 
 const OWNER_FILE = 'owner.json'
@@ -72,6 +76,7 @@ const createLock = async (
 export const acquireSnapshotLock = async (
   snapshotDir: string,
   command: SnapshotLockOwner['command'],
+  hooks: SnapshotLockHooks = {},
 ): Promise<SnapshotLock> => {
   const path = join(snapshotDir, '.sync.lock')
   await mkdir(snapshotDir, { recursive: true })
@@ -104,22 +109,22 @@ export const acquireSnapshotLock = async (
     throw new Error(`snapshot is locked by ${owner.command} (pid ${owner.pid}). Wait for it to finish.`)
   }
 
-  // Atomically move the stale directory out of the lock name. Exactly one
-  // contender can win this rename; unlike rm+mkdir, a loser can never delete a
-  // new live lock the winner has already created.
-  const quarantine = `${path}.stale-${randomUUID()}`
+  // Atomically move this exact stale generation out of the lock name. The
+  // generation-specific tombstone deliberately remains beside the snapshot:
+  // a contender that read the old owner and pauses until after a winner creates
+  // a new lock still cannot rename that new lock over the non-empty tombstone.
+  // Removing it here reintroduces that ABA race.
+  const staleGeneration = createHash('sha256').update(owner.token).digest('hex')
+  const quarantine = `${path}.stale-${staleGeneration}`
+  await hooks.beforeStaleRename?.()
   try {
     await rename(path, quarantine)
     return await createLock(path, command)
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      // Another contender claimed the stale directory. Read the lock it made
-      // (or its own in-progress owner) rather than acting on the stale state.
-      return acquireSnapshotLock(snapshotDir, command)
+    if (['ENOENT', 'EEXIST', 'ENOTEMPTY'].includes((err as NodeJS.ErrnoException).code ?? '')) {
+      throw new Error(`snapshot is locked by another process reclaiming ${path}`)
     }
     throw err
-  } finally {
-    await rm(quarantine, { recursive: true, force: true })
   }
 }
 
