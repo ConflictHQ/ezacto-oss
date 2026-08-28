@@ -1617,6 +1617,11 @@ export const timeEntries = sqliteTable(
     budgeted: integer('budgeted', { mode: 'boolean' }).notNull().default(false),
     billableRateCents: integer('billable_rate_cents'),
     costRateCents: integer('cost_rate_cents'),
+    approvalStatus: text('approval_status', {
+      enum: ['unsubmitted', 'submitted', 'approved'],
+    })
+      .notNull()
+      .default('unsubmitted'),
     invoiceId: integer('invoice_id').references(() => invoices.id, { onDelete: 'restrict' }),
     externalRef: text('external_ref', { mode: 'json' }).$type<Record<string, unknown>>(),
     calendarEventRef: text('calendar_event_ref', { mode: 'json' }).$type<Record<string, unknown>>(),
@@ -1660,6 +1665,10 @@ export const timeEntries = sqliteTable(
     check(
       'time_entries_cost_rate_nonnegative',
       sql`${table.costRateCents} is null or ${table.costRateCents} >= 0`,
+    ),
+    check(
+      'time_entries_approval_status_valid',
+      sql`${table.approvalStatus} in ('unsubmitted', 'submitted', 'approved')`,
     ),
     check(
       'time_entries_external_ref_json',
