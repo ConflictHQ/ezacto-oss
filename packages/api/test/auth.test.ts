@@ -160,6 +160,41 @@ describe('API authentication middleware', () => {
     })
   })
 
+  it('[api] returns a credential-safe whoami identity for token and session auth', async () => {
+    const app = createAuthApp()
+    const viaToken = await app.request('/api/v1/whoami', {
+      headers: { authorization: `Bearer ${bearer}` },
+    })
+    expect(viaToken.status).toBe(200)
+    expect(viaToken.headers.get('cache-control')).toBe('no-store')
+    expect(await viaToken.json()).toEqual({
+      data: {
+        user_id: 42,
+        profile: 'accounting',
+        manager_grants: [],
+        authentication: {
+          kind: 'token',
+          token_id: 1,
+          scopes: ['reports:read'],
+        },
+      },
+      links: { self: '/api/v1/whoami' },
+    })
+
+    const viaSession = await app.request('/api/v1/whoami', {
+      headers: { cookie: 'session=user' },
+    })
+    expect(await viaSession.json()).toEqual({
+      data: {
+        user_id: 42,
+        profile: 'administrator',
+        manager_grants: [],
+        authentication: { kind: 'session' },
+      },
+      links: { self: '/api/v1/whoami' },
+    })
+  })
+
   it.each(['bearer', 'BEARER', 'BeArEr'])(
     '[api] accepts the case-insensitive %s authentication scheme',
     async (scheme) => {

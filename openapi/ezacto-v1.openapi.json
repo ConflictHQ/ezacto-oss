@@ -57,6 +57,52 @@
         "x-ezacto-generate-client": true
       }
     },
+    "/api/v1/whoami": {
+      "get": {
+        "operationId": "getWhoami",
+        "summary": "Get the authenticated user and credential authority",
+        "tags": [
+          "identity"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WhoamiEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/whoami",
+        "x-ezacto-generate-client": true
+      }
+    },
     "/api/v1/api-tokens": {
       "get": {
         "operationId": "listApiTokens",
@@ -4771,6 +4817,117 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/Service"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TokenAuthentication": {
+        "type": "object",
+        "required": [
+          "kind",
+          "token_id",
+          "scopes"
+        ],
+        "properties": {
+          "kind": {
+            "const": "token"
+          },
+          "token_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "time_entries:read",
+                "time_entries:write",
+                "projects:read",
+                "projects:write",
+                "clients:read",
+                "clients:write",
+                "invoices:read",
+                "invoices:write",
+                "expenses:read",
+                "expenses:write",
+                "team:read",
+                "schedule:read",
+                "schedule:write",
+                "reports:read"
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "SessionAuthentication": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "const": "session"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Whoami": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "profile",
+          "manager_grants",
+          "authentication"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "profile": {
+            "type": "string",
+            "enum": [
+              "member",
+              "project_manager",
+              "people_admin",
+              "accounting",
+              "executive_manager",
+              "administrator"
+            ]
+          },
+          "manager_grants": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "authentication": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TokenAuthentication"
+              },
+              {
+                "$ref": "#/components/schemas/SessionAuthentication"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "WhoamiEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Whoami"
           },
           "links": {
             "$ref": "#/components/schemas/Links"

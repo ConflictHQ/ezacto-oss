@@ -41,6 +41,28 @@ export type ServiceEnvelope = {
   "links": Links;
 };
 
+export type TokenAuthentication = {
+  "kind": "token";
+  "token_id": number;
+  "scopes": Array<"time_entries:read" | "time_entries:write" | "projects:read" | "projects:write" | "clients:read" | "clients:write" | "invoices:read" | "invoices:write" | "expenses:read" | "expenses:write" | "team:read" | "schedule:read" | "schedule:write" | "reports:read">;
+};
+
+export type SessionAuthentication = {
+  "kind": "session";
+};
+
+export type Whoami = {
+  "user_id": number;
+  "profile": "member" | "project_manager" | "people_admin" | "accounting" | "executive_manager" | "administrator";
+  "manager_grants": Array<string>;
+  "authentication": TokenAuthentication | SessionAuthentication;
+};
+
+export type WhoamiEnvelope = {
+  "data": Whoami;
+  "links": Links;
+};
+
 export type GeneralResource = {
   "id": number;
   "created_at": string;
@@ -344,6 +366,13 @@ export class EzactoClient {
 
   async getApiRoot(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ServiceEnvelope> {
     return this.request<ServiceEnvelope>("GET", "/api/v1", {
+      signal: args.signal,
+      headers: args.headers,
+    });
+  }
+
+  async getWhoami(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<WhoamiEnvelope> {
+    return this.request<WhoamiEnvelope>("GET", "/api/v1/whoami", {
       signal: args.signal,
       headers: args.headers,
     });
