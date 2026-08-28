@@ -22,6 +22,8 @@ describe("core package contents", () => {
         "dist/invoice-state.d.ts",
         "dist/rates.js",
         "dist/rates.d.ts",
+        "dist/tracked-state.js",
+        "dist/tracked-state.d.ts",
       ]),
     );
   }, 20_000);

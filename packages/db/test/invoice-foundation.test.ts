@@ -626,16 +626,27 @@ for (const [runtime, factory] of factories) {
         '0006_invoice_state_events',
         '0007_expenses',
         '0008_retainer_ledger',
+        '0009_three_axis_state',
         '0010_recurring_invoices',
       ])
       expect(
         firstLedger.slice(0, 4).every(({ applied_at: appliedAt }) => appliedAt === timestamp),
       ).toBe(true)
       expect(
-        await db.rows<{ id: number; harvest_id: string; invoice_id: number | null }>(
-          `SELECT id, harvest_id, invoice_id FROM time_entries`,
-        ),
-      ).toEqual([{ id: 1, harvest_id: 'legacy-entry', invoice_id: null }])
+        await db.rows<{
+          id: number
+          harvest_id: string
+          invoice_id: number | null
+          approval_status: string
+        }>(`SELECT id, harvest_id, invoice_id, approval_status FROM time_entries`),
+      ).toEqual([
+        {
+          id: 1,
+          harvest_id: 'legacy-entry',
+          invoice_id: null,
+          approval_status: 'unsubmitted',
+        },
+      ])
       expect(
         await db.rows<{ id: number; name: string; client_id: number }>(
           `SELECT id, name, client_id FROM projects ORDER BY id`,
