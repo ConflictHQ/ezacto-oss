@@ -3,6 +3,7 @@ import {
   createApiTokenStore,
   createD1Database,
   createGeneralResourceRepository,
+  createD1EmailLogStore,
   createD1PasswordAuthService,
   createD1SessionStore,
   DrizzleTrackedResourceRepository,
@@ -10,8 +11,10 @@ import {
   type TrackedPolicyResolver,
 } from '@ezacto/db/d1'
 import { createApiSessionService } from '@ezacto/api'
+import type { HttpEmailProvider } from '@ezacto/mailer'
 import type { RuntimeServices } from './app.js'
 import type { WorkerEnv } from './app.js'
+import { createWorkerAuthMailer } from './email-queue.js'
 
 const cursorSecretPattern = /^[A-Za-z0-9_-]+$/
 const cursorSecretBytes = 32
@@ -102,12 +105,20 @@ const organizationPolicy: TrackedPolicyResolver = {
 
 export const createRuntimeServices = async (
   env: WorkerEnv,
+  options: { emailProvider?: HttpEmailProvider } = {},
 ): Promise<RuntimeServices> => {
   const database = requireDatabase(env)
   const cursorSigningKey = parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY)
   await ensureRuntimeDatabaseReady(database)
   const drizzle = createD1Database(database)
   const sessions = createApiSessionService(createD1SessionStore(database))
+  const emailLog = createD1EmailLogStore(database)
+  const authMailer =
+    env.EMAIL_QUEUE === undefined ||
+    env.APP_ORIGIN === undefined ||
+    options.emailProvider === undefined
+      ? undefined
+      : createWorkerAuthMailer(env.EMAIL_QUEUE, emailLog, env.APP_ORIGIN)
   return {
     bootstrap: (input) => bootstrapInstanceD1(database, input),
     tokens: createApiTokenStore(drizzle),
@@ -119,5 +130,7 @@ export const createRuntimeServices = async (
     cursorSigningKey,
     passwordAuth: createD1PasswordAuthService(database),
     sessions,
+    emailLog,
+    ...(authMailer === undefined ? {} : { authMailer }),
   }
 }

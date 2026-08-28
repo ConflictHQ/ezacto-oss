@@ -49,6 +49,10 @@ export {
   type CursorWindow,
 } from './pagination.js'
 export {
+  installEmailLogRoutes,
+  type EmailLogReader,
+} from './email-log.js'
+export {
   installPasswordAuthRoutes,
   type AuthDelivery,
   type AuthMailer,

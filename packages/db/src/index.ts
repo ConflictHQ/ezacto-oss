@@ -1,6 +1,7 @@
 export * from './adapters.js'
 export * from './api-tokens.js'
 export * from './expenses.js'
+export * from './email-log.js'
 export * from './general-resources.js'
 export * from './identity.js'
 export * from './instance-bootstrap.js'

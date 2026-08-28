@@ -4,6 +4,7 @@ import {
   apiContractOperations,
   createApiApp,
   generateOpenApiDocument,
+  installEmailLogRoutes,
   installGeneralResourceRoutes,
   installPasswordAuthRoutes,
   installSessionRoutes,
@@ -31,6 +32,7 @@ const passwordAuth = new Proxy(
 ) as PasswordAuthService;
 const authMailer = new Proxy({}, { get: () => unavailable }) as AuthMailer;
 const sessions = new Proxy({}, { get: () => unavailable }) as ApiSessionService;
+const emailLog = { list: unavailable };
 
 const documentedApp = () =>
   createApiApp({
@@ -45,6 +47,7 @@ const documentedApp = () =>
     },
     installApi: (api) => {
       installSessionRoutes(api, sessions);
+      installEmailLogRoutes(api, emailLog);
       installGeneralResourceRoutes(api, {
         repository: generalRepository,
         cursorSigningKey: new Uint8Array(32),

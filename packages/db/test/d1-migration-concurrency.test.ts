@@ -36,6 +36,7 @@ describe('D1 migration concurrency', () => {
       '0012_instance_bootstrap',
       '0013_password_auth',
       '0014_sessions',
+      '0016_email_log',
     ])
     expect(
       await database.prepare('SELECT count(*) AS count FROM api_tokens').first<{ count: number }>(),

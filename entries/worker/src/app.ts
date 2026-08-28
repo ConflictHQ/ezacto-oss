@@ -2,6 +2,7 @@ import {
   createApiApp,
   ApiError,
   generateOpenApiDocument,
+  installEmailLogRoutes,
   installGeneralResourceRoutes,
   installPasswordAuthRoutes,
   installSessionRoutes,
@@ -21,6 +22,7 @@ import {
   type InstanceBootstrapResult,
 } from '@ezacto/db/d1'
 import { renderAppShell, webAssets } from '@ezacto/web'
+import type { EmailLogStore, QueuedEmailJob } from '@ezacto/mailer'
 
 /** Worker bindings stay entry-owned; the shared API package is runtime-agnostic. */
 export type Env = {
@@ -31,6 +33,9 @@ export type Env = {
 export type WorkerEnv = Env & {
   DB: D1Database
   API_CURSOR_SIGNING_KEY: string
+  /** Bound together with a provider implementation; absent deployments fail auth email closed. */
+  EMAIL_QUEUE?: Queue<QueuedEmailJob>
+  APP_ORIGIN?: string
   /** Temporary Worker secret installed only while the operator workflow runs. */
   EZACTO_BOOTSTRAP_TOKEN?: string
 }
@@ -43,6 +48,7 @@ export interface RuntimeServices {
   cursorSigningKey: Uint8Array
   passwordAuth: PasswordAuthService
   sessions: ApiSessionService
+  emailLog: EmailLogStore
   authMailer?: AuthMailer
 }
 
@@ -64,6 +70,7 @@ export const createApp = (services?: RuntimeServices) =>
           },
           installApi: (api) => {
             installSessionRoutes(api, services.sessions)
+            installEmailLogRoutes(api, services.emailLog)
             installGeneralResourceRoutes(api, {
               repository: services.generalResources,
               cursorSigningKey: services.cursorSigningKey,
