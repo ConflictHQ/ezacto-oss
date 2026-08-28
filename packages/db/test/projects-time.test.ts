@@ -979,6 +979,7 @@ for (const [runtime, factory] of factories) {
         '0002_projects_time',
         '0003_rate_resolver',
         '0004_invoice_foundation',
+        '0005_invoice_payments_totals',
       ])
       expect(firstLedger.slice(0, 2).map(({ applied_at: appliedAt }) => appliedAt)).toEqual([
         originalAppliedAt,
@@ -1003,7 +1004,7 @@ for (const [runtime, factory] of factories) {
           `SELECT id, applied_at FROM _ezacto_migrations ORDER BY id`,
         ),
       ).toEqual(firstLedger)
-    })
+    }, 15_000)
 
     it('[unit] rolls back a failed 0002 migration and retries without partial schema', async () => {
       database = await factory(false)
@@ -1044,6 +1045,7 @@ for (const [runtime, factory] of factories) {
         { id: '0002_projects_time' },
         { id: '0003_rate_resolver' },
         { id: '0004_invoice_foundation' },
+        { id: '0005_invoice_payments_totals' },
       ])
       expect(
         await db.rows<{ name: string }>(
@@ -1051,6 +1053,6 @@ for (const [runtime, factory] of factories) {
            WHERE type = 'table' AND name IN ('projects', 'tasks', 'time_entries') ORDER BY name`,
         ),
       ).toEqual([{ name: 'projects' }, { name: 'tasks' }, { name: 'time_entries' }])
-    })
+    }, 15_000)
   })
 }

@@ -1,4 +1,5 @@
 export * from './adapters.js'
+export * from './invoice-payments.js'
 export * from './migrate.js'
 export * from './operations.js'
 export * from './rate-resolver.js'

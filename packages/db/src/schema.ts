@@ -33,6 +33,15 @@ const canonicalTimestamp = (column: AnySQLiteColumn) => sql`unixepoch(${column})
 const nullableCanonicalTimestamp = (column: AnySQLiteColumn) =>
   sql`${column} is null or (${canonicalTimestamp(column)})`
 
+export type InvoicePaymentOption =
+  | 'stripe_checkout'
+  | 'paypal_checkout'
+  | 'quickbooks_checkout'
+  | 'mercury_transfer'
+  | 'wise_transfer'
+  | 'bill_com_checkout'
+  | 'bill_com_transfer'
+
 export const organizations = sqliteTable(
   'organizations',
   {
@@ -511,12 +520,36 @@ export const invoices = sqliteTable(
       .default(sql`lower(hex(randomblob(32)))`),
     projectId: integer('project_id').references(() => projects.id, { onDelete: 'restrict' }),
     reminderPolicy: text('reminder_policy', { mode: 'json' }).$type<Record<string, unknown>>(),
+    taxRatePpm: integer('tax_rate_ppm'),
+    tax2RatePpm: integer('tax2_rate_ppm'),
+    discountRatePpm: integer('discount_rate_ppm'),
+    amountCents: integer('amount_cents').notNull().default(0),
+    dueAmountCents: integer('due_amount_cents').notNull().default(0),
+    taxAmountCents: integer('tax_amount_cents').notNull().default(0),
+    tax2AmountCents: integer('tax2_amount_cents').notNull().default(0),
+    discountAmountCents: integer('discount_amount_cents').notNull().default(0),
+    writtenOffCents: integer('written_off_cents').notNull().default(0),
+    paymentOptions: text('payment_options', { mode: 'json' })
+      .$type<InvoicePaymentOption[]>()
+      .notNull()
+      .default([]),
+    referenceToken: text('reference_token'),
+    sourceAmountCents: integer('source_amount_cents'),
+    sourceDueAmountCents: integer('source_due_amount_cents'),
+    sourceTaxAmountCents: integer('source_tax_amount_cents'),
+    sourceTax2AmountCents: integer('source_tax2_amount_cents'),
+    sourceDiscountAmountCents: integer('source_discount_amount_cents'),
+    sourcePaymentOptions: text('source_payment_options', { mode: 'json' }).$type<string[]>(),
+    sourceUpdatedAt: text('source_updated_at'),
     ...timestamps,
   },
   (table) => [
     uniqueIndex('invoices_harvest_id_unique').on(table.harvestId),
     uniqueIndex('invoices_number_unique').on(table.number),
     uniqueIndex('invoices_client_key_unique').on(table.clientKey),
+    uniqueIndex('invoices_reference_token_unique')
+      .on(table.referenceToken)
+      .where(sql`${table.referenceToken} is not null`),
     index('invoices_client_id').on(table.clientId),
     index('invoices_project_id').on(table.projectId),
     index('invoices_created_by_user_id').on(table.createdByUserId),
@@ -545,6 +578,75 @@ export const invoices = sqliteTable(
     check('invoices_closed_at_canonical', nullableCanonicalTimestamp(table.closedAt)),
     check('invoices_created_at_canonical', canonicalTimestamp(table.createdAt)),
     check('invoices_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+    check(
+      'invoices_tax_rate_ppm_range',
+      sql`${table.taxRatePpm} is null or ${table.taxRatePpm} between 0 and 1000000`,
+    ),
+    check(
+      'invoices_tax2_rate_ppm_range',
+      sql`${table.tax2RatePpm} is null or ${table.tax2RatePpm} between 0 and 1000000`,
+    ),
+    check(
+      'invoices_discount_rate_ppm_range',
+      sql`${table.discountRatePpm} is null or ${table.discountRatePpm} between 0 and 1000000`,
+    ),
+    check('invoices_amount_bound', sql`abs(${table.amountCents}) <= 9000000000000`),
+    check('invoices_due_amount_bound', sql`abs(${table.dueAmountCents}) <= 9000000000000`),
+    check('invoices_tax_amount_bound', sql`abs(${table.taxAmountCents}) <= 9000000000000`),
+    check('invoices_tax2_amount_bound', sql`abs(${table.tax2AmountCents}) <= 9000000000000`),
+    check(
+      'invoices_discount_amount_bound',
+      sql`abs(${table.discountAmountCents}) <= 9000000000000`,
+    ),
+    check(
+      'invoices_written_off_bound',
+      sql`${table.writtenOffCents} between 0 and 9000000000000`,
+    ),
+    check(
+      'invoices_payment_options_json',
+      sql`json_valid(${table.paymentOptions}) and json_type(${table.paymentOptions}) = 'array'`,
+    ),
+    check(
+      'invoices_reference_token_format',
+      sql`${table.referenceToken} is null or (
+        length(${table.referenceToken}) = 15
+        and substr(${table.referenceToken}, 1, 3) = 'EZ-'
+        and substr(${table.referenceToken}, 4) not glob '*[^0-9A-F]*'
+      )`,
+    ),
+    check(
+      'invoices_source_payment_options_json',
+      sql`${table.sourcePaymentOptions} is null or (
+        json_valid(${table.sourcePaymentOptions})
+        and json_type(${table.sourcePaymentOptions}) = 'array'
+      )`,
+    ),
+    check(
+      'invoices_source_updated_at_canonical',
+      nullableCanonicalTimestamp(table.sourceUpdatedAt),
+    ),
+    check('invoices_source_amount_bound', sql`${table.sourceAmountCents} is null or abs(${table.sourceAmountCents}) <= 9000000000000`),
+    check('invoices_source_due_bound', sql`${table.sourceDueAmountCents} is null or abs(${table.sourceDueAmountCents}) <= 9000000000000`),
+    check('invoices_source_tax_bound', sql`${table.sourceTaxAmountCents} is null or abs(${table.sourceTaxAmountCents}) <= 9000000000000`),
+    check('invoices_source_tax2_bound', sql`${table.sourceTax2AmountCents} is null or abs(${table.sourceTax2AmountCents}) <= 9000000000000`),
+    check('invoices_source_discount_bound', sql`${table.sourceDiscountAmountCents} is null or abs(${table.sourceDiscountAmountCents}) <= 9000000000000`),
+    check(
+      'invoices_source_observation_import_only',
+      sql`${table.harvestId} is not null or (
+        ${table.sourceAmountCents} is null and ${table.sourceDueAmountCents} is null
+        and ${table.sourceTaxAmountCents} is null and ${table.sourceTax2AmountCents} is null
+        and ${table.sourceDiscountAmountCents} is null and ${table.sourcePaymentOptions} is null
+        and ${table.sourceUpdatedAt} is null
+      )`,
+    ),
+    check(
+      'invoices_source_observation_timestamp',
+      sql`${table.sourceUpdatedAt} is not null or (
+        ${table.sourceAmountCents} is null and ${table.sourceDueAmountCents} is null
+        and ${table.sourceTaxAmountCents} is null and ${table.sourceTax2AmountCents} is null
+        and ${table.sourceDiscountAmountCents} is null and ${table.sourcePaymentOptions} is null
+      )`,
+    ),
   ],
 )
 
@@ -701,6 +803,296 @@ export const eventOutbox = sqliteTable(
     check('event_outbox_published_at_canonical', nullableCanonicalTimestamp(table.publishedAt)),
   ],
 )
+
+export const paymentProviderAccounts = sqliteTable(
+  'payment_provider_accounts',
+  {
+    id: integer('id').primaryKey(),
+    provider: text('provider', {
+      enum: ['stripe', 'paypal', 'quickbooks', 'mercury', 'wise', 'bill_com'],
+    }).notNull(),
+    providerShape: text('provider_shape', {
+      enum: ['checkout', 'reconciliation'],
+    }).notNull(),
+    externalAccountId: text('external_account_id').notNull(),
+    displayName: text('display_name'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('payment_provider_accounts_identity_unique').on(
+      table.provider,
+      table.providerShape,
+      table.externalAccountId,
+    ),
+    check(
+      'payment_provider_accounts_shape',
+      sql`(${table.provider} in ('stripe','paypal','quickbooks') and ${table.providerShape} = 'checkout')
+        or (${table.provider} in ('mercury','wise') and ${table.providerShape} = 'reconciliation')
+        or ${table.provider} = 'bill_com'`,
+    ),
+    check(
+      'payment_provider_accounts_external_id_nonempty',
+      sql`length(${table.externalAccountId}) > 0`,
+    ),
+    check('payment_provider_accounts_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('payment_provider_accounts_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+  ],
+)
+
+export const bankDeposits = sqliteTable(
+  'bank_deposits',
+  {
+    id: integer('id').primaryKey(),
+    providerAccountId: integer('provider_account_id')
+      .notNull()
+      .references(() => paymentProviderAccounts.id, { onDelete: 'restrict' }),
+    providerTransactionId: text('provider_transaction_id').notNull(),
+    currency: text('currency').notNull(),
+    postedAt: text('posted_at').notNull(),
+    amountCents: integer('amount_cents').notNull(),
+    memo: text('memo'),
+    counterparty: text('counterparty'),
+    matchState: text('match_state', {
+      enum: ['unmatched', 'suggested', 'confirmed'],
+    })
+      .notNull()
+      .default('unmatched'),
+    suggestedInvoiceId: integer('suggested_invoice_id').references(() => invoices.id, {
+      onDelete: 'restrict',
+    }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('bank_deposits_provider_transaction_unique').on(
+      table.providerAccountId,
+      table.providerTransactionId,
+    ),
+    index('bank_deposits_suggested_invoice_id').on(table.suggestedInvoiceId),
+    index('bank_deposits_match_posted_id').on(table.matchState, table.postedAt, table.id),
+    check('bank_deposits_provider_transaction_nonempty', sql`length(${table.providerTransactionId}) > 0`),
+    check(
+      'bank_deposits_currency',
+      sql`length(${table.currency}) = 3 and ${table.currency} = upper(${table.currency})
+        and ${table.currency} not glob '*[^A-Z]*'`,
+    ),
+    check(
+      'bank_deposits_amount_bound',
+      sql`${table.amountCents} between 1 and 9000000000000`,
+    ),
+    check(
+      'bank_deposits_match_shape',
+      sql`(${table.matchState} = 'unmatched' and ${table.suggestedInvoiceId} is null)
+        or (${table.matchState} = 'suggested' and ${table.suggestedInvoiceId} is not null)
+        or ${table.matchState} = 'confirmed'`,
+    ),
+    check('bank_deposits_posted_at_canonical', canonicalTimestamp(table.postedAt)),
+    check('bank_deposits_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('bank_deposits_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+  ],
+)
+
+export const invoicePayments = sqliteTable(
+  'invoice_payments',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: integer('harvest_id').unique(),
+    invoiceId: integer('invoice_id')
+      .notNull()
+      .references(() => invoices.id, { onDelete: 'cascade' }),
+    currency: text('currency').notNull(),
+    amountCents: integer('amount_cents').notNull(),
+    paidAt: text('paid_at'),
+    paidDate: text('paid_date'),
+    sourcePaidAt: text('source_paid_at'),
+    sourcePaidDate: text('source_paid_date'),
+    sourceRecordedByName: text('source_recorded_by_name'),
+    sourceRecordedByEmail: text('source_recorded_by_email'),
+    sourceGatewayId: integer('source_gateway_id'),
+    sourceGatewayName: text('source_gateway_name'),
+    notes: text('notes'),
+    recordedByUserId: integer('recorded_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    provider: text('provider', {
+      enum: ['manual', 'stripe', 'paypal', 'quickbooks', 'mercury', 'wise', 'bill_com'],
+    }).notNull(),
+    providerShape: text('provider_shape', {
+      enum: ['manual', 'checkout', 'reconciliation'],
+    }).notNull(),
+    providerAccountId: integer('provider_account_id').references(
+      () => paymentProviderAccounts.id,
+      { onDelete: 'restrict' },
+    ),
+    providerTransactionId: text('provider_transaction_id'),
+    bankDepositId: integer('bank_deposit_id')
+      .unique()
+      .references(() => bankDeposits.id, { onDelete: 'restrict' }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('invoice_payments_provider_transaction_unique')
+      .on(table.providerAccountId, table.providerTransactionId)
+      .where(
+        sql`${table.providerAccountId} is not null and ${table.providerTransactionId} is not null`,
+      ),
+    index('invoice_payments_invoice_id').on(table.invoiceId),
+    index('invoice_payments_recorded_by_user_id').on(table.recordedByUserId),
+    index('invoice_payments_provider_account_id').on(table.providerAccountId),
+    check(
+      'invoice_payments_currency',
+      sql`length(${table.currency}) = 3 and ${table.currency} = upper(${table.currency})
+        and ${table.currency} not glob '*[^A-Z]*'`,
+    ),
+    check(
+      'invoice_payments_amount_bound',
+      sql`${table.amountCents} between 1 and 9000000000000`,
+    ),
+    check(
+      'invoice_payments_paid_shape',
+      sql`(${table.paidAt} is null) <> (${table.paidDate} is null)`,
+    ),
+    check('invoice_payments_paid_at_canonical', nullableCanonicalTimestamp(table.paidAt)),
+    check(
+      'invoice_payments_paid_date_canonical',
+      sql`${table.paidDate} is null or date(${table.paidDate}) is ${table.paidDate}`,
+    ),
+    check(
+      'invoice_payments_source_paid_at_canonical',
+      nullableCanonicalTimestamp(table.sourcePaidAt),
+    ),
+    check(
+      'invoice_payments_source_paid_date_canonical',
+      sql`${table.sourcePaidDate} is null or date(${table.sourcePaidDate}) is ${table.sourcePaidDate}`,
+    ),
+    check('invoice_payments_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('invoice_payments_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+    check(
+      'invoice_payments_provider_shape',
+      sql`(${table.provider} = 'manual' and ${table.providerShape} = 'manual'
+          and ${table.providerAccountId} is null and ${table.bankDepositId} is null)
+        or (${table.provider} in ('stripe','paypal','quickbooks','bill_com')
+          and ${table.providerShape} = 'checkout'
+          and ${table.providerAccountId} is not null and ${table.bankDepositId} is null)
+        or (${table.provider} in ('mercury','wise','bill_com')
+          and ${table.providerShape} = 'reconciliation'
+          and ${table.providerAccountId} is not null and ${table.bankDepositId} is not null)`,
+    ),
+    check(
+      'invoice_payments_external_transaction',
+      sql`(${table.providerTransactionId} is null or length(${table.providerTransactionId}) > 0)
+        and (${table.provider} = 'manual' or (
+          ${table.providerTransactionId} is not null
+          and length(${table.providerTransactionId}) > 0
+        ))`,
+    ),
+    check(
+      'invoice_payments_harvest_manual',
+      sql`${table.harvestId} is null or (
+        ${table.provider} = 'manual' and ${table.providerShape} = 'manual'
+        and ${table.providerAccountId} is null and ${table.bankDepositId} is null
+      )`,
+    ),
+    check(
+      'invoice_payments_source_import_only',
+      sql`${table.harvestId} is not null or (
+        ${table.sourcePaidAt} is null and ${table.sourcePaidDate} is null
+        and ${table.sourceRecordedByName} is null and ${table.sourceRecordedByEmail} is null
+        and ${table.sourceGatewayId} is null and ${table.sourceGatewayName} is null
+      )`,
+    ),
+    check(
+      'invoice_payments_imported_paid_precedence',
+      sql`${table.harvestId} is null or (
+        (${table.sourcePaidAt} is not null and ${table.paidAt} is ${table.sourcePaidAt}
+          and ${table.paidDate} is null)
+        or (${table.sourcePaidAt} is null and ${table.sourcePaidDate} is not null
+          and ${table.paidAt} is null and ${table.paidDate} is ${table.sourcePaidDate})
+      )`,
+    ),
+  ],
+)
+
+export const invoiceFinancialCalculation = sqliteView('invoice_financial_calculation', {
+  invoiceId: integer('invoice_id').notNull(),
+  discountAmountCents: integer('discount_amount_cents').notNull(),
+  taxAmountCents: integer('tax_amount_cents').notNull(),
+  tax2AmountCents: integer('tax2_amount_cents').notNull(),
+  amountCents: integer('amount_cents').notNull(),
+  dueAmountCents: integer('due_amount_cents').notNull(),
+}).as(sql`
+  WITH line_bases AS (
+    SELECT invoice.id AS invoice_id,
+      COALESCE(SUM(line.amount_cents), 0) AS subtotal_cents,
+      COALESCE(SUM(CASE WHEN line.taxed = 1 THEN line.amount_cents ELSE 0 END), 0)
+        AS tax_base_cents,
+      COALESCE(SUM(CASE WHEN line.taxed2 = 1 THEN line.amount_cents ELSE 0 END), 0)
+        AS tax2_base_cents
+    FROM invoices invoice
+    LEFT JOIN invoice_line_items line ON line.invoice_id = invoice.id
+    GROUP BY invoice.id
+  ),
+  payment_bases AS (
+    SELECT invoice.id AS invoice_id,
+      COALESCE(SUM(payment.amount_cents), 0) AS payment_cents
+    FROM invoices invoice
+    LEFT JOIN invoice_payments payment ON payment.invoice_id = invoice.id
+    GROUP BY invoice.id
+  ),
+  components AS (
+    SELECT invoice.id AS invoice_id, line_bases.subtotal_cents,
+      CASE WHEN line_bases.subtotal_cents * COALESCE(invoice.discount_rate_ppm, 0) >= 0
+        THEN (line_bases.subtotal_cents * COALESCE(invoice.discount_rate_ppm, 0) + 500000) / 1000000
+        ELSE (line_bases.subtotal_cents * COALESCE(invoice.discount_rate_ppm, 0) - 500000) / 1000000
+      END AS discount_amount_cents,
+      CASE WHEN (
+        line_bases.tax_base_cents -
+        CASE WHEN line_bases.tax_base_cents * COALESCE(invoice.discount_rate_ppm, 0) >= 0
+          THEN (line_bases.tax_base_cents * COALESCE(invoice.discount_rate_ppm, 0) + 500000) / 1000000
+          ELSE (line_bases.tax_base_cents * COALESCE(invoice.discount_rate_ppm, 0) - 500000) / 1000000
+        END
+      ) * COALESCE(invoice.tax_rate_ppm, 0) >= 0 THEN ((
+        line_bases.tax_base_cents -
+        CASE WHEN line_bases.tax_base_cents * COALESCE(invoice.discount_rate_ppm, 0) >= 0
+          THEN (line_bases.tax_base_cents * COALESCE(invoice.discount_rate_ppm, 0) + 500000) / 1000000
+          ELSE (line_bases.tax_base_cents * COALESCE(invoice.discount_rate_ppm, 0) - 500000) / 1000000
+        END
+      ) * COALESCE(invoice.tax_rate_ppm, 0) + 500000) / 1000000 ELSE ((
+        line_bases.tax_base_cents -
+        CASE WHEN line_bases.tax_base_cents * COALESCE(invoice.discount_rate_ppm, 0) >= 0
+          THEN (line_bases.tax_base_cents * COALESCE(invoice.discount_rate_ppm, 0) + 500000) / 1000000
+          ELSE (line_bases.tax_base_cents * COALESCE(invoice.discount_rate_ppm, 0) - 500000) / 1000000
+        END
+      ) * COALESCE(invoice.tax_rate_ppm, 0) - 500000) / 1000000 END AS tax_amount_cents,
+      CASE WHEN (
+        line_bases.tax2_base_cents -
+        CASE WHEN line_bases.tax2_base_cents * COALESCE(invoice.discount_rate_ppm, 0) >= 0
+          THEN (line_bases.tax2_base_cents * COALESCE(invoice.discount_rate_ppm, 0) + 500000) / 1000000
+          ELSE (line_bases.tax2_base_cents * COALESCE(invoice.discount_rate_ppm, 0) - 500000) / 1000000
+        END
+      ) * COALESCE(invoice.tax2_rate_ppm, 0) >= 0 THEN ((
+        line_bases.tax2_base_cents -
+        CASE WHEN line_bases.tax2_base_cents * COALESCE(invoice.discount_rate_ppm, 0) >= 0
+          THEN (line_bases.tax2_base_cents * COALESCE(invoice.discount_rate_ppm, 0) + 500000) / 1000000
+          ELSE (line_bases.tax2_base_cents * COALESCE(invoice.discount_rate_ppm, 0) - 500000) / 1000000
+        END
+      ) * COALESCE(invoice.tax2_rate_ppm, 0) + 500000) / 1000000 ELSE ((
+        line_bases.tax2_base_cents -
+        CASE WHEN line_bases.tax2_base_cents * COALESCE(invoice.discount_rate_ppm, 0) >= 0
+          THEN (line_bases.tax2_base_cents * COALESCE(invoice.discount_rate_ppm, 0) + 500000) / 1000000
+          ELSE (line_bases.tax2_base_cents * COALESCE(invoice.discount_rate_ppm, 0) - 500000) / 1000000
+        END
+      ) * COALESCE(invoice.tax2_rate_ppm, 0) - 500000) / 1000000 END AS tax2_amount_cents,
+      payment_bases.payment_cents, invoice.written_off_cents
+    FROM invoices invoice
+    JOIN line_bases ON line_bases.invoice_id = invoice.id
+    JOIN payment_bases ON payment_bases.invoice_id = invoice.id
+  )
+  SELECT invoice_id, discount_amount_cents, tax_amount_cents, tax2_amount_cents,
+    subtotal_cents - discount_amount_cents + tax_amount_cents + tax2_amount_cents AS amount_cents,
+    subtotal_cents - discount_amount_cents + tax_amount_cents + tax2_amount_cents
+      - payment_cents - written_off_cents AS due_amount_cents
+  FROM components
+`)
 
 export const projectTagAssignments = sqliteTable(
   'project_tag_assignments',

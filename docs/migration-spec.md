@@ -125,6 +125,7 @@ Key mappings (details in domain-model §7):
 | decimal hours | `seconds` | ×3600, round half-even, record residue in load report if any. |
 | entry `rounded_hours` | `rounded_seconds` | Convert the imported value to seconds and store it verbatim; never apply native rounding during load. |
 | money decimals | cents | ×100 exact; **fail loudly** on >2 decimal places, never round silently. |
+| invoice tax/discount percentages | `*_rate_ppm` | Parse decimal percentage text exactly into parts per million of one (`7.25% = 72_500`); fail beyond four fractional percentage digits, never pass through `REAL`. |
 | `started_time` "8:00am" | `HH:MM` | Parse per snapshot `company.clock`. |
 | `access_roles` array | `profile` + `manager_grants` | Per domain-model §2.2. |
 | `is_billable`+`is_fixed_fee` | `billing_method` | Truth table; conflicting combos (billable=false, fixed_fee=true) recorded as anomalies, imported as `non_billable`. |
@@ -132,7 +133,9 @@ Key mappings (details in domain-model §7):
 | entry `billable_rate`/`cost_rate` | snapshot columns | **Copied verbatim from Harvest, never re-resolved** — Harvest's historical resolution is truth for imported rows. |
 | invoice/estimate `creator {id,name}` | nullable real creator-user FK + immutable source creator id/name provenance | Resolve the FK when the imported user exists; never discard source attribution or create a bare/mandatory placeholder when it does not. |
 | invoice/estimate message sender scalars | immutable `sent_by`, `sent_by_email`, `sent_from`, `sent_from_email` snapshots | Copy verbatim; a later nullable sender-identity relation is enrichment, not historical truth. |
-| `payment_gateway`/`transaction_id` | `provider=manual` + `provider_transaction_id` | Historical payments import as manual records. |
+| invoice derived totals + `payment_options` + `updated_at` | native D21 totals + importer-owned `source_*` observation | Copy source amount/due/tax/tax2/discount cents, option array, and canonical source timestamp verbatim, then compute native totals by D21 so any undocumented rounding/allocation delta remains explainable. Refresh the observation atomically only when source `updated_at` advances; equal/older sync input is a no-op. Never guess what Harvest `ach` means natively. |
+| payment recorder/gateway/transaction | `manual/manual` payment + immutable source provenance | Resolve a nullable real recording-user FK when possible; retain recorder name/email and gateway id/name verbatim. Preserve the source transaction id without guessing a native provider from the gateway name. |
+| payment response `paid_at` + `paid_date` | canonical XOR + immutable `source_paid_at`/`source_paid_date` | Copy both response fields. Prefer `paid_at` canonically when both are present; compare its UTC date to `paid_date`, recording an anomaly on disagreement without discarding either source value. The shim re-emits the preserved pair. |
 | invoice `state` + timestamps | same | States imported as-is; state machine governs post-import mutations only. |
 
 ### 3.1 D1 write constraints (from D3 — designed in, not discovered)
@@ -151,6 +154,12 @@ Key mappings (details in domain-model §7):
   followed by `INSERT ... SELECT ... WHERE NOT EXISTS (...)`. Omit `client_key` so
   SQLite generates a new native bearer secret, and include creator/sender provenance
   in the update so any historical drift fails loudly rather than being hidden.
+  Invoice `source_*` total/options observations are the explicit exception to
+  provenance immutability: the importer owns them and refreshes the whole set only
+  from a strictly newer Harvest `updated_at`. Native operations cannot write them.
+  Payment/provider-account/bank-deposit identities added by D21 use the same
+  pre-insert collision-guard rule, with regressions proving `INSERT OR REPLACE`
+  preserves the original rows, totals, children, and deposit match state.
 
 ## 4. Receipts
 

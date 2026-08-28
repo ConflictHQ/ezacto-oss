@@ -259,8 +259,6 @@ for (const [runtime, factory] of factories) {
         'expenses',
         'expense_categories',
         'receipts',
-        'invoice_payments',
-        'bank_deposits',
         'estimates',
         'estimate_line_items',
         'estimate_item_categories',
@@ -303,6 +301,24 @@ for (const [runtime, factory] of factories) {
         'reminder_policy',
         'created_at',
         'updated_at',
+        'tax_rate_ppm',
+        'tax2_rate_ppm',
+        'discount_rate_ppm',
+        'amount_cents',
+        'due_amount_cents',
+        'tax_amount_cents',
+        'tax2_amount_cents',
+        'discount_amount_cents',
+        'written_off_cents',
+        'payment_options',
+        'reference_token',
+        'source_amount_cents',
+        'source_due_amount_cents',
+        'source_tax_amount_cents',
+        'source_tax2_amount_cents',
+        'source_discount_amount_cents',
+        'source_payment_options',
+        'source_updated_at',
       ])
       expect(
         (await db.rows<{ name: string }>(`PRAGMA table_info(invoice_item_categories)`)).map(
@@ -434,17 +450,9 @@ for (const [runtime, factory] of factories) {
         'estimate_id',
         'retainer_id',
         'recurring_invoice_id',
-        'payment_options',
-        'reference_token',
         'tax_pct',
         'tax2_pct',
         'discount_pct',
-        'amount_cents',
-        'due_amount_cents',
-        'tax_amount_cents',
-        'tax2_amount_cents',
-        'discount_amount_cents',
-        'written_off_cents',
         'sender_identity_id',
       ]) {
         expect(invoiceColumns.map(({ name }) => name)).not.toContain(forbidden)
@@ -580,6 +588,7 @@ for (const [runtime, factory] of factories) {
         '0002_projects_time',
         '0003_rate_resolver',
         '0004_invoice_foundation',
+        '0005_invoice_payments_totals',
       ])
       expect(firstLedger.slice(0, 4).every(({ applied_at: appliedAt }) => appliedAt === timestamp)).toBe(
         true,
@@ -920,7 +929,7 @@ for (const [runtime, factory] of factories) {
           timestamp,
           timestamp,
         ),
-      ).rejects.toThrow(/UNIQUE constraint/i)
+      ).rejects.toThrow(/line identity already exists|UNIQUE constraint/i)
       await expect(
         db.run(
           `INSERT INTO invoice_line_items
@@ -930,7 +939,7 @@ for (const [runtime, factory] of factories) {
           timestamp,
           timestamp,
         ),
-      ).rejects.toThrow(/UNIQUE constraint/i)
+      ).rejects.toThrow(/line identity already exists|UNIQUE constraint/i)
       await expect(
         db.run(
           `INSERT INTO invoice_line_items
