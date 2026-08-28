@@ -1,0 +1,16 @@
+{
+  "id": 50863457,
+  "amount": 125.5,
+  "paid_at": "2026-08-27T14:15:16Z",
+  "paid_date": "2026-08-26",
+  "notes": "Sanitized historical payment",
+  "transaction_id": "harvest-transaction-50863457",
+  "recorded_by": "Sanitized Recorder",
+  "recorded_by_email": "recorder@example.invalid",
+  "payment_gateway": {
+    "id": 8001,
+    "name": "Sanitized Gateway"
+  },
+  "created_at": "2026-08-27T14:15:16Z",
+  "updated_at": "2026-08-27T14:15:16Z"
+}

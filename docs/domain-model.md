@@ -13,6 +13,7 @@ sources:
   - knowledge/decisions/D2-D7-proposed.md
   - knowledge/decisions/D13-money-movement.md
   - knowledge/decisions/D14-email.md
+  - knowledge/decisions/D21-invoice-totals-and-payments.md
 ---
 
 # ezacto Domain Model
@@ -286,21 +287,25 @@ later; lane-C rules from D13 apply.
 | `subject`, `purchase_order`, `notes` | text | |
 | `currency` | text | |
 | `issue_date`, `due_date` | date | `payment_terms` enum as client. |
-| `tax_pct`, `tax2_pct`, `discount_pct` | real nullable | |
+| `tax_rate_ppm`, `tax2_rate_ppm`, `discount_rate_ppm` | int nullable | Exact parts per million of one (`72_500 = 7.25%`), each `0..1_000_000`; decimal-percent inputs parse exactly and reject beyond four fractional percentage digits (D21). |
 | `state` | enum `draft\|open\|paid\|closed` | **Never directly writable** (§6). |
 | `sent_at`, `paid_at`, `paid_date`, `closed_at` | ts/date nullable | State-machine outputs. |
 | `period_start`, `period_end` | date nullable | Derived from imported line items. |
 | `client_key` | text | Server-generated public-URL secret; rotatable. |
 | `estimate_id`, `retainer_id`, `recurring_invoice_id`, `project_id` | fk nullable | All **real FKs** here — Harvest dangles two of these with no API. `project_id` is the UI 19 "linked project". |
 | `reminder_policy` | json nullable | `{first_after_days, every_days}` (UI 19). Scheduled via queue jobs (D14). |
-| `payment_options` | json | Enabled checkout methods for lane B (D13): subset of `[stripe, paypal, quickbooks, mercury_transfer]`. Shim maps Harvest's `[ach, credit_card, paypal]`. |
+| `payment_options` | json | Unique native option set: `stripe_checkout`, `paypal_checkout`, `quickbooks_checkout`, `mercury_transfer`, `wise_transfer`, `bill_com_checkout`, `bill_com_transfer`. Bill.com is reserved vocabulary, not a claimed adapter. Harvest's `[ach, credit_card, paypal]` is preserved separately and mapped only where unambiguous. |
 | Derived (read-only): `amount_cents`, `due_amount_cents`, `tax_amount_cents`, `tax2_amount_cents`, `discount_amount_cents`, `written_off_cents` | | Computed from line items + payments; stored for query speed, recomputed on any mutation in the same transaction. |
 
-**Open totals decision.** The sources establish integer-cent storage and the
-aggregate formula, but do not establish the exact discount/tax ordering or the
-rounding rule at fractional-cent boundaries. The payments/totals story must decide
-and document that order and a deterministic tie rule before implementation; it must
-not infer Harvest parity from the formula alone.
+**Exact totals (D21).** Discount applies before both parallel, non-compounding taxes.
+The discount share of the subtotal and of each independently taxable base rounds
+half-away-from-zero, then each tax rounds by the same signed rule. The aggregate order
+is consistent with Harvest's documented “subtotal, including ... discounts” tax base;
+the partial-tax allocation and midpoint rule are ezacto-native, not a parity claim.
+Calculations use integer cents/rates only and reject signed aggregate overflow above
+`9_000_000_000_000` cents. Importer-owned source total/payment-option observations
+refresh atomically only for a newer Harvest `updated_at` and retain the latest source
+record when its undocumented boundary behavior differs from the native rule.
 
 `invoice_line_item`: `invoice_id`, `position`, `kind` (**denormalized category name
 string** — loose coupling is Harvest-correct and we keep it), `description` (rich
@@ -341,19 +346,42 @@ rejected on write.
 
 ### 2.16 `invoice_payment`
 
-Per D13: `invoice_id`, `amount_cents`, `paid_at` **or** `paid_date` (exactly one),
-`notes`, `recorded_by_user_id` nullable (null = system/webhook),
-`payment_provider` enum `stripe|paypal|quickbooks|mercury|manual`,
-`provider_shape` enum `checkout|reconciliation|manual`,
-`provider_transaction_id` text, `match_state` enum
-`unmatched|suggested|confirmed` (reconciliation shape only),
-`send_thank_you` behavior: **default false in native API** (a migration import that
-emails every client "thanks!" is a disaster); shim defaults true for compat.
+Per D13/D21: `invoice_id`, positive `amount_cents`, `paid_at` **or** `paid_date`
+(exactly one), immutable payment `currency`, `notes`, `recorded_by_user_id` nullable
+(null = system/webhook),
+`payment_provider` enum
+`manual|stripe|paypal|quickbooks|mercury|wise|bill_com`, `provider_shape` enum
+`manual|checkout|reconciliation`, nullable real provider-account FK, provider
+transaction id, nullable unique bank-deposit FK, and canonical timestamps. Provider
+and shape use the exact D21 matrix; external transaction identity is unique within
+its real provider account. Imported and native external/bank-confirmed payments are
+immutable except delete/re-create; native manual corrections follow D21's narrower
+update rules.
 
-Plus `bank_deposit` staging table for Mercury reconciliation:
-`{provider_account_id, posted_at, amount_cents, memo, counterparty, matched_invoice_payment_id}`.
+Harvest imports map to `manual/manual` rather than guessing from gateway names and
+retain immutable raw `source_paid_at`/`source_paid_date`, recorder name/email, and
+gateway id/name provenance. Storage keeps canonical `paid_at` XOR `paid_date`; the
+importer prefers a source timestamp when Harvest responses populate both, records a
+date-disagreement anomaly, and the shim re-emits the preserved pair. Native
+`send_thank_you` is command behavior defaulting false (the shim defaults true for
+compat), not a stored historical field.
 
-`invoice.reference_token`: short token printed on reconciliation-shape invoices for
+Payment currency must equal invoice currency at insert/confirmation. Invoice currency
+is immutable while any payment or suggested/confirmed bank deposit refers to it.
+`harvest_id IS NOT NULL` distinguishes immutable imported manual payments from
+correctable native `manual/manual` rows.
+
+`payment_provider_account` is credential-free provider/account identity. Credentials
+arrive with later integrations. `bank_deposit` references a reconciliation-shaped
+account and stores stable per-account provider transaction id, posted timestamp,
+amount cents, currency, memo, counterparty, `suggested_invoice_id`, and
+`match_state = unmatched|suggested|confirmed`. A suggestion creates no payment and
+does not change due. Explicit confirmation atomically creates the one applied payment;
+deleting it unconfirms the deposit. `match_state` therefore belongs to deposit staging,
+not to `invoice_payment`.
+
+`invoice.reference_token` is nullable except when a transfer option is enabled; it is
+server-generated as unique `EZ-` plus 12 uppercase hex characters and printed for
 deposit matching.
 
 ### 2.17 `estimate` + `estimate_line_item` + `estimate_item_category`
@@ -605,7 +633,7 @@ re-verifies the aggregate ones against imported data.
 1. At most one running time entry per user.
 2. A running entry has exactly one open terminator (null `ended_time` XOR non-null `timer_started_at`, per org mode).
 3. `locked` entries reject mutation in the native API (422), including via bulk ops.
-4. `invoice.amount = Σ line amounts − discount + taxes`, recomputed transactionally with any line/payment change; `due = amount − Σ payments − written_off`.
+4. Per D21, `invoice.amount = Σ stored line cents − rounded discount + independently rounded taxes on discounted flagged bases`; `due = amount − Σ applied payments − written_off`. Every component is integer/fixed-point and recomputes transactionally with any line/payment/rate/write-off change.
 5. `state = paid ⇔ due_amount ≤ 0 ∧ payments > 0`.
 6. Every consumed time entry/expense of a generated invoice has `invoice_id` set in the same transaction (no double-billing window).
 7. `project.client_id` immutable while any invoice links the project.
