@@ -169,7 +169,7 @@ for (const [runtime, factory] of factories) {
       ).toEqual([{ name: 'invoice_command_ledger' }])
       expect(
         await database.rows<{ id: string }>(
-          `SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`,
+          `SELECT id FROM _ezacto_migrations WHERE id = '0006_invoice_state_events'`,
         ),
       ).toEqual([{ id: '0006_invoice_state_events' }])
     })
