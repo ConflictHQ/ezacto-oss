@@ -1,0 +1,346 @@
+import type { Context, Hono, MiddlewareHandler } from 'hono'
+import {
+  canProfileUseApiScope,
+  isApiScope,
+  type ApiScope,
+} from '@ezacto/core'
+import type { ApiContext, UserProfile } from './context.js'
+import { ApiError, readJsonBody, validationError, type FieldError } from './errors.js'
+
+export interface ApiTokenMetadata {
+  id: number
+  name: string
+  scopes: string[]
+  tokenHint: string
+  createdAt: string
+  lastUsedAt: string | null
+  expiresAt: string | null
+  revokedAt: string | null
+}
+
+export interface IssuedApiToken extends ApiTokenMetadata {
+  token: string
+}
+
+export interface AuthenticatedApiToken {
+  tokenId: number
+  userId: number
+  profile: UserProfile
+  scopes: string[]
+}
+
+export interface ApiTokenService {
+  authenticate(token: string): Promise<AuthenticatedApiToken | null>
+  issue(input: {
+    userId: number
+    name: string
+    scopes: readonly string[]
+    expiresAt?: string | null
+  }): Promise<IssuedApiToken>
+  list(userId: number): Promise<ApiTokenMetadata[]>
+  revoke(userId: number, tokenId: number): Promise<ApiTokenMetadata | null>
+}
+
+export type SessionPrincipal =
+  | {
+      type: 'user'
+      userId: number
+      profile: UserProfile
+      authentication: { kind: 'session'; sessionId: string }
+    }
+  | {
+      type: 'contact'
+      contactId: number
+      clientId: number
+      authentication: { kind: 'session'; sessionId: string }
+    }
+
+export interface ApiSessionResolver {
+  resolve(request: Request): Promise<SessionPrincipal | null>
+}
+
+export interface ApiAuthentication {
+  tokens?: ApiTokenService
+  sessions?: ApiSessionResolver
+}
+
+const unauthorized = <Bindings extends object>(context: Context<ApiContext<Bindings>>): never => {
+  context.header('www-authenticate', 'Bearer realm="ezacto"')
+  throw new ApiError({
+    status: 401,
+    code: 'authentication_required',
+    message: 'A valid API token or user session is required.',
+  })
+}
+
+const bearerToken = (authorization: string): string | null => {
+  const match = /^Bearer ([^\s]+)$/i.exec(authorization)
+  return match?.[1] ?? null
+}
+
+/**
+ * Resolves exactly one credential source. An Authorization header always wins:
+ * malformed or invalid bearer credentials never fall back to a session cookie.
+ */
+export const apiAuthenticationMiddleware = <Bindings extends object>(
+  authentication: ApiAuthentication | undefined,
+): MiddlewareHandler<ApiContext<Bindings>> =>
+  async (context, next) => {
+    const authorization = context.req.header('authorization')
+    if (authorization !== undefined) {
+      const token = bearerToken(authorization)
+      const tokenService = authentication?.tokens
+      if (token === null || tokenService === undefined) return unauthorized(context)
+      const authenticated = await tokenService.authenticate(token)
+      if (authenticated === null) return unauthorized(context)
+      const scopes = authenticated.scopes
+      if (
+        !scopes.every(isApiScope) ||
+        !scopes.every((scope) => canProfileUseApiScope(authenticated.profile, scope as ApiScope))
+      ) {
+        return unauthorized(context)
+      }
+      context.set('principal', {
+        type: 'user',
+        userId: authenticated.userId,
+        profile: authenticated.profile,
+        authentication: {
+          kind: 'token',
+          tokenId: authenticated.tokenId,
+          scopes: [...scopes],
+        },
+      })
+      await next()
+      return
+    }
+
+    const principal = await authentication?.sessions?.resolve(context.req.raw)
+    if (principal === undefined || principal === null) return unauthorized(context)
+    if (principal.type === 'contact') {
+      throw new ApiError({
+        status: 403,
+        code: 'contact_api_forbidden',
+        message: 'Contact sessions cannot access the organization API.',
+      })
+    }
+    context.set('principal', principal)
+    await next()
+  }
+
+export const requireApiScope = <Bindings extends object>(
+  context: Context<ApiContext<Bindings>>,
+  scope: ApiScope,
+): void => {
+  const principal = context.get('principal')
+  if (!canProfileUseApiScope(principal.profile, scope)) {
+    throw new ApiError({
+      status: 403,
+      code: 'profile_forbidden',
+      message: 'The acting user profile cannot perform this operation.',
+    })
+  }
+  if (principal.authentication.kind === 'session') return
+  if (principal.authentication.scopes.includes(scope)) return
+  throw new ApiError({
+    status: 403,
+    code: 'insufficient_scope',
+    message: `This API token does not grant the ${scope} scope.`,
+  })
+}
+
+const requireSessionPrincipal = <Bindings extends object>(
+  context: Context<ApiContext<Bindings>>,
+) => {
+  const principal = context.get('principal')
+  if (principal.authentication.kind !== 'session') {
+    throw new ApiError({
+      status: 403,
+      code: 'session_required',
+      message: 'API tokens can only be managed from an authenticated user session.',
+    })
+  }
+  return principal
+}
+
+const tokenData = (token: ApiTokenMetadata) => ({
+  id: token.id,
+  name: token.name,
+  scopes: [...token.scopes],
+  token_hint: token.tokenHint,
+  created_at: token.createdAt,
+  last_used_at: token.lastUsedAt,
+  expires_at: token.expiresAt,
+  revoked_at: token.revokedAt,
+})
+
+const tokenId = (value: string): number => {
+  if (!/^[1-9][0-9]*$/.test(value)) {
+    throw new ApiError({
+      status: 404,
+      code: 'not_found',
+      message: 'The requested API token does not exist.',
+    })
+  }
+  const parsed = Number(value)
+  if (!Number.isSafeInteger(parsed)) {
+    throw new ApiError({
+      status: 404,
+      code: 'not_found',
+      message: 'The requested API token does not exist.',
+    })
+  }
+  return parsed
+}
+
+const issueFields = (body: Record<string, unknown>): FieldError[] => {
+  const fields: FieldError[] = []
+  const allowedKeys = new Set(['name', 'scopes', 'expires_at'])
+  for (const key of Object.keys(body)) {
+    if (!allowedKeys.has(key)) {
+      fields.push({ field: key, code: 'unknown', message: `${key} is not accepted` })
+    }
+  }
+  const nameLength = typeof body.name === 'string' ? [...body.name.trim()].length : 0
+  if (typeof body.name !== 'string' || nameLength < 1 || nameLength > 100) {
+    fields.push({
+      field: 'name',
+      code: 'invalid',
+      message: 'name must contain between 1 and 100 characters',
+    })
+  }
+  if (
+    !Array.isArray(body.scopes) ||
+    body.scopes.length < 1 ||
+    body.scopes.length > 100 ||
+    !body.scopes.every((scope) => typeof scope === 'string')
+  ) {
+    fields.push({
+      field: 'scopes',
+      code: 'invalid',
+      message: 'scopes must contain between 1 and 100 scope strings',
+    })
+  } else if (!body.scopes.every((scope) => isApiScope(scope as string))) {
+    fields.push({
+      field: 'scopes',
+      code: 'unsupported',
+      message: 'scopes contains a scope that is not supported',
+    })
+  } else if (new Set(body.scopes).size !== body.scopes.length) {
+    fields.push({
+      field: 'scopes',
+      code: 'duplicate',
+      message: 'scopes must not contain duplicate entries',
+    })
+  }
+  if (
+    body.expires_at !== undefined &&
+    body.expires_at !== null &&
+    typeof body.expires_at !== 'string'
+  ) {
+    fields.push({
+      field: 'expires_at',
+      code: 'invalid',
+      message: 'expires_at must be a canonical UTC timestamp or null',
+    })
+  } else if (typeof body.expires_at === 'string' && !isCanonicalTimestamp(body.expires_at)) {
+    fields.push({
+      field: 'expires_at',
+      code: 'invalid',
+      message: 'expires_at must be a real canonical UTC timestamp',
+    })
+  }
+  return fields
+}
+
+const canonicalTimestampPattern =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/
+
+const isCanonicalTimestamp = (value: string): boolean => {
+  const match = canonicalTimestampPattern.exec(value)
+  if (!match) return false
+  const epoch = Date.parse(value)
+  const date = new Date(epoch)
+  return (
+    Number.isFinite(epoch) &&
+    date.getUTCFullYear() === Number(match[1]) &&
+    date.getUTCMonth() === Number(match[2]) - 1 &&
+    date.getUTCDate() === Number(match[3]) &&
+    date.getUTCHours() === Number(match[4]) &&
+    date.getUTCMinutes() === Number(match[5]) &&
+    date.getUTCSeconds() === Number(match[6]) &&
+    date.getUTCMilliseconds() === Number((match[7] ?? '').padEnd(3, '0') || 0)
+  )
+}
+
+const isJsonObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+export const installApiTokenRoutes = <Bindings extends object>(
+  api: Hono<ApiContext<Bindings>>,
+  tokens: ApiTokenService,
+): void => {
+  api.get('/api-tokens', async (context) => {
+    const principal = requireSessionPrincipal(context)
+    return context.json(
+      {
+        data: (await tokens.list(principal.userId)).map(tokenData),
+        links: { self: '/api/v1/api-tokens' },
+      },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
+  api.post('/api-tokens', async (context) => {
+    const principal = requireSessionPrincipal(context)
+    const parsed = await readJsonBody<unknown>(context)
+    if (!isJsonObject(parsed)) {
+      throw validationError([
+        { field: 'body', code: 'invalid', message: 'request body must be a JSON object' },
+      ])
+    }
+    const body = parsed
+    const fields = issueFields(body)
+    if (fields.length > 0) throw validationError(fields)
+    const scopes = body.scopes as ApiScope[]
+    if (!scopes.every((scope) => canProfileUseApiScope(principal.profile, scope))) {
+      throw new ApiError({
+        status: 403,
+        code: 'profile_forbidden',
+        message: 'The acting user profile cannot grant one or more requested scopes.',
+      })
+    }
+    try {
+      const issued = await tokens.issue({
+        userId: principal.userId,
+        name: (body.name as string).trim(),
+        scopes,
+        ...('expires_at' in body ? { expiresAt: body.expires_at as string | null } : {}),
+      })
+      return context.json(
+        { data: { ...tokenData(issued), token: issued.token } },
+        201,
+        { 'cache-control': 'no-store' },
+      )
+    } catch (error) {
+      if (error instanceof RangeError) {
+        const field = /scope/.test(error.message) ? 'scopes' : 'expires_at'
+        throw validationError([{ field, code: 'invalid', message: error.message }])
+      }
+      throw error
+    }
+  })
+
+  api.delete('/api-tokens/:tokenId', async (context) => {
+    const principal = requireSessionPrincipal(context)
+    const revoked = await tokens.revoke(principal.userId, tokenId(context.req.param('tokenId')))
+    if (revoked === null) {
+      throw new ApiError({
+        status: 404,
+        code: 'not_found',
+        message: 'The requested API token does not exist.',
+      })
+    }
+    return context.json({ data: tokenData(revoked) }, 200, { 'cache-control': 'no-store' })
+  })
+}

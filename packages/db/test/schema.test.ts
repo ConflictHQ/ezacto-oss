@@ -838,6 +838,7 @@ for (const [runtime, factory] of factories) {
         { id: '0008_retainer_ledger' },
         { id: '0009_three_axis_state' },
         { id: '0010_recurring_invoices' },
+        { id: '0011_api_tokens' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -869,6 +870,7 @@ for (const [runtime, factory] of factories) {
         { id: '0008_retainer_ledger' },
         { id: '0009_three_axis_state' },
         { id: '0010_recurring_invoices' },
+        { id: '0011_api_tokens' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -918,6 +920,7 @@ for (const [runtime, factory] of factories) {
         { id: '0008_retainer_ledger' },
         { id: '0009_three_axis_state' },
         { id: '0010_recurring_invoices' },
+        { id: '0011_api_tokens' },
       ])
       expect(
         await db.rows<{ name: string }>(
@@ -943,6 +946,7 @@ for (const [runtime, factory] of factories) {
         { id: '0008_retainer_ledger' },
         { id: '0009_three_axis_state' },
         { id: '0010_recurring_invoices' },
+        { id: '0011_api_tokens' },
       ])
     })
   })
@@ -1024,9 +1028,15 @@ describe('package contents', () => {
         'dist/migrations/0005_invoice_payments_totals.d.ts',
         'dist/migrations/0009_three_axis_state.js',
         'dist/migrations/0009_three_axis_state.d.ts',
+        'dist/migrations/0010_recurring_invoices.js',
+        'dist/migrations/0010_recurring_invoices.d.ts',
+        'dist/migrations/0011_api_tokens.js',
+        'dist/migrations/0011_api_tokens.d.ts',
         'dist/invoice-payments.js',
         'dist/invoice-payments.d.ts',
         'dist/rate-resolver.js',
+        'dist/recurring-invoices.js',
+        'dist/recurring-invoices.d.ts',
         'dist/tracked-state.js',
         'dist/tracked-state.d.ts',
       ]),

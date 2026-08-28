@@ -628,6 +628,7 @@ for (const [runtime, factory] of factories) {
         '0008_retainer_ledger',
         '0009_three_axis_state',
         '0010_recurring_invoices',
+        '0011_api_tokens',
       ])
       expect(
         firstLedger.slice(0, 4).every(({ applied_at: appliedAt }) => appliedAt === timestamp),

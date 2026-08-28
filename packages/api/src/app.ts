@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { apiAuthenticationMiddleware, installApiTokenRoutes } from './auth.js'
 import type { ApiContext, CreateApiAppOptions } from './context.js'
 import { errorResponse, notFoundResponse } from './errors.js'
 
@@ -14,6 +15,15 @@ export const createApiApp = <Bindings extends object = object>(
     await next()
   })
 
+  const authenticateApi = apiAuthenticationMiddleware<Bindings>(options.authentication)
+  app.use('*', (context, next) => {
+    const path = context.req.path
+    if (path === '/api/v1' || path.startsWith('/api/v1/')) {
+      return authenticateApi(context, next)
+    }
+    return next()
+  })
+
   app.onError((error, context) => errorResponse(error, context))
   app.notFound((context) => notFoundResponse(context))
   options.installApp?.(app)
@@ -25,6 +35,9 @@ export const createApiApp = <Bindings extends object = object>(
       links: { self: '/api/v1' },
     }),
   )
+  if (options.authentication?.tokens !== undefined) {
+    installApiTokenRoutes(api, options.authentication.tokens)
+  }
   options.installApi?.(api)
   app.route('/api/v1', api)
 

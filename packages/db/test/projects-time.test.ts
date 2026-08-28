@@ -1034,6 +1034,7 @@ for (const [runtime, factory] of factories) {
         '0008_retainer_ledger',
         '0009_three_axis_state',
         '0010_recurring_invoices',
+        '0011_api_tokens',
       ])
       expect(firstLedger.slice(0, 2).map(({ applied_at: appliedAt }) => appliedAt)).toEqual([
         originalAppliedAt,
@@ -1105,6 +1106,7 @@ for (const [runtime, factory] of factories) {
         { id: '0008_retainer_ledger' },
         { id: '0009_three_axis_state' },
         { id: '0010_recurring_invoices' },
+        { id: '0011_api_tokens' },
       ])
       expect(
         await db.rows<{ name: string }>(

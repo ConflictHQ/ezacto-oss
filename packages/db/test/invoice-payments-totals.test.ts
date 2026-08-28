@@ -429,7 +429,7 @@ for (const [runtime, factory] of factories) {
       const ledger = await db.rows<{ id: string; applied_at: string }>(
         `SELECT id, applied_at FROM _ezacto_migrations ORDER BY id`,
       )
-      expect(ledger.at(-1)?.id).toBe('0010_recurring_invoices')
+      expect(ledger.at(-1)?.id).toBe('0011_api_tokens')
       await db.migrateAgain()
       expect(
         await db.rows<{ id: string; applied_at: string }>(
