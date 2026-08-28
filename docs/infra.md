@@ -77,8 +77,10 @@ one callback on each:
 
 Store each client's `OIDC_GOOGLE_CLIENT_ID` and
 `OIDC_GOOGLE_CLIENT_SECRET` in its matching GitHub environment. `deploy.yml`
-installs the pair as Worker secrets. If both are absent, Google is not exposed;
-if only one is present, deployment and runtime both fail closed. Provider access
+converges the cursor key and Google pair in one Wrangler `secret bulk` request.
+If both Google values are absent, that request sends explicit `null` values to
+delete any stale Worker copies; if only one is present, validation fails before
+the remote mutation. Provider access
 tokens, ID tokens, refresh tokens, authorization codes, and raw browser state
 are never persisted. OIDC starts are limited to 20 per hashed Cloudflare client
 address in a rolling 10-minute window. Each start transactionally removes

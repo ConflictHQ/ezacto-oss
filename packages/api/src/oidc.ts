@@ -1,7 +1,8 @@
 import type { Context, Hono } from 'hono'
-import type {
-  ProviderIdentityAssertion,
-  ProviderIdentityResolution,
+import {
+  normalizeIdentityEmail,
+  type ProviderIdentityAssertion,
+  type ProviderIdentityResolution,
 } from '@ezacto/core'
 import * as oauth from 'oauth4webapi'
 import type { ApiContext } from './context.js'
@@ -330,6 +331,48 @@ const setRedirectHeaders = <Bindings extends object>(
 const optionalText = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() !== '' ? value : undefined
 
+interface EmailClaimSet {
+  email: string
+  emailVerified: boolean
+}
+
+const emailClaimSet = (
+  source: Readonly<Record<string, unknown>>,
+): EmailClaimSet | null => {
+  const hasEmail = source.email !== undefined
+  const hasVerification = source.email_verified !== undefined
+  if (!hasEmail && !hasVerification) return null
+  if (!hasEmail || !hasVerification || typeof source.email_verified !== 'boolean') {
+    throw authFailure()
+  }
+  const email = optionalText(source.email)
+  if (email === undefined) throw authFailure()
+  return {
+    email: normalizeIdentityEmail(email),
+    emailVerified: source.email_verified,
+  }
+}
+
+const resolveEmailClaims = (
+  idToken: Readonly<Record<string, unknown>>,
+  userInfo: Readonly<Record<string, unknown>>,
+): EmailClaimSet => {
+  const signed = emailClaimSet(idToken)
+  const fetched = emailClaimSet(userInfo)
+  if (signed === null) {
+    if (fetched === null) throw authFailure()
+    return fetched
+  }
+  if (fetched === null) return signed
+  if (
+    signed.email !== fetched.email ||
+    signed.emailVerified !== fetched.emailVerified
+  ) {
+    throw authFailure()
+  }
+  return fetched
+}
+
 const authFailure = (): ApiError =>
   oidcError(
     401,
@@ -496,9 +539,7 @@ export const installOidcRoutes = <Bindings extends object>(
         claims.sub,
         userInfoResponse,
       )
-      const email = optionalText(userInfo.email) ?? optionalText(claims.email)
-      const emailVerified = userInfo.email_verified ?? claims.email_verified
-      if (email === undefined || typeof emailVerified !== 'boolean') throw authFailure()
+      const { email, emailVerified } = resolveEmailClaims(claims, userInfo)
       const firstName = optionalText(userInfo.given_name ?? claims.given_name)
       const lastName = optionalText(userInfo.family_name ?? claims.family_name)
 

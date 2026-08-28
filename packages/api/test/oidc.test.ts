@@ -88,6 +88,8 @@ interface FakeProvider {
   calls: string[]
   tokenBodies: URLSearchParams[]
   setNonce(value: string): void
+  setIdTokenClaims(claims: Readonly<Record<string, unknown>>): void
+  setUserInfoClaims(claims: Readonly<Record<string, unknown>>): void
   rejectSignature(): void
 }
 
@@ -119,6 +121,8 @@ const fakeProvider = async (issuer: string): Promise<FakeProvider> => {
   const tokenBodies: URLSearchParams[] = []
   let expectedNonce = ''
   let invalidSignature = false
+  let idTokenClaims: Readonly<Record<string, unknown>> = {}
+  let userInfoClaims: Readonly<Record<string, unknown>> = {}
 
   const signedIdToken = async (): Promise<string> => {
     const header = base64Url(JSON.stringify({ alg: 'RS256', kid: 'test-key', typ: 'JWT' }))
@@ -135,6 +139,7 @@ const fakeProvider = async (issuer: string): Promise<FakeProvider> => {
         email_verified: true,
         given_name: 'Avery',
         family_name: 'Ng',
+        ...idTokenClaims,
       }),
     )
     const input = `${header}.${payload}`
@@ -187,6 +192,7 @@ const fakeProvider = async (issuer: string): Promise<FakeProvider> => {
         email_verified: true,
         given_name: 'Avery',
         family_name: 'Ng',
+        ...userInfoClaims,
       })
     }
     return new Response('not found', { status: 404 })
@@ -206,6 +212,12 @@ const fakeProvider = async (issuer: string): Promise<FakeProvider> => {
     tokenBodies,
     setNonce: (value) => {
       expectedNonce = value
+    },
+    setIdTokenClaims: (claims) => {
+      idTokenClaims = { ...claims }
+    },
+    setUserInfoClaims: (claims) => {
+      userInfoClaims = { ...claims }
     },
     rejectSignature: () => {
       invalidSignature = true
@@ -356,6 +368,76 @@ describe('OpenID Connect browser authentication', () => {
     )
     expect(retry.status).toBe(401)
     expect(google.tokenBodies).toHaveLength(1)
+  })
+
+  it('[security] never splices email and verification claims across provider sources', async () => {
+    const conflictingClaims = [
+      {
+        idToken: { email: 'old-owner@example.test', email_verified: true },
+        userInfo: { email: 'victim@example.test', email_verified: undefined },
+      },
+      {
+        idToken: { email: 'owner@example.test', email_verified: true },
+        userInfo: { email: 'victim@example.test', email_verified: true },
+      },
+      {
+        idToken: { email: 'owner@example.test', email_verified: true },
+        userInfo: { email: 'OWNER@example.test', email_verified: false },
+      },
+    ] as const
+
+    for (const claims of conflictingClaims) {
+      const google = await fakeProvider('https://accounts.example.test')
+      google.setIdTokenClaims(claims.idToken)
+      google.setUserInfoClaims(claims.userInfo)
+      const { app, identities, sessions } = await harness({ google })
+      const pending = await start(app, google)
+      const callback = await app.request(
+        `https://ezacto.io/auth/oidc/google/callback?code=test-authorization-code&state=${encodeURIComponent(pending.state)}`,
+        { headers: { cookie: pending.cookie } },
+      )
+      expect(callback.status).toBe(401)
+      expect(await callback.json()).toMatchObject({
+        error: { code: 'oidc_authentication_failed' },
+      })
+      expect(identities.resolveProvider).not.toHaveBeenCalled()
+      expect(sessions.issue).not.toHaveBeenCalled()
+    }
+  })
+
+  it('[security] compares complete email claim sets canonically', async () => {
+    const google = await fakeProvider('https://accounts.example.test')
+    google.setIdTokenClaims({ email: ' Owner@Example.Test ', email_verified: true })
+    google.setUserInfoClaims({ email: 'owner@example.test', email_verified: true })
+    const { app, identities } = await harness({ google })
+    const pending = await start(app, google)
+    const callback = await app.request(
+      `https://ezacto.io/auth/oidc/google/callback?code=test-authorization-code&state=${encodeURIComponent(pending.state)}`,
+      { headers: { cookie: pending.cookie } },
+    )
+    expect(callback.status).toBe(303)
+    expect(identities.resolveProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ email: 'owner@example.test', emailVerified: true }),
+    )
+  })
+
+  it('[api] accepts a complete email claim set from exactly one provider source', async () => {
+    for (const absentSource of ['id-token', 'userinfo'] as const) {
+      const google = await fakeProvider('https://accounts.example.test')
+      const absentClaims = { email: undefined, email_verified: undefined }
+      if (absentSource === 'id-token') google.setIdTokenClaims(absentClaims)
+      else google.setUserInfoClaims(absentClaims)
+      const { app, identities } = await harness({ google })
+      const pending = await start(app, google)
+      const callback = await app.request(
+        `https://ezacto.io/auth/oidc/google/callback?code=test-authorization-code&state=${encodeURIComponent(pending.state)}`,
+        { headers: { cookie: pending.cookie } },
+      )
+      expect(callback.status).toBe(303)
+      expect(identities.resolveProvider).toHaveBeenCalledWith(
+        expect.objectContaining({ email: 'owner@example.test', emailVerified: true }),
+      )
+    }
   })
 
   it('[security] rejects absent, duplicate, and mismatched browser state before token exchange', async () => {
