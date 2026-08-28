@@ -834,6 +834,7 @@ for (const [runtime, factory] of factories) {
         { id: '0004_invoice_foundation' },
         { id: '0005_invoice_payments_totals' },
         { id: '0006_invoice_state_events' },
+        { id: '0008_retainer_ledger' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -861,6 +862,7 @@ for (const [runtime, factory] of factories) {
         { id: '0004_invoice_foundation' },
         { id: '0005_invoice_payments_totals' },
         { id: '0006_invoice_state_events' },
+        { id: '0008_retainer_ledger' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -906,6 +908,7 @@ for (const [runtime, factory] of factories) {
         { id: '0004_invoice_foundation' },
         { id: '0005_invoice_payments_totals' },
         { id: '0006_invoice_state_events' },
+        { id: '0008_retainer_ledger' },
       ])
       expect(
         await db.rows<{ name: string }>(
@@ -927,6 +930,7 @@ for (const [runtime, factory] of factories) {
         { id: '0004_invoice_foundation' },
         { id: '0005_invoice_payments_totals' },
         { id: '0006_invoice_state_events' },
+        { id: '0008_retainer_ledger' },
       ])
     })
   })

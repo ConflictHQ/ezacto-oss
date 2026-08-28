@@ -1,0 +1,12 @@
+[
+  {
+    "id": 71001,
+    "client": { "id": 41001, "name": "Sanitized Client" },
+    "retainer": { "id": 91001 }
+  },
+  {
+    "id": 71002,
+    "client": { "id": 41001, "name": "Sanitized Client" },
+    "retainer": { "id": 91001 }
+  }
+]

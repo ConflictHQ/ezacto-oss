@@ -286,8 +286,6 @@ for (const [runtime, factory] of factories) {
         'estimate_line_items',
         'estimate_item_categories',
         'estimate_messages',
-        'retainers',
-        'retainer_ledger',
         'recurring_invoices',
         'file_objects',
         'attachments',
@@ -345,6 +343,7 @@ for (const [runtime, factory] of factories) {
         'version',
         'close_reason',
         'close_write_off_cents',
+        'retainer_id',
       ])
       expect(
         (await db.rows<{ name: string }>(`PRAGMA table_info(invoice_item_categories)`)).map(
@@ -474,7 +473,6 @@ for (const [runtime, factory] of factories) {
       ])
       for (const forbidden of [
         'estimate_id',
-        'retainer_id',
         'recurring_invoice_id',
         'tax_pct',
         'tax2_pct',
@@ -622,6 +620,7 @@ for (const [runtime, factory] of factories) {
         '0004_invoice_foundation',
         '0005_invoice_payments_totals',
         '0006_invoice_state_events',
+        '0008_retainer_ledger',
       ])
       expect(
         firstLedger.slice(0, 4).every(({ applied_at: appliedAt }) => appliedAt === timestamp),
