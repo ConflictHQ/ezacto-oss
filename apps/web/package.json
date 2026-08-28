@@ -20,7 +20,7 @@
     "shell:check": "node scripts/compile-shell-assets.mjs --check",
     "typecheck": "npm run theme:check && npm run shell:check && tsc --noEmit",
     "lint": "eslint .",
-    "browser:prepare": "npm run build -w @ezacto/core && npm run build -w @ezacto/db && npm run build -w @ezacto/api && npm run build -w @ezacto/client && npm run build -w @ezacto/web",
+    "browser:prepare": "npm run build -w @ezacto/core && npm run build -w @ezacto/db && npm run build -w @ezacto/api && npm run build -w @ezacto/client && npm run build -w @ezacto/mailer && npm run build -w @ezacto/web",
     "test:browser": "npm run browser:prepare && playwright test --config playwright.config.ts",
     "test": "npm run theme:check && npm run shell:check && vitest run && npm run test:browser",
     "build": "npm run theme:check && npm run shell:check && tsc -p tsconfig.build.json"
