@@ -21,6 +21,9 @@ SESSION_SECRET=
 # Canonical unpadded base64url encoding of exactly 32 random bytes. Keep the same
 # value across releases or outstanding API cursors become invalid.
 API_CURSOR_SIGNING_KEY=
+# One-time operator credential. Install only while running instance bootstrap;
+# remove it from the Worker immediately after the owner token is verified.
+EZACTO_BOOTSTRAP_TOKEN=
 
 # --- migrate package (dev, against the live Harvest account) ---
 HARVEST_ACCOUNT_ID=

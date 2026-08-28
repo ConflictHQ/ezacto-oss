@@ -75,6 +75,11 @@ interface TokenRow {
   revokedAt: string | null
 }
 
+export interface PreparedApiToken {
+  selector: string
+  secretHash: string
+}
+
 const tokenPattern = /^ezacto_([A-Za-z0-9_-]{16})_([A-Za-z0-9_-]{43})$/
 const canonicalTimestampPattern =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/
@@ -132,6 +137,13 @@ const sha256Hex = async (value: string): Promise<string> => {
     await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)),
   )
   return [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+/** Validate an operator-supplied token and derive its persistable identity. */
+export const prepareApiTokenForStorage = async (token: string): Promise<PreparedApiToken> => {
+  const match = tokenPattern.exec(token)
+  if (match === null) throw new RangeError('token must be a canonical ezacto API token')
+  return { selector: match[1]!, secretHash: await sha256Hex(token) }
 }
 
 /** Fixed-work comparison for the stored and presented token digests. */

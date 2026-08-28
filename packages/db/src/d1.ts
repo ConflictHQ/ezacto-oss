@@ -10,6 +10,12 @@ export {
   type CreateApiTokenStoreOptions,
 } from './api-tokens.js'
 export { createGeneralResourceRepository } from './general-resources.js'
+export {
+  bootstrapInstanceD1,
+  InstanceBootstrapConflictError,
+  type InstanceBootstrapInput,
+  type InstanceBootstrapResult,
+} from './instance-bootstrap.js'
 export { migrateD1 } from './migrate.js'
 export {
   DrizzleTrackedResourceRepository,

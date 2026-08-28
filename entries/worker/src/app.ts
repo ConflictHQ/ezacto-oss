@@ -1,12 +1,20 @@
 import {
   createApiApp,
+  ApiError,
   generateOpenApiDocument,
   installGeneralResourceRoutes,
   installTrackedResourceRoutes,
+  readJsonBody,
+  validationError,
   type ApiTokenService,
   type GeneralResourceRouteOptions,
   type TrackedResourceRepository,
 } from '@ezacto/api'
+import {
+  InstanceBootstrapConflictError,
+  type InstanceBootstrapInput,
+  type InstanceBootstrapResult,
+} from '@ezacto/db/d1'
 
 /** Worker bindings stay entry-owned; the shared API package is runtime-agnostic. */
 export type Env = {
@@ -17,9 +25,12 @@ export type Env = {
 export type WorkerEnv = Env & {
   DB: D1Database
   API_CURSOR_SIGNING_KEY: string
+  /** Temporary Worker secret installed only while the operator workflow runs. */
+  EZACTO_BOOTSTRAP_TOKEN?: string
 }
 
 export interface RuntimeServices {
+  bootstrap(input: InstanceBootstrapInput): Promise<InstanceBootstrapResult>
   tokens: ApiTokenService
   generalResources: GeneralResourceRouteOptions['repository']
   trackedResources: TrackedResourceRepository
@@ -34,7 +45,7 @@ export type Health = {
 }
 
 export const createApp = (services?: RuntimeServices) =>
-  createApiApp<Env>({
+  createApiApp<WorkerEnv>({
     ...(services === undefined
       ? {}
       : {
@@ -73,6 +84,69 @@ export const createApp = (services?: RuntimeServices) =>
         }),
       )
 
+      if (services !== undefined) {
+        app.post('/__ezacto/bootstrap', async (context) => {
+          const expected = context.env.EZACTO_BOOTSTRAP_TOKEN
+          if (expected === undefined || expected.length === 0) {
+            throw new ApiError({
+              status: 503,
+              code: 'service_unavailable',
+              message: 'Instance bootstrap is not enabled.',
+            })
+          }
+
+          const authorization = context.req.header('authorization')
+          const presented = authorization?.startsWith('Bearer ')
+            ? authorization.slice('Bearer '.length)
+            : ''
+          if (!(await secureTokenEqual(expected, presented))) {
+            context.header('www-authenticate', 'Bearer realm="ezacto-bootstrap"')
+            throw new ApiError({
+              status: 401,
+              code: 'authentication_required',
+              message: 'Bootstrap authentication is required.',
+            })
+          }
+
+          const input = await parseBootstrapBody(context)
+          try {
+            const result = await services.bootstrap({
+              ...input,
+              token: expected,
+            })
+            return context.json(
+              {
+                data: {
+                  status: 'ready',
+                  user_id: result.userId,
+                  profile: result.profile,
+                },
+              },
+              200,
+              { 'cache-control': 'no-store' },
+            )
+          } catch (error) {
+            if (error instanceof InstanceBootstrapConflictError) {
+              throw new ApiError({
+                status: 409,
+                code: 'bootstrap_state_conflict',
+                message: 'The instance identity state does not match this bootstrap.',
+              })
+            }
+            if (error instanceof RangeError || error instanceof TypeError) {
+              throw validationError([
+                {
+                  field: 'bootstrap',
+                  code: 'invalid',
+                  message: 'The bootstrap identity fields are invalid.',
+                },
+              ])
+            }
+            throw error
+          }
+        })
+      }
+
       app.get('/', (context) =>
         context.html(page(context.env.ENVIRONMENT, context.env.RELEASE), 200, {
           'cache-control': 'no-store',
@@ -80,6 +154,62 @@ export const createApp = (services?: RuntimeServices) =>
       )
     },
   })
+
+type BootstrapBody = Omit<InstanceBootstrapInput, 'token'>
+
+const bootstrapFields = [
+  'organization_name',
+  'owner_first_name',
+  'owner_last_name',
+  'owner_email',
+] as const
+
+const parseBootstrapBody = async (
+  context: Parameters<typeof readJsonBody>[0],
+): Promise<BootstrapBody> => {
+  const body = await readJsonBody<unknown>(context, { maxBytes: 8 * 1024 })
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    throw validationError([
+      { field: 'body', code: 'invalid', message: 'body must be a JSON object' },
+    ])
+  }
+  const record = body as Record<string, unknown>
+  const allowed = new Set<string>(bootstrapFields)
+  const fields = [
+    ...bootstrapFields
+      .filter((field) => typeof record[field] !== 'string' || record[field].trim() === '')
+      .map((field) => ({
+        field,
+        code: 'required',
+        message: `${field} must be a non-empty string`,
+      })),
+    ...Object.keys(record)
+      .filter((field) => !allowed.has(field))
+      .map((field) => ({
+        field,
+        code: 'unknown',
+        message: `${field} is not accepted`,
+      })),
+  ]
+  if (fields.length > 0) throw validationError(fields)
+  return {
+    organizationName: record.organization_name as string,
+    ownerFirstName: record.owner_first_name as string,
+    ownerLastName: record.owner_last_name as string,
+    ownerEmail: record.owner_email as string,
+  }
+}
+
+const secureTokenEqual = async (expected: string, presented: string): Promise<boolean> => {
+  const digest = async (value: string): Promise<Uint8Array> =>
+    new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))
+  const [left, right] = await Promise.all([digest(expected), digest(presented)])
+  let difference = left.length ^ right.length
+  for (let index = 0; index < left.length; index += 1) {
+    difference |= left[index]! ^ (right[index] ?? 0)
+  }
+  return difference === 0
+}
 
 const systemClock = {
   now() {
@@ -133,7 +263,6 @@ function page(environment: string, release: string) {
 function escapeHtml(value: string) {
   return value.replace(
     /[&<>"']/g,
-    (ch) =>
-      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch] as string,
+    (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch] as string,
   )
 }
