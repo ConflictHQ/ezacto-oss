@@ -1,6 +1,7 @@
 import type BetterSqlite3 from 'better-sqlite3'
 import { orgPeopleMigration } from './migrations/0000_org_people.js'
 import { clientsMigration } from './migrations/0001_clients.js'
+import { projectsTimeMigration } from './migrations/0002_projects_time.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL
@@ -9,6 +10,7 @@ const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
 const migrations = [
   { id: '0000_org_people', statements: orgPeopleMigration },
   { id: '0001_clients', statements: clientsMigration },
+  { id: '0002_projects_time', statements: projectsTimeMigration },
 ] as const
 
 export const migrateContainer = (database: BetterSqlite3.Database): void => {

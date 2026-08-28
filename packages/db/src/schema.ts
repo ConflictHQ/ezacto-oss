@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm'
 import {
   type AnySQLiteColumn,
   check,
+  foreignKey,
   index,
   integer,
   primaryKey,
@@ -372,5 +373,348 @@ export const contacts = sqliteTable(
   (table) => [
     uniqueIndex('contacts_harvest_id_unique').on(table.harvestId),
     index('contacts_client_id').on(table.clientId),
+  ],
+)
+
+export const projects = sqliteTable(
+  'projects',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: integer('harvest_id'),
+    clientId: integer('client_id')
+      .notNull()
+      .references(() => clients.id, { onDelete: 'restrict' }),
+    name: text('name').notNull(),
+    code: text('code').notNull().default(''),
+    isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+    billingMethod: text('billing_method', {
+      enum: ['non_billable', 'time_materials', 'fixed_fee'],
+    })
+      .notNull()
+      .default('time_materials'),
+    billBy: text('bill_by', { enum: ['project', 'tasks', 'people', 'none'] })
+      .notNull()
+      .default('project'),
+    hourlyRateCents: integer('hourly_rate_cents'),
+    feeCents: integer('fee_cents'),
+    budgetBy: text('budget_by', {
+      enum: ['project', 'project_cost', 'task', 'task_fees', 'person', 'none'],
+    })
+      .notNull()
+      .default('none'),
+    budgetSeconds: integer('budget_seconds'),
+    costBudgetCents: integer('cost_budget_cents'),
+    budgetIsMonthly: integer('budget_is_monthly', { mode: 'boolean' }).notNull().default(false),
+    costBudgetIncludeExpenses: integer('cost_budget_include_expenses', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    notifyWhenOverBudget: integer('notify_when_over_budget', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    overBudgetPct: real('over_budget_pct'),
+    overBudgetNotifiedOn: text('over_budget_notified_on'),
+    showBudgetToAll: integer('show_budget_to_all', { mode: 'boolean' }).notNull().default(false),
+    reportVisibility: text('report_visibility', { enum: ['managers', 'everyone'] })
+      .notNull()
+      .default('managers'),
+    startsOn: text('starts_on'),
+    endsOn: text('ends_on'),
+    notes: text('notes'),
+    billingCurrency: text('billing_currency'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('projects_harvest_id_unique').on(table.harvestId),
+    index('projects_client_id').on(table.clientId),
+    check('projects_is_active_boolean', sql`${table.isActive} in (0, 1)`),
+    check(
+      'projects_hourly_rate_nonnegative',
+      sql`${table.hourlyRateCents} is null or ${table.hourlyRateCents} >= 0`,
+    ),
+    check('projects_fee_nonnegative', sql`${table.feeCents} is null or ${table.feeCents} >= 0`),
+    check(
+      'projects_budget_seconds_nonnegative',
+      sql`${table.budgetSeconds} is null or ${table.budgetSeconds} >= 0`,
+    ),
+    check(
+      'projects_cost_budget_nonnegative',
+      sql`${table.costBudgetCents} is null or ${table.costBudgetCents} >= 0`,
+    ),
+    check('projects_budget_monthly_boolean', sql`${table.budgetIsMonthly} in (0, 1)`),
+    check('projects_budget_expenses_boolean', sql`${table.costBudgetIncludeExpenses} in (0, 1)`),
+    check('projects_notify_over_budget_boolean', sql`${table.notifyWhenOverBudget} in (0, 1)`),
+    check(
+      'projects_over_budget_pct_nonnegative',
+      sql`${table.overBudgetPct} is null or ${table.overBudgetPct} >= 0`,
+    ),
+    check('projects_show_budget_boolean', sql`${table.showBudgetToAll} in (0, 1)`),
+  ],
+)
+
+export const projectTags = sqliteTable('project_tags', {
+  id: integer('id').primaryKey(),
+  name: text('name').notNull().unique(),
+  ...timestamps,
+})
+
+export const projectTagAssignments = sqliteTable(
+  'project_tag_assignments',
+  {
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    projectTagId: integer('project_tag_id')
+      .notNull()
+      .references(() => projectTags.id, { onDelete: 'cascade' }),
+    ...timestamps,
+  },
+  (table) => [
+    primaryKey({ columns: [table.projectId, table.projectTagId] }),
+    index('project_tag_assignments_tag_id').on(table.projectTagId),
+  ],
+)
+
+export const projectMilestones = sqliteTable(
+  'project_milestones',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: integer('harvest_id'),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'restrict' }),
+    name: text('name').notNull(),
+    amountCents: integer('amount_cents').notNull(),
+    dueOn: text('due_on'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('project_milestones_harvest_id_unique').on(table.harvestId),
+    index('project_milestones_project_id').on(table.projectId),
+    check('project_milestones_amount_nonnegative', sql`${table.amountCents} >= 0`),
+  ],
+)
+
+export const tasks = sqliteTable(
+  'tasks',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: integer('harvest_id'),
+    name: text('name').notNull(),
+    billableByDefault: integer('billable_by_default', { mode: 'boolean' }).notNull().default(true),
+    defaultHourlyRateCents: integer('default_hourly_rate_cents'),
+    isDefault: integer('is_default', { mode: 'boolean' }).notNull().default(false),
+    isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('tasks_harvest_id_unique').on(table.harvestId),
+    check('tasks_billable_default_boolean', sql`${table.billableByDefault} in (0, 1)`),
+    check(
+      'tasks_default_rate_nonnegative',
+      sql`${table.defaultHourlyRateCents} is null or ${table.defaultHourlyRateCents} >= 0`,
+    ),
+    check('tasks_is_default_boolean', sql`${table.isDefault} in (0, 1)`),
+    check('tasks_is_active_boolean', sql`${table.isActive} in (0, 1)`),
+  ],
+)
+
+export const taskAssignments = sqliteTable(
+  'task_assignments',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: integer('harvest_id'),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'restrict' }),
+    taskId: integer('task_id')
+      .notNull()
+      .references(() => tasks.id, { onDelete: 'restrict' }),
+    isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+    billable: integer('billable', { mode: 'boolean' }).notNull(),
+    hourlyRateCents: integer('hourly_rate_cents'),
+    budgetSeconds: integer('budget_seconds'),
+    budgetCents: integer('budget_cents'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('task_assignments_harvest_id_unique').on(table.harvestId),
+    uniqueIndex('task_assignments_project_task_unique').on(table.projectId, table.taskId),
+    uniqueIndex('task_assignments_id_project_task_unique').on(
+      table.id,
+      table.projectId,
+      table.taskId,
+    ),
+    index('task_assignments_task_id').on(table.taskId),
+    check('task_assignments_is_active_boolean', sql`${table.isActive} in (0, 1)`),
+    check('task_assignments_billable_boolean', sql`${table.billable} in (0, 1)`),
+    check(
+      'task_assignments_rate_nonnegative',
+      sql`${table.hourlyRateCents} is null or ${table.hourlyRateCents} >= 0`,
+    ),
+    check(
+      'task_assignments_budget_seconds_nonnegative',
+      sql`${table.budgetSeconds} is null or ${table.budgetSeconds} >= 0`,
+    ),
+    check(
+      'task_assignments_budget_cents_nonnegative',
+      sql`${table.budgetCents} is null or ${table.budgetCents} >= 0`,
+    ),
+  ],
+)
+
+export const userAssignments = sqliteTable(
+  'user_assignments',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: integer('harvest_id'),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'restrict' }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+    isProjectManager: integer('is_project_manager', { mode: 'boolean' }).notNull().default(false),
+    useDefaultRates: integer('use_default_rates', { mode: 'boolean' }).notNull().default(true),
+    hourlyRateCents: integer('hourly_rate_cents'),
+    budgetSeconds: integer('budget_seconds'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('user_assignments_harvest_id_unique').on(table.harvestId),
+    uniqueIndex('user_assignments_project_user_unique').on(table.projectId, table.userId),
+    uniqueIndex('user_assignments_id_project_user_unique').on(
+      table.id,
+      table.projectId,
+      table.userId,
+    ),
+    index('user_assignments_user_id').on(table.userId),
+    check('user_assignments_is_active_boolean', sql`${table.isActive} in (0, 1)`),
+    check('user_assignments_manager_boolean', sql`${table.isProjectManager} in (0, 1)`),
+    check('user_assignments_default_rates_boolean', sql`${table.useDefaultRates} in (0, 1)`),
+    check(
+      'user_assignments_rate_nonnegative',
+      sql`${table.hourlyRateCents} is null or ${table.hourlyRateCents} >= 0`,
+    ),
+    check(
+      'user_assignments_budget_nonnegative',
+      sql`${table.budgetSeconds} is null or ${table.budgetSeconds} >= 0`,
+    ),
+  ],
+)
+
+export const timeEntries = sqliteTable(
+  'time_entries',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: text('harvest_id'),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'restrict' }),
+    taskId: integer('task_id')
+      .notNull()
+      .references(() => tasks.id, { onDelete: 'restrict' }),
+    userAssignmentId: integer('user_assignment_id').notNull(),
+    taskAssignmentId: integer('task_assignment_id').notNull(),
+    spentDate: text('spent_date').notNull(),
+    seconds: integer('seconds').notNull(),
+    secondsWithoutTimer: integer('seconds_without_timer').notNull(),
+    roundedSeconds: integer('rounded_seconds').notNull(),
+    timerStartedAt: text('timer_started_at'),
+    startedTime: text('started_time'),
+    endedTime: text('ended_time'),
+    notes: text('notes'),
+    billable: integer('billable', { mode: 'boolean' }).notNull(),
+    budgeted: integer('budgeted', { mode: 'boolean' }).notNull().default(false),
+    billableRateCents: integer('billable_rate_cents'),
+    costRateCents: integer('cost_rate_cents'),
+    externalRef: text('external_ref', { mode: 'json' }).$type<Record<string, unknown>>(),
+    calendarEventRef: text('calendar_event_ref', { mode: 'json' }).$type<Record<string, unknown>>(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('time_entries_harvest_id_unique').on(table.harvestId),
+    index('time_entries_user_spent_date').on(table.userId, table.spentDate),
+    index('time_entries_project_spent_date').on(table.projectId, table.spentDate),
+    index('time_entries_external_ref_id')
+      .on(sql`cast(json_extract(${table.externalRef}, '$.id') as text)`)
+      .where(sql`${table.externalRef} is not null`),
+    uniqueIndex('time_entries_one_running_per_user')
+      .on(table.userId)
+      .where(
+        sql`${table.timerStartedAt} is not null or (${table.startedTime} is not null and ${table.endedTime} is null)`,
+      ),
+    foreignKey({
+      columns: [table.userAssignmentId, table.projectId, table.userId],
+      foreignColumns: [userAssignments.id, userAssignments.projectId, userAssignments.userId],
+      name: 'time_entries_user_assignment_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.taskAssignmentId, table.projectId, table.taskId],
+      foreignColumns: [taskAssignments.id, taskAssignments.projectId, taskAssignments.taskId],
+      name: 'time_entries_task_assignment_fk',
+    }).onDelete('restrict'),
+    check(
+      'time_entries_seconds_safe',
+      sql`${table.seconds} between 0 and 9007199254740991`,
+    ),
+    check(
+      'time_entries_checkpoint_safe',
+      sql`${table.secondsWithoutTimer} between 0 and 9007199254740991`,
+    ),
+    check(
+      'time_entries_rounded_safe',
+      sql`${table.roundedSeconds} between 0 and 9007199254740991`,
+    ),
+    check('time_entries_billable_boolean', sql`${table.billable} in (0, 1)`),
+    check('time_entries_budgeted_boolean', sql`${table.budgeted} in (0, 1)`),
+    check(
+      'time_entries_billable_rate_nonnegative',
+      sql`${table.billableRateCents} is null or ${table.billableRateCents} >= 0`,
+    ),
+    check(
+      'time_entries_cost_rate_nonnegative',
+      sql`${table.costRateCents} is null or ${table.costRateCents} >= 0`,
+    ),
+    check(
+      'time_entries_external_ref_json',
+      sql`${table.externalRef} is null or json_valid(${table.externalRef})`,
+    ),
+    check(
+      'time_entries_calendar_ref_json',
+      sql`${table.calendarEventRef} is null or json_valid(${table.calendarEventRef})`,
+    ),
+    check(
+      'time_entries_shape',
+      sql`${table.timerStartedAt} is null or (${table.startedTime} is null and ${table.endedTime} is null)`,
+    ),
+    check(
+      'time_entries_timer_started_at_canonical',
+      sql`${table.timerStartedAt} is null or (
+        unixepoch(${table.timerStartedAt}) is not null
+        and substr(${table.timerStartedAt}, 1, 19)
+          = strftime('%Y-%m-%dT%H:%M:%S', ${table.timerStartedAt})
+        and cast(substr(${table.timerStartedAt}, 12, 2) as integer) between 0 and 23
+        and cast(substr(${table.timerStartedAt}, 15, 2) as integer) between 0 and 59
+        and cast(substr(${table.timerStartedAt}, 18, 2) as integer) between 0 and 59
+        and (
+          ${table.timerStartedAt} glob '????-??-??T??:??:??Z'
+          or ${table.timerStartedAt} glob '????-??-??T??:??:??.[0-9]Z'
+          or ${table.timerStartedAt} glob '????-??-??T??:??:??.[0-9][0-9]Z'
+          or ${table.timerStartedAt} glob '????-??-??T??:??:??.[0-9][0-9][0-9]Z'
+        )
+      )`,
+    ),
+    check(
+      'time_entries_ended_requires_started',
+      sql`${table.endedTime} is null or ${table.startedTime} is not null`,
+    ),
+    check(
+      'time_entries_stopped_checkpoint',
+      sql`${table.timerStartedAt} is not null or (${table.startedTime} is not null and ${table.endedTime} is null) or ${table.secondsWithoutTimer} = ${table.seconds}`,
+    ),
   ],
 )
