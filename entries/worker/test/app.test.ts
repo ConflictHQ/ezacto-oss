@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { createApp, type Env, type Health } from '../src/app.js'
+import {
+  createApp,
+  type Env,
+  type Health,
+  type WorkerEnv,
+} from '../src/app.js'
 
 const env: Env = { ENVIRONMENT: 'test', RELEASE: 'abc1234def5678' }
 
@@ -33,6 +38,8 @@ describe('worker entry', () => {
     expect(html).toContain('data-timer-chip')
     expect(html).toContain('data-command-dialog')
     expect(html).toContain('data-sign-in-form')
+    expect(html).toContain('data-oidc-unavailable')
+    expect(html).not.toContain('data-oidc-provider')
     expect(html).toContain('data-current-identity')
     expect(html).toContain('data-logout')
     expect(html).toContain('/assets/ezacto.css')
@@ -63,6 +70,26 @@ describe('worker entry', () => {
     expect(javascript.length).toBeGreaterThan(1_000)
     expect(javascript).toContain('/auth/sign-in')
     expect(javascript).toContain('/api/v1/sessions')
+  })
+
+  it('[security] advertises a configured Google flow without exposing its runtime secrets', async () => {
+    const configured = {
+      ...env,
+      ENVIRONMENT: 'dev',
+      DB: {} as D1Database,
+      API_CURSOR_SIGNING_KEY: 'unused',
+      OIDC_GOOGLE_CLIENT_ID: 'private-google-client-id',
+      OIDC_GOOGLE_CLIENT_SECRET: 'private-google-client-secret',
+    } satisfies WorkerEnv
+    const res = await app.request('/', {}, configured)
+    const html = await res.text()
+
+    expect(res.status).toBe(200)
+    expect(html).toContain('data-oidc-provider="google"')
+    expect(html).toContain('href="/auth/oidc/google"')
+    expect(html).not.toContain(configured.OIDC_GOOGLE_CLIENT_ID)
+    expect(html).not.toContain(configured.OIDC_GOOGLE_CLIENT_SECRET)
+    expect(html).not.toContain('accounts.google.com')
   })
 
   it('publishes the versioned OpenAPI contract without database bindings', async () => {

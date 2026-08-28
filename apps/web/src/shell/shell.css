@@ -200,6 +200,36 @@ dialog h2,
   margin: 0;
   font: 600 20px/1.2 var(--ez-font-display), sans-serif;
 }
+.oidc-entry,
+.oidc-unavailable {
+  grid-column: 1 / -1;
+}
+.oidc-entry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.oidc-sign-in {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+.auth-divider,
+.oidc-unavailable {
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.oidc-unavailable {
+  margin: 0;
+}
 .sign-in-form label {
   display: grid;
   gap: 6px;
@@ -725,6 +755,13 @@ dialog textarea {
   .auth-heading,
   .auth-result {
     grid-column: 1;
+  }
+  .oidc-entry {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .auth-divider {
+    text-align: center;
   }
   .current-identity {
     align-items: stretch;

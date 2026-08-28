@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { oidcProvider, type WorkerEnv } from '../src/app.js'
+import { configuredSignInProviders, oidcProvider, type WorkerEnv } from '../src/app.js'
 
 const environment = (
   values: Partial<WorkerEnv> = {},
@@ -39,6 +39,35 @@ describe('Worker OIDC provider registry', () => {
         environment({ OIDC_GOOGLE_CLIENT_SECRET: 'client-secret' }),
       ),
     ).toThrow(/configured together/)
+  })
+
+  it('[security] advertises Google only for a complete, valid runtime configuration', () => {
+    expect(configuredSignInProviders(environment())).toEqual([])
+    expect(
+      configuredSignInProviders(
+        environment({
+          APP_BASE_URL: 'https://local-tunnel.example',
+          OIDC_GOOGLE_CLIENT_ID: 'client-id',
+        }),
+      ),
+    ).toEqual([])
+    expect(
+      configuredSignInProviders(
+        environment({
+          OIDC_GOOGLE_CLIENT_ID: 'client-id',
+          OIDC_GOOGLE_CLIENT_SECRET: 'client-secret',
+        }),
+      ),
+    ).toEqual([])
+    expect(
+      configuredSignInProviders(
+        environment({
+          APP_BASE_URL: 'https://local-tunnel.example',
+          OIDC_GOOGLE_CLIENT_ID: 'client-id',
+          OIDC_GOOGLE_CLIENT_SECRET: 'client-secret',
+        }),
+      ),
+    ).toEqual(['google'])
   })
 
   it('[acceptance] pins separate live callback origins independent of the request host', () => {

@@ -6,7 +6,10 @@ export interface AppShellOptions {
   readonly release: string
   readonly brand?: string
   readonly activeSection?: 'Time' | 'Expenses' | 'Projects' | 'Clients' | 'Invoices' | 'Reports'
+  readonly signInProviders?: readonly SignInProvider[]
 }
+
+export type SignInProvider = 'google'
 
 export interface DataQualityBannerOptions {
   readonly message: string
@@ -48,6 +51,18 @@ const sections = ['Time', 'Expenses', 'Projects', 'Clients', 'Invoices', 'Report
 
 const hrefFor = (section: (typeof sections)[number]): string =>
   section === 'Time' ? '/' : `/${section.toLocaleLowerCase('en-US')}`
+
+const providerSignIn = (providers: readonly SignInProvider[]): string => {
+  if (!providers.includes('google')) {
+    return `<p class="oidc-unavailable" data-oidc-unavailable>Single sign-on is not available for this instance. Use your email and password.</p>`
+  }
+  return (
+    `<div class="oidc-entry" data-oidc-entry>` +
+    `<a class="oidc-sign-in" data-oidc-provider="google" href="${safePath('/auth/oidc/google')}">Continue with Google</a>` +
+    `<span class="auth-divider" aria-hidden="true">or use your password</span>` +
+    `</div>`
+  )
+}
 
 export const renderAppShell = (options: AppShellOptions): string => {
   const active = options.activeSection ?? 'Time'
@@ -101,6 +116,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
           <p class="eyebrow">Your ezacto account</p>
           <h2>Sign in to your week</h2>
         </div>
+        ${providerSignIn(options.signInProviders ?? [])}
         <label for="ez-sign-in-email">Email
           <input id="ez-sign-in-email" name="email" type="email" inputmode="email" autocomplete="username" required>
         </label>
