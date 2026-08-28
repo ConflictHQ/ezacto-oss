@@ -1,9 +1,13 @@
 import {
   EzactoClient,
+  type AuthPrincipal,
   type GeneralResource,
+  type PasswordSignInInput,
+  type Session,
   type TimeEntry,
   type TimeEntryInput,
   type TimeEntryPatch,
+  type Whoami,
 } from '@ezacto/client'
 
 interface CursorPage<T> {
@@ -12,18 +16,20 @@ interface CursorPage<T> {
 }
 
 export interface ShellApi {
-  whoami(): Promise<void>
-  listProjects(cursor?: string): Promise<CursorPage<GeneralResource>>
-  listTasks(cursor?: string): Promise<CursorPage<GeneralResource>>
+  whoami(signal?: AbortSignal): Promise<Whoami>
+  signIn(credentials: PasswordSignInInput, signal?: AbortSignal): Promise<AuthPrincipal>
+  logoutCurrentSession(signal?: AbortSignal): Promise<Session>
+  listProjects(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
+  listTasks(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listTimeEntries(query: {
     readonly from?: string
     readonly to?: string
     readonly is_running?: boolean
-  }): Promise<readonly TimeEntry[]>
-  createTimeEntry(input: TimeEntryInput): Promise<TimeEntry>
-  updateTimeEntry(id: number, patch: TimeEntryPatch): Promise<TimeEntry>
-  deleteTimeEntry(id: number): Promise<void>
-  stopTimeEntry(id: number): Promise<TimeEntry>
+  }, signal?: AbortSignal): Promise<readonly TimeEntry[]>
+  createTimeEntry(input: TimeEntryInput, signal?: AbortSignal): Promise<TimeEntry>
+  updateTimeEntry(id: number, patch: TimeEntryPatch, signal?: AbortSignal): Promise<TimeEntry>
+  deleteTimeEntry(id: number, signal?: AbortSignal): Promise<void>
+  stopTimeEntry(id: number, signal?: AbortSignal): Promise<TimeEntry>
 }
 
 export interface QuickAddCommand {
@@ -84,10 +90,12 @@ const normalized = (value: string): string =>
 
 const collect = async (
   load: (cursor?: string) => Promise<CursorPage<GeneralResource>>,
+  signal?: AbortSignal,
 ): Promise<GeneralResource[]> => {
   const resources: GeneralResource[] = []
   let cursor: string | undefined
   do {
+    signal?.throwIfAborted()
     const page = await load(cursor)
     resources.push(...page.data)
     cursor = page.page.next_cursor ?? undefined
@@ -97,10 +105,11 @@ const collect = async (
 
 const loadCatalogResources = async (
   api: ShellApi,
+  signal?: AbortSignal,
 ): Promise<{ projects: GeneralResource[]; tasks: GeneralResource[] }> => {
   const [projects, tasks] = await Promise.all([
-    collect((cursor) => api.listProjects(cursor)),
-    collect((cursor) => api.listTasks(cursor)),
+    collect((cursor) => api.listProjects(cursor, signal), signal),
+    collect((cursor) => api.listTasks(cursor, signal), signal),
   ])
   return { projects, tasks }
 }
@@ -207,12 +216,13 @@ const displayEntries = (
 export const loadShellSnapshot = async (
   api: ShellApi,
   now = new Date(),
+  signal?: AbortSignal,
 ): Promise<ShellSnapshot> => {
   const range = weekRange(localDate(now))
   const [resources, entries, running] = await Promise.all([
-    loadCatalogResources(api),
-    api.listTimeEntries(range),
-    api.listTimeEntries({ is_running: true }),
+    loadCatalogResources(api, signal),
+    api.listTimeEntries(range, signal),
+    api.listTimeEntries({ is_running: true }, signal),
   ])
   const displayedEntries = displayEntries(entries, resources)
   const displayedRunning = displayEntries(running, resources)
@@ -229,22 +239,26 @@ export const quickAdd = async (
   api: ShellApi,
   value: string,
   now = new Date(),
+  signal?: AbortSignal,
 ): Promise<TimeEntry> => {
   const command = parseQuickAdd(value)
-  const resources = await loadCatalogResources(api)
+  const resources = await loadCatalogResources(api, signal)
   const project = resolveResource(
     'project',
     command.project,
     resources.projects,
   )
   const task = resolveResource('task', command.task, resources.tasks)
-  return api.createTimeEntry({
+  const input: TimeEntryInput = {
     project_id: project.id,
     task_id: task.id,
     spent_date: localDate(now),
     seconds: command.seconds,
     ...(command.notes === undefined ? {} : { notes: command.notes }),
-  })
+  }
+  return signal === undefined
+    ? api.createTimeEntry(input)
+    : api.createTimeEntry(input, signal)
 }
 
 export const startTimer = async (
@@ -252,38 +266,64 @@ export const startTimer = async (
   projectValue: string,
   taskValue: string,
   now = new Date(),
+  signal?: AbortSignal,
 ): Promise<TimeEntry> => {
-  const resources = await loadCatalogResources(api)
+  const resources = await loadCatalogResources(api, signal)
   const project = resolveResource('project', projectValue, resources.projects)
   const task = resolveResource('task', taskValue, resources.tasks)
-  return api.createTimeEntry({
+  const input: TimeEntryInput = {
     project_id: project.id,
     task_id: task.id,
     spent_date: localDate(now),
-  })
+  }
+  return signal === undefined
+    ? api.createTimeEntry(input)
+    : api.createTimeEntry(input, signal)
 }
 
+const withSignal = (signal?: AbortSignal): { signal?: AbortSignal } =>
+  signal === undefined ? {} : { signal }
+
 export const createShellApi = (client: EzactoClient): ShellApi => ({
-  whoami: async () => {
-    await client.getWhoami()
+  whoami: async (signal) => {
+    return (await client.getWhoami(withSignal(signal))).data
   },
-  listProjects: (cursor) =>
+  signIn: async (credentials, signal) => {
+    return (await client.signIn({ body: credentials, ...withSignal(signal) })).data
+  },
+  logoutCurrentSession: async (signal) => {
+    const current = (await client.listSessions(withSignal(signal))).data.find(
+      (session) => session.current,
+    )
+    if (current === undefined) {
+      throw new Error('The current session could not be found.')
+    }
+    return (
+      await client.revokeSession({
+        sessionId: current.id,
+        ...withSignal(signal),
+      })
+    ).data
+  },
+  listProjects: (cursor, signal) =>
     client.listProjects({
       query: {
         per_page: 200,
         is_active: true,
         ...(cursor === undefined ? {} : { cursor }),
       },
+      ...withSignal(signal),
     }),
-  listTasks: (cursor) =>
+  listTasks: (cursor, signal) =>
     client.listTasks({
       query: {
         per_page: 200,
         is_active: true,
         ...(cursor === undefined ? {} : { cursor }),
       },
+      ...withSignal(signal),
     }),
-  listTimeEntries: async (query) => {
+  listTimeEntries: async (query, signal) => {
     const entries: TimeEntry[] = []
     let cursor: string | undefined
     do {
@@ -293,21 +333,29 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
           per_page: 200,
           ...(cursor === undefined ? {} : { cursor }),
         },
+        ...withSignal(signal),
       })
       entries.push(...page.data)
       cursor = page.page.next_cursor ?? undefined
     } while (cursor !== undefined)
     return entries
   },
-  createTimeEntry: async (input) =>
-    (await client.createTimeEntry({ body: input })).data,
-  updateTimeEntry: async (id, patch) =>
-    (await client.updateTimeEntry({ id, body: patch })).data,
-  deleteTimeEntry: async (id) => {
-    await client.deleteTimeEntry({ id })
+  createTimeEntry: async (input, signal) =>
+    (await client.createTimeEntry({ body: input, ...withSignal(signal) })).data,
+  updateTimeEntry: async (id, patch, signal) =>
+    (await client.updateTimeEntry({ id, body: patch, ...withSignal(signal) })).data,
+  deleteTimeEntry: async (id, signal) => {
+    await client.deleteTimeEntry({ id, ...withSignal(signal) })
   },
-  stopTimeEntry: async (id) => (await client.stopTimeEntry({ id })).data,
+  stopTimeEntry: async (id, signal) =>
+    (await client.stopTimeEntry({ id, ...withSignal(signal) })).data,
 })
 
 export const createSameOriginShellApi = (): ShellApi =>
-  createShellApi(new EzactoClient({ baseUrl: globalThis.location.origin }))
+  createShellApi(
+    new EzactoClient({
+      baseUrl: globalThis.location.origin,
+      fetch: (input, init) =>
+        globalThis.fetch(input, { ...init, credentials: 'same-origin' }),
+    }),
+  )

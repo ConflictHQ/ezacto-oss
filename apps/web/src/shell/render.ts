@@ -79,12 +79,12 @@ export const renderAppShell = (options: AppShellOptions): string => {
   <header class="topbar">
     <a class="brand" href="/" aria-label="${escapeHtml(brand)} home">${escapeHtml(brand)}</a>
     <nav class="primary-nav" aria-label="Primary">${navigation}</nav>
-    <button class="timer-chip" type="button" data-timer-chip data-state="loading" aria-haspopup="dialog">
+    <button class="timer-chip" type="button" data-timer-chip data-state="loading" data-auth-action disabled aria-haspopup="dialog">
       <span class="live-dot" aria-hidden="true"></span>
       <span data-timer-label>Timer</span>
       <span data-timer-elapsed>—</span>
     </button>
-    <button class="command-trigger" type="button" data-command-trigger aria-haspopup="dialog">⌘K</button>
+    <button class="command-trigger" type="button" data-command-trigger data-auth-action disabled aria-haspopup="dialog">⌘K</button>
     <button class="menu-trigger" type="button" data-menu-trigger aria-label="Open navigation" aria-haspopup="dialog">Menu</button>
   </header>
   <nav class="tabstrip" aria-label="Time views">
@@ -93,9 +93,36 @@ export const renderAppShell = (options: AppShellOptions): string => {
   <main class="app-content" data-app-content>
     <header class="context-row">
       <div><p class="eyebrow">This week</p><h1>Time</h1></div>
-      <button class="primary-action" type="button" data-command-trigger>Log time</button>
+      <button class="primary-action" type="button" data-command-trigger data-auth-action disabled>Log time</button>
     </header>
-    <aside class="session-status" data-session-status role="status">Connecting to your ezacto session…</aside>
+    <section class="auth-shell" data-auth-shell data-state="loading" aria-label="Account">
+      <form class="sign-in-form" data-sign-in-form method="post" action="/auth/sign-in" hidden>
+        <div class="auth-heading">
+          <p class="eyebrow">Your ezacto account</p>
+          <h2>Sign in to your week</h2>
+        </div>
+        <label for="ez-sign-in-email">Email
+          <input id="ez-sign-in-email" name="email" type="email" inputmode="email" autocomplete="username" required>
+        </label>
+        <label for="ez-sign-in-password">Password
+          <input id="ez-sign-in-password" name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <button class="primary-action" type="submit" data-sign-in-submit>Sign in</button>
+        <p class="auth-result" data-sign-in-result role="status" aria-live="polite"></p>
+      </form>
+      <div class="current-identity" data-current-identity hidden>
+        <div>
+          <p class="eyebrow">Signed in</p>
+          <p class="identity-label"><strong>User #<span data-current-user-id>—</span></strong><span data-current-profile>—</span></p>
+        </div>
+        <button type="button" data-logout>Sign out</button>
+        <p class="auth-result" data-logout-result role="status" aria-live="polite"></p>
+      </div>
+    </section>
+    <aside class="session-status" data-session-status role="status">
+      <span data-session-message>Connecting to your ezacto session…</span>
+      <button type="button" data-retry-week hidden>Retry week</button>
+    </aside>
     <section class="week-surface" aria-labelledby="week-heading">
       <header class="week-toolbar">
         <div>
@@ -103,11 +130,11 @@ export const renderAppShell = (options: AppShellOptions): string => {
           <h2 id="week-heading">Week of <span data-week-label>—</span></h2>
         </div>
         <div class="week-actions">
-          <button type="button" data-week-previous aria-label="Previous week">←</button>
-          <button type="button" data-week-current>This week</button>
-          <button type="button" data-week-next aria-label="Next week">→</button>
-          <button type="button" data-copy-last-week>Copy last week</button>
-          <button type="button" data-add-row-trigger>Add row</button>
+          <button type="button" data-week-previous data-auth-action disabled aria-label="Previous week">←</button>
+          <button type="button" data-week-current data-auth-action disabled>This week</button>
+          <button type="button" data-week-next data-auth-action disabled aria-label="Next week">→</button>
+          <button type="button" data-copy-last-week data-auth-action disabled>Copy last week</button>
+          <button type="button" data-add-row-trigger data-auth-action disabled>Add row</button>
           <strong data-week-total>—</strong>
         </div>
       </header>
@@ -120,9 +147,9 @@ export const renderAppShell = (options: AppShellOptions): string => {
       </div>
       <div class="day-list" data-day-list data-view="phone">
         <header class="day-switcher">
-          <button type="button" data-day-previous aria-label="Previous day">←</button>
+          <button type="button" data-day-previous data-auth-action disabled aria-label="Previous day">←</button>
           <strong data-day-label>—</strong>
-          <button type="button" data-day-next aria-label="Next day">→</button>
+          <button type="button" data-day-next data-auth-action disabled aria-label="Next day">→</button>
         </header>
         <div data-day-rows><p class="day-empty">Loading time entries…</p></div>
       </div>

@@ -176,13 +176,105 @@ dialog h2,
   color: var(--ez-action-fg);
   font-weight: 600;
 }
+.auth-shell {
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+.auth-shell[data-state="loading"] {
+  display: none;
+}
+.sign-in-form {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+.sign-in-form[hidden],
+.current-identity[hidden] {
+  display: none;
+}
+.auth-heading h2 {
+  margin: 0;
+  font: 600 20px/1.2 var(--ez-font-display), sans-serif;
+}
+.sign-in-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.sign-in-form input {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.sign-in-form .primary-action,
+.current-identity button {
+  min-height: 44px;
+}
+.auth-result {
+  grid-column: 2 / -1;
+  margin: 0;
+  color: var(--ez-muted);
+}
+.current-identity {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+.current-identity button {
+  padding: 0 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.current-identity .auth-result {
+  grid-column: 1 / -1;
+}
+.identity-label {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+}
+.identity-label span:last-child {
+  color: var(--ez-muted);
+  text-transform: capitalize;
+}
+.primary-action:disabled,
+button[data-auth-action]:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
 .session-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 16px;
   padding: 10px 12px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: var(--ez-status-bg);
   color: var(--ez-status-fg);
+}
+.session-status button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  white-space: nowrap;
 }
 .session-status[data-state="ready"] {
   border-color: var(--ez-action);
@@ -626,6 +718,16 @@ dialog textarea {
   }
   .context-row h1 {
     font-size: 32px;
+  }
+  .sign-in-form {
+    grid-template-columns: 1fr;
+  }
+  .auth-heading,
+  .auth-result {
+    grid-column: 1;
+  }
+  .current-identity {
+    align-items: stretch;
   }
   .week-surface {
     margin-inline: -16px;

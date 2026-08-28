@@ -344,5 +344,6 @@ const shellContentSecurityPolicy = [
   "img-src 'self' data:",
   "object-src 'none'",
   "base-uri 'none'",
+  "form-action 'self'",
   "frame-ancestors 'none'",
 ].join('; ')
