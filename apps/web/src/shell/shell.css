@@ -1,0 +1,423 @@
+* {
+  box-sizing: border-box;
+}
+html {
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font-family: var(--ez-font-body), sans-serif;
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--ez-ground);
+}
+button,
+input {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible {
+  outline: 3px solid var(--ez-data);
+  outline-offset: 2px;
+}
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+a {
+  color: var(--ez-data);
+}
+.topbar {
+  min-height: 56px;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 0 24px;
+  background: var(--ez-ink);
+  color: var(--ez-ground);
+}
+.brand {
+  display: grid;
+  place-items: center;
+  color: var(--ez-ground);
+  font:
+    600 20px/1 var(--ez-font-mono),
+    monospace;
+  text-decoration: none;
+  margin-right: 12px;
+}
+.primary-nav {
+  display: flex;
+  align-items: stretch;
+}
+.primary-nav a {
+  display: grid;
+  place-items: center;
+  padding: 0 14px;
+  color: var(--ez-ground);
+  text-decoration: none;
+  font-weight: 500;
+}
+.primary-nav a[aria-current="page"] {
+  background: var(--ez-surface);
+  color: var(--ez-ink);
+}
+.timer-chip,
+.command-trigger,
+.menu-trigger {
+  align-self: center;
+  min-height: 36px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+  color: var(--ez-ink);
+}
+.timer-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  padding: 0 12px;
+  max-width: 320px;
+}
+.timer-chip [data-timer-label] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.timer-chip [data-timer-elapsed] {
+  font-family: var(--ez-font-mono), monospace;
+  font-variant-numeric: tabular-nums;
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--ez-muted);
+}
+.timer-chip[data-state="running"] {
+  border-color: var(--ez-live);
+}
+.timer-chip[data-state="running"] .live-dot {
+  background: var(--ez-live);
+}
+.command-trigger,
+.menu-trigger {
+  margin-left: 0;
+  padding: 0 12px;
+  font-family: var(--ez-font-mono), monospace;
+}
+.menu-trigger {
+  display: none;
+}
+.tabstrip {
+  height: 44px;
+  display: flex;
+  align-items: stretch;
+  gap: 24px;
+  padding: 0 32px;
+  border-bottom: 1px solid var(--ez-border);
+  overflow-x: auto;
+}
+.tabstrip a {
+  display: grid;
+  place-items: center;
+  color: var(--ez-muted);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.tabstrip a[aria-current="page"] {
+  color: var(--ez-ink);
+  box-shadow: inset 0 -3px var(--ez-live);
+}
+.app-content {
+  padding: 28px 32px 48px;
+}
+.context-row {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 20px;
+}
+.context-row h1,
+.week-surface h2,
+dialog h2,
+.empty-state h2 {
+  margin: 0;
+  font-family: var(--ez-font-display), sans-serif;
+}
+.context-row h1 {
+  font-size: clamp(32px, 4vw, 40px);
+  line-height: 1.1;
+}
+.eyebrow {
+  margin: 0 0 4px;
+  color: var(--ez-muted);
+  font:
+    500 13px/1.4 var(--ez-font-mono),
+    monospace;
+}
+.primary-action {
+  min-height: 36px;
+  padding: 0 16px;
+  border: 1px solid var(--ez-action);
+  border-radius: var(--ez-radius);
+  background: var(--ez-action);
+  color: var(--ez-action-fg);
+  font-weight: 600;
+}
+.session-status {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-status-bg);
+  color: var(--ez-status-fg);
+}
+.session-status[data-state="ready"] {
+  border-color: var(--ez-action);
+  color: var(--ez-ink);
+}
+.week-surface {
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  overflow: hidden;
+}
+.week-surface > header {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: var(--ez-surface);
+  border-bottom: 1px solid var(--ez-border);
+}
+.week-surface h2 {
+  font-size: 18px;
+}
+.week-surface [data-week-total] {
+  font-family: var(--ez-font-mono), monospace;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.table-wrap {
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+th,
+td {
+  height: 40px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--ez-border);
+  text-align: left;
+  white-space: nowrap;
+}
+th {
+  background: var(--ez-surface);
+  color: var(--ez-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+tbody tr[data-running="true"] {
+  box-shadow: inset 3px 0 var(--ez-live);
+}
+.data-quality {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-status-bg);
+  color: var(--ez-status-fg);
+}
+.data-quality a {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.empty-state {
+  min-height: 180px;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  padding: 32px;
+  background: var(--ez-surface);
+  color: var(--ez-muted);
+}
+.empty-state p {
+  margin: 8px 0 0;
+  max-width: 44ch;
+}
+dialog {
+  width: min(640px, calc(100vw - 32px));
+  padding: 0;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+dialog::backdrop {
+  background: color-mix(in srgb, var(--ez-ink) 72%, transparent);
+}
+dialog form {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+}
+dialog header {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+}
+dialog header button {
+  border: 0;
+  background: transparent;
+  color: var(--ez-muted);
+  font-size: 24px;
+}
+dialog label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ez-muted);
+}
+dialog input {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+  color: var(--ez-ink);
+}
+.hint,
+.form-result {
+  margin: 0;
+  color: var(--ez-muted);
+}
+.timer-actions {
+  display: flex;
+  gap: 8px;
+}
+.timer-actions > button {
+  min-height: 36px;
+  padding: 0 16px;
+  border-radius: var(--ez-radius);
+}
+.menu-dialog > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px;
+  border-bottom: 1px solid var(--ez-border);
+}
+.menu-dialog > header button {
+  border: 0;
+  background: transparent;
+  color: var(--ez-muted);
+  font-size: 24px;
+}
+.menu-dialog nav {
+  display: grid;
+  padding: 8px;
+}
+.menu-dialog nav a {
+  padding: 14px 12px;
+  color: var(--ez-ink);
+  text-decoration: none;
+  border-radius: var(--ez-radius);
+}
+.menu-dialog nav a[aria-current="page"] {
+  background: var(--ez-status-bg);
+}
+.document-shell {
+  min-height: 100vh;
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.document-shell > header {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--ez-border);
+}
+.document-shell > main {
+  width: min(720px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 48px 0;
+}
+.build-stamp {
+  padding: 0 32px 24px;
+  color: var(--ez-muted);
+  font:
+    12px/1.4 var(--ez-font-mono),
+    monospace;
+}
+@media (max-width: 720px) {
+  .topbar {
+    min-height: 52px;
+    padding: 0 12px;
+    gap: 6px;
+  }
+  .primary-nav,
+  .command-trigger {
+    display: none;
+  }
+  .menu-trigger {
+    display: block;
+  }
+  .brand {
+    margin-right: 0;
+  }
+  .timer-chip {
+    margin-left: auto;
+    max-width: min(56vw, 250px);
+  }
+  .timer-chip [data-timer-label] {
+    max-width: 96px;
+  }
+  .tabstrip {
+    padding: 0 16px;
+  }
+  .app-content {
+    padding: 20px 16px 36px;
+  }
+  .context-row {
+    align-items: center;
+  }
+  .context-row h1 {
+    font-size: 32px;
+  }
+  .week-surface {
+    margin-inline: -16px;
+    border-inline: 0;
+    border-radius: 0;
+  }
+  dialog {
+    width: 100vw;
+    max-width: none;
+    margin: auto 0 0;
+    border-radius: var(--ez-radius) var(--ez-radius) 0 0;
+  }
+  .timer-actions {
+    flex-direction: column;
+  }
+  .build-stamp {
+    padding-inline: 16px;
+  }
+}

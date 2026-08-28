@@ -21,18 +21,39 @@ describe('worker entry', () => {
     })
   })
 
-  it('serves an instance page naming the deployment and the short release', async () => {
+  it('serves the responsive application shell with the deployment stamp', async () => {
     const res = await app.request('/', {}, env)
 
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toContain('text/html')
 
     const html = await res.text()
-    expect(html).toContain('<title>ezacto — test</title>')
+    expect(html).toContain('<title>ezacto — Time</title>')
     expect(html).toContain('abc1234')
-    expect(html).toContain('/openapi/v1.json')
-    // Deployments are not for search engines until the product is real.
+    expect(html).toContain('data-timer-chip')
+    expect(html).toContain('data-command-dialog')
+    expect(html).toContain('/assets/ezacto.css')
+    expect(html).toContain('/assets/ezacto.js')
     expect(html).toContain('name="robots" content="noindex"')
+    expect(res.headers.get('content-security-policy')).toContain(
+      "script-src 'self'",
+    )
+  })
+
+  it('serves deterministic shell assets with explicit content types', async () => {
+    const [style, script] = await Promise.all([
+      app.request('/assets/ezacto.css', {}, env),
+      app.request('/assets/ezacto.js', {}, env),
+    ])
+
+    expect(style.status).toBe(200)
+    expect(style.headers.get('content-type')).toBe('text/css; charset=utf-8')
+    expect(await style.text()).toContain('@media (max-width: 720px)')
+    expect(script.status).toBe(200)
+    expect(script.headers.get('content-type')).toBe(
+      'text/javascript; charset=utf-8',
+    )
+    expect((await script.text()).length).toBeGreaterThan(1_000)
   })
 
   it('publishes the versioned OpenAPI contract without database bindings', async () => {
@@ -68,7 +89,11 @@ describe('worker entry', () => {
   })
 
   it('escapes binding values rather than interpolating them into the page raw', async () => {
-    const res = await app.request('/', {}, { ENVIRONMENT: '<script>x</script>', RELEASE: 'deadbeef' })
+    const res = await app.request(
+      '/',
+      {},
+      { ENVIRONMENT: '<script>x</script>', RELEASE: 'deadbeef' },
+    )
 
     const html = await res.text()
     expect(html).not.toContain('<script>x</script>')
