@@ -1,4 +1,8 @@
 export { createApiApp } from './app.js'
+export {
+  installGeneralResourceRoutes,
+  type GeneralResourceRouteOptions,
+} from './general-resources.js'
 export type {
   ApiContext,
   ApiInstaller,
