@@ -3,6 +3,7 @@ import {
   createApiTokenStore,
   createD1Database,
   createGeneralResourceRepository,
+  createD1PasswordAuthService,
   DrizzleTrackedResourceRepository,
   migrateD1,
   type TrackedPolicyResolver,
@@ -39,7 +40,9 @@ export const parseCursorSigningKey = (encoded: string): Uint8Array => {
   }
   const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
   if (bytes.byteLength !== cursorSecretBytes) {
-    throw new TypeError(`API_CURSOR_SIGNING_KEY must decode to exactly ${cursorSecretBytes} bytes`)
+    throw new TypeError(
+      `API_CURSOR_SIGNING_KEY must decode to exactly ${cursorSecretBytes} bytes`,
+    )
   }
   if (encodeBase64Url(bytes) !== encoded) {
     throw new TypeError('API_CURSOR_SIGNING_KEY must be canonical base64url')
@@ -50,7 +53,10 @@ export const parseCursorSigningKey = (encoded: string): Uint8Array => {
 const encodeBase64Url = (bytes: Uint8Array): string => {
   let binary = ''
   for (const byte of bytes) binary += String.fromCharCode(byte)
-  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
+  return btoa(binary)
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replace(/=+$/, '')
 }
 
 const requireDatabase = (env: WorkerEnv): D1Database => {
@@ -71,7 +77,9 @@ const requireDatabase = (env: WorkerEnv): D1Database => {
  * D1 itself serializes each ledger-leading migration batch. The isolate cache
  * only removes repeat checks after success; failures are evicted and retried.
  */
-export const ensureRuntimeDatabaseReady = async (database: D1Database): Promise<void> => {
+export const ensureRuntimeDatabaseReady = async (
+  database: D1Database,
+): Promise<void> => {
   const identity = database as object
   const pending = readiness.get(identity)
   if (pending !== undefined) return pending
@@ -90,7 +98,9 @@ const organizationPolicy: TrackedPolicyResolver = {
   isLocked: async () => false,
 }
 
-export const createRuntimeServices = async (env: WorkerEnv): Promise<RuntimeServices> => {
+export const createRuntimeServices = async (
+  env: WorkerEnv,
+): Promise<RuntimeServices> => {
   const database = requireDatabase(env)
   const cursorSigningKey = parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY)
   await ensureRuntimeDatabaseReady(database)
@@ -99,7 +109,11 @@ export const createRuntimeServices = async (env: WorkerEnv): Promise<RuntimeServ
     bootstrap: (input) => bootstrapInstanceD1(database, input),
     tokens: createApiTokenStore(drizzle),
     generalResources: createGeneralResourceRepository(drizzle),
-    trackedResources: new DrizzleTrackedResourceRepository(drizzle, organizationPolicy),
+    trackedResources: new DrizzleTrackedResourceRepository(
+      drizzle,
+      organizationPolicy,
+    ),
     cursorSigningKey,
+    passwordAuth: createD1PasswordAuthService(database),
   }
 }

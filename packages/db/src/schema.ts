@@ -242,6 +242,75 @@ export const userIdentities = sqliteTable(
   ],
 )
 
+export const userPasswords = sqliteTable(
+  'user_passwords',
+  {
+    userId: integer('user_id')
+      .primaryKey()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    algorithm: text('algorithm', { enum: ['pbkdf2-sha256'] }).notNull(),
+    iterations: integer('iterations').notNull(),
+    salt: text('salt').notNull(),
+    passwordHash: text('password_hash').notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    check('user_passwords_algorithm', sql`${table.algorithm} = 'pbkdf2-sha256'`),
+    check('user_passwords_iterations', sql`${table.iterations} >= 600000`),
+  ],
+)
+
+export const authTokens = sqliteTable(
+  'auth_tokens',
+  {
+    id: integer('id').primaryKey(),
+    selector: text('selector').notNull(),
+    secretHash: text('secret_hash').notNull(),
+    kind: text('kind', { enum: ['verify_email', 'password_reset'] }).notNull(),
+    userEmailId: integer('user_email_id')
+      .notNull()
+      .references(() => userEmails.id, { onDelete: 'cascade' }),
+    expiresAt: text('expires_at').notNull(),
+    usedAt: text('used_at'),
+    usedNonce: text('used_nonce'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('auth_tokens_selector_unique').on(table.selector),
+    index('auth_tokens_email_kind').on(table.userEmailId, table.kind),
+    check('auth_tokens_used_pair', sql`(${table.usedAt} is null) = (${table.usedNonce} is null)`),
+  ],
+)
+
+export const authRateLimits = sqliteTable(
+  'auth_rate_limits',
+  {
+    action: text('action', {
+      enum: ['signup', 'sign_in', 'verify_email', 'request_reset', 'reset_password'],
+    }).notNull(),
+    keyHash: text('key_hash').notNull(),
+    windowStartedAt: text('window_started_at').notNull(),
+    attempts: integer('attempts').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.action, table.keyHash] }),
+    check('auth_rate_limits_attempts_positive', sql`${table.attempts} >= 1`),
+  ],
+)
+
+export const authFirstRun = sqliteTable(
+  'auth_first_run',
+  {
+    id: integer('id').primaryKey().default(1),
+    claimNonce: text('claim_nonce').notNull().unique(),
+    completedAt: text('completed_at'),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [check('auth_first_run_singleton', sql`${table.id} = 1`)],
+)
+
 export const apiTokens = sqliteTable(
   'api_tokens',
   {
@@ -285,10 +354,7 @@ export const apiTokens = sqliteTable(
       'api_tokens_scopes_json',
       sql`json_valid(${table.scopes}) and json_type(${table.scopes}) = 'array'`,
     ),
-    check(
-      'api_tokens_last_used_at_canonical',
-      nullableCanonicalTimestamp(table.lastUsedAt),
-    ),
+    check('api_tokens_last_used_at_canonical', nullableCanonicalTimestamp(table.lastUsedAt)),
     check('api_tokens_expires_at_canonical', nullableCanonicalTimestamp(table.expiresAt)),
     check('api_tokens_revoked_at_canonical', nullableCanonicalTimestamp(table.revokedAt)),
     check('api_tokens_created_at_canonical', canonicalTimestamp(table.createdAt)),

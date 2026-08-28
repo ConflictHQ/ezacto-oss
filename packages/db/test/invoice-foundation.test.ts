@@ -630,6 +630,7 @@ for (const [runtime, factory] of factories) {
         '0010_recurring_invoices',
         '0011_api_tokens',
         '0012_instance_bootstrap',
+        '0013_password_auth',
       ])
       expect(
         firstLedger.slice(0, 4).every(({ applied_at: appliedAt }) => appliedAt === timestamp),
