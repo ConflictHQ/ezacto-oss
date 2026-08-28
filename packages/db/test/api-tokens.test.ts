@@ -184,6 +184,38 @@ for (const [runtime, factory] of factories) {
       ).rejects.toThrow(/CHECK constraint/i)
     })
 
+    it('[api] measures token names in Unicode code points at native and physical boundaries', async () => {
+      const db = await setup()
+      const acceptedName = '🙂'.repeat(60)
+      const issued = await issueApiToken(db.database, {
+        userId: 7,
+        name: acceptedName,
+        scopes: ['reports:read'],
+        createdAt,
+      })
+      expect(issued.name).toBe(acceptedName)
+
+      await expect(
+        issueApiToken(db.database, {
+          userId: 7,
+          name: '🙂'.repeat(101),
+          scopes: ['reports:read'],
+          createdAt,
+        }),
+      ).rejects.toThrow(/between 1 and 100 characters/)
+      await expect(
+        db.run(
+          `INSERT INTO api_tokens (
+            user_id, selector, secret_hash, name, scopes, created_at, updated_at
+          ) VALUES (7, 'eeeeeeeeeeeeeeee', ?, ?, '["reports:read"]', ?, ?)`,
+          '0'.repeat(64),
+          '🙂'.repeat(101),
+          createdAt,
+          createdAt,
+        ),
+      ).rejects.toThrow(/CHECK constraint/i)
+    })
+
     it('[api] records last use and rejects a revoked token on the very next request', async () => {
       const db = await setup()
       const issued = await issue(db)
@@ -281,6 +313,41 @@ for (const [runtime, factory] of factories) {
         db.run(`UPDATE api_tokens SET revoked_at = NULL WHERE id = ?`, issued.id),
       ).rejects.toThrow(/revocation is irreversible/)
       expect(await authenticateApiToken(db.database, issued.token, usedAt)).toBeNull()
+    })
+
+    it('[security] cannot reactivate a revoked identity through INSERT OR REPLACE', async () => {
+      const db = await setup()
+      const issued = await issue(db)
+      await revokeApiToken(db.database, {
+        userId: 7,
+        tokenId: issued.id,
+        revokedAt,
+      })
+
+      const replaceAttempts = [
+        `INSERT OR REPLACE INTO api_tokens (
+          id, user_id, selector, secret_hash, name, scopes, last_used_at,
+          expires_at, revoked_at, created_at, updated_at
+        ) SELECT id, user_id, selector, secret_hash, name, scopes, last_used_at,
+          expires_at, NULL, created_at, updated_at
+        FROM api_tokens WHERE id = ?`,
+        `INSERT OR REPLACE INTO api_tokens (
+          id, user_id, selector, secret_hash, name, scopes, last_used_at,
+          expires_at, revoked_at, created_at, updated_at
+        ) SELECT id + 1000, user_id, selector, secret_hash, name, scopes, last_used_at,
+          expires_at, NULL, created_at, updated_at
+        FROM api_tokens WHERE id = ?`,
+        `INSERT OR REPLACE INTO api_tokens (
+          id, user_id, selector, secret_hash, name, scopes, last_used_at,
+          expires_at, revoked_at, created_at, updated_at
+        ) SELECT id, user_id, 'replacementselector', secret_hash, name, scopes, last_used_at,
+          expires_at, NULL, created_at, updated_at
+        FROM api_tokens WHERE id = ?`,
+      ]
+      for (const statement of replaceAttempts) {
+        await expect(db.run(statement, issued.id)).rejects.toThrow(/identity cannot be replaced/)
+        expect(await authenticateApiToken(db.database, issued.token, revokedAt)).toBeNull()
+      }
     })
 
     it('[security] clamps a clock-skewed first use to token creation time', async () => {

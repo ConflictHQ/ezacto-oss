@@ -63,6 +63,13 @@ export const apiTokensMigration = [
       OR OLD.secret_hash IS NOT NEW.secret_hash OR OLD.scopes IS NOT NEW.scopes
       OR OLD.created_at IS NOT NEW.created_at
     BEGIN SELECT RAISE(ABORT, 'API token identity and scopes are immutable'); END`,
+  `CREATE TRIGGER api_tokens_identity_collision_guard
+    BEFORE INSERT ON api_tokens
+    WHEN EXISTS (
+      SELECT 1 FROM api_tokens existing
+      WHERE existing.id = NEW.id OR existing.selector = NEW.selector
+    )
+    BEGIN SELECT RAISE(ABORT, 'API token identity cannot be replaced'); END`,
   `CREATE TRIGGER api_tokens_last_used_monotonic
     BEFORE UPDATE OF last_used_at ON api_tokens
     WHEN OLD.last_used_at IS NOT NULL AND (
