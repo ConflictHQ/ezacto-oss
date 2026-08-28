@@ -12,6 +12,7 @@ import {
   text,
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core'
+import type { RecurringAmountConfig } from './recurring-invoices.js'
 
 const timestamps = {
   createdAt: text('created_at').notNull(),
@@ -548,6 +549,66 @@ export const retainers = sqliteTable(
   ],
 )
 
+export const recurringInvoices = sqliteTable(
+  'recurring_invoices',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: integer('harvest_id'),
+    clientId: integer('client_id')
+      .notNull()
+      .references(() => clients.id, { onDelete: 'restrict' }),
+    definitionStatus: text('definition_status', { enum: ['complete', 'incomplete'] })
+      .notNull()
+      .default('complete'),
+    subjectTemplate: text('subject_template'),
+    notesTemplate: text('notes_template'),
+    everyNMonths: integer('every_n_months'),
+    dayOfMonth: integer('day_of_month'),
+    nextIssueOn: text('next_issue_on'),
+    amountConfig: text('amount_config', { mode: 'json' }).$type<RecurringAmountConfig>(),
+    canDrawFromRetainerId: integer('can_draw_from_retainer_id').references(() => retainers.id, {
+      onDelete: 'restrict',
+    }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('recurring_invoices_harvest_id_unique').on(table.harvestId),
+    index('recurring_invoices_client_id').on(table.clientId),
+    index('recurring_invoices_retainer_id')
+      .on(table.canDrawFromRetainerId)
+      .where(sql`${table.canDrawFromRetainerId} is not null`),
+    check(
+      'recurring_invoices_harvest_id_safe_integer',
+      sql`${table.harvestId} is null or ${table.harvestId} between 1 and 9007199254740991`,
+    ),
+    check(
+      'recurring_invoices_definition_shape',
+      sql`(${table.definitionStatus} = 'complete'
+          and ${table.subjectTemplate} is not null
+          and length(trim(${table.subjectTemplate})) > 0
+          and ${table.notesTemplate} is not null
+          and ${table.everyNMonths} between 1 and 9007199254740991
+          and ${table.dayOfMonth} between 1 and 31
+          and ${table.nextIssueOn} is not null
+          and date(${table.nextIssueOn}, '+0 days') is ${table.nextIssueOn}
+          and ${table.amountConfig} is not null
+          and json_valid(${table.amountConfig})
+          and json_type(${table.amountConfig}) = 'object')
+        or (${table.definitionStatus} = 'incomplete'
+          and ${table.harvestId} is not null
+          and ${table.subjectTemplate} is null
+          and ${table.notesTemplate} is null
+          and ${table.everyNMonths} is null
+          and ${table.dayOfMonth} is null
+          and ${table.nextIssueOn} is null
+          and ${table.amountConfig} is null
+          and ${table.canDrawFromRetainerId} is null)`,
+    ),
+    check('recurring_invoices_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('recurring_invoices_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+  ],
+)
+
 export const invoices = sqliteTable(
   'invoices',
   {
@@ -592,6 +653,9 @@ export const invoices = sqliteTable(
       .default(sql`lower(hex(randomblob(32)))`),
     projectId: integer('project_id').references(() => projects.id, { onDelete: 'restrict' }),
     retainerId: integer('retainer_id').references(() => retainers.id, { onDelete: 'restrict' }),
+    recurringInvoiceId: integer('recurring_invoice_id').references(() => recurringInvoices.id, {
+      onDelete: 'restrict',
+    }),
     reminderPolicy: text('reminder_policy', { mode: 'json' }).$type<InvoiceReminderPolicy>(),
     taxRatePpm: integer('tax_rate_ppm'),
     tax2RatePpm: integer('tax2_rate_ppm'),
@@ -626,6 +690,7 @@ export const invoices = sqliteTable(
     index('invoices_client_id').on(table.clientId),
     index('invoices_project_id').on(table.projectId),
     index('invoices_retainer_id').on(table.retainerId),
+    index('invoices_recurring_invoice_id').on(table.recurringInvoiceId),
     index('invoices_created_by_user_id').on(table.createdByUserId),
     check(
       'invoices_reminder_policy_json',
