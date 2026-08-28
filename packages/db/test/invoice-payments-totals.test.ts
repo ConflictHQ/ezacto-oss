@@ -5,20 +5,25 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import {
   canonicalizeHarvestPaymentDates,
-  confirmBankDeposit,
   percentageToRatePpm,
   refreshInvoiceSourceObservation,
   reemitHarvestPaymentDates,
-  setInvoicePaymentOptions,
 } from '../src/invoice-payments.js'
+import {
+  deleteInvoicePayment,
+  executeInvoiceEdit,
+  recordInvoicePayment,
+} from '../src/invoice-state.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import { orgPeopleMigration } from '../src/migrations/0000_org_people.js'
 import { clientsMigration } from '../src/migrations/0001_clients.js'
 import { projectsTimeMigration } from '../src/migrations/0002_projects_time.js'
 import { rateResolverMigration } from '../src/migrations/0003_rate_resolver.js'
 import { invoiceFoundationMigration } from '../src/migrations/0004_invoice_foundation.js'
+import { invoicePaymentsTotalsMigration } from '../src/migrations/0005_invoice_payments_totals.js'
+import type { InvoicePaymentOption } from '../src/schema.js'
 
-type OperationDatabase = Parameters<typeof confirmBankDeposit>[0]
+type OperationDatabase = Parameters<typeof recordInvoicePayment>[0]
 
 interface TestDatabase {
   orm: OperationDatabase
@@ -54,7 +59,11 @@ interface HarvestInvoiceObservation {
 
 const timestamp = '2026-08-27T00:00:00.000Z'
 const laterTimestamp = '2026-08-27T00:00:00.001Z'
+const thirdTimestamp = '2026-08-27T00:00:00.002Z'
+const fourthTimestamp = '2026-08-27T00:00:00.003Z'
+const fifthTimestamp = '2026-08-27T00:00:00.004Z'
 const centsLimit = 9_000_000_000_000
+const authorizeInvoiceCommand = async (): Promise<boolean> => true
 const migrationsThrough0004 = [
   ['0000_org_people', orgPeopleMigration],
   ['0001_clients', clientsMigration],
@@ -90,10 +99,18 @@ const d1Database = async (migrate = true): Promise<TestDatabase> => {
   return {
     orm: createD1Database(d1),
     run: async (sql, ...params) => {
-      await d1.prepare(sql).bind(...params).run()
+      await d1
+        .prepare(sql)
+        .bind(...params)
+        .run()
     },
     rows: async <T>(sql: string, ...params: unknown[]) =>
-      (await d1.prepare(sql).bind(...params).all<T>()).results,
+      (
+        await d1
+          .prepare(sql)
+          .bind(...params)
+          .all<T>()
+      ).results,
     migrateAgain: async () => migrateD1(d1),
     close: async () => miniflare.dispose(),
   }
@@ -120,6 +137,18 @@ const installThrough0004 = async (database: TestDatabase): Promise<void> => {
   }
 }
 
+// D21's raw-trigger unit cases install their owning migration exactly. On the
+// latest schema, mutations go through the D22 operation tests below instead.
+const installThrough0005 = async (database: TestDatabase): Promise<void> => {
+  await installThrough0004(database)
+  for (const statement of invoicePaymentsTotalsMigration) await database.run(statement)
+  await database.run(
+    `INSERT INTO _ezacto_migrations (id, applied_at) VALUES (?, ?)`,
+    '0005_invoice_payments_totals',
+    timestamp,
+  )
+}
+
 const installBaseFixture = async (database: TestDatabase): Promise<void> => {
   await database.run(
     `INSERT INTO organizations (name, modules, created_at, updated_at)
@@ -142,10 +171,11 @@ const installBaseFixture = async (database: TestDatabase): Promise<void> => {
   )
   await database.run(
     `INSERT INTO invoices
-      (id, harvest_id, client_id, number, currency, issue_date, due_date, created_at, updated_at)
+      (id, harvest_id, client_id, number, currency, issue_date, due_date, state,
+       created_at, updated_at)
      VALUES
-      (1, 7001, 1, 'INV-001', 'USD', '2026-08-01', '2026-08-31', ?, ?),
-      (2, NULL, 1, 'INV-002', 'EUR', '2026-08-01', '2026-08-31', ?, ?)`,
+      (1, 7001, 1, 'INV-001', 'USD', '2026-08-01', '2026-08-31', 'open', ?, ?),
+      (2, NULL, 1, 'INV-002', 'EUR', '2026-08-01', '2026-08-31', 'open', ?, ?)`,
     timestamp,
     timestamp,
     timestamp,
@@ -158,6 +188,41 @@ const amountToExactCents = (amount: number): number => {
   if (!Number.isSafeInteger(scaled)) throw new Error('money has more than two decimal places')
   return scaled
 }
+
+const setPaymentOptions = async (
+  database: TestDatabase,
+  input: {
+    invoiceId: number
+    commandId: string
+    paymentOptions: readonly InvoicePaymentOption[]
+    occurredAt: string
+  },
+) => {
+  const invoice = await database.rows<{ version: number }>(
+    `SELECT version FROM invoices WHERE id = ?`,
+    input.invoiceId,
+  )
+  return executeInvoiceEdit(database.orm, {
+    invoiceId: input.invoiceId,
+    commandId: input.commandId,
+    actor: { type: 'system', id: null },
+    authorize: authorizeInvoiceCommand,
+    expectedVersion: invoice[0]?.version ?? 0,
+    occurredAt: input.occurredAt,
+    eventIds: [`${input.commandId}-event`],
+    edit: { type: 'payment_options', paymentOptions: input.paymentOptions },
+  })
+}
+
+describe('invoice payment package surface', () => {
+  it('[unit] exposes only the ledger-backed invoice mutation operations', async () => {
+    const packageApi = await import('../src/index.js')
+    expect(packageApi).toHaveProperty('executeInvoiceEdit')
+    expect(packageApi).toHaveProperty('recordInvoicePayment')
+    expect(packageApi).not.toHaveProperty('setInvoicePaymentOptions')
+    expect(packageApi).not.toHaveProperty('confirmBankDeposit')
+  })
+})
 
 for (const [runtime, factory] of factories) {
   describe(`invoice payments and totals (${runtime})`, () => {
@@ -265,10 +330,10 @@ for (const [runtime, factory] of factories) {
       ])
       const foreignKeys = (
         await db.rows<{
-        from: string
-        table: string
-        to: string
-        on_delete: string
+          from: string
+          table: string
+          to: string
+          on_delete: string
         }>(`PRAGMA foreign_key_list(invoice_payments)`)
       ).map(({ from, table, to, on_delete }) => ({ from, table, to, on_delete }))
       expect(foreignKeys).toEqual(
@@ -360,13 +425,11 @@ for (const [runtime, factory] of factories) {
       expect(await indexColumns('invoice_payments_provider_account_id')).toEqual([
         'provider_account_id',
       ])
-      expect(await indexColumns('invoices_reference_token_unique')).toEqual([
-        'reference_token',
-      ])
+      expect(await indexColumns('invoices_reference_token_unique')).toEqual(['reference_token'])
       const ledger = await db.rows<{ id: string; applied_at: string }>(
         `SELECT id, applied_at FROM _ezacto_migrations ORDER BY id`,
       )
-      expect(ledger.at(-1)?.id).toBe('0005_invoice_payments_totals')
+      expect(ledger.at(-1)?.id).toBe('0006_invoice_state_events')
       await db.migrateAgain()
       expect(
         await db.rows<{ id: string; applied_at: string }>(
@@ -411,8 +474,9 @@ for (const [runtime, factory] of factories) {
     })
 
     it('[unit] applies exact discount-first parallel taxes and recomputes every mutation', async () => {
-      database = await factory()
+      database = await factory(false)
       const db = database
+      await installThrough0005(db)
       await installBaseFixture(db)
       await db.run(
         `INSERT INTO invoices
@@ -467,9 +531,9 @@ for (const [runtime, factory] of factories) {
         timestamp,
         timestamp,
       )
-      expect(await db.rows<{ due: number }>(`SELECT due_amount_cents AS due FROM invoices WHERE id = 1`)).toEqual([
-        { due: 15650 },
-      ])
+      expect(
+        await db.rows<{ due: number }>(`SELECT due_amount_cents AS due FROM invoices WHERE id = 1`),
+      ).toEqual([{ due: 15650 }])
       await db.run(`CREATE TABLE recompute_observations (kind TEXT NOT NULL) STRICT`)
       await db.run(
         `CREATE TRIGGER observe_invoice_recompute AFTER UPDATE OF amount_cents ON invoices
@@ -487,15 +551,18 @@ for (const [runtime, factory] of factories) {
       expect(
         await db.rows<{ count: number }>(`SELECT count(*) AS count FROM recompute_observations`),
       ).toEqual([{ count: 1 }])
-      await db.run(`UPDATE invoice_payments SET amount_cents = 1200, updated_at = ? WHERE id = 1`, laterTimestamp)
-      expect(await db.rows<{ due: number }>(`SELECT due_amount_cents AS due FROM invoices WHERE id = 1`)).toEqual([
-        { due: 15450 },
-      ])
+      await db.run(
+        `UPDATE invoice_payments SET amount_cents = 1200, updated_at = ? WHERE id = 1`,
+        laterTimestamp,
+      )
+      expect(
+        await db.rows<{ due: number }>(`SELECT due_amount_cents AS due FROM invoices WHERE id = 1`),
+      ).toEqual([{ due: 15450 }])
       await db.run(`DELETE FROM invoice_payments WHERE id = 1`)
       await db.run(`UPDATE invoices SET written_off_cents = 50 WHERE id = 1`)
-      expect(await db.rows<{ due: number }>(`SELECT due_amount_cents AS due FROM invoices WHERE id = 1`)).toEqual([
-        { due: 16600 },
-      ])
+      expect(
+        await db.rows<{ due: number }>(`SELECT due_amount_cents AS due FROM invoices WHERE id = 1`),
+      ).toEqual([{ due: 16600 }])
       await db.run(`UPDATE invoice_line_items SET amount_cents = -1 WHERE id = 2`)
       await db.run(
         `UPDATE invoices SET discount_rate_ppm = 500000, tax_rate_ppm = NULL,
@@ -631,12 +698,12 @@ for (const [runtime, factory] of factories) {
           source_updated_at: '2026-08-16T15:30:00.001Z',
         },
       ])
-      await expect(
-        db.run(`UPDATE invoices SET harvest_id = NULL WHERE id = 1`),
-      ).rejects.toThrow(/source observation identity is immutable/)
-      await expect(
-        db.run(`UPDATE invoices SET harvest_id = 7999 WHERE id = 1`),
-      ).rejects.toThrow(/source observation identity is immutable/)
+      await expect(db.run(`UPDATE invoices SET harvest_id = NULL WHERE id = 1`)).rejects.toThrow(
+        /source observation identity is immutable/,
+      )
+      await expect(db.run(`UPDATE invoices SET harvest_id = 7999 WHERE id = 1`)).rejects.toThrow(
+        /source observation identity is immutable/,
+      )
       expect(
         await db.rows<{ harvest_id: number; source_amount_cents: number }>(
           `SELECT harvest_id, source_amount_cents FROM invoices WHERE id = 1`,
@@ -701,61 +768,61 @@ for (const [runtime, factory] of factories) {
       database = await factory()
       const db = database
       await installBaseFixture(db)
-      await setInvoicePaymentOptions(db.orm, {
+      await setPaymentOptions(db, {
         invoiceId: 1,
+        commandId: 'payment-options-enable',
         paymentOptions: ['wise_transfer', 'stripe_checkout'],
-        updatedAt: laterTimestamp,
+        occurredAt: laterTimestamp,
       })
-      const enabled = await db.rows<{ payment_options: string; reference_token: string }>(
-        `SELECT payment_options, reference_token FROM invoices WHERE id = 1`,
-      )
+      const enabled = await db.rows<{
+        payment_options: string
+        reference_token: string
+        version: number
+      }>(`SELECT payment_options, reference_token, version FROM invoices WHERE id = 1`)
       expect(enabled[0]?.payment_options).toBe('["wise_transfer","stripe_checkout"]')
       expect(enabled[0]?.reference_token).toMatch(/^EZ-[0-9A-F]{12}$/)
+      expect(enabled[0]?.version).toBe(1)
       await expect(
-        setInvoicePaymentOptions(db.orm, {
+        setPaymentOptions(db, {
           invoiceId: 1,
+          commandId: 'payment-options-bill-com',
           paymentOptions: ['bill_com_transfer'],
-          updatedAt: laterTimestamp,
+          occurredAt: thirdTimestamp,
         }),
-      ).rejects.toThrow(/unavailable/)
+      ).rejects.toThrow(/currently supported|unavailable/)
       await expect(
-        setInvoicePaymentOptions(db.orm, {
+        setPaymentOptions(db, {
           invoiceId: 999,
+          commandId: 'payment-options-missing',
           paymentOptions: [],
-          updatedAt: laterTimestamp,
+          occurredAt: thirdTimestamp,
         }),
-      ).rejects.toThrow(/invoice does not exist/)
+      ).rejects.toThrow(/invoice 999 does not exist/)
       await expect(
-        setInvoicePaymentOptions(db.orm, {
+        setPaymentOptions(db, {
           invoiceId: 1,
+          commandId: 'payment-options-duplicate',
           paymentOptions: ['wise_transfer', 'wise_transfer'],
-          updatedAt: laterTimestamp,
+          occurredAt: thirdTimestamp,
         }),
-      ).rejects.toThrow(/must be unique/)
+      ).rejects.toThrow(/must be unique|currently supported/)
       await expect(
         db.run(`UPDATE invoices SET payment_options = '["unknown"]' WHERE id = 1`),
-      ).rejects.toThrow(/invalid or unavailable/)
+      ).rejects.toThrow(/invalid or unavailable|pending command/)
       await expect(
         db.run(
           `UPDATE invoices SET payment_options = '["wise_transfer","wise_transfer"]'
            WHERE id = 1`,
         ),
-      ).rejects.toThrow(/invalid or unavailable/)
-      await expect(
-        setInvoicePaymentOptions(db.orm, {
-          invoiceId: 1,
-          paymentOptions: ['wise_transfer'],
-          updatedAt: laterTimestamp,
-          referenceToken: 'EZ-AAAAAAAAAAAA',
-        } as Parameters<typeof setInvoicePaymentOptions>[1]),
-      ).rejects.toThrow(/server-generated/)
+      ).rejects.toThrow(/invalid or unavailable|pending command/)
       await expect(
         db.run(`UPDATE invoices SET reference_token = NULL WHERE id = 1`),
       ).rejects.toThrow(/requires a transfer option/)
-      await setInvoicePaymentOptions(db.orm, {
+      await setPaymentOptions(db, {
         invoiceId: 1,
+        commandId: 'payment-options-clear-native',
         paymentOptions: [],
-        updatedAt: laterTimestamp,
+        occurredAt: thirdTimestamp,
       })
       expect(
         await db.rows<{ reference_token: string | null }>(
@@ -763,13 +830,20 @@ for (const [runtime, factory] of factories) {
         ),
       ).toEqual([{ reference_token: null }])
       await db.run(
+        `INSERT INTO invoices
+          (id, client_id, number, currency, issue_date, due_date, created_at, updated_at)
+         VALUES (3, 1, 'INV-ASSEMBLY-3', 'USD', '2026-08-01', '2026-08-31', ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+      await db.run(
         `UPDATE invoices SET payment_options = '["bill_com_transfer"]', updated_at = ?
-         WHERE id = 1`,
+         WHERE id = 3`,
         laterTimestamp,
       )
       expect(
         await db.rows<{ payment_options: string; reference_token: string }>(
-          `SELECT payment_options, reference_token FROM invoices WHERE id = 1`,
+          `SELECT payment_options, reference_token FROM invoices WHERE id = 3`,
         ),
       ).toEqual([
         {
@@ -777,11 +851,20 @@ for (const [runtime, factory] of factories) {
           reference_token: expect.stringMatching(/^EZ-[0-9A-F]{12}$/),
         },
       ])
-      await setInvoicePaymentOptions(db.orm, {
+      await setPaymentOptions(db, {
         invoiceId: 1,
+        commandId: 'payment-options-repeat-clear',
         paymentOptions: [],
-        updatedAt: laterTimestamp,
+        occurredAt: fourthTimestamp,
       })
+      expect(
+        await db.rows<Record<string, unknown>>(
+          `SELECT version,
+             (SELECT count(*) FROM invoice_command_ledger WHERE invoice_id = 1) AS ledger,
+             (SELECT count(*) FROM event_outbox WHERE aggregate_id = 1) AS outbox
+           FROM invoices WHERE id = 1`,
+        ),
+      ).toEqual([{ version: 3, ledger: 3, outbox: 3 }])
     })
 
     it('[unit] confirms only an exact suggestion and reverses it on payment deletion', async () => {
@@ -863,15 +946,25 @@ for (const [runtime, factory] of factories) {
              (SELECT count(*) FROM event_outbox) AS outbox
            FROM invoices invoice WHERE invoice.id = 1`,
         ),
-      ).toEqual([{ payments: 0, due: 0, state: 'draft', outbox: 0 }])
-      await confirmBankDeposit(db.orm, {
-        depositId: 1,
+      ).toEqual([{ payments: 0, due: 0, state: 'open', outbox: 0 }])
+      await recordInvoicePayment(db.orm, {
         invoiceId: 1,
-        paidAt: timestamp,
-        notes: 'Explicitly confirmed',
-        recordedByUserId: 2,
-        createdAt: timestamp,
-        updatedAt: timestamp,
+        commandId: 'confirm-bank-deposit-1',
+        actor: { type: 'user', id: 1 },
+        authorize: authorizeInvoiceCommand,
+        expectedVersion: 0,
+        occurredAt: laterTimestamp,
+        eventIds: ['bank-deposit-recorded-1', 'bank-deposit-paid-1'],
+        payment: {
+          type: 'bank_deposit',
+          id: 1,
+          depositId: 1,
+          expectedDepositUpdatedAt: timestamp,
+          expectedMatchState: 'suggested',
+          paidAt: timestamp,
+          notes: 'Explicitly confirmed',
+          recordedByUserId: 2,
+        },
       })
       expect(
         await db.rows<Record<string, unknown>>(
@@ -902,41 +995,80 @@ for (const [runtime, factory] of factories) {
              (SELECT count(*) FROM event_outbox) AS outbox
            FROM invoices WHERE id = 1`,
         ),
-      ).toEqual([{ due: -2500, state: 'draft', outbox: 0 }])
+      ).toEqual([{ due: -2500, state: 'paid', outbox: 2 }])
+      expect(
+        await db.rows<{ event_type: string; event_index: number }>(
+          `SELECT event_type, event_index FROM event_outbox
+           WHERE aggregate_id = 1 AND command_id = 'confirm-bank-deposit-1'
+           ORDER BY aggregate_sequence`,
+        ),
+      ).toEqual([
+        { event_type: 'payment.recorded', event_index: 0 },
+        { event_type: 'invoice.paid', event_index: 1 },
+      ])
       await expect(
         db.run(`UPDATE bank_deposits SET amount_cents = 2600 WHERE id = 1`),
       ).rejects.toThrow(/tuple is immutable/)
       await expect(
         db.run(`UPDATE invoice_payments SET recorded_by_user_id = 1 WHERE bank_deposit_id = 1`),
-      ).rejects.toThrow(/external invoice payment is immutable/)
-      await db.run(`DELETE FROM users WHERE id = 2`)
+      ).rejects.toThrow(/pending command|external invoice payment is immutable/)
       expect(
         await db.rows<{ recorded_by_user_id: number | null }>(
           `SELECT recorded_by_user_id FROM invoice_payments WHERE bank_deposit_id = 1`,
         ),
-      ).toEqual([{ recorded_by_user_id: null }])
+      ).toEqual([{ recorded_by_user_id: 2 }])
       await expect(
-        confirmBankDeposit(db.orm, {
-          depositId: 1,
+        recordInvoicePayment(db.orm, {
           invoiceId: 1,
-          paidAt: timestamp,
-          createdAt: timestamp,
-          updatedAt: timestamp,
+          commandId: 'confirm-bank-deposit-again',
+          actor: { type: 'user', id: 1 },
+          authorize: authorizeInvoiceCommand,
+          expectedVersion: 1,
+          occurredAt: thirdTimestamp,
+          eventIds: ['bank-deposit-recorded-again'],
+          payment: {
+            type: 'bank_deposit',
+            id: 2,
+            depositId: 1,
+            expectedDepositUpdatedAt: timestamp,
+            expectedMatchState: 'suggested',
+            paidAt: timestamp,
+          },
         }),
-      ).rejects.toThrow(/not confirmable/)
+      ).rejects.toThrow(/missing|no longer matches|could not commit/)
       await expect(
-        confirmBankDeposit(db.orm, {
-          depositId: 2,
+        recordInvoicePayment(db.orm, {
           invoiceId: 1,
-          paidAt: timestamp,
-          createdAt: timestamp,
-          updatedAt: timestamp,
+          commandId: 'confirm-bank-deposit-bill-com',
+          actor: { type: 'user', id: 1 },
+          authorize: authorizeInvoiceCommand,
+          expectedVersion: 1,
+          occurredAt: thirdTimestamp,
+          eventIds: ['bank-deposit-bill-com'],
+          payment: {
+            type: 'bank_deposit',
+            id: 2,
+            depositId: 2,
+            expectedDepositUpdatedAt: timestamp,
+            expectedMatchState: 'suggested',
+            paidAt: timestamp,
+          },
         }),
-      ).rejects.toThrow(/not confirmable/)
+      ).rejects.toThrow(/could not commit|missing|no longer matches/)
       await expect(db.run(`UPDATE invoices SET currency = 'EUR' WHERE id = 1`)).rejects.toThrow(
         /currency is immutable/,
       )
-      await db.run(`DELETE FROM invoice_payments WHERE bank_deposit_id = 1`)
+      await deleteInvoicePayment(db.orm, {
+        invoiceId: 1,
+        commandId: 'delete-bank-deposit-payment-1',
+        actor: { type: 'user', id: 1 },
+        authorize: authorizeInvoiceCommand,
+        expectedVersion: 1,
+        occurredAt: thirdTimestamp,
+        eventIds: ['bank-deposit-payment-deleted-1', 'bank-deposit-unpaid-1'],
+        paymentId: 1,
+        expectedPaymentUpdatedAt: laterTimestamp,
+      })
       expect(
         await db.rows<{ match_state: string }>(
           `SELECT match_state FROM bank_deposits WHERE id = 1`,
@@ -951,14 +1083,34 @@ for (const [runtime, factory] of factories) {
         timestamp,
         timestamp,
       )
-      await confirmBankDeposit(db.orm, {
-        depositId: 3,
+      await recordInvoicePayment(db.orm, {
         invoiceId: 1,
-        paidAt: timestamp,
-        createdAt: timestamp,
-        updatedAt: timestamp,
+        commandId: 'confirm-bank-deposit-3',
+        actor: { type: 'user', id: 1 },
+        authorize: authorizeInvoiceCommand,
+        expectedVersion: 2,
+        occurredAt: fourthTimestamp,
+        eventIds: ['bank-deposit-recorded-3', 'bank-deposit-paid-3'],
+        payment: {
+          type: 'bank_deposit',
+          id: 3,
+          depositId: 3,
+          expectedDepositUpdatedAt: timestamp,
+          expectedMatchState: 'unmatched',
+          paidAt: timestamp,
+        },
       })
-      await db.run(`DELETE FROM invoice_payments WHERE bank_deposit_id = 3`)
+      await deleteInvoicePayment(db.orm, {
+        invoiceId: 1,
+        commandId: 'delete-bank-deposit-payment-3',
+        actor: { type: 'user', id: 1 },
+        authorize: authorizeInvoiceCommand,
+        expectedVersion: 3,
+        occurredAt: fifthTimestamp,
+        eventIds: ['bank-deposit-payment-deleted-3', 'bank-deposit-unpaid-3'],
+        paymentId: 3,
+        expectedPaymentUpdatedAt: fourthTimestamp,
+      })
       expect(
         await db.rows<{ match_state: string; suggested_invoice_id: number | null }>(
           `SELECT match_state, suggested_invoice_id FROM bank_deposits WHERE id = 3`,
@@ -968,8 +1120,9 @@ for (const [runtime, factory] of factories) {
     })
 
     it('[unit] preserves Harvest recorder, gateway, transaction, and dual-date evidence', async () => {
-      database = await factory()
+      database = await factory(false)
       const db = database
+      await installThrough0005(db)
       await installBaseFixture(db)
       const fixture = JSON.parse(
         await readFile(new URL('fixtures/harvest-invoice-payment.json', import.meta.url), 'utf8'),
@@ -1046,9 +1199,7 @@ for (const [runtime, factory] of factories) {
         await db.rows<{ recorded_by_user_id: number | null; source_recorded_by_name: string }>(
           `SELECT recorded_by_user_id, source_recorded_by_name FROM invoice_payments`,
         ),
-      ).toEqual([
-        { recorded_by_user_id: null, source_recorded_by_name: 'Sanitized Recorder' },
-      ])
+      ).toEqual([{ recorded_by_user_id: null, source_recorded_by_name: 'Sanitized Recorder' }])
       await expect(
         db.run(
           `INSERT INTO invoice_payments
@@ -1075,8 +1226,9 @@ for (const [runtime, factory] of factories) {
     })
 
     it('[unit] rejects identity replacement, malformed shapes, and aggregate overflow', async () => {
-      database = await factory()
+      database = await factory(false)
       const db = database
+      await installThrough0005(db)
       await installBaseFixture(db)
       await db.run(
         `INSERT INTO payment_provider_accounts
@@ -1278,9 +1430,9 @@ for (const [runtime, factory] of factories) {
         ),
       ).rejects.toThrow(/absolute aggregate exceeds limit/)
       await db.run(`UPDATE invoices SET tax_rate_ppm = 1000000 WHERE id = 2`)
-      await expect(
-        db.run(`UPDATE invoice_line_items SET taxed = 1 WHERE id = 1`),
-      ).rejects.toThrow(/invoice financial result exceeds limit/)
+      await expect(db.run(`UPDATE invoice_line_items SET taxed = 1 WHERE id = 1`)).rejects.toThrow(
+        /invoice financial result exceeds limit/,
+      )
       expect(
         await db.rows<{ taxed: number; amount: number }>(
           `SELECT line.taxed, invoice.amount_cents AS amount
@@ -1307,16 +1459,14 @@ for (const [runtime, factory] of factories) {
           timestamp,
         ),
       ).rejects.toThrow(/payment absolute aggregate exceeds limit/)
-      await setInvoicePaymentOptions(db.orm, {
-        invoiceId: 1,
-        paymentOptions: ['wise_transfer'],
-        updatedAt: laterTimestamp,
-      })
-      await setInvoicePaymentOptions(db.orm, {
-        invoiceId: 2,
-        paymentOptions: ['mercury_transfer'],
-        updatedAt: laterTimestamp,
-      })
+      await db.run(
+        `UPDATE invoices SET payment_options = '["wise_transfer"]', updated_at = ? WHERE id = 1`,
+        laterTimestamp,
+      )
+      await db.run(
+        `UPDATE invoices SET payment_options = '["mercury_transfer"]', updated_at = ? WHERE id = 2`,
+        laterTimestamp,
+      )
       const references = await db.rows<{ id: number; reference_token: string }>(
         `SELECT id, reference_token FROM invoices WHERE id IN (1, 2) ORDER BY id`,
       )
@@ -1380,8 +1530,9 @@ for (const [runtime, factory] of factories) {
     })
 
     it('[unit] rolls back late failures in line, payment, and confirmation mutations', async () => {
-      database = await factory()
+      database = await factory(false)
       const db = database
+      await installThrough0005(db)
       await installBaseFixture(db)
       await db.run(
         `INSERT INTO invoice_line_items
@@ -1428,14 +1579,23 @@ for (const [runtime, factory] of factories) {
         db.run(`UPDATE invoice_payments SET amount_cents = 20 WHERE id = 1`),
       ).rejects.toThrow(/injected totals failure/)
       await expect(
-        confirmBankDeposit(db.orm, {
-          depositId: 1,
-          invoiceId: 1,
-          paidAt: timestamp,
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        }),
-      ).rejects.toThrow()
+        db.run(
+          `INSERT INTO invoice_payments (
+             invoice_id, currency, amount_cents, paid_at, provider, provider_shape,
+             provider_account_id, provider_transaction_id, bank_deposit_id,
+             created_at, updated_at
+           )
+           SELECT 1, deposit.currency, deposit.amount_cents, ?, account.provider,
+             account.provider_shape, account.id, deposit.provider_transaction_id,
+             deposit.id, ?, ?
+           FROM bank_deposits deposit
+           JOIN payment_provider_accounts account ON account.id = deposit.provider_account_id
+           WHERE deposit.id = 1`,
+          timestamp,
+          timestamp,
+          timestamp,
+        ),
+      ).rejects.toThrow(/injected totals failure/)
       expect(
         await db.rows<Record<string, unknown>>(
           `SELECT amount_cents FROM invoice_line_items WHERE id = 1`,
@@ -1459,8 +1619,9 @@ for (const [runtime, factory] of factories) {
     })
 
     it('[unit] defeats outer IGNORE and FAIL policies for overflowing derived results', async () => {
-      database = await factory()
+      database = await factory(false)
       const db = database
+      await installThrough0005(db)
       await installBaseFixture(db)
       for (const [offset, policy] of ['IGNORE', 'FAIL'].entries()) {
         const lineInvoiceId = 20 + offset
@@ -1514,8 +1675,9 @@ for (const [runtime, factory] of factories) {
 
         await db.run(
           `INSERT INTO invoices
-            (id, client_id, number, currency, issue_date, due_date, created_at, updated_at)
-           VALUES (?, 1, ?, 'USD', '2026-08-01', '2026-08-31', ?, ?)`,
+            (id, client_id, number, currency, issue_date, due_date, state,
+             created_at, updated_at)
+           VALUES (?, 1, ?, 'USD', '2026-08-01', '2026-08-31', 'open', ?, ?)`,
           paymentInvoiceId,
           `INV-CONFLICT-PAYMENT-${offset}`,
           timestamp,

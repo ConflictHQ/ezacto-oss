@@ -2,7 +2,6 @@ import { sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
-import type { InvoicePaymentOption } from './schema.js'
 
 export type { InvoicePaymentOption } from './schema.js'
 
@@ -11,14 +10,6 @@ type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof 
 type SqlRunner = {
   run(query: SQL): unknown
 }
-
-const enabledPaymentOptions = new Set<InvoicePaymentOption>([
-  'stripe_checkout',
-  'paypal_checkout',
-  'quickbooks_checkout',
-  'mercury_transfer',
-  'wise_transfer',
-])
 
 const canonicalTimestamp = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/
 
@@ -36,7 +27,10 @@ const timestampEpochMilliseconds = (value: string): number => {
 const requireCanonicalDate = (value: string): void => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error('paid date must be canonical')
   const milliseconds = Date.parse(`${value}T00:00:00.000Z`)
-  if (!Number.isSafeInteger(milliseconds) || new Date(milliseconds).toISOString().slice(0, 10) !== value) {
+  if (
+    !Number.isSafeInteger(milliseconds) ||
+    new Date(milliseconds).toISOString().slice(0, 10) !== value
+  ) {
     throw new Error('paid date must be a real canonical date')
   }
 }
@@ -75,10 +69,7 @@ export const canonicalizeHarvestPaymentDates = (
 }
 
 export const reemitHarvestPaymentDates = (
-  payment: Pick<
-    CanonicalPaymentDates,
-    'paidAt' | 'paidDate' | 'sourcePaidAt' | 'sourcePaidDate'
-  >,
+  payment: Pick<CanonicalPaymentDates, 'paidAt' | 'paidDate' | 'sourcePaidAt' | 'sourcePaidDate'>,
 ): HarvestPaymentDateEvidence => {
   if (payment.sourcePaidAt !== null || payment.sourcePaidDate !== null) {
     return { paidAt: payment.sourcePaidAt, paidDate: payment.sourcePaidDate }
@@ -143,86 +134,6 @@ export const refreshInvoiceSourceObservation = async (
       ) < ${incomingEpochMilliseconds})
   `)
   return changes(result) > 0
-}
-
-export interface InvoicePaymentOptionsChange {
-  invoiceId: number
-  paymentOptions: readonly InvoicePaymentOption[]
-  updatedAt: string
-}
-
-export const setInvoicePaymentOptions = async (
-  database: Database,
-  input: InvoicePaymentOptionsChange,
-): Promise<void> => {
-  if (
-    Object.prototype.hasOwnProperty.call(input, 'referenceToken') ||
-    Object.prototype.hasOwnProperty.call(input, 'reference_token')
-  ) {
-    throw new Error('invoice reference token is server-generated')
-  }
-  if (new Set(input.paymentOptions).size !== input.paymentOptions.length) {
-    throw new Error('invoice payment options must be unique')
-  }
-  if (input.paymentOptions.some((option) => !enabledPaymentOptions.has(option))) {
-    throw new Error('invoice payment option is unavailable')
-  }
-
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      const result = await (database as unknown as SqlRunner).run(sql`
-        UPDATE invoices
-        SET payment_options = ${JSON.stringify(input.paymentOptions)}, updated_at = ${input.updatedAt}
-        WHERE id = ${input.invoiceId}
-      `)
-      if (changes(result) === 0) throw new Error('invoice does not exist')
-      return
-    } catch (error) {
-      const message = String(error).toLowerCase()
-      if (
-        attempt === 2 ||
-        (!message.includes('reference token') && !message.includes('reference_token'))
-      ) {
-        throw error
-      }
-    }
-  }
-}
-
-export interface BankDepositConfirmation {
-  depositId: number
-  invoiceId: number
-  paidAt: string
-  notes?: string | null
-  recordedByUserId?: number | null
-  createdAt: string
-  updatedAt: string
-}
-
-export const confirmBankDeposit = async (
-  database: Database,
-  input: BankDepositConfirmation,
-): Promise<void> => {
-  const result = await (database as unknown as SqlRunner).run(sql`
-    INSERT INTO invoice_payments (
-      invoice_id, currency, amount_cents, paid_at, paid_date, notes, recorded_by_user_id,
-      provider, provider_shape, provider_account_id, provider_transaction_id,
-      bank_deposit_id, created_at, updated_at
-    )
-    SELECT invoice.id, deposit.currency, deposit.amount_cents, ${input.paidAt}, NULL,
-      ${input.notes ?? null}, ${input.recordedByUserId ?? null}, account.provider,
-      account.provider_shape, account.id, deposit.provider_transaction_id,
-      deposit.id, ${input.createdAt}, ${input.updatedAt}
-    FROM bank_deposits deposit
-    JOIN payment_provider_accounts account ON account.id = deposit.provider_account_id
-    JOIN invoices invoice ON invoice.id = ${input.invoiceId}
-    WHERE deposit.id = ${input.depositId}
-      AND deposit.match_state IN ('unmatched', 'suggested')
-      AND (deposit.suggested_invoice_id IS NULL OR deposit.suggested_invoice_id = invoice.id)
-      AND deposit.currency = invoice.currency
-      AND account.provider <> 'bill_com'
-  `)
-  if (changes(result) === 0) throw new Error('bank deposit is not confirmable for this invoice')
 }
 
 const changes = (result: unknown): number => {

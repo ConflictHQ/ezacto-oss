@@ -860,9 +860,7 @@ for (const [runtime, factory] of factories) {
         name: string
         notnull: number
         dflt_value: string | null
-      }>(
-        `PRAGMA table_info(project_milestones)`,
-      )
+      }>(`PRAGMA table_info(project_milestones)`)
       const allNames = [...columns, ...milestoneColumns].map(({ name }) => name)
       expect(columns.find(({ name }) => name === 'invoice_id')).toMatchObject({
         notnull: 0,
@@ -878,7 +876,9 @@ for (const [runtime, factory] of factories) {
       const definitions = await db.rows<{ sql: string | null }>(
         `SELECT sql FROM sqlite_master WHERE sql IS NOT NULL`,
       )
-      expect(definitions.map(({ sql }) => sql).join('\n')).not.toMatch(/\b(?:is_locked|locked_reason)\b/)
+      expect(definitions.map(({ sql }) => sql).join('\n')).not.toMatch(
+        /\b(?:is_locked|locked_reason)\b/,
+      )
       expect(projectsTimeMigration.join('\n')).not.toMatch(
         /\b(?:invoice_id|invoiced_invoice_id|is_locked|locked_reason)\b/,
       )
@@ -980,6 +980,7 @@ for (const [runtime, factory] of factories) {
         '0003_rate_resolver',
         '0004_invoice_foundation',
         '0005_invoice_payments_totals',
+        '0006_invoice_state_events',
       ])
       expect(firstLedger.slice(0, 2).map(({ applied_at: appliedAt }) => appliedAt)).toEqual([
         originalAppliedAt,
@@ -1046,6 +1047,7 @@ for (const [runtime, factory] of factories) {
         { id: '0003_rate_resolver' },
         { id: '0004_invoice_foundation' },
         { id: '0005_invoice_payments_totals' },
+        { id: '0006_invoice_state_events' },
       ])
       expect(
         await db.rows<{ name: string }>(

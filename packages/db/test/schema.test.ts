@@ -77,8 +77,7 @@ const containerDatabase = (migrate = true): TestDatabase => {
     run: async (sql, ...params) => {
       sqlite.prepare(sql).run(...params)
     },
-    rows: async <T>(sql: string, ...params: unknown[]) =>
-      sqlite.prepare(sql).all(...params) as T[],
+    rows: async <T>(sql: string, ...params: unknown[]) => sqlite.prepare(sql).all(...params) as T[],
     migrateAgain: async () => migrateContainer(sqlite),
     createClient: async (input) => createClient(drizzle, input),
     updateClient: async (clientId, input) => updateClient(drizzle, clientId, input),
@@ -105,10 +104,18 @@ const d1Database = async (migrate = true): Promise<TestDatabase> => {
   const drizzle = createD1Database(d1)
   return {
     run: async (sql, ...params) => {
-      await d1.prepare(sql).bind(...params).run()
+      await d1
+        .prepare(sql)
+        .bind(...params)
+        .run()
     },
     rows: async <T>(sql: string, ...params: unknown[]) =>
-      (await d1.prepare(sql).bind(...params).all<T>()).results,
+      (
+        await d1
+          .prepare(sql)
+          .bind(...params)
+          .all<T>()
+      ).results,
     migrateAgain: async () => migrateD1(d1),
     createClient: async (input) => createClient(drizzle, input),
     updateClient: async (clientId, input) => updateClient(drizzle, clientId, input),
@@ -643,8 +650,9 @@ for (const [runtime, factory] of factories) {
       await expect(
         db.run(`UPDATE user_billable_rates SET amount_cents = 1 WHERE amount_cents = 12500`),
       ).rejects.toThrow(/append-only/)
-      await expect(db.run(`DELETE FROM user_billable_rates WHERE amount_cents = 12500`)).rejects
-        .toThrow(/append-only/)
+      await expect(
+        db.run(`DELETE FROM user_billable_rates WHERE amount_cents = 12500`),
+      ).rejects.toThrow(/append-only/)
       await expect(
         db.run(
           `INSERT INTO user_billable_rates (user_id, amount_cents, start_date, end_date, created_at, updated_at)
@@ -755,8 +763,11 @@ for (const [runtime, factory] of factories) {
       await expect(db.run(`UPDATE users SET is_owner = 1 WHERE id = 2`)).rejects.toThrow(/derived/)
       await db.run(`UPDATE organization_owner SET user_id = 2, updated_at = ? WHERE id = 1`, now)
       await db.run(`UPDATE organization_owner SET user_id = 2, updated_at = ? WHERE id = 1`, now)
-      expect(await db.rows<{ owners: number }>(`SELECT count(*) AS owners FROM users WHERE is_owner = 1`))
-        .toEqual([{ owners: 1 }])
+      expect(
+        await db.rows<{ owners: number }>(
+          `SELECT count(*) AS owners FROM users WHERE is_owner = 1`,
+        ),
+      ).toEqual([{ owners: 1 }])
       expect(await db.rows<{ id: number }>(`SELECT id FROM users WHERE is_owner = 1`)).toEqual([
         { id: 2 },
       ])
@@ -822,6 +833,7 @@ for (const [runtime, factory] of factories) {
         { id: '0003_rate_resolver' },
         { id: '0004_invoice_foundation' },
         { id: '0005_invoice_payments_totals' },
+        { id: '0006_invoice_state_events' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -848,6 +860,7 @@ for (const [runtime, factory] of factories) {
         { id: '0003_rate_resolver' },
         { id: '0004_invoice_foundation' },
         { id: '0005_invoice_payments_totals' },
+        { id: '0006_invoice_state_events' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -892,6 +905,7 @@ for (const [runtime, factory] of factories) {
         { id: '0003_rate_resolver' },
         { id: '0004_invoice_foundation' },
         { id: '0005_invoice_payments_totals' },
+        { id: '0006_invoice_state_events' },
       ])
       expect(
         await db.rows<{ name: string }>(
@@ -912,6 +926,7 @@ for (const [runtime, factory] of factories) {
         { id: '0003_rate_resolver' },
         { id: '0004_invoice_foundation' },
         { id: '0005_invoice_payments_totals' },
+        { id: '0006_invoice_state_events' },
       ])
     })
   })
@@ -940,16 +955,22 @@ describe('client operation trust boundary', () => {
     const updateBase = { updatedAt: now }
 
     await expect(
-      createClient(untouchedDatabase as never, {
-        ...createBase,
-        statementKey: undefined,
-      } as unknown as NewClient),
+      createClient(
+        untouchedDatabase as never,
+        {
+          ...createBase,
+          statementKey: undefined,
+        } as unknown as NewClient,
+      ),
     ).rejects.toThrow(/server-generated/)
     await expect(
-      createClient(untouchedDatabase as never, {
-        ...createBase,
-        statement_key: 'secret',
-      } as NewClient),
+      createClient(
+        untouchedDatabase as never,
+        {
+          ...createBase,
+          statement_key: 'secret',
+        } as NewClient,
+      ),
     ).rejects.toThrow(/server-generated/)
     await expect(
       updateClient(untouchedDatabase as never, 1, {
@@ -967,34 +988,30 @@ describe('client operation trust boundary', () => {
 })
 
 describe('package contents', () => {
-  it(
-    '[unit] packs every exported runtime and the clients migration',
-    () => {
-      const output = execFileSync('npm', ['pack', '--dry-run', '--json', '--silent'], {
-        cwd: new URL('..', import.meta.url),
-        encoding: 'utf8',
-      })
-      const packed = JSON.parse(output) as Array<{ files: Array<{ path: string }> }>
-      expect(packed[0]?.files.map(({ path }) => path)).toEqual(
-        expect.arrayContaining([
-          'dist/index.js',
-          'dist/index.d.ts',
-          'dist/schema.js',
-          'dist/migrations/0001_clients.js',
-          'dist/migrations/0002_projects_time.js',
-          'dist/migrations/0003_rate_resolver.js',
-          'dist/migrations/0004_invoice_foundation.js',
-          'dist/migrations/0004_invoice_foundation.d.ts',
-          'dist/migrations/0005_invoice_payments_totals.js',
-          'dist/migrations/0005_invoice_payments_totals.d.ts',
-          'dist/invoice-payments.js',
-          'dist/invoice-payments.d.ts',
-          'dist/rate-resolver.js',
-        ]),
-      )
-    },
-    20_000,
-  )
+  it('[unit] packs every exported runtime and the clients migration', () => {
+    const output = execFileSync('npm', ['pack', '--dry-run', '--json', '--silent'], {
+      cwd: new URL('..', import.meta.url),
+      encoding: 'utf8',
+    })
+    const packed = JSON.parse(output) as Array<{ files: Array<{ path: string }> }>
+    expect(packed[0]?.files.map(({ path }) => path)).toEqual(
+      expect.arrayContaining([
+        'dist/index.js',
+        'dist/index.d.ts',
+        'dist/schema.js',
+        'dist/migrations/0001_clients.js',
+        'dist/migrations/0002_projects_time.js',
+        'dist/migrations/0003_rate_resolver.js',
+        'dist/migrations/0004_invoice_foundation.js',
+        'dist/migrations/0004_invoice_foundation.d.ts',
+        'dist/migrations/0005_invoice_payments_totals.js',
+        'dist/migrations/0005_invoice_payments_totals.d.ts',
+        'dist/invoice-payments.js',
+        'dist/invoice-payments.d.ts',
+        'dist/rate-resolver.js',
+      ]),
+    )
+  }, 20_000)
 })
 
 describe('Drizzle adapters', () => {

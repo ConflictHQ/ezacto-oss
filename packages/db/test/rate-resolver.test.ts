@@ -356,10 +356,7 @@ for (const [runtime, factory] of factories) {
          FROM time_entries WHERE id = ?`,
         entry.id,
       )
-      for (const invalid of [
-        '2026-02-30T09:00:00.000Z',
-        '2026-08-27T24:00:00.000Z',
-      ]) {
+      for (const invalid of ['2026-02-30T09:00:00.000Z', '2026-08-27T24:00:00.000Z']) {
         await expect(
           db.run(
             `INSERT INTO time_entry_rate_reprices
@@ -372,9 +369,7 @@ for (const [runtime, factory] of factories) {
         ).rejects.toThrow()
       }
       expect(
-        await db.rows<{ count: number }>(
-          `SELECT count(*) AS count FROM time_entry_rate_reprices`,
-        ),
+        await db.rows<{ count: number }>(`SELECT count(*) AS count FROM time_entry_rate_reprices`),
       ).toEqual([{ count: 0 }])
       expect(
         await db.rows<Record<string, unknown>>(
@@ -445,6 +440,7 @@ for (const [runtime, factory] of factories) {
         '0003_rate_resolver',
         '0004_invoice_foundation',
         '0005_invoice_payments_totals',
+        '0006_invoice_state_events',
       ])
       expect(firstLedger.slice(0, 3).map(({ applied_at: appliedAt }) => appliedAt)).toEqual([
         timestamp,
@@ -494,6 +490,7 @@ for (const [runtime, factory] of factories) {
         { id: '0003_rate_resolver' },
         { id: '0004_invoice_foundation' },
         { id: '0005_invoice_payments_totals' },
+        { id: '0006_invoice_state_events' },
       ])
     })
   })
