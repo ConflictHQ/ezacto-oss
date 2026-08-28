@@ -60,6 +60,30 @@ bytes. `deploy.yml` installs it through `wrangler secret put` before every deplo
 so tracked config never contains secret material. The two environments must not
 share a key.
 
+Browser sign-in uses the provider-generic OpenID Connect core with `google` as
+the first configured provider. Google publishes discovery at
+`https://accounts.google.com/.well-known/openid-configuration`; that document
+currently identifies `https://www.googleapis.com/oauth2/v3/certs` as its JWKS.
+The runtime follows and validates discovery rather than hardcoding endpoint
+responses, requires PKCE S256, and pins ID tokens to RS256.
+
+Create two Google OAuth Web clients, not one shared client, and register exactly
+one callback on each:
+
+| GitHub environment | Callback |
+| --- | --- |
+| `dev` | `https://ezacto.io/auth/oidc/google/callback` |
+| `prod` | `https://app.example.com/auth/oidc/google/callback` |
+
+Store each client's `OIDC_GOOGLE_CLIENT_ID` and
+`OIDC_GOOGLE_CLIENT_SECRET` in its matching GitHub environment. `deploy.yml`
+installs the pair as Worker secrets. If both are absent, Google is not exposed;
+if only one is present, deployment and runtime both fail closed. Provider access
+tokens, ID tokens, refresh tokens, authorization codes, and raw browser state
+are never persisted. OIDC starts are limited to 20 per hashed Cloudflare client
+address in a rolling 10-minute window. Each start transactionally removes
+expired rows; consumed rows become eligible for cleanup no later than expiry.
+
 Each environment also holds one `EZACTO_BOOTSTRAP_TOKEN`, a canonical `ezacto_`
 bearer generated independently for that instance. It is the first owner token,
 not a general deployment secret: `bootstrap-instance.yml` temporarily installs

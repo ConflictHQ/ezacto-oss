@@ -276,6 +276,41 @@ for (const [runtime, factory] of factories) {
       ).toEqual([{ address: 'before@example.test' }])
     })
 
+    it('[unit] does not require mutable profile claims for a known subject or verified email', async () => {
+      await insertUser(2)
+      await insertEmail(2, 2, 'linked-no-profile@example.test', true, true)
+      await expect(
+        harness.store.resolveProvider({
+          provider: 'google',
+          subject: 'linked-no-profile',
+          email: 'linked-no-profile@example.test',
+          emailVerified: true,
+        }),
+      ).resolves.toMatchObject({ userId: 2, matchedBy: 'verified_email' })
+
+      await expect(
+        harness.store.resolveProvider({
+          provider: 'google',
+          subject: 'linked-no-profile',
+          email: 'changed@example.test',
+          emailVerified: true,
+        }),
+      ).resolves.toMatchObject({ userId: 2, matchedBy: 'subject' })
+    })
+
+    it('[unit] requires profile claims only when provider resolution creates a user', async () => {
+      await expect(
+        harness.store.resolveProvider({
+          provider: 'google',
+          subject: 'new-no-profile',
+          email: 'new-no-profile@example.test',
+          emailVerified: true,
+        }),
+      ).rejects.toThrow(/firstName and lastName are required/)
+      expect(await harness.rows(`SELECT id FROM users WHERE id <> 1`)).toEqual([])
+      expect(await harness.rows(`SELECT id FROM user_identities`)).toEqual([])
+    })
+
     it('[api] signs in with any verified address and sends every other address to verification', async () => {
       await insertUser(2)
       await insertEmail(2, 2, 'primary@example.test', true, true)

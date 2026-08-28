@@ -8,8 +8,8 @@ export interface ProviderIdentityAssertion {
   email: string
   emailVerified: boolean
   /** Profile material used only when the assertion creates a new user. */
-  firstName: string
-  lastName: string
+  firstName?: string
+  lastName?: string
 }
 
 export type ProviderIdentityMatch = 'subject' | 'verified_email' | 'created'
@@ -34,8 +34,8 @@ export interface NormalizedProviderIdentityAssertion {
   subject: string
   email: string
   emailVerified: boolean
-  firstName: string
-  lastName: string
+  firstName?: string
+  lastName?: string
 }
 
 const printableText = (
@@ -103,12 +103,20 @@ export const normalizeProviderIdentityAssertion = (
   if (typeof assertion.emailVerified !== 'boolean') {
     throw new TypeError('emailVerified must be a boolean')
   }
+  const firstName =
+    assertion.firstName === undefined
+      ? undefined
+      : printableText(assertion.firstName, 'firstName', 100)
+  const lastName =
+    assertion.lastName === undefined
+      ? undefined
+      : printableText(assertion.lastName, 'lastName', 100)
   return {
     provider,
     subject,
     email: normalizeIdentityEmail(assertion.email),
     emailVerified: assertion.emailVerified,
-    firstName: printableText(assertion.firstName, 'firstName', 100),
-    lastName: printableText(assertion.lastName, 'lastName', 100),
+    ...(firstName === undefined ? {} : { firstName }),
+    ...(lastName === undefined ? {} : { lastName }),
   }
 }
