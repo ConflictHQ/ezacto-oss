@@ -219,6 +219,7 @@ const submitSignIn = (email: string, password: string): void => {
 describe('week-grid browser behavior', () => {
   it('[e2e:track-week] preserves keyboard edits, notes, retry, copy, and phone-day writes', async () => {
     renderBrowserShell()
+    window.history.replaceState(null, '', '/?week=2026-08-28')
     const api = browserApi()
 
     await mountShell(api)
@@ -307,14 +308,15 @@ describe('week-grid browser behavior', () => {
 
     document.documentElement.dataset.timeView = 'day'
     document.querySelector<HTMLButtonElement>('[data-day-next]')!.click()
-    const saturday = document.querySelector<HTMLInputElement>(
-      '[data-day-list] input[data-cell-key="1:1:2026-08-29"]',
+    const nextDay = document.querySelector<HTMLInputElement>(
+      '[data-day-list] input[data-cell-key^="1:1:"]',
     )!
-    edit(saturday, '0.25')
-    saturday.blur()
+    const spentDate = nextDay.dataset.cellKey!.split(':').at(-1)!
+    edit(nextDay, '0.25')
+    nextDay.blur()
     await vi.waitFor(() =>
       expect(api.entries).toContainEqual(
-        expect.objectContaining({ spent_date: '2026-08-29', seconds: 900 }),
+        expect.objectContaining({ spent_date: spentDate, seconds: 900 }),
       ),
     )
   })
