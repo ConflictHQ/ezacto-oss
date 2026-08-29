@@ -10,6 +10,7 @@ export {
   type CreateApiTokenStoreOptions,
 } from './api-tokens.js'
 export { createGeneralResourceRepository } from './general-resources.js'
+export { createReportRepository, type ReportRepository } from './reports.js'
 export {
   createD1EmailLogStore,
   type EmailLogStoreOptions,

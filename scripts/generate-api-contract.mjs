@@ -63,7 +63,7 @@ const queryType = (parameters) => {
   return `{ ${queryParameters
     .map(
       (parameter) =>
-        `${JSON.stringify(parameter.name)}?: ${schemaType(parameter.schema)}`,
+        `${JSON.stringify(parameter.name)}${parameter.required === true ? "" : "?"}: ${schemaType(parameter.schema)}`,
     )
     .join("; ")} }`;
 };
@@ -74,6 +74,10 @@ const methodSource = (operation) => {
     (parameter) => parameter.location === "path",
   );
   const query = queryType(operation.parameters);
+  const hasRequiredQuery = (operation.parameters ?? []).some(
+    (parameter) =>
+      parameter.location === "query" && parameter.required === true,
+  );
   const argumentFields = [
     ...pathParameters.map(
       (parameter) =>
@@ -82,12 +86,16 @@ const methodSource = (operation) => {
     ...(operation.requestSchema === undefined
       ? []
       : [`body: ${operation.requestSchema}`]),
-    ...(query === null ? [] : [`query?: ${query}`]),
+    ...(query === null
+      ? []
+      : [`query${hasRequiredQuery ? "" : "?"}: ${query}`]),
     "signal?: AbortSignal",
     "headers?: HeadersInit",
   ];
   const requiresArguments =
-    pathParameters.length > 0 || operation.requestRequired === true;
+    pathParameters.length > 0 ||
+    operation.requestRequired === true ||
+    hasRequiredQuery;
   const argumentType = `{ ${argumentFields.join("; ")} }`;
   const signature = requiresArguments
     ? `args: ${argumentType}`

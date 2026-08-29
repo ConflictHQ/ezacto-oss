@@ -378,6 +378,101 @@ export type ExpensePage = {
   "page": PageMetadata;
 };
 
+export type UninvoicedCurrencyTotal = {
+  "currency": string;
+  "rounded_seconds": number;
+  "time_entry_count": number;
+  "unpriced_time_entry_count": number;
+  "expense_count": number;
+  "time_cents"?: number;
+  "expense_cents"?: number;
+  "total_cents"?: number;
+};
+
+export type UninvoicedReport = {
+  "from": string;
+  "to": string;
+  "client_id": number | null;
+  "project_id": number | null;
+  "totals": Array<UninvoicedCurrencyTotal>;
+};
+
+export type UninvoicedReportEnvelope = {
+  "data": UninvoicedReport;
+  "links": Links;
+};
+
+export type ClientRollupCurrency = {
+  "currency": string;
+  "expense_cents": number;
+  "uninvoiced_time_cents"?: number;
+  "uninvoiced_expense_cents"?: number;
+  "uninvoiced_total_cents"?: number;
+  "money_budget_cents"?: number;
+  "cost_cents"?: number;
+};
+
+export type ClientRollupMetrics = {
+  "time_entry_count": number;
+  "expense_count": number;
+  "rounded_seconds": number;
+  "billable_seconds": number;
+  "budgeted_seconds": number;
+  "time_budget_seconds": number;
+  "unpriced_billable_entry_count": number;
+  "unpriced_cost_entry_count": number;
+  "currencies": Array<ClientRollupCurrency>;
+};
+
+export type ClientRollupNode = {
+  "client_id": number;
+  "name": string;
+  "parent_client_id": number | null;
+  "depth": number;
+  "direct": ClientRollupMetrics;
+  "rollup": ClientRollupMetrics;
+};
+
+export type ClientRollupReport = {
+  "root_client_id": number;
+  "from": string;
+  "to": string;
+  "nodes": Array<ClientRollupNode>;
+};
+
+export type ClientRollupReportEnvelope = {
+  "data": ClientRollupReport;
+  "links": Links;
+};
+
+export type ProjectBudgetGrain = {
+  "source": "project" | "task_assignment" | "user_assignment";
+  "source_id": number;
+  "unit": "seconds" | "cents";
+  "calculation": "time" | "billable" | "cost";
+  "unpriced_entry_count": number;
+  "budget_seconds"?: number | null;
+  "spent_seconds"?: number;
+  "remaining_seconds"?: number | null;
+  "budget_cents"?: number | null;
+  "spent_cents"?: number;
+  "remaining_cents"?: number | null;
+};
+
+export type ProjectBudgetReport = {
+  "project_id": number;
+  "budget_by": "project" | "project_cost" | "task" | "task_fees" | "person" | "none";
+  "expenses_included": boolean;
+  "from": string;
+  "to": string;
+  "grains": Array<ProjectBudgetGrain>;
+};
+
+export type ProjectBudgetReportEnvelope = {
+  "data": ProjectBudgetReport;
+  "links": Links;
+};
+
 export interface EzactoClientOptions {
   baseUrl: string;
   token?: string;
@@ -991,6 +1086,30 @@ export class EzactoClient {
 
   async deleteExpense(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<ExpenseEnvelope> {
     return this.request<ExpenseEnvelope>("DELETE", "/api/v1/expenses/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers: args.headers,
+    });
+  }
+
+  async getUninvoicedReport(args: { query: { "from": string; "to": string; "client_id"?: number; "project_id"?: number }; signal?: AbortSignal; headers?: HeadersInit }): Promise<UninvoicedReportEnvelope> {
+    return this.request<UninvoicedReportEnvelope>("GET", "/api/v1/reports/uninvoiced", {
+      query: args.query,
+      signal: args.signal,
+      headers: args.headers,
+    });
+  }
+
+  async getClientRollupReport(args: { "clientId": number; query: { "from": string; "to": string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<ClientRollupReportEnvelope> {
+    return this.request<ClientRollupReportEnvelope>("GET", "/api/v1/reports/client-rollups/:clientId".replace(":clientId", encodeURIComponent(String(args["clientId"]))), {
+      query: args.query,
+      signal: args.signal,
+      headers: args.headers,
+    });
+  }
+
+  async getProjectBudgetReport(args: { "projectId": number; query: { "from": string; "to": string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<ProjectBudgetReportEnvelope> {
+    return this.request<ProjectBudgetReportEnvelope>("GET", "/api/v1/reports/project-budget/:projectId".replace(":projectId", encodeURIComponent(String(args["projectId"]))), {
+      query: args.query,
       signal: args.signal,
       headers: args.headers,
     });

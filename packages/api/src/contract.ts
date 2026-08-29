@@ -383,6 +383,48 @@ const expenseOperations: ApiContractOperation[] = [
   })),
 ];
 
+const requiredReportRange = [
+  { ...query("from", dateSchema), required: true },
+  { ...query("to", dateSchema), required: true },
+] as const;
+
+const reportOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/reports/uninvoiced",
+    operationId: "getUninvoicedReport",
+    summary: "Report uninvoiced tracked time and expenses",
+    tag: "reports",
+    responseStatus: 200,
+    responseSchema: "UninvoicedReportEnvelope",
+    parameters: [
+      ...requiredReportRange,
+      query("client_id", integerSchema),
+      query("project_id", integerSchema),
+    ],
+  },
+  {
+    method: "get",
+    path: "/api/v1/reports/client-rollups/:clientId",
+    operationId: "getClientRollupReport",
+    summary: "Roll up reporting metrics through a client subtree",
+    tag: "reports",
+    responseStatus: 200,
+    responseSchema: "ClientRollupReportEnvelope",
+    parameters: [path("clientId"), ...requiredReportRange],
+  },
+  {
+    method: "get",
+    path: "/api/v1/reports/project-budget/:projectId",
+    operationId: "getProjectBudgetReport",
+    summary: "Report project budget consumption",
+    tag: "reports",
+    responseStatus: 200,
+    responseSchema: "ProjectBudgetReportEnvelope",
+    parameters: [path("projectId"), ...requiredReportRange],
+  },
+];
+
 export const apiContractOperations: readonly ApiContractOperation[] = [
   {
     method: "get",
@@ -559,6 +601,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...rateOperations(),
   ...timeEntryOperations,
   ...expenseOperations,
+  ...reportOperations,
 ];
 
 const nullable = (schema: JsonSchema): JsonSchema => ({
@@ -1207,6 +1250,170 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   ExpenseEnvelope: envelope("Expense"),
   ExpensePage: page("Expense"),
+  UninvoicedCurrencyTotal: {
+    type: "object",
+    required: [
+      "currency",
+      "rounded_seconds",
+      "time_entry_count",
+      "unpriced_time_entry_count",
+      "expense_count",
+    ],
+    properties: {
+      currency: stringSchema,
+      rounded_seconds: { type: "integer", minimum: 0 },
+      time_entry_count: { type: "integer", minimum: 0 },
+      unpriced_time_entry_count: { type: "integer", minimum: 0 },
+      expense_count: { type: "integer", minimum: 0 },
+      time_cents: { type: "integer", minimum: 0 },
+      expense_cents: { type: "integer", minimum: 0 },
+      total_cents: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  UninvoicedReport: {
+    type: "object",
+    required: ["from", "to", "client_id", "project_id", "totals"],
+    properties: {
+      from: dateSchema,
+      to: dateSchema,
+      client_id: nullable(integerSchema),
+      project_id: nullable(integerSchema),
+      totals: { type: "array", items: reference("UninvoicedCurrencyTotal") },
+    },
+    additionalProperties: false,
+  },
+  UninvoicedReportEnvelope: envelope("UninvoicedReport"),
+  ClientRollupCurrency: {
+    type: "object",
+    required: ["currency", "expense_cents"],
+    properties: {
+      currency: stringSchema,
+      expense_cents: { type: "integer", minimum: 0 },
+      uninvoiced_time_cents: { type: "integer", minimum: 0 },
+      uninvoiced_expense_cents: { type: "integer", minimum: 0 },
+      uninvoiced_total_cents: { type: "integer", minimum: 0 },
+      money_budget_cents: { type: "integer", minimum: 0 },
+      cost_cents: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  ClientRollupMetrics: {
+    type: "object",
+    required: [
+      "time_entry_count",
+      "expense_count",
+      "rounded_seconds",
+      "billable_seconds",
+      "budgeted_seconds",
+      "time_budget_seconds",
+      "unpriced_billable_entry_count",
+      "unpriced_cost_entry_count",
+      "currencies",
+    ],
+    properties: {
+      time_entry_count: { type: "integer", minimum: 0 },
+      expense_count: { type: "integer", minimum: 0 },
+      rounded_seconds: { type: "integer", minimum: 0 },
+      billable_seconds: { type: "integer", minimum: 0 },
+      budgeted_seconds: { type: "integer", minimum: 0 },
+      time_budget_seconds: { type: "integer", minimum: 0 },
+      unpriced_billable_entry_count: { type: "integer", minimum: 0 },
+      unpriced_cost_entry_count: { type: "integer", minimum: 0 },
+      currencies: { type: "array", items: reference("ClientRollupCurrency") },
+    },
+    additionalProperties: false,
+  },
+  ClientRollupNode: {
+    type: "object",
+    required: [
+      "client_id",
+      "name",
+      "parent_client_id",
+      "depth",
+      "direct",
+      "rollup",
+    ],
+    properties: {
+      client_id: integerSchema,
+      name: stringSchema,
+      parent_client_id: nullable(integerSchema),
+      depth: { type: "integer", minimum: 0 },
+      direct: reference("ClientRollupMetrics"),
+      rollup: reference("ClientRollupMetrics"),
+    },
+    additionalProperties: false,
+  },
+  ClientRollupReport: {
+    type: "object",
+    required: ["root_client_id", "from", "to", "nodes"],
+    properties: {
+      root_client_id: integerSchema,
+      from: dateSchema,
+      to: dateSchema,
+      nodes: { type: "array", items: reference("ClientRollupNode") },
+    },
+    additionalProperties: false,
+  },
+  ClientRollupReportEnvelope: envelope("ClientRollupReport"),
+  ProjectBudgetGrain: {
+    type: "object",
+    required: [
+      "source",
+      "source_id",
+      "unit",
+      "calculation",
+      "unpriced_entry_count",
+    ],
+    properties: {
+      source: {
+        type: "string",
+        enum: ["project", "task_assignment", "user_assignment"],
+      },
+      source_id: integerSchema,
+      unit: { type: "string", enum: ["seconds", "cents"] },
+      calculation: { type: "string", enum: ["time", "billable", "cost"] },
+      unpriced_entry_count: { type: "integer", minimum: 0 },
+      budget_seconds: nullable({ type: "integer", minimum: 0 }),
+      spent_seconds: { type: "integer", minimum: 0 },
+      remaining_seconds: nullable({ type: "integer" }),
+      budget_cents: nullable({ type: "integer", minimum: 0 }),
+      spent_cents: { type: "integer", minimum: 0 },
+      remaining_cents: nullable({ type: "integer" }),
+    },
+    additionalProperties: false,
+  },
+  ProjectBudgetReport: {
+    type: "object",
+    required: [
+      "project_id",
+      "budget_by",
+      "expenses_included",
+      "from",
+      "to",
+      "grains",
+    ],
+    properties: {
+      project_id: integerSchema,
+      budget_by: {
+        type: "string",
+        enum: [
+          "project",
+          "project_cost",
+          "task",
+          "task_fees",
+          "person",
+          "none",
+        ],
+      },
+      expenses_included: booleanSchema,
+      from: dateSchema,
+      to: dateSchema,
+      grains: { type: "array", items: reference("ProjectBudgetGrain") },
+    },
+    additionalProperties: false,
+  },
+  ProjectBudgetReportEnvelope: envelope("ProjectBudgetReport"),
 };
 
 const openApiPath = (runtimePath: string): string =>
