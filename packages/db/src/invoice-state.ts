@@ -136,6 +136,21 @@ export interface ExecuteInvoiceLifecycleCommand {
   occurredAt: string
   messageId: number
   eventId: string
+  /** Immutable delivery/document provenance captured with the command row. */
+  message?: Readonly<{
+    sentBy: string | null
+    sentByEmail: string | null
+    sentFrom: string | null
+    sentFromEmail: string | null
+    recipients: readonly Readonly<{ name: string; email: string }>[]
+    subject: string | null
+    body: string | null
+    attachPdf: boolean
+    sendMeACopy: boolean
+    thankYou: boolean
+    reminder: boolean
+    sendReminderOn: string | null
+  }>
   authorize: InvoiceCommandAuthorization
 }
 
@@ -450,6 +465,57 @@ const validateInput = (input: ExecuteInvoiceLifecycleCommand): number | null => 
     invalidInput('eventId must be 1-255 printable ASCII characters')
   }
   assertCanonicalTimestamp(input.occurredAt)
+  if (input.message !== undefined) {
+    const scalarFields = [
+      ['sentBy', input.message.sentBy],
+      ['sentByEmail', input.message.sentByEmail],
+      ['sentFrom', input.message.sentFrom],
+      ['sentFromEmail', input.message.sentFromEmail],
+      ['subject', input.message.subject],
+      ['body', input.message.body],
+    ] as const
+    for (const [field, value] of scalarFields) {
+      if (value !== null && (typeof value !== 'string' || value.length > 100_000)) {
+        invalidInput(`message.${field} must be null or a bounded string`)
+      }
+    }
+    if (!Array.isArray(input.message.recipients) || input.message.recipients.length > 1_000) {
+      invalidInput('message.recipients must be a bounded array')
+    }
+    for (const recipient of input.message.recipients) {
+      if (
+        typeof recipient !== 'object' ||
+        recipient === null ||
+        Object.keys(recipient).sort().join(',') !== 'email,name' ||
+        typeof recipient.name !== 'string' ||
+        recipient.name.length > 1_000 ||
+        typeof recipient.email !== 'string' ||
+        recipient.email.length < 3 ||
+        recipient.email.length > 320
+      ) {
+        invalidInput('message.recipients must contain exact bounded name/email objects')
+      }
+    }
+    if (input.message.sendReminderOn !== null) {
+      const date = input.message.sendReminderOn
+      const epoch = Date.parse(`${date}T00:00:00.000Z`)
+      if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+        !Number.isSafeInteger(epoch) ||
+        new Date(epoch).toISOString().slice(0, 10) !== date
+      ) {
+        invalidInput('message.sendReminderOn must be null or a real canonical date')
+      }
+    }
+    for (const value of [
+      input.message.attachPdf,
+      input.message.sendMeACopy,
+      input.message.thankYou,
+      input.message.reminder,
+    ]) {
+      if (typeof value !== 'boolean') invalidInput('message flags must be booleans')
+    }
+  }
   if (typeof input.authorize !== 'function') invalidInput('authorize must be a function')
   if (input.actor.type === 'system') {
     if (input.actor.id !== null) invalidInput('a system actor must have a null id')
@@ -1134,8 +1200,8 @@ const appendEvents = (
   events: readonly InvoiceEventType[],
   payment: { before: EventPaymentSnapshot | null; after: EventPaymentSnapshot | null },
 ): void => {
-  if (input.eventIds.length !== events.length) {
-    invalidInput(`the command requires exactly ${events.length} event id(s)`)
+  if (input.eventIds.length < events.length) {
+    invalidInput(`the command requires at least ${events.length} candidate event id(s)`)
   }
   events.forEach((eventType, eventIndex) => {
     const eventId = input.eventIds[eventIndex] ?? invalidInput('an event id is missing')
@@ -1172,6 +1238,20 @@ const mutationStatements = (
   after: InvoiceLifecycleSnapshot,
   events: readonly InvoiceEventType[],
 ): SqlStatement[] => {
+  const message = input.message ?? {
+    sentBy: null,
+    sentByEmail: null,
+    sentFrom: null,
+    sentFromEmail: null,
+    recipients: [],
+    subject: null,
+    body: null,
+    attachPdf: false,
+    sendMeACopy: false,
+    thankYou: false,
+    reminder: false,
+    sendReminderOn: null,
+  }
   const statements: SqlStatement[] = [
     {
       text: `INSERT INTO invoice_command_ledger (
@@ -1191,9 +1271,12 @@ const mutationStatements = (
     },
     {
       text: `INSERT INTO invoice_messages (
-          id, invoice_id, event_type, created_at, updated_at
+          id, invoice_id, sent_by, sent_by_email, sent_from, sent_from_email,
+          recipients, subject, body, attach_pdf, send_me_a_copy, thank_you,
+          reminder, send_reminder_on, event_type, created_at, updated_at
         )
-        SELECT ?, invoice.id, ?, ?, ? FROM invoices invoice
+        SELECT ?, invoice.id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        FROM invoices invoice
         WHERE invoice.id = ?
           AND (? <> 'invoice.view' OR invoice.state IN ('open','paid','closed'))
           AND EXISTS (
@@ -1203,6 +1286,18 @@ const mutationStatements = (
           )`,
       params: [
         input.messageId,
+        message.sentBy,
+        message.sentByEmail,
+        message.sentFrom,
+        message.sentFromEmail,
+        JSON.stringify(message.recipients),
+        message.subject,
+        message.body,
+        message.attachPdf ? 1 : 0,
+        message.sendMeACopy ? 1 : 0,
+        message.thankYou ? 1 : 0,
+        message.reminder ? 1 : 0,
+        message.sendReminderOn,
         messageEventTypes[input.command],
         input.occurredAt,
         input.occurredAt,
@@ -1298,6 +1393,24 @@ export const executeInvoiceLifecycleCommand = async (
   const commandKind = commandKinds[input.command]
   const fingerprint = await fingerprintCommand(input, commandKind, {
     message_id: input.messageId,
+    ...(input.message === undefined
+      ? {}
+      : {
+          message: {
+            // Sender fields are server-derived immutable enrichment, not
+            // caller causation. Excluding them keeps the same HTTP command a
+            // valid retry after the acting user's name or email changes; the
+            // first successful command still persists the complete snapshot.
+            recipients: input.message.recipients,
+            subject: input.message.subject,
+            body: input.message.body,
+            attach_pdf: input.message.attachPdf,
+            send_me_a_copy: input.message.sendMeACopy,
+            thank_you: input.message.thankYou,
+            reminder: input.message.reminder,
+            send_reminder_on: input.message.sendReminderOn,
+          },
+        }),
     ...(expectedVersion === null ? {} : { expected_version: expectedVersion }),
   })
 
@@ -1927,7 +2040,7 @@ export const executeInvoiceEdit = async (
     if (input.edit.clientId !== undefined) {
       assertPositiveSafeInteger(input.edit.clientId, 'clientId')
     }
-    if (input.edit.number !== undefined && input.edit.number.length === 0) {
+    if (input.edit.number !== undefined && !input.edit.number.trim()) {
       invalidInput('invoice number must not be empty')
     }
     if (input.edit.currency !== undefined && !/^[A-Z]{3}$/.test(input.edit.currency)) {
@@ -1935,6 +2048,11 @@ export const executeInvoiceEdit = async (
     }
     if (input.edit.issueDate !== undefined) assertCanonicalDate(input.edit.issueDate, 'issueDate')
     if (input.edit.dueDate !== undefined) assertCanonicalDate(input.edit.dueDate, 'dueDate')
+    const resultingIssueDate = input.edit.issueDate ?? document.issueDate
+    const resultingDueDate = input.edit.dueDate ?? document.dueDate
+    if (resultingDueDate < resultingIssueDate) {
+      invalidInput('invoice dueDate must not precede issueDate')
+    }
     if (input.edit.projectId !== undefined && input.edit.projectId !== null) {
       assertPositiveSafeInteger(input.edit.projectId, 'projectId')
     }

@@ -105,6 +105,55 @@ export class InvoiceLifecycleError extends Error {
   }
 }
 
+/**
+ * Compute a native line's authoritative cents from the JSON decimal quantity
+ * without floating-point multiplication. The number's shortest decimal form is
+ * converted to an integer ratio and rounded half away from zero per D21.
+ */
+export const calculateInvoiceLineAmountCents = (
+  quantity: number,
+  unitPriceCents: number,
+): number => {
+  if (!Number.isFinite(quantity)) {
+    throw new RangeError("invoice line quantity must be finite");
+  }
+  if (
+    !Number.isSafeInteger(unitPriceCents) ||
+    Math.abs(unitPriceCents) > 9_000_000_000_000
+  ) {
+    throw new RangeError(
+      "invoice line unit price must be bounded integer cents",
+    );
+  }
+
+  const match = /^(-?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i.exec(
+    quantity.toString(),
+  );
+  if (match === null)
+    throw new RangeError("invoice line quantity is not a decimal number");
+  const fractional = match[3] ?? "";
+  const exponent = Number(match[4] ?? 0);
+  if (!Number.isSafeInteger(exponent)) {
+    throw new RangeError("invoice line quantity exponent is out of range");
+  }
+  let numerator = BigInt(`${match[2]}${fractional}`);
+  if (match[1] === "-") numerator = -numerator;
+  const scale = fractional.length - exponent;
+  let denominator = 1n;
+  if (scale > 0) denominator = 10n ** BigInt(scale);
+  if (scale < 0) numerator *= 10n ** BigInt(-scale);
+
+  const product = numerator * BigInt(unitPriceCents);
+  const magnitude = product < 0n ? -product : product;
+  let rounded = magnitude / denominator;
+  if ((magnitude % denominator) * 2n >= denominator) rounded += 1n;
+  if (product < 0n) rounded = -rounded;
+  if (rounded < -9_000_000_000_000n || rounded > 9_000_000_000_000n) {
+    throw new RangeError("invoice line amount exceeds the cents limit");
+  }
+  return Number(rounded);
+};
+
 const centsLimit = 9_000_000_000_000;
 const canonicalTimestamp =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/;

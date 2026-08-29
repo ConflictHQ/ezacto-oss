@@ -46,6 +46,15 @@ export interface RetainerBalance {
   balance: number
 }
 
+export class RetainerLedgerEntryReuseError extends Error {
+  readonly code = 'command_id_reused'
+
+  constructor(entryId: string, options?: ErrorOptions) {
+    super(`retainer ledger id ${entryId} was already used for another movement`, options)
+    this.name = 'RetainerLedgerEntryReuseError'
+  }
+}
+
 interface SqlStatement {
   text: string
   params: readonly unknown[]
@@ -143,8 +152,7 @@ const sameEntry = (
   stored.amount === amount &&
   stored.invoiceId === (input.invoiceId ?? null) &&
   stored.occurredOn === input.occurredOn &&
-  stored.notes === (input.notes ?? null) &&
-  stored.createdAt === input.createdAt
+  stored.notes === (input.notes ?? null)
 
 /**
  * Append one stable ledger movement. Parent-unit and overdraw checks execute in
@@ -195,7 +203,7 @@ export const appendRetainerLedgerEntry = async (
   const existing = await first<RetainerLedgerEntry>(database, ledgerEntryStatement(input.id))
   if (existing !== null) {
     if (!sameEntry(existing, input, unit, amount)) {
-      throw new Error(`retainer ledger id ${input.id} was already used for another movement`)
+      throw new RetainerLedgerEntryReuseError(input.id)
     }
     return existing
   }
@@ -221,7 +229,7 @@ export const appendRetainerLedgerEntry = async (
     const raced = await first<RetainerLedgerEntry>(database, ledgerEntryStatement(input.id))
     if (raced === null) throw error
     if (!sameEntry(raced, input, unit, amount)) {
-      throw new Error(`retainer ledger id ${input.id} was already used for another movement`, {
+      throw new RetainerLedgerEntryReuseError(input.id, {
         cause: error,
       })
     }
@@ -231,7 +239,7 @@ export const appendRetainerLedgerEntry = async (
   const stored = await first<RetainerLedgerEntry>(database, ledgerEntryStatement(input.id))
   if (stored === null) throw new Error(`retainer ledger entry ${input.id} did not persist`)
   if (!sameEntry(stored, input, unit, amount)) {
-    throw new Error(`retainer ledger id ${input.id} was already used for another movement`)
+    throw new RetainerLedgerEntryReuseError(input.id)
   }
   return stored
 }

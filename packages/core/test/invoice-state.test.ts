@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   InvoiceLifecycleError,
   assertInvoiceLifecycleSnapshot,
+  calculateInvoiceLineAmountCents,
   deriveInvoicePaymentStatus,
   invoiceEventTypes,
   invoiceLifecycleCommands,
@@ -87,6 +88,30 @@ describe("invoice payment status", () => {
     [{ paymentCount: 1, dueAmountCents: 9_000_000_000_001 }, /dueAmountCents/],
   ])("[unit] rejects malformed payment facts", (facts, message) => {
     expect(() => deriveInvoicePaymentStatus(facts)).toThrow(message);
+  });
+});
+
+describe("native invoice line amount", () => {
+  it.each([
+    [1.5, 101, 152],
+    [-1.5, 101, -152],
+    [0.1, 105, 11],
+    [1e-3, 500, 1],
+    [2, -25, -50],
+  ])(
+    "[unit] computes %s × %s as exact half-away cents",
+    (quantity, unit, expected) => {
+      expect(calculateInvoiceLineAmountCents(quantity, unit)).toBe(expected);
+    },
+  );
+
+  it("[unit] rejects floating and aggregate overflow instead of rounding unsafely", () => {
+    expect(() =>
+      calculateInvoiceLineAmountCents(Number.POSITIVE_INFINITY, 1),
+    ).toThrow(RangeError);
+    expect(() => calculateInvoiceLineAmountCents(2, 9_000_000_000_000)).toThrow(
+      RangeError,
+    );
   });
 });
 

@@ -200,7 +200,7 @@ for (const [runtime, factory] of factories) {
         await database.rows<{ id: string }>(
           `SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`,
         ),
-      ).toEqual([{ id: '0020_argon2_passwords' }])
+      ).toEqual([{ id: '0022_resource_create_commands' }])
       expect(
         await database.rows<{ name: string }>(
           `SELECT name FROM sqlite_master
@@ -209,6 +209,7 @@ for (const [runtime, factory] of factories) {
         ),
       ).toEqual([
         { name: 'estimate_attachments' },
+        { name: 'estimate_command_ledger' },
         { name: 'estimate_item_categories' },
         { name: 'estimate_line_items' },
         { name: 'estimate_messages' },

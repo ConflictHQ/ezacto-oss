@@ -4,8 +4,10 @@ import {
   apiContractOperations,
   createApiApp,
   generateOpenApiDocument,
+  installAttachmentRoutes,
   installEmailLogRoutes,
   installGeneralResourceRoutes,
+  installMoneyResourceRoutes,
   installOidcRoutes,
   installPasswordAuthRoutes,
   installReportRoutes,
@@ -17,6 +19,7 @@ import {
   type OidcIdentityResolver,
   type OidcTransactionStorePort,
   type PasswordAuthService,
+  type MoneyResourceRouteOptions,
   type ReportReader,
   type TrackedResourceRepository,
 } from "../src/index.js";
@@ -30,6 +33,10 @@ const trackedRepository = new Proxy(
   {},
   { get: () => unavailable },
 ) as TrackedResourceRepository;
+const moneyResources = new Proxy(
+  {},
+  { get: () => unavailable },
+) as MoneyResourceRouteOptions["service"];
 const reports = new Proxy({}, { get: () => unavailable }) as ReportReader;
 const tokens = new Proxy({}, { get: () => unavailable }) as ApiTokenService;
 const passwordAuth = new Proxy(
@@ -84,6 +91,11 @@ const documentedApp = () =>
           }),
         },
       });
+      installMoneyResourceRoutes(api, {
+        service: moneyResources,
+        cursorSigningKey: new Uint8Array(32),
+      });
+      installAttachmentRoutes(api);
       installReportRoutes(api, reports);
     },
   });
@@ -127,5 +139,74 @@ describe("OpenAPI contract", () => {
     );
     for (const reference of references)
       expect(schemas, reference[1]).toHaveProperty(reference[1]!);
+  });
+
+  it("[contract] documents exact durable and discriminated money request shapes", () => {
+    const document = generateOpenApiDocument() as {
+      paths: Record<
+        string,
+        Record<string, { parameters?: Array<{ name: string }> }>
+      >;
+      components: { schemas: Record<string, Record<string, unknown>> };
+    };
+    for (const [path, method] of [
+      ["/api/v1/retainers", "post"],
+      ["/api/v1/recurring-invoices", "post"],
+      ["/api/v1/invoices/{invoiceId}/attachments", "post"],
+      ["/api/v1/recurring-invoices/{recurringInvoiceId}/attachments", "post"],
+      ["/api/v1/estimates/{estimateId}/attachments", "post"],
+      ["/api/v1/expenses/{expenseId}/attachments", "post"],
+      ["/api/v1/projects/{projectId}/attachments", "post"],
+    ] as const) {
+      expect(document.paths[path]?.[method]?.parameters).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "Idempotency-Key" }),
+        ]),
+      );
+    }
+
+    const schemas = document.components.schemas;
+    expect(schemas.RetainerInput?.oneOf as unknown[]).toHaveLength(3);
+    expect(schemas.RetainerLedgerInput?.oneOf as unknown[]).toHaveLength(10);
+    expect(schemas.RetainerDrawdownInput?.oneOf as unknown[]).toHaveLength(2);
+    expect(schemas.InvoicePaymentInput?.oneOf as unknown[]).toHaveLength(2);
+    const paymentUpdates = schemas.InvoicePaymentUpdateInput?.oneOf as Array<{
+      properties: Record<string, unknown>;
+      required: string[];
+    }>;
+    expect(paymentUpdates).toHaveLength(2);
+    expect(
+      paymentUpdates.every(({ properties }) => !("currency" in properties)),
+    ).toBe(true);
+    expect(paymentUpdates.map(({ required }) => required)).toEqual([
+      expect.arrayContaining(["paid_at"]),
+      expect.arrayContaining(["paid_date"]),
+    ]);
+
+    const reminder = schemas.InvoiceReminderPolicy as {
+      required: string[];
+      additionalProperties: boolean;
+    };
+    expect(reminder).toMatchObject({
+      required: ["first_after_days", "every_days"],
+      additionalProperties: false,
+    });
+
+    const recurring = schemas.RecurringAmountConfig?.oneOf as Array<{
+      properties: Record<string, { minItems?: number }>;
+      required: string[];
+    }>;
+    expect(recurring).toHaveLength(4);
+    expect(recurring[0]?.properties.line_items?.minItems).toBe(1);
+    expect(
+      recurring
+        .slice(1)
+        .every(({ properties }) => properties.project_ids?.minItems === 1),
+    ).toBe(true);
+    expect(recurring.slice(1).map(({ required }) => required)).toEqual([
+      expect.arrayContaining(["time"]),
+      expect.arrayContaining(["expenses"]),
+      expect.arrayContaining(["time", "expenses"]),
+    ]);
   });
 });

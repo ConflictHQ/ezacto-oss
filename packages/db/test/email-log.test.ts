@@ -9,10 +9,7 @@ import {
   type HttpEmailProvider,
   type QueuedEmailJob,
 } from '@ezacto/mailer'
-import {
-  createContainerEmailLogStore,
-  createD1EmailLogStore,
-} from '../src/email-log.js'
+import { createContainerEmailLogStore, createD1EmailLogStore } from '../src/email-log.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 
 interface Harness {
@@ -113,6 +110,8 @@ for (const [runtime, factory] of factories) {
         { id: '0018_estimates' },
         { id: '0019_attachments' },
         { id: '0020_argon2_passwords' },
+        { id: '0021_estimate_commands' },
+        { id: '0022_resource_create_commands' },
       ])
     })
 
@@ -120,9 +119,7 @@ for (const [runtime, factory] of factories) {
       const current = await setup()
       const queued = await current.store.createQueued(message)
       await current.run(`DROP TABLE oidc_transactions`)
-      await current.run(
-        `DELETE FROM _ezacto_migrations WHERE id = '0015_oidc_transactions'`,
-      )
+      await current.run(`DELETE FROM _ezacto_migrations WHERE id = '0015_oidc_transactions'`)
 
       await current.migrateAgain()
 
@@ -137,6 +134,8 @@ for (const [runtime, factory] of factories) {
         { id: '0018_estimates' },
         { id: '0019_attachments' },
         { id: '0020_argon2_passwords' },
+        { id: '0021_estimate_commands' },
+        { id: '0022_resource_create_commands' },
       ])
       expect(
         await current.rows<{ name: string }>(
@@ -185,12 +184,7 @@ for (const [runtime, factory] of factories) {
         ...message,
         template: 'password_reset',
       })
-      await current.store.claimAttempt(
-        second.id,
-        'http-provider',
-        'attempt-two',
-        30,
-      )
+      await current.store.claimAttempt(second.id, 'http-provider', 'attempt-two', 30)
       await expect(
         current.store.markProviderFailed(
           second.id,
@@ -312,12 +306,7 @@ for (const [runtime, factory] of factories) {
         message,
       }
       await expect(
-        current.store.claimAttempt(
-          queued.id,
-          'http-provider',
-          'abandoned-attempt',
-          30,
-        ),
+        current.store.claimAttempt(queued.id, 'http-provider', 'abandoned-attempt', 30),
       ).resolves.toBe(1)
 
       let providerCalls = 0
@@ -345,11 +334,7 @@ for (const [runtime, factory] of factories) {
       })
 
       await expect(
-        current.store.releaseAttempt(
-          queued.id,
-          'http-provider',
-          'abandoned-attempt',
-        ),
+        current.store.releaseAttempt(queued.id, 'http-provider', 'abandoned-attempt'),
       ).resolves.toBe(true)
       await expect(
         processQueuedEmail(job, 5, current.store, provider, {

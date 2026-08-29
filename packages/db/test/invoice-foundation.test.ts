@@ -472,12 +472,7 @@ for (const [runtime, factory] of factories) {
       expect(await foreignKeys('invoice_messages')).toEqual([
         { from: 'invoice_id', table: 'invoices', to: 'id', on_delete: 'CASCADE' },
       ])
-      for (const forbidden of [
-        'tax_pct',
-        'tax2_pct',
-        'discount_pct',
-        'sender_identity_id',
-      ]) {
+      for (const forbidden of ['tax_pct', 'tax2_pct', 'discount_pct', 'sender_identity_id']) {
         expect(invoiceColumns.map(({ name }) => name)).not.toContain(forbidden)
       }
 
@@ -633,6 +628,8 @@ for (const [runtime, factory] of factories) {
         '0018_estimates',
         '0019_attachments',
         '0020_argon2_passwords',
+        '0021_estimate_commands',
+        '0022_resource_create_commands',
       ])
       expect(
         firstLedger.slice(0, 4).every(({ applied_at: appliedAt }) => appliedAt === timestamp),

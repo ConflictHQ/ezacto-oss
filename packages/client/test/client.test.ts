@@ -2,6 +2,14 @@ import { createApiApp } from "../../api/src/index.js";
 import { describe, expect, it } from "vitest";
 import { EzactoClient } from "../src/index.js";
 import type { EzactoApiError } from "../src/index.js";
+import type {
+  InvoicePaymentInput,
+  InvoicePaymentUpdateInput,
+  RecurringAmountConfig,
+  RetainerDrawdownInput,
+  RetainerInput,
+  RetainerLedgerInput,
+} from "../src/generated.js";
 
 const project = {
   id: 7,
@@ -20,7 +28,12 @@ const app = createApiApp({
               tokenId: 1,
               userId: 4,
               profile: "administrator",
-              scopes: ["projects:write", "time_entries:write", "reports:read"],
+              scopes: [
+                "projects:write",
+                "time_entries:write",
+                "invoices:write",
+                "reports:read",
+              ],
             }
           : null,
       issue: async () => {
@@ -75,6 +88,71 @@ const app = createApiApp({
         201,
       );
     });
+    api.patch("/invoices/:id", async (context) =>
+      context.json({
+        data: {
+          invoice_id: context.req.param("id"),
+          command_id: context.req.header("idempotency-key"),
+          body: await context.req.json(),
+        },
+        links: { self: `/api/v1/invoices/${context.req.param("id")}` },
+      }),
+    );
+    api.post("/invoice-generations", async (context) =>
+      context.json(
+        {
+          data: {
+            command_id: context.req.header("idempotency-key"),
+            body: await context.req.json(),
+          },
+          links: { self: "/api/v1/invoices/10" },
+        },
+        201,
+      ),
+    );
+    api.post("/estimates/:id/convert", async (context) =>
+      context.json(
+        {
+          data: {
+            estimate_id: context.req.param("id"),
+            command_id: context.req.header("idempotency-key"),
+            body: await context.req.json(),
+          },
+          links: { self: "/api/v1/invoices/12" },
+        },
+        201,
+      ),
+    );
+    api.post("/projects/:projectId/attachments", async (context) => {
+      const body = await context.req.raw.formData();
+      const file = body.get("file");
+      if (!(file instanceof File)) throw new Error("expected file");
+      return context.json(
+        {
+          data: {
+            id: 12,
+            name: file.name,
+            content_hash: "a".repeat(64),
+            byte_size: file.size,
+            content_type: file.type,
+            uploaded_by_user_id: 4,
+            created_at: "2026-08-28T12:00:00.000Z",
+            updated_at: "2026-08-28T12:00:00.000Z",
+          },
+          links: {
+            self: `/api/v1/projects/${context.req.param("projectId")}/attachments/12`,
+          },
+        },
+        201,
+      );
+    });
+    api.get(
+      "/projects/:projectId/attachments/:attachmentId/content",
+      (context) =>
+        context.body(new Uint8Array([0, 1, 2, 255]), 200, {
+          "content-type": "application/octet-stream",
+        }),
+    );
     api.get("/reports/uninvoiced", (context) =>
       context.json({
         data: {
@@ -138,5 +216,149 @@ describe("generated ezacto client", () => {
         error: { code: "authentication_required" },
       },
     } satisfies Partial<EzactoApiError>);
+  });
+
+  it("[unit] maps required command identity into the generated request header", async () => {
+    const response = await client().updateInvoice({
+      id: 9,
+      "Idempotency-Key": "client-command-9",
+      body: { expected_version: 2, subject: "Updated" },
+    });
+    expect(response as unknown).toMatchObject({
+      data: {
+        invoice_id: "9",
+        command_id: "client-command-9",
+        body: { expected_version: 2, subject: "Updated" },
+      },
+    });
+
+    const generated = await client().generateInvoice({
+      "Idempotency-Key": "client-generation-10",
+      body: {
+        client_id: 3,
+        from: "2026-08-01",
+        to: "2026-08-31",
+        project_ids: [7],
+        time_summary_type: "task",
+        expense_summary_type: null,
+      },
+    });
+    expect(generated as unknown).toMatchObject({
+      data: {
+        command_id: "client-generation-10",
+        body: {
+          client_id: 3,
+          from: "2026-08-01",
+          to: "2026-08-31",
+          project_ids: [7],
+          time_summary_type: "task",
+          expense_summary_type: null,
+        },
+      },
+    });
+
+    const converted = await client().convertEstimate({
+      id: 12,
+      "Idempotency-Key": "client-conversion-12",
+      body: {
+        expected_version: 3,
+        number: "INV-12",
+        issue_date: "2026-08-28",
+        due_date: "2026-09-27",
+        payment_terms: "net_30",
+      },
+    });
+    expect(converted as unknown).toMatchObject({
+      data: {
+        estimate_id: "12",
+        command_id: "client-conversion-12",
+        body: {
+          expected_version: 3,
+          number: "INV-12",
+          payment_terms: "net_30",
+        },
+      },
+    });
+  });
+
+  it("[unit] preserves multipart boundaries and returns binary attachment content", async () => {
+    const form = new FormData();
+    form.set(
+      "file",
+      new File(["attachment bytes"], "evidence.txt", { type: "text/plain" }),
+    );
+    const multipartClient = new EzactoClient({
+      baseUrl: "https://api.test",
+      token: "generated-client-test",
+      headers: { "content-type": "application/json" },
+      fetch: async (input, init) => app.fetch(new Request(input, init)),
+    });
+    const created = await multipartClient.createProjectAttachment({
+      projectId: 7,
+      "Idempotency-Key": "client-project-attachment-7",
+      body: form,
+    });
+    expect(created.data).toMatchObject({
+      id: 12,
+      name: "evidence.txt",
+      byte_size: 16,
+      content_type: "text/plain",
+    });
+
+    const bytes = await multipartClient.downloadProjectAttachment({
+      projectId: 7,
+      attachmentId: 12,
+    });
+    expect([...new Uint8Array(bytes)]).toEqual([0, 1, 2, 255]);
+  });
+
+  it("[contract] exposes discriminated money inputs without caller-owned ambiguous fields", () => {
+    const payment: InvoicePaymentInput = {
+      expected_version: 1,
+      amount_cents: 100,
+      currency: "USD",
+      paid_date: "2026-08-28",
+    };
+    const paymentUpdate: InvoicePaymentUpdateInput = {
+      expected_version: 2,
+      expected_updated_at: "2026-08-28T12:00:00.000Z",
+      amount_cents: 90,
+      paid_at: "2026-08-28T12:00:00.000Z",
+    };
+    const retainers: RetainerInput[] = [
+      { denomination: "money", amount_cents: 1_000 },
+      { denomination: "hours", seconds: 3_600 },
+      {
+        denomination: "hours",
+        seconds: 3_600,
+        locked_rate_cents: 20_000,
+        rate_locked_at: "2026-08-28T12:00:00.000Z",
+      },
+    ];
+    const correction: RetainerLedgerInput = {
+      kind: "adjustment",
+      amount_cents: -100,
+      occurred_on: "2026-08-28",
+      notes: "Correction",
+    };
+    const drawdown: RetainerDrawdownInput = {
+      invoice_id: 4,
+      seconds: 600,
+      occurred_on: "2026-08-28",
+    };
+    const recurring: RecurringAmountConfig = {
+      schema_version: 1,
+      type: "line_items_import",
+      project_ids: [7],
+      time: { summary_type: "task" },
+    };
+    expect({
+      payment,
+      paymentUpdate,
+      retainers,
+      correction,
+      drawdown,
+      recurring,
+    }).toBeDefined();
   });
 });

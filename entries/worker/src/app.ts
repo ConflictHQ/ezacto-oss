@@ -3,8 +3,10 @@ import {
   ApiError,
   assertValidOidcProviderConfig,
   generateOpenApiDocument,
+  installAttachmentRoutes,
   installEmailLogRoutes,
   installGeneralResourceRoutes,
+  installMoneyResourceRoutes,
   installOidcRoutes,
   installPasswordAuthRoutes,
   installReportRoutes,
@@ -13,9 +15,11 @@ import {
   readJsonBody,
   validationError,
   type ApiTokenService,
+  type AttachmentRouteOptions,
   type AuthMailer,
   type ApiSessionService,
   type GeneralResourceRouteOptions,
+  type MoneyResourceRouteOptions,
   type OidcIdentityResolver,
   type OidcProviderConfig,
   type OidcTransactionStorePort,
@@ -42,6 +46,8 @@ export type Env = {
 
 export type WorkerEnv = Env & {
   DB: D1Database
+  /** Content-addressed attachment objects. Metadata remains in DB. */
+  ATTACHMENTS?: R2Bucket
   API_CURSOR_SIGNING_KEY: string
   /** Bound together with a provider implementation; absent deployments fail auth email closed. */
   EMAIL_QUEUE?: Queue<QueuedEmailJob>
@@ -68,6 +74,7 @@ export interface RuntimeServices {
   tokens: ApiTokenService
   generalResources: GeneralResourceRouteOptions['repository']
   trackedResources: TrackedResourceRepository
+  moneyResources: MoneyResourceRouteOptions['service']
   reports: ReportReader
   cursorSigningKey: Uint8Array
   passwordAuth: PasswordAuthService
@@ -76,6 +83,7 @@ export interface RuntimeServices {
   identities: OidcIdentityResolver
   oidcTransactions: OidcTransactionStorePort
   authMailer?: AuthMailer
+  attachments?: AttachmentRouteOptions
 }
 
 export type Health = {
@@ -106,6 +114,12 @@ export const createApp = (services?: RuntimeServices) =>
               clock: systemClock,
               cursorSigningKey: services.cursorSigningKey,
             })
+            installMoneyResourceRoutes(api, {
+              service: services.moneyResources,
+              cursorSigningKey: services.cursorSigningKey,
+              clock: () => systemClock.now().instant,
+            })
+            installAttachmentRoutes(api, services.attachments)
             installReportRoutes(api, services.reports)
           },
         }),
