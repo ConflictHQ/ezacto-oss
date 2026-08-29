@@ -7,6 +7,7 @@ export interface QueueContract {
   maxBatchSize: number;
   maxBatchTimeout: number;
   maxRetries: number;
+  retryDelay: number;
   maxConcurrency: number;
 }
 

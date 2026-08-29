@@ -175,6 +175,10 @@ export const readQueueContract = async (
       consumer.max_retries,
       `${environment} max_retries`,
     ),
+    retryDelay: positiveInteger(
+      consumer.retry_delay,
+      `${environment} retry_delay`,
+    ),
     maxConcurrency: positiveInteger(
       consumer.max_concurrency,
       `${environment} max_concurrency`,
@@ -284,6 +288,7 @@ const assertDeployedBinding = (queue, contract) => {
     batchSize: contract.maxBatchSize,
     batchTimeoutMs: contract.maxBatchTimeout * 1_000,
     maxRetries: contract.maxRetries,
+    retryDelay: contract.retryDelay,
     maxConcurrency: contract.maxConcurrency,
   };
   const actual = {
@@ -291,6 +296,7 @@ const assertDeployedBinding = (queue, contract) => {
     batchSize: settings.batch_size,
     batchTimeoutMs: settings.max_wait_time_ms,
     maxRetries: settings.max_retries,
+    retryDelay: settings.retry_delay,
     maxConcurrency: settings.max_concurrency,
   };
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {

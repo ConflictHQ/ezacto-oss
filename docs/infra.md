@@ -165,11 +165,16 @@ scope already documented above.
 
 The same Worker is the `EMAIL_QUEUE` producer and push consumer. The consumer
 accepts one message per batch with one concurrent invocation while SES sandbox
-limits are in play. Four Queue retries plus the initial delivery match the
-mailer's five-attempt durable provider policy; the consumer supplies the
-per-message `60 / 300 / 900 / 3600` second backoff. Provider exhaustion is
-persisted and acknowledged, while an unexpected consumer failure can reach the
-dead-letter Queue instead of being discarded.
+limits are in play. Cloudflare's bounded platform maximum of 100 Queue retries
+is the transport-failure budget, not a provider-call count: lease contention,
+D1 receipt persistence, and unexpected consumer failures can all consume Queue
+deliveries without consuming a provider attempt. Its five-second default retry
+delay matches the attempt-lease contention delay and prevents a hot retry loop.
+The durable `email_log.attempt_count` independently limits provider I/O to five
+claims and supplies the explicit per-message `60 / 300 / 900 / 3600` second
+provider backoff, which overrides the Queue default. Provider exhaustion is
+persisted and acknowledged. A message that still cannot complete after 100
+transport retries reaches the dead-letter Queue instead of being discarded.
 
 Every dev deploy idempotently converges both resources; a prod deploy only
 checks them and fails before changing secrets when the operator has not run
