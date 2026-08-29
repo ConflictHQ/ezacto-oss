@@ -1,0 +1,19 @@
+{
+  "id": 921001,
+  "sent_by": "Archived Estimate Creator",
+  "sent_by_email": "archived.creator@example.invalid",
+  "sent_from": "Sanitized Finance Team",
+  "sent_from_email": "finance@example.invalid",
+  "recipients": [
+    {
+      "name": "Sanitized Recipient",
+      "email": "recipient@example.invalid"
+    }
+  ],
+  "subject": "Sanitized engagement estimate",
+  "body": "Please review the sanitized estimate.",
+  "send_me_a_copy": true,
+  "event_type": "send",
+  "created_at": "2026-08-27T14:05:06Z",
+  "updated_at": "2026-08-27T14:05:06Z"
+}

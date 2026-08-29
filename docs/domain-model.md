@@ -393,6 +393,23 @@ conversion is a first-class operation** (market research: named user complaint;
 Harvest emits `event_type: invoice` but has no conversion API). Conversion copies
 lines, links `invoice.estimate_id`, emits the `invoice` system event.
 
+**Physical v1 storage contract (#123).** `estimate` persists the Harvest header as
+canonical cents, fixed-point percentage rates, canonical dates/timestamps, a
+server-generated public `client_key`, optimistic `version`, and state
+`draft|sent|accepted|declined`. `estimate_line_item` stores ordered, parent-owned
+lines with a bounded `REAL quantity`, denormalized category-name `kind`, integer-cent
+price/amount, and tax flags; it deliberately has no project relationship.
+`estimate_item_category` is the simpler name-only Harvest category.
+
+`estimate_message` stores the four immutable sender scalars, exact recipient JSON,
+subject/body, `send_me_a_copy`, delivery outcome, and all six representable events.
+The native write seam accepts only `send|accept|decline|re-open`, requires a nonempty
+recipient list for `send`, and rejects `view|invoice`; a separate trusted service seam
+records those system events. It has none of the invoice-only PDF, thank-you, reminder,
+or scheduled-reminder fields. Migration `0018_estimates` adds the tables and the real
+nullable `invoice.estimate_id` FK after the invoice foundation without rewriting
+existing invoice rows; cross-client links are rejected.
+
 ### 2.18 `retainer` — first-class (Harvest's biggest model gap)
 
 Harvest: no API, no ledger, funds invisible to financial reports. Market research

@@ -99,7 +99,7 @@ for (const [runtime, factory] of factories) {
 
     const setup = async () => (harness = await factory())
 
-    it('[unit] registers 0015 through 0017 in order and migrates idempotently', async () => {
+    it('[unit] registers 0015 through 0018 in order and migrates idempotently', async () => {
       const current = await setup()
       await current.migrateAgain()
       const ledger = await current.rows<{ id: string }>(
@@ -110,6 +110,7 @@ for (const [runtime, factory] of factories) {
         { id: '0015_oidc_transactions' },
         { id: '0016_email_log' },
         { id: '0017_email_delivery_details' },
+        { id: '0018_estimates' },
       ])
     })
 
@@ -131,6 +132,7 @@ for (const [runtime, factory] of factories) {
         { id: '0015_oidc_transactions' },
         { id: '0016_email_log' },
         { id: '0017_email_delivery_details' },
+        { id: '0018_estimates' },
       ])
       expect(
         await current.rows<{ name: string }>(
