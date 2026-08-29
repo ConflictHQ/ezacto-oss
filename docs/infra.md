@@ -86,6 +86,38 @@ are never persisted. OIDC starts are limited to 20 per hashed Cloudflare client
 address in a rolling 10-minute window. Each start transactionally removes
 expired rows; consumed rows become eligible for cleanup no later than expiry.
 
+Transactional email uses the SES v2 HTTPS API; SMTP is not part of the Worker
+contract. Each GitHub environment supplies `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY` as secrets, with `AWS_SESSION_TOKEN` when temporary
+credentials are used. It supplies `SES_REGION`, `SES_FROM`, and optionally
+`SES_CONFIGURATION_SET` as environment variables. `deploy.yml` validates
+configuration completeness before mutating Worker secrets, and the provider
+validates every value before runtime use. A partial or invalid contract fails
+closed; absent SES secrets are converged to explicit `null` deletions.
+
+The IAM principal needs only the region/account resources used by the instance
+and these actions: `ses:GetAccount`, `ses:ListEmailIdentities`,
+`ses:GetEmailIdentity`, `ses:GetSuppressedDestination`, and `ses:SendEmail`.
+The configured sender identity must be verified with healthy DKIM in
+`SES_REGION`. When a configuration set is named, create it in that same region
+and attach event destinations for delivery, bounce, complaint, and rejection
+events. Provider errors never include AWS response bodies in the delivery log.
+
+SES v2 `SendEmail` has no idempotency token. Ezacto signs a stable
+`ezacto-email-<delivery-id>` correlation value into an SES message tag and
+custom header, while the durable queue lease fences concurrent attempts and the
+receipt is persisted before acknowledgement. A provider success followed by a
+database failure may still be redelivered, so this is an auditable at-least-once
+boundary rather than a false exactly-once claim.
+
+Live acceptance for issue #46 requires real sandbox configuration: provision
+the Queue binding tracked by issue #43, verify the sender and sandbox recipient,
+confirm account/sending/DKIM health, send through the deployed Queue consumer,
+and verify the administrator email log contains the real SES `MessageId`, AWS
+request ID, and latency. Then add a sandbox recipient to the account suppression
+list and prove no `SendEmail` request occurs while the exact terminal reason is
+logged. Synthetic fixtures do not satisfy that acceptance.
+
 Each environment also holds one `EZACTO_BOOTSTRAP_TOKEN`, a canonical `ezacto_`
 bearer generated independently for that instance. It is the first owner token,
 not a general deployment secret: `bootstrap-instance.yml` temporarily installs

@@ -1,5 +1,10 @@
+import type { QueuedEmailJob } from '@ezacto/mailer'
 import { createApp, type WorkerEnv } from './app.js'
-import { createRuntimeServices } from './runtime.js'
+import { consumeCloudflareEmailBatch } from './email-queue.js'
+import {
+  createRuntimeServices,
+  createWorkerSesMailer,
+} from './runtime.js'
 
 const publicApp = createApp()
 
@@ -36,7 +41,7 @@ const unavailable = (): Response => {
   )
 }
 
-export const worker: ExportedHandler<WorkerEnv> = {
+export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
   async fetch(request, env, executionContext) {
     if (!isDataRequest(request)) {
       return publicApp.fetch(request, env, executionContext)
@@ -49,6 +54,16 @@ export const worker: ExportedHandler<WorkerEnv> = {
       // binding values, bearer credentials, SQL, or secret material.
       return unavailable()
     }
+  },
+  async queue(batch, env) {
+    const provider = createWorkerSesMailer(env)
+    if (provider === null) {
+      throw new TypeError('SES provider is not configured')
+    }
+    const services = await createRuntimeServices(env, {
+      emailProvider: provider,
+    })
+    await consumeCloudflareEmailBatch(batch, services.emailLog, provider)
   },
 }
 

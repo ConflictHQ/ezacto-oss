@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   EMAIL_RETRY_POLICY,
+  EmailProviderTerminalError,
   EmailQueueUnavailableError,
   InProcessEmailQueue,
   createQueuedMailer,
@@ -27,11 +28,14 @@ const record = (overrides: Partial<EmailLogRecord> = {}): EmailLogRecord => ({
   subject: 'Verify your ezacto email',
   provider: null,
   providerMessageId: null,
+  providerRequestId: null,
+  providerLatencyMs: null,
   status: 'queued',
   relatedType: 'user',
   relatedId: 1,
   attemptCount: 0,
   failureCode: null,
+  failureReason: null,
   createdAt: '2026-08-28T20:00:00.000Z',
   updatedAt: '2026-08-28T20:00:00.000Z',
   ...overrides,
@@ -47,11 +51,17 @@ const store = (): EmailLogStore => {
       return attemptCount
     }),
     releaseAttempt: vi.fn(async () => true),
-    markSent: vi.fn(async () =>
-      record({ status: 'sent', provider: 'test-http', providerMessageId: 'provider-7' }),
+    markSent: vi.fn(async (_id, provider, receipt) =>
+      record({
+        status: 'sent',
+        provider,
+        providerMessageId: receipt.messageId,
+        providerRequestId: receipt.requestId ?? null,
+        providerLatencyMs: receipt.latencyMs ?? null,
+      }),
     ),
-    markProviderFailed: vi.fn(async (_id, provider, failureCode) =>
-      record({ status: 'failed', provider, failureCode }),
+    markProviderFailed: vi.fn(async (_id, provider, failureCode, _attempt, reason) =>
+      record({ status: 'failed', provider, failureCode, failureReason: reason ?? null }),
     ),
     markQueueFailed: vi.fn(async () =>
       record({ status: 'failed', failureCode: 'queue_unavailable' }),
@@ -118,6 +128,7 @@ describe('queued mailer', () => {
       'test-http',
       'provider_rejected',
       expect.any(String),
+      undefined,
     )
     expect(JSON.stringify(vi.mocked(log.markProviderFailed).mock.calls)).not.toContain(
       'secret detail',
@@ -205,6 +216,7 @@ describe('queued mailer', () => {
       'slow-http',
       'provider_timeout',
       expect.any(String),
+      undefined,
     )
   })
 
@@ -220,12 +232,35 @@ describe('queued mailer', () => {
     expect(log.markSent).toHaveBeenCalledWith(
       7,
       'test-http',
-      'provider-7',
+      { messageId: 'provider-7' },
       expect.any(String),
     )
     expect(provider.send).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ idempotencyKey: 'ezacto-email-7' }),
+    )
+  })
+
+  it('[unit] logs a terminal provider reason and does not retry it', async () => {
+    const log = store()
+    const provider: HttpEmailProvider = {
+      name: 'ses',
+      send: vi.fn(async () => {
+        throw new EmailProviderTerminalError('recipient_suppressed:BOUNCE')
+      }),
+    }
+
+    await expect(processQueuedEmail(job, 1, log, provider)).resolves.toEqual({
+      action: 'ack',
+    })
+    expect(provider.send).toHaveBeenCalledTimes(1)
+    expect(log.releaseAttempt).not.toHaveBeenCalled()
+    expect(log.markProviderFailed).toHaveBeenCalledWith(
+      7,
+      'ses',
+      'provider_rejected',
+      expect.any(String),
+      'recipient_suppressed:BOUNCE',
     )
   })
 

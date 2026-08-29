@@ -1,3 +1,16 @@
+import { EmailProviderTerminalError } from './provider-errors.js'
+
+export { EmailProviderTerminalError } from './provider-errors.js'
+export {
+  SesMailer,
+  type SesAccountHealth,
+  type SesIdentityHealth,
+  type SesIdentitySummary,
+  type SesMailerConfig,
+  type SesMailerOptions,
+  type SesSuppression,
+} from './ses.js'
+
 export type EmailDeliveryStatus =
   | 'queued'
   | 'sent'
@@ -32,6 +45,9 @@ export interface EmailLogRecord {
   relatedId: number | null
   attemptCount: number
   failureCode: EmailFailureCode | null
+  failureReason: string | null
+  providerRequestId: string | null
+  providerLatencyMs: number | null
   createdAt: string
   updatedAt: string
 }
@@ -58,7 +74,7 @@ export interface EmailLogStore {
   markSent(
     deliveryId: number,
     provider: string,
-    providerMessageId: string,
+    receipt: EmailProviderReceipt,
     attemptId: string,
   ): Promise<EmailLogRecord>
   markProviderFailed(
@@ -66,6 +82,7 @@ export interface EmailLogStore {
     provider: string,
     failureCode: Exclude<EmailFailureCode, 'queue_unavailable'>,
     attemptId: string,
+    failureReason?: string,
   ): Promise<EmailLogRecord>
   markQueueFailed(deliveryId: number): Promise<EmailLogRecord>
   list(input?: {
@@ -94,7 +111,13 @@ export interface HttpEmailProvider {
   send(
     message: EmailMessage,
     options: { signal: AbortSignal; idempotencyKey: string },
-  ): Promise<{ messageId: string }>
+  ): Promise<EmailProviderReceipt>
+}
+
+export interface EmailProviderReceipt {
+  messageId: string
+  requestId?: string
+  latencyMs?: number
 }
 
 export interface QueuedMailer {
@@ -189,7 +212,7 @@ const providerCall = async (
   message: EmailMessage,
   deliveryId: number,
   timeoutMs: number,
-): Promise<{ messageId: string }> => {
+): Promise<EmailProviderReceipt> => {
   const controller = new AbortController()
   let timeout: ReturnType<typeof setTimeout> | undefined
   const timedOut = new Promise<never>((_, reject) => {
@@ -217,6 +240,31 @@ const failureCode = (
   error instanceof DOMException && error.name === 'TimeoutError'
     ? 'provider_timeout'
     : 'provider_rejected'
+
+const safeFailureReason = (error: unknown): string | undefined =>
+  error instanceof EmailProviderTerminalError ? error.reason : undefined
+
+const safeReceipt = (receipt: EmailProviderReceipt): EmailProviderReceipt => {
+  const messageId = text(receipt.messageId, 'provider message id', 512)
+  const requestId =
+    receipt.requestId === undefined
+      ? undefined
+      : text(receipt.requestId, 'provider request id', 512)
+  const latencyMs = receipt.latencyMs
+  if (
+    latencyMs !== undefined &&
+    (!Number.isSafeInteger(latencyMs) || latencyMs < 0 || latencyMs > 3_000_000)
+  ) {
+    throw new RangeError(
+      'provider latency must be between 0 and 3000000 milliseconds',
+    )
+  }
+  return {
+    messageId,
+    ...(requestId === undefined ? {} : { requestId }),
+    ...(latencyMs === undefined ? {} : { latencyMs }),
+  }
+}
 
 export const processQueuedEmail = async (
   job: QueuedEmailJob,
@@ -286,7 +334,7 @@ export const processQueuedEmail = async (
       : { action: 'ack' }
   }
 
-  let delivered: { messageId: string }
+  let delivered: EmailProviderReceipt
   try {
     delivered = await providerCall(
       provider,
@@ -295,7 +343,11 @@ export const processQueuedEmail = async (
       providerTimeoutMs,
     )
   } catch (error) {
-    if (providerAttempt < EMAIL_RETRY_POLICY.maxAttempts) {
+    const terminalReason = safeFailureReason(error)
+    if (
+      terminalReason === undefined &&
+      providerAttempt < EMAIL_RETRY_POLICY.maxAttempts
+    ) {
       if (!(await log.releaseAttempt(job.deliveryId, provider.name, attemptId))) {
         throw new Error('email delivery attempt ownership was lost before retry', {
           cause: error,
@@ -311,6 +363,7 @@ export const processQueuedEmail = async (
       provider.name,
       failureCode(error),
       attemptId,
+      terminalReason,
     )
     return { action: 'ack' }
   }
@@ -321,7 +374,7 @@ export const processQueuedEmail = async (
   await log.markSent(
     job.deliveryId,
     provider.name,
-    text(delivered.messageId, 'provider message id', 512),
+    safeReceipt(delivered),
     attemptId,
   )
   return { action: 'ack' }

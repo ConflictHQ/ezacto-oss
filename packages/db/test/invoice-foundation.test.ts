@@ -634,6 +634,7 @@ for (const [runtime, factory] of factories) {
         '0014_sessions',
         '0015_oidc_transactions',
         '0016_email_log',
+        '0017_email_delivery_details',
       ])
       expect(
         firstLedger.slice(0, 4).every(({ applied_at: appliedAt }) => appliedAt === timestamp),

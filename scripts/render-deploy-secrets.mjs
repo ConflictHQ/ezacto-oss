@@ -28,6 +28,24 @@ const optionalCredential = (value) => {
   return normalized === '' ? null : normalized
 }
 
+const optionalSesCredential = (value, field, maximum) => {
+  if (typeof value !== 'string' || value === '') return null
+  if (
+    value.length > maximum ||
+    value.trim() !== value ||
+    /[\u0000-\u001F\u007F]/u.test(value)
+  ) {
+    throw new TypeError(`${field} is invalid`)
+  }
+  return value
+}
+
+const optionalSesConfig = (value) => {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  return normalized === '' ? null : normalized
+}
+
 export const deploySecretPayload = (environment) => {
   const cursor = canonicalCursor(environment.API_CURSOR_SIGNING_KEY)
   const clientId = optionalCredential(environment.OIDC_GOOGLE_CLIENT_ID)
@@ -37,10 +55,50 @@ export const deploySecretPayload = (environment) => {
       'OIDC_GOOGLE_CLIENT_ID and OIDC_GOOGLE_CLIENT_SECRET must be configured together',
     )
   }
+  const accessKeyId = optionalSesCredential(
+    environment.AWS_ACCESS_KEY_ID,
+    'AWS_ACCESS_KEY_ID',
+    256,
+  )
+  const secretAccessKey = optionalSesCredential(
+    environment.AWS_SECRET_ACCESS_KEY,
+    'AWS_SECRET_ACCESS_KEY',
+    512,
+  )
+  const sessionToken = optionalSesCredential(
+    environment.AWS_SESSION_TOKEN,
+    'AWS_SESSION_TOKEN',
+    8192,
+  )
+  const region = optionalSesConfig(environment.SES_REGION)
+  const from = optionalSesConfig(environment.SES_FROM)
+  const configurationSet = optionalSesConfig(environment.SES_CONFIGURATION_SET)
+  const sesConfigured = [
+    accessKeyId,
+    secretAccessKey,
+    sessionToken,
+    region,
+    from,
+    configurationSet,
+  ].some((value) => value !== null)
+  if (
+    sesConfigured &&
+    (accessKeyId === null ||
+      secretAccessKey === null ||
+      region === null ||
+      from === null)
+  ) {
+    throw new TypeError(
+      'AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, SES_REGION, and SES_FROM must be configured together',
+    )
+  }
   return {
     API_CURSOR_SIGNING_KEY: cursor,
     OIDC_GOOGLE_CLIENT_ID: clientId,
     OIDC_GOOGLE_CLIENT_SECRET: clientSecret,
+    AWS_ACCESS_KEY_ID: accessKeyId,
+    AWS_SECRET_ACCESS_KEY: secretAccessKey,
+    AWS_SESSION_TOKEN: sessionToken,
   }
 }
 

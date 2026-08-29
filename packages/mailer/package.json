@@ -19,6 +19,9 @@
     "build": "tsc -p tsconfig.build.json",
     "prepack": "npm run build"
   },
+  "dependencies": {
+    "aws4fetch": "^1.0.20"
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.10.0",

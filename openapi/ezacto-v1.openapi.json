@@ -6308,11 +6308,14 @@
           "subject",
           "provider",
           "provider_message_id",
+          "provider_request_id",
+          "provider_latency_ms",
           "status",
           "related_type",
           "related_id",
           "attempt_count",
           "failure_code",
+          "failure_reason",
           "created_at",
           "updated_at"
         ],
@@ -6347,6 +6350,28 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider_request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider_latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 3000000
               },
               {
                 "type": "null"
@@ -6397,6 +6422,16 @@
                   "provider_timeout",
                   "provider_rejected"
                 ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
               },
               {
                 "type": "null"

@@ -11,7 +11,10 @@ import {
   consumeCloudflareEmailBatch,
   createCloudflareEmailQueue,
 } from '../src/email-queue.js'
-import { createRuntimeServices } from '../src/runtime.js'
+import {
+  createRuntimeServices,
+  createWorkerSesMailer,
+} from '../src/runtime.js'
 
 const cursorKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 const password = 'correct horse battery staple 🙂'
@@ -207,5 +210,179 @@ describe('Worker email queue composition', () => {
     } satisfies WorkerEnv
     const services = await createRuntimeServices(env)
     expect(services.authMailer).toBeUndefined()
+  })
+
+  it('[unit] binds SES only from a complete validated static runtime contract', () => {
+    const base = {
+      DB: database,
+      API_CURSOR_SIGNING_KEY: cursorKey,
+      ENVIRONMENT: 'test',
+      RELEASE: 'ses-test',
+    } satisfies WorkerEnv
+
+    expect(createWorkerSesMailer(base)).toBeNull()
+    expect(() =>
+      createWorkerSesMailer({ ...base, SES_REGION: 'us-west-2' }),
+    ).toThrow('SES requires AWS_ACCESS_KEY_ID')
+    expect(() =>
+      createWorkerSesMailer({
+        ...base,
+        AWS_ACCESS_KEY_ID: 'TESTACCESSKEY',
+        AWS_SECRET_ACCESS_KEY: 'test-secret-key',
+        SES_REGION: 'https://attacker.test',
+        SES_FROM: 'notify@example.test',
+      }),
+    ).toThrow('SES region is invalid')
+    expect(() =>
+      createWorkerSesMailer({
+        ...base,
+        AWS_ACCESS_KEY_ID: '',
+        AWS_SECRET_ACCESS_KEY: 'test-secret-key',
+        SES_REGION: 'us-west-2',
+        SES_FROM: 'notify@example.test',
+      }),
+    ).toThrow('SES access key id is invalid')
+    expect(() =>
+      createWorkerSesMailer({
+        ...base,
+        AWS_ACCESS_KEY_ID: 'TESTACCESSKEY',
+        AWS_SECRET_ACCESS_KEY: 'test-secret-key',
+        SES_REGION: 'us-west-2',
+        SES_FROM: 'notify@example.test',
+        SES_CONFIGURATION_SET: 'events?redirect=attacker',
+      }),
+    ).toThrow('SES configuration set is invalid')
+    expect(
+      createWorkerSesMailer({
+        ...base,
+        AWS_ACCESS_KEY_ID: 'TESTACCESSKEY',
+        AWS_SECRET_ACCESS_KEY: 'test-secret-key',
+        SES_REGION: 'us-west-2',
+        SES_FROM: 'notify@example.test',
+      }),
+    ).toMatchObject({ name: 'ses', region: 'us-west-2' })
+  })
+
+  it('[integration] persists the signed SES receipt before acknowledging the queue', async () => {
+    const queue = { send: vi.fn(async () => undefined) } as unknown as Queue<QueuedEmailJob>
+    const env = {
+      DB: database,
+      API_CURSOR_SIGNING_KEY: cursorKey,
+      EMAIL_QUEUE: queue,
+      APP_BASE_URL: 'https://ezacto.example',
+      AWS_ACCESS_KEY_ID: 'TESTACCESSKEY',
+      AWS_SECRET_ACCESS_KEY: 'test-secret-key',
+      SES_REGION: 'us-west-2',
+      SES_FROM: 'notify@example.test',
+      SES_CONFIGURATION_SET: 'ezacto-events',
+      ENVIRONMENT: 'test',
+      RELEASE: 'ses-test',
+    } satisfies WorkerEnv
+    const ticks = [10, 12, 20, 26]
+    const provider = createWorkerSesMailer(env, {
+      now: () => new Date('2026-08-28T12:34:56.000Z'),
+      monotonicNow: () => ticks.shift()!,
+      fetch: async (request) =>
+        request.method === 'GET'
+          ? new Response('{}', {
+              status: 404,
+              headers: { 'x-amzn-requestid': 'suppression-request' },
+            })
+          : Response.json(
+              { MessageId: 'ses-message-integration' },
+              { headers: { 'x-amzn-requestid': 'send-request-integration' } },
+            ),
+    })!
+    const services = await createRuntimeServices(env, { emailProvider: provider })
+    const message = {
+      to: [{ email: 'ses-integration@example.test' }],
+      template: 'verify_email',
+      subject: 'Verify your ezacto email',
+      text: 'Open the link.\n\nThis link expires.',
+    } as const
+    const delivery = await services.emailLog.createQueued(message)
+    const retry = vi.fn()
+    const ack = vi.fn()
+
+    await consumeCloudflareEmailBatch(
+      {
+        messages: [
+          {
+            body: { schemaVersion: 1, deliveryId: delivery.id, message },
+            attempts: 1,
+            retry,
+            ack,
+          },
+        ],
+      } as unknown as MessageBatch<QueuedEmailJob>,
+      services.emailLog,
+      provider,
+    )
+
+    expect(retry).not.toHaveBeenCalled()
+    expect(ack).toHaveBeenCalledOnce()
+    await expect(services.emailLog.get(delivery.id)).resolves.toMatchObject({
+      status: 'sent',
+      provider: 'ses',
+      providerMessageId: 'ses-message-integration',
+      providerRequestId: 'send-request-integration',
+      providerLatencyMs: 6,
+      failureReason: null,
+    })
+  })
+
+  it('[integration] logs SES suppression as a terminal reason without a send call', async () => {
+    const env = {
+      DB: database,
+      API_CURSOR_SIGNING_KEY: cursorKey,
+      AWS_ACCESS_KEY_ID: 'TESTACCESSKEY',
+      AWS_SECRET_ACCESS_KEY: 'test-secret-key',
+      SES_REGION: 'us-west-2',
+      SES_FROM: 'notify@example.test',
+      ENVIRONMENT: 'test',
+      RELEASE: 'ses-test',
+    } satisfies WorkerEnv
+    const fetch = vi.fn(async (_request: Request) =>
+      Response.json({
+        SuppressedDestination: {
+          EmailAddress: 'suppressed@example.test',
+          Reason: 'COMPLAINT',
+        },
+      }),
+    )
+    const provider = createWorkerSesMailer(env, { fetch })!
+    const services = await createRuntimeServices(env, { emailProvider: provider })
+    const message = {
+      to: [{ email: 'suppressed@example.test' }],
+      template: 'verify_email',
+      subject: 'Verify your ezacto email',
+      text: 'Open the link.',
+    } as const
+    const delivery = await services.emailLog.createQueued(message)
+    const ack = vi.fn()
+
+    await consumeCloudflareEmailBatch(
+      {
+        messages: [
+          {
+            body: { schemaVersion: 1, deliveryId: delivery.id, message },
+            attempts: 1,
+            retry: vi.fn(),
+            ack,
+          },
+        ],
+      } as unknown as MessageBatch<QueuedEmailJob>,
+      services.emailLog,
+      provider,
+    )
+
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(ack).toHaveBeenCalledOnce()
+    await expect(services.emailLog.get(delivery.id)).resolves.toMatchObject({
+      status: 'failed',
+      provider: 'ses',
+      failureCode: 'provider_rejected',
+      failureReason: 'recipient_suppressed:COMPLAINT',
+    })
   })
 })

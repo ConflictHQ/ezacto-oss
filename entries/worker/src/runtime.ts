@@ -13,7 +13,11 @@ import {
   type TrackedPolicyResolver,
 } from '@ezacto/db/d1'
 import { createApiSessionService } from '@ezacto/api'
-import type { HttpEmailProvider } from '@ezacto/mailer'
+import {
+  SesMailer,
+  type HttpEmailProvider,
+  type SesMailerOptions,
+} from '@ezacto/mailer'
 import type { RuntimeServices } from './app.js'
 import type { WorkerEnv } from './app.js'
 import { createWorkerAuthMailer } from './email-queue.js'
@@ -22,6 +26,46 @@ const cursorSecretPattern = /^[A-Za-z0-9_-]+$/
 const cursorSecretBytes = 32
 
 const readiness = new WeakMap<object, Promise<void>>()
+
+export const createWorkerSesMailer = (
+  env: WorkerEnv,
+  options: SesMailerOptions = {},
+): SesMailer | null => {
+  const configured = [
+    env.AWS_ACCESS_KEY_ID,
+    env.AWS_SECRET_ACCESS_KEY,
+    env.AWS_SESSION_TOKEN,
+    env.SES_REGION,
+    env.SES_FROM,
+    env.SES_CONFIGURATION_SET,
+  ]
+  if (configured.every((value) => value === undefined)) return null
+  if (
+    env.AWS_ACCESS_KEY_ID === undefined ||
+    env.AWS_SECRET_ACCESS_KEY === undefined ||
+    env.SES_REGION === undefined ||
+    env.SES_FROM === undefined
+  ) {
+    throw new TypeError(
+      'SES requires AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, SES_REGION, and SES_FROM together',
+    )
+  }
+  return new SesMailer(
+    {
+      accessKeyId: env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+      region: env.SES_REGION,
+      from: env.SES_FROM,
+      ...(env.AWS_SESSION_TOKEN === undefined
+        ? {}
+        : { sessionToken: env.AWS_SESSION_TOKEN }),
+      ...(env.SES_CONFIGURATION_SET === undefined
+        ? {}
+        : { configurationSet: env.SES_CONFIGURATION_SET }),
+    },
+    options,
+  )
+}
 
 /**
  * Decode a canonical base64url secret. Text encodings are deliberately not
@@ -107,7 +151,10 @@ const organizationPolicy: TrackedPolicyResolver = {
 
 export const createRuntimeServices = async (
   env: WorkerEnv,
-  options: { emailProvider?: HttpEmailProvider } = {},
+  options: {
+    emailProvider?: HttpEmailProvider
+    ses?: SesMailerOptions
+  } = {},
 ): Promise<RuntimeServices> => {
   const database = requireDatabase(env)
   const cursorSigningKey = parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY)
@@ -115,10 +162,12 @@ export const createRuntimeServices = async (
   const drizzle = createD1Database(database)
   const sessions = createApiSessionService(createD1SessionStore(database))
   const emailLog = createD1EmailLogStore(database)
+  const emailProvider =
+    options.emailProvider ?? createWorkerSesMailer(env, options.ses)
   const authMailer =
     env.EMAIL_QUEUE === undefined ||
     env.APP_BASE_URL === undefined ||
-    options.emailProvider === undefined
+    emailProvider === null
       ? undefined
       : createWorkerAuthMailer(env.EMAIL_QUEUE, emailLog, env.APP_BASE_URL)
   return {

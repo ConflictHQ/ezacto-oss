@@ -99,7 +99,7 @@ for (const [runtime, factory] of factories) {
 
     const setup = async () => (harness = await factory())
 
-    it('[unit] registers 0015 and 0016 in order and migrates idempotently', async () => {
+    it('[unit] registers 0015 through 0017 in order and migrates idempotently', async () => {
       const current = await setup()
       await current.migrateAgain()
       const ledger = await current.rows<{ id: string }>(
@@ -109,6 +109,7 @@ for (const [runtime, factory] of factories) {
         { id: '0014_sessions' },
         { id: '0015_oidc_transactions' },
         { id: '0016_email_log' },
+        { id: '0017_email_delivery_details' },
       ])
     })
 
@@ -129,6 +130,7 @@ for (const [runtime, factory] of factories) {
       ).toEqual([
         { id: '0015_oidc_transactions' },
         { id: '0016_email_log' },
+        { id: '0017_email_delivery_details' },
       ])
       expect(
         await current.rows<{ name: string }>(
@@ -158,13 +160,19 @@ for (const [runtime, factory] of factories) {
         current.store.markSent(
           queued.id,
           'http-provider',
-          'provider-1',
+          {
+            messageId: 'provider-1',
+            requestId: 'request-1',
+            latencyMs: 17,
+          },
           'attempt-one',
         ),
       ).resolves.toMatchObject({
         status: 'sent',
         attemptCount: 1,
         providerMessageId: 'provider-1',
+        providerRequestId: 'request-1',
+        providerLatencyMs: 17,
       })
 
       const second = await current.store.createQueued({
@@ -183,10 +191,12 @@ for (const [runtime, factory] of factories) {
           'http-provider',
           'provider_rejected',
           'attempt-two',
+          'recipient_suppressed:BOUNCE',
         ),
       ).resolves.toMatchObject({
         status: 'failed',
         failureCode: 'provider_rejected',
+        failureReason: 'recipient_suppressed:BOUNCE',
       })
       expect(await current.store.list({ status: 'failed' })).toHaveLength(1)
       expect(JSON.stringify(await current.rows(`SELECT * FROM email_log`))).not.toContain(
@@ -207,7 +217,7 @@ for (const [runtime, factory] of factories) {
         current.store.markSent(
           queued.id,
           'http-provider',
-          'forged-receipt',
+          { messageId: 'forged-receipt' },
           'attempt-two',
         ),
       ).rejects.toThrow(/state transition did not match/i)
@@ -220,7 +230,7 @@ for (const [runtime, factory] of factories) {
         current.store.markSent(
           queued.id,
           'http-provider',
-          'stale-receipt',
+          { messageId: 'stale-receipt' },
           'attempt-one',
         ),
       ).rejects.toThrow(/state transition did not match/i)
@@ -228,7 +238,7 @@ for (const [runtime, factory] of factories) {
         current.store.markSent(
           queued.id,
           'http-provider',
-          'provider-1',
+          { messageId: 'provider-1' },
           'attempt-two',
         ),
       ).resolves.toMatchObject({

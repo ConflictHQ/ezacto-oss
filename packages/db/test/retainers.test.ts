@@ -222,7 +222,7 @@ for (const [runtime, factory] of factories) {
         await database.rows<{ id: string }>(
           `SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`,
         ),
-      ).toEqual([{ id: '0016_email_log' }])
+      ).toEqual([{ id: '0017_email_delivery_details' }])
       await database.close()
       database = await factory(false)
       await installThrough0005(database)
