@@ -3,10 +3,21 @@ import { expect, test, type Locator, type Page, type Route } from '@playwright/t
 const timestamp = '2026-08-28T12:00:00.000Z'
 const fixtureEmail = process.env.EZACTO_BROWSER_FIXTURE_EMAIL
 const fixturePassword = process.env.EZACTO_BROWSER_FIXTURE_PASSWORD
+const fixtureInstant = process.env.EZACTO_BROWSER_FIXTURE_INSTANT
+const fixtureTimeZone = process.env.EZACTO_BROWSER_FIXTURE_TIME_ZONE
 
-if (fixtureEmail === undefined || fixturePassword === undefined) {
+if (
+  fixtureEmail === undefined ||
+  fixturePassword === undefined ||
+  fixtureInstant === undefined ||
+  fixtureTimeZone === undefined
+) {
   throw new Error('browser fixture credentials are unavailable')
 }
+
+test.beforeEach(async ({ page }) => {
+  await page.clock.setFixedTime(fixtureInstant)
+})
 
 const fulfillJson = (route: Route, body: unknown, status = 200) =>
   route.fulfill({
@@ -243,6 +254,23 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
 
   await page.goto('/')
+  expect(
+    await page.evaluate(() => {
+      const now = new Date()
+      const year = now.getFullYear()
+      const month = String(now.getMonth() + 1).padStart(2, '0')
+      const day = String(now.getDate()).padStart(2, '0')
+      return {
+        instant: now.toISOString(),
+        localDate: `${year}-${month}-${day}`,
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      }
+    }),
+  ).toEqual({
+    instant: '2026-08-31T01:00:00.000Z',
+    localDate: '2026-08-30',
+    timeZone: 'America/Costa_Rica',
+  })
   const email = page.getByLabel('Email')
   const password = page.getByLabel('Password')
   const signIn = page.getByRole('button', { name: 'Sign in', exact: true })
@@ -264,6 +292,7 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   await expect(page.locator('[data-day-rows]')).toContainText(
     'Browser Acceptance Task',
   )
+  await expect(page.locator('[data-day-label]')).toHaveText('Sunday, Aug 30')
   await expect(page.locator('[data-week-total]')).toHaveText('0:30')
   await expect.poll(() => Object.fromEntries(protectedResponses)).toMatchObject({
     '/api/v1/whoami': 200,

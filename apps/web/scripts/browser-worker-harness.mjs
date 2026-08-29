@@ -10,12 +10,41 @@ const listenHost = '127.0.0.1'
 const listenPort = 4173
 const cursorSigningKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 const fixtureEmail = process.env.EZACTO_BROWSER_FIXTURE_EMAIL
+const fixtureInstant = process.env.EZACTO_BROWSER_FIXTURE_INSTANT
+const fixtureTimeZone = process.env.EZACTO_BROWSER_FIXTURE_TIME_ZONE
 
 if (
   fixtureEmail === undefined ||
-  process.env.EZACTO_BROWSER_FIXTURE_PASSWORD === undefined
+  process.env.EZACTO_BROWSER_FIXTURE_PASSWORD === undefined ||
+  fixtureInstant === undefined ||
+  fixtureTimeZone === undefined
 ) {
   throw new Error('browser fixture credentials are unavailable')
+}
+
+const fixtureDate = new Date(fixtureInstant)
+if (
+  !Number.isFinite(fixtureDate.valueOf()) ||
+  fixtureDate.toISOString() !== fixtureInstant
+) {
+  throw new Error('browser fixture instant must be canonical UTC')
+}
+
+const localDateAt = (instant, timeZone) => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    day: '2-digit',
+    month: '2-digit',
+    timeZone,
+    year: 'numeric',
+  }).formatToParts(instant)
+  const part = (type) => parts.find((value) => value.type === type)?.value
+  const year = part('year')
+  const month = part('month')
+  const day = part('day')
+  if (year === undefined || month === undefined || day === undefined) {
+    throw new Error('browser fixture local date is unavailable')
+  }
+  return `${year}-${month}-${day}`
 }
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
@@ -52,7 +81,9 @@ if (migrationProbe.status !== 401) {
 }
 
 const database = await miniflare.getD1Database('DB')
-const passwordAuth = createD1PasswordAuthService(database)
+const passwordAuth = createD1PasswordAuthService(database, {
+  now: () => fixtureInstant,
+})
 const seedPasswordUser = async () => {
   const password = process.env.EZACTO_BROWSER_FIXTURE_PASSWORD
   if (password === undefined) {
@@ -75,8 +106,8 @@ await seedPasswordUser()
 // plaintext, a URL, console output, Playwright trace, or browser storage.
 delete process.env.EZACTO_BROWSER_FIXTURE_PASSWORD
 
-const timestamp = new Date().toISOString()
-const spentDate = timestamp.slice(0, 10)
+const timestamp = fixtureInstant
+const spentDate = localDateAt(fixtureDate, fixtureTimeZone)
 const run = async (statement, ...bindings) => {
   await database.prepare(statement).bind(...bindings).run()
 }

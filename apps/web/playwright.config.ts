@@ -8,6 +8,8 @@ process.env.EZACTO_BROWSER_FIXTURE_EMAIL ??= 'browser-owner@example.test'
 process.env.EZACTO_BROWSER_FIXTURE_PASSWORD ??= randomBytes(32).toString(
   'base64url',
 )
+process.env.EZACTO_BROWSER_FIXTURE_INSTANT ??= '2026-08-31T01:00:00.000Z'
+process.env.EZACTO_BROWSER_FIXTURE_TIME_ZONE ??= 'America/Costa_Rica'
 
 export default defineConfig({
   testDir: './e2e',
@@ -21,6 +23,7 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:4173',
     browserName: 'chromium',
     headless: true,
+    timezoneId: process.env.EZACTO_BROWSER_FIXTURE_TIME_ZONE,
     viewport: { width: 390, height: 844 },
     // Authentication acceptance uses a generated password. Keep it out of
     // retained traces as well as URLs, browser storage, and console output.
