@@ -94,8 +94,8 @@ describe("domain invariant registry", () => {
     });
     expect(getInvariant("inv-14")).toMatchObject({
       owner: {
-        story: "v0-prove-the-model/load-reconcile/transform-load",
-        issue: 78,
+        story: "v0-prove-the-model/load-reconcile/reconcile",
+        issue: 77,
       },
       evidence: { state: "downstream" },
     });

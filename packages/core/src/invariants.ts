@@ -42,7 +42,7 @@ export interface InvariantDefinition {
 
 const coreStory = "v0-prove-the-model/schema-core-domain/invariant-suite";
 const generationStory = "v0-5-working-system/invoicing/generation";
-const loadStory = "v0-prove-the-model/load-reconcile/transform-load";
+const reconciliationStory = "v0-prove-the-model/load-reconcile/reconcile";
 const bothRuntimes = ["sqlite", "d1"] as const;
 
 /**
@@ -393,8 +393,8 @@ export const invariantRegistry = [
     title: "Imported monthly time aggregates equal the Harvest checksum",
     source: "docs/domain-model.md#8-invariants-the-testable-list",
     owner: {
-      story: loadStory,
-      issue: 78,
+      story: reconciliationStory,
+      issue: 77,
       acceptance:
         "Loaded seconds reconcile per user, project, and month to the source checksum.",
     },
@@ -408,7 +408,7 @@ export const invariantRegistry = [
     evidence: {
       state: "downstream",
       testContract:
-        "Issue #78 owns the reconciliation assertion over transformed imported data and source checksums.",
+        "Issue #77 owns the reconciliation assertion over transformed imported data and source checksums.",
     },
   },
 ] as const satisfies readonly InvariantDefinition[];
