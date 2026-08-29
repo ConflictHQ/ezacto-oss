@@ -52,7 +52,7 @@ workflows:
 
 | Secret | What |
 | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | scoped deploy/provision token — account: Workers Scripts Write, Workers Observability Write, Account Settings Read, **D1 Edit, Queues Read, Queues Write**; zone: Zone Read, Workers Routes Write, DNS Write, **limited to `example.com` and `ezacto.io`** |
+| `CLOUDFLARE_API_TOKEN` | scoped deploy/provision token — account: Workers Scripts Write, Workers Observability Write, Account Settings Read, **D1 Edit**; zone: Zone Read, Workers Routes Write, DNS Write, **limited to `example.com` and `ezacto.io`** |
 | `CLOUDFLARE_ACCOUNT_ID` | CONFLICT LLC account id (not secret; a secret only to keep it out of the tracked config) |
 
 Each GitHub environment (`dev`, `prod`) also holds its own
@@ -153,6 +153,10 @@ deployed. The same workflow can explicitly converge dev when needed. Both paths
 read the names from `entries/worker/wrangler.jsonc`, reuse an exact-name match,
 create a missing resource, and fail closed on duplicates. They provision both
 the delivery Queue and its dead-letter Queue:
+
+Cloudflare's Queue list/create API accepts the existing Workers Scripts Write
+permission, so this does not broaden the repository token beyond the deployment
+scope already documented above.
 
 | Environment | Delivery Queue      | Dead-letter Queue       |
 | ----------- | ------------------- | ----------------------- |
