@@ -459,8 +459,9 @@ for (const [runtime, factory] of factories) {
         '0017_email_delivery_details',
         '0018_estimates',
         '0019_attachments',
-        '0020_estimate_commands',
-        '0021_resource_create_commands',
+        '0020_argon2_passwords',
+        '0021_estimate_commands',
+        '0022_resource_create_commands',
       ])
       expect(firstLedger.slice(0, 3).map(({ applied_at: appliedAt }) => appliedAt)).toEqual([
         timestamp,
@@ -524,8 +525,9 @@ for (const [runtime, factory] of factories) {
         { id: '0017_email_delivery_details' },
         { id: '0018_estimates' },
         { id: '0019_attachments' },
-        { id: '0020_estimate_commands' },
-        { id: '0021_resource_create_commands' },
+        { id: '0020_argon2_passwords' },
+        { id: '0021_estimate_commands' },
+        { id: '0022_resource_create_commands' },
       ])
     })
   })

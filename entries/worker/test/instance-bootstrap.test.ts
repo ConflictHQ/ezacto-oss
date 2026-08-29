@@ -228,9 +228,26 @@ describe("Worker operator bootstrap", () => {
     ).toEqual({ count: 1 });
     expect(
       await database
+        .prepare(
+          `SELECT credential_version, algorithm, version, iterations, memory_kib, time_cost, parallelism
+             FROM user_passwords
+            WHERE user_id = 1`,
+        )
+        .first(),
+    ).toEqual({
+      credential_version: 1,
+      algorithm: 'argon2id',
+      version: 19,
+      iterations: null,
+      memory_kib: 19_456,
+      time_cost: 2,
+      parallelism: 1,
+    })
+    expect(
+      await database
         .prepare(`SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`)
         .first<{ id: string }>(),
-    ).toEqual({ id: "0021_resource_create_commands" });
+    ).toEqual({ id: "0022_resource_create_commands" });
   }, 40_000);
 
   it("[security] remains unavailable when the temporary Worker secret is absent", async () => {
@@ -249,11 +266,92 @@ describe("Worker operator bootstrap", () => {
     const password = await request(
       "/__ezacto/bootstrap/owner-password",
       post(bootstrapToken, { password: ownerPassword }),
-    );
-    expect(password.status).toBe(503);
-    expect(await password.text()).not.toContain(ownerPassword);
-  }, 20_000);
-});
+    )
+    expect(password.status).toBe(503)
+    expect(await password.text()).not.toContain(ownerPassword)
+  }, 20_000)
+
+  it('[security] bounds concurrent Worker KDFs, fails overload closed, and recovers', async () => {
+    const { request } = await harness()
+    const seeded = await request(
+      '/__ezacto/bootstrap',
+      post(bootstrapToken, identity),
+    )
+    expect(seeded.status).toBe(200)
+
+    const enrollments = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        request(
+          '/__ezacto/bootstrap/owner-password',
+          post(bootstrapToken, { password: ownerPassword }),
+        ),
+      ),
+    )
+    expect(enrollments.some((response) => response.status === 503)).toBe(true)
+    expect(
+      enrollments.every(
+        (response) => response.status === 200 || response.status === 503,
+      ),
+    ).toBe(true)
+    for (const response of enrollments) {
+      const body = await response.text()
+      expect(body).not.toContain(ownerPassword)
+      if (response.status === 503) {
+        expect(response.headers.get('retry-after')).toBe('1')
+        expect(JSON.parse(body)).toMatchObject({
+          error: { code: 'internal_error' },
+        })
+      }
+    }
+
+    const enrollmentRetry = await request(
+      '/__ezacto/bootstrap/owner-password',
+      post(bootstrapToken, { password: ownerPassword }),
+    )
+    expect(enrollmentRetry.status).toBe(200)
+
+    const signIns = await Promise.all(
+      Array.from({ length: 30 }, (_, index) =>
+        request('/auth/sign-in', {
+          method: 'POST',
+          headers: {
+            'cf-connecting-ip': `198.51.100.${index + 1}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            email: `unknown-${index}@example.test`,
+            password: ownerPassword,
+          }),
+        }),
+      ),
+    )
+    expect(signIns.some((response) => response.status === 503)).toBe(true)
+    expect(
+      signIns.every(
+        (response) => response.status === 401 || response.status === 503,
+      ),
+    ).toBe(true)
+    for (const response of signIns) {
+      const body = (await response.json()) as { error: { code: string } }
+      expect(body.error.code).toBe(
+        response.status === 401 ? 'invalid_credentials' : 'internal_error',
+      )
+    }
+
+    const recovered = await request('/auth/sign-in', {
+      method: 'POST',
+      headers: {
+        'cf-connecting-ip': '203.0.113.250',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        email: identity.owner_email,
+        password: ownerPassword,
+      }),
+    })
+    expect(recovered.status).toBe(200)
+  }, 30_000)
+})
 
 function encodeBase64Url(bytes: Uint8Array): string {
   let binary = "";

@@ -865,8 +865,9 @@ for (const [runtime, factory] of factories) {
         { id: '0017_email_delivery_details' },
         { id: '0018_estimates' },
         { id: '0019_attachments' },
-        { id: '0020_estimate_commands' },
-        { id: '0021_resource_create_commands' },
+        { id: '0020_argon2_passwords' },
+        { id: '0021_estimate_commands' },
+        { id: '0022_resource_create_commands' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -907,8 +908,9 @@ for (const [runtime, factory] of factories) {
         { id: '0017_email_delivery_details' },
         { id: '0018_estimates' },
         { id: '0019_attachments' },
-        { id: '0020_estimate_commands' },
-        { id: '0021_resource_create_commands' },
+        { id: '0020_argon2_passwords' },
+        { id: '0021_estimate_commands' },
+        { id: '0022_resource_create_commands' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -967,8 +969,9 @@ for (const [runtime, factory] of factories) {
         { id: '0017_email_delivery_details' },
         { id: '0018_estimates' },
         { id: '0019_attachments' },
-        { id: '0020_estimate_commands' },
-        { id: '0021_resource_create_commands' },
+        { id: '0020_argon2_passwords' },
+        { id: '0021_estimate_commands' },
+        { id: '0022_resource_create_commands' },
       ])
       expect(
         await db.rows<{ name: string }>(
@@ -1003,8 +1006,9 @@ for (const [runtime, factory] of factories) {
         { id: '0017_email_delivery_details' },
         { id: '0018_estimates' },
         { id: '0019_attachments' },
-        { id: '0020_estimate_commands' },
-        { id: '0021_resource_create_commands' },
+        { id: '0020_argon2_passwords' },
+        { id: '0021_estimate_commands' },
+        { id: '0022_resource_create_commands' },
       ])
     })
   })
@@ -1106,10 +1110,12 @@ describe('package contents', () => {
         'dist/migrations/0018_estimates.d.ts',
         'dist/migrations/0019_attachments.js',
         'dist/migrations/0019_attachments.d.ts',
-        'dist/migrations/0020_estimate_commands.js',
-        'dist/migrations/0020_estimate_commands.d.ts',
-        'dist/migrations/0021_resource_create_commands.js',
-        'dist/migrations/0021_resource_create_commands.d.ts',
+        'dist/migrations/0020_argon2_passwords.js',
+        'dist/migrations/0020_argon2_passwords.d.ts',
+        'dist/migrations/0021_estimate_commands.js',
+        'dist/migrations/0021_estimate_commands.d.ts',
+        'dist/migrations/0022_resource_create_commands.js',
+        'dist/migrations/0022_resource_create_commands.d.ts',
         'dist/attachments.js',
         'dist/attachments.d.ts',
         'dist/estimates.js',

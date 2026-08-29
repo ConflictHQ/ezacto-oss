@@ -109,8 +109,9 @@ for (const [runtime, factory] of factories) {
         { id: '0017_email_delivery_details' },
         { id: '0018_estimates' },
         { id: '0019_attachments' },
-        { id: '0020_estimate_commands' },
-        { id: '0021_resource_create_commands' },
+        { id: '0020_argon2_passwords' },
+        { id: '0021_estimate_commands' },
+        { id: '0022_resource_create_commands' },
       ])
     })
 
@@ -132,8 +133,9 @@ for (const [runtime, factory] of factories) {
         { id: '0017_email_delivery_details' },
         { id: '0018_estimates' },
         { id: '0019_attachments' },
-        { id: '0020_estimate_commands' },
-        { id: '0021_resource_create_commands' },
+        { id: '0020_argon2_passwords' },
+        { id: '0021_estimate_commands' },
+        { id: '0022_resource_create_commands' },
       ])
       expect(
         await current.rows<{ name: string }>(

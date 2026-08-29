@@ -25,7 +25,10 @@ export interface SessionMetadata {
 }
 
 export interface SessionStorePort {
-  issue(userId: number): Promise<{ token: string; session: SessionMetadata }>
+  issue(
+    userId: number,
+    credentialVersion?: number,
+  ): Promise<{ token: string; session: SessionMetadata }>
   authenticate(token: string): Promise<{
     principal: ResolvedUserIdentity
     session: SessionMetadata
@@ -38,6 +41,7 @@ export interface SessionStorePort {
 export interface ApiSessionService extends ApiSessionResolver {
   issue(
     userId: number,
+    credentialVersion?: number,
   ): Promise<{ session: SessionMetadata; setCookie: string }>
   list(userId: number): Promise<SessionMetadata[]>
   revoke(userId: number, sessionId: number): Promise<SessionMetadata | null>
@@ -104,8 +108,11 @@ export const createApiSessionService = (
           }),
     }
   },
-  issue: async (userId) => {
-    const issued = await store.issue(userId)
+  issue: async (userId, credentialVersion) => {
+    const issued =
+      credentialVersion === undefined
+        ? await store.issue(userId)
+        : await store.issue(userId, credentialVersion)
     return {
       session: issued.session,
       setCookie: sessionCookie(issued.token, issued.session.absoluteExpiresAt),

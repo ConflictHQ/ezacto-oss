@@ -18,8 +18,9 @@ import { emailLogMigration } from './migrations/0016_email_log.js'
 import { emailDeliveryDetailsMigration } from './migrations/0017_email_delivery_details.js'
 import { estimatesMigration } from './migrations/0018_estimates.js'
 import { attachmentsMigration } from './migrations/0019_attachments.js'
-import { estimateCommandsMigration } from './migrations/0020_estimate_commands.js'
-import { resourceCreateCommandsMigration } from './migrations/0021_resource_create_commands.js'
+import { argon2PasswordsMigration } from './migrations/0020_argon2_passwords.js'
+import { estimateCommandsMigration } from './migrations/0021_estimate_commands.js'
+import { resourceCreateCommandsMigration } from './migrations/0022_resource_create_commands.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL
@@ -1343,8 +1344,9 @@ const migrations = [
   { id: '0017_email_delivery_details', statements: emailDeliveryDetailsMigration },
   { id: '0018_estimates', statements: estimatesMigration },
   { id: '0019_attachments', statements: attachmentsMigration },
-  { id: '0020_estimate_commands', statements: estimateCommandsMigration },
-  { id: '0021_resource_create_commands', statements: resourceCreateCommandsMigration },
+  { id: '0020_argon2_passwords', statements: argon2PasswordsMigration },
+  { id: '0021_estimate_commands', statements: estimateCommandsMigration },
+  { id: '0022_resource_create_commands', statements: resourceCreateCommandsMigration },
 ] as const
 
 export const migrateContainer = (database: BetterSqlite3.Database): void => {

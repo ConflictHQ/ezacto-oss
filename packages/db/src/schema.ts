@@ -260,15 +260,37 @@ export const userPasswords = sqliteTable(
     userId: integer('user_id')
       .primaryKey()
       .references(() => users.id, { onDelete: 'cascade' }),
-    algorithm: text('algorithm', { enum: ['pbkdf2-sha256'] }).notNull(),
-    iterations: integer('iterations').notNull(),
+    credentialVersion: integer('credential_version').notNull(),
+    algorithm: text('algorithm', { enum: ['pbkdf2-sha256', 'argon2id'] }).notNull(),
+    version: integer('version'),
+    iterations: integer('iterations'),
+    memoryKiB: integer('memory_kib'),
+    timeCost: integer('time_cost'),
+    parallelism: integer('parallelism'),
     salt: text('salt').notNull(),
     passwordHash: text('password_hash').notNull(),
     ...timestamps,
   },
   (table) => [
-    check('user_passwords_algorithm', sql`${table.algorithm} = 'pbkdf2-sha256'`),
-    check('user_passwords_iterations', sql`${table.iterations} >= 600000`),
+    check(
+      'user_passwords_algorithm_parameters',
+      sql`(${table.algorithm} = 'pbkdf2-sha256'
+          AND ${table.version} IS NULL
+          AND ${table.iterations} = 600000
+          AND ${table.memoryKiB} IS NULL
+          AND ${table.timeCost} IS NULL
+          AND ${table.parallelism} IS NULL)
+        OR (${table.algorithm} = 'argon2id'
+          AND ${table.version} = 19
+          AND ${table.iterations} IS NULL
+          AND ${table.memoryKiB} = 19456
+          AND ${table.timeCost} = 2
+          AND ${table.parallelism} = 1)`,
+    ),
+    check(
+      'user_passwords_credential_version',
+      sql`${table.credentialVersion} BETWEEN 1 AND 9007199254740991`,
+    ),
   ],
 )
 
