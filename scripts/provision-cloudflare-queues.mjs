@@ -275,7 +275,8 @@ const assertDeployedBinding = (queue, contract) => {
     ? queue.consumers.filter(
         (consumer) =>
           consumer?.type === "worker" &&
-          consumer.script_name === contract.workerName,
+          (consumer.script === contract.workerName ||
+            consumer.service === contract.workerName),
       )
     : [];
   if (consumerMatches.length !== 1) {
