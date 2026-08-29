@@ -53,9 +53,7 @@ const hrefFor = (section: (typeof sections)[number]): string =>
   section === 'Time' ? '/' : `/${section.toLocaleLowerCase('en-US')}`
 
 const providerSignIn = (providers: readonly SignInProvider[]): string => {
-  if (!providers.includes('google')) {
-    return `<p class="oidc-unavailable" data-oidc-unavailable>Single sign-on is not available for this instance. Use your email and password.</p>`
-  }
+  if (!providers.includes('google')) return ''
   return (
     `<div class="oidc-entry" data-oidc-entry>` +
     `<a class="oidc-sign-in" data-oidc-provider="google" href="${safePath('/auth/oidc/google')}">Continue with Google</a>` +
@@ -83,7 +81,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   <meta name="robots" content="noindex">
   <meta name="ezacto-environment" content="${escapeHtml(options.environment)}">
   <meta name="ezacto-release" content="${escapeHtml(options.release)}">
-  <title>${escapeHtml(brand)} — Time</title>
+  <title>${escapeHtml(brand)} — Sign in</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="${escapeHtml(themeManifest.precision.fontStylesheet)}">
@@ -91,6 +89,44 @@ export const renderAppShell = (options: AppShellOptions): string => {
   <script type="module" src="/assets/ezacto.js"></script>
 </head>
 <body>
+  <section class="auth-gateway" data-auth-gateway data-state="checking" aria-label="${escapeHtml(brand)} sign in" aria-busy="true">
+    <div class="auth-splash">
+      <a class="auth-wordmark" href="/" aria-label="${escapeHtml(brand)} home">${escapeHtml(brand)}</a>
+      <div class="auth-splash-copy">
+        <p class="eyebrow">Time, exactly.</p>
+        <h1>Make every hour visible.</h1>
+        <p>Track the work, understand the week, and turn time into a clear record.</p>
+      </div>
+      <p class="auth-splash-foot">Open-source time tracking and invoicing.</p>
+    </div>
+    <div class="auth-entry">
+      <div class="auth-card">
+        <div class="auth-checking" data-auth-checking role="status" aria-live="polite">
+          <span aria-hidden="true"></span>
+          <p>Checking your session…</p>
+        </div>
+        <form class="sign-in-form" data-sign-in-form method="post" action="/auth/sign-in" hidden>
+          <div class="auth-heading">
+            <p class="eyebrow">Welcome back</p>
+            <h2 id="sign-in-title">Sign in to ezacto</h2>
+            <p>Use your account to continue to your workspace.</p>
+          </div>
+          ${providerSignIn(options.signInProviders ?? [])}
+          <label for="ez-sign-in-email">Email
+            <input id="ez-sign-in-email" name="email" type="email" inputmode="email" autocomplete="username" required>
+          </label>
+          <label for="ez-sign-in-password">Password
+            <input id="ez-sign-in-password" name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button class="primary-action" type="submit" data-sign-in-submit>Sign in</button>
+          <p class="auth-result" data-sign-in-result role="status" aria-live="polite"></p>
+        </form>
+        <noscript>${renderEmptyState('JavaScript is required', 'The ezacto app uses JavaScript to establish and protect your session.')}</noscript>
+      </div>
+      <p class="auth-build-stamp">${escapeHtml(options.environment)} · ${escapeHtml(shortRelease)}</p>
+    </div>
+  </section>
+  <div class="authenticated-shell" data-authenticated-shell hidden inert>
   <header class="topbar">
     <a class="brand" href="/" aria-label="${escapeHtml(brand)} home">${escapeHtml(brand)}</a>
     <nav class="primary-nav" aria-label="Primary">${navigation}</nav>
@@ -111,21 +147,6 @@ export const renderAppShell = (options: AppShellOptions): string => {
       <button class="primary-action" type="button" data-command-trigger data-auth-action disabled>Log time</button>
     </header>
     <section class="auth-shell" data-auth-shell data-state="loading" aria-label="Account">
-      <form class="sign-in-form" data-sign-in-form method="post" action="/auth/sign-in" hidden>
-        <div class="auth-heading">
-          <p class="eyebrow">Your ezacto account</p>
-          <h2>Sign in to your week</h2>
-        </div>
-        ${providerSignIn(options.signInProviders ?? [])}
-        <label for="ez-sign-in-email">Email
-          <input id="ez-sign-in-email" name="email" type="email" inputmode="email" autocomplete="username" required>
-        </label>
-        <label for="ez-sign-in-password">Password
-          <input id="ez-sign-in-password" name="password" type="password" autocomplete="current-password" required>
-        </label>
-        <button class="primary-action" type="submit" data-sign-in-submit>Sign in</button>
-        <p class="auth-result" data-sign-in-result role="status" aria-live="polite"></p>
-      </form>
       <div class="current-identity" data-current-identity hidden>
         <div>
           <p class="eyebrow">Signed in</p>
@@ -211,8 +232,8 @@ export const renderAppShell = (options: AppShellOptions): string => {
       <button class="primary-action" type="submit">Save note</button>
     </form>
   </dialog>
-  <noscript>${renderEmptyState('JavaScript is required', 'The ezacto app uses JavaScript to read and write your time safely.')}</noscript>
   <footer class="build-stamp">${escapeHtml(options.environment)} · ${escapeHtml(shortRelease)}</footer>
+  </div>
 </body>
 </html>`
 }

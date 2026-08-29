@@ -490,6 +490,11 @@ const resourceLabel = (resource: Record<string, unknown>): string => {
 }
 
 export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Promise<void> => {
+  const authGateway = required<HTMLElement>('[data-auth-gateway]')
+  const authChecking = required<HTMLElement>('[data-auth-checking]')
+  const authenticatedShell = required<HTMLElement>('[data-authenticated-shell]')
+  const signedOutDocumentTitle = document.title
+  const authenticatedDocumentTitle = signedOutDocumentTitle.replace(/ — Sign in$/u, ' — Time')
   const status = required<HTMLElement>('[data-session-status]')
   const statusMessage = required<HTMLElement>('[data-session-message]')
   const retryWeek = required<HTMLButtonElement>('[data-retry-week]')
@@ -579,6 +584,37 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
   }
 
+  const showSignedOutScreen = (): void => {
+    authenticatedShell.hidden = true
+    authenticatedShell.inert = true
+    authGateway.hidden = false
+    authGateway.dataset.state = 'signed-out'
+    authGateway.setAttribute('aria-busy', 'false')
+    authChecking.hidden = true
+    signInForm.hidden = false
+    document.documentElement.dataset.authState = 'signed-out'
+    document.title = signedOutDocumentTitle
+  }
+
+  const showAuthenticatedShell = (): void => {
+    authGateway.hidden = true
+    authGateway.dataset.state = 'authenticated'
+    authGateway.setAttribute('aria-busy', 'false')
+    authChecking.hidden = true
+    signInForm.hidden = true
+    authenticatedShell.hidden = false
+    authenticatedShell.inert = false
+    document.documentElement.dataset.authState = 'authenticated'
+    document.title = authenticatedDocumentTitle
+  }
+
+  const setSignInPending = (pending: boolean): void => {
+    signInSubmit.disabled = pending
+    signInSubmit.textContent = pending ? 'Signing in…' : 'Sign in'
+    signInForm.setAttribute('aria-busy', String(pending))
+    if (!authGateway.hidden) authGateway.dataset.state = pending ? 'signing-in' : 'signed-out'
+  }
+
   const clearFormState = (): void => {
     signInForm.reset()
     commandForm.reset()
@@ -665,19 +701,20 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     currentIdentity = null
     signingIn = false
     signingOut = false
-    signInSubmit.disabled = false
+    setSignInPending(false)
     logout.disabled = false
     clearFormState()
     authShell.dataset.state = 'signed-out'
-    signInForm.hidden = false
     currentIdentityPanel.hidden = true
     required<HTMLElement>('[data-current-user-id]').textContent = '—'
     required<HTMLElement>('[data-current-profile]').textContent = '—'
-    signInResult.textContent = ''
+    signInResult.textContent = message === 'Sign in to load and edit your week.' ? '' : message
     logoutResult.textContent = ''
     setSessionStatus(message, 'signed-out')
     setApplicationAvailability(false)
+    showSignedOutScreen()
     renderSignedOutWeek()
+    signInEmail.focus()
   }
 
   const showAuthenticated = (identity: Whoami): AuthOperation => {
@@ -686,7 +723,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     currentIdentity = identity
     signingIn = false
     signingOut = false
-    signInSubmit.disabled = false
+    setSignInPending(false)
     logout.disabled = false
     supplementalRows = loadSupplementalRows(identity.user_id, within)
     authShell.dataset.state = 'ready'
@@ -697,6 +734,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     signInResult.textContent = ''
     logoutResult.textContent = ''
     setApplicationAvailability(true)
+    showAuthenticatedShell()
     return operation
   }
 
@@ -1131,7 +1169,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
     const operation = beginAuthGeneration(null)
     signingIn = true
-    signInSubmit.disabled = true
+    setSignInPending(true)
     signInResult.textContent = 'Signing in…'
     let request: Promise<unknown>
     try {
@@ -1139,7 +1177,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     } catch (error) {
       signInResult.textContent = signInMessage(error)
       signingIn = false
-      signInSubmit.disabled = false
+      setSignInPending(false)
       return
     } finally {
       signInPassword.value = ''
@@ -1156,7 +1194,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       .finally(() => {
         if (!isGenerationCurrent(operation)) return
         signingIn = false
-        signInSubmit.disabled = false
+        setSignInPending(false)
       })
   })
 

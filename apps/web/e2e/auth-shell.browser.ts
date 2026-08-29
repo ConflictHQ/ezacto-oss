@@ -62,6 +62,7 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
 }) => {
   let signedIn = false
   let revoked = false
+  let signInAttempts = 0
   const protectedRequests: string[] = []
 
   await page.route('https://fonts.googleapis.com/**', (route) =>
@@ -73,6 +74,22 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
       email: 'owner@example.test',
       password: fixturePassword,
     })
+    signInAttempts += 1
+    if (signInAttempts === 1) {
+      await fulfillJson(
+        route,
+        {
+          error: {
+            code: 'invalid_credentials',
+            message: 'server detail is not rendered',
+            fields: [],
+          },
+          request_id: 'browser-acceptance',
+        },
+        401,
+      )
+      return
+    }
     signedIn = true
     await fulfillJson(route, {
       data: {
@@ -161,7 +178,7 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
   })
 
   await page.goto('/')
-  await expect(page).toHaveTitle('ezacto — Time')
+  await expect(page).toHaveTitle('ezacto — Sign in')
   await expect(page.locator('meta[name="ezacto-release"]')).toHaveAttribute(
     'content',
     'browser-cookie-e2e',
@@ -170,13 +187,20 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
   const email = page.getByLabel('Email')
   const password = page.getByLabel('Password')
   const signIn = page.getByRole('button', { name: 'Sign in', exact: true })
+  const authGateway = page.locator('[data-auth-gateway]')
+  const authenticatedShell = page.locator('[data-authenticated-shell]')
+  await expect(authGateway).toBeVisible()
+  await expect(authenticatedShell).toBeHidden()
+  await expect(page.locator('.topbar')).toBeHidden()
   await expectPhoneControl(email)
   await expectPhoneControl(password)
   await expectPhoneControl(signIn)
   await expectNoPageOverflow(page)
   expect(protectedRequests).toEqual([])
   await expect(page.locator('[data-auth-action]:not([disabled])')).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Log time' })).toBeDisabled()
+  await expect(
+    authenticatedShell.locator('[data-command-trigger]').last(),
+  ).toBeDisabled()
 
   await tabTo(page, email)
   await page.keyboard.type('owner@example.test')
@@ -187,8 +211,26 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
   await expect(signIn).toBeFocused()
   await page.keyboard.press('Enter')
 
+  await expect(page.locator('[data-sign-in-result]')).toHaveText(
+    'Email or password is incorrect.',
+  )
+  await expect(password).toHaveValue('')
+  await expect(signIn).toBeEnabled()
+  await expect(authGateway).toBeVisible()
+  await expect(authenticatedShell).toBeHidden()
+  expect(protectedRequests).toEqual([])
+  await expect(page.locator('[data-sign-in-result]')).not.toContainText(
+    'server detail is not rendered',
+  )
+
+  await password.fill(fixturePassword)
+  await signIn.click()
+
   const identity = page.locator('[data-current-identity]')
   const signOut = page.getByRole('button', { name: 'Sign out' })
+  await expect(authGateway).toBeHidden()
+  await expect(authenticatedShell).toBeVisible()
+  await expect(page).toHaveTitle('ezacto — Time')
   await expect(identity).toContainText('User #7')
   await expect(identity).toContainText('administrator')
   await expectPhoneControl(signOut)
@@ -207,9 +249,20 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
 
   await expect(email).toBeVisible()
   await expect(email).toBeFocused()
+  await expect(authGateway).toBeVisible()
+  await expect(authenticatedShell).toBeHidden()
+  await expect(page).toHaveTitle('ezacto — Sign in')
   expect(revoked).toBe(true)
   await expect(page.locator('[data-auth-action]:not([disabled])')).toHaveCount(0)
   await expectNoPageOverflow(page)
+
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await expect(page.locator('.auth-splash')).toBeVisible()
+  await expect(page.locator('.auth-card')).toBeVisible()
+  await expect(authenticatedShell).toBeHidden()
+  const desktopCard = await page.locator('.auth-card').boundingBox()
+  expect(desktopCard).not.toBeNull()
+  expect(desktopCard!.x + desktopCard!.width).toBeLessThanOrEqual(1280)
 })
 
 test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', async ({
@@ -274,7 +327,11 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   const email = page.getByLabel('Email')
   const password = page.getByLabel('Password')
   const signIn = page.getByRole('button', { name: 'Sign in', exact: true })
+  const authGateway = page.locator('[data-auth-gateway]')
+  const authenticatedShell = page.locator('[data-authenticated-shell]')
   await expect(email).toBeVisible()
+  await expect(authGateway).toBeVisible()
+  await expect(authenticatedShell).toBeHidden()
   await expect(page.locator('[data-auth-action]:not([disabled])')).toHaveCount(0)
   expect(protectedResponses.get('/api/v1/whoami')).toBe(401)
 
@@ -284,6 +341,8 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   await expect(password).toHaveValue('')
 
   const identity = page.locator('[data-current-identity]')
+  await expect(authGateway).toBeHidden()
+  await expect(authenticatedShell).toBeVisible()
   await expect(identity).toContainText('User #1')
   await expect(identity).toContainText('administrator')
   await expect(page.locator('[data-day-rows]')).toContainText(
@@ -334,6 +393,8 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   await page.getByRole('button', { name: 'Sign out' }).click()
   await expect(email).toBeVisible()
   await expect(email).toBeFocused()
+  await expect(authGateway).toBeVisible()
+  await expect(authenticatedShell).toBeHidden()
   await expect(page.locator('[data-auth-action]:not([disabled])')).toHaveCount(0)
   expect(
     (await context.cookies()).some(
