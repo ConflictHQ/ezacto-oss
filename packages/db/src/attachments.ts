@@ -66,9 +66,7 @@ export interface AttachmentStore {
   createExpenseAttachment(input: CreateExpenseAttachmentInput): Promise<AttachmentRecord>
   createProjectAttachment(input: CreateProjectAttachmentInput): Promise<AttachmentRecord>
   listInvoiceAttachments(invoiceId: number): Promise<readonly AttachmentRecord[]>
-  listRecurringInvoiceAttachments(
-    recurringInvoiceId: number,
-  ): Promise<readonly AttachmentRecord[]>
+  listRecurringInvoiceAttachments(recurringInvoiceId: number): Promise<readonly AttachmentRecord[]>
   listEstimateAttachments(estimateId: number): Promise<readonly AttachmentRecord[]>
   listExpenseAttachments(expenseId: number): Promise<readonly AttachmentRecord[]>
   listProjectAttachments(projectId: number): Promise<readonly AttachmentRecord[]>
@@ -77,10 +75,7 @@ export interface AttachmentStore {
     recurringInvoiceId: number,
     attachmentId: number,
   ): Promise<AttachmentRecord | null>
-  getEstimateAttachment(
-    estimateId: number,
-    attachmentId: number,
-  ): Promise<AttachmentRecord | null>
+  getEstimateAttachment(estimateId: number, attachmentId: number): Promise<AttachmentRecord | null>
   getExpenseAttachment(expenseId: number, attachmentId: number): Promise<AttachmentRecord | null>
   getProjectAttachment(projectId: number, attachmentId: number): Promise<AttachmentRecord | null>
   setRecurringInvoiceAttachmentPolicy(
@@ -111,12 +106,7 @@ interface StoredAttachmentRow {
 interface OwnerDefinition {
   table: string
   parentColumn: string
-  parentInputKey:
-    | 'invoiceId'
-    | 'recurringInvoiceId'
-    | 'estimateId'
-    | 'expenseId'
-    | 'projectId'
+  parentInputKey: 'invoiceId' | 'recurringInvoiceId' | 'estimateId' | 'expenseId' | 'projectId'
   guardColumn: string
 }
 
@@ -153,8 +143,7 @@ const owners = {
   },
 } as const satisfies Record<string, OwnerDefinition>
 
-const timestampPattern =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/
+const timestampPattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/
 const contentHashPattern = /^[0-9a-f]{64}$/
 
 const assertPositiveSafeInteger = (value: number, field: string): void => {
@@ -240,9 +229,7 @@ export const assertStaticRecurringAttachmentPolicy: (
   }
 }
 
-export const sha256ContentHash = async (
-  bytes: ArrayBuffer | ArrayBufferView,
-): Promise<string> => {
+export const sha256ContentHash = async (bytes: ArrayBuffer | ArrayBufferView): Promise<string> => {
   const source =
     bytes instanceof ArrayBuffer
       ? new Uint8Array(bytes)
@@ -364,10 +351,7 @@ const isAttachmentIdCollision = (error: unknown): boolean =>
     error.message,
   )
 
-const ownerParentId = (
-  owner: OwnerDefinition,
-  input: AttachmentMetadataInput,
-): number => {
+const ownerParentId = (owner: OwnerDefinition, input: AttachmentMetadataInput): number => {
   const parentId = (input as unknown as Record<string, unknown>)[owner.parentInputKey]
   assertPositiveSafeInteger(parentId as number, owner.parentInputKey)
   return parentId as number
@@ -437,10 +421,11 @@ export const createAttachmentStore = (database: AttachmentDatabase): AttachmentS
     }
 
     const run = client.transaction((): AttachmentRecord => {
-      const next = client.prepare(`SELECT coalesce(max(id), 0) + 1 AS id FROM attachments`).get() as
-        | { id: number }
-        | undefined
-      if (!next || !Number.isSafeInteger(next.id)) throw new Error('attachment id allocation failed')
+      const next = client
+        .prepare(`SELECT coalesce(max(id), 0) + 1 AS id FROM attachments`)
+        .get() as { id: number } | undefined
+      if (!next || !Number.isSafeInteger(next.id))
+        throw new Error('attachment id allocation failed')
       for (const { query, bindings } of createOperations(owner, next.id, parentId, input)) {
         client.prepare(query).run(...bindings)
       }
@@ -476,7 +461,12 @@ export const createAttachmentStore = (database: AttachmentDatabase): AttachmentS
       SET attachment_policy = ?, updated_at = ? WHERE id = ?`
     const bindings = [serialized, updatedAt, recurringInvoiceId] as const
     const changes = isD1Client(client)
-      ? (await client.prepare(query).bind(...bindings).run()).meta.changes
+      ? (
+          await client
+            .prepare(query)
+            .bind(...bindings)
+            .run()
+        ).meta.changes
       : client.prepare(query).run(...bindings).changes
     if (changes !== 1) throw new Error(`recurring invoice ${recurringInvoiceId} does not exist`)
   }
@@ -493,16 +483,13 @@ export const createAttachmentStore = (database: AttachmentDatabase): AttachmentS
     listEstimateAttachments: (estimateId) => read(owners.estimate, estimateId),
     listExpenseAttachments: (expenseId) => read(owners.expense, expenseId),
     listProjectAttachments: (projectId) => read(owners.project, projectId),
-    getInvoiceAttachment: (invoiceId, attachmentId) =>
-      get(owners.invoice, invoiceId, attachmentId),
+    getInvoiceAttachment: (invoiceId, attachmentId) => get(owners.invoice, invoiceId, attachmentId),
     getRecurringInvoiceAttachment: (recurringInvoiceId, attachmentId) =>
       get(owners.recurringInvoice, recurringInvoiceId, attachmentId),
     getEstimateAttachment: (estimateId, attachmentId) =>
       get(owners.estimate, estimateId, attachmentId),
-    getExpenseAttachment: (expenseId, attachmentId) =>
-      get(owners.expense, expenseId, attachmentId),
-    getProjectAttachment: (projectId, attachmentId) =>
-      get(owners.project, projectId, attachmentId),
+    getExpenseAttachment: (expenseId, attachmentId) => get(owners.expense, expenseId, attachmentId),
+    getProjectAttachment: (projectId, attachmentId) => get(owners.project, projectId, attachmentId),
     setRecurringInvoiceAttachmentPolicy,
   }
 }

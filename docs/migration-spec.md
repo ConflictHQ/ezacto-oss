@@ -167,7 +167,9 @@ Download every `receipt.url` binary; store under content hash; verify
 `file_size` matches. Failures are anomalies, not fatal (Harvest serves receipts
 through time-limited URLs — re-extract refreshes them). On load, a Harvest receipt
 becomes an expense-owned row in the shared `attachment` model; there is no separate
-native receipt table or `expense.receipt_id`.
+native receipt table or `expense.receipt_id`. Hash representation, logical dedupe,
+and the exact field mapping are specified in
+[Attachment storage contract](attachment-storage.md#harvest-receipt-mapping).
 
 ## 5. The `sync` loop (parallel-run)
 

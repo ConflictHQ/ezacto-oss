@@ -13,6 +13,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core'
 import type { RecurringAmountConfig } from './recurring-invoices.js'
+import type { StaticRecurringAttachmentPolicyV1 } from './attachments.js'
 import type { EmailFailureCode, EmailRecipient } from '@ezacto/mailer'
 
 const timestamps = {
@@ -832,6 +833,9 @@ export const recurringInvoices = sqliteTable(
     dayOfMonth: integer('day_of_month'),
     nextIssueOn: text('next_issue_on'),
     amountConfig: text('amount_config', { mode: 'json' }).$type<RecurringAmountConfig>(),
+    attachmentPolicy: text('attachment_policy', {
+      mode: 'json',
+    }).$type<StaticRecurringAttachmentPolicyV1>(),
     canDrawFromRetainerId: integer('can_draw_from_retainer_id').references(() => retainers.id, {
       onDelete: 'restrict',
     }),
@@ -1419,6 +1423,173 @@ export const expenses = sqliteTable(
   ],
 )
 
+/** Immutable content identity. Binary placement is provided by the D17 storage adapter. */
+export const fileObjects = sqliteTable(
+  'file_objects',
+  {
+    id: integer('id').primaryKey(),
+    contentHash: text('content_hash').notNull().unique(),
+    fileKey: text('file_key').notNull().unique(),
+    byteSize: integer('byte_size').notNull(),
+    contentType: text('content_type').notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    check(
+      'file_objects_content_hash_canonical',
+      sql`length(${table.contentHash}) = 64 and ${table.contentHash} not glob '*[^0-9a-f]*'`,
+    ),
+    check(
+      'file_objects_file_key_nonblank',
+      sql`length(${table.fileKey}) between 1 and 1024 and ${nonBlankText(table.fileKey)}`,
+    ),
+    check(
+      'file_objects_byte_size_safe_integer',
+      sql`${table.byteSize} between 0 and 9007199254740991`,
+    ),
+    check(
+      'file_objects_content_type_nonblank',
+      sql`length(${table.contentType}) between 1 and 255 and ${nonBlankText(table.contentType)}`,
+    ),
+    check('file_objects_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('file_objects_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+  ],
+)
+
+/**
+ * A logical attachment. The five same-id guards are the Drizzle representation of
+ * the migration's deferred owner FKs; exactly one owner-specific join must exist.
+ */
+export const attachments = sqliteTable(
+  'attachments',
+  {
+    id: integer('id').primaryKey(),
+    fileObjectId: integer('file_object_id')
+      .notNull()
+      .references(() => fileObjects.id, { onDelete: 'restrict' }),
+    name: text('name').notNull(),
+    uploadedByUserId: integer('uploaded_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    invoiceAttachmentLinkId: integer('invoice_attachment_link_id').unique(),
+    recurringInvoiceAttachmentLinkId: integer('recurring_invoice_attachment_link_id').unique(),
+    estimateAttachmentLinkId: integer('estimate_attachment_link_id').unique(),
+    expenseAttachmentLinkId: integer('expense_attachment_link_id').unique(),
+    projectAttachmentLinkId: integer('project_attachment_link_id').unique(),
+    ...timestamps,
+  },
+  (table) => [
+    index('attachments_file_object_id').on(table.fileObjectId),
+    index('attachments_uploaded_by_user_id')
+      .on(table.uploadedByUserId)
+      .where(sql`${table.uploadedByUserId} is not null`),
+    check(
+      'attachments_name_nonblank',
+      sql`length(${table.name}) between 1 and 255 and ${nonBlankText(table.name)}`,
+    ),
+    check(
+      'attachments_exactly_one_owner',
+      sql`(${table.invoiceAttachmentLinkId} is not null)
+        + (${table.recurringInvoiceAttachmentLinkId} is not null)
+        + (${table.estimateAttachmentLinkId} is not null)
+        + (${table.expenseAttachmentLinkId} is not null)
+        + (${table.projectAttachmentLinkId} is not null) = 1`,
+    ),
+    check(
+      'attachments_invoice_guard_same_id',
+      sql`${table.invoiceAttachmentLinkId} is null or ${table.invoiceAttachmentLinkId} = ${table.id}`,
+    ),
+    check(
+      'attachments_recurring_guard_same_id',
+      sql`${table.recurringInvoiceAttachmentLinkId} is null or ${table.recurringInvoiceAttachmentLinkId} = ${table.id}`,
+    ),
+    check(
+      'attachments_estimate_guard_same_id',
+      sql`${table.estimateAttachmentLinkId} is null or ${table.estimateAttachmentLinkId} = ${table.id}`,
+    ),
+    check(
+      'attachments_expense_guard_same_id',
+      sql`${table.expenseAttachmentLinkId} is null or ${table.expenseAttachmentLinkId} = ${table.id}`,
+    ),
+    check(
+      'attachments_project_guard_same_id',
+      sql`${table.projectAttachmentLinkId} is null or ${table.projectAttachmentLinkId} = ${table.id}`,
+    ),
+    check('attachments_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('attachments_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+  ],
+)
+
+export const invoiceAttachments = sqliteTable(
+  'invoice_attachments',
+  {
+    attachmentId: integer('attachment_id')
+      .primaryKey()
+      .references(() => attachments.id, { onDelete: 'cascade' }),
+    invoiceId: integer('invoice_id')
+      .notNull()
+      .references(() => invoices.id, { onDelete: 'restrict' }),
+  },
+  (table) => [index('invoice_attachments_invoice_id').on(table.invoiceId, table.attachmentId)],
+)
+
+export const recurringInvoiceAttachments = sqliteTable(
+  'recurring_invoice_attachments',
+  {
+    attachmentId: integer('attachment_id')
+      .primaryKey()
+      .references(() => attachments.id, { onDelete: 'cascade' }),
+    recurringInvoiceId: integer('recurring_invoice_id')
+      .notNull()
+      .references(() => recurringInvoices.id, { onDelete: 'restrict' }),
+  },
+  (table) => [
+    index('recurring_invoice_attachments_recurring_invoice_id').on(
+      table.recurringInvoiceId,
+      table.attachmentId,
+    ),
+  ],
+)
+
+export const estimateAttachments = sqliteTable(
+  'estimate_attachments',
+  {
+    attachmentId: integer('attachment_id')
+      .primaryKey()
+      .references(() => attachments.id, { onDelete: 'cascade' }),
+    estimateId: integer('estimate_id')
+      .notNull()
+      .references(() => estimates.id, { onDelete: 'restrict' }),
+  },
+  (table) => [index('estimate_attachments_estimate_id').on(table.estimateId, table.attachmentId)],
+)
+
+export const expenseAttachments = sqliteTable(
+  'expense_attachments',
+  {
+    attachmentId: integer('attachment_id')
+      .primaryKey()
+      .references(() => attachments.id, { onDelete: 'cascade' }),
+    expenseId: integer('expense_id')
+      .notNull()
+      .references(() => expenses.id, { onDelete: 'restrict' }),
+  },
+  (table) => [index('expense_attachments_expense_id').on(table.expenseId, table.attachmentId)],
+)
+
+export const projectAttachments = sqliteTable(
+  'project_attachments',
+  {
+    attachmentId: integer('attachment_id')
+      .primaryKey()
+      .references(() => attachments.id, { onDelete: 'cascade' }),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'restrict' }),
+  },
+  (table) => [index('project_attachments_project_id').on(table.projectId, table.attachmentId)],
+)
+
 export const invoiceMessages = sqliteTable(
   'invoice_messages',
   {
@@ -1500,11 +1671,7 @@ export const emailLog = sqliteTable(
     ...timestamps,
   },
   (table) => [
-    index('email_log_status_created_id').on(
-      table.status,
-      table.createdAt,
-      table.id,
-    ),
+    index('email_log_status_created_id').on(table.status, table.createdAt, table.id),
     index('email_log_related_created_id')
       .on(table.relatedType, table.relatedId, table.createdAt, table.id)
       .where(sql`${table.relatedType} is not null`),

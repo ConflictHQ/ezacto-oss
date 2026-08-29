@@ -43,6 +43,11 @@ batch. A failure rolls every new row back. Reads are owner-specific and always
 scope by both the real parent relation and (for content reads) the logical
 attachment id.
 
+Object-store writes are necessarily outside that database transaction. Callers
+use idempotent content-addressed puts and must not delete the key to compensate for
+a metadata failure: another logical attachment may already share it. Unreferenced
+objects are safe to collect later with a storage-aware garbage-collection pass.
+
 ## Static recurring policy v1
 
 `recurring_invoices.attachment_policy` is nullable. Its only accepted v1 value is:
@@ -66,14 +71,14 @@ the later F2 + F6 story owns generation semantics.
 
 The extractor's Harvest `receipt` vocabulary maps as follows:
 
-| Harvest/snapshot value | Native value |
-| --- | --- |
-| downloaded SHA-256 | `file_objects.content_hash` |
-| `receipts/<hash>.<ext>` | `file_objects.file_key` |
-| verified downloaded bytes | `file_objects.byte_size` |
-| `receipt.content_type` | `file_objects.content_type` |
-| `receipt.file_name` | `attachments.name` |
-| source expense | `expense_attachments.expense_id` |
+| Harvest/snapshot value    | Native value                     |
+| ------------------------- | -------------------------------- |
+| downloaded SHA-256        | `file_objects.content_hash`      |
+| `receipts/<hash>.<ext>`   | `file_objects.file_key`          |
+| verified downloaded bytes | `file_objects.byte_size`         |
+| `receipt.content_type`    | `file_objects.content_type`      |
+| `receipt.file_name`       | `attachments.name`               |
+| source expense            | `expense_attachments.expense_id` |
 
 The downloaded byte count must equal Harvest's declared `file_size` before load.
 The sanitized golden fixture exercises that verification and round-trips the

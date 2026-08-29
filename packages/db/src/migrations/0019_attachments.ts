@@ -53,16 +53,17 @@ const attachmentOwnerLink = (
   parentColumn: string,
   parentTable: string,
   guardColumn: string,
-) => [
-  `CREATE TABLE ${table} (
+) =>
+  [
+    `CREATE TABLE ${table} (
     attachment_id INTEGER PRIMARY KEY
       REFERENCES attachments(id) ON DELETE CASCADE,
     ${parentColumn} INTEGER NOT NULL
       REFERENCES ${parentTable}(id) ON DELETE RESTRICT
   ) STRICT`,
-  `CREATE INDEX ${table}_${parentColumn}
+    `CREATE INDEX ${table}_${parentColumn}
     ON ${table}(${parentColumn}, attachment_id)`,
-  `CREATE TRIGGER ${table}_owner_guard_insert
+    `CREATE TRIGGER ${table}_owner_guard_insert
     BEFORE INSERT ON ${table}
     WHEN NOT EXISTS (
       SELECT 1 FROM attachments attachment
@@ -70,18 +71,18 @@ const attachmentOwnerLink = (
         AND attachment.${guardColumn} = NEW.attachment_id
     )
     BEGIN SELECT RAISE(ABORT, '${table} does not match the attachment owner guard'); END`,
-  `CREATE TRIGGER ${table}_reject_identity_collision
+    `CREATE TRIGGER ${table}_reject_identity_collision
     BEFORE INSERT ON ${table}
     WHEN EXISTS (
       SELECT 1 FROM ${table} existing WHERE existing.attachment_id = NEW.attachment_id
     )
     BEGIN SELECT RAISE(ABORT, '${table} attachment identity already exists'); END`,
-  `CREATE TRIGGER ${table}_owner_immutable
+    `CREATE TRIGGER ${table}_owner_immutable
     BEFORE UPDATE OF attachment_id, ${parentColumn} ON ${table}
     WHEN OLD.attachment_id IS NOT NEW.attachment_id
       OR OLD.${parentColumn} IS NOT NEW.${parentColumn}
     BEGIN SELECT RAISE(ABORT, '${table} ownership is immutable'); END`,
-] as const
+  ] as const
 
 const ownerLinks = [
   ...attachmentOwnerLink(

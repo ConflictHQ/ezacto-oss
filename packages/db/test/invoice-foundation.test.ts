@@ -277,13 +277,11 @@ for (const [runtime, factory] of factories) {
           'invoice_messages',
           'event_outbox',
           'recurring_invoices',
+          'file_objects',
+          'attachments',
         ]),
       )
-      const forbiddenTables = [
-        'receipts',
-        'file_objects',
-        'attachments',
-      ]
+      const forbiddenTables = ['receipts']
       expect(
         tables.map(({ name }) => name).filter((name) => forbiddenTables.includes(name)),
       ).toEqual([])
@@ -633,6 +631,7 @@ for (const [runtime, factory] of factories) {
         '0016_email_log',
         '0017_email_delivery_details',
         '0018_estimates',
+        '0019_attachments',
       ])
       expect(
         firstLedger.slice(0, 4).every(({ applied_at: appliedAt }) => appliedAt === timestamp),
