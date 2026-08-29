@@ -279,13 +279,20 @@ describe("Worker operator bootstrap", () => {
     )
     expect(seeded.status).toBe(200)
 
+    // Materialize each streamed body inside its request task so concurrent
+    // dispatch responses are not retained past their fetch lifecycle.
     const enrollments = await Promise.all(
-      Array.from({ length: 20 }, () =>
-        request(
+      Array.from({ length: 20 }, async () => {
+        const response = await request(
           '/__ezacto/bootstrap/owner-password',
           post(bootstrapToken, { password: ownerPassword }),
-        ),
-      ),
+        )
+        return {
+          status: response.status,
+          retryAfter: response.headers.get('retry-after'),
+          body: await response.text(),
+        }
+      }),
     )
     expect(enrollments.some((response) => response.status === 503)).toBe(true)
     expect(
@@ -293,12 +300,11 @@ describe("Worker operator bootstrap", () => {
         (response) => response.status === 200 || response.status === 503,
       ),
     ).toBe(true)
-    for (const response of enrollments) {
-      const body = await response.text()
-      expect(body).not.toContain(ownerPassword)
-      if (response.status === 503) {
-        expect(response.headers.get('retry-after')).toBe('1')
-        expect(JSON.parse(body)).toMatchObject({
+    for (const enrollment of enrollments) {
+      expect(enrollment.body).not.toContain(ownerPassword)
+      if (enrollment.status === 503) {
+        expect(enrollment.retryAfter).toBe('1')
+        expect(JSON.parse(enrollment.body)).toMatchObject({
           error: { code: 'internal_error' },
         })
       }
@@ -311,8 +317,8 @@ describe("Worker operator bootstrap", () => {
     expect(enrollmentRetry.status).toBe(200)
 
     const signIns = await Promise.all(
-      Array.from({ length: 30 }, (_, index) =>
-        request('/auth/sign-in', {
+      Array.from({ length: 30 }, async (_, index) => {
+        const response = await request('/auth/sign-in', {
           method: 'POST',
           headers: {
             'cf-connecting-ip': `198.51.100.${index + 1}`,
@@ -322,8 +328,12 @@ describe("Worker operator bootstrap", () => {
             email: `unknown-${index}@example.test`,
             password: ownerPassword,
           }),
-        }),
-      ),
+        })
+        return {
+          status: response.status,
+          body: (await response.json()) as { error: { code: string } },
+        }
+      }),
     )
     expect(signIns.some((response) => response.status === 503)).toBe(true)
     expect(
@@ -331,10 +341,9 @@ describe("Worker operator bootstrap", () => {
         (response) => response.status === 401 || response.status === 503,
       ),
     ).toBe(true)
-    for (const response of signIns) {
-      const body = (await response.json()) as { error: { code: string } }
-      expect(body.error.code).toBe(
-        response.status === 401 ? 'invalid_credentials' : 'internal_error',
+    for (const signIn of signIns) {
+      expect(signIn.body.error.code).toBe(
+        signIn.status === 401 ? 'invalid_credentials' : 'internal_error',
       )
     }
 
