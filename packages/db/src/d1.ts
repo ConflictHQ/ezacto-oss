@@ -5,16 +5,30 @@ import * as schema from './schema.js'
 export const createD1Database = (database: D1Database) => drizzle(database, { schema })
 
 export {
+  assertStaticRecurringAttachmentPolicy,
+  createAttachmentStore,
+  sha256ContentHash,
+  type AttachmentDatabase,
+  type AttachmentFileInput,
+  type AttachmentMetadataInput,
+  type AttachmentRecord,
+  type AttachmentStore,
+  type CreateEstimateAttachmentInput,
+  type CreateExpenseAttachmentInput,
+  type CreateInvoiceAttachmentInput,
+  type CreateProjectAttachmentInput,
+  type CreateRecurringInvoiceAttachmentInput,
+  type StaticRecurringAttachmentPolicyV1,
+} from './attachments.js'
+
+export {
   createApiTokenStore,
   type ApiTokenStore,
   type CreateApiTokenStoreOptions,
 } from './api-tokens.js'
 export { createGeneralResourceRepository } from './general-resources.js'
 export { createReportRepository, type ReportRepository } from './reports.js'
-export {
-  createD1EmailLogStore,
-  type EmailLogStoreOptions,
-} from './email-log.js'
+export { createD1EmailLogStore, type EmailLogStoreOptions } from './email-log.js'
 export { createD1IdentityStore, type IdentityStore, type IdentityStoreOptions } from './identity.js'
 export {
   createD1OidcTransactionStore,

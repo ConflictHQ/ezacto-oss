@@ -27,7 +27,7 @@
   "receipt": {
     "url": "https://example.invalid/sanitized-receipt",
     "file_name": "sanitized-receipt.pdf",
-    "file_size": 2048,
+    "file_size": 51,
     "content_type": "application/pdf"
   },
   "notes": "Sanitized project travel",

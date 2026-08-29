@@ -17,6 +17,7 @@ import { oidcTransactionsMigration } from './migrations/0015_oidc_transactions.j
 import { emailLogMigration } from './migrations/0016_email_log.js'
 import { emailDeliveryDetailsMigration } from './migrations/0017_email_delivery_details.js'
 import { estimatesMigration } from './migrations/0018_estimates.js'
+import { attachmentsMigration } from './migrations/0019_attachments.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL
@@ -97,7 +98,8 @@ const invoiceLifecyclePreflight = `WITH payment_counts AS (
   WHERE code = (SELECT code FROM selected)
   ORDER BY id LIMIT 11`
 
-const invoiceLifecycleMigration = [
+/** Exported so version-boundary acceptance tests can install the exact 0018 predecessor. */
+export const invoiceLifecycleMigration = [
   `CREATE TABLE invoice_messages_0006 (
     id INTEGER PRIMARY KEY,
     harvest_id INTEGER UNIQUE,
@@ -1338,6 +1340,7 @@ const migrations = [
   { id: '0016_email_log', statements: emailLogMigration },
   { id: '0017_email_delivery_details', statements: emailDeliveryDetailsMigration },
   { id: '0018_estimates', statements: estimatesMigration },
+  { id: '0019_attachments', statements: attachmentsMigration },
 ] as const
 
 export const migrateContainer = (database: BetterSqlite3.Database): void => {

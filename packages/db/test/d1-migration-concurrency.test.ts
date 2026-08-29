@@ -40,6 +40,7 @@ describe('D1 migration concurrency', () => {
       '0016_email_log',
       '0017_email_delivery_details',
       '0018_estimates',
+      '0019_attachments',
     ])
     expect(
       await database.prepare('SELECT count(*) AS count FROM api_tokens').first<{ count: number }>(),

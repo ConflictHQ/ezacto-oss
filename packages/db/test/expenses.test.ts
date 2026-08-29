@@ -288,8 +288,8 @@ for (const [runtime, factory] of factories) {
         await db.rows<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'table'`)
       ).map(({ name }) => name)
       expect(tables).not.toContain('receipts')
-      expect(tables).not.toContain('attachments')
-      expect(tables).not.toContain('file_objects')
+      expect(tables).toContain('attachments')
+      expect(tables).toContain('file_objects')
     })
 
     it('[unit] upgrades a populated invoice-foundation database without row loss', async () => {
@@ -330,7 +330,7 @@ for (const [runtime, factory] of factories) {
       ).toEqual(before.lines)
       expect(await db.rows(`PRAGMA foreign_key_check`)).toEqual([])
       const ledger = await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id`)
-      expect(ledger.at(-1)).toEqual({ id: '0018_estimates' })
+      expect(ledger.at(-1)).toEqual({ id: '0019_attachments' })
       await db.migrateAgain()
       expect(await db.rows(`SELECT id FROM _ezacto_migrations ORDER BY id`)).toEqual(ledger)
     }, 15_000)

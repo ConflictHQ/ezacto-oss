@@ -271,7 +271,8 @@ there is no unchecked generic `owner_type/owner_id`. A Harvest receipt is an
 expense-owned attachment in native storage; `receipt` survives only as a Harvest
 shim/extract vocabulary. Static recurring attachment policy belongs to this model;
 generated-report attachments remain downstream of F2 + F6. This is the one
-multipart surface in the API.
+multipart surface in the API. The versioned physical invariants and recurring
+policy shape are specified in [Attachment storage contract](attachment-storage.md).
 
 Reimbursement (UI 06, gated in Harvest): `reimbursable` bool, `reimbursement_status`
 enum `none|pending|approved|paid`, `payout_ref` — columns in the model now, surfaces
