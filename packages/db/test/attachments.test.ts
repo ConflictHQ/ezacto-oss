@@ -393,6 +393,62 @@ for (const [runtime, factory] of factories) {
         ),
       ).rejects.toThrow()
 
+      await db.run(
+        `INSERT INTO file_objects (
+          id, content_hash, file_key, byte_size, content_type, created_at, updated_at
+        ) VALUES (900, ?, 'attachments/unreferenced-original', 9, 'text/plain', ?, ?)`,
+        '9'.repeat(64),
+        timestamp,
+        timestamp,
+      )
+      for (const [id, hash, key] of [
+        [901, '9'.repeat(64), 'attachments/replaced-by-hash'],
+        [900, '6'.repeat(64), 'attachments/replaced-by-id'],
+        [902, '5'.repeat(64), 'attachments/unreferenced-original'],
+      ] as const) {
+        await expect(
+          db.run(
+            `INSERT OR REPLACE INTO file_objects (
+              id, content_hash, file_key, byte_size, content_type, created_at, updated_at
+            ) VALUES (?, ?, ?, 999, 'application/octet-stream', ?, ?)`,
+            id,
+            hash,
+            key,
+            laterTimestamp,
+            laterTimestamp,
+          ),
+        ).rejects.toThrow(/identity already exists|constraint/i)
+      }
+      await expect(
+        db.run(
+          `INSERT OR REPLACE INTO file_objects (
+            id, content_hash, file_key, byte_size, content_type, created_at, updated_at
+          ) VALUES (?, ?, 'attachments/referenced-replacement', 999,
+            'application/octet-stream', ?, ?)`,
+          invoice.fileObjectId,
+          '4'.repeat(64),
+          laterTimestamp,
+          laterTimestamp,
+        ),
+      ).rejects.toThrow(/identity already exists|constraint/i)
+      expect(
+        await db.rows(
+          `SELECT id, content_hash, file_key, byte_size, content_type, created_at, updated_at
+           FROM file_objects WHERE id = 900`,
+        ),
+      ).toEqual([
+        {
+          id: 900,
+          content_hash: '9'.repeat(64),
+          file_key: 'attachments/unreferenced-original',
+          byte_size: 9,
+          content_type: 'text/plain',
+          created_at: timestamp,
+          updated_at: timestamp,
+        },
+      ])
+      expect(await store.getInvoiceAttachment(1, invoice.id)).toEqual(invoice)
+
       await db.run(`DELETE FROM users WHERE id = 2`)
       expect(await store.getInvoiceAttachment(1, invoice.id)).toMatchObject({
         uploadedByUserId: null,

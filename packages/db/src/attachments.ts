@@ -280,8 +280,10 @@ const createOperations = (
     {
       query: `INSERT INTO file_objects (
           content_hash, file_key, byte_size, content_type, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(content_hash) DO NOTHING`,
+        ) SELECT ?, ?, ?, ?, ?, ?
+        WHERE NOT EXISTS (
+          SELECT 1 FROM file_objects existing WHERE existing.content_hash = ?
+        )`,
       bindings: [
         input.contentHash,
         input.fileKey,
@@ -289,6 +291,7 @@ const createOperations = (
         input.contentType,
         input.createdAt,
         input.updatedAt,
+        input.contentHash,
       ],
     },
     {

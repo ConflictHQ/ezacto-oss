@@ -192,6 +192,15 @@ export const attachmentsMigration = [
     ON attachments(uploaded_by_user_id)
     WHERE uploaded_by_user_id IS NOT NULL`,
   ...ownerLinks,
+  `CREATE TRIGGER file_objects_reject_identity_collision
+    BEFORE INSERT ON file_objects
+    WHEN EXISTS (
+      SELECT 1 FROM file_objects existing
+      WHERE existing.id = NEW.id
+        OR existing.content_hash = NEW.content_hash
+        OR existing.file_key = NEW.file_key
+    )
+    BEGIN SELECT RAISE(ABORT, 'file object identity already exists'); END`,
   `CREATE TRIGGER file_objects_content_identity_immutable
     BEFORE UPDATE OF content_hash, file_key, byte_size, content_type ON file_objects
     WHEN OLD.content_hash IS NOT NEW.content_hash
