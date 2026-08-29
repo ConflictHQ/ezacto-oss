@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 const bootstrapToken = `ezacto_abcdefghijklmnop_${'A'.repeat(43)}`
 const wrongToken = `ezacto_abcdefghijklmnop_${'B'.repeat(43)}`
+const ownerPassword = 'correct horse battery staple'
 const cursorSecret = encodeBase64Url(new Uint8Array(32).fill(0x42))
 const identity = {
   organization_name: 'Conflict',
@@ -113,8 +114,93 @@ describe('Worker operator bootstrap', () => {
       },
     })
 
+    const beforeEnrollment = await request('/auth/sign-in', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: identity.owner_email, password: ownerPassword }),
+    })
+    expect(beforeEnrollment.status).toBe(401)
+
+    const unauthorizedPassword = await request(
+      '/__ezacto/bootstrap/owner-password',
+      post(wrongToken, { password: ownerPassword }),
+    )
+    responses.push(await unauthorizedPassword.text())
+    expect(unauthorizedPassword.status).toBe(401)
+
+    const enrolled = await request(
+      '/__ezacto/bootstrap/owner-password',
+      post(bootstrapToken, { password: ownerPassword }),
+    )
+    const enrolledBody = await enrolled.text()
+    responses.push(enrolledBody)
+    expect(enrolled.status).toBe(200)
+    expect(JSON.parse(enrolledBody)).toEqual({
+      data: {
+        status: 'ready',
+        credential: 'password',
+        user_id: 1,
+        profile: 'administrator',
+        owner_email: identity.owner_email,
+      },
+    })
+
+    const exactPasswordRetry = await request(
+      '/__ezacto/bootstrap/owner-password',
+      post(bootstrapToken, { password: ownerPassword }),
+    )
+    responses.push(await exactPasswordRetry.text())
+    expect(exactPasswordRetry.status).toBe(200)
+
+    const differentPassword = await request(
+      '/__ezacto/bootstrap/owner-password',
+      post(bootstrapToken, { password: 'a different valid password' }),
+    )
+    responses.push(await differentPassword.text())
+    expect(differentPassword.status).toBe(409)
+    expect(JSON.parse(responses.at(-1)!)).toMatchObject({
+      error: { code: 'bootstrap_password_state_conflict' },
+    })
+
+    const signedIn = await request('/auth/sign-in', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: identity.owner_email, password: ownerPassword }),
+    })
+    expect(signedIn.status).toBe(200)
+    const sessionCookie = signedIn.headers.get('set-cookie')!.split(';', 1)[0]!
+    expect(sessionCookie).toContain('__Host-ezacto_session=')
+
+    const browserWhoami = await request('/api/v1/whoami', {
+      headers: { cookie: sessionCookie },
+    })
+    expect(browserWhoami.status).toBe(200)
+    expect(await browserWhoami.json()).toMatchObject({
+      data: {
+        user_id: 1,
+        profile: 'administrator',
+        authentication: { kind: 'session' },
+      },
+    })
+
+    const sessions = await request('/api/v1/sessions', {
+      headers: { cookie: sessionCookie },
+    })
+    const current = ((await sessions.json()) as { data: Array<{ id: number }> }).data[0]
+    expect(current).toBeDefined()
+    const logout = await request(`/api/v1/sessions/${current!.id}`, {
+      method: 'DELETE',
+      headers: { cookie: sessionCookie, origin: 'https://worker.test' },
+    })
+    expect(logout.status).toBe(200)
+    const revokedCookie = await request('/api/v1/whoami', {
+      headers: { cookie: sessionCookie },
+    })
+    expect(revokedCookie.status).toBe(401)
+
     expect(responses.join('\n')).not.toContain(bootstrapToken)
     expect(responses.join('\n')).not.toContain('A'.repeat(43))
+    expect(responses.join('\n')).not.toContain(ownerPassword)
     expect(
       await database
         .prepare(`SELECT count(*) AS count FROM instance_bootstrap`)
@@ -125,7 +211,7 @@ describe('Worker operator bootstrap', () => {
         .prepare(`SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`)
         .first<{ id: string }>(),
     ).toEqual({ id: '0018_estimates' })
-  }, 20_000)
+  }, 40_000)
 
   it('[security] remains unavailable when the temporary Worker secret is absent', async () => {
     const { request } = await harness(false)
@@ -134,6 +220,13 @@ describe('Worker operator bootstrap', () => {
     expect(response.status).toBe(503)
     expect(JSON.parse(body)).toMatchObject({ error: { code: 'internal_error' } })
     expect(body).not.toContain(bootstrapToken)
+
+    const password = await request(
+      '/__ezacto/bootstrap/owner-password',
+      post(bootstrapToken, { password: ownerPassword }),
+    )
+    expect(password.status).toBe(503)
+    expect(await password.text()).not.toContain(ownerPassword)
   }, 20_000)
 })
 
