@@ -43,6 +43,14 @@ export type WorkerEnv = Env & {
   APP_BASE_URL?: string
   OIDC_GOOGLE_CLIENT_ID?: string
   OIDC_GOOGLE_CLIENT_SECRET?: string
+  /** SES credentials are Worker secrets; never place them in wrangler vars. */
+  AWS_ACCESS_KEY_ID?: string
+  AWS_SECRET_ACCESS_KEY?: string
+  AWS_SESSION_TOKEN?: string
+  /** Static SES routing/configuration values. */
+  SES_REGION?: string
+  SES_FROM?: string
+  SES_CONFIGURATION_SET?: string
   /** Temporary Worker secret installed only while the operator workflow runs. */
   EZACTO_BOOTSTRAP_TOKEN?: string
 }

@@ -1277,6 +1277,8 @@ export const emailLog = sqliteTable(
     subject: text('subject').notNull(),
     provider: text('provider'),
     providerMessageId: text('provider_message_id'),
+    providerRequestId: text('provider_request_id'),
+    providerLatencyMs: integer('provider_latency_ms'),
     status: text('status', {
       enum: ['queued', 'sent', 'bounced', 'complained', 'failed'],
     })
@@ -1288,6 +1290,7 @@ export const emailLog = sqliteTable(
     activeAttemptId: text('active_attempt_id'),
     attemptLeaseExpiresAt: text('attempt_lease_expires_at'),
     failureCode: text('failure_code').$type<EmailFailureCode | null>(),
+    failureReason: text('failure_reason'),
     ...timestamps,
   },
   (table) => [
@@ -1314,6 +1317,31 @@ export const emailLog = sqliteTable(
     check(
       'email_log_attempt_count_safe',
       sql`${table.attemptCount} between 0 and 9007199254740991`,
+    ),
+    check(
+      'email_log_provider_latency_safe',
+      sql`${table.providerLatencyMs} is null or ${table.providerLatencyMs} between 0 and 3000000`,
+    ),
+    check(
+      'email_log_provider_request_id_safe',
+      sql`${table.providerRequestId} is null or length(trim(${table.providerRequestId})) between 1 and 512`,
+    ),
+    check(
+      'email_log_failure_reason_safe',
+      sql`${table.failureReason} is null or (
+        length(${table.failureReason}) between 1 and 128
+        and ${table.failureReason} not glob '*[^A-Za-z0-9_:]*'
+      )`,
+    ),
+    check(
+      'email_log_delivery_details_status',
+      sql`(
+        (${table.providerRequestId} is null and ${table.providerLatencyMs} is null)
+        or ${table.status} in ('sent','bounced','complained')
+      ) and (
+        ${table.failureReason} is null
+        or (${table.status} = 'failed' and ${table.failureCode} = 'provider_rejected')
+      )`,
     ),
     check(
       'email_log_attempt_lease_pair',

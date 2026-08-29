@@ -23,11 +23,14 @@ interface EmailLogRow {
   subject: string
   provider: string | null
   providerMessageId: string | null
+  providerRequestId: string | null
+  providerLatencyMs: number | null
   status: EmailDeliveryStatus
   relatedType: string | null
   relatedId: number | null
   attemptCount: number
   failureCode: EmailFailureCode | null
+  failureReason: string | null
   createdAt: string
   updatedAt: string
 }
@@ -44,9 +47,12 @@ const assertCanonicalTimestamp = (value: string): void => {
 }
 
 const columns = `id, to_json AS toJson, template, subject, provider,
-  provider_message_id AS providerMessageId, status, related_type AS relatedType,
+  provider_message_id AS providerMessageId,
+  provider_request_id AS providerRequestId, provider_latency_ms AS providerLatencyMs,
+  status, related_type AS relatedType,
   related_id AS relatedId, attempt_count AS attemptCount,
-  failure_code AS failureCode, created_at AS createdAt, updated_at AS updatedAt`
+  failure_code AS failureCode, failure_reason AS failureReason,
+  created_at AS createdAt, updated_at AS updatedAt`
 
 const rowRecord = (row: EmailLogRow | null): EmailLogRecord => {
   if (row === null) throw new Error('email delivery state transition did not match a queued log')
@@ -76,11 +82,14 @@ const rowRecord = (row: EmailLogRow | null): EmailLogRecord => {
     subject: row.subject,
     provider: row.provider,
     providerMessageId: row.providerMessageId,
+    providerRequestId: row.providerRequestId,
+    providerLatencyMs: row.providerLatencyMs,
     status: row.status,
     relatedType: row.relatedType,
     relatedId: row.relatedId,
     attemptCount: row.attemptCount,
     failureCode: row.failureCode,
+    failureReason: row.failureReason,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }
@@ -175,34 +184,58 @@ const createStore = (
       )
     },
 
-    async markSent(deliveryId, provider, providerMessageId, attemptId) {
+    async markSent(deliveryId, provider, receipt, attemptId) {
       const at = timestamp()
       return rowRecord(
         await database.first<EmailLogRow>(
           `UPDATE email_log
            SET status = 'sent', provider = ?, provider_message_id = ?,
+             provider_request_id = ?, provider_latency_ms = ?,
              active_attempt_id = NULL, attempt_lease_expires_at = NULL,
              updated_at = ?
            WHERE id = ? AND status = 'queued' AND attempt_count > 0
              AND provider = ? AND active_attempt_id = ?
            RETURNING ${columns}`,
-          [provider, providerMessageId, at, deliveryId, provider, attemptId],
+          [
+            provider,
+            receipt.messageId,
+            receipt.requestId ?? null,
+            receipt.latencyMs ?? null,
+            at,
+            deliveryId,
+            provider,
+            attemptId,
+          ],
         ),
       )
     },
 
-    async markProviderFailed(deliveryId, provider, failureCode, attemptId) {
+    async markProviderFailed(
+      deliveryId,
+      provider,
+      failureCode,
+      attemptId,
+      failureReason,
+    ) {
       const at = timestamp()
       return rowRecord(
         await database.first<EmailLogRow>(
           `UPDATE email_log
-           SET status = 'failed', provider = ?, failure_code = ?,
+           SET status = 'failed', provider = ?, failure_code = ?, failure_reason = ?,
              active_attempt_id = NULL, attempt_lease_expires_at = NULL,
              updated_at = ?
            WHERE id = ? AND status = 'queued' AND provider = ?
              AND active_attempt_id = ?
            RETURNING ${columns}`,
-          [provider, failureCode, at, deliveryId, provider, attemptId],
+          [
+            provider,
+            failureCode,
+            failureReason ?? null,
+            at,
+            deliveryId,
+            provider,
+            attemptId,
+          ],
         ),
       )
     },

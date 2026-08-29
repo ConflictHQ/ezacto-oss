@@ -124,7 +124,7 @@ describe('Worker operator bootstrap', () => {
       await database
         .prepare(`SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`)
         .first<{ id: string }>(),
-    ).toEqual({ id: '0016_email_log' })
+    ).toEqual({ id: '0017_email_delivery_details' })
   }, 20_000)
 
   it('[security] remains unavailable when the temporary Worker secret is absent', async () => {

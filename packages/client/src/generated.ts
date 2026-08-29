@@ -94,11 +94,14 @@ export type EmailLog = {
   "subject": string;
   "provider": string | null;
   "provider_message_id": string | null;
+  "provider_request_id": string | null;
+  "provider_latency_ms": number | null;
   "status": "queued" | "sent" | "bounced" | "complained" | "failed";
   "related_type": string | null;
   "related_id": number | null;
   "attempt_count": number;
   "failure_code": "queue_unavailable" | "provider_timeout" | "provider_rejected" | null;
+  "failure_reason": string | null;
   "created_at": string;
   "updated_at": string;
 };

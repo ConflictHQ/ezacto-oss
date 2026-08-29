@@ -844,6 +844,7 @@ for (const [runtime, factory] of factories) {
         { id: '0014_sessions' },
         { id: '0015_oidc_transactions' },
         { id: '0016_email_log' },
+        { id: '0017_email_delivery_details' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -881,6 +882,7 @@ for (const [runtime, factory] of factories) {
         { id: '0014_sessions' },
         { id: '0015_oidc_transactions' },
         { id: '0016_email_log' },
+        { id: '0017_email_delivery_details' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -936,6 +938,7 @@ for (const [runtime, factory] of factories) {
         { id: '0014_sessions' },
         { id: '0015_oidc_transactions' },
         { id: '0016_email_log' },
+        { id: '0017_email_delivery_details' },
       ])
       expect(
         await db.rows<{ name: string }>(
@@ -967,6 +970,7 @@ for (const [runtime, factory] of factories) {
         { id: '0014_sessions' },
         { id: '0015_oidc_transactions' },
         { id: '0016_email_log' },
+        { id: '0017_email_delivery_details' },
       ])
     })
   })
@@ -1062,6 +1066,8 @@ describe('package contents', () => {
         'dist/migrations/0015_oidc_transactions.d.ts',
         'dist/migrations/0016_email_log.js',
         'dist/migrations/0016_email_log.d.ts',
+        'dist/migrations/0017_email_delivery_details.js',
+        'dist/migrations/0017_email_delivery_details.d.ts',
         'dist/instance-bootstrap.js',
         'dist/instance-bootstrap.d.ts',
         'dist/oidc-transactions.js',
