@@ -146,11 +146,13 @@ then applies the binding and its smoke gate proves the exact release is live.
 
 ## Queue provisioning
 
-Run the manual `provision Queues` workflow once for each environment before its
-tracked Queue binding is deployed. The workflow reads the names from
-`entries/worker/wrangler.jsonc`, reuses an exact-name match, creates a missing
-resource, and fails closed on duplicates. It provisions both the delivery Queue
-and its dead-letter Queue:
+The automatic dev deploy converges its exact resources before it mutates Worker
+secrets or bindings. Prod remains an explicit operator action: run the manual
+`provision Queues` workflow for `prod` before its tracked Queue binding is first
+deployed. The same workflow can explicitly converge dev when needed. Both paths
+read the names from `entries/worker/wrangler.jsonc`, reuse an exact-name match,
+create a missing resource, and fail closed on duplicates. They provision both
+the delivery Queue and its dead-letter Queue:
 
 | Environment | Delivery Queue      | Dead-letter Queue       |
 | ----------- | ------------------- | ----------------------- |
@@ -165,12 +167,13 @@ per-message `60 / 300 / 900 / 3600` second backoff. Provider exhaustion is
 persisted and acknowledged, while an unexpected consumer failure can reach the
 dead-letter Queue instead of being discarded.
 
-Every normal deploy checks that both resources exist before changing Worker
-secrets. After `wrangler deploy`, it reads Cloudflare's Queue API and verifies
-the exact Worker producer, consumer, dead-letter target, batching, concurrency,
-and retry settings before the host smoke test can pass. `APP_BASE_URL` is a
-tracked per-environment Worker variable so a configured Queue and SES provider
-actually enable queued authentication mail.
+Every dev deploy idempotently converges both resources; a prod deploy only
+checks them and fails before changing secrets when the operator has not run
+provisioning. After `wrangler deploy`, both paths read Cloudflare's Queue API and
+verify the exact Worker producer, consumer, dead-letter target, batching,
+concurrency, and retry settings before the host smoke test can pass.
+`APP_BASE_URL` is a tracked per-environment Worker variable so a configured
+Queue and SES provider actually enable queued authentication mail.
 
 Resource provisioning alone does not satisfy live mail acceptance. Each GitHub
 environment still needs its SES credentials and static variables described
