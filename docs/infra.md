@@ -128,6 +128,13 @@ API and compiled CLI can authenticate, and removes the Worker copy in an
 or credential manager when it is generated: GitHub retains it for automation but
 will not reveal it later. Workflow logs and artifacts never contain it.
 
+Each environment also stores `EZACTO_OWNER_PASSWORD` for the explicit
+`bootstrap browser owner` workflow. It is not a deployment variable and is never
+installed as a Worker secret. The workflow reads it only into masked step
+environment, sends it in runner-temp request bodies, accepts the real browser
+session lifecycle, and removes those files. Keep the same value in the owner's
+password manager; GitHub cannot reveal it after it is stored.
+
 The Cloudflare token cannot touch any other zone, and cannot create zones. Rotate
 it by issuing a new token and replacing the repository secret; revoke the old one
 after the first green deploy.
@@ -201,6 +208,16 @@ The first statement claims a singleton audit record; the last statement asserts
 the complete seeded state. An identical retry is a no-op, while different input,
 pre-existing identity rows, or a partial write fails closed. Successful completion
 requires both live `/api/v1/whoami` and the compiled `ez login`/`ez whoami` path.
+
+That first bootstrap intentionally creates no password. After setting the
+environment's `EZACTO_OWNER_PASSWORD`, run `bootstrap browser owner`. The
+temporary bootstrap authority can enroll only user `1` when its active,
+administrator-owner row, verified primary email, immutable bootstrap audit, and
+unrevoked owner token all agree. An exact password retry is a no-op; a different
+password or altered bootstrap state fails closed. Completion is the live
+password sign-in, secure HttpOnly session cookie, session-authenticated
+`/api/v1/whoami`, logout, and rejection of the revoked cookie. Google OIDC is an
+independent alternative once its client credentials are configured.
 
 ## CI (`.github/workflows/ci.yml`)
 

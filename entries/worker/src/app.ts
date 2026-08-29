@@ -25,8 +25,11 @@ import {
 } from '@ezacto/api'
 import {
   InstanceBootstrapConflictError,
+  InstanceOwnerPasswordConflictError,
   type InstanceBootstrapInput,
   type InstanceBootstrapResult,
+  type InstanceOwnerPasswordInput,
+  type InstanceOwnerPasswordResult,
 } from '@ezacto/db/d1'
 import { renderAppShell, webAssets, type SignInProvider } from '@ezacto/web'
 import type { EmailLogStore, QueuedEmailJob } from '@ezacto/mailer'
@@ -59,6 +62,9 @@ export type WorkerEnv = Env & {
 
 export interface RuntimeServices {
   bootstrap(input: InstanceBootstrapInput): Promise<InstanceBootstrapResult>
+  enrollOwnerPassword(
+    input: InstanceOwnerPasswordInput,
+  ): Promise<InstanceOwnerPasswordResult>
   tokens: ApiTokenService
   generalResources: GeneralResourceRouteOptions['repository']
   trackedResources: TrackedResourceRepository
@@ -205,6 +211,73 @@ export const createApp = (services?: RuntimeServices) =>
             throw error
           }
         })
+
+        app.post('/__ezacto/bootstrap/owner-password', async (context) => {
+          const expected = context.env.EZACTO_BOOTSTRAP_TOKEN
+          if (expected === undefined || expected.length === 0) {
+            throw new ApiError({
+              status: 503,
+              code: 'service_unavailable',
+              message: 'Instance bootstrap is not enabled.',
+            })
+          }
+
+          const authorization = context.req.header('authorization')
+          const presented = authorization?.startsWith('Bearer ')
+            ? authorization.slice('Bearer '.length)
+            : ''
+          if (!(await secureTokenEqual(expected, presented))) {
+            context.header(
+              'www-authenticate',
+              'Bearer realm="ezacto-bootstrap"',
+            )
+            throw new ApiError({
+              status: 401,
+              code: 'authentication_required',
+              message: 'Bootstrap authentication is required.',
+            })
+          }
+
+          const password = await parseBootstrapPasswordBody(context)
+          try {
+            const result = await services.enrollOwnerPassword({
+              token: expected,
+              password,
+            })
+            return context.json(
+              {
+                data: {
+                  status: 'ready',
+                  credential: 'password',
+                  user_id: result.userId,
+                  profile: result.profile,
+                  owner_email: result.ownerEmail,
+                },
+              },
+              200,
+              { 'cache-control': 'no-store' },
+            )
+          } catch (error) {
+            if (error instanceof InstanceOwnerPasswordConflictError) {
+              throw new ApiError({
+                status: 409,
+                code: 'bootstrap_password_state_conflict',
+                message:
+                  'The owner password does not match this bootstrap state.',
+              })
+            }
+            if (error instanceof RangeError || error instanceof TypeError) {
+              throw validationError([
+                {
+                  field: 'password',
+                  code: 'invalid',
+                  message: 'The owner password does not meet the password policy.',
+                },
+              ])
+            }
+            throw error
+          }
+        })
       }
 
       app.get('/assets/ezacto.css', (context) =>
@@ -342,6 +415,38 @@ const parseBootstrapBody = async (
     ownerLastName: record.owner_last_name as string,
     ownerEmail: record.owner_email as string,
   }
+}
+
+const parseBootstrapPasswordBody = async (
+  context: Parameters<typeof readJsonBody>[0],
+): Promise<string> => {
+  const body = await readJsonBody<unknown>(context, { maxBytes: 8 * 1024 })
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    throw validationError([
+      { field: 'body', code: 'invalid', message: 'body must be a JSON object' },
+    ])
+  }
+  const record = body as Record<string, unknown>
+  const fields = [
+    ...(typeof record.password === 'string'
+      ? []
+      : [
+          {
+            field: 'password',
+            code: 'required',
+            message: 'password must be a string',
+          },
+        ]),
+    ...Object.keys(record)
+      .filter((field) => field !== 'password')
+      .map((field) => ({
+        field,
+        code: 'unknown',
+        message: `${field} is not accepted`,
+      })),
+  ]
+  if (fields.length > 0) throw validationError(fields)
+  return record.password as string
 }
 
 const secureTokenEqual = async (

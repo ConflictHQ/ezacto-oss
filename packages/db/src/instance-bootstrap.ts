@@ -1,5 +1,11 @@
 import type BetterSqlite3 from 'better-sqlite3'
-import { apiScopes } from '@ezacto/core'
+import {
+  apiScopes,
+  hashPassword,
+  validatePassword,
+  verifyPassword,
+  type StoredPassword,
+} from '@ezacto/core'
 import { prepareApiTokenForStorage } from './api-tokens.js'
 
 export interface InstanceBootstrapInput {
@@ -15,6 +21,15 @@ export interface InstanceBootstrapResult {
   profile: 'administrator'
 }
 
+export interface InstanceOwnerPasswordInput {
+  token: string
+  password: string
+}
+
+export interface InstanceOwnerPasswordResult extends InstanceBootstrapResult {
+  ownerEmail: string
+}
+
 export interface InstanceBootstrapOptions {
   now?: () => string
 }
@@ -26,9 +41,29 @@ export class InstanceBootstrapConflictError extends Error {
   }
 }
 
+export class InstanceOwnerPasswordConflictError extends Error {
+  constructor() {
+    super('instance owner password conflicts with bootstrap state')
+    this.name = 'InstanceOwnerPasswordConflictError'
+  }
+}
+
 interface Operation {
   query: string
   bindings: readonly unknown[]
+}
+
+interface PortableDatabase {
+  first<T>(query: string, bindings?: readonly unknown[]): Promise<T | null>
+  atomic(operations: readonly Operation[]): Promise<Record<string, unknown>[][]>
+}
+
+interface OwnerPasswordRow {
+  ownerEmail: string
+  algorithm: 'pbkdf2-sha256' | null
+  iterations: number | null
+  salt: string | null
+  passwordHash: string | null
 }
 
 interface NormalizedBootstrap {
@@ -176,6 +211,154 @@ const translateConflict = (error: unknown): never => {
   throw error
 }
 
+const ownerPasswordLookup = `SELECT
+    bootstrap.owner_email AS ownerEmail,
+    password.algorithm,
+    password.iterations,
+    password.salt,
+    password.password_hash AS passwordHash
+  FROM instance_bootstrap bootstrap
+  JOIN users user ON user.id = 1
+  JOIN organization_owner owner ON owner.id = 1 AND owner.user_id = user.id
+  JOIN user_emails email ON email.user_id = user.id
+    AND email.address = bootstrap.owner_email
+    AND email.is_primary = 1
+  JOIN api_tokens token ON token.id = 1 AND token.user_id = user.id
+  LEFT JOIN user_passwords password ON password.user_id = user.id
+  WHERE bootstrap.id = 1
+    AND user.is_owner = 1
+    AND user.profile = 'administrator'
+    AND user.is_active = 1
+    AND email.verified_at IS NOT NULL
+    AND email.invalidated_at IS NULL
+    AND token.selector = bootstrap.token_selector
+    AND token.secret_hash = bootstrap.token_secret_hash
+    AND token.name = bootstrap.token_name
+    AND token.scopes = bootstrap.token_scopes
+    AND token.selector = ?
+    AND token.secret_hash = ?
+    AND token.revoked_at IS NULL
+    AND (token.expires_at IS NULL OR julianday(token.expires_at) > julianday(?))`
+
+const ownerPasswordInsert = `INSERT INTO user_passwords (
+    user_id, algorithm, iterations, salt, password_hash, created_at, updated_at
+  ) SELECT
+    1, ?, ?, ?, ?, ?, ?
+  FROM instance_bootstrap bootstrap
+  JOIN users user ON user.id = 1
+  JOIN organization_owner owner ON owner.id = 1 AND owner.user_id = user.id
+  JOIN user_emails email ON email.user_id = user.id
+    AND email.address = bootstrap.owner_email
+    AND email.is_primary = 1
+  JOIN api_tokens token ON token.id = 1 AND token.user_id = user.id
+  WHERE bootstrap.id = 1
+    AND user.is_owner = 1
+    AND user.profile = 'administrator'
+    AND user.is_active = 1
+    AND email.verified_at IS NOT NULL
+    AND email.invalidated_at IS NULL
+    AND token.selector = bootstrap.token_selector
+    AND token.secret_hash = bootstrap.token_secret_hash
+    AND token.name = bootstrap.token_name
+    AND token.scopes = bootstrap.token_scopes
+    AND token.selector = ?
+    AND token.secret_hash = ?
+    AND token.revoked_at IS NULL
+    AND (token.expires_at IS NULL OR julianday(token.expires_at) > julianday(?))
+    AND NOT EXISTS (SELECT 1 FROM user_passwords WHERE user_id = user.id)
+  RETURNING user_id AS userId`
+
+const storedPassword = (row: OwnerPasswordRow): StoredPassword | null => {
+  const values = [row.algorithm, row.iterations, row.salt, row.passwordHash]
+  if (values.every((value) => value === null)) return null
+  if (
+    row.algorithm !== 'pbkdf2-sha256' ||
+    row.iterations === null ||
+    row.salt === null ||
+    row.passwordHash === null
+  ) {
+    throw new InstanceOwnerPasswordConflictError()
+  }
+  return {
+    algorithm: row.algorithm,
+    iterations: row.iterations,
+    salt: row.salt,
+    passwordHash: row.passwordHash,
+  }
+}
+
+const exactOwnerPasswordRetry = async (
+  database: PortableDatabase,
+  bindings: readonly unknown[],
+  password: string,
+): Promise<OwnerPasswordRow> => {
+  const row = await database.first<OwnerPasswordRow>(ownerPasswordLookup, bindings)
+  if (row === null) throw new InstanceOwnerPasswordConflictError()
+  const existing = storedPassword(row)
+  if (existing === null) throw new InstanceOwnerPasswordConflictError()
+  try {
+    if (await verifyPassword(password, existing)) return row
+  } catch {
+    throw new InstanceOwnerPasswordConflictError()
+  }
+  throw new InstanceOwnerPasswordConflictError()
+}
+
+const enrollInstanceOwnerPassword = async (
+  database: PortableDatabase,
+  input: InstanceOwnerPasswordInput,
+  { now = () => new Date().toISOString() }: InstanceBootstrapOptions = {},
+): Promise<InstanceOwnerPasswordResult> => {
+  validatePassword(input.password)
+  const timestamp = now()
+  assertCanonicalTimestamp(timestamp)
+  const token = await prepareApiTokenForStorage(input.token)
+  const bindings = [token.selector, token.secretHash, timestamp] as const
+  const row = await database.first<OwnerPasswordRow>(ownerPasswordLookup, bindings)
+  if (row === null) throw new InstanceOwnerPasswordConflictError()
+
+  const existing = storedPassword(row)
+  if (existing !== null) {
+    const retry = await exactOwnerPasswordRetry(database, bindings, input.password)
+    return { userId: 1, profile: 'administrator', ownerEmail: retry.ownerEmail }
+  }
+
+  const password = await hashPassword(input.password)
+  try {
+    const rows = await database.atomic([
+      {
+        query: ownerPasswordInsert,
+        bindings: [
+          password.algorithm,
+          password.iterations,
+          password.salt,
+          password.passwordHash,
+          timestamp,
+          timestamp,
+          ...bindings,
+        ],
+      },
+    ])
+    if ((rows[0]?.[0] as { userId?: number } | undefined)?.userId !== 1) {
+      throw new InstanceOwnerPasswordConflictError()
+    }
+  } catch (error) {
+    if (error instanceof InstanceOwnerPasswordConflictError) {
+      const retry = await exactOwnerPasswordRetry(database, bindings, input.password)
+      return { userId: 1, profile: 'administrator', ownerEmail: retry.ownerEmail }
+    }
+    if (
+      error instanceof Error &&
+      /unique constraint failed: user_passwords\.user_id/i.test(error.message)
+    ) {
+      const retry = await exactOwnerPasswordRetry(database, bindings, input.password)
+      return { userId: 1, profile: 'administrator', ownerEmail: retry.ownerEmail }
+    }
+    throw error
+  }
+  return { userId: 1, profile: 'administrator', ownerEmail: row.ownerEmail }
+}
+
 export const bootstrapInstanceD1 = async (
   database: D1Database,
   input: InstanceBootstrapInput,
@@ -212,3 +395,51 @@ export const bootstrapInstanceContainer = async (
   }
   return { userId: 1, profile: 'administrator' }
 }
+
+export const enrollInstanceOwnerPasswordD1 = async (
+  database: D1Database,
+  input: InstanceOwnerPasswordInput,
+  options: InstanceBootstrapOptions = {},
+): Promise<InstanceOwnerPasswordResult> =>
+  enrollInstanceOwnerPassword(
+    {
+      first: async (query, bindings = []) =>
+        database
+          .prepare(query)
+          .bind(...bindings)
+          .first(),
+      atomic: async (requestedOperations) => {
+        const results = await database.batch(
+          requestedOperations.map(({ query, bindings }) =>
+            database.prepare(query).bind(...bindings),
+          ),
+        )
+        return results.map((result) => result.results as Record<string, unknown>[])
+      },
+    },
+    input,
+    options,
+  )
+
+export const enrollInstanceOwnerPasswordContainer = async (
+  database: BetterSqlite3.Database,
+  input: InstanceOwnerPasswordInput,
+  options: InstanceBootstrapOptions = {},
+): Promise<InstanceOwnerPasswordResult> =>
+  enrollInstanceOwnerPassword(
+    {
+      first: async <T>(query: string, bindings: readonly unknown[] = []) =>
+        (database.prepare(query).get(...bindings) as T | undefined) ?? null,
+      atomic: async (requestedOperations) => {
+        const run = database.transaction(() =>
+          requestedOperations.map(
+            ({ query, bindings }) =>
+              database.prepare(query).all(...bindings) as Record<string, unknown>[],
+          ),
+        )
+        return run()
+      },
+    },
+    input,
+    options,
+  )
