@@ -33,13 +33,15 @@ describe('worker entry', () => {
     expect(res.headers.get('content-type')).toContain('text/html')
 
     const html = await res.text()
-    expect(html).toContain('<title>ezacto — Time</title>')
+    expect(html).toContain('<title>ezacto — Sign in</title>')
     expect(html).toContain('abc1234')
+    expect(html).toContain('data-auth-gateway data-state="checking"')
+    expect(html).toContain('data-authenticated-shell hidden inert')
     expect(html).toContain('data-timer-chip')
     expect(html).toContain('data-command-dialog')
     expect(html).toContain('data-sign-in-form')
-    expect(html).toContain('data-oidc-unavailable')
     expect(html).not.toContain('data-oidc-provider')
+    expect(html).not.toContain('data-oidc-entry')
     expect(html).toContain('data-current-identity')
     expect(html).toContain('data-logout')
     expect(html).toContain('/assets/ezacto.css')
@@ -160,7 +162,8 @@ describe('worker entry', () => {
     expect(res.status).toBe(200)
     expect(res.headers.get('cache-control')).toBe('no-store')
     expect(html).not.toContain('data-oidc-provider')
-    expect(html).toContain('data-oidc-unavailable')
+    expect(html).not.toContain('data-oidc-entry')
+    expect(html).not.toContain('Single sign-on is not available')
     expect(html).toContain('method="post" action="/auth/sign-in"')
   })
 
@@ -187,7 +190,8 @@ describe('worker entry', () => {
 
       expect(res.headers.get('cache-control')).toBe('no-store')
       expect(html.includes('data-oidc-provider="google"')).toBe(shouldAdvertise)
-      expect(html.includes('data-oidc-unavailable')).toBe(!shouldAdvertise)
+      expect(html.includes('data-oidc-entry')).toBe(shouldAdvertise)
+      expect(html).not.toContain('Single sign-on is not available')
     }
   })
 
