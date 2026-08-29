@@ -47,7 +47,8 @@ secrets; every new env var lands in `.dev.vars.example` in the same PR that
 reads it.
 
 CI holds two repository-wide Cloudflare credentials. They are consumed only by
-`deploy.yml` and the manual `provision-d1.yml` workflow:
+`deploy.yml` and the manual `provision-d1.yml` / `provision-queues.yml`
+workflows:
 
 | Secret | What |
 | --- | --- |
@@ -142,6 +143,51 @@ ID for each environment, and installs that environment's cursor-signing secret.
 Commit the reported IDs under the matching `env.dev` and `env.prod`
 `d1_databases` entries in `entries/worker/wrangler.jsonc`. The normal deployment
 then applies the binding and its smoke gate proves the exact release is live.
+
+## Queue provisioning
+
+The automatic dev deploy converges its exact resources before it mutates Worker
+secrets or bindings. Prod remains an explicit operator action: run the manual
+`provision Queues` workflow for `prod` before its tracked Queue binding is first
+deployed. The same workflow can explicitly converge dev when needed. Both paths
+read the names from `entries/worker/wrangler.jsonc`, reuse an exact-name match,
+create a missing resource, and fail closed on duplicates. They provision both
+the delivery Queue and its dead-letter Queue:
+
+Cloudflare's Queue list/create API accepts the existing Workers Scripts Write
+permission, so this does not broaden the repository token beyond the deployment
+scope already documented above.
+
+| Environment | Delivery Queue      | Dead-letter Queue       |
+| ----------- | ------------------- | ----------------------- |
+| `dev`       | `ezacto-dev-email`  | `ezacto-dev-email-dlq`  |
+| `prod`      | `ezacto-prod-email` | `ezacto-prod-email-dlq` |
+
+The same Worker is the `EMAIL_QUEUE` producer and push consumer. The consumer
+accepts one message per batch with one concurrent invocation while SES sandbox
+limits are in play. Cloudflare's bounded platform maximum of 100 Queue retries
+is the transport-failure budget, not a provider-call count: lease contention,
+D1 receipt persistence, and unexpected consumer failures can all consume Queue
+deliveries without consuming a provider attempt. Its five-second default retry
+delay matches the attempt-lease contention delay and prevents a hot retry loop.
+The durable `email_log.attempt_count` independently limits provider I/O to five
+claims and supplies the explicit per-message `60 / 300 / 900 / 3600` second
+provider backoff, which overrides the Queue default. Provider exhaustion is
+persisted and acknowledged. A message that still cannot complete after 100
+transport retries reaches the dead-letter Queue instead of being discarded.
+
+Every dev deploy idempotently converges both resources; a prod deploy only
+checks them and fails before changing secrets when the operator has not run
+provisioning. After `wrangler deploy`, both paths read Cloudflare's Queue API and
+verify the exact Worker producer, consumer, dead-letter target, batching,
+concurrency, and retry settings before the host smoke test can pass.
+`APP_BASE_URL` is a tracked per-environment Worker variable so a configured
+Queue and SES provider actually enable queued authentication mail.
+
+Resource provisioning alone does not satisfy live mail acceptance. Each GitHub
+environment still needs its SES credentials and static variables described
+above; the sender and any sandbox recipient must be verified in AWS before a
+real password-reset delivery can be accepted.
 
 ## Instance bootstrap
 

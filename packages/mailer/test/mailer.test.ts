@@ -166,6 +166,23 @@ describe('queued mailer', () => {
     expect(log.markProviderFailed).not.toHaveBeenCalled()
   })
 
+  it('[unit] never invokes the provider after the durable attempt budget', async () => {
+    const log = store()
+    vi.mocked(log.claimAttempt).mockResolvedValue(
+      EMAIL_RETRY_POLICY.maxAttempts + 1,
+    )
+    const provider: HttpEmailProvider = {
+      name: 'test-http',
+      send: vi.fn(async () => ({ messageId: 'must-not-send' })),
+    }
+
+    await expect(processQueuedEmail(job, 101, log, provider)).rejects.toThrow(
+      'email delivery provider attempt budget is exhausted',
+    )
+    expect(provider.send).not.toHaveBeenCalled()
+    expect(log.markProviderFailed).not.toHaveBeenCalled()
+  })
+
   it('[unit] times out provider I/O without leaking the timeout into the enqueueing click', async () => {
     const log = store()
     let providerStarted = false

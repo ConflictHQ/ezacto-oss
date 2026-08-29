@@ -333,6 +333,9 @@ export const processQueuedEmail = async (
         }
       : { action: 'ack' }
   }
+  if (providerAttempt > EMAIL_RETRY_POLICY.maxAttempts) {
+    throw new Error('email delivery provider attempt budget is exhausted')
+  }
 
   let delivered: EmailProviderReceipt
   try {

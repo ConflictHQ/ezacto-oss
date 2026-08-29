@@ -199,6 +199,18 @@ describe('Worker email queue composition', () => {
       attemptCount: 2,
       failureCode: null,
     })
+
+    for (let attempts = 6; attempts <= 8; attempts += 1) {
+      await consume(attempts)
+    }
+    expect(retry).toHaveBeenCalledTimes(7)
+    expect(ack).toHaveBeenCalledOnce()
+    expect(provider.send).toHaveBeenCalledTimes(4)
+    await expect(services.emailLog.get(queued.id)).resolves.toMatchObject({
+      status: 'failed',
+      attemptCount: EMAIL_RETRY_POLICY.maxAttempts,
+      failureCode: 'provider_rejected',
+    })
   })
 
   it('[api] keeps signup fail-closed before a queue and provider are both bound', async () => {
