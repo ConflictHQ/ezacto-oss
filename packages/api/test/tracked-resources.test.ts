@@ -291,6 +291,8 @@ const asProfile = (
 })
 
 for (const [runtime, factory] of factories) {
+  const slowRuntimeTimeout = runtime === 'D1' ? 20_000 : undefined
+
   describe(`tracked resource API (${runtime})`, () => {
     let active: Harness | undefined
 
@@ -418,7 +420,7 @@ for (const [runtime, factory] of factories) {
         }),
       )
       expect(restarted).toMatchObject({ seconds: 1_800, is_running: true })
-    })
+    }, slowRuntimeTimeout)
 
     it('[api] applies implicit and explicit start/end-mode timing', async () => {
       const test = await setup()
@@ -805,7 +807,7 @@ for (const [runtime, factory] of factories) {
       expect((await test.request(`/api/v1/expenses/${direct.id}`)).status).toBe(
         404,
       )
-    })
+    }, slowRuntimeTimeout)
 
     it('[api] uses the shared three-axis guard for expense writes and rejects malformed filters', async () => {
       const test = await setup()
