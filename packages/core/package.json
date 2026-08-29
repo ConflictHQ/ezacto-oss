@@ -12,6 +12,9 @@
     }
   },
   "engines": { "node": ">=22" },
+  "dependencies": {
+    "@noble/hashes": "2.4.0"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",

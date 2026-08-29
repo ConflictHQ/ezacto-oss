@@ -1,8 +1,12 @@
 import type BetterSqlite3 from 'better-sqlite3'
 import {
-  CURRENT_PBKDF2_ITERATIONS,
+  ARGON2ID_MEMORY_KIB,
+  ARGON2ID_PARALLELISM,
+  ARGON2ID_TIME_COST,
+  ARGON2ID_VERSION,
   hashPassword,
   normalizeIdentityEmail,
+  passwordNeedsRehash,
   verifyPassword,
   type ResolvedUserIdentity,
   type StoredPassword,
@@ -36,7 +40,11 @@ export interface PasswordSignInInput {
 }
 
 export type PasswordSignInResult =
-  | { status: 'authenticated'; principal: ResolvedUserIdentity }
+  | {
+      status: 'authenticated'
+      principal: ResolvedUserIdentity
+      credentialVersion: number
+    }
   | { status: 'invalid_credentials' }
   | { status: 'verification_required' }
 
@@ -94,8 +102,13 @@ interface PasswordRow {
   verifiedAt: string | null
   invalidatedAt: string | null
   address: string
-  algorithm: 'pbkdf2-sha256' | null
+  credentialVersion: number | null
+  algorithm: 'pbkdf2-sha256' | 'argon2id' | null
+  version: number | null
   iterations: number | null
+  memoryKiB: number | null
+  timeCost: number | null
+  parallelism: number | null
   salt: string | null
   passwordHash: string | null
 }
@@ -129,8 +142,11 @@ const canonicalTimestampPattern =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/
 const tokenPattern = /^ezacto_(verify|reset)_([A-Za-z0-9_-]{16})_([A-Za-z0-9_-]{43})$/
 const dummyPassword: StoredPassword = {
-  algorithm: 'pbkdf2-sha256',
-  iterations: CURRENT_PBKDF2_ITERATIONS,
+  algorithm: 'argon2id',
+  version: ARGON2ID_VERSION,
+  memoryKiB: ARGON2ID_MEMORY_KIB,
+  timeCost: ARGON2ID_TIME_COST,
+  parallelism: ARGON2ID_PARALLELISM,
   salt: 'AAAAAAAAAAAAAAAAAAAAAA',
   passwordHash: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
 }
@@ -222,18 +238,46 @@ const principal = (row: PasswordRow | undefined): ResolvedUserIdentity => {
 }
 
 const passwordRecord = (row: PasswordRow | null): StoredPassword | null => {
-  if (
-    row?.algorithm === null ||
-    row?.iterations === null ||
-    row?.salt === null ||
-    row?.passwordHash === null ||
-    row === null
-  ) {
+  if (row?.algorithm === null || row?.salt === null || row?.passwordHash === null || row === null) {
     return null
+  }
+  if (row.algorithm === 'pbkdf2-sha256') {
+    if (
+      !Number.isSafeInteger(row.credentialVersion) ||
+      row.credentialVersion! < 1 ||
+      row.iterations === null ||
+      row.version !== null ||
+      row.memoryKiB !== null ||
+      row.timeCost !== null ||
+      row.parallelism !== null
+    ) {
+      throw new Error('password authentication resolved malformed PBKDF2 state')
+    }
+    return {
+      algorithm: row.algorithm,
+      iterations: row.iterations,
+      salt: row.salt,
+      passwordHash: row.passwordHash,
+    }
+  }
+  if (
+    row.algorithm !== 'argon2id' ||
+    !Number.isSafeInteger(row.credentialVersion) ||
+    row.credentialVersion! < 1 ||
+    row.version === null ||
+    row.iterations !== null ||
+    row.memoryKiB === null ||
+    row.timeCost === null ||
+    row.parallelism === null
+  ) {
+    throw new Error('password authentication resolved malformed Argon2id state')
   }
   return {
     algorithm: row.algorithm,
-    iterations: row.iterations,
+    version: row.version,
+    memoryKiB: row.memoryKiB,
+    timeCost: row.timeCost,
+    parallelism: row.parallelism,
     salt: row.salt,
     passwordHash: row.passwordHash,
   }
@@ -242,7 +286,10 @@ const passwordRecord = (row: PasswordRow | null): StoredPassword | null => {
 const passwordLookup = `SELECT user.id AS userId, user.profile,
     user.manager_grants AS managerGrants, user.is_active AS isActive,
     email.address, email.verified_at AS verifiedAt, email.invalidated_at AS invalidatedAt,
-    password.algorithm, password.iterations, password.salt,
+    password.credential_version AS credentialVersion,
+    password.algorithm, password.version, password.iterations,
+    password.memory_kib AS memoryKiB, password.time_cost AS timeCost,
+    password.parallelism, password.salt,
     password.password_hash AS passwordHash
   FROM user_emails email
   JOIN users user ON user.id = email.user_id
@@ -254,7 +301,10 @@ const passwordLookup = `SELECT user.id AS userId, user.profile,
 const principalByUserQuery = `SELECT user.id AS userId, user.profile,
     user.manager_grants AS managerGrants, user.is_active AS isActive,
     email.address, email.verified_at AS verifiedAt, email.invalidated_at AS invalidatedAt,
-    password.algorithm, password.iterations, password.salt,
+    password.credential_version AS credentialVersion,
+    password.algorithm, password.version, password.iterations,
+    password.memory_kib AS memoryKiB, password.time_cost AS timeCost,
+    password.parallelism, password.salt,
     password.password_hash AS passwordHash
   FROM users user
   JOIN user_emails email ON email.user_id = user.id
@@ -406,13 +456,18 @@ const createPasswordAuthService = (
         },
         {
           query: `INSERT INTO user_passwords (
-              user_id, algorithm, iterations, salt, password_hash, created_at, updated_at
-            ) SELECT 1, ?, ?, ?, ?, ?, ?
+              user_id, credential_version, algorithm, version, iterations, memory_kib, time_cost,
+              parallelism, salt, password_hash, created_at, updated_at
+            ) SELECT 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             WHERE EXISTS (SELECT 1 FROM auth_first_run WHERE id = 1 AND claim_nonce = ?)
             RETURNING user_id AS userId`,
           bindings: [
             password.algorithm,
-            password.iterations,
+            password.algorithm === 'argon2id' ? password.version : null,
+            password.algorithm === 'pbkdf2-sha256' ? password.iterations : null,
+            password.algorithm === 'argon2id' ? password.memoryKiB : null,
+            password.algorithm === 'argon2id' ? password.timeCost : null,
+            password.algorithm === 'argon2id' ? password.parallelism : null,
             password.salt,
             password.passwordHash,
             timestamp,
@@ -494,7 +549,48 @@ const createPasswordAuthService = (
     if (row.verifiedAt === null || row.invalidatedAt !== null) {
       return { status: 'verification_required' }
     }
-    return { status: 'authenticated', principal: principal(row) }
+    let credentialVersion = row.credentialVersion!
+    if (passwordNeedsRehash(record)) {
+      const replacement = await hashPassword(input.password)
+      const upgraded = await database.atomic([
+        {
+          query: `UPDATE user_passwords SET
+              credential_version = credential_version + 1,
+              algorithm = ?, version = ?, iterations = ?, memory_kib = ?,
+              time_cost = ?, parallelism = ?, salt = ?, password_hash = ?, updated_at = ?
+            WHERE user_id = ? AND credential_version = ?
+              AND algorithm = ? AND salt = ? AND password_hash = ?
+              AND credential_version < 9007199254740991
+            RETURNING credential_version AS credentialVersion`,
+          bindings: [
+            replacement.algorithm,
+            replacement.algorithm === 'argon2id' ? replacement.version : null,
+            replacement.algorithm === 'pbkdf2-sha256' ? replacement.iterations : null,
+            replacement.algorithm === 'argon2id' ? replacement.memoryKiB : null,
+            replacement.algorithm === 'argon2id' ? replacement.timeCost : null,
+            replacement.algorithm === 'argon2id' ? replacement.parallelism : null,
+            replacement.salt,
+            replacement.passwordHash,
+            timestamp,
+            row.userId,
+            credentialVersion,
+            record.algorithm,
+            record.salt,
+            record.passwordHash,
+          ],
+        },
+      ])
+      const version = upgraded[0]?.[0] as { credentialVersion?: number } | undefined
+      if (version?.credentialVersion === undefined) {
+        return { status: 'invalid_credentials' }
+      }
+      credentialVersion = version.credentialVersion
+    }
+    return {
+      status: 'authenticated',
+      principal: principal(row),
+      credentialVersion,
+    }
   },
 
   requestPasswordReset: async (presentedEmail, presentedClientKey) => {
@@ -560,15 +656,22 @@ const createPasswordAuthService = (
       },
       {
         query: `UPDATE user_passwords SET
-            algorithm = ?, iterations = ?, salt = ?, password_hash = ?, updated_at = ?
+            credential_version = credential_version + 1,
+            algorithm = ?, version = ?, iterations = ?, memory_kib = ?,
+            time_cost = ?, parallelism = ?, salt = ?, password_hash = ?, updated_at = ?
           WHERE user_id = (
             SELECT email.user_id FROM auth_tokens token
             JOIN user_emails email ON email.id = token.user_email_id
             WHERE token.selector = ? AND token.secret_hash = ? AND token.used_nonce = ?
-          ) RETURNING user_id AS userId`,
+          ) AND credential_version < 9007199254740991
+          RETURNING user_id AS userId`,
         bindings: [
           password.algorithm,
-          password.iterations,
+          password.algorithm === 'argon2id' ? password.version : null,
+          password.algorithm === 'pbkdf2-sha256' ? password.iterations : null,
+          password.algorithm === 'argon2id' ? password.memoryKiB : null,
+          password.algorithm === 'argon2id' ? password.timeCost : null,
+          password.algorithm === 'argon2id' ? password.parallelism : null,
           password.salt,
           password.passwordHash,
           timestamp,

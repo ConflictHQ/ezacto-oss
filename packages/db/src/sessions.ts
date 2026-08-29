@@ -30,7 +30,7 @@ export interface AuthenticatedSession {
 }
 
 export interface SessionStore {
-  issue(userId: number): Promise<IssuedSession>
+  issue(userId: number, credentialVersion?: number): Promise<IssuedSession>
   authenticate(token: string): Promise<AuthenticatedSession | null>
   list(userId: number): Promise<SessionMetadata[]>
   revoke(userId: number, sessionId: number): Promise<SessionMetadata | null>
@@ -38,6 +38,13 @@ export interface SessionStore {
     userId: number,
     reason?: Exclude<SessionRevocationReason, 'privilege_change'>,
   ): Promise<number>
+}
+
+export class SessionCredentialChangedError extends Error {
+  constructor() {
+    super('password credential changed before session issuance')
+    this.name = 'SessionCredentialChangedError'
+  }
 }
 
 export interface SessionStoreOptions {
@@ -207,9 +214,18 @@ const createSessionStore = (
   positiveTtl(idleTtlMs, 'idleTtlMs')
   positiveTtl(absoluteTtlMs, 'absoluteTtlMs')
 
-  const issue = async (userId: number): Promise<IssuedSession> => {
+  const issue = async (
+    userId: number,
+    credentialVersion?: number,
+  ): Promise<IssuedSession> => {
     if (!Number.isSafeInteger(userId) || userId < 1) {
       throw new RangeError('session user id must be a positive safe integer')
+    }
+    if (
+      credentialVersion !== undefined &&
+      (!Number.isSafeInteger(credentialVersion) || credentialVersion < 1)
+    ) {
+      throw new RangeError('session credential version must be a positive safe integer')
     }
     const timestamp = now()
     assertCanonicalTimestamp(timestamp)
@@ -231,8 +247,14 @@ const createSessionStore = (
                 idle_expires_at, absolute_expires_at, revoked_at,
                 revocation_reason, rotation_nonce, updated_at
               )
-              SELECT id, ?, ?, profile, manager_grants, ?, ?, ?, ?, NULL, NULL, NULL, ?
-              FROM users WHERE id = ? AND is_active = 1
+              SELECT user.id, ?, ?, user.profile, user.manager_grants,
+                ?, ?, ?, ?, NULL, NULL, NULL, ?
+              FROM users user WHERE user.id = ? AND user.is_active = 1
+                AND (? IS NULL OR EXISTS (
+                  SELECT 1 FROM user_passwords password
+                  WHERE password.user_id = user.id
+                    AND password.credential_version = ?
+                ))
               RETURNING ${rowColumns()}`,
             bindings: [
               material.selector,
@@ -243,11 +265,18 @@ const createSessionStore = (
               absoluteExpiresAt,
               timestamp,
               userId,
+              credentialVersion ?? null,
+              credentialVersion ?? null,
             ],
           },
         ])
         const row = rows[0]?.[0] as unknown as SessionRow | undefined
-        if (row === undefined) throw new Error('session user is unavailable or disabled')
+        if (row === undefined) {
+          if (credentialVersion !== undefined) {
+            throw new SessionCredentialChangedError()
+          }
+          throw new Error('session user is unavailable or disabled')
+        }
         return { token: material.token, session: metadata(row) }
       } catch (error) {
         if (attempt < 3 && isSelectorCollision(error)) continue

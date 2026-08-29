@@ -258,6 +258,17 @@ export const createApp = (services?: RuntimeServices) =>
               { 'cache-control': 'no-store' },
             )
           } catch (error) {
+            if (
+              error instanceof Error &&
+              error.name === 'PasswordDerivationOverloadedError'
+            ) {
+              context.header('retry-after', '1')
+              throw new ApiError({
+                status: 503,
+                code: 'service_unavailable',
+                message: 'Authentication is temporarily unavailable.',
+              })
+            }
             if (error instanceof InstanceOwnerPasswordConflictError) {
               throw new ApiError({
                 status: 409,

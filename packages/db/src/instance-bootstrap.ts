@@ -1,6 +1,7 @@
 import type BetterSqlite3 from 'better-sqlite3'
 import {
   apiScopes,
+  PasswordDerivationOverloadedError,
   hashPassword,
   validatePassword,
   verifyPassword,
@@ -60,8 +61,13 @@ interface PortableDatabase {
 
 interface OwnerPasswordRow {
   ownerEmail: string
-  algorithm: 'pbkdf2-sha256' | null
+  credentialVersion: number | null
+  algorithm: 'pbkdf2-sha256' | 'argon2id' | null
+  version: number | null
   iterations: number | null
+  memoryKiB: number | null
+  timeCost: number | null
+  parallelism: number | null
   salt: string | null
   passwordHash: string | null
 }
@@ -213,8 +219,13 @@ const translateConflict = (error: unknown): never => {
 
 const ownerPasswordLookup = `SELECT
     bootstrap.owner_email AS ownerEmail,
+    password.credential_version AS credentialVersion,
     password.algorithm,
+    password.version,
     password.iterations,
+    password.memory_kib AS memoryKiB,
+    password.time_cost AS timeCost,
+    password.parallelism,
     password.salt,
     password.password_hash AS passwordHash
   FROM instance_bootstrap bootstrap
@@ -241,9 +252,10 @@ const ownerPasswordLookup = `SELECT
     AND (token.expires_at IS NULL OR julianday(token.expires_at) > julianday(?))`
 
 const ownerPasswordInsert = `INSERT INTO user_passwords (
-    user_id, algorithm, iterations, salt, password_hash, created_at, updated_at
+    user_id, credential_version, algorithm, version, iterations, memory_kib, time_cost,
+    parallelism, salt, password_hash, created_at, updated_at
   ) SELECT
-    1, ?, ?, ?, ?, ?, ?
+    1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
   FROM instance_bootstrap bootstrap
   JOIN users user ON user.id = 1
   JOIN organization_owner owner ON owner.id = 1 AND owner.user_id = user.id
@@ -269,11 +281,48 @@ const ownerPasswordInsert = `INSERT INTO user_passwords (
   RETURNING user_id AS userId`
 
 const storedPassword = (row: OwnerPasswordRow): StoredPassword | null => {
-  const values = [row.algorithm, row.iterations, row.salt, row.passwordHash]
+  const values = [
+    row.algorithm,
+    row.credentialVersion,
+    row.version,
+    row.iterations,
+    row.memoryKiB,
+    row.timeCost,
+    row.parallelism,
+    row.salt,
+    row.passwordHash,
+  ]
   if (values.every((value) => value === null)) return null
+  if (row.algorithm === 'pbkdf2-sha256') {
+    if (
+      !Number.isSafeInteger(row.credentialVersion) ||
+      row.credentialVersion! < 1 ||
+      row.version !== null ||
+      row.iterations === null ||
+      row.memoryKiB !== null ||
+      row.timeCost !== null ||
+      row.parallelism !== null ||
+      row.salt === null ||
+      row.passwordHash === null
+    ) {
+      throw new InstanceOwnerPasswordConflictError()
+    }
+    return {
+      algorithm: row.algorithm,
+      iterations: row.iterations,
+      salt: row.salt,
+      passwordHash: row.passwordHash,
+    }
+  }
   if (
-    row.algorithm !== 'pbkdf2-sha256' ||
-    row.iterations === null ||
+    row.algorithm !== 'argon2id' ||
+    !Number.isSafeInteger(row.credentialVersion) ||
+    row.credentialVersion! < 1 ||
+    row.version === null ||
+    row.iterations !== null ||
+    row.memoryKiB === null ||
+    row.timeCost === null ||
+    row.parallelism === null ||
     row.salt === null ||
     row.passwordHash === null
   ) {
@@ -281,7 +330,10 @@ const storedPassword = (row: OwnerPasswordRow): StoredPassword | null => {
   }
   return {
     algorithm: row.algorithm,
-    iterations: row.iterations,
+    version: row.version,
+    memoryKiB: row.memoryKiB,
+    timeCost: row.timeCost,
+    parallelism: row.parallelism,
     salt: row.salt,
     passwordHash: row.passwordHash,
   }
@@ -298,7 +350,8 @@ const exactOwnerPasswordRetry = async (
   if (existing === null) throw new InstanceOwnerPasswordConflictError()
   try {
     if (await verifyPassword(password, existing)) return row
-  } catch {
+  } catch (error) {
+    if (error instanceof PasswordDerivationOverloadedError) throw error
     throw new InstanceOwnerPasswordConflictError()
   }
   throw new InstanceOwnerPasswordConflictError()
@@ -330,7 +383,11 @@ const enrollInstanceOwnerPassword = async (
         query: ownerPasswordInsert,
         bindings: [
           password.algorithm,
-          password.iterations,
+          password.algorithm === 'argon2id' ? password.version : null,
+          password.algorithm === 'pbkdf2-sha256' ? password.iterations : null,
+          password.algorithm === 'argon2id' ? password.memoryKiB : null,
+          password.algorithm === 'argon2id' ? password.timeCost : null,
+          password.algorithm === 'argon2id' ? password.parallelism : null,
           password.salt,
           password.passwordHash,
           timestamp,

@@ -34,7 +34,7 @@ const createHarness = () => {
     }),
     signIn: vi.fn(async ({ password }) =>
       password === 'correct password'
-        ? { status: 'authenticated' as const, principal }
+        ? { status: 'authenticated' as const, principal, credentialVersion: 7 }
         : password === 'pending password'
           ? { status: 'verification_required' as const }
           : { status: 'invalid_credentials' as const },
@@ -135,7 +135,7 @@ describe('password authentication routes', () => {
   })
 
   it('[api] maps authenticated, unverified, and invalid sign-in outcomes', async () => {
-    const { app } = createHarness()
+    const { app, sessions } = createHarness()
     const authenticated = await post(app, '/auth/sign-in', {
       email: 'owner@example.test',
       password: 'correct password',
@@ -152,6 +152,7 @@ describe('password authentication routes', () => {
         manager_grants: [],
       },
     })
+    expect(sessions.issue).toHaveBeenCalledWith(1, 7)
 
     const pending = await post(app, '/auth/sign-in', {
       email: 'owner@example.test',
@@ -170,6 +171,48 @@ describe('password authentication routes', () => {
     expect(await invalid.json()).toMatchObject({
       error: { code: 'invalid_credentials' },
     })
+  })
+
+  it('[security] rejects a session when the verified credential epoch changed', async () => {
+    const { app, sessions } = createHarness()
+    const changed = new Error('changed')
+    changed.name = 'SessionCredentialChangedError'
+    sessions.issue.mockRejectedValueOnce(changed)
+
+    const response = await post(app, '/auth/sign-in', {
+      email: 'owner@example.test',
+      password: 'correct password',
+    })
+    expect(response.status).toBe(401)
+    expect(response.headers.get('set-cookie')).toBeNull()
+    expect(await response.json()).toMatchObject({
+      error: { code: 'invalid_credentials' },
+    })
+  })
+
+  it('[security] makes derivation overload non-enumerating', async () => {
+    const responses: Response[] = []
+    for (const email of ['owner@example.test', 'unknown@example.test']) {
+      const { app, service } = createHarness()
+      const overloaded = new Error('overloaded')
+      overloaded.name = 'PasswordDerivationOverloadedError'
+      vi.mocked(service.signIn).mockRejectedValueOnce(overloaded)
+      responses.push(
+        await post(app, '/auth/sign-in', {
+          email,
+          password: 'correct password',
+        }),
+      )
+    }
+
+    expect(responses.map((response) => response.status)).toEqual([503, 503])
+    const bodies = (await Promise.all(
+      responses.map((response) => response.json()),
+    )) as Array<{ error: { code: string } }>
+    expect(bodies.map((body) => body.error.code)).toEqual([
+      'internal_error',
+      'internal_error',
+    ])
   })
 
   it('[api] makes used tokens 401 and rate limits 429', async () => {
