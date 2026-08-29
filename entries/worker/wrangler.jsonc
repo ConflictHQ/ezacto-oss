@@ -12,22 +12,40 @@
 
   // Two environments, on purpose: our books, and the one everyone else sees.
   // No per-branch preview workers — deploy targets are hosts we own and name.
-  // The runtime reads a D1 binding named DB. API_CURSOR_SIGNING_KEY and AWS
-  // credentials are Worker secrets; SES_REGION, SES_FROM, and the optional
-  // SES_CONFIGURATION_SET are deployment vars. Environment-specific database
-  // ids and Queue bindings are added only after actual resources are provisioned;
-  // they are never fabricated in tracked config.
+  // The runtime reads D1 as DB and the mail producer as EMAIL_QUEUE.
+  // API_CURSOR_SIGNING_KEY and AWS credentials are Worker secrets; SES_REGION,
+  // SES_FROM, and the optional SES_CONFIGURATION_SET are deployment vars.
+  // Queue names are the provisioning contract; provision-queues.yml converges
+  // the resources before this configuration may be deployed.
   "env": {
     // CONFLICT's own instance — the dogfood deployment, and the OSS gate.
     "prod": {
       "name": "ezacto",
       "routes": [{ "pattern": "app.example.com", "custom_domain": true }],
-      "vars": { "ENVIRONMENT": "prod", "RELEASE": "unknown" },
+      "vars": {
+        "ENVIRONMENT": "prod",
+        "RELEASE": "unknown",
+        "APP_BASE_URL": "https://app.example.com"
+      },
       "d1_databases": [{
         "binding": "DB",
         "database_name": "ezacto-prod",
         "database_id": "00000000-0000-0000-0000-000000000000"
       }],
+      "queues": {
+        "producers": [{
+          "binding": "EMAIL_QUEUE",
+          "queue": "ezacto-prod-email"
+        }],
+        "consumers": [{
+          "queue": "ezacto-prod-email",
+          "max_batch_size": 1,
+          "max_batch_timeout": 1,
+          "max_retries": 4,
+          "dead_letter_queue": "ezacto-prod-email-dlq",
+          "max_concurrency": 1
+        }]
+      },
       "workers_dev": false,
       "observability": { "enabled": true }
     },
@@ -36,12 +54,30 @@
     "dev": {
       "name": "ezacto-dev",
       "routes": [{ "pattern": "ezacto.io", "custom_domain": true }],
-      "vars": { "ENVIRONMENT": "dev", "RELEASE": "unknown" },
+      "vars": {
+        "ENVIRONMENT": "dev",
+        "RELEASE": "unknown",
+        "APP_BASE_URL": "https://ezacto.io"
+      },
       "d1_databases": [{
         "binding": "DB",
         "database_name": "ezacto-dev",
         "database_id": "00000000-0000-0000-0000-000000000000"
       }],
+      "queues": {
+        "producers": [{
+          "binding": "EMAIL_QUEUE",
+          "queue": "ezacto-dev-email"
+        }],
+        "consumers": [{
+          "queue": "ezacto-dev-email",
+          "max_batch_size": 1,
+          "max_batch_timeout": 1,
+          "max_retries": 4,
+          "dead_letter_queue": "ezacto-dev-email-dlq",
+          "max_concurrency": 1
+        }]
+      },
       "workers_dev": false,
       "observability": { "enabled": true }
     }

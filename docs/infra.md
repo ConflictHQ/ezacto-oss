@@ -47,11 +47,12 @@ secrets; every new env var lands in `.dev.vars.example` in the same PR that
 reads it.
 
 CI holds two repository-wide Cloudflare credentials. They are consumed only by
-`deploy.yml` and the manual `provision-d1.yml` workflow:
+`deploy.yml` and the manual `provision-d1.yml` / `provision-queues.yml`
+workflows:
 
 | Secret | What |
 | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | scoped deploy/provision token — account: Workers Scripts Write, Workers Observability Write, Account Settings Read, **D1 Edit**; zone: Zone Read, Workers Routes Write, DNS Write, **limited to `example.com` and `ezacto.io`** |
+| `CLOUDFLARE_API_TOKEN` | scoped deploy/provision token — account: Workers Scripts Write, Workers Observability Write, Account Settings Read, **D1 Edit, Queues Read, Queues Write**; zone: Zone Read, Workers Routes Write, DNS Write, **limited to `example.com` and `ezacto.io`** |
 | `CLOUDFLARE_ACCOUNT_ID` | CONFLICT LLC account id (not secret; a secret only to keep it out of the tracked config) |
 
 Each GitHub environment (`dev`, `prod`) also holds its own
@@ -142,6 +143,39 @@ ID for each environment, and installs that environment's cursor-signing secret.
 Commit the reported IDs under the matching `env.dev` and `env.prod`
 `d1_databases` entries in `entries/worker/wrangler.jsonc`. The normal deployment
 then applies the binding and its smoke gate proves the exact release is live.
+
+## Queue provisioning
+
+Run the manual `provision Queues` workflow once for each environment before its
+tracked Queue binding is deployed. The workflow reads the names from
+`entries/worker/wrangler.jsonc`, reuses an exact-name match, creates a missing
+resource, and fails closed on duplicates. It provisions both the delivery Queue
+and its dead-letter Queue:
+
+| Environment | Delivery Queue      | Dead-letter Queue       |
+| ----------- | ------------------- | ----------------------- |
+| `dev`       | `ezacto-dev-email`  | `ezacto-dev-email-dlq`  |
+| `prod`      | `ezacto-prod-email` | `ezacto-prod-email-dlq` |
+
+The same Worker is the `EMAIL_QUEUE` producer and push consumer. The consumer
+accepts one message per batch with one concurrent invocation while SES sandbox
+limits are in play. Four Queue retries plus the initial delivery match the
+mailer's five-attempt durable provider policy; the consumer supplies the
+per-message `60 / 300 / 900 / 3600` second backoff. Provider exhaustion is
+persisted and acknowledged, while an unexpected consumer failure can reach the
+dead-letter Queue instead of being discarded.
+
+Every normal deploy checks that both resources exist before changing Worker
+secrets. After `wrangler deploy`, it reads Cloudflare's Queue API and verifies
+the exact Worker producer, consumer, dead-letter target, batching, concurrency,
+and retry settings before the host smoke test can pass. `APP_BASE_URL` is a
+tracked per-environment Worker variable so a configured Queue and SES provider
+actually enable queued authentication mail.
+
+Resource provisioning alone does not satisfy live mail acceptance. Each GitHub
+environment still needs its SES credentials and static variables described
+above; the sender and any sandbox recipient must be verified in AWS before a
+real password-reset delivery can be accepted.
 
 ## Instance bootstrap
 
