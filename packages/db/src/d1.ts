@@ -59,9 +59,13 @@ export {
 } from './sessions.js'
 export {
   bootstrapInstanceD1,
+  enrollInstanceOwnerPasswordD1,
   InstanceBootstrapConflictError,
+  InstanceOwnerPasswordConflictError,
   type InstanceBootstrapInput,
   type InstanceBootstrapResult,
+  type InstanceOwnerPasswordInput,
+  type InstanceOwnerPasswordResult,
 } from './instance-bootstrap.js'
 export { migrateD1 } from './migrate.js'
 export {
