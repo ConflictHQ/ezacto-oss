@@ -146,8 +146,8 @@ Key mappings (details in domain-model §7):
   a queued, checkpointed job consuming the snapshot from R2; local SQLite loads have
   no such ceiling and are the default dev path.
 - 30 s query duration ⇒ no mega-transactions; chunk per-resource with a
-  load-progress table so a resumed load is idempotent. Invoice and invoice-message
-  imports must never use `INSERT OR REPLACE` or `ON CONFLICT DO UPDATE`: their
+  load-progress table so a resumed load is idempotent. Invoice, estimate, and their
+  message imports must never use `INSERT OR REPLACE` or `ON CONFLICT DO UPDATE`: their
   identity-collision guards intentionally reject both shortcuts because replacement
   can delete children, rotate a native `client_key`, or bypass immutable provenance.
   In one container transaction or D1 batch, issue an `UPDATE ... WHERE harvest_id = ?`
@@ -209,7 +209,7 @@ the gate is zero UNEXPLAINED.
 | **Estimates/approval/activity-log modules disabled** on our account | Nothing to extract; extractor skips per company feature flags and says so. |
 | Report-only fields (utilization) | Derived, not stored — recomputed by ezacto; reconciled in A. |
 | Forecast | Out of scope (research §14). |
-| `statement_key`/`client_key` secrets | **Not imported.** Regenerated — importing another system's public-URL bearer tokens imports its leak surface. Old Harvest links die at cutover; release note item. |
+| `statement_key` / invoice and estimate `client_key` secrets | **Not imported.** Regenerated — importing another system's public-URL bearer tokens imports its leak surface. Old Harvest links die at cutover; release note item. |
 | Avatars | Best-effort download; failures cosmetic. |
 
 ## 8. Milestones

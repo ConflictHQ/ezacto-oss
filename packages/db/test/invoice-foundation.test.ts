@@ -281,10 +281,6 @@ for (const [runtime, factory] of factories) {
       )
       const forbiddenTables = [
         'receipts',
-        'estimates',
-        'estimate_line_items',
-        'estimate_item_categories',
-        'estimate_messages',
         'file_objects',
         'attachments',
       ]
@@ -343,6 +339,7 @@ for (const [runtime, factory] of factories) {
         'close_write_off_cents',
         'retainer_id',
         'recurring_invoice_id',
+        'estimate_id',
       ])
       expect(
         (await db.rows<{ name: string }>(`PRAGMA table_info(invoice_item_categories)`)).map(
@@ -465,6 +462,7 @@ for (const [runtime, factory] of factories) {
             to: 'id',
             on_delete: 'RESTRICT',
           },
+          { from: 'estimate_id', table: 'estimates', to: 'id', on_delete: 'RESTRICT' },
         ]),
       )
       expect(await foreignKeys('invoice_line_items')).toEqual(
@@ -477,7 +475,6 @@ for (const [runtime, factory] of factories) {
         { from: 'invoice_id', table: 'invoices', to: 'id', on_delete: 'CASCADE' },
       ])
       for (const forbidden of [
-        'estimate_id',
         'tax_pct',
         'tax2_pct',
         'discount_pct',
@@ -635,6 +632,7 @@ for (const [runtime, factory] of factories) {
         '0015_oidc_transactions',
         '0016_email_log',
         '0017_email_delivery_details',
+        '0018_estimates',
       ])
       expect(
         firstLedger.slice(0, 4).every(({ applied_at: appliedAt }) => appliedAt === timestamp),

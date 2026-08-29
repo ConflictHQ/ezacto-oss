@@ -457,6 +457,7 @@ for (const [runtime, factory] of factories) {
         '0015_oidc_transactions',
         '0016_email_log',
         '0017_email_delivery_details',
+        '0018_estimates',
       ])
       expect(firstLedger.slice(0, 3).map(({ applied_at: appliedAt }) => appliedAt)).toEqual([
         timestamp,
@@ -518,6 +519,7 @@ for (const [runtime, factory] of factories) {
         { id: '0015_oidc_transactions' },
         { id: '0016_email_log' },
         { id: '0017_email_delivery_details' },
+        { id: '0018_estimates' },
       ])
     })
   })

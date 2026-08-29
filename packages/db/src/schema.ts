@@ -56,6 +56,16 @@ export interface InvoiceReminderPolicy {
   every_days: number
 }
 
+export interface EstimateRecipient {
+  name: string
+  email: string
+}
+
+export type EstimateMessageEventType =
+  'send' | 'accept' | 'decline' | 're-open' | 'view' | 'invoice'
+
+export type EstimateDeliveryStatus = 'queued' | 'sent' | 'bounced' | 'complained' | 'failed'
+
 export const organizations = sqliteTable(
   'organizations',
   {
@@ -865,6 +875,200 @@ export const recurringInvoices = sqliteTable(
   ],
 )
 
+export const estimates = sqliteTable(
+  'estimates',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: integer('harvest_id'),
+    clientId: integer('client_id')
+      .notNull()
+      .references(() => clients.id, { onDelete: 'restrict' }),
+    createdByUserId: integer('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    sourceCreatorId: integer('source_creator_id'),
+    sourceCreatorName: text('source_creator_name'),
+    number: text('number').notNull(),
+    purchaseOrder: text('purchase_order'),
+    subject: text('subject'),
+    notes: text('notes'),
+    currency: text('currency').notNull(),
+    state: text('state', { enum: ['draft', 'sent', 'accepted', 'declined'] })
+      .notNull()
+      .default('draft'),
+    version: integer('version').notNull().default(0),
+    issueDate: text('issue_date').notNull(),
+    sentAt: text('sent_at'),
+    acceptedAt: text('accepted_at'),
+    declinedAt: text('declined_at'),
+    clientKey: text('client_key')
+      .notNull()
+      .default(sql`lower(hex(randomblob(32)))`),
+    taxRatePpm: integer('tax_rate_ppm'),
+    tax2RatePpm: integer('tax2_rate_ppm'),
+    discountRatePpm: integer('discount_rate_ppm'),
+    amountCents: integer('amount_cents').notNull().default(0),
+    taxAmountCents: integer('tax_amount_cents').notNull().default(0),
+    tax2AmountCents: integer('tax2_amount_cents').notNull().default(0),
+    discountAmountCents: integer('discount_amount_cents').notNull().default(0),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('estimates_harvest_id_unique').on(table.harvestId),
+    uniqueIndex('estimates_number_unique').on(table.number),
+    uniqueIndex('estimates_client_key_unique').on(table.clientKey),
+    index('estimates_client_id').on(table.clientId),
+    index('estimates_created_by_user_id').on(table.createdByUserId),
+    check('estimates_number_nonblank', nonBlankText(table.number)),
+    check(
+      'estimates_currency_canonical',
+      sql`length(${table.currency}) = 3 and ${table.currency} = upper(${table.currency})
+        and ${table.currency} not glob '*[^A-Z]*'`,
+    ),
+    check(
+      'estimates_creator_provenance_pair',
+      sql`(${table.sourceCreatorId} is null) = (${table.sourceCreatorName} is null)`,
+    ),
+    check('estimates_issue_date_canonical', sql`date(${table.issueDate}) is ${table.issueDate}`),
+    check('estimates_sent_at_canonical', nullableCanonicalTimestamp(table.sentAt)),
+    check('estimates_accepted_at_canonical', nullableCanonicalTimestamp(table.acceptedAt)),
+    check('estimates_declined_at_canonical', nullableCanonicalTimestamp(table.declinedAt)),
+    check('estimates_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('estimates_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+    check('estimates_version_safe_integer', sql`${table.version} between 0 and 9007199254740991`),
+    check(
+      'estimates_tax_rate_ppm_range',
+      sql`${table.taxRatePpm} is null or ${table.taxRatePpm} between 0 and 1000000`,
+    ),
+    check(
+      'estimates_tax2_rate_ppm_range',
+      sql`${table.tax2RatePpm} is null or ${table.tax2RatePpm} between 0 and 1000000`,
+    ),
+    check(
+      'estimates_discount_rate_ppm_range',
+      sql`${table.discountRatePpm} is null or ${table.discountRatePpm} between 0 and 1000000`,
+    ),
+    check('estimates_amount_bound', sql`abs(${table.amountCents}) <= 9000000000000`),
+    check('estimates_tax_amount_bound', sql`abs(${table.taxAmountCents}) <= 9000000000000`),
+    check('estimates_tax2_amount_bound', sql`abs(${table.tax2AmountCents}) <= 9000000000000`),
+    check(
+      'estimates_discount_amount_bound',
+      sql`abs(${table.discountAmountCents}) <= 9000000000000`,
+    ),
+  ],
+)
+
+export const estimateItemCategories = sqliteTable(
+  'estimate_item_categories',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: integer('harvest_id'),
+    name: text('name').notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('estimate_item_categories_harvest_id_unique').on(table.harvestId),
+    uniqueIndex('estimate_item_categories_name_unique').on(table.name),
+    check('estimate_item_categories_name_nonblank', nonBlankText(table.name)),
+    check('estimate_item_categories_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('estimate_item_categories_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+  ],
+)
+
+export const estimateLineItems = sqliteTable(
+  'estimate_line_items',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: integer('harvest_id'),
+    estimateId: integer('estimate_id')
+      .notNull()
+      .references(() => estimates.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    kind: text('kind').notNull(),
+    description: text('description'),
+    quantity: real('quantity').notNull(),
+    unitPriceCents: integer('unit_price_cents').notNull(),
+    amountCents: integer('amount_cents').notNull(),
+    taxed: integer('taxed', { mode: 'boolean' }).notNull().default(false),
+    taxed2: integer('taxed2', { mode: 'boolean' }).notNull().default(false),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('estimate_line_items_harvest_id_unique').on(table.harvestId),
+    uniqueIndex('estimate_line_items_estimate_position_unique').on(
+      table.estimateId,
+      table.position,
+    ),
+    index('estimate_line_items_estimate_id').on(table.estimateId),
+    check(
+      'estimate_line_items_position_safe_integer',
+      sql`${table.position} between 0 and 9007199254740991`,
+    ),
+    check('estimate_line_items_kind_nonblank', nonBlankText(table.kind)),
+    check(
+      'estimate_line_items_quantity_finite',
+      sql`${table.quantity} between -9007199254740991 and 9007199254740991`,
+    ),
+    check(
+      'estimate_line_items_unit_price_bound',
+      sql`abs(${table.unitPriceCents}) <= 9000000000000`,
+    ),
+    check('estimate_line_items_amount_bound', sql`abs(${table.amountCents}) <= 9000000000000`),
+    check('estimate_line_items_taxed_boolean', sql`${table.taxed} in (0, 1)`),
+    check('estimate_line_items_taxed2_boolean', sql`${table.taxed2} in (0, 1)`),
+    check('estimate_line_items_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('estimate_line_items_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+  ],
+)
+
+export const estimateMessages = sqliteTable(
+  'estimate_messages',
+  {
+    id: integer('id').primaryKey(),
+    harvestId: integer('harvest_id'),
+    estimateId: integer('estimate_id')
+      .notNull()
+      .references(() => estimates.id, { onDelete: 'cascade' }),
+    sentBy: text('sent_by'),
+    sentByEmail: text('sent_by_email'),
+    sentFrom: text('sent_from'),
+    sentFromEmail: text('sent_from_email'),
+    recipients: text('recipients', { mode: 'json' })
+      .$type<EstimateRecipient[]>()
+      .notNull()
+      .default([]),
+    subject: text('subject'),
+    body: text('body'),
+    sendMeACopy: integer('send_me_a_copy', { mode: 'boolean' }).notNull().default(false),
+    eventType: text('event_type', {
+      enum: ['send', 'accept', 'decline', 're-open', 'view', 'invoice'],
+    }),
+    deliveryStatus: text('delivery_status', {
+      enum: ['queued', 'sent', 'bounced', 'complained', 'failed'],
+    }),
+    providerMessageId: text('provider_message_id'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('estimate_messages_harvest_id_unique').on(table.harvestId),
+    index('estimate_messages_estimate_created_id').on(table.estimateId, table.createdAt, table.id),
+    index('estimate_messages_provider_message_id')
+      .on(table.providerMessageId)
+      .where(sql`${table.providerMessageId} is not null`),
+    check(
+      'estimate_messages_recipients_json',
+      sql`json_valid(${table.recipients}) and json_type(${table.recipients}) = 'array'`,
+    ),
+    check(
+      'estimate_messages_send_recipients',
+      sql`${table.eventType} is not 'send' or json_array_length(${table.recipients}) > 0`,
+    ),
+    check('estimate_messages_copy_boolean', sql`${table.sendMeACopy} in (0, 1)`),
+    check('estimate_messages_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('estimate_messages_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+  ],
+)
+
 export const invoices = sqliteTable(
   'invoices',
   {
@@ -912,6 +1116,7 @@ export const invoices = sqliteTable(
     recurringInvoiceId: integer('recurring_invoice_id').references(() => recurringInvoices.id, {
       onDelete: 'restrict',
     }),
+    estimateId: integer('estimate_id').references(() => estimates.id, { onDelete: 'restrict' }),
     reminderPolicy: text('reminder_policy', { mode: 'json' }).$type<InvoiceReminderPolicy>(),
     taxRatePpm: integer('tax_rate_ppm'),
     tax2RatePpm: integer('tax2_rate_ppm'),
@@ -947,6 +1152,7 @@ export const invoices = sqliteTable(
     index('invoices_project_id').on(table.projectId),
     index('invoices_retainer_id').on(table.retainerId),
     index('invoices_recurring_invoice_id').on(table.recurringInvoiceId),
+    index('invoices_estimate_id').on(table.estimateId),
     index('invoices_created_by_user_id').on(table.createdByUserId),
     check(
       'invoices_reminder_policy_json',
