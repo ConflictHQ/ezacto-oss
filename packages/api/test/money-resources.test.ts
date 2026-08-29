@@ -461,9 +461,9 @@ for (const [runtime, factory] of factories) {
       return active;
     };
 
-    it("[db] returns self-consistent invoice and estimate header/line snapshots", async () => {
-      const invoice = await setup(undefined, "invoice");
-      expect(await invoice.service.getInvoice(1)).toMatchObject({
+    it("[db] returns a self-consistent invoice header/line snapshot", async () => {
+      const test = await setup(undefined, "invoice");
+      expect(await test.service.getInvoice(1)).toMatchObject({
         id: 1,
         version: 1,
         amount_cents: 101,
@@ -471,10 +471,11 @@ for (const [runtime, factory] of factories) {
         updated_at: secondTime,
         line_items: [{ id: 777001, amount_cents: 101, updated_at: secondTime }],
       });
-      await invoice.database.close();
+    });
 
-      const estimate = await setup(undefined, "estimate");
-      expect(await estimate.service.getEstimate(12)).toMatchObject({
+    it("[db] returns a self-consistent estimate header/line snapshot", async () => {
+      const test = await setup(undefined, "estimate");
+      expect(await test.service.getEstimate(12)).toMatchObject({
         id: 12,
         version: 1,
         amount_cents: 200,
