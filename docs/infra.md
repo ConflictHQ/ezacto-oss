@@ -47,13 +47,20 @@ secrets; every new env var lands in `.dev.vars.example` in the same PR that
 reads it.
 
 CI holds two repository-wide Cloudflare credentials. They are consumed only by
-`deploy.yml` and the manual `provision-d1.yml` / `provision-queues.yml`
-workflows:
+`deploy.yml` and the manual `provision-d1.yml` / `provision-queues.yml` /
+`provision-r2.yml` workflows:
 
 | Secret | What |
 | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | scoped deploy/provision token — account: Workers Scripts Write, Workers Observability Write, Account Settings Read, **D1 Edit**; zone: Zone Read, Workers Routes Write, DNS Write, **limited to `example.com` and `ezacto.io`** |
+| `CLOUDFLARE_API_TOKEN` | scoped deploy/provision token — account: Workers Scripts Write, Workers Observability Write, Account Settings Read, **D1 Edit**, **Workers R2 Storage Edit**; zone: Zone Read, Workers Routes Write, DNS Write, **limited to `example.com` and `ezacto.io`** |
 | `CLOUDFLARE_ACCOUNT_ID` | CONFLICT LLC account id (not secret; a secret only to keep it out of the tracked config) |
+
+R2 bucket discovery and creation use Cloudflare's account REST API. In the API
+token editor, grant **Account > Workers R2 Storage > Edit** and scope it to the
+same account named by `CLOUDFLARE_ACCOUNT_ID`. A Worker R2 binding does not by
+itself grant the deployment token permission to list or create buckets. The
+workflow prints only this permission requirement on HTTP 403; it never prints
+the token, account ID, or Cloudflare response body.
 
 Each GitHub environment (`dev`, `prod`) also holds its own
 `API_CURSOR_SIGNING_KEY`: canonical unpadded base64url for exactly 32 random
