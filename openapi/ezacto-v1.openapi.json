@@ -7799,6 +7799,16 @@
         },
         "x-ezacto-runtime-path": "/api/v1/retainers",
         "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -8330,6 +8340,16 @@
         },
         "x-ezacto-runtime-path": "/api/v1/recurring-invoices",
         "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -8680,6 +8700,17 @@
               "type": "integer",
               "minimum": 1
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
           }
         ],
         "requestBody": {
@@ -8982,6 +9013,17 @@
             "schema": {
               "type": "integer",
               "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
             }
           }
         ],
@@ -9286,6 +9328,17 @@
               "type": "integer",
               "minimum": 1
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
           }
         ],
         "requestBody": {
@@ -9589,6 +9642,17 @@
               "type": "integer",
               "minimum": 1
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
           }
         ],
         "requestBody": {
@@ -9891,6 +9955,17 @@
             "schema": {
               "type": "integer",
               "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
             }
           }
         ],
@@ -10536,6 +10611,24 @@
           },
           "links": {
             "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceReminderPolicy": {
+        "type": "object",
+        "required": [
+          "first_after_days",
+          "every_days"
+        ],
+        "properties": {
+          "first_after_days": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "every_days": {
+            "type": "integer",
+            "minimum": 1
           }
         },
         "additionalProperties": false
@@ -12642,8 +12735,7 @@
           "reminder_policy": {
             "anyOf": [
               {
-                "type": "object",
-                "additionalProperties": true
+                "$ref": "#/components/schemas/InvoiceReminderPolicy"
               },
               {
                 "type": "null"
@@ -13419,7 +13511,8 @@
           "number": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 255
+            "maxLength": 255,
+            "pattern": "\\S"
           },
           "issue_date": {
             "type": "string",
@@ -13828,8 +13921,7 @@
           "reminder_policy": {
             "anyOf": [
               {
-                "type": "object",
-                "additionalProperties": true
+                "$ref": "#/components/schemas/InvoiceReminderPolicy"
               },
               {
                 "type": "null"
@@ -14532,116 +14624,168 @@
         "additionalProperties": false
       },
       "InvoicePaymentInput": {
-        "type": "object",
-        "required": [
-          "expected_version",
-          "amount_cents",
-          "currency"
-        ],
-        "properties": {
-          "expected_version": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "amount_cents": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9000000000000
-          },
-          "currency": {
-            "type": "string",
-            "pattern": "^[A-Z]{3}$"
-          },
-          "paid_at": {
-            "anyOf": [
-              {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "expected_version",
+              "amount_cents",
+              "currency",
+              "paid_at"
+            ],
+            "properties": {
+              "expected_version": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "amount_cents": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9000000000000
+              },
+              "currency": {
+                "type": "string",
+                "pattern": "^[A-Z]{3}$"
+              },
+              "paid_at": {
                 "type": "string",
                 "format": "date-time"
               },
-              {
-                "type": "null"
+              "notes": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
-            ]
+            },
+            "additionalProperties": false
           },
-          "paid_date": {
-            "anyOf": [
-              {
+          {
+            "type": "object",
+            "required": [
+              "expected_version",
+              "amount_cents",
+              "currency",
+              "paid_date"
+            ],
+            "properties": {
+              "expected_version": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "amount_cents": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9000000000000
+              },
+              "currency": {
+                "type": "string",
+                "pattern": "^[A-Z]{3}$"
+              },
+              "paid_date": {
                 "type": "string",
                 "format": "date"
               },
-              {
-                "type": "null"
+              "notes": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
-            ]
-          },
-          "notes": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            },
+            "additionalProperties": false
           }
-        },
-        "additionalProperties": false
+        ]
       },
       "InvoicePaymentUpdateInput": {
-        "type": "object",
-        "required": [
-          "expected_version",
-          "expected_updated_at",
-          "amount_cents"
-        ],
-        "properties": {
-          "expected_version": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "expected_updated_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "amount_cents": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9000000000000
-          },
-          "paid_at": {
-            "anyOf": [
-              {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "expected_version",
+              "expected_updated_at",
+              "amount_cents",
+              "paid_at"
+            ],
+            "properties": {
+              "expected_version": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "expected_updated_at": {
                 "type": "string",
                 "format": "date-time"
               },
-              {
-                "type": "null"
+              "amount_cents": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9000000000000
+              },
+              "paid_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "notes": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
-            ]
+            },
+            "additionalProperties": false
           },
-          "paid_date": {
-            "anyOf": [
-              {
+          {
+            "type": "object",
+            "required": [
+              "expected_version",
+              "expected_updated_at",
+              "amount_cents",
+              "paid_date"
+            ],
+            "properties": {
+              "expected_version": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "expected_updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "amount_cents": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9000000000000
+              },
+              "paid_date": {
                 "type": "string",
                 "format": "date"
               },
-              {
-                "type": "null"
+              "notes": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
-            ]
-          },
-          "notes": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            },
+            "additionalProperties": false
           }
-        },
-        "additionalProperties": false
+        ]
       },
       "Retainer": {
         "type": "object",
@@ -14846,133 +14990,272 @@
         "additionalProperties": false
       },
       "RetainerInput": {
-        "type": "object",
-        "required": [
-          "denomination"
-        ],
-        "properties": {
-          "client_id": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "denomination",
+              "amount_cents"
+            ],
+            "properties": {
+              "client_id": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "project_id": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1
+              "project_id": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "denomination": {
-            "type": "string",
-            "enum": [
-              "money",
-              "hours"
-            ]
-          },
-          "amount_cents": {
-            "anyOf": [
-              {
+              "denomination": {
+                "const": "money"
+              },
+              "amount_cents": {
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9000000000000
               },
-              {
-                "type": "null"
+              "period": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "rollover": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "carry",
+                      "expire",
+                      "cap"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expires_at": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "on_exhaustion": {
+                "type": "string",
+                "enum": [
+                  "block",
+                  "warn",
+                  "overflow"
+                ]
               }
-            ]
+            },
+            "additionalProperties": false
           },
-          "seconds": {
-            "anyOf": [
-              {
+          {
+            "type": "object",
+            "required": [
+              "denomination",
+              "seconds"
+            ],
+            "properties": {
+              "client_id": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "project_id": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "denomination": {
+                "const": "hours"
+              },
+              "seconds": {
                 "type": "integer",
                 "minimum": 0
               },
-              {
-                "type": "null"
+              "period": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "rollover": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "carry",
+                      "expire",
+                      "cap"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expires_at": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "on_exhaustion": {
+                "type": "string",
+                "enum": [
+                  "block",
+                  "warn",
+                  "overflow"
+                ]
               }
-            ]
+            },
+            "additionalProperties": false
           },
-          "locked_rate_cents": {
-            "anyOf": [
-              {
+          {
+            "type": "object",
+            "required": [
+              "denomination",
+              "seconds",
+              "locked_rate_cents",
+              "rate_locked_at"
+            ],
+            "properties": {
+              "client_id": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "project_id": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "denomination": {
+                "const": "hours"
+              },
+              "seconds": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "locked_rate_cents": {
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9000000000000
               },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "rate_locked_at": {
-            "anyOf": [
-              {
+              "rate_locked_at": {
                 "type": "string",
                 "format": "date-time"
               },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "period": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 64
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "rollover": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "carry",
-                  "expire",
-                  "cap"
+              "period": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  {
+                    "type": "null"
+                  }
                 ]
               },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "expires_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date"
+              "rollover": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "carry",
+                      "expire",
+                      "cap"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
-              {
-                "type": "null"
+              "expires_at": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "on_exhaustion": {
+                "type": "string",
+                "enum": [
+                  "block",
+                  "warn",
+                  "overflow"
+                ]
               }
-            ]
-          },
-          "on_exhaustion": {
-            "type": "string",
-            "enum": [
-              "block",
-              "warn",
-              "overflow"
-            ]
+            },
+            "additionalProperties": false
           }
-        },
-        "additionalProperties": false
+        ]
       },
       "RetainerPatch": {
         "type": "object",
@@ -15166,95 +15449,430 @@
         "additionalProperties": false
       },
       "RetainerLedgerInput": {
-        "type": "object",
-        "required": [
-          "kind",
-          "occurred_on"
-        ],
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "deposit",
-              "drawdown",
-              "expiry",
-              "reset",
-              "adjustment"
-            ]
-          },
-          "invoice_id": {
-            "anyOf": [
-              {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "amount_cents",
+              "occurred_on",
+              "invoice_id"
+            ],
+            "properties": {
+              "kind": {
+                "const": "deposit"
+              },
+              "invoice_id": {
                 "type": "integer",
                 "minimum": 1
               },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "amount_cents": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9000000000000
-          },
-          "seconds": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "occurred_on": {
-            "type": "string",
-            "format": "date"
-          },
-          "notes": {
-            "anyOf": [
-              {
-                "type": "string"
+              "amount_cents": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9000000000000
               },
-              {
-                "type": "null"
+              "occurred_on": {
+                "type": "string",
+                "format": "date"
+              },
+              "notes": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
-            ]
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "seconds",
+              "occurred_on",
+              "invoice_id"
+            ],
+            "properties": {
+              "kind": {
+                "const": "deposit"
+              },
+              "invoice_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "seconds": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "occurred_on": {
+                "type": "string",
+                "format": "date"
+              },
+              "notes": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "amount_cents",
+              "occurred_on",
+              "invoice_id"
+            ],
+            "properties": {
+              "kind": {
+                "const": "drawdown"
+              },
+              "invoice_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "amount_cents": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9000000000000
+              },
+              "occurred_on": {
+                "type": "string",
+                "format": "date"
+              },
+              "notes": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "seconds",
+              "occurred_on",
+              "invoice_id"
+            ],
+            "properties": {
+              "kind": {
+                "const": "drawdown"
+              },
+              "invoice_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "seconds": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "occurred_on": {
+                "type": "string",
+                "format": "date"
+              },
+              "notes": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "amount_cents",
+              "occurred_on"
+            ],
+            "properties": {
+              "kind": {
+                "const": "expiry"
+              },
+              "amount_cents": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9000000000000
+              },
+              "occurred_on": {
+                "type": "string",
+                "format": "date"
+              },
+              "notes": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "seconds",
+              "occurred_on"
+            ],
+            "properties": {
+              "kind": {
+                "const": "expiry"
+              },
+              "seconds": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "occurred_on": {
+                "type": "string",
+                "format": "date"
+              },
+              "notes": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "amount_cents",
+              "occurred_on"
+            ],
+            "properties": {
+              "kind": {
+                "const": "reset"
+              },
+              "amount_cents": {
+                "type": "integer",
+                "minimum": -9000000000000,
+                "maximum": 9000000000000,
+                "not": {
+                  "const": 0
+                }
+              },
+              "occurred_on": {
+                "type": "string",
+                "format": "date"
+              },
+              "notes": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "seconds",
+              "occurred_on"
+            ],
+            "properties": {
+              "kind": {
+                "const": "reset"
+              },
+              "seconds": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "not": {
+                  "const": 0
+                }
+              },
+              "occurred_on": {
+                "type": "string",
+                "format": "date"
+              },
+              "notes": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "amount_cents",
+              "occurred_on",
+              "notes"
+            ],
+            "properties": {
+              "kind": {
+                "const": "adjustment"
+              },
+              "amount_cents": {
+                "type": "integer",
+                "minimum": -9000000000000,
+                "maximum": 9000000000000,
+                "not": {
+                  "const": 0
+                }
+              },
+              "occurred_on": {
+                "type": "string",
+                "format": "date"
+              },
+              "notes": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "seconds",
+              "occurred_on",
+              "notes"
+            ],
+            "properties": {
+              "kind": {
+                "const": "adjustment"
+              },
+              "seconds": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "not": {
+                  "const": 0
+                }
+              },
+              "occurred_on": {
+                "type": "string",
+                "format": "date"
+              },
+              "notes": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              }
+            },
+            "additionalProperties": false
           }
-        },
-        "additionalProperties": false
+        ]
       },
       "RetainerDrawdownInput": {
-        "type": "object",
-        "required": [
-          "invoice_id",
-          "occurred_on"
-        ],
-        "properties": {
-          "invoice_id": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "amount_cents": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9000000000000
-          },
-          "seconds": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "occurred_on": {
-            "type": "string",
-            "format": "date"
-          },
-          "notes": {
-            "anyOf": [
-              {
-                "type": "string"
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "amount_cents",
+              "occurred_on",
+              "invoice_id"
+            ],
+            "properties": {
+              "invoice_id": {
+                "type": "integer",
+                "minimum": 1
               },
-              {
-                "type": "null"
+              "amount_cents": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9000000000000
+              },
+              "occurred_on": {
+                "type": "string",
+                "format": "date"
+              },
+              "notes": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
-            ]
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "seconds",
+              "occurred_on",
+              "invoice_id"
+            ],
+            "properties": {
+              "invoice_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "seconds": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "occurred_on": {
+                "type": "string",
+                "format": "date"
+              },
+              "notes": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
           }
-        },
-        "additionalProperties": false
+        ]
       },
       "RecurringFixedLine": {
         "type": "object",
@@ -15325,6 +15943,7 @@
               },
               "line_items": {
                 "type": "array",
+                "minItems": 1,
                 "items": {
                   "$ref": "#/components/schemas/RecurringFixedLine"
                 }
@@ -15337,7 +15956,8 @@
             "required": [
               "schema_version",
               "type",
-              "project_ids"
+              "project_ids",
+              "time"
             ],
             "properties": {
               "schema_version": {
@@ -15348,6 +15968,98 @@
               },
               "project_ids": {
                 "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "time": {
+                "type": "object",
+                "required": [
+                  "summary_type"
+                ],
+                "properties": {
+                  "summary_type": {
+                    "type": "string",
+                    "enum": [
+                      "project",
+                      "task",
+                      "people",
+                      "detailed"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "schema_version",
+              "type",
+              "project_ids",
+              "expenses"
+            ],
+            "properties": {
+              "schema_version": {
+                "const": 1
+              },
+              "type": {
+                "const": "line_items_import"
+              },
+              "project_ids": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "expenses": {
+                "type": "object",
+                "required": [
+                  "summary_type"
+                ],
+                "properties": {
+                  "summary_type": {
+                    "type": "string",
+                    "enum": [
+                      "project",
+                      "category",
+                      "people",
+                      "detailed"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "schema_version",
+              "type",
+              "project_ids",
+              "time",
+              "expenses"
+            ],
+            "properties": {
+              "schema_version": {
+                "const": 1
+              },
+              "type": {
+                "const": "line_items_import"
+              },
+              "project_ids": {
+                "type": "array",
+                "minItems": 1,
                 "uniqueItems": true,
                 "items": {
                   "type": "integer",

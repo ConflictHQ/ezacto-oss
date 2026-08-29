@@ -66,12 +66,7 @@ interface EstimateConversionInput {
   issueDate: string;
   dueDate: string;
   paymentTerms:
-    | "upon_receipt"
-    | "net_15"
-    | "net_30"
-    | "net_45"
-    | "net_60"
-    | "custom";
+    "upon_receipt" | "net_15" | "net_30" | "net_45" | "net_60" | "custom";
   occurredAt: string;
 }
 
@@ -83,6 +78,9 @@ interface RetainerResource extends IdentifiedResource {
 type RecurringResource = IdentifiedResource;
 
 interface CreateRetainerInput {
+  resourceId: number;
+  commandId: string;
+  actorUserId: number;
   clientId: number | null;
   projectId: number | null;
   denomination: "money" | "hours";
@@ -158,6 +156,9 @@ type RecurringAmountConfig =
     };
 
 interface RecurringInput {
+  resourceId?: number;
+  commandId?: string;
+  actorUserId?: number;
   clientId: number;
   subjectTemplate: string;
   notesTemplate: string;
@@ -363,16 +364,10 @@ interface MoneyResourceService {
 }
 
 export type InvoiceGenerationTimeSummary =
-  | "project"
-  | "task"
-  | "people"
-  | "detailed";
+  "project" | "task" | "people" | "detailed";
 
 export type InvoiceGenerationExpenseSummary =
-  | "project"
-  | "category"
-  | "people"
-  | "detailed";
+  "project" | "category" | "people" | "detailed";
 
 export interface InvoiceGenerationRequest {
   clientId: number;
@@ -1136,13 +1131,7 @@ const installEstimates = <Bindings extends object>(
         message: "due_date cannot precede issue_date",
       });
     }
-    const terms = enumValue(
-      body,
-      "payment_terms",
-      paymentTerms,
-      errors,
-      true,
-    );
+    const terms = enumValue(body, "payment_terms", paymentTerms, errors, true);
     assertFields(errors);
     try {
       const invoiceId = await stableId(
@@ -1303,6 +1292,17 @@ const parseInvoiceEdit = (
         field: "reminder_policy",
         code: "invalid_object",
         message: "reminder_policy must be an object or null",
+      });
+    }
+    if (
+      Object.hasOwn(body, "number") &&
+      typeof body.number === "string" &&
+      !body.number.trim()
+    ) {
+      errors.push({
+        field: "number",
+        code: "non_blank_required",
+        message: "number must contain a non-whitespace character",
       });
     }
     edit = {
@@ -1697,7 +1697,6 @@ const installPayments = <Bindings extends object>(
   const paymentFields = new Set([
     "expected_version",
     "amount_cents",
-    "currency",
     "paid_at",
     "paid_date",
     "notes",
@@ -1705,7 +1704,7 @@ const installPayments = <Bindings extends object>(
   const parsePayment = (body: JsonObject, update: boolean) => {
     const allowed = new Set([
       ...paymentFields,
-      ...(update ? ["expected_updated_at"] : []),
+      ...(update ? ["expected_updated_at"] : ["currency"]),
     ]);
     const errors = unknownFieldErrors(body, allowed);
     const version = expectedVersion(body, errors);
@@ -1723,15 +1722,19 @@ const installPayments = <Bindings extends object>(
         code: "invalid_currency",
         message: "currency must be three uppercase letters",
       });
-    const paidAt =
-      timestampValue(body, "paid_at", errors, { nullable: true }) ?? null;
-    const paidDate =
-      dateValue(body, "paid_date", errors, { nullable: true }) ?? null;
-    if ((paidAt === null) === (paidDate === null))
+    const hasPaidAt = Object.hasOwn(body, "paid_at");
+    const hasPaidDate = Object.hasOwn(body, "paid_date");
+    const paidAt = hasPaidAt
+      ? (timestampValue(body, "paid_at", errors, { required: true }) ?? null)
+      : null;
+    const paidDate = hasPaidDate
+      ? (dateValue(body, "paid_date", errors, { required: true }) ?? null)
+      : null;
+    if (hasPaidAt === hasPaidDate)
       errors.push({
         field: "paid_at",
         code: "exclusive_timestamp",
-        message: "provide exactly one of paid_at or paid_date",
+        message: "provide exactly one non-null paid_at or paid_date field",
       });
     const notes = stringValue(body, "notes", errors, { nullable: true });
     const expectedUpdatedAt = update
@@ -1847,7 +1850,7 @@ const installPayments = <Bindings extends object>(
 const parseRetainer = (
   body: JsonObject,
   occurredAt: string,
-): CreateRetainerInput => {
+): Omit<CreateRetainerInput, "resourceId" | "commandId" | "actorUserId"> => {
   const allowed = new Set([
     "client_id",
     "project_id",
@@ -1920,12 +1923,17 @@ const parseRetainer = (
         true,
       )
     : "block";
+  const hasAmountCents = Object.hasOwn(body, "amount_cents");
+  const hasSeconds = Object.hasOwn(body, "seconds");
+  const hasLockedRateCents = Object.hasOwn(body, "locked_rate_cents");
+  const hasRateLockedAt = Object.hasOwn(body, "rate_locked_at");
   if (
     denomination === "money" &&
-    (amountCents === null ||
-      seconds !== null ||
-      lockedRateCents !== null ||
-      rateLockedAt !== null)
+    (!hasAmountCents ||
+      amountCents === null ||
+      hasSeconds ||
+      hasLockedRateCents ||
+      hasRateLockedAt)
   )
     errors.push({
       field: "denomination",
@@ -1935,9 +1943,12 @@ const parseRetainer = (
     });
   if (
     denomination === "hours" &&
-    (seconds === null ||
-      amountCents !== null ||
-      (lockedRateCents === null) !== (rateLockedAt === null))
+    (!hasSeconds ||
+      seconds === null ||
+      hasAmountCents ||
+      hasLockedRateCents !== hasRateLockedAt ||
+      (hasLockedRateCents &&
+        (lockedRateCents === null || rateLockedAt === null)))
   )
     errors.push({
       field: "denomination",
@@ -1982,11 +1993,15 @@ const installRetainers = <Bindings extends object>(
     );
   });
   api.post("/retainers", async (context) => {
-    requireWrite(context);
+    const principal = requireWrite(context);
+    const commandId = idempotencyKey(context);
     try {
-      const created = await options.service.createRetainer(
-        parseRetainer(await readObjectBody(context), options.clock()),
-      );
+      const created = await options.service.createRetainer({
+        ...parseRetainer(await readObjectBody(context), options.clock()),
+        resourceId: await stableId("retainer", 0, commandId),
+        commandId,
+        actorUserId: principal.userId,
+      });
       return context.json(
         { data: created, links: { self: `/api/v1/retainers/${created.id}` } },
         201,
@@ -2127,16 +2142,28 @@ const installRetainers = <Bindings extends object>(
         nullable: true,
         minimum: 1,
       }) ?? null;
+    const acceptsSignedAmount = kind === "reset" || kind === "adjustment";
     const cents = integerValue(body, "amount_cents", errors, {
-      minimum: 1,
+      minimum: acceptsSignedAmount ? -9_000_000_000_000 : 1,
       maximum: 9_000_000_000_000,
     });
-    const seconds = integerValue(body, "seconds", errors, { minimum: 1 });
+    const seconds = integerValue(body, "seconds", errors, {
+      minimum: acceptsSignedAmount ? -Number.MAX_SAFE_INTEGER : 1,
+      maximum: Number.MAX_SAFE_INTEGER,
+    });
     if ((cents === undefined) === (seconds === undefined))
       errors.push({
         field: "amount_cents",
         code: "exclusive_amount",
-        message: "provide exactly one positive amount_cents or seconds value",
+        message: acceptsSignedAmount
+          ? "provide exactly one non-zero signed amount_cents or seconds value"
+          : "provide exactly one positive amount_cents or seconds value",
+      });
+    if (acceptsSignedAmount && (cents === 0 || seconds === 0))
+      errors.push({
+        field: cents === 0 ? "amount_cents" : "seconds",
+        code: "non_zero",
+        message: `${cents === 0 ? "amount_cents" : "seconds"} must be non-zero`,
       });
     const occurredOn = dateValue(body, "occurred_on", errors, {
       required: true,
@@ -2148,6 +2175,17 @@ const installRetainers = <Bindings extends object>(
         field: "invoice_id",
         code: "required",
         message: `${kind} requires invoice_id`,
+      });
+    if (
+      kind !== undefined &&
+      kind !== "deposit" &&
+      kind !== "drawdown" &&
+      invoiceId !== null
+    )
+      errors.push({
+        field: "invoice_id",
+        code: "forbidden",
+        message: `${kind} does not accept invoice_id`,
       });
     if (kind === "adjustment" && (notes ?? "").trim().length === 0)
       errors.push({
@@ -2277,11 +2315,15 @@ const installRecurring = <Bindings extends object>(
     );
   });
   api.post("/recurring-invoices", async (context) => {
-    requireWrite(context);
+    const principal = requireWrite(context);
+    const commandId = idempotencyKey(context);
     try {
-      const value = await options.service.createRecurring(
-        parseRecurring(await readObjectBody(context), options.clock()),
-      );
+      const value = await options.service.createRecurring({
+        ...parseRecurring(await readObjectBody(context), options.clock()),
+        resourceId: await stableId("recurring-invoice", 0, commandId),
+        commandId,
+        actorUserId: principal.userId,
+      });
       return context.json(
         {
           data: value,
@@ -2341,11 +2383,12 @@ export const installMoneyResourceRoutes = <Bindings extends object>(
     ...supplied,
     clock: supplied.clock ?? (() => new Date().toISOString()),
   };
-  const preventFinancialCaching: MiddlewareHandler<ApiContext<Bindings>> =
-    async (context, next) => {
-      await next();
-      context.header("cache-control", "no-store");
-    };
+  const preventFinancialCaching: MiddlewareHandler<
+    ApiContext<Bindings>
+  > = async (context, next) => {
+    await next();
+    context.header("cache-control", "no-store");
+  };
   for (const resource of [
     "invoices",
     "estimates",

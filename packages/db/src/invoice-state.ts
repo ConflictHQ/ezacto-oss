@@ -2040,7 +2040,7 @@ export const executeInvoiceEdit = async (
     if (input.edit.clientId !== undefined) {
       assertPositiveSafeInteger(input.edit.clientId, 'clientId')
     }
-    if (input.edit.number !== undefined && input.edit.number.length === 0) {
+    if (input.edit.number !== undefined && !input.edit.number.trim()) {
       invalidInput('invoice number must not be empty')
     }
     if (input.edit.currency !== undefined && !/^[A-Z]{3}$/.test(input.edit.currency)) {
@@ -2048,6 +2048,11 @@ export const executeInvoiceEdit = async (
     }
     if (input.edit.issueDate !== undefined) assertCanonicalDate(input.edit.issueDate, 'issueDate')
     if (input.edit.dueDate !== undefined) assertCanonicalDate(input.edit.dueDate, 'dueDate')
+    const resultingIssueDate = input.edit.issueDate ?? document.issueDate
+    const resultingDueDate = input.edit.dueDate ?? document.dueDate
+    if (resultingDueDate < resultingIssueDate) {
+      invalidInput('invoice dueDate must not precede issueDate')
+    }
     if (input.edit.projectId !== undefined && input.edit.projectId !== null) {
       assertPositiveSafeInteger(input.edit.projectId, 'projectId')
     }

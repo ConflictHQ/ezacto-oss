@@ -2,6 +2,14 @@ import { createApiApp } from "../../api/src/index.js";
 import { describe, expect, it } from "vitest";
 import { EzactoClient } from "../src/index.js";
 import type { EzactoApiError } from "../src/index.js";
+import type {
+  InvoicePaymentInput,
+  InvoicePaymentUpdateInput,
+  RecurringAmountConfig,
+  RetainerDrawdownInput,
+  RetainerInput,
+  RetainerLedgerInput,
+} from "../src/generated.js";
 
 const project = {
   id: 7,
@@ -131,15 +139,19 @@ const app = createApiApp({
             created_at: "2026-08-28T12:00:00.000Z",
             updated_at: "2026-08-28T12:00:00.000Z",
           },
-          links: { self: `/api/v1/projects/${context.req.param("projectId")}/attachments/12` },
+          links: {
+            self: `/api/v1/projects/${context.req.param("projectId")}/attachments/12`,
+          },
         },
         201,
       );
     });
-    api.get("/projects/:projectId/attachments/:attachmentId/content", (context) =>
-      context.body(new Uint8Array([0, 1, 2, 255]), 200, {
-        "content-type": "application/octet-stream",
-      }),
+    api.get(
+      "/projects/:projectId/attachments/:attachmentId/content",
+      (context) =>
+        context.body(new Uint8Array([0, 1, 2, 255]), 200, {
+          "content-type": "application/octet-stream",
+        }),
     );
     api.get("/reports/uninvoiced", (context) =>
       context.json({
@@ -283,6 +295,7 @@ describe("generated ezacto client", () => {
     });
     const created = await multipartClient.createProjectAttachment({
       projectId: 7,
+      "Idempotency-Key": "client-project-attachment-7",
       body: form,
     });
     expect(created.data).toMatchObject({
@@ -297,5 +310,55 @@ describe("generated ezacto client", () => {
       attachmentId: 12,
     });
     expect([...new Uint8Array(bytes)]).toEqual([0, 1, 2, 255]);
+  });
+
+  it("[contract] exposes discriminated money inputs without caller-owned ambiguous fields", () => {
+    const payment: InvoicePaymentInput = {
+      expected_version: 1,
+      amount_cents: 100,
+      currency: "USD",
+      paid_date: "2026-08-28",
+    };
+    const paymentUpdate: InvoicePaymentUpdateInput = {
+      expected_version: 2,
+      expected_updated_at: "2026-08-28T12:00:00.000Z",
+      amount_cents: 90,
+      paid_at: "2026-08-28T12:00:00.000Z",
+    };
+    const retainers: RetainerInput[] = [
+      { denomination: "money", amount_cents: 1_000 },
+      { denomination: "hours", seconds: 3_600 },
+      {
+        denomination: "hours",
+        seconds: 3_600,
+        locked_rate_cents: 20_000,
+        rate_locked_at: "2026-08-28T12:00:00.000Z",
+      },
+    ];
+    const correction: RetainerLedgerInput = {
+      kind: "adjustment",
+      amount_cents: -100,
+      occurred_on: "2026-08-28",
+      notes: "Correction",
+    };
+    const drawdown: RetainerDrawdownInput = {
+      invoice_id: 4,
+      seconds: 600,
+      occurred_on: "2026-08-28",
+    };
+    const recurring: RecurringAmountConfig = {
+      schema_version: 1,
+      type: "line_items_import",
+      project_ids: [7],
+      time: { summary_type: "task" },
+    };
+    expect({
+      payment,
+      paymentUpdate,
+      retainers,
+      correction,
+      drawdown,
+      recurring,
+    }).toBeDefined();
   });
 });

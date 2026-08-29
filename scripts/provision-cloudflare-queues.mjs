@@ -26,7 +26,7 @@ const positiveInteger = (value, field) => {
   return value;
 };
 
-const parseJsonc = (source) => {
+export const parseJsonc = (source) => {
   let stripped = "";
   let inString = false;
   let escaped = false;

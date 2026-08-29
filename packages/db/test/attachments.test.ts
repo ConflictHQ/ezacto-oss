@@ -243,7 +243,7 @@ for (const [runtime, factory] of factories) {
       database = await factory()
       const db = database
       const before = await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id`)
-      expect(before.at(-1)).toEqual({ id: '0020_estimate_commands' })
+      expect(before.at(-1)).toEqual({ id: '0021_resource_create_commands' })
       await db.migrateAgain()
       expect(await db.rows(`SELECT id FROM _ezacto_migrations ORDER BY id`)).toEqual(before)
 
@@ -456,6 +456,102 @@ for (const [runtime, factory] of factories) {
       expect(await db.rows(`PRAGMA foreign_key_check`)).toEqual([])
     })
 
+    it('[security] durably replays attachment creates and rejects changed command input', async () => {
+      database = await factory()
+      const db = database
+      await seedParents(db)
+      const store = createAttachmentStore(db.orm)
+      const input = {
+        projectId: 1,
+        attachmentId: 400_001,
+        commandId: 'project-attachment-stable',
+        actorUserId: 2,
+        ...metadata('4'),
+      }
+      const [first, raced] = await Promise.all([
+        store.createProjectAttachment(input),
+        store.createProjectAttachment(input),
+      ])
+      expect(raced).toEqual(first)
+      const replay = await store.createProjectAttachment({
+        ...input,
+        createdAt: laterTimestamp,
+        updatedAt: laterTimestamp,
+      })
+      expect(replay).toEqual(first)
+      await expect(
+        store.createProjectAttachment({ ...input, name: 'changed-name.pdf' }),
+      ).rejects.toThrow(/command id was reused/i)
+      expect(await db.rows(`SELECT count(*) AS count FROM attachments`)).toEqual([{ count: 1 }])
+      expect(await db.rows(`SELECT count(*) AS count FROM resource_create_commands`)).toEqual([
+        { count: 1 },
+      ])
+      const [receipt] = await db.rows<{
+        command_kind: string
+        command_id: string
+        input_fingerprint: string
+        actor_user_id: number
+        resource_id: number
+        result_json: string
+        occurred_at: string
+      }>(`SELECT * FROM resource_create_commands`)
+      if (receipt === undefined) throw new Error('attachment receipt fixture is missing')
+      await expect(
+        db.run(
+          `INSERT OR REPLACE INTO resource_create_commands (
+            command_kind, command_id, input_fingerprint, actor_user_id,
+            resource_id, result_json, occurred_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          receipt.command_kind,
+          receipt.command_id,
+          `sha256:${'f'.repeat(64)}`,
+          receipt.actor_user_id,
+          receipt.resource_id,
+          receipt.result_json,
+          receipt.occurred_at,
+        ),
+      ).rejects.toThrow(/identity already exists/)
+      await expect(
+        db.run(
+          `UPDATE resource_create_commands SET result_json = result_json
+           WHERE command_kind = 'project_attachment.create' AND command_id = ?`,
+          input.commandId,
+        ),
+      ).rejects.toThrow(/immutable/)
+      await expect(
+        db.run(
+          `DELETE FROM resource_create_commands
+           WHERE command_kind = 'project_attachment.create' AND command_id = ?`,
+          input.commandId,
+        ),
+      ).rejects.toThrow(/append-only/)
+
+      await db.run(
+        `CREATE TRIGGER force_attachment_receipt_failure
+         BEFORE INSERT ON resource_create_commands
+         WHEN NEW.command_id = 'forced-attachment-receipt-failure'
+         BEGIN SELECT RAISE(ABORT, 'forced attachment receipt failure'); END`,
+      )
+      await expect(
+        store.createProjectAttachment({
+          projectId: 1,
+          attachmentId: 400_002,
+          commandId: 'forced-attachment-receipt-failure',
+          actorUserId: 2,
+          ...metadata('3'),
+        }),
+      ).rejects.toThrow(/forced attachment receipt failure/)
+      expect(
+        await db.rows(
+          `SELECT count(*) AS count FROM file_objects WHERE content_hash = ?`,
+          '3'.repeat(64),
+        ),
+      ).toEqual([{ count: 0 }])
+      expect(await db.rows(`SELECT count(*) AS count FROM attachments WHERE id = 400002`)).toEqual([
+        { count: 0 },
+      ])
+    })
+
     it('[unit] accepts only closed v1 static recurring policies owned by the definition', async () => {
       database = await factory()
       const db = database
@@ -533,7 +629,7 @@ for (const [runtime, factory] of factories) {
       expect(await db.rows(`SELECT id, number FROM invoices`)).toEqual(before)
       expect(
         await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`),
-      ).toEqual([{ id: '0020_estimate_commands' }])
+      ).toEqual([{ id: '0021_resource_create_commands' }])
       await db.migrateAgain()
       expect(await db.rows(`SELECT id, number FROM invoices`)).toEqual(before)
       expect(await db.rows(`PRAGMA foreign_key_check`)).toEqual([])

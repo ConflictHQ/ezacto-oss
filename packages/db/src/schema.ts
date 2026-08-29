@@ -1151,6 +1151,59 @@ export const estimateCommandLedger = sqliteTable(
   ],
 )
 
+export const resourceCreateCommands = sqliteTable(
+  'resource_create_commands',
+  {
+    commandKind: text('command_kind', {
+      enum: [
+        'retainer.create',
+        'recurring_invoice.create',
+        'invoice_attachment.create',
+        'recurring_invoice_attachment.create',
+        'estimate_attachment.create',
+        'expense_attachment.create',
+        'project_attachment.create',
+      ],
+    }).notNull(),
+    commandId: text('command_id').notNull(),
+    inputFingerprint: text('input_fingerprint').notNull(),
+    actorUserId: integer('actor_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    resourceId: integer('resource_id').notNull(),
+    resultJson: text('result_json', { mode: 'json' })
+      .$type<{ schema_version: 1; data: Record<string, unknown> }>()
+      .notNull(),
+    occurredAt: text('occurred_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.commandKind, table.commandId] }),
+    uniqueIndex('resource_create_commands_resource_unique').on(table.commandKind, table.resourceId),
+    check(
+      'resource_create_commands_command_id_format',
+      sql`length(${table.commandId}) between 1 and 128
+        and ${table.commandId} not glob '*[^A-Za-z0-9._:-]*'`,
+    ),
+    check(
+      'resource_create_commands_fingerprint_format',
+      sql`length(${table.inputFingerprint}) = 71
+        and substr(${table.inputFingerprint}, 1, 7) = 'sha256:'
+        and substr(${table.inputFingerprint}, 8) not glob '*[^0-9a-f]*'`,
+    ),
+    check(
+      'resource_create_commands_resource_id_safe',
+      sql`${table.resourceId} between 1 and 9007199254740991`,
+    ),
+    check(
+      'resource_create_commands_result_shape',
+      sql`json_valid(${table.resultJson})
+        and json_extract(${table.resultJson}, '$.schema_version') = 1
+        and json_type(${table.resultJson}, '$.data') = 'object'`,
+    ),
+    check('resource_create_commands_occurred_at_canonical', canonicalTimestamp(table.occurredAt)),
+  ],
+)
+
 export const invoices = sqliteTable(
   'invoices',
   {

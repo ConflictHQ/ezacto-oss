@@ -246,18 +246,134 @@ const authentication: ApiAuthentication = {
 
 interface Harness {
   database: TestDatabase;
+  service: ReturnType<typeof createMoneyResourceRepository>;
   request(path: string, init?: RequestInit): Promise<Response>;
   setTime(value: string): void;
 }
 
+const withReadInterleaving = (
+  database: TestDatabase,
+  targetResource: "invoice" | "estimate",
+): MoneyResourceDatabase => {
+  const orm = database.orm;
+  const client = orm.$client;
+  let interleaved = false;
+  const mutate = async (): Promise<void> => {
+    if (targetResource === "invoice") {
+      await database.run(
+        `INSERT INTO invoice_line_items (
+          id, invoice_id, position, kind, quantity, unit_price_cents, amount_cents,
+          taxed, taxed2, created_at, updated_at
+        ) VALUES (777001, 1, 0, 'Concurrent', 1, 101, 101, 0, 0, ?, ?)`,
+        secondTime,
+        secondTime,
+      );
+      await database.run(
+        `UPDATE invoices SET amount_cents = 101, due_amount_cents = 101,
+          version = 1, updated_at = ? WHERE id = 1`,
+        secondTime,
+      );
+    } else {
+      await database.run(
+        `INSERT INTO estimate_line_items (
+          id, estimate_id, position, kind, quantity, unit_price_cents, amount_cents,
+          taxed, taxed2, created_at, updated_at
+        ) VALUES (777002, 12, 0, 'Concurrent', 1, 200, 200, 0, 0, ?, ?)`,
+        secondTime,
+        secondTime,
+      );
+      await database.run(
+        `UPDATE estimates SET amount_cents = 200, version = 1, updated_at = ? WHERE id = 12`,
+        secondTime,
+      );
+    }
+  };
+  const proxiedClient =
+    "batch" in client
+      ? new Proxy(client, {
+          get(native, property) {
+            if (property === "batch") {
+              return async (statements: Parameters<typeof native.batch>[0]) => {
+                if (!interleaved) {
+                  interleaved = true;
+                  await mutate();
+                }
+                return native.batch(statements);
+              };
+            }
+            const value = Reflect.get(native, property, native);
+            return typeof value === "function" ? value.bind(native) : value;
+          },
+        })
+      : new Proxy(client, {
+          get(native, property) {
+            if (property === "transaction") {
+              return (operation: () => unknown) => {
+                const transaction = native.transaction(operation);
+                return () => {
+                  if (!interleaved) {
+                    interleaved = true;
+                    if (targetResource === "invoice") {
+                      native
+                        .prepare(
+                          `INSERT INTO invoice_line_items (
+                            id, invoice_id, position, kind, quantity, unit_price_cents,
+                            amount_cents, taxed, taxed2, created_at, updated_at
+                          ) VALUES (777001, 1, 0, 'Concurrent', 1, 101, 101, 0, 0, ?, ?)`,
+                        )
+                        .run(secondTime, secondTime);
+                      native
+                        .prepare(
+                          `UPDATE invoices SET amount_cents = 101, due_amount_cents = 101,
+                            version = 1, updated_at = ? WHERE id = 1`,
+                        )
+                        .run(secondTime);
+                    } else {
+                      native
+                        .prepare(
+                          `INSERT INTO estimate_line_items (
+                            id, estimate_id, position, kind, quantity, unit_price_cents,
+                            amount_cents, taxed, taxed2, created_at, updated_at
+                          ) VALUES (777002, 12, 0, 'Concurrent', 1, 200, 200, 0, 0, ?, ?)`,
+                        )
+                        .run(secondTime, secondTime);
+                      native
+                        .prepare(
+                          `UPDATE estimates SET amount_cents = 200, version = 1,
+                            updated_at = ? WHERE id = 12`,
+                        )
+                        .run(secondTime);
+                    }
+                  }
+                  return transaction();
+                };
+              };
+            }
+            const value = Reflect.get(native, property, native);
+            return typeof value === "function" ? value.bind(native) : value;
+          },
+        });
+  return { ...orm, $client: proxiedClient } as MoneyResourceDatabase;
+};
+
 const harness = async (
   factory: () => Promise<TestDatabase>,
   onGenerate?: (input: InvoiceGenerationCommand) => void,
+  interleave?: "invoice" | "estimate",
 ): Promise<Harness> => {
   const database = await factory();
   await seed(database);
+  if (interleave === "invoice") {
+    // This fixture simulates a fully committed competing command without
+    // recreating D22 command/outbox plumbing; production retains the guard.
+    await database.run("DROP TRIGGER invoices_d22_transition_guard");
+  }
   let currentTime = firstTime;
-  const service = createMoneyResourceRepository(database.orm);
+  const service = createMoneyResourceRepository(
+    interleave === undefined
+      ? database.orm
+      : withReadInterleaving(database, interleave),
+  );
   const app = createApiApp({
     authentication,
     installApi: (api) =>
@@ -274,7 +390,8 @@ const harness = async (
                 generate: async (input: InvoiceGenerationCommand) => {
                   onGenerate(input);
                   const invoice = await service.getInvoice(1);
-                  if (invoice === null) throw new Error("fixture invoice missing");
+                  if (invoice === null)
+                    throw new Error("fixture invoice missing");
                   return invoice;
                 },
               },
@@ -283,6 +400,7 @@ const harness = async (
   });
   return {
     database,
+    service,
     request: async (path, init) => {
       const headers = new Headers(init?.headers);
       headers.set("origin", "http://localhost");
@@ -320,9 +438,7 @@ const stableTestId = async (
   const bytes = new Uint8Array(
     await crypto.subtle.digest(
       "SHA-256",
-      new TextEncoder().encode(
-        [namespace, parentId, commandId].join("\u001f"),
-      ),
+      new TextEncoder().encode([namespace, parentId, commandId].join("\u001f")),
     ),
   );
   const digest = Array.from(bytes, (byte) =>
@@ -339,10 +455,33 @@ for (const [runtime, factory] of factories) {
 
     const setup = async (
       onGenerate?: (input: InvoiceGenerationCommand) => void,
+      interleave?: "invoice" | "estimate",
     ): Promise<Harness> => {
-      active = await harness(factory, onGenerate);
+      active = await harness(factory, onGenerate, interleave);
       return active;
     };
+
+    it("[db] returns self-consistent invoice and estimate header/line snapshots", async () => {
+      const invoice = await setup(undefined, "invoice");
+      expect(await invoice.service.getInvoice(1)).toMatchObject({
+        id: 1,
+        version: 1,
+        amount_cents: 101,
+        due_amount_cents: 101,
+        updated_at: secondTime,
+        line_items: [{ id: 777001, amount_cents: 101, updated_at: secondTime }],
+      });
+      await invoice.database.close();
+
+      const estimate = await setup(undefined, "estimate");
+      expect(await estimate.service.getEstimate(12)).toMatchObject({
+        id: 12,
+        version: 1,
+        amount_cents: 200,
+        updated_at: secondTime,
+        line_items: [{ id: 777002, amount_cents: 200, updated_at: secondTime }],
+      });
+    });
 
     it("[api] snapshots estimate senders and replays a stable message command", async () => {
       const test = await setup();
@@ -512,6 +651,28 @@ for (const [runtime, factory] of factories) {
           ],
         },
         event: { event_type: "invoice" },
+      });
+      expect(
+        await test.database.rows(
+          "SELECT state, version, updated_at FROM estimates WHERE id = 10",
+        ),
+      ).toEqual([{ state: "accepted", version: 3, updated_at: firstTime }]);
+      const staleReopen = await test.request(
+        "/api/v1/estimates/10/messages",
+        jsonRequest(
+          "POST",
+          {
+            expected_version: 2,
+            event_type: "re-open",
+            recipients: [],
+            send_me_a_copy: false,
+          },
+          "stale-reopen-after-convert",
+        ),
+      );
+      expect(staleReopen.status).toBe(409);
+      expect(await staleReopen.json()).toMatchObject({
+        error: { code: "estimate_version_conflict" },
       });
 
       test.setTime(fourthTime);
@@ -848,6 +1009,63 @@ for (const [runtime, factory] of factories) {
       ).toEqual([{ invoices: 0, events: 1 }]);
     });
 
+    it("[db] atomically chooses one winner between conversion and estimate lifecycle", async () => {
+      const test = await setup();
+      const [conversion, reopen] = await Promise.all([
+        test.request(
+          "/api/v1/estimates/13/convert",
+          jsonRequest(
+            "POST",
+            {
+              expected_version: 4,
+              number: "INV-CONVERT-REOPEN-RACE",
+              issue_date: "2026-08-28",
+              due_date: "2026-09-27",
+              payment_terms: "net_30",
+            },
+            "convert-reopen-race",
+          ),
+        ),
+        test.request(
+          "/api/v1/estimates/13/messages",
+          jsonRequest(
+            "POST",
+            {
+              expected_version: 4,
+              event_type: "re-open",
+              recipients: [],
+              send_me_a_copy: false,
+            },
+            "reopen-convert-race",
+          ),
+        ),
+      ]);
+      expect([conversion.status, reopen.status].sort()).toEqual([201, 409]);
+      const [estimate] = await test.database.rows<{
+        state: string;
+        version: number;
+      }>("SELECT state, version FROM estimates WHERE id = 13");
+      expect(estimate?.version).toBe(5);
+      const artifacts = await test.database.rows<{
+        invoices: number;
+        invoiceEvents: number;
+        reopenEvents: number;
+      }>(`SELECT
+        (SELECT count(*) FROM invoices WHERE estimate_id = 13) AS invoices,
+        (SELECT count(*) FROM estimate_messages WHERE estimate_id = 13 AND event_type = 'invoice')
+          AS invoiceEvents,
+        (SELECT count(*) FROM estimate_messages WHERE estimate_id = 13 AND event_type = 're-open')
+          AS reopenEvents`);
+      expect(artifacts).toEqual(
+        conversion.status === 201
+          ? [{ invoices: 1, invoiceEvents: 1, reopenEvents: 0 }]
+          : [{ invoices: 0, invoiceEvents: 0, reopenEvents: 1 }],
+      );
+      expect(estimate?.state).toBe(
+        conversion.status === 201 ? "accepted" : "sent",
+      );
+    });
+
     it("[db] rolls back conversion before invoice creation when the stable event id is occupied", async () => {
       const test = await setup();
       await test.database.run(
@@ -948,6 +1166,11 @@ for (const [runtime, factory] of factories) {
               WHERE estimate_id = 12) AS receipts`,
         ),
       ).toEqual([{ invoices: 0, lines: 0, events: 0, outbox: 0, receipts: 0 }]);
+      expect(
+        await test.database.rows(
+          "SELECT state, version, updated_at FROM estimates WHERE id = 12",
+        ),
+      ).toEqual([{ state: "accepted", version: 0, updated_at: seedTime }]);
     });
 
     it("[api] passes validated generation identity and domain input exactly to the future engine", async () => {
@@ -961,16 +1184,13 @@ for (const [runtime, factory] of factories) {
         time_summary_type: "task",
         expense_summary_type: "category",
       };
-      const generated = await test.request(
-        "/api/v1/invoice-generations",
-        {
-          ...jsonRequest("POST", body, "generate-august-client-1"),
-          headers: {
-            ...jsonRequest("POST", {}, "generate-august-client-1").headers,
-            authorization: "Bearer full-money",
-          },
+      const generated = await test.request("/api/v1/invoice-generations", {
+        ...jsonRequest("POST", body, "generate-august-client-1"),
+        headers: {
+          ...jsonRequest("POST", {}, "generate-august-client-1").headers,
+          authorization: "Bearer full-money",
         },
-      );
+      });
 
       expect(generated.status).toBe(201);
       expect(generated.headers.get("cache-control")).toBe("no-store");
@@ -1120,6 +1340,51 @@ for (const [runtime, factory] of factories) {
       expect(
         await test.database.rows("SELECT * FROM event_outbox"),
       ).toHaveLength(0);
+    });
+
+    it("[api] rejects blank invoice numbers and invalid resulting date order atomically", async () => {
+      const test = await setup();
+      const before = await test.database.rows(
+        "SELECT number, issue_date, due_date, version, updated_at FROM invoices WHERE id = 1",
+      );
+      const blank = await test.request(
+        "/api/v1/invoices/1",
+        jsonRequest(
+          "PATCH",
+          { expected_version: 0, number: "   " },
+          "blank-number",
+        ),
+      );
+      expect(blank.status).toBe(422);
+      const issueAfterDue = await test.request(
+        "/api/v1/invoices/1",
+        jsonRequest(
+          "PATCH",
+          { expected_version: 0, issue_date: "2026-09-01" },
+          "invalid-resulting-date-order",
+        ),
+      );
+      expect(issueAfterDue.status).toBe(422);
+      const dueBeforeIssue = await test.request(
+        "/api/v1/invoices/1",
+        jsonRequest(
+          "PATCH",
+          { expected_version: 0, due_date: "2026-07-31" },
+          "invalid-due-date-order",
+        ),
+      );
+      expect(dueBeforeIssue.status).toBe(422);
+      expect(
+        await test.database.rows(
+          "SELECT number, issue_date, due_date, version, updated_at FROM invoices WHERE id = 1",
+        ),
+      ).toEqual(before);
+      expect(
+        await test.database.rows(
+          `SELECT command_id FROM invoice_command_ledger
+           WHERE command_id IN ('blank-number','invalid-resulting-date-order','invalid-due-date-order')`,
+        ),
+      ).toEqual([]);
     });
 
     it("[api] derives line totals, replays commands, and freezes lifecycle sender snapshots", async () => {
@@ -1333,6 +1598,34 @@ for (const [runtime, factory] of factories) {
         (await responseData<typeof recordedData>(replay)).command.event_ids,
       ).toEqual(recordedData.command.event_ids);
 
+      const immutableCurrency = await test.request(
+        `/api/v1/invoices/3/payments/${payment!.id}`,
+        jsonRequest(
+          "PATCH",
+          {
+            expected_version: 3,
+            expected_updated_at: payment!.updated_at,
+            amount_cents: 200,
+            currency: "EUR",
+            paid_date: "2026-08-28",
+            notes: "Corrected",
+          },
+          "payment-update",
+        ),
+      );
+      expect(immutableCurrency.status).toBe(422);
+      expect(
+        await test.database.rows(
+          "SELECT command_id FROM invoice_command_ledger WHERE command_id = 'payment-update'",
+        ),
+      ).toEqual([]);
+      expect(
+        await test.database.rows(
+          "SELECT currency, amount_cents FROM invoice_payments WHERE id = ?",
+          payment!.id,
+        ),
+      ).toEqual([{ currency: "USD", amount_cents: 50 }]);
+
       const corrected = await test.request(
         `/api/v1/invoices/3/payments/${payment!.id}`,
         jsonRequest(
@@ -1510,6 +1803,129 @@ for (const [runtime, factory] of factories) {
       });
       expect(drawnEntry).not.toHaveProperty("retainerId");
       expect(drawnEntry).not.toHaveProperty("createdAt");
+
+      const negativeAdjustment = await test.request(
+        "/api/v1/retainers/1/ledger",
+        jsonRequest(
+          "POST",
+          {
+            kind: "adjustment",
+            amount_cents: -50,
+            occurred_on: "2026-08-29",
+            notes: "Correct an over-credit",
+          },
+          "retainer-negative-adjustment",
+        ),
+      );
+      expect(negativeAdjustment.status).toBe(201);
+      expect(await responseData(negativeAdjustment)).toMatchObject({
+        entry: { kind: "adjustment", amount: -50 },
+        balance: 250,
+      });
+      const negativeReset = await test.request(
+        "/api/v1/retainers/1/ledger",
+        jsonRequest(
+          "POST",
+          { kind: "reset", amount_cents: -25, occurred_on: "2026-08-30" },
+          "retainer-negative-reset",
+        ),
+      );
+      expect(negativeReset.status).toBe(201);
+      expect(await responseData(negativeReset)).toMatchObject({
+        entry: { kind: "reset", amount: -25 },
+        balance: 225,
+      });
+    });
+
+    it("[api] durably replays retainer creates and preserves concurrent partial policy patches", async () => {
+      const test = await setup();
+      const input = {
+        client_id: 1,
+        denomination: "money",
+        amount_cents: 1_000,
+        period: "monthly",
+        rollover: "carry",
+      };
+      const created = await test.request(
+        "/api/v1/retainers",
+        jsonRequest("POST", input, "create-retainer-stable"),
+      );
+      expect(created.status).toBe(201);
+      const original = await responseData<{
+        id: number;
+        period: string;
+        rollover: string;
+        created_at: string;
+      }>(created);
+
+      test.setTime(secondTime);
+      const [period, rollover] = await Promise.all([
+        test.request(
+          `/api/v1/retainers/${original.id}`,
+          jsonRequest("PATCH", { period: "quarterly" }),
+        ),
+        test.request(
+          `/api/v1/retainers/${original.id}`,
+          jsonRequest("PATCH", { rollover: "expire" }),
+        ),
+      ]);
+      expect([period.status, rollover.status]).toEqual([200, 200]);
+      expect(
+        await responseData(
+          await test.request(`/api/v1/retainers/${original.id}`),
+        ),
+      ).toMatchObject({ period: "quarterly", rollover: "expire" });
+
+      test.setTime(thirdTime);
+      const replay = await test.request(
+        "/api/v1/retainers",
+        jsonRequest("POST", input, "create-retainer-stable"),
+      );
+      expect(replay.status).toBe(201);
+      expect(await responseData(replay)).toEqual(original);
+      const changed = await test.request(
+        "/api/v1/retainers",
+        jsonRequest(
+          "POST",
+          { ...input, amount_cents: 2_000 },
+          "create-retainer-stable",
+        ),
+      );
+      expect(changed.status).toBe(409);
+      expect(
+        await test.database.rows<{ count: number }>(
+          "SELECT count(*) AS count FROM retainers",
+        ),
+      ).toEqual([{ count: 2 }]);
+    });
+
+    it("[db] rolls a create resource back when durable receipt insertion fails late", async () => {
+      const test = await setup();
+      await test.database.run(
+        `CREATE TRIGGER force_retainer_create_receipt_failure
+         BEFORE INSERT ON resource_create_commands
+         WHEN NEW.command_kind = 'retainer.create'
+         BEGIN SELECT RAISE(ABORT, 'forced create receipt failure'); END`,
+      );
+      const response = await test.request(
+        "/api/v1/retainers",
+        jsonRequest(
+          "POST",
+          { client_id: 1, denomination: "money", amount_cents: 500 },
+          "forced-create-receipt-failure",
+        ),
+      );
+      expect(response.status).toBe(500);
+      expect(
+        await test.database.rows<{ count: number }>(
+          "SELECT count(*) AS count FROM retainers",
+        ),
+      ).toEqual([{ count: 1 }]);
+      expect(
+        await test.database.rows<{ count: number }>(
+          "SELECT count(*) AS count FROM resource_create_commands",
+        ),
+      ).toEqual([{ count: 0 }]);
     });
 
     it("[api] validates recurring definitions and exposes complete CRUD", async () => {
@@ -1540,7 +1956,7 @@ for (const [runtime, factory] of factories) {
       };
       const created = await test.request(
         "/api/v1/recurring-invoices",
-        jsonRequest("POST", input),
+        jsonRequest("POST", input, "recurring-create"),
       );
       expect(created.status).toBe(201);
       const original = await responseData<{
@@ -1586,6 +2002,22 @@ for (const [runtime, factory] of factories) {
         every_n_months: 3,
         updated_at: secondTime,
       });
+      test.setTime(thirdTime);
+      const replay = await test.request(
+        "/api/v1/recurring-invoices",
+        jsonRequest("POST", input, "recurring-create"),
+      );
+      expect(replay.status).toBe(201);
+      expect(await responseData(replay)).toEqual(original);
+      const changedCreate = await test.request(
+        "/api/v1/recurring-invoices",
+        jsonRequest(
+          "POST",
+          { ...input, subject_template: "Changed create" },
+          "recurring-create",
+        ),
+      );
+      expect(changedCreate.status).toBe(409);
       expect(
         await responseData<unknown[]>(
           await test.request("/api/v1/recurring-invoices"),

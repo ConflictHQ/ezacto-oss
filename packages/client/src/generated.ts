@@ -25,6 +25,11 @@ export type AttachmentListEnvelope = {
   "links": Links;
 };
 
+export type InvoiceReminderPolicy = {
+  "first_after_days": number;
+  "every_days": number;
+};
+
 export type FieldError = {
   "field": string;
   "code": string;
@@ -445,9 +450,7 @@ export type Invoice = {
   "retainer_id": number | null;
   "recurring_invoice_id": number | null;
   "estimate_id": number | null;
-  "reminder_policy": {
-  [key: string]: unknown;
-} | null;
+  "reminder_policy": InvoiceReminderPolicy | null;
   "tax_rate_ppm": number | null;
   "tax2_rate_ppm": number | null;
   "discount_rate_ppm": number | null;
@@ -652,9 +655,7 @@ export type InvoiceEditInput = {
   "due_date"?: string;
   "payment_terms"?: "upon_receipt" | "net_15" | "net_30" | "net_45" | "net_60" | "custom";
   "project_id"?: number | null;
-  "reminder_policy"?: {
-  [key: string]: unknown;
-} | null;
+  "reminder_policy"?: InvoiceReminderPolicy | null;
   "payment_options"?: Array<"stripe_checkout" | "paypal_checkout" | "quickbooks_checkout" | "mercury_transfer" | "wise_transfer">;
   "tax_rate_ppm"?: number | null;
   "tax2_rate_ppm"?: number | null;
@@ -776,8 +777,13 @@ export type InvoicePaymentInput = {
   "expected_version": number;
   "amount_cents": number;
   "currency": string;
-  "paid_at"?: string | null;
-  "paid_date"?: string | null;
+  "paid_at": string;
+  "notes"?: string | null;
+} | {
+  "expected_version": number;
+  "amount_cents": number;
+  "currency": string;
+  "paid_date": string;
   "notes"?: string | null;
 };
 
@@ -785,8 +791,13 @@ export type InvoicePaymentUpdateInput = {
   "expected_version": number;
   "expected_updated_at": string;
   "amount_cents": number;
-  "paid_at"?: string | null;
-  "paid_date"?: string | null;
+  "paid_at": string;
+  "notes"?: string | null;
+} | {
+  "expected_version": number;
+  "expected_updated_at": string;
+  "amount_cents": number;
+  "paid_date": string;
   "notes"?: string | null;
 };
 
@@ -823,11 +834,28 @@ export type RetainerPage = {
 export type RetainerInput = {
   "client_id"?: number | null;
   "project_id"?: number | null;
-  "denomination": "money" | "hours";
-  "amount_cents"?: number | null;
-  "seconds"?: number | null;
-  "locked_rate_cents"?: number | null;
-  "rate_locked_at"?: string | null;
+  "denomination": "money";
+  "amount_cents": number;
+  "period"?: string | null;
+  "rollover"?: "carry" | "expire" | "cap" | null;
+  "expires_at"?: string | null;
+  "on_exhaustion"?: "block" | "warn" | "overflow";
+} | {
+  "client_id"?: number | null;
+  "project_id"?: number | null;
+  "denomination": "hours";
+  "seconds": number;
+  "period"?: string | null;
+  "rollover"?: "carry" | "expire" | "cap" | null;
+  "expires_at"?: string | null;
+  "on_exhaustion"?: "block" | "warn" | "overflow";
+} | {
+  "client_id"?: number | null;
+  "project_id"?: number | null;
+  "denomination": "hours";
+  "seconds": number;
+  "locked_rate_cents": number;
+  "rate_locked_at": string;
   "period"?: string | null;
   "rollover"?: "carry" | "expire" | "cap" | null;
   "expires_at"?: string | null;
@@ -871,18 +899,69 @@ export type RetainerLedgerMutationEnvelope = {
 };
 
 export type RetainerLedgerInput = {
-  "kind": "deposit" | "drawdown" | "expiry" | "reset" | "adjustment";
-  "invoice_id"?: number | null;
-  "amount_cents"?: number;
-  "seconds"?: number;
+  "kind": "deposit";
+  "invoice_id": number;
+  "amount_cents": number;
   "occurred_on": string;
   "notes"?: string | null;
+} | {
+  "kind": "deposit";
+  "invoice_id": number;
+  "seconds": number;
+  "occurred_on": string;
+  "notes"?: string | null;
+} | {
+  "kind": "drawdown";
+  "invoice_id": number;
+  "amount_cents": number;
+  "occurred_on": string;
+  "notes"?: string | null;
+} | {
+  "kind": "drawdown";
+  "invoice_id": number;
+  "seconds": number;
+  "occurred_on": string;
+  "notes"?: string | null;
+} | {
+  "kind": "expiry";
+  "amount_cents": number;
+  "occurred_on": string;
+  "notes"?: string | null;
+} | {
+  "kind": "expiry";
+  "seconds": number;
+  "occurred_on": string;
+  "notes"?: string | null;
+} | {
+  "kind": "reset";
+  "amount_cents": number;
+  "occurred_on": string;
+  "notes"?: string | null;
+} | {
+  "kind": "reset";
+  "seconds": number;
+  "occurred_on": string;
+  "notes"?: string | null;
+} | {
+  "kind": "adjustment";
+  "amount_cents": number;
+  "occurred_on": string;
+  "notes": string;
+} | {
+  "kind": "adjustment";
+  "seconds": number;
+  "occurred_on": string;
+  "notes": string;
 };
 
 export type RetainerDrawdownInput = {
   "invoice_id": number;
-  "amount_cents"?: number;
-  "seconds"?: number;
+  "amount_cents": number;
+  "occurred_on": string;
+  "notes"?: string | null;
+} | {
+  "invoice_id": number;
+  "seconds": number;
   "occurred_on": string;
   "notes"?: string | null;
 };
@@ -905,10 +984,24 @@ export type RecurringAmountConfig = {
   "schema_version": 1;
   "type": "line_items_import";
   "project_ids": Array<number>;
-  "time"?: {
+  "time": {
   "summary_type": "project" | "task" | "people" | "detailed";
 };
-  "expenses"?: {
+} | {
+  "schema_version": 1;
+  "type": "line_items_import";
+  "project_ids": Array<number>;
+  "expenses": {
+  "summary_type": "project" | "category" | "people" | "detailed";
+};
+} | {
+  "schema_version": 1;
+  "type": "line_items_import";
+  "project_ids": Array<number>;
+  "time": {
+  "summary_type": "project" | "task" | "people" | "detailed";
+};
+  "expenses": {
   "summary_type": "project" | "category" | "people" | "detailed";
 };
 };
@@ -2007,9 +2100,9 @@ export class EzactoClient {
     });
   }
 
-  async createRetainer(args: { body: RetainerInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<RetainerEnvelope> {
+  async createRetainer(args: { "Idempotency-Key": string; body: RetainerInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<RetainerEnvelope> {
     const headers = new Headers(args.headers);
-
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
     return this.request<RetainerEnvelope>("POST", "/api/v1/retainers", {
       body: args.body,
       signal: args.signal,
@@ -2075,9 +2168,9 @@ export class EzactoClient {
     });
   }
 
-  async createRecurringInvoice(args: { body: RecurringInvoiceInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<RecurringInvoiceEnvelope> {
+  async createRecurringInvoice(args: { "Idempotency-Key": string; body: RecurringInvoiceInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<RecurringInvoiceEnvelope> {
     const headers = new Headers(args.headers);
-
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
     return this.request<RecurringInvoiceEnvelope>("POST", "/api/v1/recurring-invoices", {
       body: args.body,
       signal: args.signal,
@@ -2122,9 +2215,9 @@ export class EzactoClient {
     });
   }
 
-  async createInvoiceAttachment(args: { "invoiceId": number; body: FormData; signal?: AbortSignal; headers?: HeadersInit }): Promise<AttachmentEnvelope> {
+  async createInvoiceAttachment(args: { "invoiceId": number; "Idempotency-Key": string; body: FormData; signal?: AbortSignal; headers?: HeadersInit }): Promise<AttachmentEnvelope> {
     const headers = new Headers(args.headers);
-
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
     return this.request<AttachmentEnvelope>("POST", "/api/v1/invoices/:invoiceId/attachments".replace(":invoiceId", encodeURIComponent(String(args["invoiceId"]))), {
       body: args.body,
       multipart: true,
@@ -2161,9 +2254,9 @@ export class EzactoClient {
     });
   }
 
-  async createRecurringInvoiceAttachment(args: { "recurringInvoiceId": number; body: FormData; signal?: AbortSignal; headers?: HeadersInit }): Promise<AttachmentEnvelope> {
+  async createRecurringInvoiceAttachment(args: { "recurringInvoiceId": number; "Idempotency-Key": string; body: FormData; signal?: AbortSignal; headers?: HeadersInit }): Promise<AttachmentEnvelope> {
     const headers = new Headers(args.headers);
-
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
     return this.request<AttachmentEnvelope>("POST", "/api/v1/recurring-invoices/:recurringInvoiceId/attachments".replace(":recurringInvoiceId", encodeURIComponent(String(args["recurringInvoiceId"]))), {
       body: args.body,
       multipart: true,
@@ -2200,9 +2293,9 @@ export class EzactoClient {
     });
   }
 
-  async createEstimateAttachment(args: { "estimateId": number; body: FormData; signal?: AbortSignal; headers?: HeadersInit }): Promise<AttachmentEnvelope> {
+  async createEstimateAttachment(args: { "estimateId": number; "Idempotency-Key": string; body: FormData; signal?: AbortSignal; headers?: HeadersInit }): Promise<AttachmentEnvelope> {
     const headers = new Headers(args.headers);
-
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
     return this.request<AttachmentEnvelope>("POST", "/api/v1/estimates/:estimateId/attachments".replace(":estimateId", encodeURIComponent(String(args["estimateId"]))), {
       body: args.body,
       multipart: true,
@@ -2239,9 +2332,9 @@ export class EzactoClient {
     });
   }
 
-  async createExpenseAttachment(args: { "expenseId": number; body: FormData; signal?: AbortSignal; headers?: HeadersInit }): Promise<AttachmentEnvelope> {
+  async createExpenseAttachment(args: { "expenseId": number; "Idempotency-Key": string; body: FormData; signal?: AbortSignal; headers?: HeadersInit }): Promise<AttachmentEnvelope> {
     const headers = new Headers(args.headers);
-
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
     return this.request<AttachmentEnvelope>("POST", "/api/v1/expenses/:expenseId/attachments".replace(":expenseId", encodeURIComponent(String(args["expenseId"]))), {
       body: args.body,
       multipart: true,
@@ -2278,9 +2371,9 @@ export class EzactoClient {
     });
   }
 
-  async createProjectAttachment(args: { "projectId": number; body: FormData; signal?: AbortSignal; headers?: HeadersInit }): Promise<AttachmentEnvelope> {
+  async createProjectAttachment(args: { "projectId": number; "Idempotency-Key": string; body: FormData; signal?: AbortSignal; headers?: HeadersInit }): Promise<AttachmentEnvelope> {
     const headers = new Headers(args.headers);
-
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
     return this.request<AttachmentEnvelope>("POST", "/api/v1/projects/:projectId/attachments".replace(":projectId", encodeURIComponent(String(args["projectId"]))), {
       body: args.body,
       multipart: true,

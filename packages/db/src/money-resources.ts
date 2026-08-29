@@ -258,6 +258,9 @@ export interface RetainerResource {
 }
 
 export interface CreateRetainerInput {
+  resourceId: number
+  commandId: string
+  actorUserId: number
   clientId: number | null
   projectId: number | null
   denomination: 'money' | 'hours'
@@ -296,6 +299,9 @@ export interface RecurringInvoiceResource {
 }
 
 export interface RecurringInvoiceInput {
+  resourceId?: number
+  commandId?: string
+  actorUserId?: number
   clientId: number
   subjectTemplate: string
   notesTemplate: string
@@ -438,27 +444,18 @@ type RawInvoiceLine = Omit<InvoiceLineResource, 'taxed' | 'taxed2'> & {
   taxed2: number | boolean
 }
 
-const linesFor = async (
-  database: MoneyResourceDatabase,
-  invoiceId: number,
-): Promise<InvoiceLineResource[]> =>
-  (
-    await all<RawInvoiceLine>(database, {
-      text: `SELECT id, invoice_id, position, kind, description, quantity,
-      unit_price_cents, amount_cents, taxed, taxed2, project_id, created_at, updated_at
-      FROM invoice_line_items WHERE invoice_id = ? ORDER BY position, id`,
-      params: [invoiceId],
-    })
-  ).map((line) => ({ ...line, taxed: Boolean(line.taxed), taxed2: Boolean(line.taxed2) }))
+const invoiceLinesSelect = `SELECT id, invoice_id, position, kind, description, quantity,
+  unit_price_cents, amount_cents, taxed, taxed2, project_id, created_at, updated_at
+  FROM invoice_line_items WHERE invoice_id = ? ORDER BY position, id`
 
-const hydrateInvoice = async (
-  database: MoneyResourceDatabase,
-  row: RawInvoice,
-): Promise<InvoiceResource> => ({
+const hydrateInvoiceLines = (lines: RawInvoiceLine[]): InvoiceLineResource[] =>
+  lines.map((line) => ({ ...line, taxed: Boolean(line.taxed), taxed2: Boolean(line.taxed2) }))
+
+const hydrateInvoice = (row: RawInvoice, lineItems: InvoiceLineResource[]): InvoiceResource => ({
   ...row,
   reminder_policy: parseJson<Record<string, unknown> | null>(row.reminder_policy, null),
   payment_options: parseJson<string[]>(row.payment_options, []),
-  line_items: await linesFor(database, row.id),
+  line_items: lineItems,
 })
 
 const estimateSelect = `SELECT id, client_id, created_by_user_id, number,
@@ -472,26 +469,72 @@ type RawEstimateLine = Omit<EstimateLineResource, 'taxed' | 'taxed2'> & {
   taxed2: number | boolean
 }
 
-const estimateLinesFor = async (
+const estimateLinesSelect = `SELECT id, estimate_id, position, kind, description, quantity,
+  unit_price_cents, amount_cents, taxed, taxed2, created_at, updated_at
+  FROM estimate_line_items WHERE estimate_id = ? ORDER BY position, id`
+
+const hydrateEstimateLines = (lines: RawEstimateLine[]): EstimateLineResource[] =>
+  lines.map((line) => ({ ...line, taxed: Boolean(line.taxed), taxed2: Boolean(line.taxed2) }))
+
+const hydrateEstimate = (
+  row: Omit<EstimateResource, 'line_items'>,
+  lineItems: EstimateLineResource[],
+): EstimateResource => ({
+  ...row,
+  line_items: lineItems,
+})
+
+const readConsistentInvoice = async (
+  database: MoneyResourceDatabase,
+  invoiceId: number,
+): Promise<InvoiceResource | null> => {
+  const client = database.$client
+  if (isD1Client(client)) {
+    const [header, lines] = await client.batch([
+      client.prepare(`${invoiceSelect} WHERE id = ?`).bind(invoiceId),
+      client.prepare(invoiceLinesSelect).bind(invoiceId),
+    ])
+    if (header === undefined || lines === undefined) {
+      throw new Error('D1 invoice snapshot batch returned incomplete results')
+    }
+    const row = (header.results[0] as RawInvoice | undefined) ?? null
+    if (row === null) return null
+    return hydrateInvoice(row, hydrateInvoiceLines(lines.results as unknown as RawInvoiceLine[]))
+  }
+  return client.transaction(() => {
+    const row = client.prepare(`${invoiceSelect} WHERE id = ?`).get(invoiceId) as
+      RawInvoice | undefined
+    if (row === undefined) return null
+    const lines = client.prepare(invoiceLinesSelect).all(invoiceId) as RawInvoiceLine[]
+    return hydrateInvoice(row, hydrateInvoiceLines(lines))
+  })()
+}
+
+const readConsistentEstimate = async (
   database: MoneyResourceDatabase,
   estimateId: number,
-): Promise<EstimateLineResource[]> =>
-  (
-    await all<RawEstimateLine>(database, {
-      text: `SELECT id, estimate_id, position, kind, description, quantity,
-        unit_price_cents, amount_cents, taxed, taxed2, created_at, updated_at
-        FROM estimate_line_items WHERE estimate_id = ? ORDER BY position, id`,
-      params: [estimateId],
-    })
-  ).map((line) => ({ ...line, taxed: Boolean(line.taxed), taxed2: Boolean(line.taxed2) }))
-
-const hydrateEstimate = async (
-  database: MoneyResourceDatabase,
-  row: Omit<EstimateResource, 'line_items'>,
-): Promise<EstimateResource> => ({
-  ...row,
-  line_items: await estimateLinesFor(database, row.id),
-})
+): Promise<EstimateResource | null> => {
+  const client = database.$client
+  if (isD1Client(client)) {
+    const [header, lines] = await client.batch([
+      client.prepare(`${estimateSelect} WHERE id = ?`).bind(estimateId),
+      client.prepare(estimateLinesSelect).bind(estimateId),
+    ])
+    if (header === undefined || lines === undefined) {
+      throw new Error('D1 estimate snapshot batch returned incomplete results')
+    }
+    const row = (header.results[0] as Omit<EstimateResource, 'line_items'> | undefined) ?? null
+    if (row === null) return null
+    return hydrateEstimate(row, hydrateEstimateLines(lines.results as unknown as RawEstimateLine[]))
+  }
+  return client.transaction(() => {
+    const row = client.prepare(`${estimateSelect} WHERE id = ?`).get(estimateId) as
+      Omit<EstimateResource, 'line_items'> | undefined
+    if (row === undefined) return null
+    const lines = client.prepare(estimateLinesSelect).all(estimateId) as RawEstimateLine[]
+    return hydrateEstimate(row, hydrateEstimateLines(lines))
+  })()
+}
 
 type RawEstimateMessage = Omit<EstimateMessageResource, 'recipients' | 'send_me_a_copy'> & {
   recipients: unknown
@@ -509,11 +552,7 @@ const estimateMessageSelect = `SELECT id, estimate_id, sent_by, sent_by_email,
   delivery_status, provider_message_id, created_at, updated_at FROM estimate_messages`
 
 type EstimateCommandKind =
-  | 'estimate.send'
-  | 'estimate.accept'
-  | 'estimate.decline'
-  | 'estimate.re-open'
-  | 'estimate.convert'
+  'estimate.send' | 'estimate.accept' | 'estimate.decline' | 'estimate.re-open' | 'estimate.convert'
 
 interface StoredEstimateCommand {
   estimateId: number
@@ -542,6 +581,62 @@ const fingerprint = async (value: unknown): Promise<string> => {
     await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value))),
   )
   return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('')}`
+}
+
+type ResourceCreateCommandKind = 'retainer.create' | 'recurring_invoice.create'
+
+interface StoredResourceCreateCommand {
+  inputFingerprint: string
+  actorUserId: number
+  resourceId: number
+  resultJson: unknown
+}
+
+const readResourceCreateCommand = (
+  database: MoneyResourceDatabase,
+  commandKind: ResourceCreateCommandKind,
+  commandId: string,
+): Promise<StoredResourceCreateCommand | null> =>
+  first(database, {
+    text: `SELECT input_fingerprint AS "inputFingerprint", actor_user_id AS "actorUserId",
+      resource_id AS "resourceId", result_json AS "resultJson"
+      FROM resource_create_commands WHERE command_kind = ? AND command_id = ?`,
+    params: [commandKind, commandId],
+  })
+
+const replayResourceCreate = <T>(
+  receipt: StoredResourceCreateCommand,
+  expected: { inputFingerprint: string; actorUserId: number; resourceId: number },
+): T => {
+  if (
+    receipt.inputFingerprint !== expected.inputFingerprint ||
+    receipt.actorUserId !== expected.actorUserId ||
+    receipt.resourceId !== expected.resourceId
+  ) {
+    throw new MoneyResourceOperationError(
+      'command_id_reused',
+      'resource create command id was reused with different input',
+    )
+  }
+  const result = parseJson<{ schema_version?: unknown; data?: unknown }>(receipt.resultJson, {})
+  if (result.schema_version !== 1 || typeof result.data !== 'object' || result.data === null) {
+    throw new Error('resource create receipt has an invalid stored result')
+  }
+  return result.data as T
+}
+
+const assertCreateCommandInput = (input: {
+  resourceId: number
+  commandId: string
+  actorUserId: number
+  occurredAt: string
+}): void => {
+  assertPositiveId(input.resourceId, 'resourceId')
+  assertPositiveId(input.actorUserId, 'actorUserId')
+  if (!/^[A-Za-z0-9._:-]{1,128}$/.test(input.commandId)) {
+    throw new TypeError('commandId has invalid characters or length')
+  }
+  assertTimestamp(input.occurredAt, 'occurredAt')
 }
 
 const assertEstimateCommandReceipt = (
@@ -637,37 +732,33 @@ export class MoneyResourceRepository {
   }
 
   async listInvoices(window: MoneyWindow): Promise<InvoiceResource[]> {
-    const rows = await all<RawInvoice>(this.database, {
-      text: `${invoiceSelect} WHERE id > ? AND id <= ? ORDER BY id LIMIT ?`,
+    const rows = await all<{ id: number }>(this.database, {
+      text: `SELECT id FROM invoices WHERE id > ? AND id <= ? ORDER BY id LIMIT ?`,
       params: [window.afterId ?? 0, window.throughId, window.take],
     })
-    return Promise.all(rows.map((row) => hydrateInvoice(this.database, row)))
+    const values = await Promise.all(rows.map(({ id }) => readConsistentInvoice(this.database, id)))
+    return values.filter((value): value is InvoiceResource => value !== null)
   }
 
   async getInvoice(id: number): Promise<InvoiceResource | null> {
     assertPositiveId(id, 'invoice id')
-    const row = await first<RawInvoice>(this.database, {
-      text: `${invoiceSelect} WHERE id = ?`,
-      params: [id],
-    })
-    return row === null ? null : hydrateInvoice(this.database, row)
+    return readConsistentInvoice(this.database, id)
   }
 
   async listEstimates(window: MoneyWindow): Promise<EstimateResource[]> {
-    const rows = await all<Omit<EstimateResource, 'line_items'>>(this.database, {
-      text: `${estimateSelect} WHERE id > ? AND id <= ? ORDER BY id LIMIT ?`,
+    const rows = await all<{ id: number }>(this.database, {
+      text: `SELECT id FROM estimates WHERE id > ? AND id <= ? ORDER BY id LIMIT ?`,
       params: [window.afterId ?? 0, window.throughId, window.take],
     })
-    return Promise.all(rows.map((row) => hydrateEstimate(this.database, row)))
+    const values = await Promise.all(
+      rows.map(({ id }) => readConsistentEstimate(this.database, id)),
+    )
+    return values.filter((value): value is EstimateResource => value !== null)
   }
 
   async getEstimate(id: number): Promise<EstimateResource | null> {
     assertPositiveId(id, 'estimate id')
-    const row = await first<Omit<EstimateResource, 'line_items'>>(this.database, {
-      text: `${estimateSelect} WHERE id = ?`,
-      params: [id],
-    })
-    return row === null ? null : hydrateEstimate(this.database, row)
+    return readConsistentEstimate(this.database, id)
   }
 
   async listEstimateMessages(estimateId: number): Promise<EstimateMessageResource[] | null> {
@@ -733,7 +824,10 @@ export class MoneyResourceRepository {
         }),
       ])
       if (estimate === null || messageRow === null) {
-        throw new MoneyResourceOperationError('command_id_reused', 'estimate receipt result is missing')
+        throw new MoneyResourceOperationError(
+          'command_id_reused',
+          'estimate receipt result is missing',
+        )
       }
       return { estimate, message: hydrateEstimateMessage(messageRow) }
     }
@@ -972,21 +1066,21 @@ export class MoneyResourceRepository {
       receipt: StoredEstimateCommand,
     ): Promise<EstimateConversionResult> => {
       assertEstimateCommandReceipt(receipt, expectedReceipt)
-      const [invoiceRow, eventRow] = await Promise.all([
-        first<RawInvoice>(this.database, {
-          text: `${invoiceSelect} WHERE id = ? AND estimate_id = ?`,
-          params: [input.invoiceId, input.estimateId],
-        }),
+      const [invoice, eventRow] = await Promise.all([
+        readConsistentInvoice(this.database, input.invoiceId),
         first<RawEstimateMessage>(this.database, {
           text: `${estimateMessageSelect} WHERE id = ? AND estimate_id = ? AND event_type = 'invoice'`,
           params: [input.messageId, input.estimateId],
         }),
       ])
-      if (invoiceRow === null || eventRow === null) {
-        throw new MoneyResourceOperationError('command_id_reused', 'conversion receipt result is missing')
+      if (invoice === null || invoice.estimate_id !== input.estimateId || eventRow === null) {
+        throw new MoneyResourceOperationError(
+          'command_id_reused',
+          'conversion receipt result is missing',
+        )
       }
       return {
-        invoice: await hydrateInvoice(this.database, invoiceRow),
+        invoice,
         event: hydrateEstimateMessage(eventRow),
       }
     }
@@ -1206,6 +1300,42 @@ export class MoneyResourceRepository {
         params: [input.invoiceId, input.estimateId, input.commandId, inputFingerprint],
       },
       {
+        text: `UPDATE estimates SET version = version + 1, updated_at = ?
+          WHERE id = ? AND state = 'accepted' AND version = ?
+            AND EXISTS (
+              SELECT 1 FROM estimate_command_ledger command
+              WHERE command.estimate_id = estimates.id AND command.command_id = ?
+                AND command.input_fingerprint = ? AND command.completed = 0
+            )
+            AND EXISTS (
+              SELECT 1 FROM invoices invoice
+              WHERE invoice.id = ? AND invoice.estimate_id = estimates.id
+            )
+            AND EXISTS (
+              SELECT 1 FROM estimate_messages message
+              WHERE message.id = ? AND message.estimate_id = estimates.id
+                AND message.event_type = 'invoice'
+            )
+            AND EXISTS (
+              SELECT 1 FROM event_outbox event
+              WHERE event.id = ? AND event.aggregate_type = 'invoice'
+                AND event.aggregate_id = ? AND event.command_id = ?
+                AND event.event_index = 0
+            )`,
+        params: [
+          input.occurredAt,
+          input.estimateId,
+          input.expectedVersion,
+          input.commandId,
+          inputFingerprint,
+          input.invoiceId,
+          input.messageId,
+          input.eventId,
+          input.invoiceId,
+          input.commandId,
+        ],
+      },
+      {
         text: `UPDATE estimate_command_ledger SET
           completed = 1,
           result_json = json_object(
@@ -1233,6 +1363,13 @@ export class MoneyResourceRepository {
                 AND event.aggregate_id = estimate_command_ledger.invoice_id
                 AND event.command_id = estimate_command_ledger.command_id
                 AND event.event_index = 0
+            )
+            AND EXISTS (
+              SELECT 1 FROM estimates estimate
+              WHERE estimate.id = estimate_command_ledger.estimate_id
+                AND estimate.state = 'accepted'
+                AND estimate.version = estimate_command_ledger.expected_estimate_version + 1
+                AND estimate.updated_at = estimate_command_ledger.occurred_at
             )`,
         params: [input.occurredAt, input.estimateId, input.commandId, inputFingerprint],
       },
@@ -1287,11 +1424,8 @@ export class MoneyResourceRepository {
       throw error
     }
 
-    const [invoiceRow, eventRow, estimate, receipt] = await Promise.all([
-      first<RawInvoice>(this.database, {
-        text: `${invoiceSelect} WHERE id = ? AND estimate_id = ?`,
-        params: [input.invoiceId, input.estimateId],
-      }),
+    const [invoice, eventRow, estimate, receipt] = await Promise.all([
+      readConsistentInvoice(this.database, input.invoiceId),
       first<RawEstimateMessage>(this.database, {
         text: `${estimateMessageSelect} WHERE id = ? AND estimate_id = ? AND event_type = 'invoice'`,
         params: [input.messageId, input.estimateId],
@@ -1300,9 +1434,14 @@ export class MoneyResourceRepository {
       readReceipt(),
     ])
     if (receipt !== null) assertEstimateCommandReceipt(receipt, expectedReceipt)
-    if (invoiceRow !== null && eventRow !== null && receipt !== null) {
+    if (
+      invoice !== null &&
+      invoice.estimate_id === input.estimateId &&
+      eventRow !== null &&
+      receipt !== null
+    ) {
       return {
-        invoice: await hydrateInvoice(this.database, invoiceRow),
+        invoice,
         event: hydrateEstimateMessage(eventRow),
       }
     }
@@ -1418,59 +1557,133 @@ export class MoneyResourceRepository {
   }
 
   async createRetainer(input: CreateRetainerInput): Promise<RetainerResource> {
-    assertTimestamp(input.occurredAt, 'occurredAt')
+    assertCreateCommandInput(input)
     if (input.clientId !== null) assertPositiveId(input.clientId, 'clientId')
     if (input.projectId !== null) assertPositiveId(input.projectId, 'projectId')
-    const created = await first<{ id: number }>(this.database, {
-      text: `INSERT INTO retainers (
-        client_id, project_id, denomination, amount_cents, seconds,
-        locked_rate_cents, rate_locked_at, period, rollover, expires_at,
-        on_exhaustion, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-      params: [
-        input.clientId,
-        input.projectId,
-        input.denomination,
-        input.amountCents,
-        input.seconds,
-        input.lockedRateCents,
-        input.rateLockedAt,
-        input.period,
-        input.rollover,
-        input.expiresAt,
-        input.onExhaustion,
-        input.occurredAt,
-        input.occurredAt,
-      ],
+    const commandKind = 'retainer.create' as const
+    const inputFingerprint = await fingerprint({
+      schema_version: 1,
+      command_kind: commandKind,
+      actor: { type: 'user', id: input.actorUserId },
+      retainer: {
+        client_id: input.clientId,
+        project_id: input.projectId,
+        denomination: input.denomination,
+        amount_cents: input.amountCents,
+        seconds: input.seconds,
+        locked_rate_cents: input.lockedRateCents,
+        rate_locked_at: input.rateLockedAt,
+        period: input.period,
+        rollover: input.rollover,
+        expires_at: input.expiresAt,
+        on_exhaustion: input.onExhaustion,
+      },
     })
-    if (created === null) throw new Error('retainer creation did not return an id')
-    return (
-      (await this.getRetainer(created.id)) ??
-      (() => {
-        throw new Error('retainer missing')
-      })()
-    )
+    const expected = {
+      inputFingerprint,
+      actorUserId: input.actorUserId,
+      resourceId: input.resourceId,
+    }
+    const prior = await readResourceCreateCommand(this.database, commandKind, input.commandId)
+    if (prior !== null) return replayResourceCreate<RetainerResource>(prior, expected)
+    const result: RetainerResource = {
+      id: input.resourceId,
+      client_id: input.clientId,
+      project_id: input.projectId,
+      state: 'ongoing',
+      denomination: input.denomination,
+      amount_cents: input.amountCents,
+      seconds: input.seconds,
+      locked_rate_cents: input.lockedRateCents,
+      rate_locked_at: input.rateLockedAt,
+      period: input.period,
+      rollover: input.rollover,
+      expires_at: input.expiresAt,
+      on_exhaustion: input.onExhaustion,
+      balance: 0,
+      created_at: input.occurredAt,
+      updated_at: input.occurredAt,
+    }
+    try {
+      await runAtomic(this.database, [
+        {
+          text: `INSERT INTO retainers (
+            id, client_id, project_id, denomination, amount_cents, seconds,
+            locked_rate_cents, rate_locked_at, period, rollover, expires_at,
+            on_exhaustion, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          params: [
+            input.resourceId,
+            input.clientId,
+            input.projectId,
+            input.denomination,
+            input.amountCents,
+            input.seconds,
+            input.lockedRateCents,
+            input.rateLockedAt,
+            input.period,
+            input.rollover,
+            input.expiresAt,
+            input.onExhaustion,
+            input.occurredAt,
+            input.occurredAt,
+          ],
+        },
+        {
+          text: `INSERT INTO resource_create_commands (
+            command_kind, command_id, input_fingerprint, actor_user_id,
+            resource_id, result_json, occurred_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          params: [
+            commandKind,
+            input.commandId,
+            inputFingerprint,
+            input.actorUserId,
+            input.resourceId,
+            JSON.stringify({ schema_version: 1, data: result }),
+            input.occurredAt,
+          ],
+        },
+      ])
+      return result
+    } catch (error) {
+      const completed = await readResourceCreateCommand(this.database, commandKind, input.commandId)
+      if (completed !== null) return replayResourceCreate<RetainerResource>(completed, expected)
+      if (
+        error instanceof Error &&
+        /(resource create command identity already exists|unique constraint failed: retainers\.id)/i.test(
+          error.message,
+        )
+      ) {
+        throw new MoneyResourceOperationError(
+          'command_id_reused',
+          'retainer create identity is already occupied',
+        )
+      }
+      throw error
+    }
   }
 
   async updateRetainer(id: number, input: UpdateRetainerInput): Promise<RetainerResource | null> {
     assertPositiveId(id, 'retainer id')
     assertTimestamp(input.occurredAt, 'occurredAt')
-    const current = await this.getRetainer(id)
-    if (current === null) return null
-    await run(this.database, {
-      text: `UPDATE retainers SET state = ?, period = ?, rollover = ?, expires_at = ?,
-        on_exhaustion = ?, updated_at = ? WHERE id = ?`,
-      params: [
-        input.state ?? current.state,
-        input.period === undefined ? current.period : input.period,
-        input.rollover === undefined ? current.rollover : input.rollover,
-        input.expiresAt === undefined ? current.expires_at : input.expiresAt,
-        input.onExhaustion ?? current.on_exhaustion,
-        input.occurredAt,
-        id,
-      ],
+    const assignments: string[] = []
+    const params: unknown[] = []
+    const assign = (column: string, value: unknown): void => {
+      assignments.push(`${column} = ?`)
+      params.push(value)
+    }
+    if (Object.hasOwn(input, 'state')) assign('state', input.state)
+    if (Object.hasOwn(input, 'period')) assign('period', input.period)
+    if (Object.hasOwn(input, 'rollover')) assign('rollover', input.rollover)
+    if (Object.hasOwn(input, 'expiresAt')) assign('expires_at', input.expiresAt)
+    if (Object.hasOwn(input, 'onExhaustion')) assign('on_exhaustion', input.onExhaustion)
+    assign('updated_at', input.occurredAt)
+    const result = await run(this.database, {
+      text: `UPDATE retainers SET ${assignments.join(', ')} WHERE id = ?`,
+      params: [...params, id],
     })
-    return this.getRetainer(id)
+    return result.changes === 0 ? null : this.getRetainer(id)
   }
 
   async listRetainerLedger(retainerId: number): Promise<RetainerLedgerEntry[] | null> {
@@ -1514,32 +1727,112 @@ export class MoneyResourceRepository {
 
   async createRecurring(input: RecurringInvoiceInput): Promise<RecurringInvoiceResource> {
     this.validateRecurringInput(input)
-    const created = await first<{ id: number }>(this.database, {
-      text: `INSERT INTO recurring_invoices (
-        client_id, definition_status, subject_template, notes_template,
-        every_n_months, day_of_month, next_issue_on, amount_config,
-        can_draw_from_retainer_id, created_at, updated_at
-      ) VALUES (?, 'complete', ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-      params: [
-        input.clientId,
-        input.subjectTemplate,
-        input.notesTemplate,
-        input.everyNMonths,
-        input.dayOfMonth,
-        input.nextIssueOn,
-        JSON.stringify(input.amountConfig),
-        input.canDrawFromRetainerId,
-        input.occurredAt,
-        input.occurredAt,
-      ],
+    if (
+      input.resourceId === undefined ||
+      input.commandId === undefined ||
+      input.actorUserId === undefined
+    ) {
+      throw new TypeError('recurring creates require stable command identity')
+    }
+    assertCreateCommandInput({
+      resourceId: input.resourceId,
+      commandId: input.commandId,
+      actorUserId: input.actorUserId,
+      occurredAt: input.occurredAt,
     })
-    if (created === null) throw new Error('recurring invoice creation did not return an id')
-    return (
-      (await this.getRecurring(created.id)) ??
-      (() => {
-        throw new Error('definition missing')
-      })()
-    )
+    const commandKind = 'recurring_invoice.create' as const
+    const inputFingerprint = await fingerprint({
+      schema_version: 1,
+      command_kind: commandKind,
+      actor: { type: 'user', id: input.actorUserId },
+      recurring_invoice: {
+        client_id: input.clientId,
+        subject_template: input.subjectTemplate,
+        notes_template: input.notesTemplate,
+        every_n_months: input.everyNMonths,
+        day_of_month: input.dayOfMonth,
+        next_issue_on: input.nextIssueOn,
+        amount_config: input.amountConfig,
+        can_draw_from_retainer_id: input.canDrawFromRetainerId,
+      },
+    })
+    const expected = {
+      inputFingerprint,
+      actorUserId: input.actorUserId,
+      resourceId: input.resourceId,
+    }
+    const prior = await readResourceCreateCommand(this.database, commandKind, input.commandId)
+    if (prior !== null) return replayResourceCreate<RecurringInvoiceResource>(prior, expected)
+    const result: RecurringInvoiceResource = {
+      id: input.resourceId,
+      client_id: input.clientId,
+      subject_template: input.subjectTemplate,
+      notes_template: input.notesTemplate,
+      every_n_months: input.everyNMonths,
+      day_of_month: input.dayOfMonth,
+      next_issue_on: input.nextIssueOn,
+      amount_config: input.amountConfig,
+      can_draw_from_retainer_id: input.canDrawFromRetainerId,
+      created_at: input.occurredAt,
+      updated_at: input.occurredAt,
+    }
+    try {
+      await runAtomic(this.database, [
+        {
+          text: `INSERT INTO recurring_invoices (
+            id, client_id, definition_status, subject_template, notes_template,
+            every_n_months, day_of_month, next_issue_on, amount_config,
+            can_draw_from_retainer_id, created_at, updated_at
+          ) VALUES (?, ?, 'complete', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          params: [
+            input.resourceId,
+            input.clientId,
+            input.subjectTemplate,
+            input.notesTemplate,
+            input.everyNMonths,
+            input.dayOfMonth,
+            input.nextIssueOn,
+            JSON.stringify(input.amountConfig),
+            input.canDrawFromRetainerId,
+            input.occurredAt,
+            input.occurredAt,
+          ],
+        },
+        {
+          text: `INSERT INTO resource_create_commands (
+            command_kind, command_id, input_fingerprint, actor_user_id,
+            resource_id, result_json, occurred_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          params: [
+            commandKind,
+            input.commandId,
+            inputFingerprint,
+            input.actorUserId,
+            input.resourceId,
+            JSON.stringify({ schema_version: 1, data: result }),
+            input.occurredAt,
+          ],
+        },
+      ])
+      return result
+    } catch (error) {
+      const completed = await readResourceCreateCommand(this.database, commandKind, input.commandId)
+      if (completed !== null) {
+        return replayResourceCreate<RecurringInvoiceResource>(completed, expected)
+      }
+      if (
+        error instanceof Error &&
+        /(resource create command identity already exists|unique constraint failed: recurring_invoices\.id)/i.test(
+          error.message,
+        )
+      ) {
+        throw new MoneyResourceOperationError(
+          'command_id_reused',
+          'recurring invoice create identity is already occupied',
+        )
+      }
+      throw error
+    }
   }
 
   async updateRecurring(

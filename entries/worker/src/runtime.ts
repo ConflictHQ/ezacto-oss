@@ -15,22 +15,22 @@ import {
   DrizzleTrackedResourceRepository,
   migrateD1,
   type TrackedPolicyResolver,
-} from '@ezacto/db/d1'
-import { createApiSessionService } from '@ezacto/api'
-import type { AttachmentObjectPort, AttachmentRouteOptions } from '@ezacto/api'
+} from "@ezacto/db/d1";
+import { createApiSessionService } from "@ezacto/api";
+import type { AttachmentObjectPort, AttachmentRouteOptions } from "@ezacto/api";
 import {
   SesMailer,
   type HttpEmailProvider,
   type SesMailerOptions,
-} from '@ezacto/mailer'
-import type { RuntimeServices } from './app.js'
-import type { WorkerEnv } from './app.js'
-import { createWorkerAuthMailer } from './email-queue.js'
+} from "@ezacto/mailer";
+import type { RuntimeServices } from "./app.js";
+import type { WorkerEnv } from "./app.js";
+import { createWorkerAuthMailer } from "./email-queue.js";
 
-const cursorSecretPattern = /^[A-Za-z0-9_-]+$/
-const cursorSecretBytes = 32
+const cursorSecretPattern = /^[A-Za-z0-9_-]+$/;
+const cursorSecretBytes = 32;
 
-const readiness = new WeakMap<object, Promise<void>>()
+const readiness = new WeakMap<object, Promise<void>>();
 
 export const createWorkerSesMailer = (
   env: WorkerEnv,
@@ -43,8 +43,8 @@ export const createWorkerSesMailer = (
     env.SES_REGION,
     env.SES_FROM,
     env.SES_CONFIGURATION_SET,
-  ]
-  if (configured.every((value) => value === undefined)) return null
+  ];
+  if (configured.every((value) => value === undefined)) return null;
   if (
     env.AWS_ACCESS_KEY_ID === undefined ||
     env.AWS_SECRET_ACCESS_KEY === undefined ||
@@ -52,8 +52,8 @@ export const createWorkerSesMailer = (
     env.SES_FROM === undefined
   ) {
     throw new TypeError(
-      'SES requires AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, SES_REGION, and SES_FROM together',
-    )
+      "SES requires AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, SES_REGION, and SES_FROM together",
+    );
   }
   return new SesMailer(
     {
@@ -69,8 +69,8 @@ export const createWorkerSesMailer = (
         : { configurationSet: env.SES_CONFIGURATION_SET }),
     },
     options,
-  )
-}
+  );
+};
 
 /**
  * Decode a canonical base64url secret. Text encodings are deliberately not
@@ -78,56 +78,56 @@ export const createWorkerSesMailer = (
  */
 export const parseCursorSigningKey = (encoded: string): Uint8Array => {
   if (
-    typeof encoded !== 'string' ||
+    typeof encoded !== "string" ||
     encoded.length === 0 ||
     encoded.length > 128 ||
     encoded.length % 4 === 1 ||
     !cursorSecretPattern.test(encoded)
   ) {
-    throw new TypeError('API_CURSOR_SIGNING_KEY must be canonical base64url')
+    throw new TypeError("API_CURSOR_SIGNING_KEY must be canonical base64url");
   }
 
-  let binary: string
+  let binary: string;
   try {
-    const padding = '='.repeat((4 - (encoded.length % 4)) % 4)
-    binary = atob(encoded.replaceAll('-', '+').replaceAll('_', '/') + padding)
+    const padding = "=".repeat((4 - (encoded.length % 4)) % 4);
+    binary = atob(encoded.replaceAll("-", "+").replaceAll("_", "/") + padding);
   } catch {
-    throw new TypeError('API_CURSOR_SIGNING_KEY must be canonical base64url')
+    throw new TypeError("API_CURSOR_SIGNING_KEY must be canonical base64url");
   }
-  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
   if (bytes.byteLength !== cursorSecretBytes) {
     throw new TypeError(
       `API_CURSOR_SIGNING_KEY must decode to exactly ${cursorSecretBytes} bytes`,
-    )
+    );
   }
   if (encodeBase64Url(bytes) !== encoded) {
-    throw new TypeError('API_CURSOR_SIGNING_KEY must be canonical base64url')
+    throw new TypeError("API_CURSOR_SIGNING_KEY must be canonical base64url");
   }
-  return bytes
-}
+  return bytes;
+};
 
 const encodeBase64Url = (bytes: Uint8Array): string => {
-  let binary = ''
-  for (const byte of bytes) binary += String.fromCharCode(byte)
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary)
-    .replaceAll('+', '-')
-    .replaceAll('/', '_')
-    .replace(/=+$/, '')
-}
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/, "");
+};
 
 const requireDatabase = (env: WorkerEnv): D1Database => {
-  const database = env.DB
+  const database = env.DB;
   if (
     database === undefined ||
-    typeof database !== 'object' ||
-    typeof database.prepare !== 'function' ||
-    typeof database.batch !== 'function' ||
-    typeof database.exec !== 'function'
+    typeof database !== "object" ||
+    typeof database.prepare !== "function" ||
+    typeof database.batch !== "function" ||
+    typeof database.exec !== "function"
   ) {
-    throw new TypeError('DB must be a D1 database binding')
+    throw new TypeError("DB must be a D1 database binding");
   }
-  return database
-}
+  return database;
+};
 
 /**
  * D1 itself serializes each ledger-leading migration batch. The isolate cache
@@ -136,57 +136,94 @@ const requireDatabase = (env: WorkerEnv): D1Database => {
 export const ensureRuntimeDatabaseReady = async (
   database: D1Database,
 ): Promise<void> => {
-  const identity = database as object
-  const pending = readiness.get(identity)
-  if (pending !== undefined) return pending
+  const identity = database as object;
+  const pending = readiness.get(identity);
+  if (pending !== undefined) return pending;
 
   const migration = migrateD1(database).catch((error: unknown) => {
-    if (readiness.get(identity) === migration) readiness.delete(identity)
-    throw error
-  })
-  readiness.set(identity, migration)
-  return migration
-}
+    if (readiness.get(identity) === migration) readiness.delete(identity);
+    throw error;
+  });
+  readiness.set(identity, migration);
+  return migration;
+};
 
 // Approval and invoice locks are persisted and derived by the repository. The
 // current organization model defines no additional calendar/policy lock source.
 const organizationPolicy: TrackedPolicyResolver = {
   isLocked: async () => false,
-}
+};
 
-export const createR2AttachmentObjectStore = (bucket: R2Bucket): AttachmentObjectPort => ({
+export const createR2AttachmentObjectStore = (
+  bucket: R2Bucket,
+): AttachmentObjectPort => ({
   async put(key, bytes, contentType) {
-    await bucket.put(key, bytes, { httpMetadata: { contentType } })
+    // A hash-derived key is immutable. If another request already stored these
+    // bytes, retain its metadata instead of letting a conflicting upload rewrite
+    // the shared object before durable metadata convergence rejects the request.
+    // R2 metadata is deliberately non-authoritative: downloads set headers from
+    // the immutable database file-object identity owned by the attachment route.
+    try {
+      await bucket.put(key, bytes, {
+        onlyIf: { etagDoesNotMatch: "*" },
+        httpMetadata: { contentType },
+      });
+    } catch (error) {
+      // Some local/older R2 implementations surface the failed precondition as
+      // an exception instead of the documented null result. Presence proves
+      // the immutable key already converged; unrelated storage failures escape.
+      if ((await bucket.head(key)) === null) throw error;
+    }
   },
   async get(key) {
-    const object = await bucket.get(key)
-    return object === null ? null : { body: object.body }
+    const object = await bucket.get(key);
+    return object === null ? null : { body: object.body };
   },
-})
+});
 
-export const createD1AttachmentOwnerAuthorizer = (
-  database: D1Database,
-): AttachmentRouteOptions['authorizeOwnerAccess'] =>
+export const createD1AttachmentOwnerAuthorizer =
+  (database: D1Database): AttachmentRouteOptions["authorizeOwnerAccess"] =>
   async ({ owner, parentId, principal }) => {
-    const exists = async (statement: string, ...bindings: unknown[]): Promise<boolean> =>
-      (await database.prepare(statement).bind(...bindings).first<{ authorized: number }>()) !== null
+    const exists = async (
+      statement: string,
+      ...bindings: unknown[]
+    ): Promise<boolean> =>
+      (await database
+        .prepare(statement)
+        .bind(...bindings)
+        .first<{ authorized: number }>()) !== null;
 
     switch (owner) {
-      case 'invoice':
-        return exists('SELECT 1 AS authorized FROM invoices WHERE id = ?', parentId)
-      case 'recurringInvoice':
-        return exists('SELECT 1 AS authorized FROM recurring_invoices WHERE id = ?', parentId)
-      case 'estimate':
-        return exists('SELECT 1 AS authorized FROM estimates WHERE id = ?', parentId)
-      case 'expense':
+      case "invoice":
         return exists(
-          'SELECT 1 AS authorized FROM expenses WHERE id = ? AND user_id = ?',
+          "SELECT 1 AS authorized FROM invoices WHERE id = ?",
+          parentId,
+        );
+      case "recurringInvoice":
+        return exists(
+          "SELECT 1 AS authorized FROM recurring_invoices WHERE id = ?",
+          parentId,
+        );
+      case "estimate":
+        return exists(
+          "SELECT 1 AS authorized FROM estimates WHERE id = ?",
+          parentId,
+        );
+      case "expense":
+        return exists(
+          "SELECT 1 AS authorized FROM expenses WHERE id = ? AND user_id = ?",
           parentId,
           principal.userId,
-        )
-      case 'project':
-        if (principal.profile === 'administrator' || principal.profile === 'executive_manager') {
-          return exists('SELECT 1 AS authorized FROM projects WHERE id = ?', parentId)
+        );
+      case "project":
+        if (
+          principal.profile === "administrator" ||
+          principal.profile === "executive_manager"
+        ) {
+          return exists(
+            "SELECT 1 AS authorized FROM projects WHERE id = ?",
+            parentId,
+          );
         }
         return exists(
           `SELECT 1 AS authorized FROM projects project
@@ -202,34 +239,35 @@ export const createD1AttachmentOwnerAuthorizer = (
            )`,
           principal.userId,
           parentId,
-        )
+        );
     }
-  }
+  };
 
 export const createRuntimeServices = async (
   env: WorkerEnv,
   options: {
-    emailProvider?: HttpEmailProvider
-    ses?: SesMailerOptions
+    emailProvider?: HttpEmailProvider;
+    ses?: SesMailerOptions;
   } = {},
 ): Promise<RuntimeServices> => {
-  const database = requireDatabase(env)
-  const cursorSigningKey = parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY)
-  await ensureRuntimeDatabaseReady(database)
-  const drizzle = createD1Database(database)
-  const sessions = createApiSessionService(createD1SessionStore(database))
-  const emailLog = createD1EmailLogStore(database)
+  const database = requireDatabase(env);
+  const cursorSigningKey = parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY);
+  await ensureRuntimeDatabaseReady(database);
+  const drizzle = createD1Database(database);
+  const sessions = createApiSessionService(createD1SessionStore(database));
+  const emailLog = createD1EmailLogStore(database);
   const emailProvider =
-    options.emailProvider ?? createWorkerSesMailer(env, options.ses)
+    options.emailProvider ?? createWorkerSesMailer(env, options.ses);
   const authMailer =
     env.EMAIL_QUEUE === undefined ||
     env.APP_BASE_URL === undefined ||
     emailProvider === null
       ? undefined
-      : createWorkerAuthMailer(env.EMAIL_QUEUE, emailLog, env.APP_BASE_URL)
+      : createWorkerAuthMailer(env.EMAIL_QUEUE, emailLog, env.APP_BASE_URL);
   return {
     bootstrap: (input) => bootstrapInstanceD1(database, input),
-    enrollOwnerPassword: (input) => enrollInstanceOwnerPasswordD1(database, input),
+    enrollOwnerPassword: (input) =>
+      enrollInstanceOwnerPasswordD1(database, input),
     tokens: createApiTokenStore(drizzle),
     generalResources: createGeneralResourceRepository(drizzle),
     moneyResources: createMoneyResourceRepository(drizzle),
@@ -254,5 +292,5 @@ export const createRuntimeServices = async (
             authorizeOwnerAccess: createD1AttachmentOwnerAuthorizer(database),
           },
         }),
-  }
-}
+  };
+};

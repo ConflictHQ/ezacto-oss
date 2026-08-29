@@ -1,7 +1,7 @@
 import {
   attachmentContractOperations,
   attachmentContractSchemas,
-} from './attachment-contract.js'
+} from "./attachment-contract.js";
 
 export type ApiContractMethod = "get" | "post" | "patch" | "delete";
 
@@ -614,6 +614,7 @@ const moneyOperations: ApiContractOperation[] = [
     responseSchema: "RetainerEnvelope",
     requestSchema: "RetainerInput",
     requestRequired: true,
+    parameters: [idempotency],
   },
   ...(["get", "patch"] as const).map((method) => ({
     method,
@@ -682,6 +683,7 @@ const moneyOperations: ApiContractOperation[] = [
     responseSchema: "RecurringInvoiceEnvelope",
     requestSchema: "RecurringInvoiceInput",
     requestRequired: true,
+    parameters: [idempotency],
   },
   ...(["get", "patch", "delete"] as const).map((method) => ({
     method,
@@ -949,6 +951,152 @@ const page = (name: string): JsonSchema => ({
   additionalProperties: false,
 });
 
+const retainerInputVariant = (
+  denomination: "money" | "hours",
+  locked: boolean,
+): JsonSchema => ({
+  type: "object",
+  required: [
+    "denomination",
+    denomination === "money" ? "amount_cents" : "seconds",
+    ...(locked ? ["locked_rate_cents", "rate_locked_at"] : []),
+  ],
+  properties: {
+    client_id: nullable(integerSchema),
+    project_id: nullable(integerSchema),
+    denomination: { const: denomination },
+    ...(denomination === "money"
+      ? {
+          amount_cents: {
+            type: "integer",
+            minimum: 0,
+            maximum: 9_000_000_000_000,
+          },
+        }
+      : {
+          seconds: { type: "integer", minimum: 0 },
+          ...(locked
+            ? {
+                locked_rate_cents: {
+                  type: "integer",
+                  minimum: 0,
+                  maximum: 9_000_000_000_000,
+                },
+                rate_locked_at: timestampSchema,
+              }
+            : {}),
+        }),
+    period: nullable({ type: "string", maxLength: 64 }),
+    rollover: nullable({ type: "string", enum: ["carry", "expire", "cap"] }),
+    expires_at: nullable(dateSchema),
+    on_exhaustion: { type: "string", enum: ["block", "warn", "overflow"] },
+  },
+  additionalProperties: false,
+});
+
+const retainerLedgerVariant = (
+  kind: "deposit" | "drawdown" | "expiry" | "reset" | "adjustment",
+  unit: "amount_cents" | "seconds",
+): JsonSchema => {
+  const requiresInvoice = kind === "deposit" || kind === "drawdown";
+  const requiresNotes = kind === "adjustment";
+  const signed = kind === "reset" || kind === "adjustment";
+  return {
+    type: "object",
+    required: [
+      "kind",
+      unit,
+      "occurred_on",
+      ...(requiresInvoice ? ["invoice_id"] : []),
+      ...(requiresNotes ? ["notes"] : []),
+    ],
+    properties: {
+      kind: { const: kind },
+      ...(requiresInvoice ? { invoice_id: integerSchema } : {}),
+      [unit]: {
+        type: "integer",
+        ...(signed
+          ? {
+              minimum:
+                unit === "amount_cents"
+                  ? -9_000_000_000_000
+                  : -9_007_199_254_740_991,
+              maximum:
+                unit === "amount_cents"
+                  ? 9_000_000_000_000
+                  : 9_007_199_254_740_991,
+              not: { const: 0 },
+            }
+          : {
+              minimum: 1,
+              ...(unit === "amount_cents"
+                ? { maximum: 9_000_000_000_000 }
+                : {}),
+            }),
+      },
+      occurred_on: dateSchema,
+      notes: requiresNotes
+        ? { type: "string", minLength: 1, pattern: "\\S" }
+        : nullable(stringSchema),
+    },
+    additionalProperties: false,
+  };
+};
+
+const recurringImportVariant = (
+  mode: "time" | "expenses" | "both",
+): JsonSchema => ({
+  type: "object",
+  required: [
+    "schema_version",
+    "type",
+    "project_ids",
+    ...(mode === "time" || mode === "both" ? ["time"] : []),
+    ...(mode === "expenses" || mode === "both" ? ["expenses"] : []),
+  ],
+  properties: {
+    schema_version: { const: 1 },
+    type: { const: "line_items_import" },
+    project_ids: {
+      type: "array",
+      minItems: 1,
+      uniqueItems: true,
+      items: integerSchema,
+    },
+    ...(mode === "time" || mode === "both"
+      ? {
+          time: {
+            type: "object",
+            required: ["summary_type"],
+            properties: {
+              summary_type: {
+                type: "string",
+                enum: ["project", "task", "people", "detailed"],
+              },
+            },
+            additionalProperties: false,
+          },
+        }
+      : {}),
+    ...(mode === "expenses" || mode === "both"
+      ? {
+          expenses: {
+            type: "object",
+            required: ["summary_type"],
+            properties: {
+              summary_type: {
+                type: "string",
+                enum: ["project", "category", "people", "detailed"],
+              },
+            },
+            additionalProperties: false,
+          },
+        }
+      : {}),
+  },
+  additionalProperties: false,
+});
+
 const apiScopes = [
   "time_entries:read",
   "time_entries:write",
@@ -968,6 +1116,15 @@ const apiScopes = [
 
 export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   ...attachmentContractSchemas,
+  InvoiceReminderPolicy: {
+    type: "object",
+    required: ["first_after_days", "every_days"],
+    properties: {
+      first_after_days: { type: "integer", minimum: 0 },
+      every_days: { type: "integer", minimum: 1 },
+    },
+    additionalProperties: false,
+  },
   FieldError: {
     type: "object",
     required: ["field", "code", "message"],
@@ -1687,7 +1844,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       retainer_id: nullable(integerSchema),
       recurring_invoice_id: nullable(integerSchema),
       estimate_id: nullable(integerSchema),
-      reminder_policy: nullable({ type: "object", additionalProperties: true }),
+      reminder_policy: nullable(reference("InvoiceReminderPolicy")),
       tax_rate_ppm: nullable({
         type: "integer",
         minimum: 0,
@@ -1953,7 +2110,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     ],
     properties: {
       expected_version: { type: "integer", minimum: 0 },
-      number: { type: "string", minLength: 1, maxLength: 255 },
+      number: { type: "string", minLength: 1, maxLength: 255, pattern: "\\S" },
       issue_date: dateSchema,
       due_date: dateSchema,
       payment_terms: {
@@ -2112,7 +2269,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         ],
       },
       project_id: nullable(integerSchema),
-      reminder_policy: nullable({ type: "object", additionalProperties: true }),
+      reminder_policy: nullable(reference("InvoiceReminderPolicy")),
       payment_options: {
         type: "array",
         uniqueItems: true,
@@ -2368,30 +2525,49 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   InvoicePaymentInput: {
-    type: "object",
-    required: ["expected_version", "amount_cents", "currency"],
-    properties: {
-      expected_version: { type: "integer", minimum: 0 },
-      amount_cents: { type: "integer", minimum: 1, maximum: 9_000_000_000_000 },
-      currency: { type: "string", pattern: "^[A-Z]{3}$" },
-      paid_at: nullable(timestampSchema),
-      paid_date: nullable(dateSchema),
-      notes: nullable(stringSchema),
-    },
-    additionalProperties: false,
+    oneOf: ["paid_at", "paid_date"].map((field) => ({
+      type: "object",
+      required: ["expected_version", "amount_cents", "currency", field],
+      properties: {
+        expected_version: { type: "integer", minimum: 0 },
+        amount_cents: {
+          type: "integer",
+          minimum: 1,
+          maximum: 9_000_000_000_000,
+        },
+        currency: { type: "string", pattern: "^[A-Z]{3}$" },
+        ...(field === "paid_at"
+          ? { paid_at: timestampSchema }
+          : { paid_date: dateSchema }),
+        notes: nullable(stringSchema),
+      },
+      additionalProperties: false,
+    })),
   },
   InvoicePaymentUpdateInput: {
-    type: "object",
-    required: ["expected_version", "expected_updated_at", "amount_cents"],
-    properties: {
-      expected_version: { type: "integer", minimum: 0 },
-      expected_updated_at: timestampSchema,
-      amount_cents: { type: "integer", minimum: 1, maximum: 9_000_000_000_000 },
-      paid_at: nullable(timestampSchema),
-      paid_date: nullable(dateSchema),
-      notes: nullable(stringSchema),
-    },
-    additionalProperties: false,
+    oneOf: ["paid_at", "paid_date"].map((field) => ({
+      type: "object",
+      required: [
+        "expected_version",
+        "expected_updated_at",
+        "amount_cents",
+        field,
+      ],
+      properties: {
+        expected_version: { type: "integer", minimum: 0 },
+        expected_updated_at: timestampSchema,
+        amount_cents: {
+          type: "integer",
+          minimum: 1,
+          maximum: 9_000_000_000_000,
+        },
+        ...(field === "paid_at"
+          ? { paid_at: timestampSchema }
+          : { paid_date: dateSchema }),
+        notes: nullable(stringSchema),
+      },
+      additionalProperties: false,
+    })),
   },
   Retainer: {
     type: "object",
@@ -2436,30 +2612,11 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   RetainerEnvelope: envelope("Retainer"),
   RetainerPage: page("Retainer"),
   RetainerInput: {
-    type: "object",
-    required: ["denomination"],
-    properties: {
-      client_id: nullable(integerSchema),
-      project_id: nullable(integerSchema),
-      denomination: { type: "string", enum: ["money", "hours"] },
-      amount_cents: nullable({
-        type: "integer",
-        minimum: 0,
-        maximum: 9_000_000_000_000,
-      }),
-      seconds: nullable({ type: "integer", minimum: 0 }),
-      locked_rate_cents: nullable({
-        type: "integer",
-        minimum: 0,
-        maximum: 9_000_000_000_000,
-      }),
-      rate_locked_at: nullable(timestampSchema),
-      period: nullable({ type: "string", maxLength: 64 }),
-      rollover: nullable({ type: "string", enum: ["carry", "expire", "cap"] }),
-      expires_at: nullable(dateSchema),
-      on_exhaustion: { type: "string", enum: ["block", "warn", "overflow"] },
-    },
-    additionalProperties: false,
+    oneOf: [
+      retainerInputVariant("money", false),
+      retainerInputVariant("hours", false),
+      retainerInputVariant("hours", true),
+    ],
   },
   RetainerPatch: {
     type: "object",
@@ -2523,32 +2680,33 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   RetainerLedgerMutationEnvelope: envelope("RetainerLedgerMutation"),
   RetainerLedgerInput: {
-    type: "object",
-    required: ["kind", "occurred_on"],
-    properties: {
-      kind: {
-        type: "string",
-        enum: ["deposit", "drawdown", "expiry", "reset", "adjustment"],
-      },
-      invoice_id: nullable(integerSchema),
-      amount_cents: { type: "integer", minimum: 1, maximum: 9_000_000_000_000 },
-      seconds: { type: "integer", minimum: 1 },
-      occurred_on: dateSchema,
-      notes: nullable(stringSchema),
-    },
-    additionalProperties: false,
+    oneOf: ["deposit", "drawdown", "expiry", "reset", "adjustment"].flatMap(
+      (kind) =>
+        (["amount_cents", "seconds"] as const).map((unit) =>
+          retainerLedgerVariant(
+            kind as "deposit" | "drawdown" | "expiry" | "reset" | "adjustment",
+            unit,
+          ),
+        ),
+    ),
   },
   RetainerDrawdownInput: {
-    type: "object",
-    required: ["invoice_id", "occurred_on"],
-    properties: {
-      invoice_id: integerSchema,
-      amount_cents: { type: "integer", minimum: 1, maximum: 9_000_000_000_000 },
-      seconds: { type: "integer", minimum: 1 },
-      occurred_on: dateSchema,
-      notes: nullable(stringSchema),
-    },
-    additionalProperties: false,
+    oneOf: (["amount_cents", "seconds"] as const).map((unit) => {
+      const variant = retainerLedgerVariant("drawdown", unit) as Record<
+        string,
+        unknown
+      >;
+      const properties = variant.properties as Record<string, unknown>;
+      const drawdownProperties = { ...properties };
+      delete drawdownProperties.kind;
+      return {
+        ...variant,
+        required: (variant.required as string[]).filter(
+          (field) => field !== "kind",
+        ),
+        properties: drawdownProperties,
+      };
+    }),
   },
   RecurringFixedLine: {
     type: "object",
@@ -2580,46 +2738,17 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         properties: {
           schema_version: { const: 1 },
           type: { const: "fixed_lines" },
-          line_items: { type: "array", items: reference("RecurringFixedLine") },
-        },
-        additionalProperties: false,
-      },
-      {
-        type: "object",
-        required: ["schema_version", "type", "project_ids"],
-        properties: {
-          schema_version: { const: 1 },
-          type: { const: "line_items_import" },
-          project_ids: {
+          line_items: {
             type: "array",
-            uniqueItems: true,
-            items: integerSchema,
-          },
-          time: {
-            type: "object",
-            required: ["summary_type"],
-            properties: {
-              summary_type: {
-                type: "string",
-                enum: ["project", "task", "people", "detailed"],
-              },
-            },
-            additionalProperties: false,
-          },
-          expenses: {
-            type: "object",
-            required: ["summary_type"],
-            properties: {
-              summary_type: {
-                type: "string",
-                enum: ["project", "category", "people", "detailed"],
-              },
-            },
-            additionalProperties: false,
+            minItems: 1,
+            items: reference("RecurringFixedLine"),
           },
         },
         additionalProperties: false,
       },
+      recurringImportVariant("time"),
+      recurringImportVariant("expenses"),
+      recurringImportVariant("both"),
     ],
   },
   RecurringInvoice: {

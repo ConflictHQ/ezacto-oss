@@ -23,6 +23,10 @@ export interface AttachmentFileInput {
 }
 
 export interface AttachmentMetadataInput extends AttachmentFileInput {
+  /** Stable route-level command identity; all three identity fields are supplied together. */
+  attachmentId?: number
+  commandId?: string
+  actorUserId?: number
   name: string
   uploadedByUserId?: number | null
   createdAt: string
@@ -108,6 +112,12 @@ interface OwnerDefinition {
   parentColumn: string
   parentInputKey: 'invoiceId' | 'recurringInvoiceId' | 'estimateId' | 'expenseId' | 'projectId'
   guardColumn: string
+  commandKind:
+    | 'invoice_attachment.create'
+    | 'recurring_invoice_attachment.create'
+    | 'estimate_attachment.create'
+    | 'expense_attachment.create'
+    | 'project_attachment.create'
 }
 
 const owners = {
@@ -116,30 +126,35 @@ const owners = {
     parentColumn: 'invoice_id',
     parentInputKey: 'invoiceId',
     guardColumn: 'invoice_attachment_link_id',
+    commandKind: 'invoice_attachment.create',
   },
   recurringInvoice: {
     table: 'recurring_invoice_attachments',
     parentColumn: 'recurring_invoice_id',
     parentInputKey: 'recurringInvoiceId',
     guardColumn: 'recurring_invoice_attachment_link_id',
+    commandKind: 'recurring_invoice_attachment.create',
   },
   estimate: {
     table: 'estimate_attachments',
     parentColumn: 'estimate_id',
     parentInputKey: 'estimateId',
     guardColumn: 'estimate_attachment_link_id',
+    commandKind: 'estimate_attachment.create',
   },
   expense: {
     table: 'expense_attachments',
     parentColumn: 'expense_id',
     parentInputKey: 'expenseId',
     guardColumn: 'expense_attachment_link_id',
+    commandKind: 'expense_attachment.create',
   },
   project: {
     table: 'project_attachments',
     parentColumn: 'project_id',
     parentInputKey: 'projectId',
     guardColumn: 'project_attachment_link_id',
+    commandKind: 'project_attachment.create',
   },
 } as const satisfies Record<string, OwnerDefinition>
 
@@ -189,6 +204,17 @@ const normalizeAttachmentInput = <T extends AttachmentMetadataInput>(input: T): 
   }
   if (input.uploadedByUserId !== undefined && input.uploadedByUserId !== null) {
     assertPositiveSafeInteger(input.uploadedByUserId, 'uploadedByUserId')
+  }
+  const commandFields = [input.attachmentId, input.commandId, input.actorUserId]
+  if (commandFields.some((value) => value !== undefined)) {
+    if (commandFields.some((value) => value === undefined)) {
+      throw new TypeError('attachment command identity fields must be supplied together')
+    }
+    assertPositiveSafeInteger(input.attachmentId!, 'attachmentId')
+    assertPositiveSafeInteger(input.actorUserId!, 'actorUserId')
+    if (!/^[A-Za-z0-9._:-]{1,128}$/.test(input.commandId!)) {
+      throw new TypeError('commandId has invalid characters or length')
+    }
   }
   assertCanonicalTimestamp(input.createdAt, 'createdAt')
   assertCanonicalTimestamp(input.updatedAt, 'updatedAt')
@@ -272,11 +298,12 @@ const createOperations = (
   attachmentId: number,
   parentId: number,
   input: AttachmentMetadataInput,
+  inputFingerprint?: string,
 ): readonly Operation[] => {
   const guards = Object.values(owners).map(({ guardColumn }) =>
     guardColumn === owner.guardColumn ? attachmentId : null,
   )
-  return [
+  const operations: Operation[] = [
     {
       query: `INSERT INTO file_objects (
           content_hash, file_key, byte_size, content_type, created_at, updated_at
@@ -325,6 +352,42 @@ const createOperations = (
       bindings: [attachmentId, parentId],
     },
   ]
+  if (
+    inputFingerprint !== undefined &&
+    input.commandId !== undefined &&
+    input.actorUserId !== undefined
+  ) {
+    operations.push({
+      query: `INSERT INTO resource_create_commands (
+          command_kind, command_id, input_fingerprint, actor_user_id,
+          resource_id, result_json, occurred_at
+        ) SELECT ?, ?, ?, ?, attachment.id,
+          json_object('schema_version', 1, 'data', json_object(
+            'id', attachment.id,
+            'fileObjectId', attachment.file_object_id,
+            'contentHash', file.content_hash,
+            'fileKey', file.file_key,
+            'byteSize', file.byte_size,
+            'contentType', file.content_type,
+            'name', attachment.name,
+            'uploadedByUserId', attachment.uploaded_by_user_id,
+            'createdAt', attachment.created_at,
+            'updatedAt', attachment.updated_at
+          )), ?
+        FROM attachments attachment
+        JOIN file_objects file ON file.id = attachment.file_object_id
+        WHERE attachment.id = ?`,
+      bindings: [
+        owner.commandKind,
+        input.commandId,
+        inputFingerprint,
+        input.actorUserId,
+        input.createdAt,
+        attachmentId,
+      ],
+    })
+  }
+  return operations
 }
 
 const isD1Client = (client: BetterSqlite3.Database | D1Database): client is D1Database =>
@@ -353,6 +416,41 @@ const isAttachmentIdCollision = (error: unknown): boolean =>
   /(attachment identity already exists|unique constraint failed: attachments\.id)/i.test(
     error.message,
   )
+
+interface StoredAttachmentCommand {
+  input_fingerprint: string
+  actor_user_id: number
+  resource_id: number
+}
+
+const fingerprintAttachment = async (
+  owner: OwnerDefinition,
+  parentId: number,
+  input: AttachmentMetadataInput,
+): Promise<string> => {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(
+        JSON.stringify({
+          schema_version: 1,
+          command_kind: owner.commandKind,
+          actor: { type: 'user', id: input.actorUserId },
+          owner: { type: owner.commandKind, id: parentId },
+          file: {
+            content_hash: input.contentHash,
+            file_key: input.fileKey,
+            byte_size: input.byteSize,
+            content_type: input.contentType,
+            name: input.name,
+            uploaded_by_user_id: input.uploadedByUserId ?? null,
+          },
+        }),
+      ),
+    ),
+  )
+  return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('')}`
+}
 
 const ownerParentId = (owner: OwnerDefinition, input: AttachmentMetadataInput): number => {
   const parentId = (input as unknown as Record<string, unknown>)[owner.parentInputKey]
@@ -397,39 +495,82 @@ export const createAttachmentStore = (database: AttachmentDatabase): AttachmentS
   ): Promise<AttachmentRecord> => {
     normalizeAttachmentInput(input)
     const parentId = ownerParentId(owner, input)
+    const durable = input.commandId !== undefined
+    const attachmentId = durable ? input.attachmentId! : undefined
+    const inputFingerprint = durable
+      ? await fingerprintAttachment(owner, parentId, input)
+      : undefined
+    const readReceipt = async (): Promise<StoredAttachmentCommand | null> => {
+      if (!durable) return null
+      return (
+        (
+          await rows<StoredAttachmentCommand>(
+            `SELECT input_fingerprint, actor_user_id, resource_id
+           FROM resource_create_commands WHERE command_kind = ? AND command_id = ?`,
+            [owner.commandKind, input.commandId!],
+          )
+        )[0] ?? null
+      )
+    }
+    const replay = async (receipt: StoredAttachmentCommand): Promise<AttachmentRecord> => {
+      if (
+        receipt.input_fingerprint !== inputFingerprint ||
+        receipt.actor_user_id !== input.actorUserId ||
+        receipt.resource_id !== attachmentId
+      ) {
+        throw new Error('attachment command id was reused with different input')
+      }
+      const [created] = await read(owner, parentId, receipt.resource_id)
+      if (!created) throw new Error('attachment command result is missing')
+      return created
+    }
+    const prior = await readReceipt()
+    if (prior !== null) return replay(prior)
 
     if (isD1Client(client)) {
       for (let attempt = 0; attempt < 4; attempt += 1) {
-        const [next] = await d1Rows<{ id: number }>(
-          client,
-          `SELECT coalesce(max(id), 0) + 1 AS id FROM attachments`,
-        )
+        const [next] = durable
+          ? [{ id: attachmentId! }]
+          : await d1Rows<{ id: number }>(
+              client,
+              `SELECT coalesce(max(id), 0) + 1 AS id FROM attachments`,
+            )
         if (!next || !Number.isSafeInteger(next.id)) {
           throw new Error('attachment id allocation failed')
         }
         try {
           await client.batch(
-            createOperations(owner, next.id, parentId, input).map(({ query, bindings }) =>
-              client.prepare(query).bind(...bindings),
+            createOperations(owner, next.id, parentId, input, inputFingerprint).map(
+              ({ query, bindings }) => client.prepare(query).bind(...bindings),
             ),
           )
           const [created] = await read(owner, parentId, next.id)
           if (!created) throw new Error('attachment batch did not persist its logical row')
           return created
         } catch (error) {
+          const completed = await readReceipt()
+          if (completed !== null) return replay(completed)
           if (!isAttachmentIdCollision(error) || attempt === 3) throw error
+          if (durable) throw error
         }
       }
       throw new Error('attachment id allocation exhausted')
     }
 
     const run = client.transaction((): AttachmentRecord => {
-      const next = client
-        .prepare(`SELECT coalesce(max(id), 0) + 1 AS id FROM attachments`)
-        .get() as { id: number } | undefined
+      const next = durable
+        ? { id: attachmentId! }
+        : (client.prepare(`SELECT coalesce(max(id), 0) + 1 AS id FROM attachments`).get() as
+            { id: number } | undefined)
       if (!next || !Number.isSafeInteger(next.id))
         throw new Error('attachment id allocation failed')
-      for (const { query, bindings } of createOperations(owner, next.id, parentId, input)) {
+      for (const { query, bindings } of createOperations(
+        owner,
+        next.id,
+        parentId,
+        input,
+        inputFingerprint,
+      )) {
         client.prepare(query).run(...bindings)
       }
       const [created] = containerRows<StoredAttachmentRow>(
@@ -442,7 +583,13 @@ export const createAttachmentStore = (database: AttachmentDatabase): AttachmentS
       if (!created) throw new Error('attachment transaction did not persist its logical row')
       return attachment(created)
     })
-    return run()
+    try {
+      return run()
+    } catch (error) {
+      const completed = await readReceipt()
+      if (completed !== null) return replay(completed)
+      throw error
+    }
   }
 
   const get = async (
