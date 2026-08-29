@@ -6,11 +6,18 @@ import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import {
   bootstrapInstanceContainer,
   bootstrapInstanceD1,
+  enrollInstanceOwnerPasswordContainer,
+  enrollInstanceOwnerPasswordD1,
   InstanceBootstrapConflictError,
+  InstanceOwnerPasswordConflictError,
   type InstanceBootstrapInput,
   type InstanceBootstrapOptions,
 } from '../src/instance-bootstrap.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
+import {
+  createContainerPasswordAuthService,
+  createD1PasswordAuthService,
+} from '../src/password-auth.js'
 
 const timestamp = '2026-08-28T15:00:00.000Z'
 const usedAt = '2026-08-28T15:01:00.000Z'
@@ -23,10 +30,13 @@ const input: InstanceBootstrapInput = {
   token,
 }
 const options: InstanceBootstrapOptions = { now: () => timestamp }
+const ownerPassword = 'correct horse battery staple'
 
 interface Harness {
   bootstrap(value?: InstanceBootstrapInput, createdAt?: string): Promise<void>
+  enroll(password?: string, presentedToken?: string, createdAt?: string): Promise<void>
   authenticate(value: string): ReturnType<typeof authenticateApiToken>
+  signIn(password?: string): Promise<unknown>
   run(statement: string, ...bindings: unknown[]): Promise<void>
   rows<T>(statement: string, ...bindings: unknown[]): Promise<T[]>
   close(): Promise<void>
@@ -40,7 +50,24 @@ const containerHarness = (): Harness => {
     bootstrap: async (value = input, createdAt = timestamp) => {
       await bootstrapInstanceContainer(client, value, { now: () => createdAt })
     },
+    enroll: async (
+      password = ownerPassword,
+      presentedToken = token,
+      createdAt = usedAt,
+    ) => {
+      await enrollInstanceOwnerPasswordContainer(
+        client,
+        { token: presentedToken, password },
+        { now: () => createdAt },
+      )
+    },
     authenticate: (value) => authenticateApiToken(database, value, usedAt),
+    signIn: (password = ownerPassword) =>
+      createContainerPasswordAuthService(client, { now: () => usedAt }).signIn({
+        email: input.ownerEmail,
+        password,
+        clientKey: 'instance-bootstrap-test',
+      }),
     run: async (statement, ...bindings) => {
       client.prepare(statement).run(...bindings)
     },
@@ -65,7 +92,24 @@ const d1Harness = async (): Promise<Harness> => {
     bootstrap: async (value = input, createdAt = timestamp) => {
       await bootstrapInstanceD1(client, value, { now: () => createdAt })
     },
+    enroll: async (
+      password = ownerPassword,
+      presentedToken = token,
+      createdAt = usedAt,
+    ) => {
+      await enrollInstanceOwnerPasswordD1(
+        client,
+        { token: presentedToken, password },
+        { now: () => createdAt },
+      )
+    },
     authenticate: (value) => authenticateApiToken(database, value, usedAt),
+    signIn: (password = ownerPassword) =>
+      createD1PasswordAuthService(client, { now: () => usedAt }).signIn({
+        email: input.ownerEmail,
+        password,
+        clientKey: 'instance-bootstrap-test',
+      }),
     run: async (statement, ...bindings) => {
       await client
         .prepare(statement)
@@ -222,6 +266,49 @@ for (const [runtime, factory] of factories) {
           await harness.rows<{ count: number }>(`SELECT count(*) AS count FROM ${table}`),
         ).toEqual([{ count: 0 }])
       }
+    })
+
+    it('[security] enrolls only the exact bootstrapped owner password and makes browser sign-in usable', async () => {
+      harness = await factory()
+      await harness.bootstrap()
+      expect(await harness.signIn()).toEqual({ status: 'invalid_credentials' })
+
+      await harness.enroll()
+      expect(await harness.signIn()).toEqual({
+        status: 'authenticated',
+        principal: {
+          userId: 1,
+          profile: 'administrator',
+          managerGrants: [],
+        },
+      })
+
+      await harness.enroll(ownerPassword, token, '2026-08-28T15:03:00.000Z')
+      await expect(
+        harness.enroll('a different valid password', token, '2026-08-28T15:04:00.000Z'),
+      ).rejects.toBeInstanceOf(InstanceOwnerPasswordConflictError)
+      await expect(
+        harness.enroll(ownerPassword, `ezacto_abcdefghijklmnop_${'B'.repeat(43)}`),
+      ).rejects.toBeInstanceOf(InstanceOwnerPasswordConflictError)
+      expect(await harness.signIn('a different valid password')).toEqual({
+        status: 'invalid_credentials',
+      })
+      expect(await harness.rows(`SELECT user_id FROM user_passwords`)).toEqual([
+        { user_id: 1 },
+      ])
+    })
+
+    it('[security] fails closed and leaves the bootstrap audit intact when password persistence fails', async () => {
+      harness = await factory()
+      await harness.bootstrap()
+      await harness.run(`CREATE TRIGGER test_reject_owner_password
+        BEFORE INSERT ON user_passwords
+        BEGIN SELECT RAISE(ABORT, 'test password failure'); END`)
+
+      await expect(harness.enroll()).rejects.toThrow(/test password failure/i)
+      expect(await harness.rows(`SELECT user_id FROM user_passwords`)).toEqual([])
+      expect(await harness.rows(`SELECT id FROM instance_bootstrap`)).toEqual([{ id: 1 }])
+      expect(await harness.authenticate(token)).toMatchObject({ userId: 1 })
     })
   })
 }

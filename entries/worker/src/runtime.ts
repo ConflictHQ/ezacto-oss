@@ -1,5 +1,6 @@
 import {
   bootstrapInstanceD1,
+  enrollInstanceOwnerPasswordD1,
   createApiTokenStore,
   createD1Database,
   createD1IdentityStore,
@@ -173,6 +174,7 @@ export const createRuntimeServices = async (
       : createWorkerAuthMailer(env.EMAIL_QUEUE, emailLog, env.APP_BASE_URL)
   return {
     bootstrap: (input) => bootstrapInstanceD1(database, input),
+    enrollOwnerPassword: (input) => enrollInstanceOwnerPasswordD1(database, input),
     tokens: createApiTokenStore(drizzle),
     generalResources: createGeneralResourceRepository(drizzle),
     trackedResources: new DrizzleTrackedResourceRepository(
