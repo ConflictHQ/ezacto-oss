@@ -7,6 +7,12 @@ import {
 
 const apiOrigin = "https://api.cloudflare.com/client/v4";
 const modes = new Set(["check", "deployed", "provision"]);
+const r2Permission = "Account > Workers R2 Storage > Edit";
+
+const cloudflareError = (status) =>
+  status === 403
+    ? `Cloudflare R2 API returned HTTP 403; CLOUDFLARE_API_TOKEN must grant ${r2Permission} for the account selected by CLOUDFLARE_ACCOUNT_ID`
+    : `Cloudflare R2 API returned HTTP ${status}`;
 
 const record = (value, field) => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -77,10 +83,10 @@ const cloudflareRequest = async (options, path, init = {}) => {
   try {
     payload = await response.json();
   } catch {
-    throw new Error(`Cloudflare R2 API returned HTTP ${response.status}`);
+    throw new Error(cloudflareError(response.status));
   }
   if (!response.ok || payload?.success !== true) {
-    throw new Error(`Cloudflare R2 API returned HTTP ${response.status}`);
+    throw new Error(cloudflareError(response.status));
   }
   return payload;
 };
