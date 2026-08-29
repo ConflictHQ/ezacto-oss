@@ -236,7 +236,7 @@ for (const [runtime, factory] of factories) {
       expect([entry.billableRateCents, entry.costRateCents]).toEqual([null, null])
     })
 
-    it('[unit] leaves native and imported snapshots stable until explicit audited reprice', async () => {
+    it('[unit] [inv-09] leaves native and imported snapshots stable until explicit audited reprice', async () => {
       const db = await setup()
       const native = await createStoppedTimeEntry(db.drizzle, stoppedInput())
       await db.run(

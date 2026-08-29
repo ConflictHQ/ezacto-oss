@@ -447,7 +447,7 @@ for (const [runtime, factory] of factories) {
       ).rejects.toThrow(/CHECK constraint/)
     })
 
-    it('[unit] derives balance and atomically blocks all non-overflow overdrafts', async () => {
+    it('[unit] [inv-10] derives balance and atomically blocks all non-overflow overdrafts', async () => {
       database = await factory()
       await installOrganizationAndClients(database)
       await insertMoneyRetainer(database, 1, 'block')

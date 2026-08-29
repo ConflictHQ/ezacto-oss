@@ -473,7 +473,7 @@ for (const [runtime, factory] of factories) {
       expect(await db.rows(`PRAGMA foreign_key_check`)).toEqual([])
     })
 
-    it('[unit] applies exact discount-first parallel taxes and recomputes every mutation', async () => {
+    it('[unit] [inv-04] applies exact discount-first parallel taxes and recomputes every mutation', async () => {
       database = await factory(false)
       const db = database
       await installThrough0005(db)

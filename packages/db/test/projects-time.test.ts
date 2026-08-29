@@ -238,7 +238,7 @@ for (const [runtime, factory] of factories) {
       return database
     }
 
-    it('[unit] rolls duration timers, preserves checkpoints, and rolls back a failed replacement', async () => {
+    it('[unit] [inv-01] rolls duration timers, preserves checkpoints, and rolls back a failed replacement', async () => {
       const db = await setup('duration', 'nearest_6')
       const first = await startTimeEntry(
         db.drizzle,
@@ -702,7 +702,7 @@ for (const [runtime, factory] of factories) {
       ])
     })
 
-    it('[unit] stores canonical start/end timers without timer_started_at and accumulates checkpoints', async () => {
+    it('[unit] [inv-02] stores canonical start/end timers without timer_started_at and accumulates checkpoints', async () => {
       const db = await setup('start_end', 'nearest_15')
       const first = await startTimeEntry(
         db.drizzle,

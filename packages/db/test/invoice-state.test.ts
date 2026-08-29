@@ -909,7 +909,7 @@ for (const [runtime, factory] of factories) {
       })
     })
 
-    it('[unit] orders payment events before paid, partial, and unpaid outcomes', async () => {
+    it('[unit] [inv-05] orders payment events before paid, partial, and unpaid outcomes', async () => {
       database = await factory(false)
       await installThrough0005(database)
       await installFixture(database)
