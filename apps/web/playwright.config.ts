@@ -1,8 +1,13 @@
+import { randomBytes } from 'node:crypto'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from '@playwright/test'
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
+process.env.EZACTO_BROWSER_FIXTURE_EMAIL ??= 'browser-owner@example.test'
+process.env.EZACTO_BROWSER_FIXTURE_PASSWORD ??= randomBytes(32).toString(
+  'base64url',
+)
 
 export default defineConfig({
   testDir: './e2e',
@@ -17,10 +22,12 @@ export default defineConfig({
     browserName: 'chromium',
     headless: true,
     viewport: { width: 390, height: 844 },
-    trace: 'retain-on-failure',
+    // Authentication acceptance uses a generated password. Keep it out of
+    // retained traces as well as URLs, browser storage, and console output.
+    trace: 'off',
   },
   webServer: {
-    command: 'npm run dev -w ezacto-worker -- --port 4173 --ip 127.0.0.1',
+    command: 'node apps/web/scripts/browser-worker-harness.mjs',
     cwd: repositoryRoot,
     url: 'http://127.0.0.1:4173/healthz',
     reuseExistingServer: false,
