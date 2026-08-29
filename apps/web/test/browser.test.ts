@@ -347,6 +347,9 @@ describe('native browser authentication', () => {
       expect(base.listProjects).not.toHaveBeenCalled()
       expect(base.listTasks).not.toHaveBeenCalled()
       expect(base.listTimeEntries).not.toHaveBeenCalled()
+      expect(document.querySelector<HTMLElement>('[data-auth-gateway]')?.hidden).toBe(false)
+      expect(document.querySelector<HTMLElement>('[data-authenticated-shell]')?.hidden).toBe(true)
+      expect(document.querySelector<HTMLElement>('[data-authenticated-shell]')?.inert).toBe(true)
       expect(document.querySelector<HTMLFormElement>('[data-sign-in-form]')?.hidden).toBe(false)
       expect(document.querySelector<HTMLButtonElement>('[data-command-trigger]')?.disabled).toBe(
         true,
@@ -388,10 +391,23 @@ describe('native browser authentication', () => {
     expect(document.querySelector<HTMLButtonElement>('[data-sign-in-submit]')?.disabled).toBe(
       true,
     )
+    expect(document.querySelector<HTMLButtonElement>('[data-sign-in-submit]')?.textContent).toBe(
+      'Signing in…',
+    )
+    expect(
+      document
+        .querySelector<HTMLFormElement>('[data-sign-in-form]')
+        ?.getAttribute('aria-busy'),
+    ).toBe('true')
 
     rejectSignIn?.(authenticationError(401, 'invalid_credentials'))
     await vi.waitFor(() =>
       expect(document.querySelector<HTMLInputElement>('[name="password"]')?.value).toBe(''),
+    )
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLButtonElement>('[data-sign-in-submit]')?.textContent).toBe(
+        'Sign in',
+      ),
     )
   })
 
@@ -424,6 +440,9 @@ describe('native browser authentication', () => {
     await vi.waitFor(() =>
       expect(document.querySelector('[data-current-user-id]')?.textContent).toBe('1'),
     )
+    expect(document.querySelector<HTMLElement>('[data-auth-gateway]')?.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-authenticated-shell]')?.hidden).toBe(false)
+    expect(document.querySelector<HTMLElement>('[data-authenticated-shell]')?.inert).toBe(false)
   })
 
   it('[security] sends a cell retry 401 through the shared signed-out transition', async () => {
@@ -452,6 +471,9 @@ describe('native browser authentication', () => {
       expect(document.querySelector<HTMLFormElement>('[data-sign-in-form]')?.hidden).toBe(false),
     )
     expect(document.querySelector('[data-session-status]')?.textContent).toContain(
+      'session ended',
+    )
+    expect(document.querySelector('[data-sign-in-result]')?.textContent).toContain(
       'session ended',
     )
     expect(document.querySelector<HTMLButtonElement>('[data-command-trigger]')?.disabled).toBe(
@@ -487,6 +509,9 @@ describe('native browser authentication', () => {
       expect(document.querySelector<HTMLFormElement>('[data-sign-in-form]')?.hidden).toBe(false),
     )
     expect(document.querySelector('[data-session-status]')?.textContent).toContain(
+      'session ended',
+    )
+    expect(document.querySelector('[data-sign-in-result]')?.textContent).toContain(
       'session ended',
     )
     expect(input.value).toBe('')
@@ -596,6 +621,9 @@ describe('native browser authentication', () => {
       expect(document.querySelector('[data-current-user-id]')?.textContent).toBe('1'),
     )
     expect(document.querySelector('[data-current-profile]')?.textContent).toBe('administrator')
+    expect(document.querySelector<HTMLElement>('[data-auth-gateway]')?.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-authenticated-shell]')?.hidden).toBe(false)
+    expect(document.querySelector<HTMLElement>('[data-authenticated-shell]')?.inert).toBe(false)
     expect(document.querySelector<HTMLElement>('[data-current-identity]')?.hidden).toBe(false)
     expect(base.listProjects).toHaveBeenCalledTimes(1)
     expect(base.listTasks).toHaveBeenCalledTimes(1)
@@ -619,6 +647,9 @@ describe('native browser authentication', () => {
     await vi.waitFor(() =>
       expect(document.querySelector<HTMLFormElement>('[data-sign-in-form]')?.hidden).toBe(false),
     )
+    expect(document.querySelector<HTMLElement>('[data-auth-gateway]')?.hidden).toBe(false)
+    expect(document.querySelector<HTMLElement>('[data-authenticated-shell]')?.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-authenticated-shell]')?.inert).toBe(true)
     expect(document.querySelector('[data-session-status]')?.textContent).toContain('Signed out')
     expect(document.querySelector<HTMLButtonElement>('[data-command-trigger]')?.disabled).toBe(
       true,

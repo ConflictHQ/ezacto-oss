@@ -133,6 +133,8 @@ describe('S-1 through S-5 application shell', () => {
     expect(html).toContain('data-add-row-trigger')
     expect(html).toContain('data-note-dialog')
     expect(html).toContain('data-sign-in-form')
+    expect(html).toContain('data-auth-gateway data-state="checking"')
+    expect(html).toContain('data-authenticated-shell hidden inert')
     expect(html).toContain('method="post" action="/auth/sign-in"')
     expect(html).toContain('autocomplete="username"')
     expect(html).toContain('autocomplete="current-password"')
@@ -141,6 +143,7 @@ describe('S-1 through S-5 application shell', () => {
     expect(html).toContain('name="viewport"')
     expect(webAssets.stylesheet).toContain('@media (max-width: 720px)')
     expect(webAssets.stylesheet).toContain('.timer-chip {')
+    expect(webAssets.stylesheet).toContain('.auth-gateway {')
     expect(webAssets.stylesheet).not.toMatch(/\.timer-chip\s*\{[^}]*display:\s*none/su)
     expect(webAssets.javascript).toContain('credentials:"same-origin"')
   })
@@ -160,7 +163,7 @@ describe('S-1 through S-5 application shell', () => {
       /\.week-actions button,[\s\S]*\.day-switcher button \{[\s\S]*min-height: 44px;/u,
     )
     expect(webAssets.stylesheet).toMatch(
-      /@media \(max-width: 720px\)[\s\S]*\.sign-in-form \{[\s\S]*grid-template-columns: 1fr;/u,
+      /@media \(max-width: 720px\)[\s\S]*\.auth-gateway \{[\s\S]*grid-template-columns: 1fr;/u,
     )
     expect(webAssets.stylesheet).toMatch(
       /\.sign-in-form input \{[\s\S]*min-height: 44px;/u,
@@ -185,12 +188,11 @@ describe('S-1 through S-5 application shell', () => {
       release: 'abcdef012345',
     })
     expect(unavailable).not.toContain('data-oidc-provider')
-    expect(unavailable).toContain('data-oidc-unavailable')
-    expect(unavailable).toContain('Use your email and password.')
+    expect(unavailable).not.toContain('data-oidc-entry')
+    expect(unavailable).not.toContain('Single sign-on is not available')
+    expect(unavailable).toContain('Sign in to ezacto')
     expect(webAssets.stylesheet).toMatch(/\.oidc-sign-in \{[\s\S]*min-height: 44px;/u)
-    expect(webAssets.stylesheet).toMatch(
-      /@media \(max-width: 720px\)[\s\S]*\.oidc-entry \{[\s\S]*flex-direction: column;/u,
-    )
+    expect(webAssets.stylesheet).toMatch(/\.oidc-entry \{[\s\S]*display: grid;/u)
   })
 
   it('[unit] resolves K-bar navigation and computes a live timer counter', () => {
