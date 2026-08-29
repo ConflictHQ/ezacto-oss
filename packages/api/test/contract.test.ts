@@ -4,8 +4,10 @@ import {
   apiContractOperations,
   createApiApp,
   generateOpenApiDocument,
+  installAttachmentRoutes,
   installEmailLogRoutes,
   installGeneralResourceRoutes,
+  installMoneyResourceRoutes,
   installOidcRoutes,
   installPasswordAuthRoutes,
   installReportRoutes,
@@ -17,6 +19,7 @@ import {
   type OidcIdentityResolver,
   type OidcTransactionStorePort,
   type PasswordAuthService,
+  type MoneyResourceRouteOptions,
   type ReportReader,
   type TrackedResourceRepository,
 } from "../src/index.js";
@@ -30,6 +33,10 @@ const trackedRepository = new Proxy(
   {},
   { get: () => unavailable },
 ) as TrackedResourceRepository;
+const moneyResources = new Proxy(
+  {},
+  { get: () => unavailable },
+) as MoneyResourceRouteOptions["service"];
 const reports = new Proxy({}, { get: () => unavailable }) as ReportReader;
 const tokens = new Proxy({}, { get: () => unavailable }) as ApiTokenService;
 const passwordAuth = new Proxy(
@@ -84,6 +91,11 @@ const documentedApp = () =>
           }),
         },
       });
+      installMoneyResourceRoutes(api, {
+        service: moneyResources,
+        cursorSigningKey: new Uint8Array(32),
+      });
+      installAttachmentRoutes(api);
       installReportRoutes(api, reports);
     },
   });

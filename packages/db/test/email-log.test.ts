@@ -112,6 +112,7 @@ for (const [runtime, factory] of factories) {
         { id: '0017_email_delivery_details' },
         { id: '0018_estimates' },
         { id: '0019_attachments' },
+        { id: '0020_estimate_commands' },
       ])
     })
 
@@ -135,6 +136,7 @@ for (const [runtime, factory] of factories) {
         { id: '0017_email_delivery_details' },
         { id: '0018_estimates' },
         { id: '0019_attachments' },
+        { id: '0020_estimate_commands' },
       ])
       expect(
         await current.rows<{ name: string }>(

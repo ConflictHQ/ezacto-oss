@@ -865,6 +865,7 @@ for (const [runtime, factory] of factories) {
         { id: '0017_email_delivery_details' },
         { id: '0018_estimates' },
         { id: '0019_attachments' },
+        { id: '0020_estimate_commands' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -905,6 +906,7 @@ for (const [runtime, factory] of factories) {
         { id: '0017_email_delivery_details' },
         { id: '0018_estimates' },
         { id: '0019_attachments' },
+        { id: '0020_estimate_commands' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -963,6 +965,7 @@ for (const [runtime, factory] of factories) {
         { id: '0017_email_delivery_details' },
         { id: '0018_estimates' },
         { id: '0019_attachments' },
+        { id: '0020_estimate_commands' },
       ])
       expect(
         await db.rows<{ name: string }>(
@@ -997,6 +1000,7 @@ for (const [runtime, factory] of factories) {
         { id: '0017_email_delivery_details' },
         { id: '0018_estimates' },
         { id: '0019_attachments' },
+        { id: '0020_estimate_commands' },
       ])
     })
   })
@@ -1098,6 +1102,8 @@ describe('package contents', () => {
         'dist/migrations/0018_estimates.d.ts',
         'dist/migrations/0019_attachments.js',
         'dist/migrations/0019_attachments.d.ts',
+        'dist/migrations/0020_estimate_commands.js',
+        'dist/migrations/0020_estimate_commands.d.ts',
         'dist/attachments.js',
         'dist/attachments.d.ts',
         'dist/estimates.js',

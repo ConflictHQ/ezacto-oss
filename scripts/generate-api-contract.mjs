@@ -73,6 +73,9 @@ const methodSource = (operation) => {
   const pathParameters = (operation.parameters ?? []).filter(
     (parameter) => parameter.location === "path",
   );
+  const headerParameters = (operation.parameters ?? []).filter(
+    (parameter) => parameter.location === "header",
+  );
   const query = queryType(operation.parameters);
   const hasRequiredQuery = (operation.parameters ?? []).some(
     (parameter) =>
@@ -83,9 +86,15 @@ const methodSource = (operation) => {
       (parameter) =>
         `${JSON.stringify(parameter.name)}: ${schemaType(parameter.schema)}`,
     ),
+    ...headerParameters.map(
+      (parameter) =>
+        `${JSON.stringify(parameter.name)}${parameter.required === true ? "" : "?"}: ${schemaType(parameter.schema)}`,
+    ),
     ...(operation.requestSchema === undefined
       ? []
-      : [`body: ${operation.requestSchema}`]),
+      : [
+          `body: ${operation.requestContentType === "multipart/form-data" ? "FormData" : operation.requestSchema}`,
+        ]),
     ...(query === null
       ? []
       : [`query${hasRequiredQuery ? "" : "?"}: ${query}`]),
@@ -95,6 +104,7 @@ const methodSource = (operation) => {
   const requiresArguments =
     pathParameters.length > 0 ||
     operation.requestRequired === true ||
+    headerParameters.some((parameter) => parameter.required === true) ||
     hasRequiredQuery;
   const argumentType = `{ ${argumentFields.join("; ")} }`;
   const signature = requiresArguments
@@ -108,11 +118,21 @@ const methodSource = (operation) => {
   const responseType =
     operation.responseStatus === 204
       ? "void"
-      : (operation.responseSchema ?? "unknown");
+      : operation.binaryResponse === true
+        ? "ArrayBuffer"
+        : (operation.responseSchema ?? "unknown");
+  const headerSource = headerParameters
+    .map(
+      (parameter) =>
+        `    if (args[${JSON.stringify(parameter.name)}] !== undefined) headers.set(${JSON.stringify(parameter.name)}, String(args[${JSON.stringify(parameter.name)}]));`,
+    )
+    .join("\n");
   return `  async ${operation.operationId}(${signature}): Promise<${responseType}> {
+    const headers = new Headers(args.headers);
+${headerSource}
     return this.request<${responseType}>(${JSON.stringify(operation.method.toUpperCase())}, ${routeExpression}, {
-      ${query === null ? "" : "query: args.query,\n      "}${operation.requestSchema === undefined ? "" : "body: args.body,\n      "}signal: args.signal,
-      headers: args.headers,
+      ${query === null ? "" : "query: args.query,\n      "}${operation.requestSchema === undefined ? "" : `body: args.body,\n      ${operation.requestContentType === "multipart/form-data" ? "multipart: true,\n      " : ""}`}signal: args.signal,
+      ${operation.binaryResponse === true ? "binary: true,\n      " : ""}headers,
     });
   }`;
 };
@@ -147,6 +167,8 @@ export class EzactoApiError extends Error {
 interface RequestOptions {
   query?: Readonly<Record<string, string | number | boolean | undefined>> | undefined;
   body?: unknown;
+  multipart?: boolean | undefined;
+  binary?: boolean | undefined;
   signal?: AbortSignal | undefined;
   headers?: HeadersInit | undefined;
 }
@@ -176,14 +198,20 @@ export class EzactoClient {
       if (value !== undefined) url.searchParams.set(name, String(value));
     }
     const headers = new Headers(this.defaultHeaders);
+    const requestHeaders = new Headers(options.headers);
+    requestHeaders.forEach((value, name) => headers.set(name, value));
     if (this.token !== undefined) headers.set("authorization", \`Bearer \${this.token}\`);
-    if (options.body !== undefined) headers.set("content-type", "application/json");
+    if (options.multipart === true) headers.delete("content-type");
+    else if (options.body !== undefined) headers.set("content-type", "application/json");
     const response = await this.fetchImplementation(url, {
       method,
       headers,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+      ...(options.body === undefined
+        ? {}
+        : { body: options.multipart === true ? options.body as BodyInit : JSON.stringify(options.body) }),
     });
+    if (response.ok && options.binary === true) return await response.arrayBuffer() as T;
     const text = await response.text();
     let body: unknown = undefined;
     if (text.length > 0) {

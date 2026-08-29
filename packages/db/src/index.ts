@@ -17,6 +17,7 @@ export {
   type InvoicePaymentOption,
 } from './invoice-payments.js'
 export * from './migrate.js'
+export * from './money-resources.js'
 export * from './operations.js'
 export * from './oidc-transactions.js'
 export * from './password-auth.js'

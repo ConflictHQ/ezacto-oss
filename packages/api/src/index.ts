@@ -1,5 +1,17 @@
 export { createApiApp } from './app.js'
 export {
+  installAttachmentRoutes,
+  MAX_ATTACHMENT_BYTES,
+  type AttachmentMetadataInput,
+  type AttachmentMetadataPort,
+  type AttachmentObject,
+  type AttachmentObjectPort,
+  type AttachmentOwnerAccessInput,
+  type AttachmentOwnerType,
+  type AttachmentRecord,
+  type AttachmentRouteOptions,
+} from './attachments.js'
+export {
   apiContractOperations,
   apiContractSchemas,
   generateOpenApiDocument,
@@ -23,6 +35,15 @@ export {
   installGeneralResourceRoutes,
   type GeneralResourceRouteOptions,
 } from './general-resources.js'
+export {
+  installMoneyResourceRoutes,
+  type InvoiceGenerationCommand,
+  type InvoiceGenerationExpenseSummary,
+  type InvoiceGenerationPort,
+  type InvoiceGenerationRequest,
+  type InvoiceGenerationTimeSummary,
+  type MoneyResourceRouteOptions,
+} from './money-resources.js'
 export type {
   ApiContext,
   ApiInstaller,

@@ -1055,6 +1055,9 @@ export const estimateMessages = sqliteTable(
   },
   (table) => [
     uniqueIndex('estimate_messages_harvest_id_unique').on(table.harvestId),
+    uniqueIndex('estimate_messages_invoice_event_unique')
+      .on(table.estimateId)
+      .where(sql`${table.eventType} = 'invoice'`),
     index('estimate_messages_estimate_created_id').on(table.estimateId, table.createdAt, table.id),
     index('estimate_messages_provider_message_id')
       .on(table.providerMessageId)
@@ -1070,6 +1073,81 @@ export const estimateMessages = sqliteTable(
     check('estimate_messages_copy_boolean', sql`${table.sendMeACopy} in (0, 1)`),
     check('estimate_messages_created_at_canonical', canonicalTimestamp(table.createdAt)),
     check('estimate_messages_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+  ],
+)
+
+export const estimateCommandLedger = sqliteTable(
+  'estimate_command_ledger',
+  {
+    estimateId: integer('estimate_id')
+      .notNull()
+      .references(() => estimates.id, { onDelete: 'restrict' }),
+    commandId: text('command_id').notNull(),
+    commandKind: text('command_kind', {
+      enum: [
+        'estimate.send',
+        'estimate.accept',
+        'estimate.decline',
+        'estimate.re-open',
+        'estimate.convert',
+      ],
+    }).notNull(),
+    inputFingerprint: text('input_fingerprint').notNull(),
+    actorUserId: integer('actor_user_id').notNull(),
+    expectedEstimateVersion: integer('expected_estimate_version').notNull(),
+    messageId: integer('message_id').notNull(),
+    invoiceId: integer('invoice_id'),
+    eventId: text('event_id'),
+    occurredAt: text('occurred_at').notNull(),
+    completed: integer('completed', { mode: 'boolean' }).notNull().default(false),
+    resultJson: text('result_json', { mode: 'json' }).$type<Record<string, unknown>>(),
+    completedAt: text('completed_at'),
+  },
+  (table) => [
+    primaryKey({ columns: [table.estimateId, table.commandId] }),
+    uniqueIndex('estimate_command_ledger_message_id_unique').on(table.messageId),
+    uniqueIndex('estimate_command_ledger_invoice_id_unique')
+      .on(table.invoiceId)
+      .where(sql`${table.invoiceId} is not null`),
+    uniqueIndex('estimate_command_ledger_event_id_unique')
+      .on(table.eventId)
+      .where(sql`${table.eventId} is not null`),
+    check(
+      'estimate_command_ledger_command_id_format',
+      sql`length(${table.commandId}) between 1 and 128
+        and ${table.commandId} not glob '*[^A-Za-z0-9._:-]*'`,
+    ),
+    check(
+      'estimate_command_ledger_fingerprint_format',
+      sql`length(${table.inputFingerprint}) = 71
+        and substr(${table.inputFingerprint}, 1, 7) = 'sha256:'
+        and substr(${table.inputFingerprint}, 8) not glob '*[^0-9a-f]*'`,
+    ),
+    check(
+      'estimate_command_ledger_expected_version_safe',
+      sql`${table.expectedEstimateVersion} between 0 and 9007199254740991`,
+    ),
+    check(
+      'estimate_command_ledger_conversion_shape',
+      sql`(${table.commandKind} = 'estimate.convert'
+          and ${table.invoiceId} is not null and ${table.eventId} is not null)
+        or (${table.commandKind} <> 'estimate.convert'
+          and ${table.invoiceId} is null and ${table.eventId} is null)`,
+    ),
+    check('estimate_command_ledger_occurred_at_canonical', canonicalTimestamp(table.occurredAt)),
+    check('estimate_command_ledger_completed_boolean', sql`${table.completed} in (0, 1)`),
+    check(
+      'estimate_command_ledger_completion_shape',
+      sql`(${table.completed} = 0 and ${table.resultJson} is null and ${table.completedAt} is null)
+        or (${table.completed} = 1 and ${table.resultJson} is not null
+          and json_valid(${table.resultJson})
+          and json_extract(${table.resultJson}, '$.schema_version') = 1
+          and ${table.completedAt} is not null)`,
+    ),
+    check(
+      'estimate_command_ledger_completed_at_canonical',
+      nullableCanonicalTimestamp(table.completedAt),
+    ),
   ],
 )
 

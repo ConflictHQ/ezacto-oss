@@ -19,6 +19,7 @@ let miniflare: Miniflare
 let database: D1Database
 let bootstrapResponse: Response
 let bearer: string
+let moneyBearer: string
 
 const request = (path: string, init?: RequestInit): Promise<Response> =>
   miniflare.dispatchFetch(
@@ -52,6 +53,7 @@ beforeAll(async () => {
     // Latest compatibility date accepted by the pinned stable workerd.
     compatibilityDate: '2026-08-06',
     d1Databases: ['DB'],
+    r2Buckets: ['ATTACHMENTS'],
     modules: true,
     script: bundled.outputFiles[0]!.text,
   })
@@ -89,7 +91,11 @@ beforeAll(async () => {
   await run(
     `INSERT INTO projects (
       id, client_id, name, code, hourly_rate_cents, created_at, updated_at
-    ) VALUES (1, 1, 'Runtime Project', 'RUN', 10000, ?, ?)`,
+    ) VALUES
+      (1, 1, 'Runtime Project', 'RUN', 10000, ?, ?),
+      (2, 1, 'Unassigned Project', 'PRIVATE', 10000, ?, ?)`,
+    timestamp,
+    timestamp,
     timestamp,
     timestamp,
   )
@@ -126,6 +132,29 @@ beforeAll(async () => {
     timestamp,
     timestamp,
   )
+  await run(
+    `INSERT INTO invoices (
+      id, client_id, created_by_user_id, number, currency, issue_date, due_date,
+      created_at, updated_at
+    ) VALUES (1, 1, 1, 'RUN-001', 'USD', '2026-08-28', '2026-09-27', ?, ?)`,
+    timestamp,
+    timestamp,
+  )
+  await run(
+    `INSERT INTO expense_categories (
+      id, name, unit_price_cents, created_at, updated_at
+    ) VALUES (1, 'Runtime Expense', NULL, ?, ?)`,
+    timestamp,
+    timestamp,
+  )
+  await run(
+    `INSERT INTO expenses (
+      id, user_id, project_id, expense_category_id, spent_date, total_cost_cents,
+      created_at, updated_at
+    ) VALUES (1, 1, 1, 1, '2026-08-28', 100, ?, ?)`,
+    timestamp,
+    timestamp,
+  )
 
   const store = createApiTokenStore(createD1Database(database), {
     now: () => timestamp,
@@ -134,10 +163,26 @@ beforeAll(async () => {
     await store.issue({
       userId: 2,
       name: 'Runtime fetch test',
-      scopes: ['projects:read', 'time_entries:read', 'time_entries:write'],
+      scopes: [
+        'projects:read',
+        'time_entries:read',
+        'time_entries:write',
+        'expenses:read',
+        'expenses:write',
+      ],
+    })
+  ).token
+  moneyBearer = (
+    await store.issue({
+      userId: 1,
+      name: 'Runtime money fetch test',
+      scopes: ['invoices:read', 'invoices:write'],
     })
   ).token
   expect(await store.authenticate(bearer)).toMatchObject({ profile: 'member' })
+  expect(await store.authenticate(moneyBearer)).toMatchObject({
+    profile: 'administrator',
+  })
 }, 20_000)
 
 afterAll(async () => miniflare.dispose())
@@ -149,8 +194,8 @@ describe('Worker D1 runtime composition', () => {
     const migrations = await database
       .prepare('SELECT id FROM _ezacto_migrations ORDER BY id')
       .all<{ id: string }>()
-    expect(migrations.results.at(-1)?.id).toBe('0019_attachments')
-    expect(migrations.results).toHaveLength(20)
+    expect(migrations.results.at(-1)?.id).toBe('0020_estimate_commands')
+    expect(migrations.results).toHaveLength(21)
   })
 
   it('[security] keeps unverified session-like cookies fail-closed', async () => {
@@ -200,6 +245,129 @@ describe('Worker D1 runtime composition', () => {
     }
     expect(project.data).toMatchObject({ id: 1, name: 'Runtime Project' })
     expect(project.data).not.toHaveProperty('hourly_rate_cents')
+  })
+
+  it('[api] executes and replays a generated-client money command through the real D1 binding', async () => {
+    const client = new EzactoClient({
+      baseUrl: 'https://worker.test',
+      token: moneyBearer,
+      fetch: workerFetch,
+    })
+    const command = {
+      id: 1,
+      'Idempotency-Key': 'runtime-money-line-1',
+      body: {
+        expected_version: 0,
+        position: 0,
+        kind: 'Service',
+        description: 'Fractional runtime work',
+        quantity: 1.5,
+        unit_price_cents: 101,
+      },
+    } as const
+
+    const created = await client.createInvoiceLine(command)
+    const replayed = await client.createInvoiceLine(command)
+
+    expect(created.data.invoice).toMatchObject({
+      id: 1,
+      version: 1,
+      amount_cents: 152,
+      due_amount_cents: 152,
+    })
+    expect(replayed.data.command.event_ids).toEqual(
+      created.data.command.event_ids,
+    )
+    expect(
+      await database
+        .prepare(
+          `SELECT COUNT(*) AS lineCount, SUM(amount_cents) AS amountCents
+           FROM invoice_line_items WHERE invoice_id = ?`,
+        )
+        .bind(1)
+        .first(),
+    ).toEqual({ lineCount: 1, amountCents: 152 })
+    expect(
+      await database
+        .prepare(
+          `SELECT COUNT(*) AS eventCount
+           FROM event_outbox WHERE aggregate_type = 'invoice' AND aggregate_id = ?`,
+        )
+        .bind(1)
+        .first(),
+    ).toEqual({ eventCount: 1 })
+  })
+
+  it('[api] uploads and downloads an owner-scoped attachment through real D1 and R2 bindings', async () => {
+    const client = new EzactoClient({
+      baseUrl: 'https://worker.test',
+      token: moneyBearer,
+      fetch: workerFetch,
+    })
+    const form = new FormData()
+    form.set(
+      'file',
+      new File(['runtime attachment'], 'runtime.txt', { type: 'text/plain' }),
+    )
+    const created = await client.createInvoiceAttachment({
+      invoiceId: 1,
+      body: form,
+    })
+    expect(created.data).toMatchObject({
+      name: 'runtime.txt',
+      byte_size: 18,
+      content_type: 'text/plain',
+      uploaded_by_user_id: 1,
+    })
+
+    const bytes = await client.downloadInvoiceAttachment({
+      invoiceId: 1,
+      attachmentId: created.data.id,
+    })
+    expect(new TextDecoder().decode(bytes)).toBe('runtime attachment')
+    expect(
+      await database
+        .prepare(
+          `SELECT attachment.name, file.content_hash AS contentHash
+           FROM attachments attachment
+           JOIN file_objects file ON file.id = attachment.file_object_id
+           JOIN invoice_attachments owner ON owner.attachment_id = attachment.id
+           WHERE owner.invoice_id = ?`,
+        )
+        .bind(1)
+        .first(),
+    ).toMatchObject({ name: 'runtime.txt', contentHash: expect.stringMatching(/^[0-9a-f]{64}$/) })
+  })
+
+  it('[security] denies foreign expenses and unassigned projects before D1 or R2 attachment access', async () => {
+    const foreignExpense = await request('/api/v1/expenses/1/attachments', {
+      headers: { authorization: `Bearer ${bearer}` },
+    })
+    expect(foreignExpense.status).toBe(404)
+
+    const unassignedProject = await request('/api/v1/projects/2/attachments', {
+      headers: { authorization: `Bearer ${bearer}` },
+    })
+    expect(unassignedProject.status).toBe(404)
+
+    const bytes = 'foreign expense bytes'
+    const form = new FormData()
+    form.set('file', new File([bytes], 'foreign.txt', { type: 'text/plain' }))
+    const deniedUpload = await request('/api/v1/expenses/1/attachments', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${bearer}` },
+      body: form,
+    })
+    expect(deniedUpload.status).toBe(404)
+    expect(
+      await database.prepare('SELECT COUNT(*) AS count FROM expense_attachments').first(),
+    ).toEqual({ count: 0 })
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(bytes))
+    const contentHash = [...new Uint8Array(digest)]
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('')
+    const bucket = await miniflare.getR2Bucket('ATTACHMENTS')
+    expect(await bucket.get(`sha256/${contentHash.slice(0, 2)}/${contentHash}`)).toBeNull()
   })
 
   it('[e2e:quick-add] sends the shell command through the generated client and refreshes D1 state', async () => {

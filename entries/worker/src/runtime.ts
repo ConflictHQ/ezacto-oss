@@ -1,11 +1,13 @@
 import {
   bootstrapInstanceD1,
+  createAttachmentStore,
   enrollInstanceOwnerPasswordD1,
   createApiTokenStore,
   createD1Database,
   createD1IdentityStore,
   createD1OidcTransactionStore,
   createGeneralResourceRepository,
+  createMoneyResourceRepository,
   createReportRepository,
   createD1EmailLogStore,
   createD1PasswordAuthService,
@@ -15,6 +17,7 @@ import {
   type TrackedPolicyResolver,
 } from '@ezacto/db/d1'
 import { createApiSessionService } from '@ezacto/api'
+import type { AttachmentObjectPort, AttachmentRouteOptions } from '@ezacto/api'
 import {
   SesMailer,
   type HttpEmailProvider,
@@ -151,6 +154,58 @@ const organizationPolicy: TrackedPolicyResolver = {
   isLocked: async () => false,
 }
 
+export const createR2AttachmentObjectStore = (bucket: R2Bucket): AttachmentObjectPort => ({
+  async put(key, bytes, contentType) {
+    await bucket.put(key, bytes, { httpMetadata: { contentType } })
+  },
+  async get(key) {
+    const object = await bucket.get(key)
+    return object === null ? null : { body: object.body }
+  },
+})
+
+export const createD1AttachmentOwnerAuthorizer = (
+  database: D1Database,
+): AttachmentRouteOptions['authorizeOwnerAccess'] =>
+  async ({ owner, parentId, principal }) => {
+    const exists = async (statement: string, ...bindings: unknown[]): Promise<boolean> =>
+      (await database.prepare(statement).bind(...bindings).first<{ authorized: number }>()) !== null
+
+    switch (owner) {
+      case 'invoice':
+        return exists('SELECT 1 AS authorized FROM invoices WHERE id = ?', parentId)
+      case 'recurringInvoice':
+        return exists('SELECT 1 AS authorized FROM recurring_invoices WHERE id = ?', parentId)
+      case 'estimate':
+        return exists('SELECT 1 AS authorized FROM estimates WHERE id = ?', parentId)
+      case 'expense':
+        return exists(
+          'SELECT 1 AS authorized FROM expenses WHERE id = ? AND user_id = ?',
+          parentId,
+          principal.userId,
+        )
+      case 'project':
+        if (principal.profile === 'administrator' || principal.profile === 'executive_manager') {
+          return exists('SELECT 1 AS authorized FROM projects WHERE id = ?', parentId)
+        }
+        return exists(
+          `SELECT 1 AS authorized FROM projects project
+           JOIN users viewer ON viewer.id = ? AND viewer.is_active = 1
+           WHERE project.id = ? AND (
+             viewer.has_access_to_all_future_projects = 1
+             OR EXISTS (
+               SELECT 1 FROM user_assignments assignment
+               WHERE assignment.project_id = project.id
+                 AND assignment.user_id = viewer.id
+                 AND assignment.is_active = 1
+             )
+           )`,
+          principal.userId,
+          parentId,
+        )
+    }
+  }
+
 export const createRuntimeServices = async (
   env: WorkerEnv,
   options: {
@@ -177,6 +232,7 @@ export const createRuntimeServices = async (
     enrollOwnerPassword: (input) => enrollInstanceOwnerPasswordD1(database, input),
     tokens: createApiTokenStore(drizzle),
     generalResources: createGeneralResourceRepository(drizzle),
+    moneyResources: createMoneyResourceRepository(drizzle),
     trackedResources: new DrizzleTrackedResourceRepository(
       drizzle,
       organizationPolicy,
@@ -189,5 +245,14 @@ export const createRuntimeServices = async (
     identities: createD1IdentityStore(database),
     oidcTransactions: createD1OidcTransactionStore(database),
     ...(authMailer === undefined ? {} : { authMailer }),
+    ...(env.ATTACHMENTS === undefined
+      ? {}
+      : {
+          attachments: {
+            metadata: createAttachmentStore(drizzle),
+            objects: createR2AttachmentObjectStore(env.ATTACHMENTS),
+            authorizeOwnerAccess: createD1AttachmentOwnerAuthorizer(database),
+          },
+        }),
   }
 }
