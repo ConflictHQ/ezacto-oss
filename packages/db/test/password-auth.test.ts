@@ -10,6 +10,7 @@ import {
 } from '../src/password-auth.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import {
+  SessionCredentialChangedError,
   createContainerSessionStore,
   createD1SessionStore,
   type SessionStore,
@@ -131,14 +132,14 @@ for (const [runtime, factory] of factories) {
         harness.service.verifyEmail(verification.token, '198.51.100.10'),
       ).rejects.toBeInstanceOf(InvalidAuthTokenError)
 
-      await expect(
-        harness.service.signIn({
-          email: 'OWNER@example.test',
-          password,
-          clientKey: '198.51.100.10',
-        }),
-      ).resolves.toEqual({
+      const verifiedSignIn = await harness.service.signIn({
+        email: 'OWNER@example.test',
+        password,
+        clientKey: '198.51.100.10',
+      })
+      expect(verifiedSignIn).toEqual({
         status: 'authenticated',
+        credentialVersion: 1,
         principal: { userId: 1, profile: 'administrator', managerGrants: [] },
       })
       const activeSession = await harness.sessions.issue(1)
@@ -168,6 +169,12 @@ for (const [runtime, factory] of factories) {
       await expect(
         harness.service.resetPassword(reset!.token, replacementPassword, '198.51.100.10'),
       ).resolves.toEqual({ userId: 1, profile: 'administrator', managerGrants: [] })
+      await expect(
+        harness.sessions.issue(
+          1,
+          verifiedSignIn.status === 'authenticated' ? verifiedSignIn.credentialVersion : undefined,
+        ),
+      ).rejects.toBeInstanceOf(SessionCredentialChangedError)
       await expect(harness.sessions.authenticate(activeSession.token)).resolves.toBeNull()
       await expect(harness.sessions.list(1)).resolves.toContainEqual(
         expect.objectContaining({
@@ -209,16 +216,36 @@ for (const [runtime, factory] of factories) {
       ).rejects.toBeInstanceOf(InvalidAuthTokenError)
 
       const stored = await harness.rows<{
+        credential_version: number
+        algorithm: string
+        version: number | null
+        iterations: number | null
+        memory_kib: number | null
+        time_cost: number | null
+        parallelism: number | null
         salt: string
         password_hash: string
         selector: string
         secret_hash: string
       }>(
-        `SELECT password.salt, password.password_hash, token.selector, token.secret_hash
+        `SELECT password.credential_version, password.algorithm, password.version, password.iterations,
+           password.memory_kib, password.time_cost, password.parallelism,
+           password.salt, password.password_hash, token.selector, token.secret_hash
          FROM user_passwords password JOIN auth_tokens token ON 1 = 1
          ORDER BY token.id`,
       )
       expect(stored).toHaveLength(3)
+      for (const row of stored) {
+        expect(row).toMatchObject({
+          credential_version: 2,
+          algorithm: 'argon2id',
+          version: 19,
+          iterations: null,
+          memory_kib: 19_456,
+          time_cost: 2,
+          parallelism: 1,
+        })
+      }
       expect(JSON.stringify(stored)).not.toContain(password)
       expect(JSON.stringify(stored)).not.toContain(replacementPassword)
       expect(JSON.stringify(stored)).not.toContain(verification.token)
@@ -227,6 +254,9 @@ for (const [runtime, factory] of factories) {
 
       await expect(
         harness.execute(`UPDATE user_passwords SET salt = 'not-base64url' WHERE user_id = 1`),
+      ).rejects.toThrow()
+      await expect(
+        harness.execute(`UPDATE user_passwords SET memory_kib = 1073741824 WHERE user_id = 1`),
       ).rejects.toThrow()
       await expect(
         harness.execute(`UPDATE auth_tokens SET secret_hash = ? WHERE id = 1`, '0'.repeat(64)),

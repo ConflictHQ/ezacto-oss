@@ -14,6 +14,11 @@ import {
   type InstanceBootstrapOptions,
 } from '../src/instance-bootstrap.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
+import { orgPeopleMigration } from '../src/migrations/0000_org_people.js'
+import { apiTokensMigration } from '../src/migrations/0011_api_tokens.js'
+import { instanceBootstrapMigration } from '../src/migrations/0012_instance_bootstrap.js'
+import { passwordAuthMigration } from '../src/migrations/0013_password_auth.js'
+import { argon2PasswordsMigration } from '../src/migrations/0020_argon2_passwords.js'
 import {
   createContainerPasswordAuthService,
   createD1PasswordAuthService,
@@ -283,6 +288,7 @@ for (const [runtime, factory] of factories) {
       ])
       expect(await harness.signIn()).toEqual({
         status: 'authenticated',
+        credentialVersion: 1,
         principal: {
           userId: 1,
           profile: 'administrator',
@@ -334,4 +340,215 @@ describe('instance bootstrap migration gate', () => {
       client.close()
     }
   })
+})
+
+describe('instance owner password version boundary', () => {
+  const predecessor = [...orgPeopleMigration, ...apiTokensMigration, ...instanceBootstrapMigration]
+
+  for (const runtime of ['container', 'D1'] as const) {
+    it(`[regression] enrolls ${runtime} bootstrapped before password authentication existed`, async () => {
+      if (runtime === 'container') {
+        const client = new BetterSqlite3(':memory:')
+        try {
+          for (const statement of predecessor) client.exec(statement)
+          await bootstrapInstanceContainer(client, input, options)
+          for (const statement of [...passwordAuthMigration, ...argon2PasswordsMigration]) {
+            client.exec(statement)
+          }
+
+          await expect(
+            enrollInstanceOwnerPasswordContainer(
+              client,
+              { token, password: ownerPassword },
+              { now: () => usedAt },
+            ),
+          ).resolves.toMatchObject({ userId: 1, ownerEmail: input.ownerEmail })
+          await expect(
+            createContainerPasswordAuthService(client, { now: () => usedAt }).signIn({
+              email: input.ownerEmail,
+              password: ownerPassword,
+              clientKey: 'pre-password-auth-upgrade',
+            }),
+          ).resolves.toMatchObject({ status: 'authenticated' })
+          expect(
+            client
+              .prepare(
+                `SELECT credential_version, algorithm, version, iterations, memory_kib, time_cost, parallelism
+                 FROM user_passwords`,
+              )
+              .get(),
+          ).toEqual({
+            credential_version: 1,
+            algorithm: 'argon2id',
+            version: 19,
+            iterations: null,
+            memory_kib: 19_456,
+            time_cost: 2,
+            parallelism: 1,
+          })
+        } finally {
+          client.close()
+        }
+        return
+      }
+
+      const miniflare = new Miniflare({
+        modules: true,
+        script: 'export default { fetch() { return new Response("ok") } }',
+        d1Databases: ['DB'],
+      })
+      try {
+        const client = await miniflare.getD1Database('DB')
+        for (const statement of predecessor) await client.prepare(statement).run()
+        await bootstrapInstanceD1(client, input, options)
+        for (const statement of [...passwordAuthMigration, ...argon2PasswordsMigration]) {
+          await client.prepare(statement).run()
+        }
+
+        await expect(
+          enrollInstanceOwnerPasswordD1(
+            client,
+            { token, password: ownerPassword },
+            { now: () => usedAt },
+          ),
+        ).resolves.toMatchObject({ userId: 1, ownerEmail: input.ownerEmail })
+        await expect(
+          createD1PasswordAuthService(client, { now: () => usedAt }).signIn({
+            email: input.ownerEmail,
+            password: ownerPassword,
+            clientKey: 'pre-password-auth-upgrade',
+          }),
+        ).resolves.toMatchObject({ status: 'authenticated' })
+        await expect(
+          client
+            .prepare(
+              `SELECT credential_version, algorithm, version, iterations, memory_kib, time_cost, parallelism
+               FROM user_passwords`,
+            )
+            .first(),
+        ).resolves.toEqual({
+          credential_version: 1,
+          algorithm: 'argon2id',
+          version: 19,
+          iterations: null,
+          memory_kib: 19_456,
+          time_cost: 2,
+          parallelism: 1,
+        })
+      } finally {
+        await miniflare.dispose()
+      }
+    })
+  }
+
+  for (const runtime of ['container', 'D1'] as const) {
+    it(`[regression] preserves and verifies ${runtime} legacy PBKDF2 state across the Argon2id migration`, async () => {
+      const legacyInsert = `INSERT INTO user_passwords (
+          user_id, algorithm, iterations, salt, password_hash, created_at, updated_at
+        ) VALUES (1, 'pbkdf2-sha256', 600000, ?, ?, ?, ?)`
+      const legacyBindings = [
+        'AAAAAAAAAAAAAAAAAAAAAA',
+        'BGDu7H3fi1-R8gN7PiqySPfF2I2-yrtQpCaeUY8ZSM0',
+        usedAt,
+        usedAt,
+      ] as const
+
+      if (runtime === 'container') {
+        const client = new BetterSqlite3(':memory:')
+        try {
+          for (const statement of predecessor) client.exec(statement)
+          await bootstrapInstanceContainer(client, input, options)
+          for (const statement of passwordAuthMigration) client.exec(statement)
+          client.prepare(legacyInsert).run(...legacyBindings)
+          for (const statement of argon2PasswordsMigration) client.exec(statement)
+
+          await expect(
+            enrollInstanceOwnerPasswordContainer(
+              client,
+              { token, password: ownerPassword },
+              { now: () => usedAt },
+            ),
+          ).resolves.toMatchObject({ ownerEmail: input.ownerEmail })
+          await expect(
+            createContainerPasswordAuthService(client, { now: () => usedAt }).signIn({
+              email: input.ownerEmail,
+              password: ownerPassword,
+              clientKey: 'legacy-password-upgrade',
+            }),
+          ).resolves.toMatchObject({ status: 'authenticated' })
+          expect(
+            client
+              .prepare(
+                `SELECT credential_version, algorithm, version, iterations, memory_kib, time_cost, parallelism
+                 FROM user_passwords`,
+              )
+              .get(),
+          ).toEqual({
+            credential_version: 2,
+            algorithm: 'argon2id',
+            version: 19,
+            iterations: null,
+            memory_kib: 19_456,
+            time_cost: 2,
+            parallelism: 1,
+          })
+        } finally {
+          client.close()
+        }
+        return
+      }
+
+      const miniflare = new Miniflare({
+        modules: true,
+        script: 'export default { fetch() { return new Response("ok") } }',
+        d1Databases: ['DB'],
+      })
+      try {
+        const client = await miniflare.getD1Database('DB')
+        for (const statement of predecessor) await client.prepare(statement).run()
+        await bootstrapInstanceD1(client, input, options)
+        for (const statement of passwordAuthMigration) await client.prepare(statement).run()
+        await client
+          .prepare(legacyInsert)
+          .bind(...legacyBindings)
+          .run()
+        for (const statement of argon2PasswordsMigration) {
+          await client.prepare(statement).run()
+        }
+
+        await expect(
+          enrollInstanceOwnerPasswordD1(
+            client,
+            { token, password: ownerPassword },
+            { now: () => usedAt },
+          ),
+        ).resolves.toMatchObject({ ownerEmail: input.ownerEmail })
+        await expect(
+          createD1PasswordAuthService(client, { now: () => usedAt }).signIn({
+            email: input.ownerEmail,
+            password: ownerPassword,
+            clientKey: 'legacy-password-upgrade',
+          }),
+        ).resolves.toMatchObject({ status: 'authenticated' })
+        await expect(
+          client
+            .prepare(
+              `SELECT credential_version, algorithm, version, iterations, memory_kib, time_cost, parallelism
+               FROM user_passwords`,
+            )
+            .first(),
+        ).resolves.toEqual({
+          credential_version: 2,
+          algorithm: 'argon2id',
+          version: 19,
+          iterations: null,
+          memory_kib: 19_456,
+          time_cost: 2,
+          parallelism: 1,
+        })
+      } finally {
+        await miniflare.dispose()
+      }
+    })
+  }
 })

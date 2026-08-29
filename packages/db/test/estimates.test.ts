@@ -200,7 +200,7 @@ for (const [runtime, factory] of factories) {
         await database.rows<{ id: string }>(
           `SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`,
         ),
-      ).toEqual([{ id: '0019_attachments' }])
+      ).toEqual([{ id: '0020_argon2_passwords' }])
       expect(
         await database.rows<{ name: string }>(
           `SELECT name FROM sqlite_master

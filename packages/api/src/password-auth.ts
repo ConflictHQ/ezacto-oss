@@ -32,7 +32,11 @@ export interface PasswordAuthService {
     password: string
     clientKey: string
   }): Promise<
-    | { status: 'authenticated'; principal: ResolvedUserIdentity }
+    | {
+        status: 'authenticated'
+        principal: ResolvedUserIdentity
+        credentialVersion: number
+      }
     | { status: 'invalid_credentials' }
     | { status: 'verification_required' }
   >
@@ -53,7 +57,10 @@ export interface AuthMailer {
 }
 
 export interface PasswordSessionIssuer {
-  issue(userId: number): Promise<{ setCookie: string }>
+  issue(
+    userId: number,
+    credentialVersion?: number,
+  ): Promise<{ setCookie: string }>
 }
 
 export interface PasswordAuthRouteOptions {
@@ -146,6 +153,26 @@ const translateAuthError = (error: unknown): never => {
       message: 'The authentication token is invalid, expired, or already used.',
     })
   }
+  if (
+    error instanceof Error &&
+    error.name === 'PasswordDerivationOverloadedError'
+  ) {
+    throw new ApiError({
+      status: 503,
+      code: 'service_unavailable',
+      message: 'Authentication is temporarily unavailable.',
+    })
+  }
+  if (
+    error instanceof Error &&
+    error.name === 'SessionCredentialChangedError'
+  ) {
+    throw new ApiError({
+      status: 401,
+      code: 'invalid_credentials',
+      message: 'The email address or password is invalid.',
+    })
+  }
   if (error instanceof RangeError || error instanceof TypeError) {
     throw validationError([
       {
@@ -230,7 +257,10 @@ export const installPasswordAuthRoutes = <Bindings extends object>(
           message: 'Verify this email address before signing in.',
         })
       }
-      const session = await options.sessions.issue(result.principal.userId)
+      const session = await options.sessions.issue(
+        result.principal.userId,
+        result.credentialVersion,
+      )
       context.header('set-cookie', session.setCookie, { append: true })
       return context.json(
         {
