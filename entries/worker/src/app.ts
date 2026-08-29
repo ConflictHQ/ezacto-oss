@@ -7,6 +7,7 @@ import {
   installGeneralResourceRoutes,
   installOidcRoutes,
   installPasswordAuthRoutes,
+  installReportRoutes,
   installSessionRoutes,
   installTrackedResourceRoutes,
   readJsonBody,
@@ -19,6 +20,7 @@ import {
   type OidcProviderConfig,
   type OidcTransactionStorePort,
   type PasswordAuthService,
+  type ReportReader,
   type TrackedResourceRepository,
 } from '@ezacto/api'
 import {
@@ -60,6 +62,7 @@ export interface RuntimeServices {
   tokens: ApiTokenService
   generalResources: GeneralResourceRouteOptions['repository']
   trackedResources: TrackedResourceRepository
+  reports: ReportReader
   cursorSigningKey: Uint8Array
   passwordAuth: PasswordAuthService
   sessions: ApiSessionService
@@ -97,6 +100,7 @@ export const createApp = (services?: RuntimeServices) =>
               clock: systemClock,
               cursorSigningKey: services.cursorSigningKey,
             })
+            installReportRoutes(api, services.reports)
           },
         }),
     installApp(app) {

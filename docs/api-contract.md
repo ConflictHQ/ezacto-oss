@@ -76,6 +76,25 @@ requiring database bindings. Consumers import `EzactoClient` from
 `@ezacto/client`; direct edits to `packages/client/src/generated.ts` are replaced
 by the generator.
 
+## Reports and rollups
+
+The native report slice requires an explicit inclusive `from`/`to` date range:
+
+- `GET /api/v1/reports/uninvoiced` prices stopped, billable, unlinked time from
+  its stored `rounded_seconds` and rate snapshot, then adds billable unlinked
+  expenses. The shared integer-cents generation preview owns this arithmetic;
+  null rates remain unpriced and are counted rather than converted to zero.
+- `GET /api/v1/reports/client-rollups/:clientId` returns direct and descendant
+  totals for every node in the selected client subtree. Monetary values remain
+  grouped by currency.
+- `GET /api/v1/reports/project-budget/:projectId` reports the active budget grain
+  (`project`, task assignment, or user assignment). Time budgets are visible on
+  the project-read surface; money budget, billable, and cost-derived fields are
+  independently omitted by the shared permission-profile policy.
+
+Report responses are `no-store`. Invalid, duplicate, missing, or inverted date
+filters fail before the repository runs.
+
 The contract suite dispatches the same fixture handlers through a real Node HTTP
 server adapter and a Miniflare/workerd isolate. In-process Hono tests remain unit
 tests and are not treated as proof of runtime parity.

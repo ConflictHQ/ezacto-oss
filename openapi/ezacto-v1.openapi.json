@@ -5863,6 +5863,267 @@
           }
         ]
       }
+    },
+    "/api/v1/reports/uninvoiced": {
+      "get": {
+        "operationId": "getUninvoicedReport",
+        "summary": "Report uninvoiced tracked time and expenses",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UninvoicedReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/reports/uninvoiced",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "client_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/reports/client-rollups/{clientId}": {
+      "get": {
+        "operationId": "getClientRollupReport",
+        "summary": "Roll up reporting metrics through a client subtree",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientRollupReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/reports/client-rollups/:clientId",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "clientId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/reports/project-budget/{projectId}": {
+      "get": {
+        "operationId": "getProjectBudgetReport",
+        "summary": "Report project budget consumption",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBudgetReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/reports/project-budget/:projectId",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -7713,6 +7974,451 @@
           },
           "page": {
             "$ref": "#/components/schemas/PageMetadata"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UninvoicedCurrencyTotal": {
+        "type": "object",
+        "required": [
+          "currency",
+          "rounded_seconds",
+          "time_entry_count",
+          "unpriced_time_entry_count",
+          "expense_count"
+        ],
+        "properties": {
+          "currency": {
+            "type": "string"
+          },
+          "rounded_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "time_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unpriced_time_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "expense_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "time_cents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "expense_cents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_cents": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "UninvoicedReport": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "client_id",
+          "project_id",
+          "totals"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date"
+          },
+          "to": {
+            "type": "string",
+            "format": "date"
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "totals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UninvoicedCurrencyTotal"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "UninvoicedReportEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/UninvoicedReport"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientRollupCurrency": {
+        "type": "object",
+        "required": [
+          "currency",
+          "expense_cents"
+        ],
+        "properties": {
+          "currency": {
+            "type": "string"
+          },
+          "expense_cents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "uninvoiced_time_cents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "uninvoiced_expense_cents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "uninvoiced_total_cents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "money_budget_cents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cost_cents": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientRollupMetrics": {
+        "type": "object",
+        "required": [
+          "time_entry_count",
+          "expense_count",
+          "rounded_seconds",
+          "billable_seconds",
+          "budgeted_seconds",
+          "time_budget_seconds",
+          "unpriced_billable_entry_count",
+          "unpriced_cost_entry_count",
+          "currencies"
+        ],
+        "properties": {
+          "time_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "expense_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "rounded_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "billable_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "budgeted_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "time_budget_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unpriced_billable_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unpriced_cost_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "currencies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientRollupCurrency"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientRollupNode": {
+        "type": "object",
+        "required": [
+          "client_id",
+          "name",
+          "parent_client_id",
+          "depth",
+          "direct",
+          "rollup"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string"
+          },
+          "parent_client_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "direct": {
+            "$ref": "#/components/schemas/ClientRollupMetrics"
+          },
+          "rollup": {
+            "$ref": "#/components/schemas/ClientRollupMetrics"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientRollupReport": {
+        "type": "object",
+        "required": [
+          "root_client_id",
+          "from",
+          "to",
+          "nodes"
+        ],
+        "properties": {
+          "root_client_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "from": {
+            "type": "string",
+            "format": "date"
+          },
+          "to": {
+            "type": "string",
+            "format": "date"
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientRollupNode"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientRollupReportEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ClientRollupReport"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectBudgetGrain": {
+        "type": "object",
+        "required": [
+          "source",
+          "source_id",
+          "unit",
+          "calculation",
+          "unpriced_entry_count"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "project",
+              "task_assignment",
+              "user_assignment"
+            ]
+          },
+          "source_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "unit": {
+            "type": "string",
+            "enum": [
+              "seconds",
+              "cents"
+            ]
+          },
+          "calculation": {
+            "type": "string",
+            "enum": [
+              "time",
+              "billable",
+              "cost"
+            ]
+          },
+          "unpriced_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "budget_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "spent_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "remaining_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "budget_cents": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "spent_cents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "remaining_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectBudgetReport": {
+        "type": "object",
+        "required": [
+          "project_id",
+          "budget_by",
+          "expenses_included",
+          "from",
+          "to",
+          "grains"
+        ],
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "budget_by": {
+            "type": "string",
+            "enum": [
+              "project",
+              "project_cost",
+              "task",
+              "task_fees",
+              "person",
+              "none"
+            ]
+          },
+          "expenses_included": {
+            "type": "boolean"
+          },
+          "from": {
+            "type": "string",
+            "format": "date"
+          },
+          "to": {
+            "type": "string",
+            "format": "date"
+          },
+          "grains": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectBudgetGrain"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectBudgetReportEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ProjectBudgetReport"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
           }
         },
         "additionalProperties": false

@@ -20,7 +20,7 @@ const app = createApiApp({
               tokenId: 1,
               userId: 4,
               profile: "administrator",
-              scopes: ["projects:write", "time_entries:write"],
+              scopes: ["projects:write", "time_entries:write", "reports:read"],
             }
           : null,
       issue: async () => {
@@ -75,6 +75,18 @@ const app = createApiApp({
         201,
       );
     });
+    api.get("/reports/uninvoiced", (context) =>
+      context.json({
+        data: {
+          from: context.req.query("from"),
+          to: context.req.query("to"),
+          client_id: null,
+          project_id: null,
+          totals: [],
+        },
+        links: { self: context.req.path },
+      }),
+    );
   },
 });
 
@@ -84,6 +96,17 @@ const client = (token = "generated-client-test") =>
     token,
     fetch: async (input, init) => app.fetch(new Request(input, init)),
   });
+
+it("[unit] sends required report range filters through the generated client", async () => {
+  const report = await client().getUninvoicedReport({
+    query: { from: "2026-08-01", to: "2026-08-31" },
+  });
+  expect(report.data).toMatchObject({
+    from: "2026-08-01",
+    to: "2026-08-31",
+    totals: [],
+  });
+});
 
 describe("generated ezacto client", () => {
   it("[unit] round-trips core project and time resources", async () => {

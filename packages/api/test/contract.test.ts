@@ -8,6 +8,7 @@ import {
   installGeneralResourceRoutes,
   installOidcRoutes,
   installPasswordAuthRoutes,
+  installReportRoutes,
   installSessionRoutes,
   installTrackedResourceRoutes,
   type ApiSessionService,
@@ -16,6 +17,7 @@ import {
   type OidcIdentityResolver,
   type OidcTransactionStorePort,
   type PasswordAuthService,
+  type ReportReader,
   type TrackedResourceRepository,
 } from "../src/index.js";
 
@@ -28,6 +30,7 @@ const trackedRepository = new Proxy(
   {},
   { get: () => unavailable },
 ) as TrackedResourceRepository;
+const reports = new Proxy({}, { get: () => unavailable }) as ReportReader;
 const tokens = new Proxy({}, { get: () => unavailable }) as ApiTokenService;
 const passwordAuth = new Proxy(
   {},
@@ -81,6 +84,7 @@ const documentedApp = () =>
           }),
         },
       });
+      installReportRoutes(api, reports);
     },
   });
 

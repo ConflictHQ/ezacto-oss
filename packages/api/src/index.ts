@@ -61,6 +61,13 @@ export {
   type PasswordSessionIssuer,
 } from './password-auth.js'
 export {
+  installReportRoutes,
+  serializeClientRollup,
+  serializeProjectBudget,
+  serializeUninvoiced,
+  type ReportReader,
+} from './reports.js'
+export {
   assertValidOidcProviderConfig,
   installOidcRoutes,
   OIDC_STATE_COOKIE_NAME,
