@@ -300,16 +300,28 @@ for (const [runtime, factory] of factories) {
         ...metadata('a', { name: 'same-content-expense.pdf' }),
       })
       const project = await store.createProjectAttachment({ projectId: 1, ...metadata('d') })
+      const [racedFirst, racedSecond] = await Promise.all([
+        store.createProjectAttachment({
+          projectId: 1,
+          ...metadata('8', { name: 'concurrent-first.pdf' }),
+        }),
+        store.createProjectAttachment({
+          projectId: 1,
+          ...metadata('8', { name: 'concurrent-second.pdf' }),
+        }),
+      ])
 
       expect(invoice.fileObjectId).toBe(expense.fileObjectId)
       expect(invoice.id).not.toBe(expense.id)
-      expect(await db.rows(`SELECT count(*) AS count FROM file_objects`)).toEqual([{ count: 4 }])
-      expect(await db.rows(`SELECT count(*) AS count FROM attachments`)).toEqual([{ count: 5 }])
+      expect(racedFirst.fileObjectId).toBe(racedSecond.fileObjectId)
+      expect(racedFirst.id).not.toBe(racedSecond.id)
+      expect(await db.rows(`SELECT count(*) AS count FROM file_objects`)).toEqual([{ count: 5 }])
+      expect(await db.rows(`SELECT count(*) AS count FROM attachments`)).toEqual([{ count: 7 }])
       expect(await store.listInvoiceAttachments(1)).toEqual([invoice])
       expect(await store.listRecurringInvoiceAttachments(1)).toEqual([recurring])
       expect(await store.listEstimateAttachments(1)).toEqual([estimate])
       expect(await store.listExpenseAttachments(152975211)).toEqual([expense])
-      expect(await store.listProjectAttachments(1)).toEqual([project])
+      expect(await store.listProjectAttachments(1)).toEqual([project, racedFirst, racedSecond])
       expect(await store.getExpenseAttachment(152975211, invoice.id)).toBeNull()
       expect(await store.getInvoiceAttachment(1, expense.id)).toBeNull()
 
@@ -329,7 +341,7 @@ for (const [runtime, factory] of factories) {
          ORDER BY attachment.id`,
       )
       expect(ownerCounts).toEqual(
-        [invoice, recurring, estimate, expense, project]
+        [invoice, recurring, estimate, expense, project, racedFirst, racedSecond]
           .map(({ id }) => ({ id, owner_count: 1 }))
           .sort((left, right) => left.id - right.id),
       )
