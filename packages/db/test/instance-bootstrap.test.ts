@@ -273,7 +273,14 @@ for (const [runtime, factory] of factories) {
       await harness.bootstrap()
       expect(await harness.signIn()).toEqual({ status: 'invalid_credentials' })
 
-      await harness.enroll()
+      const concurrentExactRetries = await Promise.allSettled([
+        harness.enroll(),
+        harness.enroll(),
+      ])
+      expect(concurrentExactRetries.map(({ status }) => status)).toEqual([
+        'fulfilled',
+        'fulfilled',
+      ])
       expect(await harness.signIn()).toEqual({
         status: 'authenticated',
         principal: {

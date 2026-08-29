@@ -287,6 +287,23 @@ const storedPassword = (row: OwnerPasswordRow): StoredPassword | null => {
   }
 }
 
+const exactOwnerPasswordRetry = async (
+  database: PortableDatabase,
+  bindings: readonly unknown[],
+  password: string,
+): Promise<OwnerPasswordRow> => {
+  const row = await database.first<OwnerPasswordRow>(ownerPasswordLookup, bindings)
+  if (row === null) throw new InstanceOwnerPasswordConflictError()
+  const existing = storedPassword(row)
+  if (existing === null) throw new InstanceOwnerPasswordConflictError()
+  try {
+    if (await verifyPassword(password, existing)) return row
+  } catch {
+    throw new InstanceOwnerPasswordConflictError()
+  }
+  throw new InstanceOwnerPasswordConflictError()
+}
+
 const enrollInstanceOwnerPassword = async (
   database: PortableDatabase,
   input: InstanceOwnerPasswordInput,
@@ -302,14 +319,8 @@ const enrollInstanceOwnerPassword = async (
 
   const existing = storedPassword(row)
   if (existing !== null) {
-    let exact: boolean
-    try {
-      exact = await verifyPassword(input.password, existing)
-    } catch {
-      throw new InstanceOwnerPasswordConflictError()
-    }
-    if (!exact) throw new InstanceOwnerPasswordConflictError()
-    return { userId: 1, profile: 'administrator', ownerEmail: row.ownerEmail }
+    const retry = await exactOwnerPasswordRetry(database, bindings, input.password)
+    return { userId: 1, profile: 'administrator', ownerEmail: retry.ownerEmail }
   }
 
   const password = await hashPassword(input.password)
@@ -332,11 +343,16 @@ const enrollInstanceOwnerPassword = async (
       throw new InstanceOwnerPasswordConflictError()
     }
   } catch (error) {
+    if (error instanceof InstanceOwnerPasswordConflictError) {
+      const retry = await exactOwnerPasswordRetry(database, bindings, input.password)
+      return { userId: 1, profile: 'administrator', ownerEmail: retry.ownerEmail }
+    }
     if (
-      error instanceof InstanceOwnerPasswordConflictError ||
-      (error instanceof Error && /unique constraint failed: user_passwords\.user_id/i.test(error.message))
+      error instanceof Error &&
+      /unique constraint failed: user_passwords\.user_id/i.test(error.message)
     ) {
-      throw new InstanceOwnerPasswordConflictError()
+      const retry = await exactOwnerPasswordRetry(database, bindings, input.password)
+      return { userId: 1, profile: 'administrator', ownerEmail: retry.ownerEmail }
     }
     throw error
   }
