@@ -355,7 +355,7 @@ for (const [runtime, factory] of factories) {
       })
     })
 
-    it('[unit] atomically rejects every locked stop and restart without changing data', async () => {
+    it('[unit] [inv-03] atomically rejects every locked stop and restart without changing data', async () => {
       const db = await setup()
       const snapshot = async () =>
         db.rows<Record<string, unknown>>(`SELECT * FROM time_entries WHERE id = 1`)

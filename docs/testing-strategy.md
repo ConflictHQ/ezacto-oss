@@ -7,7 +7,7 @@ code arrives with its stories (each Acceptance box carries its mechanism tag).
 
 | Layer | What | Named by | Runs |
 |---|---|---|---|
-| **Unit** | domain invariants (`inv-01…13` — citable names, E8), rate resolver table, state machines, token compiler, matchers | `[unit]` tags | every commit, both runtimes |
+| **Unit** | domain invariants (`inv-01…14` — citable names, E8), rate resolver table, state machines, token compiler, matchers | `[unit]` tags | every commit, both runtimes |
 | **API/contract** | /api/v1 behavior, permission×money redaction matrix, `/harvest/v2` **golden files from the real (anonymized) snapshot**, OpenAPI drift | `[api]` tags | every commit |
 | **E2E** | the 15 journeys (`umbrella knowledge/docs/user-journeys.md`) as Playwright specs | `[e2e:<id>]` tags | PR + nightly |
 | **Manual/UAT** | gate ceremonies (M4 run, restore drill review, fresh-eyes install) | `[manual]` tags | at gates |

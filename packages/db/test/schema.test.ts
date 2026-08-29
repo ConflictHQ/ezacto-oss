@@ -618,7 +618,7 @@ for (const [runtime, factory] of factories) {
       ).rejects.toThrow(/NOT NULL/)
     })
 
-    it('[unit] rate insert closes the previous row and history is append-only (invariant 8)', async () => {
+    it('[unit] [inv-08] rate insert closes the previous row and history is append-only', async () => {
       const db = await setup()
       await insertUser(db, 1)
       await db.run(
@@ -756,7 +756,7 @@ for (const [runtime, factory] of factories) {
       ])
     })
 
-    it('[unit] exactly one owner remains enforced (invariant 12)', async () => {
+    it('[unit] [inv-12] exactly one owner remains enforced', async () => {
       const db = await setup()
       await insertUser(db, 1)
       await insertUser(db, 2)

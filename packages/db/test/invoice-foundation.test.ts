@@ -751,7 +751,7 @@ for (const [runtime, factory] of factories) {
       expect(await db.rows(`PRAGMA foreign_key_check`)).toEqual([])
     })
 
-    it('[unit] enforces real invoice links and linked-project client immutability', async () => {
+    it('[unit] [inv-07] enforces real invoice links and linked-project client immutability', async () => {
       database = await factory(false)
       const db = database
       await installThrough0003(db)
