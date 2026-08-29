@@ -1,4 +1,4 @@
-import type { ApprovalStatus } from '@ezacto/core'
+import { canViewMoneyField, type ApprovalStatus } from '@ezacto/core'
 import type { Hono } from 'hono'
 import { requireApiScope } from '../auth.js'
 import type { ApiContext, UserPrincipal } from '../context.js'
@@ -74,12 +74,6 @@ interface TimeEntryOutput {
   updated_at: string
 }
 
-const moneyProfiles = new Set([
-  'accounting',
-  'executive_manager',
-  'administrator',
-])
-
 export const serializeTimeEntry = (
   entry: Readonly<TimeEntryRecord>,
   viewer: Readonly<UserPrincipal>,
@@ -111,10 +105,10 @@ export const serializeTimeEntry = (
   locked_reason: entry.state.lockedReason,
   external_ref: entry.externalRef,
   calendar_event_ref: entry.calendarEventRef,
-  ...(moneyProfiles.has(viewer.profile)
+  ...(canViewMoneyField(viewer, 'billable_rate')
     ? { billable_rate_cents: entry.billableRateCents }
     : {}),
-  ...(viewer.profile === 'administrator'
+  ...(canViewMoneyField(viewer, 'cost_rate')
     ? { cost_rate_cents: entry.costRateCents }
     : {}),
   created_at: entry.createdAt,

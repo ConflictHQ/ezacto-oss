@@ -1,4 +1,5 @@
 import type { UserProfile } from './api-authorization.js'
+import type { ActingUserAuthority } from './money-permissions.js'
 
 export interface ProviderIdentityAssertion {
   /** Application-owned provider key, for example `google` or `github`. */
@@ -14,7 +15,7 @@ export interface ProviderIdentityAssertion {
 
 export type ProviderIdentityMatch = 'subject' | 'verified_email' | 'created'
 
-export interface ResolvedUserIdentity {
+export interface ResolvedUserIdentity extends ActingUserAuthority {
   userId: number
   profile: UserProfile
   managerGrants: string[]

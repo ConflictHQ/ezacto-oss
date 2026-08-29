@@ -12,6 +12,7 @@ import {
 } from '../../db/src/tracked-resource-repository.js'
 import { createApiApp } from '../src/app.js'
 import type { ApiAuthentication } from '../src/auth.js'
+import type { UserProfile } from '../src/context.js'
 import { installTrackedResourceRoutes } from '../src/resources/index.js'
 import type {
   ResourceTimeBoundary,
@@ -183,14 +184,33 @@ const seed = async (database: TestDatabase): Promise<void> => {
   )
 }
 
+const userProfiles: ReadonlySet<string> = new Set([
+  'member',
+  'project_manager',
+  'people_admin',
+  'accounting',
+  'executive_manager',
+  'administrator',
+])
+
 const authentication: ApiAuthentication = {
   sessions: {
-    resolve: async () => ({
-      type: 'user',
-      userId: 1,
-      profile: 'member',
-      authentication: { kind: 'session', sessionId: 'tracked-resource-test' },
-    }),
+    resolve: async (request) => {
+      const profile = request.headers.get('x-test-profile') ?? 'member'
+      if (!userProfiles.has(profile)) return null
+      return {
+        type: 'user',
+        userId: 1,
+        profile: profile as UserProfile,
+        managerGrants: (request.headers.get('x-test-manager-grants') ?? '')
+          .split(',')
+          .filter(Boolean),
+        authentication: {
+          kind: 'session',
+          sessionId: 'tracked-resource-test',
+        },
+      }
+    },
   },
 }
 
@@ -258,6 +278,18 @@ const jsonRequest = (
 const data = async <T>(response: Response): Promise<T> =>
   ((await response.json()) as { data: T }).data
 
+const asProfile = (
+  profile: UserProfile,
+  managerGrants: readonly string[] = [],
+): RequestInit => ({
+  headers: {
+    'x-test-profile': profile,
+    ...(managerGrants.length === 0
+      ? {}
+      : { 'x-test-manager-grants': managerGrants.join(',') }),
+  },
+})
+
 for (const [runtime, factory] of factories) {
   describe(`tracked resource API (${runtime})`, () => {
     let active: Harness | undefined
@@ -268,6 +300,54 @@ for (const [runtime, factory] of factories) {
       active = await harness(factory)
       return active
     }
+
+    it('[security] redacts both time-entry rate snapshots across all six profiles', async () => {
+      const test = await setup()
+      await test.database.run(
+        `INSERT INTO time_entries (
+          id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+          spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+          billable_rate_cents, cost_rate_cents, created_at, updated_at
+        ) VALUES (700, 1, 1, 1, 1, 1, '2026-08-28', 3600, 3600, 3600, 1,
+          15000, 9000, ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+      const matrix: Readonly<
+        Record<UserProfile, Readonly<{ billable: boolean; cost: boolean }>>
+      > = {
+        member: { billable: false, cost: false },
+        project_manager: { billable: false, cost: false },
+        people_admin: { billable: false, cost: false },
+        accounting: { billable: true, cost: false },
+        executive_manager: { billable: true, cost: false },
+        administrator: { billable: true, cost: true },
+      }
+      for (const [profile, expected] of Object.entries(matrix) as Array<
+        [UserProfile, { billable: boolean; cost: boolean }]
+      >) {
+        const serialized = await data<Record<string, unknown>>(
+          await test.request('/api/v1/time-entries/700', asProfile(profile)),
+        )
+        expect(
+          Object.hasOwn(serialized, 'billable_rate_cents'),
+          `${profile}:billable_rate_cents`,
+        ).toBe(expected.billable)
+        expect(
+          Object.hasOwn(serialized, 'cost_rate_cents'),
+          `${profile}:cost_rate_cents`,
+        ).toBe(expected.cost)
+      }
+
+      const grantedManager = await data<Record<string, unknown>>(
+        await test.request(
+          '/api/v1/time-entries/700',
+          asProfile('project_manager', ['billable_rates_manager']),
+        ),
+      )
+      expect(grantedManager).toHaveProperty('billable_rate_cents', 15_000)
+      expect(grantedManager).not.toHaveProperty('cost_rate_cents')
+    })
 
     it('[api] applies implicit duration start, replacement stop, stop, and restart semantics', async () => {
       const test = await setup()

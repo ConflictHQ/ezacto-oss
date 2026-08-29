@@ -1,14 +1,15 @@
 import type { Hono } from 'hono'
-import type { UserProfile as CoreUserProfile } from '@ezacto/core'
+import type {
+  ActingUserAuthority,
+  UserProfile as CoreUserProfile,
+} from '@ezacto/core'
 import type { ApiAuthentication } from './auth.js'
 
 export type UserProfile = CoreUserProfile
 
-export type UserPrincipal = {
+export type UserPrincipal = ActingUserAuthority & {
   type: 'user'
   userId: number
-  profile: UserProfile
-  managerGrants: string[]
   authentication:
     | { kind: 'session'; sessionId: string }
     | { kind: 'token'; tokenId: number; scopes: string[] }

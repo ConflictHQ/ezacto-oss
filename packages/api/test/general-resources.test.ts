@@ -607,6 +607,232 @@ for (const [runtime, createHarness] of factories) {
       );
     }, 20_000);
 
+    it("[security] enforces every serialized money field across all six profiles", async () => {
+      const client = await data(
+        await harness.request("/clients", json({ name: "Matrix client" })),
+      );
+      const task = await data(
+        await harness.request(
+          "/tasks",
+          json({ name: "Matrix task", default_hourly_rate_cents: 15_000 }),
+        ),
+      );
+      const project = await data(
+        await harness.request(
+          "/projects",
+          json({
+            client_id: client.id,
+            name: "Matrix project",
+            hourly_rate_cents: 20_000,
+            fee_cents: 100_000,
+            cost_budget_cents: 50_000,
+          }),
+        ),
+      );
+      const user = await data(
+        await harness.request(
+          "/users",
+          json({
+            first_name: "Matrix",
+            last_name: "Owner",
+            email: "matrix-owner@example.test",
+          }),
+        ),
+      );
+      const taskAssignment = await data(
+        await harness.request(
+          "/task-assignments",
+          json({
+            project_id: project.id,
+            task_id: task.id,
+            hourly_rate_cents: 17_500,
+            budget_cents: 75_000,
+          }),
+        ),
+      );
+      const userAssignment = await data(
+        await harness.request(
+          "/user-assignments",
+          json({
+            project_id: project.id,
+            user_id: user.id,
+            hourly_rate_cents: 18_000,
+          }),
+        ),
+      );
+      await data(
+        await harness.request(
+          `/users/${user.id as number}/billable-rates`,
+          json({ amount_cents: 16_000, start_date: null }),
+        ),
+      );
+      await data(
+        await harness.request(
+          `/users/${user.id as number}/cost-rates`,
+          json({ amount_cents: 9_000, start_date: null }),
+        ),
+      );
+
+      const serializedCases = [
+        {
+          path: `/projects/${project.id as number}`,
+          readableBy: profiles,
+          fields: {
+            hourly_rate_cents: "billable_rate",
+            fee_cents: "billable_rate",
+            cost_budget_cents: "money_budget",
+          },
+        },
+        {
+          path: `/tasks/${task.id as number}`,
+          readableBy: profiles,
+          fields: { default_hourly_rate_cents: "billable_rate" },
+        },
+        {
+          path: `/task-assignments/${taskAssignment.id as number}`,
+          readableBy: profiles,
+          fields: {
+            hourly_rate_cents: "billable_rate",
+            budget_cents: "money_budget",
+          },
+        },
+        {
+          path: `/user-assignments/${userAssignment.id as number}`,
+          readableBy: new Set([
+            "project_manager",
+            "people_admin",
+            "executive_manager",
+            "administrator",
+          ]),
+          fields: { hourly_rate_cents: "billable_rate" },
+        },
+      ] as const;
+      const matrix: Readonly<
+        Record<
+          UserProfile,
+          Readonly<{ billable_rate: boolean; money_budget: boolean }>
+        >
+      > = {
+        member: { billable_rate: false, money_budget: false },
+        project_manager: { billable_rate: false, money_budget: false },
+        people_admin: { billable_rate: false, money_budget: false },
+        accounting: { billable_rate: true, money_budget: true },
+        executive_manager: { billable_rate: true, money_budget: true },
+        administrator: { billable_rate: true, money_budget: true },
+      };
+      const allProfiles: readonly UserProfile[] = [
+        "member",
+        "project_manager",
+        "people_admin",
+        "accounting",
+        "executive_manager",
+        "administrator",
+      ];
+
+      for (const profile of allProfiles) {
+        for (const { path, readableBy, fields } of serializedCases) {
+          const response = await harness.request(path, asProfile(profile));
+          if (!readableBy.has(profile)) {
+            expect(response.status, `${profile}:${path}`).toBe(403);
+            continue;
+          }
+          const serialized = await data(response);
+          for (const [field, category] of Object.entries(fields)) {
+            expect(
+              Object.hasOwn(serialized, field),
+              `${profile}:${path}:${field}`,
+            ).toBe(
+              matrix[profile][category as keyof (typeof matrix)[UserProfile]],
+            );
+          }
+        }
+        expect(
+          (
+            await harness.request(
+              `/users/${user.id as number}/billable-rates`,
+              asProfile(profile),
+            )
+          ).status,
+          `${profile}:billable_rate`,
+        ).toBe(matrix[profile].billable_rate ? 200 : 403);
+        expect(
+          (
+            await harness.request(
+              `/users/${user.id as number}/cost-rates`,
+              asProfile(profile),
+            )
+          ).status,
+          `${profile}:cost_rate`,
+        ).toBe(profile === "administrator" ? 200 : 403);
+      }
+
+      for (const { path, fields } of serializedCases) {
+        const serialized = await data(
+          await harness.request(
+            path,
+            asProfile("project_manager", {}, ["billable_rates_manager"]),
+          ),
+        );
+        for (const [field, category] of Object.entries(fields)) {
+          expect(
+            Object.hasOwn(serialized, field),
+            `granted_project_manager:${path}:${field}`,
+          ).toBe(category === "billable_rate");
+        }
+      }
+      expect(
+        (
+          await harness.request(
+            `/projects/${project.id as number}`,
+            asProfile(
+              "project_manager",
+              json({ hourly_rate_cents: 1 }, "PATCH"),
+            ),
+          )
+        ).status,
+      ).toBe(403);
+      expect(
+        (
+          await harness.request(
+            `/projects/${project.id as number}`,
+            asProfile(
+              "project_manager",
+              json({ cost_budget_cents: 1 }, "PATCH"),
+              ["billable_rates_manager"],
+            ),
+          )
+        ).status,
+      ).toBe(403);
+
+      const attemptedOverride = asBearer("member-projects");
+      const overrideHeaders = new Headers(attemptedOverride.headers);
+      overrideHeaders.set("x-test-profile", "administrator");
+      const machineCaller = await data(
+        await harness.request(`/projects/${project.id as number}`, {
+          ...attemptedOverride,
+          headers: overrideHeaders,
+        }),
+      );
+      expect(machineCaller).not.toHaveProperty("hourly_rate_cents");
+      expect(machineCaller).not.toHaveProperty("fee_cents");
+      expect(machineCaller).not.toHaveProperty("cost_budget_cents");
+
+      const immutableOwner = await harness.request(
+        `/users/${user.id as number}`,
+        json({ profile: "member" }, "PATCH"),
+      );
+      expect(immutableOwner.status).toBe(422);
+      expect(await immutableOwner.json()).toMatchObject({
+        error: { code: "validation_failed" },
+      });
+      expect(
+        await data(await harness.request(`/users/${user.id as number}`)),
+      ).toMatchObject({
+        profile: "administrator",
+        is_owner: true,
+      });
+    }, 20_000);
+
     it("[security] enforces scopes, team mutation boundaries, and serializer redaction", async () => {
       const client = await data(
         await harness.request("/clients", json({ name: "Secure client" })),

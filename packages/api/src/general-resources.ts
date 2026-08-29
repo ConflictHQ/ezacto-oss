@@ -1,4 +1,5 @@
 import {
+  canViewMoneyField,
   GeneralResourceError,
   type GeneralMutationInput,
   type GeneralResourceFilters,
@@ -268,19 +269,11 @@ const serializeRaw = (
   return output;
 };
 
-const moneyProfiles: ReadonlySet<UserProfile> = new Set([
-  "accounting",
-  "executive_manager",
-  "administrator",
-]);
-
 const canSeeBillableMoney = (viewer: Readonly<UserPrincipal>): boolean =>
-  moneyProfiles.has(viewer.profile) ||
-  (viewer.profile === "project_manager" &&
-    viewer.managerGrants.includes("billable_rates_manager"));
+  canViewMoneyField(viewer, "billable_rate");
 
 const canSeeMoneyBudgets = (viewer: Readonly<UserPrincipal>): boolean =>
-  moneyProfiles.has(viewer.profile);
+  canViewMoneyField(viewer, "money_budget");
 
 const hiddenGeneralField = (
   kind: GeneralResourceKind,
@@ -689,7 +682,7 @@ const requireRateRead = <Bindings extends object>(
 ): UserPrincipal => {
   const principal = context.get("principal");
   if (kind === "cost") {
-    if (principal.profile !== "administrator") return profileForbidden();
+    if (!canViewMoneyField(principal, "cost_rate")) return profileForbidden();
     requireApiScope(context, "reports:read");
     return principal;
   }
