@@ -55,7 +55,10 @@ jobs:
             exit 1
           fi
 
-          # History, not just the working tree (needs fetch-depth: 0 above).
-          ./gitleaks git . --config .gitleaks.toml --redact --no-banner
+          # Scan the complete ancestry of the checked-out PR merge or main HEAD,
+          # not unrelated remote branch tips that checkout also fetched. This
+          # still catches a secret added and later deleted anywhere in the
+          # history being proposed for merge.
+          ./gitleaks git . --log-opts="--full-history --diff-filter=tuxdb HEAD" --config .gitleaks.toml --redact --no-banner --verbose
         env:
           GITLEAKS_VERSION: 8.30.0
