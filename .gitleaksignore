@@ -21,3 +21,8 @@
 # reference token. It is neither an API key nor accepted by any authentication
 # path; the historical occurrence is pinned because the branch history is scanned.
 30d0d8781fa36f41f0501d0da65b055833d9db3f:packages/db/test/invoice-import-contract.test.ts:generic-api-key:628
+
+# A stale-lock fixture used a readable process-generation label beside the
+# `token` field. It was test metadata, never authentication material, and is
+# shortened in the working tree; append-only history keeps the exact finding.
+bab94c5a37f316baa52549f5dae39e7c0a10d26c:packages/migrate/test/load-resume.test.ts:generic-api-key:355

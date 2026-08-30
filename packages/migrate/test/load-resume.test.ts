@@ -348,7 +348,7 @@ describe('idempotent load and resume', () => {
         host: hostname(),
         command: 'load',
         started_at: '2026-08-30T00:00:00.000Z',
-        token: 'killed-load',
+        token: 'test',
       })}\n`,
     )
 
