@@ -705,6 +705,149 @@ describe('transform and load', () => {
     }
   }, 70_000)
 
+  it('[integration] resumes generic child lineage from its durable byte cursor', async () => {
+    const userPath = join(snapshotDir, 'raw', 'users.jsonl')
+    const originalUsers = (await readFile(userPath, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    const member = originalUsers.find((user) => user.id === 1782960)!
+    const count = 240
+    const teammateIds = Array.from({ length: count }, (_, index) => 1_900_000 + index)
+    const users = [
+      ...originalUsers,
+      ...teammateIds.map((id) => ({
+        ...member,
+        id,
+        email: `lineage-${id}@example.invalid`,
+      })),
+    ]
+    await writeFile(userPath, `${users.map((row) => JSON.stringify(row)).join('\n')}\n`)
+
+    const teammatePath = join(snapshotDir, 'raw', 'teammates.jsonl')
+    const lineagePath = join(snapshotDir, 'raw', 'teammates.lineage.jsonl')
+    const teammate = JSON.parse((await readFile(teammatePath, 'utf8')).trim()) as Record<
+      string,
+      unknown
+    >
+    await writeFile(
+      teammatePath,
+      `${teammateIds.map((id) => JSON.stringify({ ...teammate, id })).join('\n')}\n`,
+    )
+    await writeFile(
+      lineagePath,
+      `${teammateIds
+        .map((sourceId) => JSON.stringify({ source_id: sourceId, parent_id: 1782959 }))
+        .join('\n')}\n`,
+    )
+    const manifest = await readManifest(snapshotDir)
+    manifest.resources.users!.count = users.length
+    manifest.resources.teammates!.count = teammateIds.length
+    await writeManifest(snapshotDir, manifest)
+    await refreshChecksum(snapshotDir)
+    const checksum = JSON.parse(await readFile(join(snapshotDir, 'checksums.json'), 'utf8')) as {
+      snapshot_sha256: string
+    }
+
+    const miniflare = new Miniflare({
+      modules: true,
+      script: 'export default { fetch() { return new Response("ok") } }',
+      d1Databases: ['DB'],
+    })
+    try {
+      const d1 = await miniflare.getD1Database('DB')
+      await migrateD1(d1)
+      let complete = false
+      let invocations = 0
+      let teammateSteps = 0
+      const recoveryCheckpoints: number[] = []
+      let restoreLineageAfterCall: string | null = null
+      let provedLineageResume = false
+      let installedDeepLegacyCheckpoint = false
+      while (!complete) {
+        let prepared = 0
+        const cold = new Proxy(d1, {
+          get(target, property, receiver) {
+            if (property === 'prepare') {
+              return (sql: string) => {
+                prepared += 1
+                return target.prepare(sql)
+              }
+            }
+            const value = Reflect.get(target, property, receiver) as unknown
+            return typeof value === 'function' ? value.bind(target) : value
+          },
+        })
+        const result = await loadNextChunk({
+          database: createD1Database(cold),
+          snapshotDir,
+          maxRows: 225,
+          maxStatements: 230,
+          immutableSnapshotSha256: checksum.snapshot_sha256,
+        })
+        if (restoreLineageAfterCall !== null) {
+          await writeFile(lineagePath, restoreLineageAfterCall)
+          restoreLineageAfterCall = null
+          provedLineageResume = true
+        }
+        expect(prepared).toBeLessThanOrEqual(1000)
+        if (result.resource === 'teammates') {
+          teammateSteps += 1
+          if (!installedDeepLegacyCheckpoint) {
+            expect(result.loadedRows).toBe(225)
+            // Model an in-flight database created by the prior loader: domain
+            // progress is deep in one parent group but no cursor table exists.
+            await d1.exec('DROP TABLE _ezacto_load_lineage_progress')
+            installedDeepLegacyCheckpoint = true
+          } else if (result.loadedRows === 0) {
+            const checkpoint = await d1
+              .prepare(
+                `SELECT rows_scanned AS rowsScanned, byte_offset AS byteOffset
+                 FROM _ezacto_load_lineage_progress WHERE resource = 'teammates'`,
+              )
+              .first<{ rowsScanned: number; byteOffset: number }>()
+            expect(checkpoint?.byteOffset).toBeGreaterThan(0)
+            recoveryCheckpoints.push(checkpoint!.rowsScanned)
+          }
+          if (
+            recoveryCheckpoints.at(-1) === 225 &&
+            !provedLineageResume &&
+            restoreLineageAfterCall === null
+          ) {
+            const checkpoint = await d1
+              .prepare(
+                `SELECT byte_offset AS byteOffset
+                 FROM _ezacto_load_lineage_progress WHERE resource = 'teammates'`,
+              )
+              .first<{ byteOffset: number }>()
+            const original = await readFile(lineagePath, 'utf8')
+            const firstBoundary = original.indexOf('\n')
+            expect(firstBoundary).toBeGreaterThan(0)
+            expect(firstBoundary).toBeLessThan(checkpoint!.byteOffset)
+            // Same-size damage before the durable cursor changes the legacy
+            // line count. A retry that scans from the parent origin misaligns;
+            // a cursor-based retry never opens this consumed prefix.
+            const poisoned = `${original.slice(0, firstBoundary)} ${original.slice(firstBoundary + 1)}`
+            expect(Buffer.byteLength(poisoned)).toBe(Buffer.byteLength(original))
+            await writeFile(lineagePath, poisoned)
+            restoreLineageAfterCall = original
+          }
+        }
+        complete = result.complete
+        invocations += 1
+        expect(invocations).toBeLessThan(250)
+      }
+      expect(recoveryCheckpoints).toEqual([100, 200, 225])
+      expect(provedLineageResume).toBe(true)
+      expect(teammateSteps).toBe(5)
+      expect(
+        (await d1.prepare('SELECT count(*) AS count FROM teammate_assignments').first())?.count,
+      ).toBe(count)
+    } finally {
+      await miniflare.dispose()
+    }
+  }, 70_000)
+
   it('[integration] checkpoints legacy organization-currency inference in bounded cold windows', async () => {
     const clientPath = join(snapshotDir, 'raw', 'clients.jsonl')
     const originalClients = (await readFile(clientPath, 'utf8'))

@@ -39,6 +39,7 @@ export const D1_MAX_STATEMENTS = 1000
 export const D1_INVOCATION_QUERY_RESERVE = 250
 export const DEFAULT_INVOCATION_STATEMENT_BUDGET = 700
 const RATE_CLEANUP_ROWS_PER_INVOCATION = 100
+const LINEAGE_RECOVERY_ROWS_PER_INVOCATION = 100
 const CHILD_INDEX_REMOTE_LOCK_STALE_MS = 5 * 60 * 1000
 
 export interface PlannedStatement {
@@ -440,6 +441,11 @@ const ensureProgressSchema = async (database: RawDatabase): Promise<void> => {
     database,
     `SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = '_ezacto_load_currency_progress'`,
   )
+  const lineageProgressPresent = await first<{ present: number }>(
+    database,
+    `SELECT 1 AS present FROM sqlite_master
+      WHERE type = 'table' AND name = '_ezacto_load_lineage_progress'`,
+  )
   const statements: PlannedStatement[] = []
   if (!admissionPresent)
     statements.push({
@@ -463,6 +469,16 @@ const ensureProgressSchema = async (database: RawDatabase): Promise<void> => {
       total_rows INTEGER NOT NULL CHECK (total_rows >= 0),
       completed INTEGER NOT NULL CHECK (completed IN (0,1)),
       updated_at TEXT NOT NULL
+    ) STRICT`,
+      bindings: [],
+    })
+  if (!lineageProgressPresent)
+    statements.push({
+      sql: `CREATE TABLE IF NOT EXISTS _ezacto_load_lineage_progress (
+      resource TEXT PRIMARY KEY,
+      snapshot_sha256 TEXT NOT NULL,
+      byte_offset INTEGER NOT NULL CHECK (byte_offset >= 0),
+      rows_scanned INTEGER NOT NULL CHECK (rows_scanned >= 0)
     ) STRICT`,
       bindings: [],
     })
@@ -669,6 +685,39 @@ const progressStatement = (
     completed ? 1 : 0,
     timestamp,
   ],
+})
+
+interface LineageProgress {
+  snapshotSha256: string
+  byteOffset: number
+  rowsScanned: number
+}
+
+const lineageProgress = async (
+  database: RawDatabase,
+  resource: string,
+): Promise<LineageProgress | null> =>
+  first<LineageProgress>(
+    database,
+    `SELECT snapshot_sha256 AS snapshotSha256, byte_offset AS byteOffset,
+      rows_scanned AS rowsScanned
+     FROM _ezacto_load_lineage_progress WHERE resource = ?`,
+    [resource],
+  )
+
+const lineageProgressStatement = (
+  resource: string,
+  digest: string,
+  byteOffset: number,
+  rowsScanned: number,
+): PlannedStatement => ({
+  sql: `INSERT INTO _ezacto_load_lineage_progress
+      (resource, snapshot_sha256, byte_offset, rows_scanned)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(resource) DO UPDATE SET
+      byte_offset = excluded.byte_offset, rows_scanned = excluded.rows_scanned
+    WHERE _ezacto_load_lineage_progress.snapshot_sha256 = excluded.snapshot_sha256`,
+  bindings: [resource, digest, byteOffset, rowsScanned],
 })
 
 interface LoadSubprogress {
@@ -1562,9 +1611,11 @@ const lineageChunkFrom = async (
   record: ChildIndexRecord,
   skip: number,
   count: number,
-): Promise<ChildLineage[]> => {
+): Promise<{ rows: ChildLineage[]; endByteOffsets: number[] }> => {
   const rows: ChildLineage[] = []
+  const endByteOffsets: number[] = []
   let seen = 0
+  let byteOffset = record.lineageStartByte
   const lines = createInterface({
     input: createReadStream(join(snapshotDir, 'raw', `${resource}.lineage.jsonl`), {
       start: record.lineageStartByte,
@@ -1574,6 +1625,7 @@ const lineageChunkFrom = async (
   })
   try {
     for await (const line of lines) {
+      byteOffset += Buffer.byteLength(line, 'utf8') + 1
       if (!line.trim()) continue
       if (seen++ < skip) continue
       const witness = JSON.parse(line) as Partial<ChildLineage>
@@ -1585,13 +1637,14 @@ const lineageChunkFrom = async (
         throw new Error(`${resource} child index disagrees with source lineage`)
       }
       rows.push(witness as ChildLineage)
+      endByteOffsets.push(byteOffset)
       if (rows.length === count) break
     }
   } finally {
     lines.close()
   }
   if (rows.length !== count) throw new Error(`${resource} child lineage range is truncated`)
-  return rows
+  return { rows, endByteOffsets }
 }
 
 const lineageChunkAt = async (
@@ -1600,11 +1653,12 @@ const lineageChunkAt = async (
   record: ChildIndexRecord,
   byteOffset: number,
   count: number,
-): Promise<{ rows: ChildLineage[]; nextByteOffset: number }> => {
+): Promise<{ rows: ChildLineage[]; nextByteOffset: number; endByteOffsets: number[] }> => {
   if (byteOffset < record.lineageStartByte || byteOffset > record.lineageEndByte) {
     throw new Error(`${resource} child lineage checkpoint is outside its indexed range`)
   }
   const rows: ChildLineage[] = []
+  const endByteOffsets: number[] = []
   let nextByteOffset = byteOffset
   const lines = createInterface({
     input: createReadStream(join(snapshotDir, 'raw', `${resource}.lineage.jsonl`), {
@@ -1622,13 +1676,14 @@ const lineageChunkAt = async (
         throw new Error(`${resource} child index disagrees with source lineage`)
       }
       rows.push(witness as ChildLineage)
+      endByteOffsets.push(nextByteOffset)
       if (rows.length === count) break
     }
   } finally {
     lines.close()
   }
   if (rows.length !== count) throw new Error(`${resource} child lineage range is truncated`)
-  return { rows, nextByteOffset }
+  return { rows, nextByteOffset, endByteOffsets }
 }
 
 const sequentialLineageChunk = async (
@@ -1674,30 +1729,54 @@ const lineageFor = async (
   resource: string,
   digest: string,
   offset: number,
+  lineageByteOffset: number,
   rows: readonly RawRow[],
-): Promise<ChildLineage[]> => {
+): Promise<{ rows: ChildLineage[]; endByteOffsets: number[] }> => {
   const slices = await childIndexSlices(snapshotDir, resource, digest, offset, rows.length)
   const lineage: ChildLineage[] = []
+  const endByteOffsets: number[] = []
   let source = 0
-  let at = offset
-  for (const slice of slices) {
-    const witnesses = await lineageChunkFrom(
+  for (const [sliceIndex, slice] of slices.entries()) {
+    const witnesses = await lineageChunkAt(
       snapshotDir,
       resource,
       slice.record,
-      at - slice.record.startRow,
+      sliceIndex === 0 ? lineageByteOffset : slice.record.lineageStartByte,
       slice.count,
     )
-    for (const witness of witnesses) {
+    for (const [witnessIndex, witness] of witnesses.rows.entries()) {
       const row = rows[source++]!
       if (witness.source_id !== safeIntegerAt(row, '/id', `${resource}.id`)) {
         throw new Error(`${resource} child lineage is misaligned`)
       }
       lineage.push(witness)
+      endByteOffsets.push(witnesses.endByteOffsets[witnessIndex]!)
     }
-    at += slice.count
   }
-  return lineage
+  return { rows: lineage, endByteOffsets }
+}
+
+const advanceLineageCursor = async (
+  snapshotDir: string,
+  resource: string,
+  digest: string,
+  rowOffset: number,
+  byteOffset: number,
+  count: number,
+): Promise<number> => {
+  const slices = await childIndexSlices(snapshotDir, resource, digest, rowOffset, count)
+  let nextByteOffset = byteOffset
+  for (const [sliceIndex, slice] of slices.entries()) {
+    const advanced = await lineageChunkAt(
+      snapshotDir,
+      resource,
+      slice.record,
+      sliceIndex === 0 ? nextByteOffset : slice.record.lineageStartByte,
+      slice.count,
+    )
+    nextByteOffset = advanced.nextByteOffset
+  }
+  return nextByteOffset
 }
 
 type RateResource = 'billable_rates' | 'cost_rates'
@@ -2868,14 +2947,14 @@ const childRowsForParent = async (
     throw new Error(`${resource} child index no longer matches raw data`)
   }
   const lineage = await lineageChunkFrom(snapshotDir, resource, record, 0, record.count)
-  for (const [index, witness] of lineage.entries()) {
+  for (const [index, witness] of lineage.rows.entries()) {
     if (witness.source_id !== safeIntegerAt(chunk.rows[index]!, '/id', `${resource}.id`)) {
       throw new Error(`${resource} child index disagrees with aligned source lineage`)
     }
   }
   return {
     rows: chunk.rows,
-    lineage,
+    lineage: lineage.rows,
   }
 }
 
@@ -3873,11 +3952,47 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
         anomalies,
       }
     }
+    const step = RESOURCES.find((item) => item.name === resource)
+    let childCursor: LineageProgress | null = null
+    if (step?.kind === 'child') {
+      childCursor = await lineageProgress(options.database.$client, resource)
+      if (childCursor !== null && childCursor.snapshotSha256 !== digest) {
+        throw new Error(`${resource} lineage progress belongs to a different snapshot`)
+      }
+      const rowsScanned = childCursor?.rowsScanned ?? 0
+      if (rowsScanned > offset) {
+        throw new Error(`${resource} lineage progress is ahead of source progress`)
+      }
+      if (rowsScanned < offset) {
+        const take = Math.min(LINEAGE_RECOVERY_ROWS_PER_INVOCATION, offset - rowsScanned)
+        const nextByteOffset = await advanceLineageCursor(
+          options.snapshotDir,
+          resource,
+          digest,
+          rowsScanned,
+          childCursor?.byteOffset ?? 0,
+          take,
+        )
+        await execute(options.database.$client, [
+          lineageProgressStatement(resource, digest, nextByteOffset, rowsScanned + take),
+        ])
+        return {
+          complete: false,
+          resource,
+          loadedRows: 0,
+          statements: 1,
+          snapshotSha256: digest,
+          anomalies,
+        }
+      }
+    }
     const complex = resource === 'estimates' || resource === 'invoices' || resource === 'expenses'
+    const checkpointStatements = step?.kind === 'child' ? 2 : 1
     const limit =
       complex || resource === 'roles'
         ? 1
-        : Math.min(options.maxRows ?? 100, maxStatements - 1, total - offset)
+        : Math.min(options.maxRows ?? 100, maxStatements - checkpointStatements, total - offset)
+    if (limit < 1) throw new Error(`${resource} row exceeds the invocation statement budget`)
     const sourceChunk = await rawChunkFrom(
       options.snapshotDir,
       resource,
@@ -3991,10 +4106,16 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
         throw error
       }
     }
-    const step = RESOURCES.find((item) => item.name === resource)
     const lineage =
       step && 'parent' in step
-        ? await lineageFor(options.snapshotDir, resource, digest, offset, rows)
+        ? await lineageFor(
+            options.snapshotDir,
+            resource,
+            digest,
+            offset,
+            childCursor?.byteOffset ?? 0,
+            rows,
+          )
         : undefined
     const statements: PlannedStatement[] = []
     const taskBudgetByProject =
@@ -4024,10 +4145,13 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
         row,
         manifest,
         anomalies,
-        lineage?.[index],
+        lineage?.rows[index],
         taskBudgetBy,
       )
-      if (statements.length + planned.length + anomalies.length + 1 > maxStatements) {
+      if (
+        statements.length + planned.length + anomalies.length + checkpointStatements >
+        maxStatements
+      ) {
         anomalies.splice(anomalyCount)
         break
       }
@@ -4037,7 +4161,11 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
     if (consumed === 0) throw new Error(`${resource} row exceeds the invocation statement budget`)
     const loaded = offset + consumed
     const sourceByteOffset = rows[consumed - 1]!.endByteOffset
+    const lineageByteOffset = lineage?.endByteOffsets[consumed - 1] ?? 0
     statements.push(...anomalyStatements(digest, anomalies))
+    if (lineage) {
+      statements.push(lineageProgressStatement(resource, digest, lineageByteOffset, loaded))
+    }
     statements.push(
       progressStatement(
         resource,
