@@ -370,7 +370,8 @@ export const buildSanitizedLoadSnapshot = async (
     account_id: manifest.account.id,
     snapshot_sha256: await snapshotDigest(snapshotDir, manifest),
     generated_at: timestamp,
-    periods: [],
+    periods: [{ year: 2026, from: '2026-08-27', to: '2026-08-27' }],
+    report_ranges: { uninvoiced: { from: '2026-08-27', to: '2026-08-27' } },
     reports: {},
     requests: 0,
   }

@@ -7,6 +7,7 @@ import { loadDevVars, readHarvestEnv } from './env.js'
 import { runAuth } from './auth.js'
 import { runExtract, type ExtractResult } from './extract.js'
 import { runLoad } from './load.js'
+import { reconciliationExitCode, runReconcile } from './reconcile.js'
 import { runSync, syncExitCode } from './sync.js'
 import { runVerify } from './verify.js'
 
@@ -21,11 +22,12 @@ Commands:
   sync     Run an incremental extract, then a complete full-ID delete witness.
   verify   Check snapshot counts/FKs and capture report checksums per currency
   load     Transform a verified snapshot into an ezacto SQLite database
+  reconcile Compare Harvest checksums, snapshot rows, and the loaded database
 
 Options:
   --account-id <id>    Harvest account id to use (skips auto-pick/prompt)
   --snapshot-dir <dir> Snapshot directory to write manifest.json into (default: ./snapshot)
-  --database <path>    SQLite database path for load (required)
+  --database <path>    SQLite database path for load/reconcile (required)
   --organization-currency <code>  ISO currency when Company/client data is ambiguous
   --organization-address <text>   Organization address (Company API omits it)
   --force              Re-stamp a snapshot dir that holds a different account
@@ -116,7 +118,14 @@ const main = async (): Promise<number> => {
   })
   const command = positionals[0]
 
-  if (command !== 'auth' && command !== 'extract' && command !== 'verify' && command !== 'sync' && command !== 'load') {
+  if (
+    command !== 'auth' &&
+    command !== 'extract' &&
+    command !== 'verify' &&
+    command !== 'sync' &&
+    command !== 'load' &&
+    command !== 'reconcile'
+  ) {
     process.stdout.write(USAGE)
     return 1
   }
@@ -137,6 +146,19 @@ const main = async (): Promise<number> => {
         `${result.anomalies.length} anomaly(s); snapshot ${result.snapshotSha256}`,
     )
     return 0
+  }
+
+  if (command === 'reconcile') {
+    if (!values.database) throw new Error('--database is required for reconcile')
+    const result = await runReconcile({
+      snapshotDir,
+      databasePath: values.database,
+    })
+    console.log(
+      `reconciled: ${result.report.summary.unexplained} UNEXPLAINED delta(s); ` +
+        `${result.jsonPath}; ${result.markdownPath}`,
+    )
+    return reconciliationExitCode(result.report)
   }
 
   const devVarsPath = loadDevVars()

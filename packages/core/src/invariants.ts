@@ -406,9 +406,11 @@ export const invariantRegistry = [
       then: "Every user-project-month seconds total exactly matches the Harvest checksum.",
     },
     evidence: {
-      state: "downstream",
-      testContract:
-        "Issue #77 owns the reconciliation assertion over transformed imported data and source checksums.",
+      state: "executable",
+      testFile: "packages/migrate/test/reconcile.test.ts",
+      testName:
+        "[integration] [inv-14] reports zero unexplained deltas and proves monthly seconds at source grain",
+      runtimes: ["sqlite"],
     },
   },
 ] as const satisfies readonly InvariantDefinition[];

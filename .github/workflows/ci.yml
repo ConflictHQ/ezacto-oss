@@ -59,6 +59,6 @@ jobs:
           # not unrelated remote branch tips that checkout also fetched. This
           # still catches a secret added and later deleted anywhere in the
           # history being proposed for merge.
-          ./gitleaks git . --log-opts="--full-history --diff-filter=tuxdb HEAD" --config .gitleaks.toml --redact --no-banner --verbose
+          ./gitleaks git . --log-opts="--full-history --diff-merges=first-parent --diff-filter=tuxdb HEAD" --config .gitleaks.toml --redact --no-banner --verbose
         env:
           GITLEAKS_VERSION: 8.30.0

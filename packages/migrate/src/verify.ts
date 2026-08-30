@@ -13,6 +13,7 @@ import { createRateLimiter, type RateLimiter } from './rate-limiter.js'
 import { lineagePath, type ChildLineage } from './jsonl.js'
 import { RESOURCES } from './resources.js'
 import { numberLexemes } from './transform.js'
+import { acquireSnapshotLock, releaseSnapshotLock } from './snapshot-lock.js'
 
 export const REPORTS_RATE_LIMIT = 100
 export const REPORTS_RATE_WINDOW_MS = 15 * 60 * 1000
@@ -29,6 +30,7 @@ export interface ChecksumReport {
   account_id: string
   generated_at: string
   periods: Array<{ year: number; from: string; to: string }>
+  report_ranges: { uninvoiced: { from: string; to: string } }
   reports: Record<string, Array<Record<string, unknown>>>
   requests: number
   snapshot_sha256: string
@@ -36,6 +38,55 @@ export interface ChecksumReport {
 }
 
 export type ChecksumReportPayload = Omit<ChecksumReport, 'report_sha256'>
+
+interface ReportRange {
+  from: string
+  to: string
+}
+
+const exactUtcDate = (value: string): Date => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error(`invalid report date ${value}`)
+  const parsed = new Date(`${value}T00:00:00.000Z`)
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+    throw new Error(`invalid report date ${value}`)
+  }
+  return parsed
+}
+
+/** Splits an inclusive Harvest report range into deterministic windows of at most 365 days. */
+export const splitReportRange = (range: ReportRange): ReportRange[] => {
+  let cursor = exactUtcDate(range.from)
+  const final = exactUtcDate(range.to)
+  if (cursor > final) throw new Error('report range starts after it ends')
+  const chunks: ReportRange[] = []
+  while (cursor <= final) {
+    const end = new Date(cursor)
+    end.setUTCDate(end.getUTCDate() + 364)
+    if (end > final) end.setTime(final.getTime())
+    chunks.push({
+      from: cursor.toISOString().slice(0, 10),
+      to: end.toISOString().slice(0, 10),
+    })
+    cursor = new Date(end)
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  }
+  return chunks
+}
+
+/** Keeps the legacy annual key unless Harvest's 365-day cap requires multiple windows. */
+export const reportChunkKey = (base: string, chunk: ReportRange, chunkCount: number): string =>
+  chunkCount === 1 ? base : `${base}/${chunk.from}..${chunk.to}`
+
+export const uninvoicedReportRange = (
+  periods: Array<{ year: number; from: string; to: string }>,
+): { from: string; to: string } => {
+  const current = periods.at(-1)
+  if (current === undefined) throw new Error('cannot derive an uninvoiced range without a period')
+  const trailingStart = new Date(`${current.to}T00:00:00.000Z`)
+  trailingStart.setUTCDate(trailingStart.getUTCDate() - 364)
+  const trailingFrom = trailingStart.toISOString().slice(0, 10)
+  return { from: current.from > trailingFrom ? current.from : trailingFrom, to: current.to }
+}
 
 /** Binds report/checksum evidence without introducing a self-referential digest. */
 export const checksumReportDigest = (report: ChecksumReportPayload): string =>
@@ -452,87 +503,100 @@ const writeChecksums = async (snapshotDir: string, report: ChecksumReport): Prom
 }
 
 export const runVerify = async (options: RunVerifyOptions): Promise<VerifyResult> => {
-  const manifest = await readManifest(options.snapshotDir)
-  const issues = await verifySnapshot(options.snapshotDir, manifest)
-  const now = options.now ?? (() => new Date())
-  const sleep =
-    options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
-  const limiter =
-    options.limiter ??
-    createRateLimiter({
-      limit: REPORTS_RATE_LIMIT,
-      windowMs: REPORTS_RATE_WINDOW_MS,
-      now: options.nowMs,
-      sleep,
-    })
-  const deps: PaginateDeps = { limiter, sleep, log: options.log ?? console.log }
-  const config: HarvestClientConfig = {
-    pat: options.env.pat,
-    accountId: manifest.account.id,
-    userAgentEmail: options.env.userAgentEmail,
-    baseUrl: options.baseUrl,
-    timeoutMs: options.timeoutMs,
-  }
-  const periods = await reportPeriods(options.snapshotDir, now())
-  const reports: Record<string, Array<Record<string, unknown>>> = {}
+  const lock = await acquireSnapshotLock(options.snapshotDir, 'verify')
+  try {
+    const manifest = await readManifest(options.snapshotDir)
+    const issues = await verifySnapshot(options.snapshotDir, manifest)
+    const now = options.now ?? (() => new Date())
+    const sleep =
+      options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+    const limiter =
+      options.limiter ??
+      createRateLimiter({
+        limit: REPORTS_RATE_LIMIT,
+        windowMs: REPORTS_RATE_WINDOW_MS,
+        now: options.nowMs,
+        sleep,
+      })
+    const deps: PaginateDeps = { limiter, sleep, log: options.log ?? console.log }
+    const config: HarvestClientConfig = {
+      pat: options.env.pat,
+      accountId: manifest.account.id,
+      userAgentEmail: options.env.userAgentEmail,
+      baseUrl: options.baseUrl,
+      timeoutMs: options.timeoutMs,
+    }
+    const periods = await reportPeriods(options.snapshotDir, now())
+    const reports: Record<string, Array<Record<string, unknown>>> = {}
 
-  const collect = async (
-    key: string,
-    path: string,
-    params: Record<string, string>,
-  ): Promise<void> => {
-    const collected: Array<Record<string, unknown>> = []
-    for await (const page of paginate(
-      { resource: key, path, collection: 'results', params },
-      config,
-      deps,
-    )) {
-      for (const result of page.objects) {
-        if (typeof result !== 'object' || result === null || Array.isArray(result)) {
-          throw new Error(`${key} returned a non-object result row`)
+    const collect = async (
+      key: string,
+      path: string,
+      params: Record<string, string>,
+    ): Promise<void> => {
+      const collected: Array<Record<string, unknown>> = []
+      for await (const page of paginate(
+        { resource: key, path, collection: 'results', params },
+        config,
+        deps,
+      )) {
+        for (const result of page.objects) {
+          if (typeof result !== 'object' || result === null || Array.isArray(result)) {
+            throw new Error(`${key} returned a non-object result row`)
+          }
+          collected.push(result as Record<string, unknown>)
         }
-        collected.push(result as Record<string, unknown>)
+      }
+      reports[key] = collected
+    }
+
+    for (const period of periods) {
+      const chunks = splitReportRange(period)
+      for (const chunk of chunks) {
+        for (const grain of ['clients', 'projects', 'tasks', 'team']) {
+          const base = `time/${grain}/${period.year}`
+          await collect(reportChunkKey(base, chunk, chunks.length), `/v2/reports/time/${grain}`, {
+            ...chunk,
+            include_fixed_fee: 'true',
+          })
+        }
+        for (const grain of ['clients', 'projects', 'categories', 'team']) {
+          const base = `expenses/${grain}/${period.year}`
+          await collect(
+            reportChunkKey(base, chunk, chunks.length),
+            `/v2/reports/expenses/${grain}`,
+            {
+              ...chunk,
+            },
+          )
+        }
       }
     }
-    reports[key] = collected
-  }
+    const uninvoicedRange = uninvoicedReportRange(periods)
+    await collect('uninvoiced', '/v2/reports/uninvoiced', {
+      ...uninvoicedRange,
+      include_fixed_fee: 'true',
+    })
+    await collect('project_budget/active', '/v2/reports/project_budget', { is_active: 'true' })
+    await collect('project_budget/inactive', '/v2/reports/project_budget', { is_active: 'false' })
 
-  for (const period of periods) {
-    for (const grain of ['clients', 'projects', 'tasks', 'team']) {
-      await collect(`time/${grain}/${period.year}`, `/v2/reports/time/${grain}`, {
-        from: period.from,
-        to: period.to,
-        include_fixed_fee: 'true',
-      })
+    const checksumPayload: ChecksumReportPayload = {
+      version: 1,
+      account_id: manifest.account.id,
+      generated_at: now().toISOString(),
+      periods,
+      report_ranges: { uninvoiced: uninvoicedRange },
+      reports,
+      requests: limiter.granted,
+      snapshot_sha256: await snapshotDigest(options.snapshotDir, manifest),
     }
-    for (const grain of ['clients', 'projects', 'categories', 'team']) {
-      await collect(`expenses/${grain}/${period.year}`, `/v2/reports/expenses/${grain}`, {
-        from: period.from,
-        to: period.to,
-      })
+    const checksums: ChecksumReport = {
+      ...checksumPayload,
+      report_sha256: checksumReportDigest(checksumPayload),
     }
+    await writeChecksums(options.snapshotDir, checksums)
+    return { issues, checksums }
+  } finally {
+    await releaseSnapshotLock(lock)
   }
-  const wholeRange = { from: periods[0].from, to: periods[periods.length - 1].to }
-  await collect('uninvoiced', '/v2/reports/uninvoiced', {
-    ...wholeRange,
-    include_fixed_fee: 'true',
-  })
-  await collect('project_budget/active', '/v2/reports/project_budget', { is_active: 'true' })
-  await collect('project_budget/inactive', '/v2/reports/project_budget', { is_active: 'false' })
-
-  const checksumPayload: ChecksumReportPayload = {
-    version: 1,
-    account_id: manifest.account.id,
-    generated_at: now().toISOString(),
-    periods,
-    reports,
-    requests: limiter.granted,
-    snapshot_sha256: await snapshotDigest(options.snapshotDir, manifest),
-  }
-  const checksums: ChecksumReport = {
-    ...checksumPayload,
-    report_sha256: checksumReportDigest(checksumPayload),
-  }
-  await writeChecksums(options.snapshotDir, checksums)
-  return { issues, checksums }
 }

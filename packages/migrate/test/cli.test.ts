@@ -75,6 +75,18 @@ describe('ezacto-migrate CLI entrypoint', () => {
     expect(stdout).toContain('extract')
     expect(stdout).toContain('sync')
     expect(stdout).toContain('verify')
+    expect(stdout).toContain('load')
+    expect(stdout).toContain('reconcile')
+  })
+
+  it('[unit] reconcile is offline and requires only the snapshot and database paths', async () => {
+    const { code, stderr } = await runNode(cliPath, ['reconcile', '--snapshot-dir', dir], {
+      cwd: dir,
+    })
+
+    expect(stderr).toContain('--database is required for reconcile')
+    expect(stderr).not.toContain('HARVEST_PAT')
+    expect(code).toBe(1)
   })
 
   it('[unit] advertises the resume and incremental behavior extract now has', async () => {
