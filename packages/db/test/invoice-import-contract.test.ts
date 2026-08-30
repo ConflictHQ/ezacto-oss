@@ -524,6 +524,258 @@ for (const [runtime, factory] of factories) {
       ])
     })
 
+    it('[unit] does not widen native invoice or message authority while an import is pending', async () => {
+      database = await factory()
+      await installFixture(database)
+      const sourceLine = {
+        harvestId: 8010,
+        position: 0,
+        kind: 'Service',
+        quantity: 1,
+        unitPriceCents: 1000,
+        amountCents: 1000,
+        createdAt: initialTimestamp,
+        updatedAt: sourceTimestamp,
+      }
+      const sourceMessage = {
+        harvestId: 9010,
+        recipients: [{ name: 'Sanitized Client', email: 'client@example.invalid' }],
+        body: 'Original body',
+        createdAt: initialTimestamp,
+        updatedAt: sourceTimestamp,
+      }
+      const firstInput = {
+        ...input(1),
+        lines: [sourceLine],
+        messages: [sourceMessage],
+        payments: [],
+      }
+      await reconcileHarvestInvoice(database.orm, firstInput)
+      const [before] = await database.rows<{
+        client_key: string
+        reference_token: string | null
+        reminder_policy: string | null
+        payment_options: string
+        message_id: number
+        message_harvest_id: number
+      }>(
+        `SELECT invoice.client_key, invoice.reference_token, invoice.reminder_policy,
+           invoice.payment_options, message.id AS message_id,
+           message.harvest_id AS message_harvest_id
+         FROM invoices invoice JOIN invoice_messages message ON message.invoice_id = invoice.id
+         WHERE invoice.id = 1 AND message.harvest_id = 9010`,
+      )
+      expect(before).toBeDefined()
+
+      const pendingInput = {
+        ...firstInput,
+        expectedSourceUpdatedAt: sourceTimestamp,
+        sourceUpdatedAt: nextSourceTimestamp,
+        sourceAmountCents: 1300,
+        sourceDueAmountCents: 1200,
+        maximumStatements: 3,
+        lines: [
+          sourceLine,
+          { ...sourceLine, harvestId: 8020, position: 1, amountCents: 100, unitPriceCents: 100 },
+          { ...sourceLine, harvestId: 8030, position: 2, amountCents: 100, unitPriceCents: 100 },
+          { ...sourceLine, harvestId: 8040, position: 3, amountCents: 100, unitPriceCents: 100 },
+        ],
+        messages: [
+          { ...sourceMessage, body: 'Newer body', updatedAt: nextSourceTimestamp },
+          {
+            ...sourceMessage,
+            harvestId: 9020,
+            body: 'New source message',
+            updatedAt: nextSourceTimestamp,
+          },
+        ],
+        payments: [
+          {
+            harvestId: 10010,
+            amountCents: 100,
+            sourcePaidAt: nextSourceTimestamp,
+            sourcePaidDate: null,
+            createdAt: initialTimestamp,
+            updatedAt: nextSourceTimestamp,
+          },
+        ],
+      }
+      let pending = await reconcileHarvestInvoice(database.orm, pendingInput)
+      expect(pending.complete).toBe(false)
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT completed, message_manifest_json
+           FROM invoice_import_reconciliations
+           WHERE invoice_id = 1 AND source_updated_at = ?`,
+          nextSourceTimestamp,
+        ),
+      ).toEqual([
+        {
+          completed: 0,
+          message_manifest_json: JSON.stringify([
+            { harvest_id: 9010, id: before!.message_id, updated_at: nextSourceTimestamp },
+            { harvest_id: 9020, id: 0, updated_at: nextSourceTimestamp },
+          ]),
+        },
+      ])
+
+      const invoiceMutations = [
+        `UPDATE invoices SET client_key = 'tampered-client-key' WHERE id = 1`,
+        `UPDATE invoices SET reminder_policy =
+           '{"first_after_days":1,"every_days":2}' WHERE id = 1`,
+        `UPDATE invoices SET payment_options = '["stripe_checkout"]' WHERE id = 1`,
+        `UPDATE invoices SET payment_options = '["wise_transfer"]',
+           reference_token = 'EZ-123456789ABC' WHERE id = 1`,
+      ]
+      for (const sql of invoiceMutations) {
+        await expect(database.run(sql)).rejects.toThrow(/invoice header mutation/)
+      }
+      await expect(
+        database.run(
+          `UPDATE invoice_messages SET id = id + 100000, updated_at = ?
+           WHERE invoice_id = 1 AND harvest_id = 9010`,
+          nextSourceTimestamp,
+        ),
+      ).rejects.toThrow(/invoice message source mutation/)
+      await expect(
+        database.run(
+          `UPDATE invoice_messages SET harvest_id = 9020, updated_at = ?
+           WHERE invoice_id = 1 AND harvest_id = 9010`,
+          nextSourceTimestamp,
+        ),
+      ).rejects.toThrow(/invoice message source mutation/)
+      await expect(
+        database.run(
+          `INSERT INTO invoice_line_items (
+             id, harvest_id, invoice_id, position, kind, quantity,
+             unit_price_cents, amount_cents, created_at, updated_at
+           ) VALUES (777777, 8040, 1, 3, 'Service', 1, 100, 100, ?, ?)`,
+          initialTimestamp,
+          nextSourceTimestamp,
+        ),
+      ).rejects.toThrow(/invoice line insert requires/)
+      await expect(
+        database.run(
+          `INSERT INTO invoice_payments (
+             id, harvest_id, invoice_id, currency, amount_cents, paid_at, source_paid_at,
+             provider, provider_shape, created_at, updated_at
+           ) VALUES (888888, 10010, 1, 'USD', 100, ?, ?, 'manual', 'manual', ?, ?)`,
+          nextSourceTimestamp,
+          nextSourceTimestamp,
+          initialTimestamp,
+          nextSourceTimestamp,
+        ),
+      ).rejects.toThrow(/invoice payment insert requires/)
+
+      while (pending.complete === false) {
+        pending = await reconcileHarvestInvoice(database.orm, pendingInput)
+      }
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT invoice.client_key, invoice.reference_token, invoice.reminder_policy,
+             invoice.payment_options, message.id AS message_id,
+             message.harvest_id AS message_harvest_id
+           FROM invoices invoice JOIN invoice_messages message ON message.invoice_id = invoice.id
+           WHERE invoice.id = 1 AND message.harvest_id = 9010`,
+        ),
+      ).toEqual([before])
+    })
+
+    it('[unit] rejects newer payment rows that rewrite immutable source provenance', async () => {
+      database = await factory()
+      await installFixture(database)
+      const sourceLine = {
+        harvestId: 8040,
+        position: 0,
+        kind: 'Service',
+        quantity: 1,
+        unitPriceCents: 1000,
+        amountCents: 1000,
+        createdAt: initialTimestamp,
+        updatedAt: sourceTimestamp,
+      }
+      const sourcePayment = {
+        harvestId: 10041,
+        amountCents: 100,
+        sourcePaidAt: sourceTimestamp,
+        sourcePaidDate: null,
+        sourceRecordedByName: 'Sanitized Recorder',
+        sourceRecordedByEmail: 'recorder@example.invalid',
+        sourceGatewayId: 42,
+        sourceGatewayName: 'Sanitized Gateway',
+        notes: 'Original note',
+        recordedByUserId: null,
+        providerTransactionId: 'sanitized-transaction-41',
+        createdAt: initialTimestamp,
+        updatedAt: sourceTimestamp,
+      }
+      const firstInput = {
+        ...input(4),
+        sourceDueAmountCents: 900,
+        lines: [sourceLine],
+        messages: [],
+        payments: [sourcePayment],
+      }
+      await reconcileHarvestInvoice(database.orm, firstInput)
+      const [before] = await database.rows<{ id: number }>(
+        'SELECT id FROM invoice_payments WHERE harvest_id = 10041',
+      )
+      expect(before).toBeDefined()
+
+      const immutableDrifts = [
+        { sourcePaidAt: nextSourceTimestamp },
+        { sourcePaidDate: '2026-08-26' },
+        { sourceRecordedByName: 'Doctored Recorder' },
+        { sourceRecordedByEmail: 'doctored@example.invalid' },
+        { sourceGatewayId: 84 },
+        { sourceGatewayName: 'Doctored Gateway' },
+        { providerTransactionId: 'doctored-transaction-41' },
+        { createdAt: '2026-08-27T11:59:59.000Z' },
+      ]
+      for (const drift of immutableDrifts) {
+        await expect(
+          reconcileHarvestInvoice(database.orm, {
+            ...firstInput,
+            expectedSourceUpdatedAt: sourceTimestamp,
+            sourceUpdatedAt: nextSourceTimestamp,
+            payments: [{ ...sourcePayment, ...drift, updatedAt: nextSourceTimestamp }],
+          }),
+        ).rejects.toThrow(/payment identity or provenance drifted/)
+      }
+
+      await reconcileHarvestInvoice(database.orm, {
+        ...firstInput,
+        expectedSourceUpdatedAt: sourceTimestamp,
+        sourceUpdatedAt: nextSourceTimestamp,
+        sourceDueAmountCents: 800,
+        payments: [
+          {
+            ...sourcePayment,
+            amountCents: 200,
+            notes: 'Corrected source note',
+            updatedAt: nextSourceTimestamp,
+          },
+        ],
+      })
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT id, amount_cents, notes, source_paid_at, source_recorded_by_name,
+             source_gateway_id, provider_transaction_id
+           FROM invoice_payments WHERE harvest_id = 10041`,
+        ),
+      ).toEqual([
+        {
+          id: before!.id,
+          amount_cents: 200,
+          notes: 'Corrected source note',
+          source_paid_at: sourceTimestamp,
+          source_recorded_by_name: 'Sanitized Recorder',
+          source_gateway_id: 42,
+          provider_transaction_id: 'sanitized-transaction-41',
+        },
+      ])
+    })
+
     it('[unit] atomically refreshes imported headers and retains DB-owned child ids', async () => {
       database = await factory()
       await installFixture(database)

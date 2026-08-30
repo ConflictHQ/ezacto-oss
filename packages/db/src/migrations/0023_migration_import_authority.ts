@@ -72,7 +72,15 @@ export const migrationImportAuthorityMigration = [
           AND invoice.version = OLD.target_version AND invoice.updated_at = OLD.target_updated_at
           AND invoice.state = OLD.target_state
           AND invoice.close_reason IS OLD.target_close_reason
+          AND invoice.close_write_off_cents = OLD.target_close_write_off_cents
           AND invoice.written_off_cents = OLD.target_written_off_cents
+          AND invoice.sent_at IS OLD.target_sent_at
+          AND invoice.paid_at IS OLD.target_paid_at
+          AND invoice.paid_date IS OLD.target_paid_date
+          AND invoice.closed_at IS OLD.target_closed_at
+          AND OLD.outbox_count_before = (
+            SELECT count(*) FROM event_outbox event
+            WHERE event.aggregate_type = 'invoice' AND event.aggregate_id = OLD.invoice_id)
           AND json_array_length(OLD.line_manifest_json) = (
             SELECT count(*) FROM invoice_line_items line
             WHERE line.invoice_id = OLD.invoice_id AND line.harvest_id IS NOT NULL)
@@ -123,8 +131,8 @@ export const migrationImportAuthorityMigration = [
       SELECT 1 FROM invoice_import_reconciliations import,
         json_each(import.message_manifest_json) member
       WHERE import.invoice_id = NEW.invoice_id AND import.completed = 0
-        AND (json_extract(member.value, '$.id') = 0
-          OR json_extract(member.value, '$.id') = NEW.id)
+        AND (json_extract(member.value, '$.id') = NEW.id
+          OR (json_extract(member.value, '$.id') = 0 AND NEW.id = -1))
         AND json_extract(member.value, '$.harvest_id') = NEW.harvest_id
         AND json_extract(member.value, '$.updated_at') = NEW.updated_at
     ))
@@ -142,14 +150,13 @@ export const migrationImportAuthorityMigration = [
       OR OLD.send_reminder_on IS NOT NEW.send_reminder_on
       OR OLD.event_type IS NOT NEW.event_type OR OLD.created_at IS NOT NEW.created_at
       OR OLD.updated_at IS NOT NEW.updated_at)
-      AND NOT (OLD.harvest_id IS NOT NULL AND NEW.harvest_id IS NOT NULL AND EXISTS (
+      AND NOT (OLD.id IS NEW.id AND OLD.harvest_id IS NEW.harvest_id
+        AND OLD.invoice_id IS NEW.invoice_id AND OLD.harvest_id IS NOT NULL AND EXISTS (
         SELECT 1 FROM invoice_import_reconciliations import,
           json_each(import.message_manifest_json) member
-        WHERE import.invoice_id = OLD.invoice_id AND import.invoice_id = NEW.invoice_id
-          AND import.completed = 0
-          AND (json_extract(member.value, '$.id') = 0
-            OR json_extract(member.value, '$.id') = NEW.id)
-          AND json_extract(member.value, '$.harvest_id') = NEW.harvest_id
+        WHERE import.invoice_id = OLD.invoice_id AND import.completed = 0
+          AND json_extract(member.value, '$.id') = OLD.id
+          AND json_extract(member.value, '$.harvest_id') = OLD.harvest_id
           AND json_extract(member.value, '$.updated_at') = NEW.updated_at))
     BEGIN SELECT RAISE(ABORT, 'invoice message source mutation requires exact import authority'); END`,
   `DROP TRIGGER invoice_messages_d22_delete_guard`,
@@ -178,8 +185,8 @@ export const migrationImportAuthorityMigration = [
         json_each(import.payment_manifest_json) member
       WHERE import.invoice_id = NEW.invoice_id AND import.completed = 0
         AND import.target_state <> 'draft'
-        AND (json_extract(member.value, '$.id') = 0
-          OR json_extract(member.value, '$.id') = NEW.id)
+        AND (json_extract(member.value, '$.id') = NEW.id
+          OR (json_extract(member.value, '$.id') = 0 AND NEW.id = -1))
         AND json_extract(member.value, '$.harvest_id') = NEW.harvest_id
         AND json_extract(member.value, '$.updated_at') = NEW.updated_at))
     BEGIN SELECT RAISE(ABORT, 'invoice payment insert requires its pending command'); END`,
@@ -221,8 +228,8 @@ export const migrationImportAuthorityMigration = [
       SELECT 1 FROM invoice_import_reconciliations import,
         json_each(import.line_manifest_json) member
       WHERE import.invoice_id = NEW.invoice_id AND import.completed = 0
-        AND (json_extract(member.value, '$.id') = 0
-          OR json_extract(member.value, '$.id') = NEW.id)
+        AND (json_extract(member.value, '$.id') = NEW.id
+          OR (json_extract(member.value, '$.id') = 0 AND NEW.id = -1))
         AND json_extract(member.value, '$.harvest_id') = NEW.harvest_id
         AND json_extract(member.value, '$.updated_at') = NEW.updated_at))
     BEGIN SELECT RAISE(ABORT, 'invoice line insert requires its pending command'); END`,
@@ -297,11 +304,16 @@ export const migrationImportAuthorityMigration = [
       WHERE command.invoice_id = OLD.id AND command.completed = 0
         AND command.command_kind = 'invoice.update'
         AND command.expected_invoice_version = OLD.version
-    ) AND NOT EXISTS (
-      SELECT 1 FROM invoice_import_reconciliations import
-      WHERE OLD.harvest_id IS NOT NULL
-        AND import.invoice_id = OLD.id AND import.completed = 0
-        AND import.expected_source_updated_at IS OLD.source_updated_at
+    ) AND NOT (
+      OLD.client_key IS NEW.client_key AND OLD.reference_token IS NEW.reference_token
+      AND OLD.reminder_policy IS NEW.reminder_policy
+      AND OLD.payment_options IS NEW.payment_options
+      AND EXISTS (
+        SELECT 1 FROM invoice_import_reconciliations import
+        WHERE OLD.harvest_id IS NOT NULL
+          AND import.invoice_id = OLD.id AND import.completed = 0
+          AND import.expected_source_updated_at IS OLD.source_updated_at
+      )
     ) AND NOT (
       OLD.harvest_id IS NULL AND OLD.state = 'draft' AND OLD.version = 0
       AND OLD.sent_at IS NULL AND OLD.closed_at IS NULL AND OLD.close_reason IS NULL

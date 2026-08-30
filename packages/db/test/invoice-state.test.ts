@@ -2114,8 +2114,6 @@ for (const [runtime, factory] of factories) {
           {
             ...input.payments[0]!,
             amountCents: 1000,
-            sourcePaidAt: thirdTimestamp,
-            sourcePaidDate: null,
             updatedAt: thirdTimestamp,
           },
         ],

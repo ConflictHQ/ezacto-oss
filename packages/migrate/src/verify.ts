@@ -12,6 +12,7 @@ import { paginate, type PaginateDeps } from './paginator.js'
 import { createRateLimiter, type RateLimiter } from './rate-limiter.js'
 import { lineagePath, type ChildLineage } from './jsonl.js'
 import { RESOURCES } from './resources.js'
+import { numberLexemes } from './transform.js'
 
 export const REPORTS_RATE_LIMIT = 100
 export const REPORTS_RATE_WINDOW_MS = 15 * 60 * 1000
@@ -60,6 +61,7 @@ export interface RunVerifyOptions {
 interface StreamedRow {
   row: Record<string, unknown>
   line: number
+  raw: string
 }
 
 const streamRows = async function* (
@@ -78,7 +80,7 @@ const streamRows = async function* (
         const parsed = JSON.parse(raw) as unknown
         if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
           throw new Error()
-        yield { row: parsed as Record<string, unknown>, line }
+        yield { row: parsed as Record<string, unknown>, line, raw }
       } catch {
         throw new Error(`${path}:${line} is not a JSON object`)
       }
@@ -143,20 +145,25 @@ const FK_RULES: Record<string, Array<{ field: string; target: string }>> = {
     { field: 'user', target: 'users' },
     { field: 'task_assignment', target: 'task_assignments' },
     { field: 'user_assignment', target: 'user_assignments' },
+    { field: 'invoice', target: 'invoices' },
   ],
   expenses: [
     { field: 'project', target: 'projects' },
     { field: 'user', target: 'users' },
     { field: 'expense_category', target: 'expense_categories' },
+    { field: 'invoice', target: 'invoices' },
   ],
   invoices: [{ field: 'client', target: 'clients' }],
   estimates: [{ field: 'client', target: 'clients' }],
 }
 
-const IDENTITY_TARGETS = new Set([
-  ...Object.values(FK_RULES).flatMap((rules) => rules.map((rule) => rule.target)),
-  ...RESOURCES.flatMap((step) => (step.kind === 'child' ? [step.parent] : [])),
-])
+const ARRAY_FK_RULES: Record<string, Array<{ field: string; target: string }>> = {
+  roles: [{ field: 'user_ids', target: 'users' }],
+}
+
+const SOURCE_ID_FK_RULES: Record<string, string> = {
+  teammates: 'users',
+}
 
 export const verifySnapshot = async (
   snapshotDir: string,
@@ -170,28 +177,43 @@ export const verifySnapshot = async (
   const identities = new BetterSqlite3(join(indexDir, 'identities.sqlite'))
   identities.exec(`CREATE TABLE identities (
     resource TEXT NOT NULL,
-    id INTEGER NOT NULL,
+    id TEXT NOT NULL,
     PRIMARY KEY (resource, id)
   ) WITHOUT ROWID`)
   const insertIdentity = identities.prepare(
     'INSERT OR IGNORE INTO identities (resource, id) VALUES (?, ?)',
   )
   const hasIdentity = identities.prepare('SELECT 1 FROM identities WHERE resource = ? AND id = ?')
-  const insertBatch = identities.transaction((batch: Array<[string, number]>) => {
-    for (const identity of batch) insertIdentity.run(...identity)
-  })
+  const insertBatch = identities.transaction(
+    (batch: Array<{ resource: string; id: string; line: number; allowDuplicate: boolean }>) => {
+      for (const identity of batch) {
+        if (
+          insertIdentity.run(identity.resource, identity.id).changes === 0 &&
+          !identity.allowDuplicate
+        )
+          addIssue({
+            kind: 'invalid_row',
+            path: `raw/${identity.resource}.jsonl:${identity.line}.id`,
+            id: Number.isSafeInteger(Number(identity.id)) ? Number(identity.id) : identity.id,
+            message: `${identity.resource} repeats source id ${identity.id}`,
+          })
+      }
+    },
+  )
   try {
-    let pending: Array<[string, number]> = []
+    let pending: Array<{
+      resource: string
+      id: string
+      line: number
+      allowDuplicate: boolean
+    }> = []
     for (const [resource, progress] of Object.entries(manifest.resources)) {
       let count = 0
-      for await (const { row } of streamRows(snapshotDir, resource)) {
+      for await (const { raw, line } of streamRows(snapshotDir, resource)) {
         count += 1
-        if (
-          IDENTITY_TARGETS.has(resource) &&
-          typeof row.id === 'number' &&
-          Number.isSafeInteger(row.id)
-        ) {
-          pending.push([resource, row.id])
+        const id = numberLexemes(raw).get('/id')
+        if (id !== undefined && /^\d+$/.test(id) && BigInt(id) > 0n) {
+          pending.push({ resource, id, line, allowDuplicate: resource === 'teammates' })
           if (pending.length === 1000) {
             insertBatch(pending)
             pending = []
@@ -213,7 +235,7 @@ export const verifySnapshot = async (
         const sourceId = typeof row.id === 'number' ? row.id : null
         for (const rule of rules) {
           const foreignId = nestedId(row, rule.field)
-          if (foreignId === null || hasIdentity.get(rule.target, foreignId)) continue
+          if (foreignId === null || hasIdentity.get(rule.target, String(foreignId))) continue
           addIssue({
             kind: 'dangling_fk',
             path: `raw/${resource}.jsonl:${line}.${rule.field}.id`,
@@ -221,6 +243,59 @@ export const verifySnapshot = async (
             message: `${resource} ${String(sourceId)} references missing ${rule.target} id ${foreignId}`,
           })
         }
+      }
+    }
+
+    for (const [resource, rules] of Object.entries(ARRAY_FK_RULES)) {
+      for await (const { row, line } of streamRows(snapshotDir, resource)) {
+        const sourceId = typeof row.id === 'number' ? row.id : null
+        for (const rule of rules) {
+          const foreignIds = row[rule.field]
+          if (foreignIds === undefined || foreignIds === null) continue
+          if (!Array.isArray(foreignIds)) {
+            addIssue({
+              kind: 'invalid_row',
+              path: `raw/${resource}.jsonl:${line}.${rule.field}`,
+              id: sourceId,
+              message: `${resource} ${String(sourceId)} has a non-array ${rule.field}`,
+            })
+            continue
+          }
+          for (const [index, foreignId] of foreignIds.entries()) {
+            if (typeof foreignId !== 'number' || !Number.isSafeInteger(foreignId)) {
+              addIssue({
+                kind: 'invalid_row',
+                path: `raw/${resource}.jsonl:${line}.${rule.field}[${index}]`,
+                id: sourceId,
+                message: `${resource} ${String(sourceId)} has an invalid ${rule.field} identity`,
+              })
+            } else if (!hasIdentity.get(rule.target, String(foreignId))) {
+              addIssue({
+                kind: 'dangling_fk',
+                path: `raw/${resource}.jsonl:${line}.${rule.field}[${index}]`,
+                id: foreignId,
+                message: `${resource} ${String(sourceId)} references missing ${rule.target} id ${foreignId}`,
+              })
+            }
+          }
+        }
+      }
+    }
+
+    for (const [resource, target] of Object.entries(SOURCE_ID_FK_RULES)) {
+      for await (const { row, line } of streamRows(snapshotDir, resource)) {
+        const sourceId = row.id
+        if (
+          typeof sourceId === 'number' &&
+          Number.isSafeInteger(sourceId) &&
+          !hasIdentity.get(target, String(sourceId))
+        )
+          addIssue({
+            kind: 'dangling_fk',
+            path: `raw/${resource}.jsonl:${line}.id`,
+            id: sourceId,
+            message: `${resource} ${sourceId} references missing ${target} id ${sourceId}`,
+          })
       }
     }
 
@@ -243,7 +318,20 @@ export const verifySnapshot = async (
               id: witness.value.row.source_id,
               message: `lineage source id ${witness.value.row.source_id} does not match aligned raw id ${String(sourceId)}`,
             })
-          if (!hasIdentity.get(step.parent, witness.value.row.parent_id))
+          if (
+            step.name === 'teammates' &&
+            insertIdentity.run(
+              `teammates:${witness.value.row.parent_id}`,
+              String(witness.value.row.source_id),
+            ).changes === 0
+          )
+            addIssue({
+              kind: 'invalid_row',
+              path: `raw/${step.name}.lineage.jsonl:${witness.value.line}`,
+              id: witness.value.row.source_id,
+              message: `teammates repeats manager ${witness.value.row.parent_id} and user ${witness.value.row.source_id}`,
+            })
+          if (!hasIdentity.get(step.parent, String(witness.value.row.parent_id)))
             addIssue({
               kind: 'dangling_fk',
               path: `raw/${step.name}.lineage.jsonl:${witness.value.line}.parent_id`,

@@ -400,6 +400,20 @@ const samePayment = (left: StoredPayment, right: StoredPayment): boolean =>
     (key) => left[key as keyof StoredPayment] === right[key as keyof StoredPayment],
   )
 
+const samePaymentIdentityAndProvenance = (left: StoredPayment, right: StoredPayment): boolean =>
+  left.id === right.id &&
+  left.harvestId === right.harvestId &&
+  left.paidAt === right.paidAt &&
+  left.paidDate === right.paidDate &&
+  left.sourcePaidAt === right.sourcePaidAt &&
+  left.sourcePaidDate === right.sourcePaidDate &&
+  left.sourceRecordedByName === right.sourceRecordedByName &&
+  left.sourceRecordedByEmail === right.sourceRecordedByEmail &&
+  left.sourceGatewayId === right.sourceGatewayId &&
+  left.sourceGatewayName === right.sourceGatewayName &&
+  left.providerTransactionId === right.providerTransactionId &&
+  left.createdAt === right.createdAt
+
 const canonicalMessage = (message: ImportedInvoiceMessage): StoredMessage => {
   assertTimestamp(message.createdAt, 'message.createdAt')
   assertTimestamp(message.updatedAt, 'message.updatedAt')
@@ -978,6 +992,9 @@ export const reconcileImportedInvoice = async (
     const existing = byHarvestId.get(payment.harvestId)
     if (existing === undefined) inserts.push(payment)
     else if (!samePayment(existing, payment)) {
+      if (!samePaymentIdentityAndProvenance(existing, payment)) {
+        throw new Error('imported payment identity or provenance drifted')
+      }
       deletes.push(existing)
       inserts.push(payment)
     }
@@ -1037,6 +1054,12 @@ export const reconcileImportedInvoice = async (
       messageDeletes.push(message)
     }
   }
+  // A source-only input uses id=0 for DB allocation. Once a Harvest child
+  // already exists, pin the pending authority to that exact native row so the
+  // completion guard can prove reconciliation did not rotate its storage id.
+  const lineAuthorityManifestJson = canonicalJson(membershipManifest(incomingLines))
+  const messageAuthorityManifestJson = canonicalJson(membershipManifest(incomingMessages))
+  const paymentAuthorityManifestJson = canonicalJson(membershipManifest(incoming))
 
   const paymentCents = [...nativePayments, ...incoming].reduce(
     (sum, payment) => sum + payment.amountCents,
@@ -1106,11 +1129,11 @@ export const reconcileImportedInvoice = async (
               inputFingerprint,
               manifests.sourceManifestJson,
               manifests.sourceManifestHash,
-              manifests.lineManifestJson,
+              lineAuthorityManifestJson,
               manifests.lineManifestHash,
-              manifests.messageManifestJson,
+              messageAuthorityManifestJson,
               manifests.messageManifestHash,
-              manifests.paymentManifestJson,
+              paymentAuthorityManifestJson,
               manifests.paymentManifestHash,
               input.sourceState,
               targetState,

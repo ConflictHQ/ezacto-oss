@@ -323,7 +323,7 @@ export const buildSanitizedLoadSnapshot = async (
       '"spent_date":"2026-08-16","hours":1.25,"hours_without_timer":1.25,"rounded_hours":1.50,"timer_started_at":null,' +
       '"started_time":"8:00am","ended_time":"9:15am","notes":"Sanitized time","billable":true,' +
       '"budgeted":true,"billable_rate":175.00,"cost_rate":80.50,"external_reference":null,' +
-      `"calendar_event":null,"invoice":null,"approval_status":"approved",` +
+      `"calendar_event":null,"invoice":{"id":12000001},"approval_status":"approved",` +
       `"created_at":"${timestamp}","updated_at":"${timestamp}"}`,
     `{"id":9007199254740994,"user":{"id":1782960},"project":{"id":14308069},` +
       `"task":{"id":51001},"user_assignment":{"id":54002},"task_assignment":{"id":53001},` +

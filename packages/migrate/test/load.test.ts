@@ -165,6 +165,44 @@ describe('transform and load', () => {
           .get(),
       ).toEqual({ recorded_by_user_id: expect.any(Number), user_harvest_id: 1782960 })
       expect(
+        db
+          .prepare(
+            `SELECT invoice.harvest_id AS invoice_harvest_id
+        FROM time_entries entry JOIN invoices invoice ON invoice.id = entry.invoice_id
+        WHERE entry.harvest_id = ?`,
+          )
+          .get('9007199254740993'),
+      ).toEqual({ invoice_harvest_id: 12000001 })
+      expect(
+        db
+          .prepare(
+            `SELECT invoice.harvest_id AS invoice_harvest_id
+        FROM expenses expense JOIN invoices invoice ON invoice.id = expense.invoice_id
+        WHERE expense.harvest_id = 152975211`,
+          )
+          .get(),
+      ).toEqual({ invoice_harvest_id: 12000001 })
+      expect(
+        db
+          .prepare(
+            `SELECT manager.harvest_id AS manager_harvest_id,
+          teammate.harvest_id AS teammate_harvest_id
+        FROM teammate_assignments assignment
+        JOIN users manager ON manager.id = assignment.manager_id
+        JOIN users teammate ON teammate.id = assignment.user_id`,
+          )
+          .get(),
+      ).toEqual({ manager_harvest_id: 1782959, teammate_harvest_id: 1782960 })
+      expect(
+        db
+          .prepare(
+            `SELECT user.harvest_id AS user_harvest_id
+        FROM user_roles assignment JOIN users user ON user.id = assignment.user_id
+        JOIN roles role ON role.id = assignment.role_id WHERE role.harvest_id = 71001`,
+          )
+          .all(),
+      ).toEqual([{ user_harvest_id: 1782960 }])
+      expect(
         JSON.parse(
           (
             db.prepare('SELECT modules FROM organizations WHERE id = 1').get() as {
@@ -249,6 +287,51 @@ describe('transform and load', () => {
     }
   }, 30_000)
 
+  it('[integration] rejects an estimate-message identity owned by another estimate', async () => {
+    await runLoad({ snapshotDir, databasePath })
+    const db = new BetterSqlite3(databasePath)
+    try {
+      db.prepare(
+        `INSERT INTO estimates (
+          harvest_id, client_id, number, currency, issue_date, created_at, updated_at
+        ) SELECT 920002, client_id, 'EST-OTHER', currency, issue_date, created_at, updated_at
+          FROM estimates WHERE harvest_id = 920001`,
+      ).run()
+      db.prepare(
+        `UPDATE estimate_messages SET estimate_id =
+          (SELECT id FROM estimates WHERE harvest_id = 920002)
+        WHERE harvest_id = 921001`,
+      ).run()
+      db.prepare(`DELETE FROM _ezacto_load_progress WHERE resource = 'estimates'`).run()
+    } finally {
+      db.close()
+    }
+
+    await expect(runLoad({ snapshotDir, databasePath })).rejects.toThrow(/estimate.*identity/i)
+    const after = new BetterSqlite3(databasePath, { readonly: true })
+    try {
+      expect(
+        after
+          .prepare(
+            `SELECT estimate.harvest_id AS estimate_harvest_id
+            FROM estimate_messages message
+            JOIN estimates estimate ON estimate.id = message.estimate_id
+            WHERE message.harvest_id = 921001`,
+          )
+          .get(),
+      ).toEqual({ estimate_harvest_id: 920002 })
+      expect(
+        after
+          .prepare(
+            `SELECT count(*) AS count FROM _ezacto_load_progress WHERE resource = 'estimates'`,
+          )
+          .get(),
+      ).toEqual({ count: 0 })
+    } finally {
+      after.close()
+    }
+  }, 30_000)
+
   it('[integration] fails a three-decimal money token before inserting its resource row', async () => {
     const path = join(snapshotDir, 'raw', 'expenses.jsonl')
     await writeFile(
@@ -260,6 +343,24 @@ describe('transform and load', () => {
     const db = new BetterSqlite3(databasePath, { readonly: true })
     try {
       expect(db.prepare('SELECT count(*) AS count FROM expenses').get()).toEqual({ count: 0 })
+    } finally {
+      db.close()
+    }
+  }, 30_000)
+
+  it('[integration] refuses a missing billed invoice before advancing load progress', async () => {
+    const path = join(snapshotDir, 'raw', 'time_entries.jsonl')
+    await writeFile(path, (await readFile(path, 'utf8')).replace('"id":12000001', '"id":99999999'))
+    await refreshChecksum(snapshotDir)
+
+    await expect(runLoad({ snapshotDir, databasePath })).rejects.toThrow(
+      /dangling_fk raw\/time_entries\.jsonl:1\.invoice\.id/,
+    )
+    const db = new BetterSqlite3(databasePath, { readonly: true })
+    try {
+      expect(db.prepare('SELECT count(*) AS count FROM _ezacto_load_progress').get()).toEqual({
+        count: 0,
+      })
     } finally {
       db.close()
     }
@@ -605,6 +706,27 @@ describe('transform and load', () => {
   }, 30_000)
 
   it('[integration] keeps a 700-line D1 invoice under the total invocation query budget', async () => {
+    const taskPath = join(snapshotDir, 'raw', 'tasks.jsonl')
+    const task = JSON.parse((await readFile(taskPath, 'utf8')).trim()) as Record<string, unknown>
+    const tasks = Array.from({ length: 700 }, (_, index) => ({
+      ...task,
+      id: 51001 + index,
+      name: `Migration ${index}`,
+    }))
+    await writeFile(taskPath, `${tasks.map((row) => JSON.stringify(row)).join('\n')}\n`)
+    const taskAssignmentPath = join(snapshotDir, 'raw', 'task_assignments.jsonl')
+    const taskAssignment = JSON.parse(
+      (await readFile(taskAssignmentPath, 'utf8')).trim(),
+    ) as Record<string, unknown>
+    const taskAssignments = Array.from({ length: 700 }, (_, index) => ({
+      ...taskAssignment,
+      id: 53001 + index,
+      task: { id: 51001 + index },
+    }))
+    await writeFile(
+      taskAssignmentPath,
+      `${taskAssignments.map((row) => JSON.stringify(row)).join('\n')}\n`,
+    )
     const invoicePath = join(snapshotDir, 'raw', 'invoices.jsonl')
     const invoices = (await readFile(invoicePath, 'utf8'))
       .trim()
@@ -628,6 +750,10 @@ describe('transform and load', () => {
       invoicePath,
       `${invoices.map((invoice) => JSON.stringify(invoice)).join('\n')}\n`,
     )
+    const manifest = await readManifest(snapshotDir)
+    manifest.resources.tasks!.count = tasks.length
+    manifest.resources.task_assignments!.count = taskAssignments.length
+    await writeManifest(snapshotDir, manifest)
     await refreshChecksum(snapshotDir)
 
     const miniflare = new Miniflare({
@@ -662,7 +788,7 @@ describe('transform and load', () => {
         const result = await loadNextChunk({
           database,
           snapshotDir,
-          maxRows: 100,
+          maxRows: 700,
           maxStatements: 700,
           immutableSnapshotSha256: checksum.snapshot_sha256,
         })
@@ -671,6 +797,9 @@ describe('transform and load', () => {
         if (result.resource === 'invoices') invoiceSteps += 1
       }
       expect(invoiceSteps).toBeGreaterThan(2)
+      expect(
+        (await d1.prepare('SELECT count(*) AS count FROM task_assignments').first())?.count,
+      ).toBe(700)
       expect(
         (await d1.prepare('SELECT count(*) AS count FROM invoice_line_items').first())?.count,
       ).toBe(700)

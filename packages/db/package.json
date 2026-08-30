@@ -3,9 +3,16 @@
   "version": "0.0.0",
   "description": "Ezacto's shared Drizzle SQLite schema and D1/container adapters.",
   "type": "module",
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "exports": {
-    ".": "./dist/index.js",
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
     "./d1": {
       "types": "./src/d1.ts",
       "development": "./src/d1.ts",
@@ -18,7 +25,9 @@
     },
     "./schema": "./dist/schema.js"
   },
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",

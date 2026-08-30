@@ -219,14 +219,25 @@ const rawChunkFrom = async (
   return { rows, nextByteOffset }
 }
 
-const rawChunk = async (
+const findRawRowById = async (
   snapshotDir: string,
   resource: string,
-  offset: number,
-  limit: number,
-): Promise<RawRow[]> => {
-  const chunk = await rawChunkFrom(snapshotDir, resource, 0, 0, offset + limit)
-  return chunk.rows.slice(offset, offset + limit)
+  total: number,
+  targetId: number,
+): Promise<RawRow | null> => {
+  let rowOffset = 0
+  let byteOffset = 0
+  while (rowOffset < total) {
+    const chunk = await rawChunkFrom(snapshotDir, resource, byteOffset, rowOffset, 100)
+    if (chunk.rows.length === 0) return null
+    const match = chunk.rows.find(
+      (candidate) => safeIntegerAt(candidate, '/id', `${resource}.id`) === targetId,
+    )
+    if (match) return match
+    rowOffset += chunk.rows.length
+    byteOffset = chunk.nextByteOffset
+  }
+  return null
 }
 
 const numberAt = (source: RawRow, path: string, field = path): string => {
@@ -1727,13 +1738,12 @@ const nativeIds = async (
 ): Promise<Map<number, number>> => {
   const unique = [...new Set(harvestIds)]
   const resolved = new Map<number, number>()
-  for (const batch of boundedInsertBatches(unique, 1)) {
-    if (batch.length === 0) continue
+  if (unique.length > 0) {
     const rows = await all<{ id: number; harvestId: number }>(
       database,
       `SELECT id, harvest_id AS harvestId FROM ${table}
-       WHERE harvest_id IN (${batch.map(() => '?').join(', ')})`,
-      batch,
+       WHERE harvest_id IN (SELECT value FROM json_each(?))`,
+      [JSON.stringify(unique)],
     )
     for (const row of rows) resolved.set(row.harvestId, row.id)
   }
@@ -1748,19 +1758,36 @@ const userIdsByEmail = async (
 ): Promise<Map<string, number>> => {
   const unique = [...new Set(addresses.map((address) => address.toLowerCase()))]
   const resolved = new Map<string, number>()
-  for (const batch of boundedInsertBatches(unique, 1)) {
-    if (batch.length === 0) continue
+  if (unique.length > 0) {
     const rows = await all<{ address: string; id: number }>(
       database,
       `SELECT lower(email.address) AS address, user.id
        FROM user_emails email JOIN users user ON user.id = email.user_id
-       WHERE lower(email.address) IN (${batch.map(() => '?').join(', ')})
+       WHERE lower(email.address) IN (SELECT value FROM json_each(?))
          AND email.invalidated_at IS NULL
        ORDER BY email.is_primary DESC, email.id`,
-      batch,
+      [JSON.stringify(unique)],
     )
     for (const row of rows) if (!resolved.has(row.address)) resolved.set(row.address, row.id)
   }
+  return resolved
+}
+
+const projectBudgetBys = async (
+  database: RawDatabase,
+  harvestIds: readonly number[],
+): Promise<Map<number, string>> => {
+  const unique = [...new Set(harvestIds)]
+  if (unique.length === 0) return new Map()
+  const rows = await all<{ harvestId: number; budgetBy: string }>(
+    database,
+    `SELECT harvest_id AS harvestId, budget_by AS budgetBy FROM projects
+     WHERE harvest_id IN (SELECT value FROM json_each(?))`,
+    [JSON.stringify(unique)],
+  )
+  const resolved = new Map(rows.map((row) => [row.harvestId, row.budgetBy]))
+  const missing = unique.find((harvestId) => !resolved.has(harvestId))
+  if (missing !== undefined) throw new Error(`project source id ${missing} has not been loaded`)
   return resolved
 }
 
@@ -1960,28 +1987,19 @@ const estimateStatements = (
         WHERE harvest_id = ? AND estimate_id = (SELECT id FROM estimates WHERE harvest_id = ?)`,
       bindings: [...messageRendered.bindings, messageId, harvestId],
     })
-    statements.push(
-      insertByHarvestId(
-        'estimate_messages',
-        [
-          'harvest_id',
-          'estimate_id',
-          'sent_by',
-          'sent_by_email',
-          'sent_from',
-          'sent_from_email',
-          'recipients',
-          'subject',
-          'body',
-          'send_me_a_copy',
-          'event_type',
-          'created_at',
-          'updated_at',
-        ],
-        messageCells,
-        messageId,
-      ),
-    )
+    const insertRendered = renderCells(messageCells)
+    statements.push({
+      sql: `INSERT INTO estimate_messages (
+          harvest_id, estimate_id, sent_by, sent_by_email, sent_from, sent_from_email,
+          recipients, subject, body, send_me_a_copy, event_type, created_at, updated_at
+        ) SELECT ${insertRendered.sql}
+        WHERE NOT EXISTS (
+          SELECT 1 FROM estimate_messages existing
+          WHERE existing.harvest_id = ?
+            AND existing.estimate_id = (SELECT id FROM estimates WHERE harvest_id = ?)
+        )`,
+      bindings: [...insertRendered.bindings, messageId, harvestId],
+    })
   }
   return statements
 }
@@ -2845,8 +2863,11 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
     if (resource === 'organization') {
       const statement = await organizationStatement(options.snapshotDir, manifest, options)
       const userCount = manifest.resources.users?.count ?? 0
-      const owner = (await rawChunk(options.snapshotDir, 'users', 0, userCount)).find(
-        (candidate) => safeIntegerAt(candidate, '/id', 'users.id') === manifest.preflight.user.id,
+      const owner = await findRawRowById(
+        options.snapshotDir,
+        'users',
+        userCount,
+        manifest.preflight.user.id,
       )
       if (!owner)
         throw new Error(
@@ -2870,7 +2891,9 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
     }
     const complex = resource === 'estimates' || resource === 'invoices' || resource === 'expenses'
     const limit =
-      complex || resource === 'roles' ? 1 : Math.min(options.maxRows ?? 100, total - offset)
+      complex || resource === 'roles'
+        ? 1
+        : Math.min(options.maxRows ?? 100, maxStatements - 1, total - offset)
     const rateBatch =
       resource === 'billable_rates' || resource === 'cost_rates'
         ? await rateLoadRows(options.snapshotDir, resource, digest, offset)
@@ -3043,6 +3066,17 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
         ? await lineageFor(options.snapshotDir, resource, digest, offset, rows)
         : undefined
     const statements: PlannedStatement[] = []
+    const taskBudgetByProject =
+      resource === 'task_assignments'
+        ? await projectBudgetBys(
+            options.database.$client,
+            rows.map((row) => {
+              const projectHarvestId = nestedId(row.row, 'project')
+              if (projectHarvestId === null) throw new Error('task assignment project is required')
+              return projectHarvestId
+            }),
+          )
+        : null
     let consumed = 0
     for (const [index, row] of rows.entries()) {
       const anomalyCount = anomalies.length
@@ -3050,14 +3084,9 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
       if (resource === 'task_assignments') {
         const projectHarvestId = nestedId(row.row, 'project')
         if (projectHarvestId === null) throw new Error('task assignment project is required')
-        const project = await first<{ budgetBy: string }>(
-          options.database.$client,
-          'SELECT budget_by AS budgetBy FROM projects WHERE harvest_id = ?',
-          [projectHarvestId],
-        )
-        if (project === null)
+        taskBudgetBy = taskBudgetByProject?.get(projectHarvestId)
+        if (taskBudgetBy === undefined)
           throw new Error(`project source id ${projectHarvestId} has not been loaded`)
-        taskBudgetBy = project.budgetBy
       }
       const planned = rowStatements(
         resource,
