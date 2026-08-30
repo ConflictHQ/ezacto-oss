@@ -448,6 +448,8 @@ const stableTestId = async (
 };
 
 for (const [runtime, factory] of factories) {
+  const slowRuntimeTimeout = runtime === "D1" ? 20_000 : undefined;
+
   describe(`money resource API (${runtime})`, () => {
     let active: Harness | undefined;
 
@@ -1700,7 +1702,7 @@ for (const [runtime, factory] of factories) {
           "SELECT id FROM invoice_payments WHERE invoice_id = 3",
         ),
       ).toHaveLength(0);
-    });
+    }, slowRuntimeTimeout);
 
     it("[api] returns retainer movement plus balance and makes retries stable", async () => {
       const test = await setup();
