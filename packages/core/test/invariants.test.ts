@@ -73,14 +73,23 @@ describe("domain invariant registry", () => {
       "inv-10",
       "inv-12",
       "inv-13",
+      "inv-14",
     ]);
     for (const definition of invariantRegistry) {
       if (definition.evidence.state === "executable") {
-        expect(definition.owner).toMatchObject({
-          story: "v0-prove-the-model/schema-core-domain/invariant-suite",
-          issue: 87,
-        });
-        expect(definition.evidence.runtimes).toEqual(["sqlite", "d1"]);
+        if (definition.id === "inv-14") {
+          expect(definition.owner).toMatchObject({
+            story: "v0-prove-the-model/load-reconcile/reconcile",
+            issue: 77,
+          });
+          expect(definition.evidence.runtimes).toEqual(["sqlite"]);
+        } else {
+          expect(definition.owner).toMatchObject({
+            story: "v0-prove-the-model/schema-core-domain/invariant-suite",
+            issue: 87,
+          });
+          expect(definition.evidence.runtimes).toEqual(["sqlite", "d1"]);
+        }
       }
     }
 
@@ -97,7 +106,10 @@ describe("domain invariant registry", () => {
         story: "v0-prove-the-model/load-reconcile/reconcile",
         issue: 77,
       },
-      evidence: { state: "downstream" },
+      evidence: {
+        state: "executable",
+        testFile: "packages/migrate/test/reconcile.test.ts",
+      },
     });
   });
 

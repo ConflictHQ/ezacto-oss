@@ -6,11 +6,14 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { writeManifest, type Manifest } from '../src/manifest.js'
 import { createRateLimiter } from '../src/rate-limiter.js'
+import { acquireSnapshotLock, releaseSnapshotLock } from '../src/snapshot-lock.js'
 import {
   REPORTS_RATE_LIMIT,
   REPORTS_RATE_WINDOW_MS,
+  reportChunkKey,
   runVerify,
   snapshotDigest,
+  splitReportRange,
   verifySnapshot,
 } from '../src/verify.js'
 import { preflight, resourceProgress } from './fixtures.js'
@@ -207,9 +210,11 @@ describe('report checksums', () => {
   let dir: string
   let server: Server
   let baseUrl: string
+  let requested: URL[]
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'ezacto-checksums-'))
+    requested = []
     await mkdir(join(dir, 'raw'))
     await writeFile(
       join(dir, 'raw', 'time_entries.jsonl'),
@@ -228,6 +233,7 @@ describe('report checksums', () => {
     })
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+      requested.push(url)
       const results =
         url.pathname === '/v2/reports/time/clients'
           ? [
@@ -262,6 +268,81 @@ describe('report checksums', () => {
     expect(JSON.parse(await readFile(join(dir, 'checksums.json'), 'utf8'))).toEqual(
       result.checksums,
     )
+    const next = await acquireSnapshotLock(dir, 'extract')
+    await releaseSnapshotLock(next)
+  })
+
+  it('[unit] splits inclusive report ranges at the 365-day Harvest boundary', () => {
+    const ordinary = splitReportRange({ from: '2023-01-01', to: '2023-12-31' })
+    expect(ordinary).toEqual([{ from: '2023-01-01', to: '2023-12-31' }])
+    expect(reportChunkKey('time/clients/2023', ordinary[0]!, ordinary.length)).toBe(
+      'time/clients/2023',
+    )
+
+    const leap = splitReportRange({ from: '2024-01-01', to: '2024-12-31' })
+    expect(leap).toEqual([
+      { from: '2024-01-01', to: '2024-12-30' },
+      { from: '2024-12-31', to: '2024-12-31' },
+    ])
+    expect(reportChunkKey('time/clients/2024', leap[0]!, leap.length)).toBe(
+      'time/clients/2024/2024-01-01..2024-12-30',
+    )
+  })
+
+  it('[api] requests a leap year in capped chunks and records deterministic keys', async () => {
+    await writeFile(
+      join(dir, 'raw', 'time_entries.jsonl'),
+      `${JSON.stringify(row(1, { spent_date: '2024-01-01' }))}\n`,
+    )
+    const result = await runVerify({
+      env: { pat: 'p', accountId: '42', userAgentEmail: 'e@example.com' },
+      snapshotDir: dir,
+      baseUrl,
+      now: () => new Date('2024-12-31T00:00:00.000Z'),
+    })
+
+    expect(
+      requested
+        .filter((url) => url.pathname === '/v2/reports/time/clients')
+        .map((url) => ({ from: url.searchParams.get('from'), to: url.searchParams.get('to') })),
+    ).toEqual([
+      { from: '2024-01-01', to: '2024-12-30' },
+      { from: '2024-12-31', to: '2024-12-31' },
+    ])
+    expect(Object.keys(result.checksums.reports)).toEqual(
+      expect.arrayContaining([
+        'time/clients/2024/2024-01-01..2024-12-30',
+        'time/clients/2024/2024-12-31..2024-12-31',
+      ]),
+    )
+    expect(result.checksums.reports['time/clients/2024']).toBeUndefined()
+  })
+
+  it('[unit] refuses verify while another snapshot owner is live', async () => {
+    const owner = await acquireSnapshotLock(dir, 'extract')
+    try {
+      await expect(
+        runVerify({
+          env: { pat: 'p', accountId: '42', userAgentEmail: 'e@example.com' },
+          snapshotDir: dir,
+          baseUrl,
+        }),
+      ).rejects.toThrow('snapshot is locked by extract')
+    } finally {
+      await releaseSnapshotLock(owner)
+    }
+  })
+
+  it('[unit] releases the snapshot lock when report collection fails', async () => {
+    await expect(
+      runVerify({
+        env: { pat: 'p', accountId: '42', userAgentEmail: 'e@example.com' },
+        snapshotDir: dir,
+        baseUrl: 'not-a-url',
+      }),
+    ).rejects.toThrow()
+    const next = await acquireSnapshotLock(dir, 'reconcile')
+    await releaseSnapshotLock(next)
   })
 
   it('[unit] reports limiter never grants more than 100 calls in any 15-minute window', async () => {

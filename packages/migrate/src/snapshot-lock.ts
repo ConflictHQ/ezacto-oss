@@ -1,5 +1,6 @@
-// A snapshot is one mutable artifact shared by auth, extract and sync. This
-// lock serializes their whole transactions, including sync's nested extract.
+// A snapshot is one mutable artifact shared by auth, extract, sync, verify,
+// load and reconcile. This lock serializes their whole transactions, including
+// sync's nested extract.
 
 import { mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import { hostname } from 'node:os'
@@ -9,7 +10,7 @@ import { createHash, randomUUID } from 'node:crypto'
 interface SnapshotLockOwner {
   pid: number
   host: string
-  command: 'auth' | 'extract' | 'sync' | 'load'
+  command: 'auth' | 'extract' | 'sync' | 'verify' | 'load' | 'reconcile'
   started_at: string
   token: string
 }
@@ -93,8 +94,12 @@ export const acquireSnapshotLock = async (
       typeof owner.pid !== 'number' ||
       typeof owner.host !== 'string' ||
       typeof owner.token !== 'string' ||
-      (owner.command !== 'auth' && owner.command !== 'extract' && owner.command !== 'sync' &&
-        owner.command !== 'load')
+      (owner.command !== 'auth' &&
+        owner.command !== 'extract' &&
+        owner.command !== 'sync' &&
+        owner.command !== 'verify' &&
+        owner.command !== 'load' &&
+        owner.command !== 'reconcile')
     ) {
       throw new Error('invalid owner')
     }
@@ -107,7 +112,9 @@ export const acquireSnapshotLock = async (
     )
   }
   if (pidIsLive(owner.pid)) {
-    throw new Error(`snapshot is locked by ${owner.command} (pid ${owner.pid}). Wait for it to finish.`)
+    throw new Error(
+      `snapshot is locked by ${owner.command} (pid ${owner.pid}). Wait for it to finish.`,
+    )
   }
 
   // Atomically move this exact stale generation out of the lock name. The

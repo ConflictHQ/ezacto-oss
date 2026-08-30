@@ -6,7 +6,9 @@
   "bin": {
     "ezacto-migrate": "./dist/cli.js"
   },
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
@@ -15,6 +17,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
+    "@ezacto/core": "0.0.0",
     "@ezacto/db": "0.0.0",
     "better-sqlite3": "^13.0.3"
   },
