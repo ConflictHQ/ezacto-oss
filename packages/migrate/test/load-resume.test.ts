@@ -174,43 +174,39 @@ const loadOutcome = async (rows: Rows): Promise<LoadOutcome> => {
   }
 }
 
-const protectedIdentities = async (rows: Rows): Promise<Record<string, Row[]>> => ({
-  clients: await rows(
-    `SELECT id, harvest_id, statement_key FROM clients
-     WHERE harvest_id IS NOT NULL ORDER BY harvest_id`,
-  ),
-  estimates: await rows(
-    `SELECT id, harvest_id FROM estimates WHERE harvest_id IS NOT NULL ORDER BY harvest_id`,
-  ),
-  estimateLines: await rows(
-    `SELECT id, harvest_id, estimate_id FROM estimate_line_items
-     WHERE harvest_id IS NOT NULL ORDER BY harvest_id`,
-  ),
-  estimateMessages: await rows(
-    `SELECT id, harvest_id, estimate_id FROM estimate_messages
-     WHERE harvest_id IS NOT NULL ORDER BY harvest_id`,
-  ),
-  invoices: await rows(
-    `SELECT id, harvest_id, client_key, reference_token, recurring_invoice_id, retainer_id
-     FROM invoices WHERE harvest_id IS NOT NULL ORDER BY harvest_id`,
-  ),
-  invoiceLines: await rows(
-    `SELECT id, harvest_id, invoice_id FROM invoice_line_items
-     WHERE harvest_id IS NOT NULL ORDER BY harvest_id`,
-  ),
-  invoiceMessages: await rows(
-    `SELECT id, harvest_id, invoice_id FROM invoice_messages
-     WHERE harvest_id IS NOT NULL ORDER BY harvest_id`,
-  ),
-  invoicePayments: await rows(
-    `SELECT id, harvest_id, invoice_id, provider_transaction_id
-     FROM invoice_payments WHERE harvest_id IS NOT NULL ORDER BY harvest_id`,
-  ),
-  receipts: await rows(
-    `SELECT source_expense_id, attachment_id FROM harvest_expense_receipts
-     ORDER BY source_expense_id`,
-  ),
-})
+const protectedIdentities = async (rows: Rows): Promise<Record<string, Row[]>> => {
+  const importedRows = await Promise.all(
+    HARVEST_ID_TABLES.map(async (name) => {
+      const table = quoteIdentifier(name)
+      return [
+        name,
+        await rows(
+          `SELECT * FROM ${table} WHERE harvest_id IS NOT NULL
+           ORDER BY CAST(harvest_id AS TEXT), id`,
+        ),
+      ] as const
+    }),
+  )
+  return {
+    ...Object.fromEntries(importedRows),
+    receipts: await rows(
+      `SELECT * FROM harvest_expense_receipts ORDER BY source_expense_id`,
+    ),
+    receiptAttachments: await rows(
+      `SELECT attachment.id AS attachment_id, attachment.file_object_id,
+         attachment.name, attachment.uploaded_by_user_id,
+         attachment.created_at AS attachment_created_at,
+         attachment.updated_at AS attachment_updated_at,
+         file.id AS file_id, file.content_hash, file.file_key, file.byte_size,
+         file.content_type, file.created_at AS file_created_at,
+         file.updated_at AS file_updated_at
+       FROM harvest_expense_receipts receipt
+       JOIN attachments attachment ON attachment.id = receipt.attachment_id
+       JOIN file_objects file ON file.id = attachment.file_object_id
+       ORDER BY receipt.source_expense_id`,
+    ),
+  }
+}
 
 const expectNoPendingLoadWork = async (rows: Rows): Promise<void> => {
   expect(
