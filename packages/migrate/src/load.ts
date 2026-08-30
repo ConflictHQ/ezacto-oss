@@ -13,7 +13,7 @@ import {
   type HarvestInvoiceReconciliation,
   type ImportDatabase,
 } from '@ezacto/db/importer'
-import { readIds, type ChildLineage } from './jsonl.js'
+import { type ChildLineage } from './jsonl.js'
 import { readManifest, type Manifest } from './manifest.js'
 import { RESOURCES } from './resources.js'
 import { acquireSnapshotLock, releaseSnapshotLock } from './snapshot-lock.js'
@@ -429,6 +429,10 @@ const ensureProgressSchema = async (database: RawDatabase): Promise<void> => {
     database,
     `SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = '_ezacto_load_subprogress'`,
   )
+  const rateProgressPresent = await first<{ present: number }>(
+    database,
+    `SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = '_ezacto_load_rate_progress'`,
+  )
   const statements: PlannedStatement[] = []
   if (!admissionPresent)
     statements.push({
@@ -479,6 +483,48 @@ const ensureProgressSchema = async (database: RawDatabase): Promise<void> => {
     ) STRICT`,
       bindings: [],
     })
+  if (!rateProgressPresent) {
+    statements.push(
+      {
+        sql: `CREATE TABLE _ezacto_load_rate_progress (
+        resource TEXT PRIMARY KEY,
+        snapshot_sha256 TEXT NOT NULL,
+        source_byte_offset INTEGER NOT NULL CHECK (source_byte_offset >= 0),
+        staged_rows INTEGER NOT NULL CHECK (staged_rows >= 0),
+        loaded_rows INTEGER NOT NULL CHECK (loaded_rows >= 0),
+        last_user_harvest_id INTEGER,
+        last_sort_start_date TEXT,
+        last_harvest_id INTEGER,
+        CHECK ((last_user_harvest_id IS NULL) = (last_sort_start_date IS NULL)),
+        CHECK ((last_user_harvest_id IS NULL) = (last_harvest_id IS NULL))
+      ) STRICT`,
+        bindings: [],
+      },
+      ...['_ezacto_load_billable_rates', '_ezacto_load_cost_rates'].flatMap(
+        (table): PlannedStatement[] => [
+          {
+            sql: `CREATE TABLE ${table} (
+            harvest_id INTEGER PRIMARY KEY,
+            source_row_index INTEGER NOT NULL UNIQUE CHECK (source_row_index >= 0),
+            user_harvest_id INTEGER NOT NULL,
+            amount_cents INTEGER NOT NULL,
+            start_date TEXT,
+            sort_start_date TEXT NOT NULL,
+            source_end_date TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          ) STRICT`,
+            bindings: [],
+          },
+          {
+            sql: `CREATE INDEX ${table}_load_order
+              ON ${table}(user_harvest_id, sort_start_date, harvest_id)`,
+            bindings: [],
+          },
+        ],
+      ),
+    )
+  }
   if (statements.length > 0) await execute(database, statements)
 }
 
@@ -703,6 +749,7 @@ const seconds = (
 }
 
 const CHILD_INDEX_RECORD_BYTES = 111
+const CHILD_INDEX_WORK_ROWS_PER_INVOCATION = 100
 
 interface ChildIndexRecord {
   parentId: number
@@ -716,6 +763,12 @@ interface ChildIndexRecord {
 
 const childIndexPath = (snapshotDir: string, resource: string, digest: string): string =>
   join(snapshotDir, 'raw', '.load-index', `${resource}.${digest}.idx`)
+
+const childIndexPartialPath = (snapshotDir: string, resource: string, digest: string): string =>
+  `${childIndexPath(snapshotDir, resource, digest)}.partial`
+
+const childIndexStatePath = (snapshotDir: string, resource: string, digest: string): string =>
+  `${childIndexPath(snapshotDir, resource, digest)}.state.json`
 
 const childIndexLine = (record: ChildIndexRecord): string => {
   const fields = [
@@ -734,50 +787,216 @@ const childIndexLine = (record: ChildIndexRecord): string => {
   return line
 }
 
-const buildChildIndex = async (
+interface IndexedLine {
+  line: string
+  startByte: number
+  endByte: number
+}
+
+interface LineCursor {
+  next(): Promise<IndexedLine | null>
+  close(): void
+}
+
+const lineCursor = (path: string, byteOffset: number): LineCursor => {
+  const lines = createInterface({
+    input: createReadStream(path, byteOffset === 0 ? undefined : { start: byteOffset }),
+    crlfDelay: Infinity,
+  })
+  const iterator = lines[Symbol.asyncIterator]()
+  let offset = byteOffset
+  return {
+    async next() {
+      for (;;) {
+        const next = await iterator.next()
+        if (next.done) return null
+        const startByte = offset
+        offset += Buffer.byteLength(next.value, 'utf8') + 1
+        if (next.value.trim()) return { line: next.value, startByte, endByte: offset }
+      }
+    },
+    close: () => lines.close(),
+  }
+}
+
+interface ActiveChildIndexParent {
+  parentId: number
+  startByte: number
+  lineageStartByte: number
+  startRow: number
+  count: number
+}
+
+interface ChildIndexBuildState {
+  version: 1
+  resource: string
+  digest: string
+  parentOrdinal: number
+  parentByteOffset: number
+  childByteOffset: number
+  lineageByteOffset: number
+  childRowOffset: number
+  indexRecords: number
+  activeParent: ActiveChildIndexParent | null
+}
+
+interface ChildIndexCandidate {
+  parentId: number
+  raw: IndexedLine
+  lineage: IndexedLine
+}
+
+const nonnegativeSafeInteger = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+
+const parseChildIndexBuildState = (
+  raw: string,
+  resource: string,
+  digest: string,
+): ChildIndexBuildState => {
+  const value = JSON.parse(raw) as Partial<ChildIndexBuildState>
+  const active = value.activeParent
+  if (
+    value.version !== 1 ||
+    value.resource !== resource ||
+    value.digest !== digest ||
+    !nonnegativeSafeInteger(value.parentOrdinal) ||
+    !nonnegativeSafeInteger(value.parentByteOffset) ||
+    !nonnegativeSafeInteger(value.childByteOffset) ||
+    !nonnegativeSafeInteger(value.lineageByteOffset) ||
+    !nonnegativeSafeInteger(value.childRowOffset) ||
+    !nonnegativeSafeInteger(value.indexRecords) ||
+    value.indexRecords !== value.parentOrdinal ||
+    (active !== null &&
+      (active === undefined ||
+        !nonnegativeSafeInteger(active.parentId) ||
+        active.parentId < 1 ||
+        !nonnegativeSafeInteger(active.startByte) ||
+        !nonnegativeSafeInteger(active.lineageStartByte) ||
+        !nonnegativeSafeInteger(active.startRow) ||
+        !nonnegativeSafeInteger(active.count)))
+  ) {
+    throw new Error(`${resource} child index checkpoint is corrupt`)
+  }
+  return value as ChildIndexBuildState
+}
+
+const writeChildIndexBuildState = async (
+  snapshotDir: string,
+  resource: string,
+  digest: string,
+  state: ChildIndexBuildState,
+): Promise<void> => {
+  const path = childIndexStatePath(snapshotDir, resource, digest)
+  const temporary = `${path}.${process.pid}.tmp`
+  const handle = await open(temporary, 'w')
+  try {
+    await handle.writeFile(`${JSON.stringify(state)}\n`, 'utf8')
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+  await rename(temporary, path)
+}
+
+const completedChildIndex = async (
+  snapshotDir: string,
+  resource: string,
+  digest: string,
+  parentCount: number,
+  childCount: number,
+): Promise<boolean> => {
+  try {
+    const handle = await open(childIndexPath(snapshotDir, resource, digest), 'r')
+    try {
+      if ((await handle.stat()).size !== parentCount * CHILD_INDEX_RECORD_BYTES) return false
+      if (parentCount === 0) return childCount === 0
+      const last = await readChildIndexRecord(handle, resource, parentCount - 1)
+      return last.startRow + last.count === childCount
+    } finally {
+      await handle.close()
+    }
+  } catch {
+    return false
+  }
+}
+
+interface ChildIndexAdvanceResult {
+  complete: boolean
+  workRows: number
+}
+
+const advanceChildIndex = async (
   snapshotDir: string,
   resource: string,
   parentResource: string,
   digest: string,
-): Promise<void> => {
-  const raw = createInterface({
-    input: createReadStream(join(snapshotDir, 'raw', `${resource}.jsonl`)),
-    crlfDelay: Infinity,
-  })
-  const lineage = createInterface({
-    input: createReadStream(join(snapshotDir, 'raw', `${resource}.lineage.jsonl`)),
-    crlfDelay: Infinity,
-  })
-  const rawIterator = raw[Symbol.asyncIterator]()
-  const lineageIterator = lineage[Symbol.asyncIterator]()
-  let rawOffset = 0
-  let lineageOffset = 0
-  let childRowOffset = 0
-  const nextLine = async (iterator: AsyncIterator<string>): Promise<string | null> => {
-    for (;;) {
-      const next = await iterator.next()
-      if (next.done) return null
-      if (next.value.trim()) return next.value
+  parentCount: number,
+  childCount: number,
+  workBudget: number,
+): Promise<ChildIndexAdvanceResult> => {
+  if (await completedChildIndex(snapshotDir, resource, digest, parentCount, childCount)) {
+    await rm(childIndexStatePath(snapshotDir, resource, digest), { force: true })
+    await rm(childIndexPartialPath(snapshotDir, resource, digest), { force: true })
+    return { complete: true, workRows: 0 }
+  }
+  await mkdir(join(snapshotDir, 'raw', '.load-index'), { recursive: true })
+  await rm(childIndexPath(snapshotDir, resource, digest), { force: true })
+  const statePath = childIndexStatePath(snapshotDir, resource, digest)
+  let state: ChildIndexBuildState
+  try {
+    state = parseChildIndexBuildState(await readFile(statePath, 'utf8'), resource, digest)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    await rm(childIndexPartialPath(snapshotDir, resource, digest), { force: true })
+    state = {
+      version: 1,
+      resource,
+      digest,
+      parentOrdinal: 0,
+      parentByteOffset: 0,
+      childByteOffset: 0,
+      lineageByteOffset: 0,
+      childRowOffset: 0,
+      indexRecords: 0,
+      activeParent: null,
     }
   }
-  const nextChild = async (): Promise<{
-    parentId: number
-    sourceId: number
-    startByte: number
-    endByte: number
-    lineageStartByte: number
-    lineageEndByte: number
-  } | null> => {
-    const [rawLine, lineageLine] = await Promise.all([
-      nextLine(rawIterator),
-      nextLine(lineageIterator),
-    ])
-    if (rawLine === null && lineageLine === null) return null
-    if (rawLine === null || lineageLine === null) {
+  if (state.parentOrdinal > parentCount || state.childRowOffset > childCount) {
+    throw new Error(`${resource} child index checkpoint exceeds the manifest`)
+  }
+  const partialPath = childIndexPartialPath(snapshotDir, resource, digest)
+  // The index file is always flushed before its state. A crash between those
+  // writes can only leave the file ahead, so resumption safely truncates it to
+  // the last durable record instead of rescanning any completed parent.
+  const output = await open(partialPath, state.indexRecords === 0 ? 'w+' : 'r+')
+  const expectedBytes = state.indexRecords * CHILD_INDEX_RECORD_BYTES
+  const partialBytes = (await output.stat()).size
+  if (partialBytes < expectedBytes) {
+    await output.close()
+    throw new Error(`${resource} child index checkpoint is truncated`)
+  }
+  if (partialBytes > expectedBytes) await output.truncate(expectedBytes)
+
+  const parent = lineCursor(
+    join(snapshotDir, 'raw', `${parentResource}.jsonl`),
+    state.parentByteOffset,
+  )
+  const raw = lineCursor(join(snapshotDir, 'raw', `${resource}.jsonl`), state.childByteOffset)
+  const lineage = lineCursor(
+    join(snapshotDir, 'raw', `${resource}.lineage.jsonl`),
+    state.lineageByteOffset,
+  )
+  let pendingChild: ChildIndexCandidate | null = null
+  let workRows = 0
+  const nextChild = async (): Promise<ChildIndexCandidate | null> => {
+    const [sourceLine, lineageLine] = await Promise.all([raw.next(), lineage.next()])
+    if (sourceLine === null && lineageLine === null) return null
+    if (sourceLine === null || lineageLine === null) {
       throw new Error(`${resource} raw data and lineage have different row counts`)
     }
-    const source = JSON.parse(rawLine) as Record<string, unknown>
-    const witness = JSON.parse(lineageLine) as Partial<ChildLineage>
+    const source = JSON.parse(sourceLine.line) as Record<string, unknown>
+    const witness = JSON.parse(lineageLine.line) as Partial<ChildLineage>
     if (
       !Number.isSafeInteger(source.id) ||
       !Number.isSafeInteger(witness.source_id) ||
@@ -787,67 +1006,91 @@ const buildChildIndex = async (
     ) {
       throw new Error(`${resource} lineage is misaligned while indexing`)
     }
-    const startByte = rawOffset
-    const lineageStartByte = lineageOffset
-    rawOffset += Buffer.byteLength(rawLine, 'utf8') + 1
-    lineageOffset += Buffer.byteLength(lineageLine, 'utf8') + 1
     return {
       parentId: witness.parent_id!,
-      sourceId: witness.source_id!,
-      startByte,
-      endByte: rawOffset,
-      lineageStartByte,
-      lineageEndByte: lineageOffset,
+      raw: sourceLine,
+      lineage: lineageLine,
     }
   }
-  const path = childIndexPath(snapshotDir, resource, digest)
-  await mkdir(join(snapshotDir, 'raw', '.load-index'), { recursive: true })
-  const temporary = `${path}.${process.pid}.tmp`
-  const output = await open(temporary, 'w')
   try {
-    let child = await nextChild()
-    let indexedRawOffset = 0
-    let indexedLineageOffset = 0
-    for await (const parentId of readIds(snapshotDir, parentResource)) {
-      const startByte = indexedRawOffset
-      const lineageStartByte = indexedLineageOffset
-      const startRow = childRowOffset
-      let count = 0
-      while (child !== null && child.parentId === parentId) {
-        count += 1
-        childRowOffset += 1
-        indexedRawOffset = child.endByte
-        indexedLineageOffset = child.lineageEndByte
-        child = await nextChild()
-      }
-      await output.writeFile(
-        childIndexLine({
+    while (workRows < workBudget) {
+      if (state.activeParent === null) {
+        if (state.parentOrdinal === parentCount) break
+        const sourceParent = await parent.next()
+        workRows += 1
+        if (sourceParent === null) {
+          throw new Error(`${parentResource} ended before manifest count ${parentCount}`)
+        }
+        const parentIdLiteral = numberLexemes(sourceParent.line).get('/id')
+        const parentId = parentIdLiteral === undefined ? Number.NaN : Number(parentIdLiteral)
+        if (!Number.isSafeInteger(parentId) || parentId < 1) {
+          throw new Error(`${parentResource} child-index parent id is invalid`)
+        }
+        state.parentByteOffset = sourceParent.endByte
+        state.activeParent = {
           parentId,
-          startByte,
-          endByte: indexedRawOffset,
-          lineageStartByte,
-          lineageEndByte: indexedLineageOffset,
-          startRow,
-          count,
+          startByte: state.childByteOffset,
+          lineageStartByte: state.lineageByteOffset,
+          startRow: state.childRowOffset,
+          count: 0,
+        }
+        if (workRows === workBudget) break
+      }
+
+      const active = state.activeParent
+      if (active === null) continue
+      const child: ChildIndexCandidate | null = pendingChild ?? (await nextChild())
+      if (pendingChild === null) workRows += 1
+      pendingChild = null
+      if (child !== null && child.parentId === active.parentId) {
+        state.childByteOffset = child.raw.endByte
+        state.lineageByteOffset = child.lineage.endByte
+        state.childRowOffset += 1
+        active.count += 1
+        continue
+      }
+      await output.write(
+        childIndexLine({
+          parentId: active.parentId,
+          startByte: active.startByte,
+          endByte: state.childByteOffset,
+          lineageStartByte: active.lineageStartByte,
+          lineageEndByte: state.lineageByteOffset,
+          startRow: active.startRow,
+          count: active.count,
         }),
+        state.indexRecords * CHILD_INDEX_RECORD_BYTES,
+        'utf8',
       )
-    }
-    if (child !== null) {
-      throw new Error(
-        `${resource} lineage parent ${child.parentId} is absent or out of parent extraction order`,
-      )
+      state.indexRecords += 1
+      state.parentOrdinal += 1
+      state.activeParent = null
+      pendingChild = child
     }
     await output.sync()
-  } catch (error) {
-    await output.close()
-    await rm(temporary, { force: true })
-    throw error
+    if (state.parentOrdinal === parentCount && state.activeParent === null) {
+      if (state.childRowOffset !== childCount) {
+        throw new Error(
+          `${resource} indexed ${state.childRowOffset} rows; manifest claims ${childCount}`,
+        )
+      }
+      await output.close()
+      await rename(partialPath, childIndexPath(snapshotDir, resource, digest))
+      await rm(statePath, { force: true })
+      return { complete: true, workRows }
+    }
+    await writeChildIndexBuildState(snapshotDir, resource, digest, state)
+    return { complete: false, workRows }
   } finally {
+    parent.close()
     raw.close()
     lineage.close()
+    try {
+      await output.close()
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EBADF') throw error
+    }
   }
-  await output.close()
-  await rename(temporary, path)
 }
 
 const parseChildIndexRecord = (line: string, resource: string): ChildIndexRecord => {
@@ -880,61 +1123,30 @@ const readChildIndexRecord = async (
   return parseChildIndexRecord(buffer.toString('utf8'), resource)
 }
 
-const buildChildIndexes = async (
+const advanceChildIndexes = async (
   snapshotDir: string,
   manifest: Manifest,
   digest: string,
-): Promise<void> => {
-  for (const step of RESOURCES) {
-    if (step.kind !== 'child' || (manifest.resources[step.name]?.count ?? 0) === 0) continue
-    await buildChildIndex(snapshotDir, step.name, step.parent, digest)
-  }
-}
-
-const ensureChildIndexes = async (
-  snapshotDir: string,
-  manifest: Manifest,
-  digest: string,
-): Promise<void> => {
+  workBudget: number,
+): Promise<boolean> => {
+  let remaining = Math.min(workBudget, CHILD_INDEX_WORK_ROWS_PER_INVOCATION)
   for (const step of RESOURCES) {
     const expectedCount = manifest.resources[step.name]?.count ?? 0
     if (step.kind !== 'child' || expectedCount === 0) continue
-    let valid = false
-    try {
-      const handle = await open(childIndexPath(snapshotDir, step.name, digest), 'r')
-      try {
-        const size = (await handle.stat()).size
-        const parentCount = manifest.resources[step.parent]?.count ?? 0
-        valid = size === parentCount * CHILD_INDEX_RECORD_BYTES
-        let previousEndByte = 0
-        let previousLineageEndByte = 0
-        let previousEndRow = 0
-        for (let ordinal = 0; valid && ordinal < parentCount; ordinal += 1) {
-          const record = await readChildIndexRecord(handle, step.name, ordinal)
-          valid =
-            record.parentId > 0 &&
-            record.startByte === previousEndByte &&
-            record.lineageStartByte === previousLineageEndByte &&
-            record.startRow === previousEndRow &&
-            record.endByte >= record.startByte &&
-            record.lineageEndByte >= record.lineageStartByte &&
-            record.count >= 0 &&
-            (record.count > 0 ||
-              (record.endByte === record.startByte &&
-                record.lineageEndByte === record.lineageStartByte))
-          previousEndByte = record.endByte
-          previousLineageEndByte = record.lineageEndByte
-          previousEndRow = record.startRow + record.count
-        }
-        valid &&= previousEndRow === expectedCount
-      } finally {
-        await handle.close()
-      }
-    } catch {
-      valid = false
-    }
-    if (!valid) await buildChildIndex(snapshotDir, step.name, step.parent, digest)
+    if (remaining < 1) return false
+    const advanced = await advanceChildIndex(
+      snapshotDir,
+      step.name,
+      step.parent,
+      digest,
+      manifest.resources[step.parent]?.count ?? 0,
+      expectedCount,
+      remaining,
+    )
+    remaining -= advanced.workRows
+    if (!advanced.complete) return false
   }
+  return true
 }
 
 const findChildIndex = async (
@@ -1113,20 +1325,82 @@ const lineageFor = async (
   return lineage
 }
 
-interface RateLoadContext {
-  expectedEndDate: string | null
+type RateResource = 'billable_rates' | 'cost_rates'
+
+interface RateStageProgress {
+  snapshotSha256: string
+  sourceByteOffset: number
+  stagedRows: number
+  loadedRows: number
+  lastUserHarvestId: number | null
+  lastSortStartDate: string | null
+  lastHarvestId: number | null
 }
 
-interface RateLoadRow {
-  source: RawRow
-  lineage: ChildLineage
-  context: RateLoadContext
+interface StagedRate {
+  harvestId: number
+  userHarvestId: number
+  amountCents: number
+  startDate: string | null
+  sortStartDate: string
+  sourceEndDate: string | null
+  createdAt: string
+  updatedAt: string
 }
 
-interface RateLoadBatch {
-  rows: RateLoadRow[]
-  record: ChildIndexRecord
-}
+const rateStageTable = (resource: RateResource): string =>
+  resource === 'billable_rates' ? '_ezacto_load_billable_rates' : '_ezacto_load_cost_rates'
+
+const rateTargetTable = (resource: RateResource): string =>
+  resource === 'billable_rates' ? 'user_billable_rates' : 'user_cost_rates'
+
+const rateStageProgress = async (
+  database: RawDatabase,
+  resource: RateResource,
+): Promise<RateStageProgress | null> =>
+  first<RateStageProgress>(
+    database,
+    `SELECT snapshot_sha256 AS snapshotSha256, source_byte_offset AS sourceByteOffset,
+      staged_rows AS stagedRows, loaded_rows AS loadedRows,
+      last_user_harvest_id AS lastUserHarvestId,
+      last_sort_start_date AS lastSortStartDate, last_harvest_id AS lastHarvestId
+    FROM _ezacto_load_rate_progress WHERE resource = ?`,
+    [resource],
+  )
+
+const rateStageProgressStatement = (
+  resource: RateResource,
+  digest: string,
+  sourceByteOffset: number,
+  stagedRows: number,
+  loadedRows: number,
+  lastUserHarvestId: number | null,
+  lastSortStartDate: string | null,
+  lastHarvestId: number | null,
+): PlannedStatement => ({
+  sql: `INSERT INTO _ezacto_load_rate_progress (
+      resource, snapshot_sha256, source_byte_offset, staged_rows, loaded_rows,
+      last_user_harvest_id, last_sort_start_date, last_harvest_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(resource) DO UPDATE SET
+      source_byte_offset = excluded.source_byte_offset,
+      staged_rows = excluded.staged_rows,
+      loaded_rows = excluded.loaded_rows,
+      last_user_harvest_id = excluded.last_user_harvest_id,
+      last_sort_start_date = excluded.last_sort_start_date,
+      last_harvest_id = excluded.last_harvest_id
+    WHERE _ezacto_load_rate_progress.snapshot_sha256 = excluded.snapshot_sha256`,
+  bindings: [
+    resource,
+    digest,
+    sourceByteOffset,
+    stagedRows,
+    loadedRows,
+    lastUserHarvestId,
+    lastSortStartDate,
+    lastHarvestId,
+  ],
+})
 
 const dayBefore = (value: string): string => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error(`rate start_date ${value} is invalid`)
@@ -1135,67 +1409,228 @@ const dayBefore = (value: string): string => {
   return new Date(milliseconds - 86_400_000).toISOString().slice(0, 10)
 }
 
-const rateLoadRows = async (
-  snapshotDir: string,
-  resource: 'billable_rates' | 'cost_rates',
-  digest: string,
-  rowOffset: number,
-): Promise<RateLoadBatch> => {
-  const [slice] = await childIndexSlices(snapshotDir, resource, digest, rowOffset, 1)
-  if (!slice) throw new Error(`${resource} child row ${rowOffset} is absent from its index`)
-  const { record } = slice
-  const chunk = await rawChunkFrom(
-    snapshotDir,
-    resource,
-    record.startByte,
-    record.startRow,
-    record.count,
-  )
-  const sourceLineage = await lineageChunkFrom(snapshotDir, resource, record, 0, record.count)
-  for (const [index, witness] of sourceLineage.entries()) {
-    if (witness.source_id !== safeIntegerAt(chunk.rows[index]!, '/id', `${resource}.id`)) {
-      throw new Error(`${resource} child lineage is misaligned`)
-    }
-  }
-  const sorted = chunk.rows
-    .map((source, index) => ({ source, lineage: sourceLineage[index]! }))
-    .sort((left, right) => {
-      const leftStart = stringValue(left.source.row, 'start_date') ?? ''
-      const rightStart = stringValue(right.source.row, 'start_date') ?? ''
-      return (
-        leftStart.localeCompare(rightStart) ||
-        safeIntegerAt(left.source, '/id', `${resource}.id`) -
-          safeIntegerAt(right.source, '/id', `${resource}.id`)
-      )
-    })
-  const expectedEndDate = new Map<number, string | null>()
-  for (const [index, pair] of sorted.entries()) {
-    const nextStart =
-      index + 1 < sorted.length ? stringValue(sorted[index + 1]!.source.row, 'start_date') : null
-    expectedEndDate.set(
-      safeIntegerAt(pair.source, '/id', `${resource}.id`),
-      nextStart === null ? null : dayBefore(nextStart),
+const stagedRates = async (
+  database: RawDatabase,
+  resource: RateResource,
+  cursor: Pick<RateStageProgress, 'lastUserHarvestId' | 'lastSortStartDate' | 'lastHarvestId'>,
+  limit: number,
+): Promise<StagedRate[]> => {
+  const table = rateStageTable(resource)
+  const columns = `harvest_id AS harvestId, user_harvest_id AS userHarvestId,
+    amount_cents AS amountCents, start_date AS startDate,
+    sort_start_date AS sortStartDate, source_end_date AS sourceEndDate,
+    created_at AS createdAt, updated_at AS updatedAt`
+  if (cursor.lastUserHarvestId === null) {
+    return all<StagedRate>(
+      database,
+      `SELECT ${columns} FROM ${table}
+       ORDER BY user_harvest_id, sort_start_date, harvest_id LIMIT ?`,
+      [limit],
     )
   }
+  return all<StagedRate>(
+    database,
+    `SELECT ${columns} FROM ${table}
+     WHERE (user_harvest_id, sort_start_date, harvest_id) > (?, ?, ?)
+     ORDER BY user_harvest_id, sort_start_date, harvest_id LIMIT ?`,
+    [cursor.lastUserHarvestId, cursor.lastSortStartDate, cursor.lastHarvestId, limit],
+  )
+}
+
+const loadRateChunk = async (
+  options: LoadNextChunkOptions,
+  resource: RateResource,
+  digest: string,
+  loadOptionsJson: string,
+  timestamp: string,
+  total: number,
+  maxStatements: number,
+): Promise<LoadChunkResult> => {
+  const prior = await rateStageProgress(options.database.$client, resource)
+  if (prior !== null && prior.snapshotSha256 !== digest) {
+    throw new Error(`${resource} staging progress belongs to a different snapshot`)
+  }
+  const stage =
+    prior ??
+    ({
+      snapshotSha256: digest,
+      sourceByteOffset: 0,
+      stagedRows: 0,
+      loadedRows: 0,
+      lastUserHarvestId: null,
+      lastSortStartDate: null,
+      lastHarvestId: null,
+    } satisfies RateStageProgress)
+  if (stage.stagedRows < total) {
+    // Harvest does not promise chronological rate history. Stage source-order
+    // windows durably, then let this indexed table provide a keyset-ordered
+    // stream; no invocation retains or re-sorts a whole user's history.
+    const limit = Math.min(options.maxRows ?? 100, maxStatements - 1, total - stage.stagedRows)
+    if (limit < 1) throw new Error(`${resource} has no staging statement budget`)
+    const chunk = await rawChunkFrom(
+      options.snapshotDir,
+      resource,
+      stage.sourceByteOffset,
+      stage.stagedRows,
+      limit,
+    )
+    if (chunk.rows.length === 0) throw new Error(`${resource} ended before manifest count ${total}`)
+    const lineage = await lineageFor(
+      options.snapshotDir,
+      resource,
+      digest,
+      stage.stagedRows,
+      chunk.rows,
+    )
+    const table = rateStageTable(resource)
+    const statements = chunk.rows.map((source, index) => {
+      const witness = lineage[index]
+      const harvestId = safeIntegerAt(source, '/id', `${resource}.id`)
+      if (witness?.source_id !== harvestId) throw new Error(`${resource} lineage is misaligned`)
+      const startDate = stringValue(source.row, 'start_date')
+      return insertByHarvestId(
+        table,
+        [
+          'harvest_id',
+          'source_row_index',
+          'user_harvest_id',
+          'amount_cents',
+          'start_date',
+          'sort_start_date',
+          'source_end_date',
+          'created_at',
+          'updated_at',
+        ],
+        [
+          harvestId,
+          source.index,
+          witness.parent_id,
+          moneyLiteralToCents(numberAt(source, '/amount'), `${resource}.amount`),
+          startDate,
+          startDate ?? '',
+          stringValue(source.row, 'end_date'),
+          requiredText(source.row, 'created_at'),
+          requiredText(source.row, 'updated_at'),
+        ],
+        harvestId,
+      )
+    })
+    statements.push(
+      rateStageProgressStatement(
+        resource,
+        digest,
+        chunk.nextByteOffset,
+        stage.stagedRows + chunk.rows.length,
+        stage.loadedRows,
+        stage.lastUserHarvestId,
+        stage.lastSortStartDate,
+        stage.lastHarvestId,
+      ),
+    )
+    await execute(options.database.$client, statements)
+    return {
+      complete: false,
+      resource,
+      loadedRows: 0,
+      statements: statements.length,
+      snapshotSha256: digest,
+      anomalies: [],
+    }
+  }
+
+  const capacity = Math.floor((maxStatements - 3) / 2)
+  if (capacity < 1) throw new Error(`${resource} has no load statement budget`)
+  const take = Math.min(options.maxRows ?? 100, capacity, total - stage.loadedRows)
+  const ordered = await stagedRates(options.database.$client, resource, stage, take + 1)
+  const selected = ordered.slice(0, take)
+  if (selected.length === 0) {
+    throw new Error(`${resource} staging ended before manifest count ${total}`)
+  }
+  const anomalies: LoadAnomaly[] = []
+  const target = rateTargetTable(resource)
+  const statements: PlannedStatement[] = selected.map((rate, index) => {
+    const next = ordered[index + 1]
+    const expectedEndDate =
+      next?.userHarvestId === rate.userHarvestId && next.startDate !== null
+        ? dayBefore(next.startDate)
+        : null
+    if (rate.sourceEndDate !== expectedEndDate) {
+      anomalies.push({
+        resource,
+        source_id: rate.harvestId,
+        kind: 'rate_chain_mismatch',
+        detail: `source end_date=${rate.sourceEndDate ?? 'null'}; derived end_date=${expectedEndDate ?? 'null'}`,
+      })
+    }
+    return insertByHarvestId(
+      target,
+      ['harvest_id', 'user_id', 'amount_cents', 'start_date', 'created_at', 'updated_at'],
+      [
+        rate.harvestId,
+        idFrom('users', rate.userHarvestId),
+        rate.amountCents,
+        rate.startDate,
+        rate.createdAt,
+        rate.updatedAt,
+      ],
+      rate.harvestId,
+    )
+  })
+  const last = selected[selected.length - 1]!
+  const loaded = stage.loadedRows + selected.length
+  const complete = loaded === total
+  statements.push(...anomalyStatements(digest, anomalies))
+  if (complete) {
+    statements.push(
+      { sql: `DELETE FROM ${rateStageTable(resource)}`, bindings: [] },
+      { sql: 'DELETE FROM _ezacto_load_rate_progress WHERE resource = ?', bindings: [resource] },
+    )
+  } else {
+    statements.push(
+      rateStageProgressStatement(
+        resource,
+        digest,
+        stage.sourceByteOffset,
+        stage.stagedRows,
+        loaded,
+        last.userHarvestId,
+        last.sortStartDate,
+        last.harvestId,
+      ),
+    )
+  }
+  statements.push(
+    progressStatement(
+      resource,
+      digest,
+      loadOptionsJson,
+      stage.sourceByteOffset,
+      loaded,
+      total,
+      complete,
+      timestamp,
+    ),
+  )
+  await execute(options.database.$client, statements)
   return {
-    record,
-    rows: sorted.map((pair) => ({
-      ...pair,
-      context: {
-        expectedEndDate:
-          expectedEndDate.get(safeIntegerAt(pair.source, '/id', `${resource}.id`)) ?? null,
-      },
-    })),
+    complete: false,
+    resource,
+    loadedRows: selected.length,
+    statements: statements.length,
+    snapshotSha256: digest,
+    anomalies,
   }
 }
 
 const rowStatements = (
-  resource: Exclude<LoadResource, 'organization' | 'estimates' | 'invoices' | 'expenses'>,
+  resource: Exclude<
+    LoadResource,
+    'organization' | 'billable_rates' | 'cost_rates' | 'estimates' | 'invoices' | 'expenses'
+  >,
   source: RawRow,
   manifest: Manifest,
   anomalies: LoadAnomaly[],
   lineage?: ChildLineage,
-  rateContext?: RateLoadContext,
   taskBudgetBy?: string,
   childOffset = 0,
   childLimit = Number.POSITIVE_INFINITY,
@@ -1265,37 +1700,6 @@ const rowStatements = (
                 WHERE existing.user_id = user.id AND lower(existing.address) = lower(?))`,
           bindings: [email, createdAt, createdAt, updatedAt, harvestId, email],
         },
-      ]
-    }
-    case 'billable_rates':
-    case 'cost_rates': {
-      if (!lineage || lineage.source_id !== harvestId)
-        throw new Error(`${resource} lineage is misaligned`)
-      if (!rateContext) throw new Error(`${resource} derived-chain context is missing`)
-      const sourceEndDate = stringValue(row, 'end_date')
-      if (sourceEndDate !== rateContext.expectedEndDate) {
-        anomalies.push({
-          resource,
-          source_id: harvestId,
-          kind: 'rate_chain_mismatch',
-          detail: `source end_date=${sourceEndDate ?? 'null'}; derived end_date=${rateContext.expectedEndDate ?? 'null'}`,
-        })
-      }
-      const table = resource === 'billable_rates' ? 'user_billable_rates' : 'user_cost_rates'
-      return [
-        insertByHarvestId(
-          table,
-          ['harvest_id', 'user_id', 'amount_cents', 'start_date', 'created_at', 'updated_at'],
-          [
-            harvestId,
-            idFrom('users', lineage.parent_id),
-            moneyLiteralToCents(numberAt(source, '/amount'), `${resource}.amount`),
-            stringValue(row, 'start_date'),
-            createdAt,
-            updatedAt,
-          ],
-          harvestId,
-        ),
       ]
     }
     case 'roles': {
@@ -2386,6 +2790,11 @@ interface LoadAdmission {
   loadOptionsJson: string
 }
 
+interface SnapshotAdmission {
+  snapshotSha256: string
+  indexingComplete: boolean
+}
+
 const processAdmissions = new WeakMap<object, string>()
 
 const checksumDigest = async (snapshotDir: string): Promise<string> => {
@@ -2413,7 +2822,7 @@ const admitSnapshot = async (
   manifest: Manifest,
   loadOptionsJson: string,
   timestamp: string,
-): Promise<string> => {
+): Promise<SnapshotAdmission> => {
   const expectedDigest = await checksumDigest(options.snapshotDir)
   if (isD1(options.database.$client) && options.immutableSnapshotSha256 !== expectedDigest) {
     throw new Error('D1 load requires immutableSnapshotSha256 matching checksums.json')
@@ -2448,10 +2857,17 @@ const admitSnapshot = async (
           throw new Error('snapshot bytes changed after their persisted load admission')
         }
       }
-      await ensureChildIndexes(options.snapshotDir, manifest, expectedDigest)
       processAdmissions.set(options.database.$client, expectedDigest)
     }
-    return existing.snapshotSha256
+    return {
+      snapshotSha256: existing.snapshotSha256,
+      indexingComplete: await advanceChildIndexes(
+        options.snapshotDir,
+        manifest,
+        expectedDigest,
+        CHILD_INDEX_WORK_ROWS_PER_INVOCATION,
+      ),
+    }
   }
 
   const externallyPinned =
@@ -2469,7 +2885,14 @@ const admitSnapshot = async (
       throw new Error('snapshot has not passed verify, or changed since checksums.json was written')
     }
   }
-  await buildChildIndexes(options.snapshotDir, manifest, actualDigest)
+  processAdmissions.set(options.database.$client, actualDigest)
+  const indexingComplete = await advanceChildIndexes(
+    options.snapshotDir,
+    manifest,
+    actualDigest,
+    CHILD_INDEX_WORK_ROWS_PER_INVOCATION,
+  )
+  if (!indexingComplete) return { snapshotSha256: actualDigest, indexingComplete: false }
   await execute(options.database.$client, [
     {
       sql: `INSERT INTO _ezacto_load_admission
@@ -2491,8 +2914,7 @@ const admitSnapshot = async (
   ) {
     throw new Error('concurrent load admission selected a different snapshot or load options')
   }
-  processAdmissions.set(options.database.$client, actualDigest)
-  return actualDigest
+  return { snapshotSha256: actualDigest, indexingComplete: true }
 }
 
 const loadExpense = async (
@@ -2816,7 +3238,18 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
       `maxStatements must be between 2 and ${maximumStatements}; D1 reserves query overhead`,
     )
   }
-  const digest = await admitSnapshot(options, manifest, loadOptionsJson, timestamp)
+  const admission = await admitSnapshot(options, manifest, loadOptionsJson, timestamp)
+  const digest = admission.snapshotSha256
+  if (!admission.indexingComplete) {
+    return {
+      complete: false,
+      resource: null,
+      loadedRows: 0,
+      statements: 0,
+      snapshotSha256: digest,
+      anomalies: [],
+    }
+  }
   const existing = await all<{ resource: string; digest: string; options: string }>(
     options.database.$client,
     'SELECT resource, snapshot_sha256 AS digest, load_options_json AS options FROM _ezacto_load_progress',
@@ -2860,6 +3293,17 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
         anomalies,
       }
     }
+    if (resource === 'billable_rates' || resource === 'cost_rates') {
+      return loadRateChunk(
+        options,
+        resource,
+        digest,
+        loadOptionsJson,
+        timestamp,
+        total,
+        maxStatements,
+      )
+    }
     if (resource === 'organization') {
       const statement = await organizationStatement(options.snapshotDir, manifest, options)
       const userCount = manifest.resources.users?.count ?? 0
@@ -2894,67 +3338,15 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
       complex || resource === 'roles'
         ? 1
         : Math.min(options.maxRows ?? 100, maxStatements - 1, total - offset)
-    const rateBatch =
-      resource === 'billable_rates' || resource === 'cost_rates'
-        ? await rateLoadRows(options.snapshotDir, resource, digest, offset)
-        : undefined
-    const sourceChunk =
-      rateBatch === undefined
-        ? await rawChunkFrom(
-            options.snapshotDir,
-            resource,
-            prior?.sourceByteOffset ?? 0,
-            offset,
-            limit,
-          )
-        : null
-    const rows = rateBatch?.rows.map((rate) => rate.source) ?? sourceChunk!.rows
+    const sourceChunk = await rawChunkFrom(
+      options.snapshotDir,
+      resource,
+      prior?.sourceByteOffset ?? 0,
+      offset,
+      limit,
+    )
+    const rows = sourceChunk.rows
     if (rows.length === 0) throw new Error(`${resource} ended before manifest count ${total}`)
-    if (rateBatch !== undefined && (resource === 'billable_rates' || resource === 'cost_rates')) {
-      const rowIndex = rateBatch.record.startRow
-      const priorChild = await subprogress(options.database.$client, resource, rowIndex)
-      const childOffset = priorChild?.childOffset ?? 0
-      if (childOffset > rateBatch.rows.length)
-        throw new Error('rate checkpoint exceeds its indexed group')
-      const capacity = Math.floor((maxStatements - 2) / 2)
-      if (capacity < 1) throw new Error('rate group has no row statement budget')
-      const take = Math.min(options.maxRows ?? 100, capacity, rateBatch.rows.length - childOffset)
-      const statements: PlannedStatement[] = []
-      for (const rate of rateBatch.rows.slice(childOffset, childOffset + take)) {
-        statements.push(
-          ...rowStatements(resource, rate.source, manifest, anomalies, rate.lineage, rate.context),
-        )
-      }
-      const complete = childOffset + take === rateBatch.rows.length
-      const loaded = offset + (complete ? rateBatch.record.count : 0)
-      statements.push(...anomalyStatements(digest, anomalies))
-      if (complete) {
-        statements.push(deleteSubprogressStatement(resource, rowIndex))
-        statements.push(
-          progressStatement(
-            resource,
-            digest,
-            loadOptionsJson,
-            rateBatch.record.endByte,
-            loaded,
-            total,
-            loaded === total,
-            timestamp,
-          ),
-        )
-      } else {
-        statements.push(subprogressStatement(resource, rowIndex, childOffset + take, 0, 0))
-      }
-      await execute(options.database.$client, statements)
-      return {
-        complete: false,
-        resource,
-        loadedRows: complete ? rateBatch.record.count : 0,
-        statements: statements.length,
-        snapshotSha256: digest,
-        anomalies,
-      }
-    }
     if (resource === 'roles') {
       const row = rows[0]!
       const userIds = row.row.user_ids
@@ -2975,7 +3367,6 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
         row,
         manifest,
         anomalies,
-        undefined,
         undefined,
         undefined,
         childOffset,
@@ -3094,7 +3485,6 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
         manifest,
         anomalies,
         lineage?.[index],
-        undefined,
         taskBudgetBy,
       )
       if (statements.length + planned.length + anomalies.length + 1 > maxStatements) {

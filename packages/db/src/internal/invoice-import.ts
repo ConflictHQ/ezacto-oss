@@ -248,6 +248,46 @@ interface Statement {
   params: Array<string | number | null>
 }
 
+type ImportOperationKind = 'line' | 'message' | 'payment'
+type ImportOperationAction = 'insert' | 'update' | 'delete'
+
+const importOperationStatements = (
+  input: Pick<ReconcileImportedInvoiceInput, 'invoiceId' | 'sourceUpdatedAt'>,
+  inputFingerprint: string,
+  resourceKind: ImportOperationKind,
+  action: ImportOperationAction,
+  harvestId: number,
+  nativeId: number | null,
+  oldUpdatedAt: string | null,
+  newUpdatedAt: string | null,
+  mutation: Statement,
+): Statement[] => [
+  {
+    text: `INSERT INTO invoice_import_operations (
+      invoice_id, source_updated_at, resource_kind, action, harvest_id,
+      native_id, old_updated_at, new_updated_at, input_fingerprint
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    params: [
+      input.invoiceId,
+      input.sourceUpdatedAt,
+      resourceKind,
+      action,
+      harvestId,
+      nativeId,
+      oldUpdatedAt,
+      newUpdatedAt,
+      inputFingerprint,
+    ],
+  },
+  mutation,
+  {
+    text: `UPDATE invoice_import_operations SET completed = 1
+      WHERE invoice_id = ? AND source_updated_at = ? AND resource_kind = ?
+        AND action = ? AND harvest_id = ? AND completed = 0`,
+    params: [input.invoiceId, input.sourceUpdatedAt, resourceKind, action, harvestId],
+  },
+]
+
 const d1StatementLimit = 1000
 const d1ReconciliationQueryOverhead = 6
 const d1AtomicStatementLimit = d1StatementLimit - d1ReconciliationQueryOverhead
@@ -414,6 +454,90 @@ const samePaymentIdentityAndProvenance = (left: StoredPayment, right: StoredPaym
   left.providerTransactionId === right.providerTransactionId &&
   left.createdAt === right.createdAt
 
+const paymentInsertStatement = (
+  invoiceId: number,
+  currency: string,
+  payment: StoredPayment,
+): Statement =>
+  payment.id === 0
+    ? {
+        text: `INSERT INTO invoice_payments (
+          harvest_id, invoice_id, currency, amount_cents, paid_at, paid_date,
+          source_paid_at, source_paid_date, source_recorded_by_name,
+          source_recorded_by_email, source_gateway_id, source_gateway_name, notes,
+          recorded_by_user_id, provider, provider_shape, provider_transaction_id,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', 'manual', ?, ?, ?)`,
+        params: [
+          payment.harvestId,
+          invoiceId,
+          currency,
+          payment.amountCents,
+          payment.paidAt,
+          payment.paidDate,
+          payment.sourcePaidAt,
+          payment.sourcePaidDate,
+          payment.sourceRecordedByName,
+          payment.sourceRecordedByEmail,
+          payment.sourceGatewayId,
+          payment.sourceGatewayName,
+          payment.notes,
+          payment.recordedByUserId,
+          payment.providerTransactionId,
+          payment.createdAt,
+          payment.updatedAt,
+        ],
+      }
+    : {
+        text: `INSERT INTO invoice_payments (
+          id, harvest_id, invoice_id, currency, amount_cents, paid_at, paid_date,
+          source_paid_at, source_paid_date, source_recorded_by_name,
+          source_recorded_by_email, source_gateway_id, source_gateway_name, notes,
+          recorded_by_user_id, provider, provider_shape, provider_transaction_id,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', 'manual', ?, ?, ?)`,
+        params: [
+          payment.id,
+          payment.harvestId,
+          invoiceId,
+          currency,
+          payment.amountCents,
+          payment.paidAt,
+          payment.paidDate,
+          payment.sourcePaidAt,
+          payment.sourcePaidDate,
+          payment.sourceRecordedByName,
+          payment.sourceRecordedByEmail,
+          payment.sourceGatewayId,
+          payment.sourceGatewayName,
+          payment.notes,
+          payment.recordedByUserId,
+          payment.providerTransactionId,
+          payment.createdAt,
+          payment.updatedAt,
+        ],
+      }
+
+const paymentUpdateStatement = (
+  invoiceId: number,
+  existing: StoredPayment,
+  incoming: StoredPayment,
+): Statement => ({
+  text: `UPDATE invoice_payments SET
+    amount_cents = ?, notes = ?, recorded_by_user_id = ?, updated_at = ?
+    WHERE invoice_id = ? AND harvest_id = ? AND id = ? AND updated_at = ?`,
+  params: [
+    incoming.amountCents,
+    incoming.notes,
+    incoming.recordedByUserId,
+    incoming.updatedAt,
+    invoiceId,
+    existing.harvestId,
+    existing.id,
+    existing.updatedAt,
+  ],
+})
+
 const canonicalMessage = (message: ImportedInvoiceMessage): StoredMessage => {
   assertTimestamp(message.createdAt, 'message.createdAt')
   assertTimestamp(message.updatedAt, 'message.updatedAt')
@@ -478,7 +602,72 @@ const sameMessageIdentityAndSender = (left: StoredMessage, right: StoredMessage)
   left.sentBy === right.sentBy &&
   left.sentByEmail === right.sentByEmail &&
   left.sentFrom === right.sentFrom &&
-  left.sentFromEmail === right.sentFromEmail
+  left.sentFromEmail === right.sentFromEmail &&
+  left.createdAt === right.createdAt
+
+const messageInsertStatement = (invoiceId: number, message: StoredMessage): Statement => {
+  const columns = `harvest_id, invoice_id, sent_by, sent_by_email, sent_from, sent_from_email,
+    recipients, subject, body, attach_pdf, send_me_a_copy, thank_you, reminder,
+    send_reminder_on, event_type, delivery_status, provider_message_id, created_at, updated_at`
+  const values: Array<string | number | null> = [
+    message.harvestId,
+    invoiceId,
+    message.sentBy,
+    message.sentByEmail,
+    message.sentFrom,
+    message.sentFromEmail,
+    message.recipients,
+    message.subject,
+    message.body,
+    message.attachPdf,
+    message.sendMeACopy,
+    message.thankYou,
+    message.reminder,
+    message.sendReminderOn,
+    message.eventType,
+    message.deliveryStatus,
+    message.providerMessageId,
+    message.createdAt,
+    message.updatedAt,
+  ]
+  return message.id === 0
+    ? {
+        text: `INSERT INTO invoice_messages (${columns}) VALUES (${values.map(() => '?').join(', ')})`,
+        params: values,
+      }
+    : {
+        text: `INSERT INTO invoice_messages (id, ${columns})
+          VALUES (?, ${values.map(() => '?').join(', ')})`,
+        params: [message.id, ...values],
+      }
+}
+
+const messageUpdateStatement = (
+  invoiceId: number,
+  existing: StoredMessage,
+  incoming: StoredMessage,
+): Statement => ({
+  text: `UPDATE invoice_messages SET
+    recipients = ?, subject = ?, body = ?, attach_pdf = ?, send_me_a_copy = ?,
+    thank_you = ?, reminder = ?, send_reminder_on = ?, event_type = ?, updated_at = ?
+    WHERE invoice_id = ? AND harvest_id = ? AND id = ? AND updated_at = ?`,
+  params: [
+    incoming.recipients,
+    incoming.subject,
+    incoming.body,
+    incoming.attachPdf,
+    incoming.sendMeACopy,
+    incoming.thankYou,
+    incoming.reminder,
+    incoming.sendReminderOn,
+    incoming.eventType,
+    incoming.updatedAt,
+    invoiceId,
+    existing.harvestId,
+    existing.id,
+    existing.updatedAt,
+  ],
+})
 
 const canonicalLine = (line: ImportedInvoiceLine, allowUnallocated = false): StoredLine => {
   assertTimestamp(line.createdAt, 'line.createdAt')
@@ -517,6 +706,79 @@ const canonicalLine = (line: ImportedInvoiceLine, allowUnallocated = false): Sto
 
 const sameLine = (left: StoredLine, right: StoredLine): boolean =>
   Object.keys(left).every((key) => left[key as keyof StoredLine] === right[key as keyof StoredLine])
+
+const lineInsertStatement = (invoiceId: number, line: StoredLine): Statement =>
+  line.id === 0
+    ? {
+        text: `INSERT INTO invoice_line_items (
+          harvest_id, invoice_id, position, kind, description, quantity,
+          unit_price_cents, amount_cents, taxed, taxed2, project_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          line.harvestId,
+          invoiceId,
+          line.position,
+          line.kind,
+          line.description,
+          line.quantity,
+          line.unitPriceCents,
+          line.amountCents,
+          line.taxed,
+          line.taxed2,
+          line.projectId,
+          line.createdAt,
+          line.updatedAt,
+        ],
+      }
+    : {
+        text: `INSERT INTO invoice_line_items (
+          id, harvest_id, invoice_id, position, kind, description, quantity,
+          unit_price_cents, amount_cents, taxed, taxed2, project_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          line.id,
+          line.harvestId,
+          invoiceId,
+          line.position,
+          line.kind,
+          line.description,
+          line.quantity,
+          line.unitPriceCents,
+          line.amountCents,
+          line.taxed,
+          line.taxed2,
+          line.projectId,
+          line.createdAt,
+          line.updatedAt,
+        ],
+      }
+
+const lineUpdateStatement = (
+  invoiceId: number,
+  existing: StoredLine,
+  incoming: StoredLine,
+): Statement => ({
+  text: `UPDATE invoice_line_items SET
+    position = ?, kind = ?, description = ?, quantity = ?, unit_price_cents = ?,
+    amount_cents = ?, taxed = ?, taxed2 = ?, project_id = ?, updated_at = ?
+    WHERE invoice_id = ? AND harvest_id = ? AND id = ? AND updated_at = ?`,
+  params: [
+    incoming.position,
+    incoming.kind,
+    incoming.description,
+    incoming.quantity,
+    incoming.unitPriceCents,
+    incoming.amountCents,
+    incoming.taxed,
+    incoming.taxed2,
+    incoming.projectId,
+    incoming.updatedAt,
+    invoiceId,
+    existing.harvestId,
+    existing.id,
+    existing.updatedAt,
+  ],
+})
 
 const byHarvestIdentity = <T extends { harvestId: number | null; id: number }>(
   left: T,
@@ -939,7 +1201,9 @@ export const reconcileImportedInvoice = async (
     seenLinePositions.add(line.position)
     const existing = linesByHarvestId.get(harvestId)
     if (existing === undefined) lineInserts.push(line)
-    else if (!sameLine(existing, line)) {
+    else if (existing.id !== line.id || existing.createdAt !== line.createdAt) {
+      throw new Error('imported line identity or provenance drifted')
+    } else if (!sameLine(existing, line)) {
       lineDeletes.push(existing)
       lineInserts.push(line)
     }
@@ -1186,234 +1450,169 @@ export const reconcileImportedInvoice = async (
       ],
     })
   }
+  const pendingLineInserts = new Map(lineInserts.map((line) => [line.harvestId, line]))
   for (const line of lineDeletes) {
-    statements.push({
-      text: `DELETE FROM invoice_line_items
-        WHERE invoice_id = ? AND harvest_id = ? AND id = ?`,
-      params: [input.invoiceId, line.harvestId, line.id],
-    })
-  }
-  for (const line of lineInserts) {
-    statements.push(
-      line.id === 0
-        ? {
-            text: `INSERT INTO invoice_line_items (
-          harvest_id, invoice_id, position, kind, description, quantity,
-          unit_price_cents, amount_cents, taxed, taxed2, project_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            params: [
-              line.harvestId,
-              input.invoiceId,
-              line.position,
-              line.kind,
-              line.description,
-              line.quantity,
-              line.unitPriceCents,
-              line.amountCents,
-              line.taxed,
-              line.taxed2,
-              line.projectId,
-              line.createdAt,
-              line.updatedAt,
-            ],
-          }
-        : {
-            text: `INSERT INTO invoice_line_items (
-          id, harvest_id, invoice_id, position, kind, description, quantity,
-          unit_price_cents, amount_cents, taxed, taxed2, project_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            params: [
-              line.id,
-              line.harvestId,
-              input.invoiceId,
-              line.position,
-              line.kind,
-              line.description,
-              line.quantity,
-              line.unitPriceCents,
-              line.amountCents,
-              line.taxed,
-              line.taxed2,
-              line.projectId,
-              line.createdAt,
-              line.updatedAt,
-            ],
+    if (line.harvestId === null) throw new Error('imported line identity is missing')
+    const replacement = pendingLineInserts.get(line.harvestId)
+    if (replacement !== undefined) {
+      statements.push(
+        ...importOperationStatements(
+          input,
+          inputFingerprint,
+          'line',
+          'update',
+          line.harvestId,
+          line.id,
+          line.updatedAt,
+          replacement.updatedAt,
+          lineUpdateStatement(input.invoiceId, line, replacement),
+        ),
+      )
+      pendingLineInserts.delete(line.harvestId)
+    } else {
+      statements.push(
+        ...importOperationStatements(
+          input,
+          inputFingerprint,
+          'line',
+          'delete',
+          line.harvestId,
+          line.id,
+          line.updatedAt,
+          null,
+          {
+            text: `DELETE FROM invoice_line_items
+              WHERE invoice_id = ? AND harvest_id = ? AND id = ? AND updated_at = ?`,
+            params: [input.invoiceId, line.harvestId, line.id, line.updatedAt],
           },
+        ),
+      )
+    }
+  }
+  for (const line of pendingLineInserts.values()) {
+    if (line.harvestId === null) throw new Error('imported line identity is missing')
+    statements.push(
+      ...importOperationStatements(
+        input,
+        inputFingerprint,
+        'line',
+        'insert',
+        line.harvestId,
+        line.id === 0 ? null : line.id,
+        null,
+        line.updatedAt,
+        lineInsertStatement(input.invoiceId, line),
+      ),
     )
   }
+  const pendingPaymentInserts = new Map(inserts.map((payment) => [payment.harvestId, payment]))
   for (const payment of deletes) {
-    statements.push({
-      text: `DELETE FROM invoice_payments
-        WHERE invoice_id = ? AND harvest_id = ? AND id = ?`,
-      params: [input.invoiceId, payment.harvestId, payment.id],
-    })
-  }
-  for (const payment of inserts) {
-    statements.push(
-      payment.id === 0
-        ? {
-            text: `INSERT INTO invoice_payments (
-          harvest_id, invoice_id, currency, amount_cents, paid_at, paid_date,
-          source_paid_at, source_paid_date, source_recorded_by_name,
-          source_recorded_by_email, source_gateway_id, source_gateway_name, notes,
-          recorded_by_user_id, provider, provider_shape, provider_transaction_id,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', 'manual', ?, ?, ?)`,
-            params: [
-              payment.harvestId,
-              input.invoiceId,
-              invoice.currency,
-              payment.amountCents,
-              payment.paidAt,
-              payment.paidDate,
-              payment.sourcePaidAt,
-              payment.sourcePaidDate,
-              payment.sourceRecordedByName,
-              payment.sourceRecordedByEmail,
-              payment.sourceGatewayId,
-              payment.sourceGatewayName,
-              payment.notes,
-              payment.recordedByUserId,
-              payment.providerTransactionId,
-              payment.createdAt,
-              payment.updatedAt,
-            ],
-          }
-        : {
-            text: `INSERT INTO invoice_payments (
-          id, harvest_id, invoice_id, currency, amount_cents, paid_at, paid_date,
-          source_paid_at, source_paid_date, source_recorded_by_name,
-          source_recorded_by_email, source_gateway_id, source_gateway_name, notes,
-          recorded_by_user_id, provider, provider_shape, provider_transaction_id,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', 'manual', ?, ?, ?)`,
-            params: [
-              payment.id,
-              payment.harvestId,
-              input.invoiceId,
-              invoice.currency,
-              payment.amountCents,
-              payment.paidAt,
-              payment.paidDate,
-              payment.sourcePaidAt,
-              payment.sourcePaidDate,
-              payment.sourceRecordedByName,
-              payment.sourceRecordedByEmail,
-              payment.sourceGatewayId,
-              payment.sourceGatewayName,
-              payment.notes,
-              payment.recordedByUserId,
-              payment.providerTransactionId,
-              payment.createdAt,
-              payment.updatedAt,
-            ],
+    if (payment.harvestId === null) throw new Error('imported payment identity is missing')
+    const replacement = pendingPaymentInserts.get(payment.harvestId)
+    if (replacement !== undefined) {
+      statements.push(
+        ...importOperationStatements(
+          input,
+          inputFingerprint,
+          'payment',
+          'update',
+          payment.harvestId,
+          payment.id,
+          payment.updatedAt,
+          replacement.updatedAt,
+          paymentUpdateStatement(input.invoiceId, payment, replacement),
+        ),
+      )
+      pendingPaymentInserts.delete(payment.harvestId)
+    } else {
+      statements.push(
+        ...importOperationStatements(
+          input,
+          inputFingerprint,
+          'payment',
+          'delete',
+          payment.harvestId,
+          payment.id,
+          payment.updatedAt,
+          null,
+          {
+            text: `DELETE FROM invoice_payments
+              WHERE invoice_id = ? AND harvest_id = ? AND id = ? AND updated_at = ?`,
+            params: [input.invoiceId, payment.harvestId, payment.id, payment.updatedAt],
           },
+        ),
+      )
+    }
+  }
+  for (const payment of pendingPaymentInserts.values()) {
+    if (payment.harvestId === null) throw new Error('imported payment identity is missing')
+    statements.push(
+      ...importOperationStatements(
+        input,
+        inputFingerprint,
+        'payment',
+        'insert',
+        payment.harvestId,
+        payment.id === 0 ? null : payment.id,
+        null,
+        payment.updatedAt,
+        paymentInsertStatement(input.invoiceId, invoice.currency, payment),
+      ),
     )
   }
   for (const message of messageDeletes) {
-    statements.push({
-      text: `DELETE FROM invoice_messages
-        WHERE invoice_id = ? AND harvest_id = ? AND id = ?`,
-      params: [input.invoiceId, message.harvestId, message.id],
-    })
+    if (message.harvestId === null) throw new Error('imported message identity is missing')
+    statements.push(
+      ...importOperationStatements(
+        input,
+        inputFingerprint,
+        'message',
+        'delete',
+        message.harvestId,
+        message.id,
+        message.updatedAt,
+        null,
+        {
+          text: `DELETE FROM invoice_messages
+            WHERE invoice_id = ? AND harvest_id = ? AND id = ? AND updated_at = ?`,
+          params: [input.invoiceId, message.harvestId, message.id, message.updatedAt],
+        },
+      ),
+    )
   }
   for (const message of incomingMessages) {
-    const existing = messagesByHarvestId.get(message.harvestId ?? 0)
+    if (message.harvestId === null) throw new Error('imported message identity is missing')
+    const existing = messagesByHarvestId.get(message.harvestId)
     if (existing !== undefined && sameSourceMessage(existing, message)) continue
-    statements.push({
-      text: `UPDATE invoice_messages SET
-          sent_by = ?, sent_by_email = ?, sent_from = ?, sent_from_email = ?,
-          recipients = ?, subject = ?, body = ?, attach_pdf = ?, send_me_a_copy = ?,
-          thank_you = ?, reminder = ?, send_reminder_on = ?, event_type = ?,
-          created_at = ?, updated_at = ?
-        WHERE invoice_id = ? AND harvest_id = ?${message.id === 0 ? '' : ' AND id = ?'}`,
-      params: [
-        message.sentBy,
-        message.sentByEmail,
-        message.sentFrom,
-        message.sentFromEmail,
-        message.recipients,
-        message.subject,
-        message.body,
-        message.attachPdf,
-        message.sendMeACopy,
-        message.thankYou,
-        message.reminder,
-        message.sendReminderOn,
-        message.eventType,
-        message.createdAt,
-        message.updatedAt,
-        input.invoiceId,
-        message.harvestId,
-        ...(message.id === 0 ? [] : [message.id]),
-      ],
-    })
-    statements.push(
-      message.id === 0
-        ? {
-            text: `INSERT INTO invoice_messages (
-          harvest_id, invoice_id, sent_by, sent_by_email, sent_from, sent_from_email,
-          recipients, subject, body, attach_pdf, send_me_a_copy, thank_you, reminder,
-          send_reminder_on, event_type, delivery_status, provider_message_id,
-          created_at, updated_at
-        ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-        WHERE NOT EXISTS (SELECT 1 FROM invoice_messages WHERE harvest_id = ?)`,
-            params: [
-              message.harvestId,
-              input.invoiceId,
-              message.sentBy,
-              message.sentByEmail,
-              message.sentFrom,
-              message.sentFromEmail,
-              message.recipients,
-              message.subject,
-              message.body,
-              message.attachPdf,
-              message.sendMeACopy,
-              message.thankYou,
-              message.reminder,
-              message.sendReminderOn,
-              message.eventType,
-              message.deliveryStatus,
-              message.providerMessageId,
-              message.createdAt,
-              message.updatedAt,
-              message.harvestId,
-            ],
-          }
-        : {
-            text: `INSERT INTO invoice_messages (
-          id, harvest_id, invoice_id, sent_by, sent_by_email, sent_from, sent_from_email,
-          recipients, subject, body, attach_pdf, send_me_a_copy, thank_you, reminder,
-          send_reminder_on, event_type, delivery_status, provider_message_id,
-          created_at, updated_at
-        ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-        WHERE NOT EXISTS (SELECT 1 FROM invoice_messages WHERE harvest_id = ?)`,
-            params: [
-              message.id,
-              message.harvestId,
-              input.invoiceId,
-              message.sentBy,
-              message.sentByEmail,
-              message.sentFrom,
-              message.sentFromEmail,
-              message.recipients,
-              message.subject,
-              message.body,
-              message.attachPdf,
-              message.sendMeACopy,
-              message.thankYou,
-              message.reminder,
-              message.sendReminderOn,
-              message.eventType,
-              message.deliveryStatus,
-              message.providerMessageId,
-              message.createdAt,
-              message.updatedAt,
-              message.harvestId,
-            ],
-          },
-    )
+    if (existing === undefined) {
+      statements.push(
+        ...importOperationStatements(
+          input,
+          inputFingerprint,
+          'message',
+          'insert',
+          message.harvestId,
+          message.id === 0 ? null : message.id,
+          null,
+          message.updatedAt,
+          messageInsertStatement(input.invoiceId, message),
+        ),
+      )
+    } else {
+      statements.push(
+        ...importOperationStatements(
+          input,
+          inputFingerprint,
+          'message',
+          'update',
+          message.harvestId,
+          existing.id,
+          existing.updatedAt,
+          message.updatedAt,
+          messageUpdateStatement(input.invoiceId, existing, message),
+        ),
+      )
+    }
   }
   statements.push(
     {
@@ -1456,7 +1655,15 @@ export const reconcileImportedInvoice = async (
   const complete = statements.length <= maximumStatements
   if (!complete) {
     let cut = Math.min(maximumStatements, statements.length - 2)
-    if (/^UPDATE invoice_messages/.test(statements[cut - 1]?.text.trim() ?? '')) cut -= 1
+    while (cut > 0) {
+      const previous = statements[cut - 1]?.text.trim() ?? ''
+      const next = statements[cut]?.text.trim() ?? ''
+      const splitsOperation =
+        /^INSERT INTO invoice_import_operations/.test(previous) ||
+        /^UPDATE invoice_import_operations SET completed/.test(next)
+      if (!splitsOperation) break
+      cut -= 1
+    }
     if (cut < 1) throw new InvoiceImportBatchLimitError(statements.length, maximumStatements)
     stepStatements = statements.slice(0, cut)
   }

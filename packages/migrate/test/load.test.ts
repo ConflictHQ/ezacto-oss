@@ -539,6 +539,125 @@ describe('transform and load', () => {
     }
   }, 30_000)
 
+  it('[integration] resumes cold D1 admission and streams a high-cardinality rate history', async () => {
+    const ratePath = join(snapshotDir, 'raw', 'billable_rates.jsonl')
+    const lineagePath = join(snapshotDir, 'raw', 'billable_rates.lineage.jsonl')
+    const count = 260
+    const rates = Array.from({ length: count }, (_, index) => {
+      const start = new Date(Date.UTC(2024, 0, 1 + index)).toISOString().slice(0, 10)
+      const next =
+        index + 1 === count
+          ? null
+          : new Date(Date.UTC(2024, 0, 2 + index)).toISOString().slice(0, 10)
+      return {
+        id: 820_000 + index,
+        amount: 100 + index,
+        start_date: start,
+        end_date:
+          next === null
+            ? null
+            : new Date(Date.parse(`${next}T00:00:00.000Z`) - 86_400_000).toISOString().slice(0, 10),
+        created_at: '2026-08-27T15:30:00Z',
+        updated_at: '2026-08-27T15:30:00Z',
+      }
+    })
+    const extractionOrder = [...rates].reverse()
+    await writeFile(ratePath, `${extractionOrder.map((rate) => JSON.stringify(rate)).join('\n')}\n`)
+    await writeFile(
+      lineagePath,
+      `${extractionOrder
+        .map((rate) => JSON.stringify({ source_id: rate.id, parent_id: 1782959 }))
+        .join('\n')}\n`,
+    )
+    const manifest = await readManifest(snapshotDir)
+    manifest.resources.billable_rates!.count = count
+    await writeManifest(snapshotDir, manifest)
+    await refreshChecksum(snapshotDir)
+    const checksum = JSON.parse(await readFile(join(snapshotDir, 'checksums.json'), 'utf8')) as {
+      snapshot_sha256: string
+    }
+
+    const miniflare = new Miniflare({
+      modules: true,
+      script: 'export default { fetch() { return new Response("ok") } }',
+      d1Databases: ['DB'],
+    })
+    try {
+      const d1 = await miniflare.getD1Database('DB')
+      await migrateD1(d1)
+      let complete = false
+      let admissionSteps = 0
+      let sawLoadedResource = false
+      let invocations = 0
+      while (!complete) {
+        let prepared = 0
+        const cold = new Proxy(d1, {
+          get(target, property, receiver) {
+            if (property === 'prepare') {
+              return (sql: string) => {
+                prepared += 1
+                return target.prepare(sql)
+              }
+            }
+            const value = Reflect.get(target, property, receiver) as unknown
+            return typeof value === 'function' ? value.bind(target) : value
+          },
+        })
+        const result = await loadNextChunk({
+          database: createD1Database(cold),
+          snapshotDir,
+          maxRows: 17,
+          maxStatements: 40,
+          immutableSnapshotSha256: checksum.snapshot_sha256,
+        })
+        expect(prepared).toBeLessThanOrEqual(1000)
+        if (!result.complete && result.resource === null) {
+          expect(sawLoadedResource).toBe(false)
+          admissionSteps += 1
+        } else if (result.resource !== null) {
+          sawLoadedResource = true
+        }
+        complete = result.complete
+        invocations += 1
+        expect(invocations).toBeLessThan(200)
+      }
+      // Two incomplete calls plus the call that finishes indexing and begins the
+      // organization prove the 260-row parent was not admitted as one sweep.
+      expect(admissionSteps).toBeGreaterThanOrEqual(2)
+      expect(invocations).toBeGreaterThan(40)
+      expect(
+        await d1
+          .prepare(
+            `SELECT harvest_id, start_date, end_date
+             FROM user_billable_rates ORDER BY start_date, harvest_id`,
+          )
+          .all(),
+      ).toMatchObject({
+        results: rates.map((rate) => ({
+          harvest_id: rate.id,
+          start_date: rate.start_date,
+          end_date: rate.end_date,
+        })),
+      })
+      expect(
+        (await d1.prepare('SELECT count(*) AS count FROM _ezacto_load_billable_rates').first())
+          ?.count,
+      ).toBe(0)
+      expect(
+        (
+          await d1
+            .prepare(
+              `SELECT count(*) AS count FROM _ezacto_load_rate_progress
+               WHERE resource = 'billable_rates'`,
+            )
+            .first()
+        )?.count,
+      ).toBe(0)
+    } finally {
+      await miniflare.dispose()
+    }
+  }, 70_000)
+
   it('[integration] rejects a same-size child-index range swap against source lineage', async () => {
     const rawPath = join(snapshotDir, 'raw', 'cost_rates.jsonl')
     const lineagePath = join(snapshotDir, 'raw', 'cost_rates.lineage.jsonl')

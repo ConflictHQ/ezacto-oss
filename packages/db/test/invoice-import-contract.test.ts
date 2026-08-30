@@ -373,7 +373,7 @@ for (const [runtime, factory] of factories) {
       ])
     })
 
-    it('[unit] ignores equal or older observations and rejects sender provenance drift', async () => {
+    it('[unit] ignores equal or older observations and rejects child provenance drift', async () => {
       database = await factory()
       await installFixture(database)
       const firstInput = input(1, {
@@ -405,6 +405,19 @@ for (const [runtime, factory] of factories) {
       })
       expect(equal).toEqual(first)
       expect(older).toEqual(first)
+
+      await expect(
+        reconcileImportedInvoice(database.orm, {
+          ...firstInput,
+          expectedSourceUpdatedAt: sourceTimestamp,
+          sourceUpdatedAt: nextSourceTimestamp,
+          lines: firstInput.lines.map((item) => ({
+            ...item,
+            createdAt: nextSourceTimestamp,
+            updatedAt: nextSourceTimestamp,
+          })),
+        }),
+      ).rejects.toThrow(/line identity or provenance drifted/)
 
       await expect(
         reconcileImportedInvoice(database.orm, {
@@ -604,6 +617,11 @@ for (const [runtime, factory] of factories) {
       expect(pending.complete).toBe(false)
       expect(
         await database.rows<Record<string, unknown>>(
+          `SELECT count(*) AS count FROM invoice_import_operations WHERE completed = 0`,
+        ),
+      ).toEqual([{ count: 0 }])
+      expect(
+        await database.rows<Record<string, unknown>>(
           `SELECT completed, message_manifest_json
            FROM invoice_import_reconciliations
            WHERE invoice_id = 1 AND source_updated_at = ?`,
@@ -639,6 +657,23 @@ for (const [runtime, factory] of factories) {
       ).rejects.toThrow(/invoice message source mutation/)
       await expect(
         database.run(
+          `UPDATE invoice_messages SET sent_by = 'Doctored Sender', updated_at = ?
+           WHERE invoice_id = 1 AND harvest_id = 9010`,
+          nextSourceTimestamp,
+        ),
+      ).rejects.toThrow(/invoice message source mutation/)
+      await expect(
+        database.run(
+          `INSERT INTO invoice_line_items (
+             harvest_id, invoice_id, position, kind, quantity,
+             unit_price_cents, amount_cents, created_at, updated_at
+           ) VALUES (8040, 1, 3, 'Doctored', 1, 999, 999, ?, ?)`,
+          initialTimestamp,
+          sourceTimestamp,
+        ),
+      ).rejects.toThrow(/invoice line insert requires/)
+      await expect(
+        database.run(
           `UPDATE invoice_messages SET harvest_id = 9020, updated_at = ?
            WHERE invoice_id = 1 AND harvest_id = 9010`,
           nextSourceTimestamp,
@@ -657,9 +692,9 @@ for (const [runtime, factory] of factories) {
       await expect(
         database.run(
           `INSERT INTO invoice_payments (
-             id, harvest_id, invoice_id, currency, amount_cents, paid_at, source_paid_at,
+             harvest_id, invoice_id, currency, amount_cents, paid_at, source_paid_at,
              provider, provider_shape, created_at, updated_at
-           ) VALUES (888888, 10010, 1, 'USD', 100, ?, ?, 'manual', 'manual', ?, ?)`,
+           ) VALUES (10010, 1, 'USD', 999, ?, ?, 'manual', 'manual', ?, ?)`,
           nextSourceTimestamp,
           nextSourceTimestamp,
           initialTimestamp,
@@ -667,8 +702,35 @@ for (const [runtime, factory] of factories) {
         ),
       ).rejects.toThrow(/invoice payment insert requires/)
 
+      let allocatedLineId: number | undefined
+      let admissionAttempts = 0
+      while (allocatedLineId === undefined && pending.complete === false) {
+        pending = await reconcileHarvestInvoice(database.orm, pendingInput)
+        expect(
+          await database.rows<Record<string, unknown>>(
+            `SELECT count(*) AS count FROM invoice_import_operations WHERE completed = 0`,
+          ),
+        ).toEqual([{ count: 0 }])
+        const [allocatedLine] = await database.rows<{ id: number }>(
+          `SELECT id FROM invoice_line_items WHERE invoice_id = 1 AND harvest_id = 8020`,
+        )
+        allocatedLineId = allocatedLine?.id
+        admissionAttempts += 1
+        if (admissionAttempts > 10) throw new Error('allocated line was not admitted')
+      }
+      expect(allocatedLineId).toBeGreaterThan(0)
+      expect(pending.complete).toBe(false)
+      await expect(
+        database.run(`DELETE FROM invoice_line_items WHERE id = ?`, allocatedLineId!),
+      ).rejects.toThrow(/invoice line delete requires/)
+
       while (pending.complete === false) {
         pending = await reconcileHarvestInvoice(database.orm, pendingInput)
+        expect(
+          await database.rows<Record<string, unknown>>(
+            `SELECT count(*) AS count FROM invoice_import_operations WHERE completed = 0`,
+          ),
+        ).toEqual([{ count: 0 }])
       }
       expect(
         await database.rows<Record<string, unknown>>(
@@ -679,6 +741,13 @@ for (const [runtime, factory] of factories) {
            WHERE invoice.id = 1 AND message.harvest_id = 9010`,
         ),
       ).toEqual([before])
+      const operationReceipts = JSON.stringify(
+        await database.rows<Record<string, unknown>>(
+          `SELECT * FROM invoice_import_operations WHERE invoice_id = 1`,
+        ),
+      )
+      expect(operationReceipts).not.toContain('client@example.invalid')
+      expect(operationReceipts).not.toContain('Newer body')
     })
 
     it('[unit] rejects newer payment rows that rewrite immutable source provenance', async () => {
@@ -772,6 +841,106 @@ for (const [runtime, factory] of factories) {
           source_recorded_by_name: 'Sanitized Recorder',
           source_gateway_id: 42,
           provider_transaction_id: 'sanitized-transaction-41',
+        },
+      ])
+    })
+
+    it('[unit] keeps replacement deletes and inserts atomic across bounded retries', async () => {
+      database = await factory()
+      await installFixture(database)
+      const sourceLine = {
+        harvestId: 8051,
+        position: 0,
+        kind: 'Service',
+        quantity: 1,
+        unitPriceCents: 1000,
+        amountCents: 1000,
+        createdAt: initialTimestamp,
+        updatedAt: sourceTimestamp,
+      }
+      const sourcePayment = {
+        harvestId: 10051,
+        amountCents: 100,
+        sourcePaidAt: sourceTimestamp,
+        sourcePaidDate: null,
+        notes: 'Original note',
+        createdAt: initialTimestamp,
+        updatedAt: sourceTimestamp,
+      }
+      const firstInput = {
+        ...input(4),
+        sourceDueAmountCents: 900,
+        lines: [sourceLine],
+        messages: [],
+        payments: [sourcePayment],
+      }
+      await reconcileHarvestInvoice(database.orm, firstInput)
+      const [before] = await database.rows<{ line_id: number; payment_id: number }>(
+        `SELECT line.id AS line_id, payment.id AS payment_id
+         FROM invoice_line_items line JOIN invoice_payments payment
+           ON payment.invoice_id = line.invoice_id
+         WHERE line.harvest_id = 8051 AND payment.harvest_id = 10051`,
+      )
+      expect(before).toBeDefined()
+
+      const nextInput = {
+        ...firstInput,
+        expectedSourceUpdatedAt: sourceTimestamp,
+        sourceUpdatedAt: nextSourceTimestamp,
+        sourceAmountCents: 1200,
+        sourceDueAmountCents: 1000,
+        maximumStatements: 3,
+        lines: [
+          {
+            ...sourceLine,
+            unitPriceCents: 1200,
+            amountCents: 1200,
+            updatedAt: nextSourceTimestamp,
+          },
+        ],
+        payments: [
+          {
+            ...sourcePayment,
+            amountCents: 200,
+            notes: 'Corrected note',
+            updatedAt: nextSourceTimestamp,
+          },
+        ],
+      }
+      let result = await reconcileHarvestInvoice(database.orm, nextInput)
+      expect(result.complete).toBe(false)
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT count(*) AS count FROM invoice_import_operations WHERE completed = 0`,
+        ),
+      ).toEqual([{ count: 0 }])
+      let retries = 0
+      while (result.complete === false) {
+        result = await reconcileHarvestInvoice(database.orm, nextInput)
+        expect(
+          await database.rows<Record<string, unknown>>(
+            `SELECT count(*) AS count FROM invoice_import_operations WHERE completed = 0`,
+          ),
+        ).toEqual([{ count: 0 }])
+        retries += 1
+        if (retries > 10) throw new Error('bounded reconciliation did not converge')
+      }
+
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT line.id AS line_id, line.amount_cents,
+             payment.id AS payment_id, payment.amount_cents AS payment_cents, payment.notes
+           FROM invoice_line_items line JOIN invoice_payments payment
+             ON payment.invoice_id = line.invoice_id
+           WHERE line.harvest_id = 8051 AND payment.harvest_id = 10051`,
+        ),
+      ).toEqual([
+        {
+          line_id: before!.line_id,
+          amount_cents: 1200,
+          payment_id: before!.payment_id,
+          payment_cents: 200,
+          notes: 'Corrected note',
         },
       ])
     })
@@ -948,7 +1117,7 @@ it('[integration] resumes a D1 reconciliation that exceeds one deterministic sta
     const oversizedLines = Array.from({ length: 992 }, (_, index) =>
       line(1000 + index, 1, { position: index }),
     )
-    const first = await reconcileImportedInvoice(
+    let result = await reconcileImportedInvoice(
       database.orm,
       input(1, {
         sourceAmountCents: oversizedLines.length,
@@ -956,25 +1125,40 @@ it('[integration] resumes a D1 reconciliation that exceeds one deterministic sta
         lines: oversizedLines,
       }),
     )
-    expect(first.complete).toBe(false)
-    expect(
-      await database.rows<Record<string, unknown>>(
-        `SELECT invoice.source_updated_at,
+    expect(result.complete).toBe(false)
+    const [partial] = await database.rows<{
+      source_updated_at: string
+      lines: number
+      receipts: number
+    }>(
+      `SELECT invoice.source_updated_at,
            (SELECT count(*) FROM invoice_line_items WHERE invoice_id = invoice.id) AS lines,
            (SELECT count(*) FROM invoice_import_reconciliations
              WHERE invoice_id = invoice.id) AS receipts
          FROM invoices invoice WHERE invoice.id = 1`,
-      ),
-    ).toEqual([{ source_updated_at: initialTimestamp, lines: 992, receipts: 1 }])
-    const completed = await reconcileImportedInvoice(
-      database.orm,
-      input(1, {
-        sourceAmountCents: oversizedLines.length,
-        sourceDueAmountCents: oversizedLines.length,
-        lines: oversizedLines,
-      }),
     )
-    expect(completed.complete).not.toBe(false)
+    expect(partial).toMatchObject({ source_updated_at: initialTimestamp, receipts: 1 })
+    expect(partial!.lines).toBeGreaterThan(0)
+    expect(partial!.lines).toBeLessThan(oversizedLines.length)
+    let attempts = 1
+    while (result.complete === false) {
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT count(*) AS count FROM invoice_import_operations WHERE completed = 0`,
+        ),
+      ).toEqual([{ count: 0 }])
+      result = await reconcileImportedInvoice(
+        database.orm,
+        input(1, {
+          sourceAmountCents: oversizedLines.length,
+          sourceDueAmountCents: oversizedLines.length,
+          lines: oversizedLines,
+        }),
+      )
+      attempts += 1
+      if (attempts > 10) throw new Error('oversized reconciliation did not converge')
+    }
+    expect(attempts).toBeGreaterThan(2)
     expect(
       await database.rows<Record<string, unknown>>(
         `SELECT invoice.source_updated_at,
