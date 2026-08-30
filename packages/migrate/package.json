@@ -12,7 +12,7 @@
     "lint": "eslint .",
     "test": "vitest run --testTimeout=10000",
     "build": "tsc -p tsconfig.build.json",
-    "prepare": "npm run build"
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@ezacto/db": "0.0.0",
