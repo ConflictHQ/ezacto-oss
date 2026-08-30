@@ -139,8 +139,11 @@ Each environment also stores `EZACTO_OWNER_PASSWORD` for the explicit
 `bootstrap browser owner` workflow. It is not a deployment variable and is never
 installed as a Worker secret. The workflow reads it only into masked step
 environment, sends it in runner-temp request bodies, accepts the real browser
-session lifecycle, and removes those files. Keep the same value in the owner's
-password manager; GitHub cannot reveal it after it is stored.
+session lifecycle, and removes those files. The value must contain 12–1024
+Unicode code points and no more than 4096 UTF-8 bytes. Validation names a missing
+or invalid secret and restates this policy, but never reports the supplied value,
+its observed length, or derived data. Keep the same value in the owner's password
+manager; GitHub cannot reveal it after it is stored.
 
 The Cloudflare token cannot touch any other zone, and cannot create zones. Rotate
 it by issuing a new token and replacing the repository secret; revoke the old one
