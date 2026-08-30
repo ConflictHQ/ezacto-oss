@@ -22,6 +22,9 @@
 # path; the historical occurrence is pinned because the branch history is scanned.
 # Git 2.55 also reports the unchanged fixture at the later transform/load merge,
 # where surrounding additions moved the line. Both exact reviewed fingerprints
-# are retained because neither value is authentication material.
+# are retained because neither value is authentication material. The earlier
+# extract-engine merge similarly re-attributed the reviewed short CLI placeholder;
+# its exact merge fingerprint is retained as well.
 30d0d8781fa36f41f0501d0da65b055833d9db3f:packages/db/test/invoice-import-contract.test.ts:generic-api-key:628
 15234222dddd2bc9683189346769cabffdb83b64:packages/db/test/invoice-import-contract.test.ts:generic-api-key:646
+41246407df66dcf3ea2d555acfe6bb5545a5bfc8:packages/migrate/test/cli.test.ts:harvest-pat-assignment:91
