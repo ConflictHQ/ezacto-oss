@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
@@ -589,6 +589,9 @@ describe('transform and load', () => {
       let admissionSteps = 0
       let sawLoadedResource = false
       let invocations = 0
+      let restoreLineageAfterCall: string | null = null
+      let provedLineageResume = false
+      let cleanupSteps = 0
       while (!complete) {
         let prepared = 0
         const cold = new Proxy(d1, {
@@ -606,16 +609,58 @@ describe('transform and load', () => {
         const result = await loadNextChunk({
           database: createD1Database(cold),
           snapshotDir,
-          maxRows: 17,
+          maxRows: 10_000,
           maxStatements: 40,
           immutableSnapshotSha256: checksum.snapshot_sha256,
         })
+        if (restoreLineageAfterCall !== null) {
+          await writeFile(lineagePath, restoreLineageAfterCall)
+          restoreLineageAfterCall = null
+          provedLineageResume = true
+        }
         expect(prepared).toBeLessThanOrEqual(1000)
         if (!result.complete && result.resource === null) {
           expect(sawLoadedResource).toBe(false)
           admissionSteps += 1
         } else if (result.resource !== null) {
           sawLoadedResource = true
+        }
+        const rateProgress = await d1
+          .prepare(
+            `SELECT source_lineage_byte_offset AS lineageOffset, staged_rows AS stagedRows,
+              loaded_rows AS loadedRows, cleaned_rows AS cleanedRows
+             FROM _ezacto_load_rate_progress WHERE resource = 'billable_rates'`,
+          )
+          .first<{
+            lineageOffset: number
+            stagedRows: number
+            loadedRows: number
+            cleanedRows: number
+          }>()
+        if (rateProgress?.loadedRows === count && rateProgress.cleanedRows > 0) {
+          cleanupSteps += 1
+          expect(
+            (
+              await d1
+                .prepare('SELECT count(*) AS count FROM _ezacto_load_billable_rates')
+                .first<{ count: number }>()
+            )?.count,
+          ).toBe(count - rateProgress.cleanedRows)
+        }
+        if (
+          rateProgress !== null &&
+          rateProgress.stagedRows > 0 &&
+          rateProgress.stagedRows < count &&
+          rateProgress.lineageOffset > 0 &&
+          !provedLineageResume &&
+          restoreLineageAfterCall === null
+        ) {
+          const original = await readFile(lineagePath, 'utf8')
+          const poisoned = original.replace('"source_id":820259', '"source_id":920259')
+          expect(Buffer.byteLength(poisoned)).toBe(Buffer.byteLength(original))
+          expect(poisoned).not.toBe(original)
+          await writeFile(lineagePath, poisoned)
+          restoreLineageAfterCall = original
         }
         complete = result.complete
         invocations += 1
@@ -624,7 +669,9 @@ describe('transform and load', () => {
       // Two incomplete calls plus the call that finishes indexing and begins the
       // organization prove the 260-row parent was not admitted as one sweep.
       expect(admissionSteps).toBeGreaterThanOrEqual(2)
-      expect(invocations).toBeGreaterThan(40)
+      expect(invocations).toBeGreaterThan(30)
+      expect(provedLineageResume).toBe(true)
+      expect(cleanupSteps).toBeGreaterThan(1)
       expect(
         await d1
           .prepare(
@@ -658,18 +705,187 @@ describe('transform and load', () => {
     }
   }, 70_000)
 
-  it('[integration] rejects a same-size child-index range swap against source lineage', async () => {
-    const rawPath = join(snapshotDir, 'raw', 'cost_rates.jsonl')
-    const lineagePath = join(snapshotDir, 'raw', 'cost_rates.lineage.jsonl')
-    const existingRaw = await readFile(rawPath, 'utf8')
-    const existingLineage = await readFile(lineagePath, 'utf8')
-    await writeFile(rawPath, `${existingRaw.replace('81002', '81004')}${existingRaw}`)
+  it('[integration] checkpoints legacy organization-currency inference in bounded cold windows', async () => {
+    const clientPath = join(snapshotDir, 'raw', 'clients.jsonl')
+    const originalClients = (await readFile(clientPath, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    const clients = Array.from({ length: 260 }, (_, index) => ({
+      ...(originalClients[index] ?? originalClients[0]),
+      id: originalClients[index]?.id ?? 600_000 + index,
+      name: `Sanitized Client ${index}`,
+    }))
+    await writeFile(clientPath, `${clients.map((row) => JSON.stringify(row)).join('\n')}\n`)
+    const manifest = await readManifest(snapshotDir)
+    manifest.preflight.organization_currency = null
+    manifest.resources.clients!.count = clients.length
+    await writeManifest(snapshotDir, manifest)
+    await refreshChecksum(snapshotDir)
+
+    for (const expected of [100, 200]) {
+      const sqlite = new BetterSqlite3(databasePath)
+      try {
+        migrateContainer(sqlite)
+        const result = await loadNextChunk({
+          database: createContainerDatabase(sqlite),
+          snapshotDir,
+          maxRows: 1,
+        })
+        expect(result.resource).toBeNull()
+        expect(
+          sqlite
+            .prepare(
+              `SELECT rows_scanned AS rowsScanned, currency, completed
+               FROM _ezacto_load_currency_progress WHERE singleton = 1`,
+            )
+            .get(),
+        ).toEqual({ rowsScanned: expected, currency: 'USD', completed: 0 })
+      } finally {
+        sqlite.close()
+      }
+    }
+    const sqlite = new BetterSqlite3(databasePath)
+    try {
+      migrateContainer(sqlite)
+      expect(
+        (
+          await loadNextChunk({
+            database: createContainerDatabase(sqlite),
+            snapshotDir,
+            maxRows: 1,
+          })
+        ).resource,
+      ).toBe('organization')
+      expect(
+        sqlite.prepare('SELECT 1 FROM _ezacto_load_currency_progress WHERE singleton = 1').get(),
+      ).toBeUndefined()
+    } finally {
+      sqlite.close()
+    }
+  }, 30_000)
+
+  it('[integration] serializes concurrent index builders and reclaims crash artifacts', async () => {
+    const userPath = join(snapshotDir, 'raw', 'users.jsonl')
+    const originalUsers = (await readFile(userPath, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    const users = Array.from({ length: 180 }, (_, index) => ({
+      ...(originalUsers[index] ?? originalUsers[0]),
+      id: originalUsers[index]?.id ?? 1_700_000 + index,
+      email: originalUsers[index]?.email ?? `concurrent-${index}@example.invalid`,
+    }))
+    await writeFile(userPath, `${users.map((row) => JSON.stringify(row)).join('\n')}\n`)
+    const manifest = await readManifest(snapshotDir)
+    manifest.preflight.organization_currency = 'USD'
+    manifest.resources.users!.count = users.length
+    await writeManifest(snapshotDir, manifest)
+    await refreshChecksum(snapshotDir)
+
+    const sqlite = new BetterSqlite3(databasePath)
+    try {
+      migrateContainer(sqlite)
+      const database = createContainerDatabase(sqlite)
+      const first = await loadNextChunk({ database, snapshotDir, maxRows: 1 })
+      expect(first.resource).toBeNull()
+      const indexDirectory = join(snapshotDir, 'raw', '.load-index')
+      const state = (await readdir(indexDirectory)).find((entry) => entry.endsWith('.state.json'))
+      expect(state).toBeDefined()
+      await writeFile(join(indexDirectory, `${state!}.2147483647.dead.tmp`), 'torn')
+      await mkdir(join(indexDirectory, '.builder.lock.claim-2147483647-crashed'))
+      const lock = join(indexDirectory, '.builder.lock')
+      await mkdir(lock)
+      await writeFile(
+        join(lock, 'owner.json'),
+        `${JSON.stringify({
+          pid: 2_147_483_647,
+          host: hostname(),
+          token: 'crashed-index-build',
+          startedAt: 0,
+        })}\n`,
+      )
+
+      await Promise.all([
+        loadNextChunk({ database, snapshotDir, maxRows: 1 }),
+        loadNextChunk({ database, snapshotDir, maxRows: 1 }),
+      ])
+      const after = await readdir(indexDirectory)
+      expect(after.some((entry) => entry.endsWith('.tmp'))).toBe(false)
+      expect(after.some((entry) => entry.startsWith('.builder.lock.claim-'))).toBe(false)
+      expect(after).not.toContain('.builder.lock')
+      expect(after.some((entry) => entry.startsWith('.builder.lock.stale-'))).toBe(true)
+
+      await mkdir(lock)
+      await writeFile(
+        join(lock, 'owner.json'),
+        `${JSON.stringify({
+          pid: 1,
+          host: 'active-remote-host.invalid',
+          token: 'active-remote-index-build',
+          startedAt: Date.now(),
+        })}\n`,
+      )
+      await expect(loadNextChunk({ database, snapshotDir, maxRows: 1 })).rejects.toThrow(
+        'already being built',
+      )
+      await rm(lock, { recursive: true })
+
+      await mkdir(lock)
+      await writeFile(
+        join(lock, 'owner.json'),
+        `${JSON.stringify({
+          pid: 1,
+          host: 'crashed-remote-host.invalid',
+          token: 'crashed-remote-index-build',
+          startedAt: 0,
+        })}\n`,
+      )
+      await loadNextChunk({ database, snapshotDir, maxRows: 1 })
+      expect(
+        (await readdir(indexDirectory)).filter((entry) => entry.startsWith('.builder.lock.stale-')),
+      ).toHaveLength(2)
+
+      let reachedLoad = false
+      for (let invocation = 0; invocation < 20 && !reachedLoad; invocation += 1) {
+        reachedLoad = (await loadNextChunk({ database, snapshotDir, maxRows: 1 })).resource !== null
+      }
+      expect(reachedLoad).toBe(true)
+    } finally {
+      sqlite.close()
+    }
+  }, 30_000)
+
+  it('[integration] invalidates and rebuilds a corrupt same-size child index', async () => {
+    const userPath = join(snapshotDir, 'raw', 'users.jsonl')
+    const users = (await readFile(userPath, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    users.push(
+      { ...users[0], id: 1_782_961, email: 'index-one@example.invalid' },
+      { ...users[0], id: 1_782_962, email: 'index-two@example.invalid' },
+    )
+    await writeFile(userPath, `${users.map((row) => JSON.stringify(row)).join('\n')}\n`)
+    const rawPath = join(snapshotDir, 'raw', 'teammates.jsonl')
+    const lineagePath = join(snapshotDir, 'raw', 'teammates.lineage.jsonl')
+    const teammate = JSON.parse((await readFile(rawPath, 'utf8')).trim()) as Record<string, unknown>
+    const teammateIds = [1_782_959, 1_782_961, 1_782_962, 1_782_960]
+    await writeFile(
+      rawPath,
+      `${teammateIds.map((id) => JSON.stringify({ ...teammate, id })).join('\n')}\n`,
+    )
     await writeFile(
       lineagePath,
-      `${existingLineage.replace('81002', '81004').replace('1782959', '1782960')}${existingLineage}`,
+      `${teammateIds
+        .map((sourceId, index) =>
+          JSON.stringify({ source_id: sourceId, parent_id: users[index]!.id }),
+        )
+        .join('\n')}\n`,
     )
     const manifest = await readManifest(snapshotDir)
-    manifest.resources.cost_rates!.count = 2
+    manifest.resources.users!.count = users.length
+    manifest.resources.teammates!.count = teammateIds.length
     await writeManifest(snapshotDir, manifest)
     await refreshChecksum(snapshotDir)
 
@@ -682,28 +898,33 @@ describe('transform and load', () => {
         snapshotDir,
         'raw',
         '.load-index',
-        `cost_rates.${admitted.snapshotSha256}.idx`,
+        `teammates.${admitted.snapshotSha256}.idx`,
       )
       const records = (await readFile(indexPath, 'utf8'))
         .trimEnd()
         .split('\n')
         .map((line) => line.split(' '))
-      expect(records).toHaveLength(2)
-      for (let field = 1; field <= 4; field += 1) {
-        ;[records[0]![field], records[1]![field]] = [records[1]![field]!, records[0]![field]!]
-      }
+      expect(records).toHaveLength(users.length)
+      // A prior implementation accepted this fixed-size edit and silently
+      // treated the first parent's real child as an empty group.
+      records[1]![6] = '000000000000'
       await writeFile(indexPath, `${records.map((fields) => fields.join(' ')).join('\n')}\n`)
 
-      let rejection: unknown
-      for (let invocation = 0; invocation < 20 && rejection === undefined; invocation += 1) {
+      let complete = false
+      let rejectedCorruption = false
+      for (let invocation = 0; invocation < 100 && !complete; invocation += 1) {
         try {
-          await loadNextChunk({ database, snapshotDir, maxRows: 1 })
+          complete = (await loadNextChunk({ database, snapshotDir, maxRows: 1 })).complete
         } catch (error) {
-          rejection = error
+          expect((error as Error).message).toMatch(/teammates child index/)
+          rejectedCorruption = true
         }
       }
-      expect(rejection).toBeInstanceOf(Error)
-      expect((rejection as Error).message).toMatch(/child index.*(lineage|raw data)/)
+      expect(rejectedCorruption).toBe(true)
+      expect(complete).toBe(true)
+      expect(sqlite.prepare('SELECT count(*) AS count FROM teammate_assignments').get()).toEqual({
+        count: teammateIds.length,
+      })
     } finally {
       sqlite.close()
     }

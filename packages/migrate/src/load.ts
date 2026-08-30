@@ -1,6 +1,7 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises'
+import { mkdir, open, readFile, readdir, rename, rm, stat } from 'node:fs/promises'
+import { hostname } from 'node:os'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import {
@@ -37,6 +38,8 @@ export const D1_MAX_BOUND_PARAMETERS = 100
 export const D1_MAX_STATEMENTS = 1000
 export const D1_INVOCATION_QUERY_RESERVE = 250
 export const DEFAULT_INVOCATION_STATEMENT_BUDGET = 700
+const RATE_CLEANUP_ROWS_PER_INVOCATION = 100
+const CHILD_INDEX_REMOTE_LOCK_STALE_MS = 5 * 60 * 1000
 
 export interface PlannedStatement {
   sql: string
@@ -433,10 +436,14 @@ const ensureProgressSchema = async (database: RawDatabase): Promise<void> => {
     database,
     `SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = '_ezacto_load_rate_progress'`,
   )
+  const currencyProgressPresent = await first<{ present: number }>(
+    database,
+    `SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = '_ezacto_load_currency_progress'`,
+  )
   const statements: PlannedStatement[] = []
   if (!admissionPresent)
     statements.push({
-      sql: `CREATE TABLE _ezacto_load_admission (
+      sql: `CREATE TABLE IF NOT EXISTS _ezacto_load_admission (
       singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
       snapshot_sha256 TEXT NOT NULL,
       manifest_sha256 TEXT NOT NULL,
@@ -447,7 +454,7 @@ const ensureProgressSchema = async (database: RawDatabase): Promise<void> => {
     })
   if (!progressPresent)
     statements.push({
-      sql: `CREATE TABLE _ezacto_load_progress (
+      sql: `CREATE TABLE IF NOT EXISTS _ezacto_load_progress (
       resource TEXT PRIMARY KEY,
       snapshot_sha256 TEXT NOT NULL,
       load_options_json TEXT NOT NULL CHECK (json_valid(load_options_json)),
@@ -461,7 +468,7 @@ const ensureProgressSchema = async (database: RawDatabase): Promise<void> => {
     })
   if (!subprogressPresent)
     statements.push({
-      sql: `CREATE TABLE _ezacto_load_subprogress (
+      sql: `CREATE TABLE IF NOT EXISTS _ezacto_load_subprogress (
       resource TEXT NOT NULL,
       row_index INTEGER NOT NULL CHECK (row_index >= 0),
       child_offset INTEGER NOT NULL CHECK (child_offset >= 0),
@@ -473,7 +480,7 @@ const ensureProgressSchema = async (database: RawDatabase): Promise<void> => {
     })
   if (!anomalyPresent)
     statements.push({
-      sql: `CREATE TABLE _ezacto_load_anomalies (
+      sql: `CREATE TABLE IF NOT EXISTS _ezacto_load_anomalies (
       snapshot_sha256 TEXT NOT NULL,
       resource TEXT NOT NULL,
       source_id TEXT,
@@ -486,15 +493,19 @@ const ensureProgressSchema = async (database: RawDatabase): Promise<void> => {
   if (!rateProgressPresent) {
     statements.push(
       {
-        sql: `CREATE TABLE _ezacto_load_rate_progress (
+        sql: `CREATE TABLE IF NOT EXISTS _ezacto_load_rate_progress (
         resource TEXT PRIMARY KEY,
         snapshot_sha256 TEXT NOT NULL,
         source_byte_offset INTEGER NOT NULL CHECK (source_byte_offset >= 0),
+        source_lineage_byte_offset INTEGER NOT NULL CHECK (source_lineage_byte_offset >= 0),
         staged_rows INTEGER NOT NULL CHECK (staged_rows >= 0),
         loaded_rows INTEGER NOT NULL CHECK (loaded_rows >= 0),
+        cleaned_rows INTEGER NOT NULL CHECK (cleaned_rows >= 0),
         last_user_harvest_id INTEGER,
         last_sort_start_date TEXT,
         last_harvest_id INTEGER,
+        CHECK (cleaned_rows <= loaded_rows),
+        CHECK (loaded_rows <= staged_rows),
         CHECK ((last_user_harvest_id IS NULL) = (last_sort_start_date IS NULL)),
         CHECK ((last_user_harvest_id IS NULL) = (last_harvest_id IS NULL))
       ) STRICT`,
@@ -503,7 +514,7 @@ const ensureProgressSchema = async (database: RawDatabase): Promise<void> => {
       ...['_ezacto_load_billable_rates', '_ezacto_load_cost_rates'].flatMap(
         (table): PlannedStatement[] => [
           {
-            sql: `CREATE TABLE ${table} (
+            sql: `CREATE TABLE IF NOT EXISTS ${table} (
             harvest_id INTEGER PRIMARY KEY,
             source_row_index INTEGER NOT NULL UNIQUE CHECK (source_row_index >= 0),
             user_harvest_id INTEGER NOT NULL,
@@ -517,7 +528,7 @@ const ensureProgressSchema = async (database: RawDatabase): Promise<void> => {
             bindings: [],
           },
           {
-            sql: `CREATE INDEX ${table}_load_order
+            sql: `CREATE INDEX IF NOT EXISTS ${table}_load_order
               ON ${table}(user_harvest_id, sort_start_date, harvest_id)`,
             bindings: [],
           },
@@ -525,6 +536,18 @@ const ensureProgressSchema = async (database: RawDatabase): Promise<void> => {
       ),
     )
   }
+  if (!currencyProgressPresent)
+    statements.push({
+      sql: `CREATE TABLE IF NOT EXISTS _ezacto_load_currency_progress (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      snapshot_sha256 TEXT NOT NULL,
+      source_byte_offset INTEGER NOT NULL CHECK (source_byte_offset >= 0),
+      rows_scanned INTEGER NOT NULL CHECK (rows_scanned >= 0),
+      currency TEXT CHECK (currency IS NULL OR length(currency) = 3),
+      completed INTEGER NOT NULL CHECK (completed IN (0, 1))
+    ) STRICT`,
+      bindings: [],
+    })
   if (statements.length > 0) await execute(database, statements)
 }
 
@@ -770,6 +793,155 @@ const childIndexPartialPath = (snapshotDir: string, resource: string, digest: st
 const childIndexStatePath = (snapshotDir: string, resource: string, digest: string): string =>
   `${childIndexPath(snapshotDir, resource, digest)}.state.json`
 
+const childIndexDirectory = (snapshotDir: string): string => join(snapshotDir, 'raw', '.load-index')
+
+interface ChildIndexLock {
+  path: string
+  directory: string
+  token: string
+}
+
+interface ChildIndexLockOwner {
+  pid: number
+  host: string
+  token: string
+  startedAt: number
+}
+
+const childIndexQueues = new Map<string, Promise<void>>()
+
+const childIndexPidIsLive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH'
+  }
+}
+
+const syncDirectory = async (path: string): Promise<void> => {
+  const handle = await open(path, 'r')
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
+const createChildIndexLock = async (snapshotDir: string): Promise<ChildIndexLock> => {
+  const directory = childIndexDirectory(snapshotDir)
+  const path = join(directory, '.builder.lock')
+  const token = randomUUID()
+  const temporary = join(directory, `.builder.lock.claim-${process.pid}-${token}`)
+  await mkdir(temporary)
+  const ownerPath = join(temporary, 'owner.json')
+  let installed = false
+  try {
+    const owner = await open(ownerPath, 'wx')
+    try {
+      const value: ChildIndexLockOwner = {
+        pid: process.pid,
+        host: hostname(),
+        token,
+        startedAt: Date.now(),
+      }
+      await owner.writeFile(`${JSON.stringify(value)}\n`, 'utf8')
+      await owner.sync()
+    } finally {
+      await owner.close()
+    }
+    await syncDirectory(temporary)
+    await rename(temporary, path)
+    installed = true
+    await syncDirectory(directory)
+  } catch (error) {
+    await rm(temporary, { recursive: true, force: true })
+    if (installed) await rm(path, { recursive: true, force: true })
+    throw error
+  }
+  return { path, directory, token }
+}
+
+const acquireChildIndexLock = async (snapshotDir: string): Promise<ChildIndexLock> => {
+  const directory = childIndexDirectory(snapshotDir)
+  const path = join(directory, '.builder.lock')
+  await mkdir(directory, { recursive: true })
+  try {
+    return await createChildIndexLock(snapshotDir)
+  } catch (error) {
+    if (!['EEXIST', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+  }
+  let owner: ChildIndexLockOwner
+  try {
+    owner = JSON.parse(await readFile(join(path, 'owner.json'), 'utf8')) as ChildIndexLockOwner
+    if (
+      !Number.isSafeInteger(owner.pid) ||
+      owner.pid < 1 ||
+      typeof owner.host !== 'string' ||
+      typeof owner.token !== 'string' ||
+      !Number.isSafeInteger(owner.startedAt) ||
+      owner.startedAt < 0
+    ) {
+      throw new Error('invalid child-index lock owner')
+    }
+  } catch {
+    throw new Error(`child index lock at ${path} has no readable owner metadata`)
+  }
+  const remote = owner.host !== hostname()
+  // A child-index turn is capped at 100 source rows and D1 itself caps an
+  // invocation at 30 seconds. Preserve fresh cross-host owners, but let a new
+  // executor recover a lock whose originating host disappeared long ago.
+  const remoteExpired = remote && Date.now() - owner.startedAt > CHILD_INDEX_REMOTE_LOCK_STALE_MS
+  if ((!remote && childIndexPidIsLive(owner.pid)) || (remote && !remoteExpired)) {
+    throw new Error(`child index is already being built by pid ${owner.pid} on ${owner.host}`)
+  }
+  const staleGeneration = createHash('sha256').update(owner.token).digest('hex')
+  const quarantine = `${path}.stale-${staleGeneration}`
+  try {
+    await rename(path, quarantine)
+    await syncDirectory(directory)
+    return await createChildIndexLock(snapshotDir)
+  } catch (error) {
+    if (['ENOENT', 'EEXIST', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+      throw new Error('child index is being reclaimed by another loader')
+    }
+    throw error
+  }
+}
+
+const releaseChildIndexLock = async (lock: ChildIndexLock): Promise<void> => {
+  const owner = JSON.parse(
+    await readFile(join(lock.path, 'owner.json'), 'utf8'),
+  ) as ChildIndexLockOwner
+  if (owner.token !== lock.token) throw new Error('refusing to release a changed child-index lock')
+  await rm(lock.path, { recursive: true, force: true })
+  await syncDirectory(lock.directory)
+}
+
+const withChildIndexLock = async <T>(snapshotDir: string, action: () => Promise<T>): Promise<T> => {
+  const key = childIndexDirectory(snapshotDir)
+  const previous = childIndexQueues.get(key) ?? Promise.resolve()
+  let releaseTurn!: () => void
+  const turn = new Promise<void>((resolve) => {
+    releaseTurn = resolve
+  })
+  const queued = previous.catch(() => undefined).then(() => turn)
+  childIndexQueues.set(key, queued)
+  await previous.catch(() => undefined)
+  let lock: ChildIndexLock | null = null
+  try {
+    lock = await acquireChildIndexLock(snapshotDir)
+    return await action()
+  } finally {
+    try {
+      if (lock !== null) await releaseChildIndexLock(lock)
+    } finally {
+      releaseTurn()
+      if (childIndexQueues.get(key) === queued) childIndexQueues.delete(key)
+    }
+  }
+}
+
 const childIndexLine = (record: ChildIndexRecord): string => {
   const fields = [
     String(record.parentId).padStart(16, '0'),
@@ -874,7 +1046,10 @@ const parseChildIndexBuildState = (
         !nonnegativeSafeInteger(active.startByte) ||
         !nonnegativeSafeInteger(active.lineageStartByte) ||
         !nonnegativeSafeInteger(active.startRow) ||
-        !nonnegativeSafeInteger(active.count)))
+        !nonnegativeSafeInteger(active.count) ||
+        active.startByte > value.childByteOffset ||
+        active.lineageStartByte > value.lineageByteOffset ||
+        active.startRow + active.count !== value.childRowOffset))
   ) {
     throw new Error(`${resource} child index checkpoint is corrupt`)
   }
@@ -888,8 +1063,8 @@ const writeChildIndexBuildState = async (
   state: ChildIndexBuildState,
 ): Promise<void> => {
   const path = childIndexStatePath(snapshotDir, resource, digest)
-  const temporary = `${path}.${process.pid}.tmp`
-  const handle = await open(temporary, 'w')
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`
+  const handle = await open(temporary, 'wx')
   try {
     await handle.writeFile(`${JSON.stringify(state)}\n`, 'utf8')
     await handle.sync()
@@ -897,6 +1072,7 @@ const writeChildIndexBuildState = async (
     await handle.close()
   }
   await rename(temporary, path)
+  await syncDirectory(childIndexDirectory(snapshotDir))
 }
 
 const completedChildIndex = async (
@@ -910,9 +1086,21 @@ const completedChildIndex = async (
     const handle = await open(childIndexPath(snapshotDir, resource, digest), 'r')
     try {
       if ((await handle.stat()).size !== parentCount * CHILD_INDEX_RECORD_BYTES) return false
-      if (parentCount === 0) return childCount === 0
+      const [rawSize, lineageSize] = await Promise.all([
+        stat(join(snapshotDir, 'raw', `${resource}.jsonl`)),
+        stat(join(snapshotDir, 'raw', `${resource}.lineage.jsonl`)),
+      ])
+      if (parentCount === 0) return childCount === 0 && rawSize.size === 0 && lineageSize.size === 0
+      const first = await readChildIndexRecord(handle, resource, 0)
       const last = await readChildIndexRecord(handle, resource, parentCount - 1)
-      return last.startRow + last.count === childCount
+      await validateChildIndexNeighborhood(handle, resource, 0, first)
+      if (parentCount > 1)
+        await validateChildIndexNeighborhood(handle, resource, parentCount - 1, last)
+      return (
+        last.startRow + last.count === childCount &&
+        last.endByte === rawSize.size &&
+        last.lineageEndByte === lineageSize.size
+      )
     } finally {
       await handle.close()
     }
@@ -940,14 +1128,16 @@ const advanceChildIndex = async (
     await rm(childIndexPartialPath(snapshotDir, resource, digest), { force: true })
     return { complete: true, workRows: 0 }
   }
-  await mkdir(join(snapshotDir, 'raw', '.load-index'), { recursive: true })
+  await mkdir(childIndexDirectory(snapshotDir), { recursive: true })
   await rm(childIndexPath(snapshotDir, resource, digest), { force: true })
   const statePath = childIndexStatePath(snapshotDir, resource, digest)
   let state: ChildIndexBuildState
   try {
     state = parseChildIndexBuildState(await readFile(statePath, 'utf8'), resource, digest)
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    const code = (error as NodeJS.ErrnoException).code
+    if (code !== undefined && code !== 'ENOENT') throw error
+    await rm(statePath, { force: true })
     await rm(childIndexPartialPath(snapshotDir, resource, digest), { force: true })
     state = {
       version: 1,
@@ -969,14 +1159,74 @@ const advanceChildIndex = async (
   // The index file is always flushed before its state. A crash between those
   // writes can only leave the file ahead, so resumption safely truncates it to
   // the last durable record instead of rescanning any completed parent.
-  const output = await open(partialPath, state.indexRecords === 0 ? 'w+' : 'r+')
+  let output: Awaited<ReturnType<typeof open>>
+  try {
+    output = await open(partialPath, state.indexRecords === 0 ? 'w+' : 'r+')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || state.indexRecords === 0) throw error
+    await rm(statePath, { force: true })
+    return advanceChildIndex(
+      snapshotDir,
+      resource,
+      parentResource,
+      digest,
+      parentCount,
+      childCount,
+      workBudget,
+    )
+  }
   const expectedBytes = state.indexRecords * CHILD_INDEX_RECORD_BYTES
   const partialBytes = (await output.stat()).size
   if (partialBytes < expectedBytes) {
     await output.close()
-    throw new Error(`${resource} child index checkpoint is truncated`)
+    await rm(statePath, { force: true })
+    await rm(partialPath, { force: true })
+    return advanceChildIndex(
+      snapshotDir,
+      resource,
+      parentResource,
+      digest,
+      parentCount,
+      childCount,
+      workBudget,
+    )
   }
   if (partialBytes > expectedBytes) await output.truncate(expectedBytes)
+  try {
+    if (state.indexRecords === 0) {
+      const active = state.activeParent
+      if (
+        active !== null &&
+        (active.startByte !== 0 || active.lineageStartByte !== 0 || active.startRow !== 0)
+      ) {
+        throw new Error(`${resource} child index checkpoint origin is corrupt`)
+      }
+    } else {
+      const previous = await readChildIndexRecord(output, resource, state.indexRecords - 1)
+      await validateChildIndexNeighborhood(output, resource, state.indexRecords - 1, previous)
+      const boundary = state.activeParent
+      if (
+        previous.endByte !== (boundary?.startByte ?? state.childByteOffset) ||
+        previous.lineageEndByte !== (boundary?.lineageStartByte ?? state.lineageByteOffset) ||
+        previous.startRow + previous.count !== (boundary?.startRow ?? state.childRowOffset)
+      ) {
+        throw new Error(`${resource} child index checkpoint boundary is corrupt`)
+      }
+    }
+  } catch {
+    await output.close()
+    await rm(statePath, { force: true })
+    await rm(partialPath, { force: true })
+    return advanceChildIndex(
+      snapshotDir,
+      resource,
+      parentResource,
+      digest,
+      parentCount,
+      childCount,
+      workBudget,
+    )
+  }
 
   const parent = lineCursor(
     join(snapshotDir, 'raw', `${parentResource}.jsonl`),
@@ -1068,6 +1318,7 @@ const advanceChildIndex = async (
       pendingChild = child
     }
     await output.sync()
+    await syncDirectory(childIndexDirectory(snapshotDir))
     if (state.parentOrdinal === parentCount && state.activeParent === null) {
       if (state.childRowOffset !== childCount) {
         throw new Error(
@@ -1076,7 +1327,9 @@ const advanceChildIndex = async (
       }
       await output.close()
       await rename(partialPath, childIndexPath(snapshotDir, resource, digest))
+      await syncDirectory(childIndexDirectory(snapshotDir))
       await rm(statePath, { force: true })
+      await syncDirectory(childIndexDirectory(snapshotDir))
       return { complete: true, workRows }
     }
     await writeChildIndexBuildState(snapshotDir, resource, digest, state)
@@ -1096,7 +1349,7 @@ const advanceChildIndex = async (
 const parseChildIndexRecord = (line: string, resource: string): ChildIndexRecord => {
   const match = /^(\d{16}) (\d{16}) (\d{16}) (\d{16}) (\d{16}) (\d{12}) (\d{12})\n$/.exec(line)
   if (!match) throw new Error(`${resource} child index is corrupt`)
-  return {
+  const record = {
     parentId: Number(match[1]),
     startByte: Number(match[2]),
     endByte: Number(match[3]),
@@ -1105,6 +1358,19 @@ const parseChildIndexRecord = (line: string, resource: string): ChildIndexRecord
     startRow: Number(match[6]),
     count: Number(match[7]),
   }
+  if (
+    !Number.isSafeInteger(record.parentId) ||
+    record.parentId < 1 ||
+    !Number.isSafeInteger(record.startByte) ||
+    !Number.isSafeInteger(record.endByte) ||
+    !Number.isSafeInteger(record.lineageStartByte) ||
+    !Number.isSafeInteger(record.lineageEndByte) ||
+    !Number.isSafeInteger(record.startRow) ||
+    !Number.isSafeInteger(record.count)
+  ) {
+    throw new Error(`${resource} child index exceeds safe integer bounds`)
+  }
+  return record
 }
 
 const readChildIndexRecord = async (
@@ -1123,12 +1389,69 @@ const readChildIndexRecord = async (
   return parseChildIndexRecord(buffer.toString('utf8'), resource)
 }
 
+const validateChildIndexNeighborhood = async (
+  handle: Awaited<ReturnType<typeof open>>,
+  resource: string,
+  ordinal: number,
+  record: ChildIndexRecord,
+): Promise<void> => {
+  const records = (await handle.stat()).size / CHILD_INDEX_RECORD_BYTES
+  if (!Number.isInteger(records) || ordinal < 0 || ordinal >= records) {
+    throw new Error(`${resource} child index ordinal is corrupt`)
+  }
+  if (
+    record.startByte > record.endByte ||
+    record.lineageStartByte > record.lineageEndByte ||
+    (record.count === 0) !== (record.startByte === record.endByte) ||
+    (record.count === 0) !== (record.lineageStartByte === record.lineageEndByte) ||
+    !Number.isSafeInteger(record.startRow + record.count)
+  ) {
+    throw new Error(`${resource} child index range is corrupt`)
+  }
+  if (ordinal === 0) {
+    if (record.startByte !== 0 || record.lineageStartByte !== 0 || record.startRow !== 0) {
+      throw new Error(`${resource} child index does not start at the source origin`)
+    }
+  } else {
+    const previous = await readChildIndexRecord(handle, resource, ordinal - 1)
+    if (
+      previous.endByte !== record.startByte ||
+      previous.lineageEndByte !== record.lineageStartByte ||
+      previous.startRow + previous.count !== record.startRow
+    ) {
+      throw new Error(`${resource} child index has a gap or overlap`)
+    }
+  }
+  if (ordinal + 1 < records) {
+    const next = await readChildIndexRecord(handle, resource, ordinal + 1)
+    if (
+      record.endByte !== next.startByte ||
+      record.lineageEndByte !== next.lineageStartByte ||
+      record.startRow + record.count !== next.startRow
+    ) {
+      throw new Error(`${resource} child index has a gap or overlap`)
+    }
+  }
+}
+
 const advanceChildIndexes = async (
   snapshotDir: string,
   manifest: Manifest,
   digest: string,
   workBudget: number,
 ): Promise<boolean> => {
+  const indexDirectory = childIndexDirectory(snapshotDir)
+  try {
+    for (const entry of await readdir(indexDirectory)) {
+      if (entry.includes('.state.json.') && entry.endsWith('.tmp')) {
+        await rm(join(indexDirectory, entry), { force: true })
+      } else if (entry.startsWith('.builder.lock.claim-')) {
+        await rm(join(indexDirectory, entry), { recursive: true, force: true })
+      }
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
   let remaining = Math.min(workBudget, CHILD_INDEX_WORK_ROWS_PER_INVOCATION)
   for (const step of RESOURCES) {
     const expectedCount = manifest.resources[step.name]?.count ?? 0
@@ -1156,17 +1479,24 @@ const findChildIndex = async (
   parentOrdinal: number,
   parentId: number,
 ): Promise<ChildIndexRecord | null> => {
-  const handle = await open(childIndexPath(snapshotDir, resource, digest), 'r')
   try {
-    const size = (await handle.stat()).size
-    if (size % CHILD_INDEX_RECORD_BYTES !== 0) throw new Error(`${resource} child index is corrupt`)
-    if (parentOrdinal < 0 || parentOrdinal >= size / CHILD_INDEX_RECORD_BYTES) return null
-    const record = await readChildIndexRecord(handle, resource, parentOrdinal)
-    if (record.parentId !== parentId)
-      throw new Error(`${resource} child index parent is misaligned`)
-    return record.count === 0 ? null : record
-  } finally {
-    await handle.close()
+    const handle = await open(childIndexPath(snapshotDir, resource, digest), 'r')
+    try {
+      const size = (await handle.stat()).size
+      if (size % CHILD_INDEX_RECORD_BYTES !== 0)
+        throw new Error(`${resource} child index is corrupt`)
+      if (parentOrdinal < 0 || parentOrdinal >= size / CHILD_INDEX_RECORD_BYTES) return null
+      const record = await readChildIndexRecord(handle, resource, parentOrdinal)
+      await validateChildIndexNeighborhood(handle, resource, parentOrdinal, record)
+      if (record.parentId !== parentId)
+        throw new Error(`${resource} child index parent is misaligned`)
+      return record.count === 0 ? null : record
+    } finally {
+      await handle.close()
+    }
+  } catch (error) {
+    await rm(childIndexPath(snapshotDir, resource, digest), { force: true })
+    throw error
   }
 }
 
@@ -1183,39 +1513,46 @@ const childIndexSlices = async (
   count: number,
 ): Promise<ChildIndexSlice[]> => {
   if (count === 0) return []
-  const handle = await open(childIndexPath(snapshotDir, resource, digest), 'r')
   try {
-    const size = (await handle.stat()).size
-    if (size % CHILD_INDEX_RECORD_BYTES !== 0) throw new Error(`${resource} child index is corrupt`)
-    const records = size / CHILD_INDEX_RECORD_BYTES
-    const slices: ChildIndexSlice[] = []
-    let at = rowOffset
-    let remaining = count
-    while (remaining > 0) {
-      let low = 0
-      let high = records - 1
-      let ordinal = -1
-      while (low <= high) {
-        const middle = Math.floor((low + high) / 2)
-        const candidate = await readChildIndexRecord(handle, resource, middle)
-        if (candidate.startRow <= at) {
-          ordinal = middle
-          low = middle + 1
-        } else high = middle - 1
+    const handle = await open(childIndexPath(snapshotDir, resource, digest), 'r')
+    try {
+      const size = (await handle.stat()).size
+      if (size % CHILD_INDEX_RECORD_BYTES !== 0)
+        throw new Error(`${resource} child index is corrupt`)
+      const records = size / CHILD_INDEX_RECORD_BYTES
+      const slices: ChildIndexSlice[] = []
+      let at = rowOffset
+      let remaining = count
+      while (remaining > 0) {
+        let low = 0
+        let high = records - 1
+        let ordinal = -1
+        while (low <= high) {
+          const middle = Math.floor((low + high) / 2)
+          const candidate = await readChildIndexRecord(handle, resource, middle)
+          if (candidate.startRow <= at) {
+            ordinal = middle
+            low = middle + 1
+          } else high = middle - 1
+        }
+        if (ordinal < 0) throw new Error(`${resource} child row ${at} is absent from its index`)
+        const record = await readChildIndexRecord(handle, resource, ordinal)
+        await validateChildIndexNeighborhood(handle, resource, ordinal, record)
+        if (record.count === 0 || at < record.startRow || at >= record.startRow + record.count) {
+          throw new Error(`${resource} child row ${at} is absent from its index`)
+        }
+        const take = Math.min(remaining, record.startRow + record.count - at)
+        slices.push({ record, count: take })
+        at += take
+        remaining -= take
       }
-      if (ordinal < 0) throw new Error(`${resource} child row ${at} is absent from its index`)
-      const record = await readChildIndexRecord(handle, resource, ordinal)
-      if (record.count === 0 || at < record.startRow || at >= record.startRow + record.count) {
-        throw new Error(`${resource} child row ${at} is absent from its index`)
-      }
-      const take = Math.min(remaining, record.startRow + record.count - at)
-      slices.push({ record, count: take })
-      at += take
-      remaining -= take
+      return slices
+    } finally {
+      await handle.close()
     }
-    return slices
-  } finally {
-    await handle.close()
+  } catch (error) {
+    await rm(childIndexPath(snapshotDir, resource, digest), { force: true })
+    throw error
   }
 }
 
@@ -1294,6 +1631,44 @@ const lineageChunkAt = async (
   return { rows, nextByteOffset }
 }
 
+const sequentialLineageChunk = async (
+  snapshotDir: string,
+  resource: string,
+  byteOffset: number,
+  count: number,
+): Promise<{ rows: ChildLineage[]; nextByteOffset: number }> => {
+  const rows: ChildLineage[] = []
+  let nextByteOffset = byteOffset
+  const lines = createInterface({
+    input: createReadStream(
+      join(snapshotDir, 'raw', `${resource}.lineage.jsonl`),
+      byteOffset === 0 ? undefined : { start: byteOffset },
+    ),
+    crlfDelay: Infinity,
+  })
+  try {
+    for await (const line of lines) {
+      nextByteOffset += Buffer.byteLength(line, 'utf8') + 1
+      if (!line.trim()) continue
+      const witness = JSON.parse(line) as Partial<ChildLineage>
+      if (
+        !Number.isSafeInteger(witness.source_id) ||
+        (witness.source_id ?? 0) < 1 ||
+        !Number.isSafeInteger(witness.parent_id) ||
+        (witness.parent_id ?? 0) < 1
+      ) {
+        throw new Error(`${resource} lineage checkpoint reached an invalid row`)
+      }
+      rows.push(witness as ChildLineage)
+      if (rows.length === count) break
+    }
+  } finally {
+    lines.close()
+  }
+  if (rows.length !== count) throw new Error(`${resource} lineage ended before its staged rows`)
+  return { rows, nextByteOffset }
+}
+
 const lineageFor = async (
   snapshotDir: string,
   resource: string,
@@ -1330,8 +1705,10 @@ type RateResource = 'billable_rates' | 'cost_rates'
 interface RateStageProgress {
   snapshotSha256: string
   sourceByteOffset: number
+  sourceLineageByteOffset: number
   stagedRows: number
   loadedRows: number
+  cleanedRows: number
   lastUserHarvestId: number | null
   lastSortStartDate: string | null
   lastHarvestId: number | null
@@ -1361,7 +1738,8 @@ const rateStageProgress = async (
   first<RateStageProgress>(
     database,
     `SELECT snapshot_sha256 AS snapshotSha256, source_byte_offset AS sourceByteOffset,
-      staged_rows AS stagedRows, loaded_rows AS loadedRows,
+      source_lineage_byte_offset AS sourceLineageByteOffset,
+      staged_rows AS stagedRows, loaded_rows AS loadedRows, cleaned_rows AS cleanedRows,
       last_user_harvest_id AS lastUserHarvestId,
       last_sort_start_date AS lastSortStartDate, last_harvest_id AS lastHarvestId
     FROM _ezacto_load_rate_progress WHERE resource = ?`,
@@ -1372,20 +1750,25 @@ const rateStageProgressStatement = (
   resource: RateResource,
   digest: string,
   sourceByteOffset: number,
+  sourceLineageByteOffset: number,
   stagedRows: number,
   loadedRows: number,
+  cleanedRows: number,
   lastUserHarvestId: number | null,
   lastSortStartDate: string | null,
   lastHarvestId: number | null,
 ): PlannedStatement => ({
   sql: `INSERT INTO _ezacto_load_rate_progress (
-      resource, snapshot_sha256, source_byte_offset, staged_rows, loaded_rows,
+      resource, snapshot_sha256, source_byte_offset, source_lineage_byte_offset,
+      staged_rows, loaded_rows, cleaned_rows,
       last_user_harvest_id, last_sort_start_date, last_harvest_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(resource) DO UPDATE SET
       source_byte_offset = excluded.source_byte_offset,
+      source_lineage_byte_offset = excluded.source_lineage_byte_offset,
       staged_rows = excluded.staged_rows,
       loaded_rows = excluded.loaded_rows,
+      cleaned_rows = excluded.cleaned_rows,
       last_user_harvest_id = excluded.last_user_harvest_id,
       last_sort_start_date = excluded.last_sort_start_date,
       last_harvest_id = excluded.last_harvest_id
@@ -1394,8 +1777,10 @@ const rateStageProgressStatement = (
     resource,
     digest,
     sourceByteOffset,
+    sourceLineageByteOffset,
     stagedRows,
     loadedRows,
+    cleanedRows,
     lastUserHarvestId,
     lastSortStartDate,
     lastHarvestId,
@@ -1455,8 +1840,10 @@ const loadRateChunk = async (
     ({
       snapshotSha256: digest,
       sourceByteOffset: 0,
+      sourceLineageByteOffset: 0,
       stagedRows: 0,
       loadedRows: 0,
+      cleanedRows: 0,
       lastUserHarvestId: null,
       lastSortStartDate: null,
       lastHarvestId: null,
@@ -1475,16 +1862,15 @@ const loadRateChunk = async (
       limit,
     )
     if (chunk.rows.length === 0) throw new Error(`${resource} ended before manifest count ${total}`)
-    const lineage = await lineageFor(
+    const lineage = await sequentialLineageChunk(
       options.snapshotDir,
       resource,
-      digest,
-      stage.stagedRows,
-      chunk.rows,
+      stage.sourceLineageByteOffset,
+      chunk.rows.length,
     )
     const table = rateStageTable(resource)
     const statements = chunk.rows.map((source, index) => {
-      const witness = lineage[index]
+      const witness = lineage.rows[index]
       const harvestId = safeIntegerAt(source, '/id', `${resource}.id`)
       if (witness?.source_id !== harvestId) throw new Error(`${resource} lineage is misaligned`)
       const startDate = stringValue(source.row, 'start_date')
@@ -1520,13 +1906,77 @@ const loadRateChunk = async (
         resource,
         digest,
         chunk.nextByteOffset,
+        lineage.nextByteOffset,
         stage.stagedRows + chunk.rows.length,
         stage.loadedRows,
+        stage.cleanedRows,
         stage.lastUserHarvestId,
         stage.lastSortStartDate,
         stage.lastHarvestId,
       ),
     )
+    await execute(options.database.$client, statements)
+    return {
+      complete: false,
+      resource,
+      loadedRows: 0,
+      statements: statements.length,
+      snapshotSha256: digest,
+      anomalies: [],
+    }
+  }
+
+  if (stage.loadedRows === total) {
+    if (stage.cleanedRows < total) {
+      const cleanupLimit = Math.min(
+        options.maxRows ?? 100,
+        RATE_CLEANUP_ROWS_PER_INVOCATION,
+        total - stage.cleanedRows,
+      )
+      if (cleanupLimit < 1) throw new Error(`${resource} has no cleanup row budget`)
+      const cleanedRows = stage.cleanedRows + cleanupLimit
+      const statements = [
+        {
+          sql: `DELETE FROM ${rateStageTable(resource)}
+            WHERE source_row_index >= ? AND source_row_index < ?`,
+          bindings: [stage.cleanedRows, cleanedRows],
+        },
+        rateStageProgressStatement(
+          resource,
+          digest,
+          stage.sourceByteOffset,
+          stage.sourceLineageByteOffset,
+          stage.stagedRows,
+          stage.loadedRows,
+          cleanedRows,
+          stage.lastUserHarvestId,
+          stage.lastSortStartDate,
+          stage.lastHarvestId,
+        ),
+      ]
+      await execute(options.database.$client, statements)
+      return {
+        complete: false,
+        resource,
+        loadedRows: 0,
+        statements: statements.length,
+        snapshotSha256: digest,
+        anomalies: [],
+      }
+    }
+    const statements = [
+      { sql: 'DELETE FROM _ezacto_load_rate_progress WHERE resource = ?', bindings: [resource] },
+      progressStatement(
+        resource,
+        digest,
+        loadOptionsJson,
+        stage.sourceByteOffset,
+        total,
+        total,
+        true,
+        timestamp,
+      ),
+    ]
     await execute(options.database.$client, statements)
     return {
       complete: false,
@@ -1578,27 +2028,21 @@ const loadRateChunk = async (
   })
   const last = selected[selected.length - 1]!
   const loaded = stage.loadedRows + selected.length
-  const complete = loaded === total
   statements.push(...anomalyStatements(digest, anomalies))
-  if (complete) {
-    statements.push(
-      { sql: `DELETE FROM ${rateStageTable(resource)}`, bindings: [] },
-      { sql: 'DELETE FROM _ezacto_load_rate_progress WHERE resource = ?', bindings: [resource] },
-    )
-  } else {
-    statements.push(
-      rateStageProgressStatement(
-        resource,
-        digest,
-        stage.sourceByteOffset,
-        stage.stagedRows,
-        loaded,
-        last.userHarvestId,
-        last.sortStartDate,
-        last.harvestId,
-      ),
-    )
-  }
+  statements.push(
+    rateStageProgressStatement(
+      resource,
+      digest,
+      stage.sourceByteOffset,
+      stage.sourceLineageByteOffset,
+      stage.stagedRows,
+      loaded,
+      stage.cleanedRows,
+      last.userHarvestId,
+      last.sortStartDate,
+      last.harvestId,
+    ),
+  )
   statements.push(
     progressStatement(
       resource,
@@ -1607,7 +2051,7 @@ const loadRateChunk = async (
       stage.sourceByteOffset,
       loaded,
       total,
-      complete,
+      false,
       timestamp,
     ),
   )
@@ -2703,44 +3147,110 @@ const invoiceInput = async (
   }
 }
 
+interface CurrencyInferenceProgress {
+  snapshotSha256: string
+  sourceByteOffset: number
+  rowsScanned: number
+  currency: string | null
+  completed: number
+}
+
+const currencyInferenceProgress = async (
+  database: RawDatabase,
+): Promise<CurrencyInferenceProgress | null> =>
+  first<CurrencyInferenceProgress>(
+    database,
+    `SELECT snapshot_sha256 AS snapshotSha256, source_byte_offset AS sourceByteOffset,
+      rows_scanned AS rowsScanned, currency, completed
+     FROM _ezacto_load_currency_progress WHERE singleton = 1`,
+  )
+
+const currencyInferenceStatement = (
+  digest: string,
+  sourceByteOffset: number,
+  rowsScanned: number,
+  currency: string | null,
+  completed: boolean,
+): PlannedStatement => ({
+  sql: `INSERT INTO _ezacto_load_currency_progress
+    (singleton, snapshot_sha256, source_byte_offset, rows_scanned, currency, completed)
+    VALUES (1, ?, ?, ?, ?, ?)
+    ON CONFLICT(singleton) DO UPDATE SET
+      source_byte_offset = excluded.source_byte_offset,
+      rows_scanned = excluded.rows_scanned,
+      currency = excluded.currency,
+      completed = excluded.completed
+    WHERE _ezacto_load_currency_progress.snapshot_sha256 = excluded.snapshot_sha256`,
+  bindings: [digest, sourceByteOffset, rowsScanned, currency, completed ? 1 : 0],
+})
+
 const resolveOrganizationCurrency = async (
+  database: RawDatabase,
   snapshotDir: string,
   manifest: Manifest,
+  digest: string,
   override: string | undefined,
-): Promise<string> => {
+): Promise<string | null> => {
   if (override) return override.toUpperCase()
   if (manifest.preflight.organization_currency)
     return manifest.preflight.organization_currency.toUpperCase()
   const total = manifest.resources.clients?.count ?? 0
-  const currencies = new Set<string>()
-  let rows = 0
-  let byteOffset = 0
-  while (rows < total && currencies.size <= 1) {
-    const chunk = await rawChunkFrom(snapshotDir, 'clients', byteOffset, rows, 100)
-    if (chunk.rows.length === 0) break
-    for (const source of chunk.rows) {
-      const currency = stringValue(source.row, 'currency')
-      if (currency) currencies.add(currency.toUpperCase())
-    }
-    rows += chunk.rows.length
-    byteOffset = chunk.nextByteOffset
+  if (total === 0) {
+    throw new Error(
+      'Harvest Company omits organization currency; pass --organization-currency (there are no client currencies to infer)',
+    )
   }
-  if (currencies.size === 1) return [...currencies][0]
-  throw new Error(
-    'Harvest Company omits organization currency; pass --organization-currency (client currencies are absent or mixed)',
+  const prior = await currencyInferenceProgress(database)
+  if (prior !== null && prior.snapshotSha256 !== digest) {
+    throw new Error('organization currency inference belongs to a different snapshot')
+  }
+  if (prior?.completed === 1) {
+    if (prior.currency === null)
+      throw new Error('completed organization currency inference is empty')
+    return prior.currency
+  }
+  const rowsScanned = prior?.rowsScanned ?? 0
+  const sourceByteOffset = prior?.sourceByteOffset ?? 0
+  if (rowsScanned > total) throw new Error('organization currency inference exceeds client count')
+  const chunk = await rawChunkFrom(
+    snapshotDir,
+    'clients',
+    sourceByteOffset,
+    rowsScanned,
+    Math.min(100, total - rowsScanned),
   )
+  if (chunk.rows.length === 0 && rowsScanned < total) {
+    throw new Error(`clients ended before manifest count ${total}`)
+  }
+  let currency = prior?.currency ?? null
+  for (const source of chunk.rows) {
+    const candidate = stringValue(source.row, 'currency')?.toUpperCase() ?? null
+    if (candidate === null) continue
+    if (currency !== null && candidate !== currency) {
+      throw new Error(
+        'Harvest Company omits organization currency; pass --organization-currency (client currencies are absent or mixed)',
+      )
+    }
+    currency = candidate
+  }
+  const scanned = rowsScanned + chunk.rows.length
+  const complete = scanned === total
+  if (complete && currency === null) {
+    throw new Error(
+      'Harvest Company omits organization currency; pass --organization-currency (client currencies are absent or mixed)',
+    )
+  }
+  await execute(database, [
+    currencyInferenceStatement(digest, chunk.nextByteOffset, scanned, currency, complete),
+  ])
+  return complete ? currency : null
 }
 
 const organizationStatement = async (
-  snapshotDir: string,
   manifest: Manifest,
   options: LoadNextChunkOptions,
+  currency: string,
 ): Promise<PlannedStatement> => {
-  const currency = await resolveOrganizationCurrency(
-    snapshotDir,
-    manifest,
-    options.organizationCurrency,
-  )
   if (!/^[A-Z]{3}$/.test(currency))
     throw new Error('organization currency must be an ISO three-letter code')
   const p = manifest.preflight
@@ -2861,11 +3371,13 @@ const admitSnapshot = async (
     }
     return {
       snapshotSha256: existing.snapshotSha256,
-      indexingComplete: await advanceChildIndexes(
-        options.snapshotDir,
-        manifest,
-        expectedDigest,
-        CHILD_INDEX_WORK_ROWS_PER_INVOCATION,
+      indexingComplete: await withChildIndexLock(options.snapshotDir, () =>
+        advanceChildIndexes(
+          options.snapshotDir,
+          manifest,
+          expectedDigest,
+          CHILD_INDEX_WORK_ROWS_PER_INVOCATION,
+        ),
       ),
     }
   }
@@ -2886,11 +3398,13 @@ const admitSnapshot = async (
     }
   }
   processAdmissions.set(options.database.$client, actualDigest)
-  const indexingComplete = await advanceChildIndexes(
-    options.snapshotDir,
-    manifest,
-    actualDigest,
-    CHILD_INDEX_WORK_ROWS_PER_INVOCATION,
+  const indexingComplete = await withChildIndexLock(options.snapshotDir, () =>
+    advanceChildIndexes(
+      options.snapshotDir,
+      manifest,
+      actualDigest,
+      CHILD_INDEX_WORK_ROWS_PER_INVOCATION,
+    ),
   )
   if (!indexingComplete) return { snapshotSha256: actualDigest, indexingComplete: false }
   await execute(options.database.$client, [
@@ -2900,6 +3414,10 @@ const admitSnapshot = async (
       SELECT 1, ?, ?, ?, ? WHERE NOT EXISTS (
         SELECT 1 FROM _ezacto_load_admission WHERE singleton = 1)`,
       bindings: [actualDigest, manifestSha256, loadOptionsJson, timestamp],
+    },
+    {
+      sql: 'DELETE FROM _ezacto_load_currency_progress WHERE singleton = 1',
+      bindings: [],
     },
   ])
   const admitted = await first<LoadAdmission>(
@@ -3193,6 +3711,20 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
     )
   }
   await ensureProgressSchema(options.database.$client)
+  const timestamp = sourceTimestamp(manifest)
+  const maxStatements = options.maxStatements ?? DEFAULT_INVOCATION_STATEMENT_BUDGET
+  const maximumStatements = isD1(options.database.$client)
+    ? D1_MAX_STATEMENTS - D1_INVOCATION_QUERY_RESERVE
+    : D1_MAX_STATEMENTS
+  if (
+    !Number.isSafeInteger(maxStatements) ||
+    maxStatements < 2 ||
+    maxStatements > maximumStatements
+  ) {
+    throw new Error(
+      `maxStatements must be between 2 and ${maximumStatements}; D1 reserves query overhead`,
+    )
+  }
   const priorAdmission = await first<{ loadOptionsJson: string }>(
     options.database.$client,
     `SELECT load_options_json AS loadOptionsJson FROM _ezacto_load_admission WHERE singleton = 1`,
@@ -3215,28 +3747,31 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
     }
     loadOptionsJson = priorAdmission.loadOptionsJson
   } else {
+    const expectedDigest = await checksumDigest(options.snapshotDir)
+    if (isD1(options.database.$client) && options.immutableSnapshotSha256 !== expectedDigest) {
+      throw new Error('D1 load requires immutableSnapshotSha256 matching checksums.json')
+    }
+    const organizationCurrency = await resolveOrganizationCurrency(
+      options.database.$client,
+      options.snapshotDir,
+      manifest,
+      expectedDigest,
+      options.organizationCurrency,
+    )
+    if (organizationCurrency === null) {
+      return {
+        complete: false,
+        resource: null,
+        loadedRows: 0,
+        statements: 1,
+        snapshotSha256: expectedDigest,
+        anomalies: [],
+      }
+    }
     loadOptionsJson = JSON.stringify({
-      organization_currency: await resolveOrganizationCurrency(
-        options.snapshotDir,
-        manifest,
-        options.organizationCurrency,
-      ),
+      organization_currency: organizationCurrency,
       organization_address: options.organizationAddress ?? manifest.preflight.organization_address,
     })
-  }
-  const timestamp = sourceTimestamp(manifest)
-  const maxStatements = options.maxStatements ?? DEFAULT_INVOCATION_STATEMENT_BUDGET
-  const maximumStatements = isD1(options.database.$client)
-    ? D1_MAX_STATEMENTS - D1_INVOCATION_QUERY_RESERVE
-    : D1_MAX_STATEMENTS
-  if (
-    !Number.isSafeInteger(maxStatements) ||
-    maxStatements < 2 ||
-    maxStatements > maximumStatements
-  ) {
-    throw new Error(
-      `maxStatements must be between 2 and ${maximumStatements}; D1 reserves query overhead`,
-    )
   }
   const admission = await admitSnapshot(options, manifest, loadOptionsJson, timestamp)
   const digest = admission.snapshotSha256
@@ -3272,6 +3807,17 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
     if (prior?.completed === 1) continue
     const offset = prior?.rowsLoaded ?? 0
     const anomalies: LoadAnomaly[] = []
+    if (resource === 'billable_rates' || resource === 'cost_rates') {
+      return loadRateChunk(
+        options,
+        resource,
+        digest,
+        loadOptionsJson,
+        timestamp,
+        total,
+        maxStatements,
+      )
+    }
     if (offset >= total) {
       const checkpoint = progressStatement(
         resource,
@@ -3293,19 +3839,13 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
         anomalies,
       }
     }
-    if (resource === 'billable_rates' || resource === 'cost_rates') {
-      return loadRateChunk(
-        options,
-        resource,
-        digest,
-        loadOptionsJson,
-        timestamp,
-        total,
-        maxStatements,
-      )
-    }
     if (resource === 'organization') {
-      const statement = await organizationStatement(options.snapshotDir, manifest, options)
+      const persistedOptions = JSON.parse(loadOptionsJson) as { organization_currency: string }
+      const statement = await organizationStatement(
+        manifest,
+        options,
+        persistedOptions.organization_currency,
+      )
       const userCount = manifest.resources.users?.count ?? 0
       const owner = await findRawRowById(
         options.snapshotDir,

@@ -246,6 +246,7 @@ interface NormalizedImportInput {
 interface Statement {
   text: string
   params: Array<string | number | null>
+  atomicGroup?: string
 }
 
 type ImportOperationKind = 'line' | 'message' | 'payment'
@@ -260,33 +261,37 @@ const importOperationStatements = (
   nativeId: number | null,
   oldUpdatedAt: string | null,
   newUpdatedAt: string | null,
-  mutation: Statement,
-): Statement[] => [
-  {
-    text: `INSERT INTO invoice_import_operations (
+  mutation: Statement | readonly Statement[],
+): Statement[] => {
+  const atomicGroup = `${resourceKind}:${action}:${harvestId}`
+  const mutations = Array.isArray(mutation) ? mutation : [mutation]
+  return [
+    {
+      text: `INSERT INTO invoice_import_operations (
       invoice_id, source_updated_at, resource_kind, action, harvest_id,
       native_id, old_updated_at, new_updated_at, input_fingerprint
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    params: [
-      input.invoiceId,
-      input.sourceUpdatedAt,
-      resourceKind,
-      action,
-      harvestId,
-      nativeId,
-      oldUpdatedAt,
-      newUpdatedAt,
-      inputFingerprint,
-    ],
-  },
-  mutation,
-  {
-    text: `UPDATE invoice_import_operations SET completed = 1
+      params: [
+        input.invoiceId,
+        input.sourceUpdatedAt,
+        resourceKind,
+        action,
+        harvestId,
+        nativeId,
+        oldUpdatedAt,
+        newUpdatedAt,
+        inputFingerprint,
+      ],
+    },
+    ...mutations,
+    {
+      text: `UPDATE invoice_import_operations SET completed = 1
       WHERE invoice_id = ? AND source_updated_at = ? AND resource_kind = ?
         AND action = ? AND harvest_id = ? AND completed = 0`,
-    params: [input.invoiceId, input.sourceUpdatedAt, resourceKind, action, harvestId],
-  },
-]
+      params: [input.invoiceId, input.sourceUpdatedAt, resourceKind, action, harvestId],
+    },
+  ].map((statement) => ({ ...statement, atomicGroup }))
+}
 
 const d1StatementLimit = 1000
 const d1ReconciliationQueryOverhead = 6
@@ -632,19 +637,22 @@ const messageInsertStatement = (invoiceId: number, message: StoredMessage): Stat
   ]
   return message.id === 0
     ? {
-        text: `INSERT INTO invoice_messages (${columns}) VALUES (${values.map(() => '?').join(', ')})`,
-        params: values,
+        text: `INSERT INTO invoice_messages (${columns})
+          SELECT ${values.map(() => '?').join(', ')}
+          WHERE NOT EXISTS (SELECT 1 FROM invoice_messages WHERE harvest_id = ?)`,
+        params: [...values, message.harvestId],
       }
     : {
         text: `INSERT INTO invoice_messages (id, ${columns})
-          VALUES (?, ${values.map(() => '?').join(', ')})`,
-        params: [message.id, ...values],
+          SELECT ?, ${values.map(() => '?').join(', ')}
+          WHERE NOT EXISTS (SELECT 1 FROM invoice_messages WHERE harvest_id = ?)`,
+        params: [message.id, ...values, message.harvestId],
       }
 }
 
 const messageUpdateStatement = (
   invoiceId: number,
-  existing: StoredMessage,
+  existing: StoredMessage | undefined,
   incoming: StoredMessage,
 ): Statement => ({
   text: `UPDATE invoice_messages SET
@@ -663,9 +671,9 @@ const messageUpdateStatement = (
     incoming.eventType,
     incoming.updatedAt,
     invoiceId,
-    existing.harvestId,
-    existing.id,
-    existing.updatedAt,
+    incoming.harvestId,
+    existing?.id ?? incoming.id,
+    existing?.updatedAt ?? incoming.updatedAt,
   ],
 })
 
@@ -1413,7 +1421,7 @@ export const reconcileImportedInvoice = async (
           },
         ]
       : []
-  if (input.sourceHeader !== undefined) {
+  if (input.sourceHeader !== undefined && priorReceipt === null) {
     const source = input.sourceHeader
     statements.push({
       text: `UPDATE invoices SET client_id = ?, created_by_user_id = ?,
@@ -1451,23 +1459,12 @@ export const reconcileImportedInvoice = async (
     })
   }
   const pendingLineInserts = new Map(lineInserts.map((line) => [line.harvestId, line]))
+  const lineUpdates = new Map<number, { existing: StoredLine; replacement: StoredLine }>()
   for (const line of lineDeletes) {
     if (line.harvestId === null) throw new Error('imported line identity is missing')
     const replacement = pendingLineInserts.get(line.harvestId)
     if (replacement !== undefined) {
-      statements.push(
-        ...importOperationStatements(
-          input,
-          inputFingerprint,
-          'line',
-          'update',
-          line.harvestId,
-          line.id,
-          line.updatedAt,
-          replacement.updatedAt,
-          lineUpdateStatement(input.invoiceId, line, replacement),
-        ),
-      )
+      lineUpdates.set(line.harvestId, { existing: line, replacement })
       pendingLineInserts.delete(line.harvestId)
     } else {
       statements.push(
@@ -1488,6 +1485,92 @@ export const reconcileImportedInvoice = async (
         ),
       )
     }
+  }
+  // Order acyclic moves from vacant target positions backwards. Any remainder
+  // is a true position cycle under UNIQUE(invoice_id, position); replace that
+  // whole cycle atomically with the same native IDs so no retry can observe a
+  // missing row or rotate identity.
+  while (lineUpdates.size > 0) {
+    const occupied = new Set([...lineUpdates.values()].map(({ existing }) => existing.position))
+    const safe = [...lineUpdates.entries()].find(
+      ([, pair]) =>
+        pair.existing.position === pair.replacement.position ||
+        !occupied.has(pair.replacement.position),
+    )
+    if (safe === undefined) break
+    const [harvestId, pair] = safe
+    statements.push(
+      ...importOperationStatements(
+        input,
+        inputFingerprint,
+        'line',
+        'update',
+        harvestId,
+        pair.existing.id,
+        pair.existing.updatedAt,
+        pair.replacement.updatedAt,
+        lineUpdateStatement(input.invoiceId, pair.existing, pair.replacement),
+      ),
+    )
+    lineUpdates.delete(harvestId)
+  }
+  while (lineUpdates.size > 0) {
+    const positionOwners = new Map(
+      [...lineUpdates.entries()].map(([harvestId, pair]) => [pair.existing.position, harvestId]),
+    )
+    const start = lineUpdates.keys().next().value
+    if (start === undefined) break
+    const cycle: Array<{ harvestId: number; existing: StoredLine; replacement: StoredLine }> = []
+    let harvestId = start
+    while (!cycle.some((member) => member.harvestId === harvestId)) {
+      const pair = lineUpdates.get(harvestId)
+      if (pair === undefined) throw new Error('imported line position cycle is inconsistent')
+      cycle.push({ harvestId, ...pair })
+      const next = positionOwners.get(pair.replacement.position)
+      if (next === undefined) throw new Error('imported line position cycle has no owner')
+      harvestId = next
+    }
+    if (harvestId !== start) throw new Error('imported line position cycles overlap')
+    const atomicGroup = `line:reorder:${cycle.map((member) => member.harvestId).join(',')}`
+    const cycleStatements = [
+      ...cycle.flatMap((member) =>
+        importOperationStatements(
+          input,
+          inputFingerprint,
+          'line',
+          'delete',
+          member.harvestId,
+          member.existing.id,
+          member.existing.updatedAt,
+          null,
+          {
+            text: `DELETE FROM invoice_line_items
+              WHERE invoice_id = ? AND harvest_id = ? AND id = ? AND updated_at = ?`,
+            params: [
+              input.invoiceId,
+              member.harvestId,
+              member.existing.id,
+              member.existing.updatedAt,
+            ],
+          },
+        ),
+      ),
+      ...cycle.flatMap((member) =>
+        importOperationStatements(
+          input,
+          inputFingerprint,
+          'line',
+          'insert',
+          member.harvestId,
+          member.existing.id,
+          null,
+          member.replacement.updatedAt,
+          lineInsertStatement(input.invoiceId, member.replacement),
+        ),
+      ),
+    ].map((statement) => ({ ...statement, atomicGroup }))
+    statements.push(...cycleStatements)
+    for (const member of cycle) lineUpdates.delete(member.harvestId)
   }
   for (const line of pendingLineInserts.values()) {
     if (line.harvestId === null) throw new Error('imported line identity is missing')
@@ -1595,7 +1678,10 @@ export const reconcileImportedInvoice = async (
           message.id === 0 ? null : message.id,
           null,
           message.updatedAt,
-          messageInsertStatement(input.invoiceId, message),
+          [
+            messageUpdateStatement(input.invoiceId, existing, message),
+            messageInsertStatement(input.invoiceId, message),
+          ],
         ),
       )
     } else {
@@ -1609,7 +1695,10 @@ export const reconcileImportedInvoice = async (
           existing.id,
           existing.updatedAt,
           message.updatedAt,
-          messageUpdateStatement(input.invoiceId, existing, message),
+          [
+            messageUpdateStatement(input.invoiceId, existing, message),
+            messageInsertStatement(input.invoiceId, message),
+          ],
         ),
       )
     }
@@ -1656,11 +1745,9 @@ export const reconcileImportedInvoice = async (
   if (!complete) {
     let cut = Math.min(maximumStatements, statements.length - 2)
     while (cut > 0) {
-      const previous = statements[cut - 1]?.text.trim() ?? ''
-      const next = statements[cut]?.text.trim() ?? ''
-      const splitsOperation =
-        /^INSERT INTO invoice_import_operations/.test(previous) ||
-        /^UPDATE invoice_import_operations SET completed/.test(next)
+      const previous = statements[cut - 1]?.atomicGroup
+      const next = statements[cut]?.atomicGroup
+      const splitsOperation = previous !== undefined && previous === next
       if (!splitsOperation) break
       cut -= 1
     }

@@ -586,7 +586,7 @@ for (const [runtime, factory] of factories) {
         sourceUpdatedAt: nextSourceTimestamp,
         sourceAmountCents: 1300,
         sourceDueAmountCents: 1200,
-        maximumStatements: 3,
+        maximumStatements: 4,
         lines: [
           sourceLine,
           { ...sourceLine, harvestId: 8020, position: 1, amountCents: 100, unitPriceCents: 100 },
@@ -945,6 +945,109 @@ for (const [runtime, factory] of factories) {
       ])
     })
 
+    it('[unit] preserves native line ids while atomically reconciling a position cycle', async () => {
+      database = await factory()
+      await installFixture(database)
+      const original = input(1, {
+        sourceAmountCents: 1000,
+        sourceDueAmountCents: 1000,
+        lines: [line(71, 400, { position: 0 }), line(72, 600, { position: 1 })],
+      })
+      await reconcileImportedInvoice(database.orm, original)
+      const before = await database.rows<{ id: number; harvest_id: number }>(
+        `SELECT id, harvest_id FROM invoice_line_items WHERE invoice_id = 1 ORDER BY harvest_id`,
+      )
+
+      const reordered = {
+        ...original,
+        expectedSourceUpdatedAt: sourceTimestamp,
+        sourceUpdatedAt: nextSourceTimestamp,
+        maximumStatements: 12,
+        lines: [
+          { ...original.lines[0]!, position: 1, updatedAt: nextSourceTimestamp },
+          { ...original.lines[1]!, position: 0, updatedAt: nextSourceTimestamp },
+        ],
+      }
+      let result = await reconcileImportedInvoice(database.orm, reordered)
+      let retries = 0
+      while (result.complete === false) {
+        result = await reconcileImportedInvoice(database.orm, reordered)
+        retries += 1
+        if (retries > 5) throw new Error('line position cycle did not converge')
+      }
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT id, harvest_id, position FROM invoice_line_items
+           WHERE invoice_id = 1 ORDER BY harvest_id`,
+        ),
+      ).toEqual([
+        { ...before[0], position: 1 },
+        { ...before[1], position: 0 },
+      ])
+    })
+
+    it('[unit] advances minimum-size retries after atomically applying a source header', async () => {
+      database = await factory()
+      await installFixture(database)
+      const sourceHeader: ImportedInvoiceHeader = {
+        harvestId: 7001,
+        clientId: 1,
+        createdByUserId: null,
+        sourceCreatorId: null,
+        sourceCreatorName: null,
+        number: 'INV-IMPORT-CONTRACT-1',
+        subject: 'Bounded source header',
+        purchaseOrder: null,
+        notes: null,
+        currency: 'USD',
+        issueDate: '2026-08-01',
+        dueDate: '2026-08-31',
+        paymentTerms: 'custom',
+        periodStart: null,
+        periodEnd: null,
+        projectId: null,
+        estimateId: null,
+        taxRatePpm: null,
+        tax2RatePpm: null,
+        discountRatePpm: null,
+        createdAt: initialTimestamp,
+        updatedAt: sourceTimestamp,
+      }
+      const boundedInput = {
+        ...input(1),
+        sourceHeader,
+        maximumStatements: 3,
+        lines: [
+          {
+            harvestId: 8061,
+            position: 0,
+            kind: 'Service',
+            quantity: 1,
+            unitPriceCents: 1000,
+            amountCents: 1000,
+            createdAt: initialTimestamp,
+            updatedAt: sourceTimestamp,
+          },
+        ],
+      }
+      let result = await reconcileHarvestInvoice(database.orm, boundedInput)
+      let retries = 0
+      while (result.complete === false) {
+        result = await reconcileHarvestInvoice(database.orm, boundedInput)
+        retries += 1
+        if (retries > 5) throw new Error('minimum-size reconciliation did not converge')
+      }
+      expect(retries).toBeGreaterThan(0)
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT invoice.subject,
+             (SELECT count(*) FROM invoice_line_items line
+              WHERE line.invoice_id = invoice.id AND line.harvest_id = 8061) AS lines
+           FROM invoices invoice WHERE invoice.id = 1`,
+        ),
+      ).toEqual([{ subject: 'Bounded source header', lines: 1 }])
+    })
+
     it('[unit] atomically refreshes imported headers and retains DB-owned child ids', async () => {
       database = await factory()
       await installFixture(database)
@@ -1114,7 +1217,9 @@ it('[integration] resumes a D1 reconciliation that exceeds one deterministic sta
   const database = await d1Database()
   try {
     await installFixture(database)
-    const oversizedLines = Array.from({ length: 992 }, (_, index) =>
+    // 670 lines require 2,010 operation statements, so receipt/finalization
+    // force more than two full 994-statement D1 reconciliation budgets.
+    const oversizedLines = Array.from({ length: 670 }, (_, index) =>
       line(1000 + index, 1, { position: index }),
     )
     let result = await reconcileImportedInvoice(
@@ -1167,7 +1272,7 @@ it('[integration] resumes a D1 reconciliation that exceeds one deterministic sta
              WHERE invoice_id = invoice.id AND completed = 1) AS receipts
          FROM invoices invoice WHERE invoice.id = 1`,
       ),
-    ).toEqual([{ source_updated_at: sourceTimestamp, lines: 992, receipts: 1 }])
+    ).toEqual([{ source_updated_at: sourceTimestamp, lines: oversizedLines.length, receipts: 1 }])
   } finally {
     await database.close()
   }
