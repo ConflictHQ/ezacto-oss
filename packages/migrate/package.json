@@ -14,10 +14,16 @@
     "build": "tsc -p tsconfig.build.json",
     "prepare": "npm run build"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@ezacto/db": "0.0.0",
+    "better-sqlite3": "^13.0.3"
+  },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@cloudflare/workers-types": "^5.20260826.1",
     "eslint": "^10.9.1",
+    "miniflare": "^4.20260730.0",
     "prettier": "^3.9.6",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.68.0",

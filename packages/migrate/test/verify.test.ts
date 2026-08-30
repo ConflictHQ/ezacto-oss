@@ -10,6 +10,7 @@ import {
   REPORTS_RATE_LIMIT,
   REPORTS_RATE_WINDOW_MS,
   runVerify,
+  snapshotDigest,
   verifySnapshot,
 } from '../src/verify.js'
 import { preflight, resourceProgress } from './fixtures.js'
@@ -53,6 +54,32 @@ describe('snapshot verification', () => {
         id: 404,
       }),
     )
+  })
+
+  it('[unit] refuses child snapshots without aligned parent lineage', async () => {
+    await writeFile(join(dir, 'raw', 'invoices.jsonl'), `${JSON.stringify(row(7))}\n`)
+    await writeFile(join(dir, 'raw', 'invoice_messages.jsonl'), `${JSON.stringify(row(10))}\n`)
+    manifest.resources.invoices = resourceProgress({ count: 1 })
+    manifest.resources.invoice_messages = resourceProgress({ count: 1 })
+    expect(await verifySnapshot(dir, manifest)).toContainEqual(
+      expect.objectContaining({
+        kind: 'lineage_mismatch',
+        path: 'raw/invoice_messages.lineage.jsonl',
+      }),
+    )
+  })
+
+  it('[unit] includes child lineage in the stable snapshot digest', async () => {
+    await writeFile(join(dir, 'raw', 'invoices.jsonl'), `${JSON.stringify(row(7))}\n`)
+    await writeFile(join(dir, 'raw', 'invoice_messages.jsonl'), `${JSON.stringify(row(10))}\n`)
+    await writeFile(join(dir, 'raw', 'invoice_messages.lineage.jsonl'),
+      `${JSON.stringify({ source_id: 10, parent_id: 7 })}\n`)
+    manifest.resources.invoices = resourceProgress({ count: 1 })
+    manifest.resources.invoice_messages = resourceProgress({ count: 1 })
+    const first = await snapshotDigest(dir, manifest)
+    await writeFile(join(dir, 'raw', 'invoice_messages.lineage.jsonl'),
+      `${JSON.stringify({ source_id: 10, parent_id: 8 })}\n`)
+    expect(await snapshotDigest(dir, manifest)).not.toBe(first)
   })
 })
 

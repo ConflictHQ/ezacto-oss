@@ -3,14 +3,18 @@ import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import {
-  InvoiceImportBatchLimitError,
   reconcileImportedInvoice,
   type ImportedInvoiceLine,
   type ImportedInvoiceMessage,
   type ImportedInvoicePayment,
   type ReconcileImportedInvoiceInput,
 } from '../src/internal/invoice-import.js'
-import { migrateContainer, migrateD1 } from '../src/migrate.js'
+import { migrateContainer, migrateContainerThrough, migrateD1 } from '../src/migrate.js'
+import {
+  ensureImportedInvoiceHeader,
+  reconcileHarvestInvoice,
+  type ImportedInvoiceHeader,
+} from '../src/importer.js'
 
 type ImportDatabase = Parameters<typeof reconcileImportedInvoice>[0]
 
@@ -519,30 +523,188 @@ for (const [runtime, factory] of factories) {
         },
       ])
     })
+
+    it('[unit] atomically refreshes imported headers and retains DB-owned child ids', async () => {
+      database = await factory()
+      await installFixture(database)
+      const header: ImportedInvoiceHeader = {
+        harvestId: 7001,
+        clientId: 1,
+        createdByUserId: null,
+        sourceCreatorId: null,
+        sourceCreatorName: null,
+        number: 'INV-IMPORT-CONTRACT-1',
+        subject: 'Newer source subject',
+        purchaseOrder: null,
+        notes: null,
+        currency: 'USD',
+        issueDate: '2026-08-01',
+        dueDate: '2026-08-31',
+        paymentTerms: 'custom',
+        periodStart: null,
+        periodEnd: null,
+        projectId: null,
+        taxRatePpm: null,
+        tax2RatePpm: null,
+        discountRatePpm: null,
+        createdAt: initialTimestamp,
+        updatedAt: sourceTimestamp,
+      }
+      const ensured = await ensureImportedInvoiceHeader(database.orm, header)
+      const sourceLine = {
+        harvestId: 8010,
+        position: 0,
+        kind: 'Service',
+        quantity: 1,
+        unitPriceCents: 1000,
+        amountCents: 1000,
+        createdAt: initialTimestamp,
+        updatedAt: sourceTimestamp,
+      }
+      const sourceMessage = {
+        harvestId: 9010,
+        sentBy: 'Original Sender',
+        sentByEmail: 'original@example.invalid',
+        sentFrom: 'Original Company',
+        sentFromEmail: 'billing@example.invalid',
+        recipients: [{ name: 'Sanitized Client', email: 'client@example.invalid' }],
+        body: 'Original body',
+        createdAt: initialTimestamp,
+        updatedAt: sourceTimestamp,
+      }
+      await reconcileHarvestInvoice(database.orm, {
+        ...input(1),
+        invoiceId: ensured.id,
+        sourceHeader: header,
+        lines: [sourceLine],
+        messages: [sourceMessage],
+        payments: [],
+      })
+      const first = await database.rows<{
+        lineId: number
+        messageId: number
+        subject: string
+      }>(
+        `SELECT line.id AS lineId, message.id AS messageId, invoice.subject
+         FROM invoice_line_items line
+         JOIN invoices invoice ON invoice.id = line.invoice_id
+         JOIN invoice_messages message ON message.invoice_id = invoice.id
+         WHERE line.harvest_id = 8010 AND message.harvest_id = 9010`,
+      )
+      const newerHeader = {
+        ...header,
+        subject: 'Newest source subject',
+        updatedAt: nextSourceTimestamp,
+      }
+      await reconcileHarvestInvoice(database.orm, {
+        ...input(1),
+        invoiceId: ensured.id,
+        expectedSourceUpdatedAt: sourceTimestamp,
+        sourceUpdatedAt: nextSourceTimestamp,
+        sourceHeader: newerHeader,
+        lines: [
+          {
+            ...sourceLine,
+            amountCents: 1200,
+            unitPriceCents: 1200,
+            updatedAt: nextSourceTimestamp,
+          },
+        ],
+        sourceAmountCents: 1200,
+        sourceDueAmountCents: 1200,
+        messages: [{ ...sourceMessage, body: 'Newest body', updatedAt: nextSourceTimestamp }],
+        payments: [],
+      })
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT line.id AS lineId, message.id AS messageId, message.body, invoice.subject
+         FROM invoice_line_items line
+         JOIN invoices invoice ON invoice.id = line.invoice_id
+         JOIN invoice_messages message ON message.invoice_id = invoice.id
+         WHERE line.harvest_id = 8010 AND message.harvest_id = 9010`,
+        ),
+      ).toEqual([
+        {
+          lineId: first[0]!.lineId,
+          messageId: first[0]!.messageId,
+          body: 'Newest body',
+          subject: 'Newest source subject',
+        },
+      ])
+      expect(first[0]!.lineId).not.toBe(8010)
+      expect(first[0]!.messageId).not.toBe(9010)
+    })
+
+    it('[unit] converges concurrent header creation and rejects immutable collision drift', async () => {
+      database = await factory()
+      await installFixture(database)
+      const header: ImportedInvoiceHeader = {
+        harvestId: 7999,
+        clientId: 1,
+        createdByUserId: null,
+        sourceCreatorId: 42,
+        sourceCreatorName: 'Original Creator',
+        number: 'INV-CONCURRENT-7999',
+        subject: 'Concurrent import',
+        purchaseOrder: null,
+        notes: null,
+        currency: 'USD',
+        issueDate: '2026-08-01',
+        dueDate: '2026-08-31',
+        paymentTerms: 'custom',
+        periodStart: null,
+        periodEnd: null,
+        projectId: null,
+        taxRatePpm: null,
+        tax2RatePpm: null,
+        discountRatePpm: null,
+        createdAt: initialTimestamp,
+        updatedAt: sourceTimestamp,
+      }
+      const [left, right] = await Promise.all([
+        ensureImportedInvoiceHeader(database.orm, header),
+        ensureImportedInvoiceHeader(database.orm, header),
+      ])
+      expect(right).toEqual(left)
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT count(*) AS count, min(client_key) AS clientKey
+         FROM invoices WHERE harvest_id = 7999`,
+        ),
+      ).toEqual([{ count: 1, clientKey: left.clientKey }])
+
+      await expect(
+        ensureImportedInvoiceHeader(database.orm, {
+          ...header,
+          sourceCreatorName: 'Changed Creator',
+        }),
+      ).rejects.toThrow(/immutable creator provenance drifted/)
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT source_creator_id, source_creator_name
+         FROM invoices WHERE harvest_id = 7999`,
+        ),
+      ).toEqual([{ source_creator_id: 42, source_creator_name: 'Original Creator' }])
+    })
   })
 }
 
-it('[unit] rejects a D1 reconciliation that exceeds its deterministic statement budget', async () => {
+it('[integration] resumes a D1 reconciliation that exceeds one deterministic statement budget', async () => {
   const database = await d1Database()
   try {
     await installFixture(database)
     const oversizedLines = Array.from({ length: 992 }, (_, index) =>
       line(1000 + index, 1, { position: index }),
     )
-    const rejection = await reconcileImportedInvoice(
+    const first = await reconcileImportedInvoice(
       database.orm,
       input(1, {
         sourceAmountCents: oversizedLines.length,
         sourceDueAmountCents: oversizedLines.length,
         lines: oversizedLines,
       }),
-    ).catch((error: unknown) => error)
-    expect(rejection).toBeInstanceOf(InvoiceImportBatchLimitError)
-    expect(rejection).toMatchObject({
-      code: 'invoice_import_batch_limit',
-      plannedBatchStatements: 995,
-      maximumBatchStatements: 994,
-    })
+    )
+    expect(first.complete).toBe(false)
     expect(
       await database.rows<Record<string, unknown>>(
         `SELECT invoice.source_updated_at,
@@ -551,7 +713,134 @@ it('[unit] rejects a D1 reconciliation that exceeds its deterministic statement 
              WHERE invoice_id = invoice.id) AS receipts
          FROM invoices invoice WHERE invoice.id = 1`,
       ),
-    ).toEqual([{ source_updated_at: initialTimestamp, lines: 0, receipts: 0 }])
+    ).toEqual([{ source_updated_at: initialTimestamp, lines: 992, receipts: 1 }])
+    const completed = await reconcileImportedInvoice(
+      database.orm,
+      input(1, {
+        sourceAmountCents: oversizedLines.length,
+        sourceDueAmountCents: oversizedLines.length,
+        lines: oversizedLines,
+      }),
+    )
+    expect(completed.complete).not.toBe(false)
+    expect(
+      await database.rows<Record<string, unknown>>(
+        `SELECT invoice.source_updated_at,
+           (SELECT count(*) FROM invoice_line_items WHERE invoice_id = invoice.id) AS lines,
+           (SELECT count(*) FROM invoice_import_reconciliations
+             WHERE invoice_id = invoice.id AND completed = 1) AS receipts
+         FROM invoices invoice WHERE invoice.id = 1`,
+      ),
+    ).toEqual([{ source_updated_at: sourceTimestamp, lines: 992, receipts: 1 }])
+  } finally {
+    await database.close()
+  }
+})
+
+it('[integration] upgrades a populated 0022 ledger and authorizes every imported invoice mutation', async () => {
+  const sqlite = new BetterSqlite3(':memory:')
+  migrateContainerThrough(sqlite, '0022_resource_create_commands')
+  const database: TestDatabase = {
+    orm: createContainerDatabase(sqlite),
+    run: async (sql, ...params) => {
+      sqlite.prepare(sql).run(...params)
+    },
+    rows: async <T>(sql: string, ...params: unknown[]) => sqlite.prepare(sql).all(...params) as T[],
+    close: async () => {
+      sqlite.close()
+    },
+  }
+  try {
+    await installFixture(database)
+    expect(
+      await database.rows<{ id: string }>(
+        'SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1',
+      ),
+    ).toEqual([{ id: '0022_resource_create_commands' }])
+
+    migrateContainer(sqlite)
+    const sourceHeader: ImportedInvoiceHeader = {
+      harvestId: 7001,
+      clientId: 1,
+      createdByUserId: null,
+      sourceCreatorId: null,
+      sourceCreatorName: null,
+      number: 'INV-IMPORT-CONTRACT-1',
+      subject: 'Imported after upgrade',
+      purchaseOrder: null,
+      notes: null,
+      currency: 'USD',
+      issueDate: '2026-08-01',
+      dueDate: '2026-08-31',
+      paymentTerms: 'custom',
+      periodStart: '2026-08-01',
+      periodEnd: '2026-08-31',
+      projectId: null,
+      estimateId: null,
+      taxRatePpm: 50_000,
+      tax2RatePpm: null,
+      discountRatePpm: null,
+      createdAt: initialTimestamp,
+      updatedAt: sourceTimestamp,
+    }
+    await reconcileHarvestInvoice(database.orm, {
+      ...input(1),
+      sourceHeader,
+      lines: [{ ...line(11, 1000, { position: 0 }), harvestId: 8011 }],
+      messages: [{ ...message(11), harvestId: 9011 }],
+      payments: [{ ...payment(11, 100), harvestId: 10011 }],
+      sourceDueAmountCents: 900,
+    })
+    const [native] = await database.rows<{ lineId: number }>(
+      `SELECT line.id AS lineId FROM invoice_line_items line WHERE line.harvest_id = 8011`,
+    )
+    expect(native?.lineId).not.toBe(8011)
+
+    await reconcileHarvestInvoice(database.orm, {
+      ...input(1),
+      expectedSourceUpdatedAt: sourceTimestamp,
+      sourceUpdatedAt: nextSourceTimestamp,
+      sourceHeader: {
+        ...sourceHeader,
+        subject: 'Updated after upgrade',
+        periodStart: null,
+        periodEnd: null,
+        taxRatePpm: null,
+        updatedAt: nextSourceTimestamp,
+      },
+      lines: [
+        { ...line(11, 1200, { position: 0, updatedAt: nextSourceTimestamp }), harvestId: 8011 },
+      ],
+      messages: [],
+      payments: [],
+      sourceAmountCents: 1200,
+      sourceDueAmountCents: 1200,
+    })
+    expect(
+      await database.rows<Record<string, unknown>>(
+        `SELECT invoice.subject, invoice.tax_rate_ppm, invoice.source_updated_at,
+         line.id AS line_id, line.amount_cents,
+         (SELECT count(*) FROM invoice_messages WHERE invoice_id = invoice.id) AS messages,
+         (SELECT count(*) FROM invoice_payments WHERE invoice_id = invoice.id) AS payments
+       FROM invoices invoice JOIN invoice_line_items line ON line.invoice_id = invoice.id
+       WHERE invoice.id = 1`,
+      ),
+    ).toEqual([
+      {
+        subject: 'Updated after upgrade',
+        tax_rate_ppm: null,
+        source_updated_at: nextSourceTimestamp,
+        line_id: native!.lineId,
+        amount_cents: 1200,
+        messages: 0,
+        payments: 0,
+      },
+    ])
+    expect(
+      await database.rows<{ id: string }>(
+        'SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1',
+      ),
+    ).toEqual([{ id: '0023_migration_import_authority' }])
   } finally {
     await database.close()
   }

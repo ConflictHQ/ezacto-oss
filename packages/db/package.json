@@ -11,6 +11,11 @@
       "development": "./src/d1.ts",
       "default": "./dist/d1.js"
     },
+    "./importer": {
+      "types": "./src/importer.ts",
+      "development": "./src/importer.ts",
+      "default": "./dist/importer.js"
+    },
     "./schema": "./dist/schema.js"
   },
   "engines": { "node": ">=22" },

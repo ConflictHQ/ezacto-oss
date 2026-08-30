@@ -9,7 +9,7 @@ import { createHash, randomUUID } from 'node:crypto'
 interface SnapshotLockOwner {
   pid: number
   host: string
-  command: 'auth' | 'extract' | 'sync'
+  command: 'auth' | 'extract' | 'sync' | 'load'
   started_at: string
   token: string
 }
@@ -93,7 +93,8 @@ export const acquireSnapshotLock = async (
       typeof owner.pid !== 'number' ||
       typeof owner.host !== 'string' ||
       typeof owner.token !== 'string' ||
-      (owner.command !== 'auth' && owner.command !== 'extract' && owner.command !== 'sync')
+      (owner.command !== 'auth' && owner.command !== 'extract' && owner.command !== 'sync' &&
+        owner.command !== 'load')
     ) {
       throw new Error('invalid owner')
     }

@@ -13,7 +13,11 @@ import type { ManifestCompanySettings } from './manifest.js'
 /** The `/v2/company` flags that decide whether a resource tree exists at all. */
 export type FeatureFlag = Extract<
   keyof ManifestCompanySettings,
-  'expense_feature' | 'invoice_feature' | 'estimate_feature' | 'approval_feature'
+  | 'expense_feature'
+  | 'invoice_feature'
+  | 'estimate_feature'
+  | 'approval_feature'
+  | 'team_feature'
 >
 
 interface StepCommon {
@@ -96,6 +100,7 @@ export const RESOURCES: readonly ResourceStep[] = [
     collection: 'teammates',
     parent: 'users',
     optional: true,
+    requires: 'team_feature',
   },
   // /v2/roles takes only `page` (deprecated) and `per_page` — research §7.
   { kind: 'list', name: 'roles', path: '/v2/roles', collection: 'roles', noUpdatedSince: true },

@@ -21,6 +21,7 @@ import { attachmentsMigration } from './migrations/0019_attachments.js'
 import { argon2PasswordsMigration } from './migrations/0020_argon2_passwords.js'
 import { estimateCommandsMigration } from './migrations/0021_estimate_commands.js'
 import { resourceCreateCommandsMigration } from './migrations/0022_resource_create_commands.js'
+import { migrationImportAuthorityMigration } from './migrations/0023_migration_import_authority.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL
@@ -601,7 +602,7 @@ export const invoiceLifecycleMigration = [
           ) member
           WHERE (SELECT count(*) FROM json_each(member.value)) <> 3
             OR json_type(member.value, '$.id') <> 'integer'
-            OR json_extract(member.value, '$.id') <= 0
+            OR json_extract(member.value, '$.id') < 0
             OR json_type(member.value, '$.harvest_id') <> 'integer'
             OR json_extract(member.value, '$.harvest_id') <= 0
             OR json_type(member.value, '$.updated_at') <> 'text'
@@ -737,7 +738,8 @@ export const invoiceLifecycleMigration = [
               WHERE line.invoice_id = OLD.invoice_id AND line.harvest_id IS NOT NULL
                 AND NOT EXISTS (
                   SELECT 1 FROM json_each(OLD.line_manifest_json) member
-                  WHERE json_extract(member.value, '$.id') = line.id
+                  WHERE (json_extract(member.value, '$.id') = 0
+                      OR json_extract(member.value, '$.id') = line.id)
                     AND json_extract(member.value, '$.harvest_id') = line.harvest_id
                     AND json_extract(member.value, '$.updated_at') = line.updated_at
                 )
@@ -751,7 +753,8 @@ export const invoiceLifecycleMigration = [
               WHERE message.invoice_id = OLD.invoice_id AND message.harvest_id IS NOT NULL
                 AND NOT EXISTS (
                   SELECT 1 FROM json_each(OLD.message_manifest_json) member
-                  WHERE json_extract(member.value, '$.id') = message.id
+                  WHERE (json_extract(member.value, '$.id') = 0
+                      OR json_extract(member.value, '$.id') = message.id)
                     AND json_extract(member.value, '$.harvest_id') = message.harvest_id
                     AND json_extract(member.value, '$.updated_at') = message.updated_at
                 )
@@ -765,7 +768,8 @@ export const invoiceLifecycleMigration = [
               WHERE payment.invoice_id = OLD.invoice_id AND payment.harvest_id IS NOT NULL
                 AND NOT EXISTS (
                   SELECT 1 FROM json_each(OLD.payment_manifest_json) member
-                  WHERE json_extract(member.value, '$.id') = payment.id
+                  WHERE (json_extract(member.value, '$.id') = 0
+                      OR json_extract(member.value, '$.id') = payment.id)
                     AND json_extract(member.value, '$.harvest_id') = payment.harvest_id
                     AND json_extract(member.value, '$.updated_at') = payment.updated_at
                 )
@@ -821,7 +825,8 @@ export const invoiceLifecycleMigration = [
         SELECT 1 FROM invoice_import_reconciliations import,
           json_each(import.message_manifest_json) member
         WHERE import.invoice_id = NEW.invoice_id AND import.completed = 0
-          AND json_extract(member.value, '$.id') = NEW.id
+          AND (json_extract(member.value, '$.id') = 0
+            OR json_extract(member.value, '$.id') = NEW.id)
           AND json_extract(member.value, '$.harvest_id') = NEW.harvest_id
           AND json_extract(member.value, '$.updated_at') = NEW.updated_at
       )
@@ -846,7 +851,8 @@ export const invoiceLifecycleMigration = [
           json_each(import.message_manifest_json) member
         WHERE import.invoice_id = OLD.invoice_id AND import.invoice_id = NEW.invoice_id
           AND import.completed = 0
-          AND json_extract(member.value, '$.id') = NEW.id
+          AND (json_extract(member.value, '$.id') = 0
+            OR json_extract(member.value, '$.id') = NEW.id)
           AND json_extract(member.value, '$.harvest_id') = NEW.harvest_id
           AND json_extract(member.value, '$.updated_at') = NEW.updated_at
       )
@@ -860,7 +866,8 @@ export const invoiceLifecycleMigration = [
         WHERE import.invoice_id = OLD.invoice_id AND import.completed = 0
           AND NOT EXISTS (
             SELECT 1 FROM json_each(import.message_manifest_json) member
-            WHERE json_extract(member.value, '$.id') = OLD.id
+            WHERE (json_extract(member.value, '$.id') = 0
+                OR json_extract(member.value, '$.id') = OLD.id)
               AND json_extract(member.value, '$.harvest_id') = OLD.harvest_id
               AND json_extract(member.value, '$.updated_at') = OLD.updated_at
           )
@@ -1062,7 +1069,8 @@ export const invoiceLifecycleMigration = [
           json_each(import.payment_manifest_json) member
         WHERE import.invoice_id = NEW.invoice_id AND import.completed = 0
           AND import.target_state <> 'draft'
-          AND json_extract(member.value, '$.id') = NEW.id
+          AND (json_extract(member.value, '$.id') = 0
+            OR json_extract(member.value, '$.id') = NEW.id)
           AND json_extract(member.value, '$.harvest_id') = NEW.harvest_id
           AND json_extract(member.value, '$.updated_at') = NEW.updated_at
       ))
@@ -1113,7 +1121,8 @@ export const invoiceLifecycleMigration = [
       WHERE import.invoice_id = OLD.invoice_id AND import.completed = 0
         AND NOT EXISTS (
           SELECT 1 FROM json_each(import.payment_manifest_json) member
-          WHERE json_extract(member.value, '$.id') = OLD.id
+            WHERE (json_extract(member.value, '$.id') = 0
+                OR json_extract(member.value, '$.id') = OLD.id)
             AND json_extract(member.value, '$.harvest_id') = OLD.harvest_id
             AND json_extract(member.value, '$.updated_at') = OLD.updated_at
         )
@@ -1178,7 +1187,13 @@ export const invoiceLifecycleMigration = [
     BEGIN SELECT RAISE(ABORT, 'invoice reminder policy shape is invalid'); END`,
   `CREATE TRIGGER invoice_period_d22_derived_update
     BEFORE UPDATE OF period_start, period_end ON invoices
-    WHEN OLD.period_start IS NOT NEW.period_start OR OLD.period_end IS NOT NEW.period_end
+    WHEN (OLD.period_start IS NOT NEW.period_start OR OLD.period_end IS NOT NEW.period_end)
+      AND NOT EXISTS (
+        SELECT 1 FROM invoice_import_reconciliations import
+        WHERE import.invoice_id = OLD.id AND import.completed = 0
+          AND OLD.harvest_id IS NOT NULL
+          AND import.expected_source_updated_at IS OLD.source_updated_at
+      )
     BEGIN SELECT RAISE(ABORT, 'invoice period is derived and cannot be edited directly'); END`,
   `CREATE TRIGGER invoice_financials_d22_command_update
     BEFORE UPDATE OF tax_rate_ppm, tax2_rate_ppm, discount_rate_ppm ON invoices
@@ -1198,6 +1213,11 @@ export const invoiceLifecycleMigration = [
         SELECT 1 FROM event_outbox event
         WHERE event.aggregate_type = 'invoice' AND event.aggregate_id = OLD.id
       )
+    ) AND NOT EXISTS (
+      SELECT 1 FROM invoice_import_reconciliations import
+      WHERE import.invoice_id = OLD.id AND import.completed = 0
+        AND OLD.harvest_id IS NOT NULL
+        AND import.expected_source_updated_at IS OLD.source_updated_at
     )
     BEGIN SELECT RAISE(ABORT, 'invoice financial mutation requires its pending command'); END`,
   `CREATE TRIGGER invoice_line_items_d22_closed_insert
@@ -1225,7 +1245,8 @@ export const invoiceLifecycleMigration = [
       SELECT 1 FROM invoice_import_reconciliations import,
         json_each(import.line_manifest_json) member
       WHERE import.invoice_id = NEW.invoice_id AND import.completed = 0
-        AND json_extract(member.value, '$.id') = NEW.id
+        AND (json_extract(member.value, '$.id') = 0
+          OR json_extract(member.value, '$.id') = NEW.id)
         AND json_extract(member.value, '$.harvest_id') = NEW.harvest_id
         AND json_extract(member.value, '$.updated_at') = NEW.updated_at
     ))
@@ -1279,7 +1300,8 @@ export const invoiceLifecycleMigration = [
       WHERE import.invoice_id = OLD.invoice_id AND import.completed = 0
         AND NOT EXISTS (
           SELECT 1 FROM json_each(import.line_manifest_json) member
-          WHERE json_extract(member.value, '$.id') = OLD.id
+          WHERE (json_extract(member.value, '$.id') = 0
+              OR json_extract(member.value, '$.id') = OLD.id)
             AND json_extract(member.value, '$.harvest_id') = OLD.harvest_id
             AND json_extract(member.value, '$.updated_at') = OLD.updated_at
         )
@@ -1347,9 +1369,13 @@ const migrations = [
   { id: '0020_argon2_passwords', statements: argon2PasswordsMigration },
   { id: '0021_estimate_commands', statements: estimateCommandsMigration },
   { id: '0022_resource_create_commands', statements: resourceCreateCommandsMigration },
+  { id: '0023_migration_import_authority', statements: migrationImportAuthorityMigration },
 ] as const
 
-export const migrateContainer = (database: BetterSqlite3.Database): void => {
+const migrateContainerPlan = (
+  database: BetterSqlite3.Database,
+  through: (typeof migrations)[number]['id'] | null,
+): void => {
   database.pragma('foreign_keys = ON')
   database.exec(ledger)
   for (const migration of migrations) {
@@ -1357,6 +1383,7 @@ export const migrateContainer = (database: BetterSqlite3.Database): void => {
     try {
       if (database.prepare('SELECT 1 FROM _ezacto_migrations WHERE id = ?').get(migration.id)) {
         database.exec('COMMIT')
+        if (migration.id === through) return
         continue
       }
       if ('preflight' in migration) {
@@ -1373,8 +1400,18 @@ export const migrateContainer = (database: BetterSqlite3.Database): void => {
       database.exec('ROLLBACK')
       throw error
     }
+    if (migration.id === through) return
   }
 }
+
+export const migrateContainer = (database: BetterSqlite3.Database): void =>
+  migrateContainerPlan(database, null)
+
+/** Version-boundary acceptance seam; production callers should use migrateContainer. */
+export const migrateContainerThrough = (
+  database: BetterSqlite3.Database,
+  through: (typeof migrations)[number]['id'],
+): void => migrateContainerPlan(database, through)
 
 export const migrateD1 = async (database: D1Database): Promise<void> => {
   // The ledger insert leads the atomic batch. If two Worker isolates observe a

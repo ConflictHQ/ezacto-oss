@@ -44,6 +44,7 @@ describe('D1 migration concurrency', () => {
       '0020_argon2_passwords',
       '0021_estimate_commands',
       '0022_resource_create_commands',
+      '0023_migration_import_authority',
     ])
     expect(
       await database.prepare('SELECT count(*) AS count FROM api_tokens').first<{ count: number }>(),

@@ -167,7 +167,7 @@ const witnessedIds = async (
 }
 
 const enabled = (manifest: Manifest, step: ResourceStep): boolean =>
-  !step.requires || manifest.preflight[step.requires]
+  !step.requires || manifest.preflight[step.requires] !== false
 
 /**
  * The extractor legitimately replaces full-sweep files (child and

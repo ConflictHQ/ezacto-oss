@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { loadDevVars, readHarvestEnv } from './env.js'
 import { runAuth } from './auth.js'
 import { runExtract, type ExtractResult } from './extract.js'
+import { runLoad } from './load.js'
 import { runSync, syncExitCode } from './sync.js'
 import { runVerify } from './verify.js'
 
@@ -19,10 +20,14 @@ Commands:
            rows Harvest reports changed since its last watermark.
   sync     Run an incremental extract, then a complete full-ID delete witness.
   verify   Check snapshot counts/FKs and capture report checksums per currency
+  load     Transform a verified snapshot into an ezacto SQLite database
 
 Options:
   --account-id <id>    Harvest account id to use (skips auto-pick/prompt)
   --snapshot-dir <dir> Snapshot directory to write manifest.json into (default: ./snapshot)
+  --database <path>    SQLite database path for load (required)
+  --organization-currency <code>  ISO currency when Company/client data is ambiguous
+  --organization-address <text>   Organization address (Company API omits it)
   --force              Re-stamp a snapshot dir that holds a different account
   --request-timeout <s> Seconds to allow one request, headers and body (default: 10).
                        Raise it when a page of 2000 rows will not finish in time.
@@ -103,20 +108,39 @@ const main = async (): Promise<number> => {
       'account-id': { type: 'string' },
       'snapshot-dir': { type: 'string' },
       'request-timeout': { type: 'string' },
+      database: { type: 'string' },
+      'organization-currency': { type: 'string' },
+      'organization-address': { type: 'string' },
       force: { type: 'boolean' },
     },
   })
   const command = positionals[0]
 
-  if (command !== 'auth' && command !== 'extract' && command !== 'verify' && command !== 'sync') {
+  if (command !== 'auth' && command !== 'extract' && command !== 'verify' && command !== 'sync' && command !== 'load') {
     process.stdout.write(USAGE)
     return 1
   }
 
-  const devVarsPath = loadDevVars()
-  const env = readHarvestEnv(devVarsPath)
   const snapshotDir = values['snapshot-dir'] ?? './snapshot'
   const timeoutMs = parseRequestTimeout(values['request-timeout'])
+
+  if (command === 'load') {
+    if (!values.database) throw new Error('--database is required for load')
+    const result = await runLoad({
+      snapshotDir,
+      databasePath: values.database,
+      organizationCurrency: values['organization-currency'],
+      organizationAddress: values['organization-address'],
+    })
+    console.log(
+      `loaded: ${result.loadedRows} row(s), ${result.invocations} chunk(s), ` +
+        `${result.anomalies.length} anomaly(s); snapshot ${result.snapshotSha256}`,
+    )
+    return 0
+  }
+
+  const devVarsPath = loadDevVars()
+  const env = readHarvestEnv(devVarsPath)
 
   if (command === 'auth') {
     const result = await runAuth({

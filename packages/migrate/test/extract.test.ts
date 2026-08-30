@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { runExtract, type ExtractResult } from '../src/extract.js'
+import { readLineage } from '../src/jsonl.js'
 import { writeManifest, type Manifest, type ManifestResource } from '../src/manifest.js'
 import { RESOURCES } from '../src/resources.js'
 import {
@@ -406,6 +407,24 @@ describe('runExtract against a fake Harvest account', () => {
     })
     // A watermark is stamped for the *next* incremental pass to use.
     expect(manifestOnDisk().updated_since.users).toBeDefined()
+  })
+
+  it('[unit] a complete child re-sweep replaces raw rows and their aligned lineage together', async () => {
+    await extract(dir)
+
+    expect(linesOnDisk('invoice_messages').map((line) => JSON.parse(line))).toEqual([
+      row(1100),
+      row(1101),
+    ])
+    expect(await readLineage(dir, 'invoice_messages')).toEqual([
+      { source_id: 1100, parent_id: 100 },
+      { source_id: 1101, parent_id: 101 },
+    ])
+    expect(manifestOnDisk().resources.invoice_messages).toMatchObject({
+      count: 2,
+      complete: true,
+      incremental: false,
+    })
   })
 
   it('[unit] the run reports its own cost', () => {
