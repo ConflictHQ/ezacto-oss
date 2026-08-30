@@ -37,10 +37,13 @@ import {
 } from './harvest-client.js'
 import {
   appendPage,
+  appendLineagePage,
   mergeIncremental,
   readIds,
+  reconcileLineageToCount,
   reconcileToCount,
   reconcileToFile,
+  startLineage,
   startResource,
 } from './jsonl.js'
 import { readManifestIfExists, writeManifest, type ManifestResource } from './manifest.js'
@@ -303,7 +306,7 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
   if (warning) log(warning)
 
   const enabled = (step: ResourceStep): boolean =>
-    !step.requires || manifest.preflight[step.requires]
+    !step.requires || manifest.preflight[step.requires] !== false
   const skipped = RESOURCES.filter((step) => !enabled(step))
 
   // §2.2: say what this is going to cost before spending it.
@@ -385,6 +388,7 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
       // would let a later incremental pass step over rows this snapshot no
       // longer holds.
       await startResource(snapshotDir, step.name)
+      if (step.kind === 'child') await startLineage(snapshotDir, step.name)
       dropChildCheckpoints(step.name, 'emptied')
       delete manifest.updated_since[step.name]
       resources[step.name] = {
@@ -537,6 +541,20 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
       // manifest never got to count, so the page it names is re-fetched once,
       // not skipped or duplicated.
       await reconcileToCount(snapshotDir, step.name, record.count)
+      if (step.kind === 'child') {
+        try {
+          await reconcileLineageToCount(snapshotDir, step.name, record.count)
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            throw new Error(
+              `raw/${step.name}.jsonl predates child-lineage capture. Its parent foreign keys ` +
+                'cannot be reconstructed safely; re-run extract from the beginning for this resource.',
+              { cause: error },
+            )
+          }
+          throw error
+        }
+      }
     } else if (record.incremental) {
       // Empty the staging file this pass appends to — which is also how the
       // rows of an interrupted pass being re-run here are discarded, before it
@@ -564,6 +582,7 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
       record.count = await reconcileToFile(snapshotDir, step.name, record.count)
     } else {
       await startResource(snapshotDir, step.name)
+      if (step.kind === 'child') await startLineage(snapshotDir, step.name)
       // The rows a child fan-out checkpoint indexes into are gone; so is the
       // checkpoint. Persisted by the write below, before the sweep that replaces
       // them starts, so a crash cannot leave the checkpoint standing over them.
@@ -609,6 +628,14 @@ export const runExtract = async (options: RunExtractOptions): Promise<ExtractRes
             rawLines(page, step.name, record, log),
             record.incremental,
           )
+          // Child endpoint bodies do not carry their owning user/invoice/estimate.
+          // Fsync the aligned, secret-free parent witness before the checkpoint
+          // claims either file. A crash can under-claim both files, never split a
+          // committed raw row from its parent identity.
+          if (step.kind === 'child') {
+            if (parentId === null) throw new Error(`${step.name} page has no parent identity`)
+            await appendLineagePage(snapshotDir, step.name, parentId, page.objects)
+          }
           // `count` describes raw/<resource>.jsonl, and an incremental pass writes
           // to raw/<resource>.jsonl.incoming — counting its rows here claims rows
           // the file it names does not hold. The merge below is the only writer of

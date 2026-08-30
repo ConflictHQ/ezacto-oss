@@ -65,6 +65,30 @@ export interface ImportedInvoiceLine {
   updatedAt: string
 }
 
+export interface ImportedInvoiceSourceHeader {
+  clientId: number
+  createdByUserId: number | null
+  sourceCreatorId: number | null
+  sourceCreatorName: string | null
+  number: string
+  subject: string | null
+  purchaseOrder: string | null
+  notes: string | null
+  currency: string
+  issueDate: string
+  dueDate: string
+  paymentTerms: 'upon_receipt' | 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'custom'
+  periodStart: string | null
+  periodEnd: string | null
+  projectId: number | null
+  estimateId?: number | null
+  taxRatePpm: number | null
+  tax2RatePpm: number | null
+  discountRatePpm: number | null
+  createdAt: string
+  updatedAt: string
+}
+
 export interface ReconcileImportedInvoiceInput {
   invoiceId: number
   /** Evidence that the caller finished reading the complete Harvest invoice source batch. */
@@ -83,6 +107,12 @@ export interface ReconcileImportedInvoiceInput {
   sourceDiscountAmountCents: number | null
   sourcePaymentOptions: readonly string[] | null
   sourceWrittenOffCents: number
+  /** Migration-only source header written under this pending reconciliation. */
+  sourceHeader?: ImportedInvoiceSourceHeader
+  /** Omit caller-owned native ids; new children let SQLite allocate them. */
+  allocateNativeChildIds?: true
+  /** Bounds one durable reconciliation step; an incomplete receipt resumes on retry. */
+  maximumStatements?: number
   lines: readonly ImportedInvoiceLine[]
   messages: readonly ImportedInvoiceMessage[]
   payments: readonly ImportedInvoicePayment[]
@@ -111,6 +141,8 @@ export interface ImportReconciliationResult {
   invoiceId: number
   sourceUpdatedAt: string
   state: SourceState
+  /** Present only while a bounded D1 reconciliation still has durable work to resume. */
+  complete?: false
   diagnostics: ImportReconciliationDiagnostic[]
 }
 
@@ -214,6 +246,51 @@ interface NormalizedImportInput {
 interface Statement {
   text: string
   params: Array<string | number | null>
+  atomicGroup?: string
+}
+
+type ImportOperationKind = 'line' | 'message' | 'payment'
+type ImportOperationAction = 'insert' | 'update' | 'delete'
+
+const importOperationStatements = (
+  input: Pick<ReconcileImportedInvoiceInput, 'invoiceId' | 'sourceUpdatedAt'>,
+  inputFingerprint: string,
+  resourceKind: ImportOperationKind,
+  action: ImportOperationAction,
+  harvestId: number,
+  nativeId: number | null,
+  oldUpdatedAt: string | null,
+  newUpdatedAt: string | null,
+  mutation: Statement | readonly Statement[],
+): Statement[] => {
+  const atomicGroup = `${resourceKind}:${action}:${harvestId}`
+  const mutations = Array.isArray(mutation) ? mutation : [mutation]
+  return [
+    {
+      text: `INSERT INTO invoice_import_operations (
+      invoice_id, source_updated_at, resource_kind, action, harvest_id,
+      native_id, old_updated_at, new_updated_at, input_fingerprint
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      params: [
+        input.invoiceId,
+        input.sourceUpdatedAt,
+        resourceKind,
+        action,
+        harvestId,
+        nativeId,
+        oldUpdatedAt,
+        newUpdatedAt,
+        inputFingerprint,
+      ],
+    },
+    ...mutations,
+    {
+      text: `UPDATE invoice_import_operations SET completed = 1
+      WHERE invoice_id = ? AND source_updated_at = ? AND resource_kind = ?
+        AND action = ? AND harvest_id = ? AND completed = 0`,
+      params: [input.invoiceId, input.sourceUpdatedAt, resourceKind, action, harvestId],
+    },
+  ].map((statement) => ({ ...statement, atomicGroup }))
 }
 
 const d1StatementLimit = 1000
@@ -368,6 +445,104 @@ const samePayment = (left: StoredPayment, right: StoredPayment): boolean =>
     (key) => left[key as keyof StoredPayment] === right[key as keyof StoredPayment],
   )
 
+const samePaymentIdentityAndProvenance = (left: StoredPayment, right: StoredPayment): boolean =>
+  left.id === right.id &&
+  left.harvestId === right.harvestId &&
+  left.paidAt === right.paidAt &&
+  left.paidDate === right.paidDate &&
+  left.sourcePaidAt === right.sourcePaidAt &&
+  left.sourcePaidDate === right.sourcePaidDate &&
+  left.sourceRecordedByName === right.sourceRecordedByName &&
+  left.sourceRecordedByEmail === right.sourceRecordedByEmail &&
+  left.sourceGatewayId === right.sourceGatewayId &&
+  left.sourceGatewayName === right.sourceGatewayName &&
+  left.providerTransactionId === right.providerTransactionId &&
+  left.createdAt === right.createdAt
+
+const paymentInsertStatement = (
+  invoiceId: number,
+  currency: string,
+  payment: StoredPayment,
+): Statement =>
+  payment.id === 0
+    ? {
+        text: `INSERT INTO invoice_payments (
+          harvest_id, invoice_id, currency, amount_cents, paid_at, paid_date,
+          source_paid_at, source_paid_date, source_recorded_by_name,
+          source_recorded_by_email, source_gateway_id, source_gateway_name, notes,
+          recorded_by_user_id, provider, provider_shape, provider_transaction_id,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', 'manual', ?, ?, ?)`,
+        params: [
+          payment.harvestId,
+          invoiceId,
+          currency,
+          payment.amountCents,
+          payment.paidAt,
+          payment.paidDate,
+          payment.sourcePaidAt,
+          payment.sourcePaidDate,
+          payment.sourceRecordedByName,
+          payment.sourceRecordedByEmail,
+          payment.sourceGatewayId,
+          payment.sourceGatewayName,
+          payment.notes,
+          payment.recordedByUserId,
+          payment.providerTransactionId,
+          payment.createdAt,
+          payment.updatedAt,
+        ],
+      }
+    : {
+        text: `INSERT INTO invoice_payments (
+          id, harvest_id, invoice_id, currency, amount_cents, paid_at, paid_date,
+          source_paid_at, source_paid_date, source_recorded_by_name,
+          source_recorded_by_email, source_gateway_id, source_gateway_name, notes,
+          recorded_by_user_id, provider, provider_shape, provider_transaction_id,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', 'manual', ?, ?, ?)`,
+        params: [
+          payment.id,
+          payment.harvestId,
+          invoiceId,
+          currency,
+          payment.amountCents,
+          payment.paidAt,
+          payment.paidDate,
+          payment.sourcePaidAt,
+          payment.sourcePaidDate,
+          payment.sourceRecordedByName,
+          payment.sourceRecordedByEmail,
+          payment.sourceGatewayId,
+          payment.sourceGatewayName,
+          payment.notes,
+          payment.recordedByUserId,
+          payment.providerTransactionId,
+          payment.createdAt,
+          payment.updatedAt,
+        ],
+      }
+
+const paymentUpdateStatement = (
+  invoiceId: number,
+  existing: StoredPayment,
+  incoming: StoredPayment,
+): Statement => ({
+  text: `UPDATE invoice_payments SET
+    amount_cents = ?, notes = ?, recorded_by_user_id = ?, updated_at = ?
+    WHERE invoice_id = ? AND harvest_id = ? AND id = ? AND updated_at = ?`,
+  params: [
+    incoming.amountCents,
+    incoming.notes,
+    incoming.recordedByUserId,
+    incoming.updatedAt,
+    invoiceId,
+    existing.harvestId,
+    existing.id,
+    existing.updatedAt,
+  ],
+})
+
 const canonicalMessage = (message: ImportedInvoiceMessage): StoredMessage => {
   assertTimestamp(message.createdAt, 'message.createdAt')
   assertTimestamp(message.updatedAt, 'message.updatedAt')
@@ -432,9 +607,77 @@ const sameMessageIdentityAndSender = (left: StoredMessage, right: StoredMessage)
   left.sentBy === right.sentBy &&
   left.sentByEmail === right.sentByEmail &&
   left.sentFrom === right.sentFrom &&
-  left.sentFromEmail === right.sentFromEmail
+  left.sentFromEmail === right.sentFromEmail &&
+  left.createdAt === right.createdAt
 
-const canonicalLine = (line: ImportedInvoiceLine): StoredLine => {
+const messageInsertStatement = (invoiceId: number, message: StoredMessage): Statement => {
+  const columns = `harvest_id, invoice_id, sent_by, sent_by_email, sent_from, sent_from_email,
+    recipients, subject, body, attach_pdf, send_me_a_copy, thank_you, reminder,
+    send_reminder_on, event_type, delivery_status, provider_message_id, created_at, updated_at`
+  const values: Array<string | number | null> = [
+    message.harvestId,
+    invoiceId,
+    message.sentBy,
+    message.sentByEmail,
+    message.sentFrom,
+    message.sentFromEmail,
+    message.recipients,
+    message.subject,
+    message.body,
+    message.attachPdf,
+    message.sendMeACopy,
+    message.thankYou,
+    message.reminder,
+    message.sendReminderOn,
+    message.eventType,
+    message.deliveryStatus,
+    message.providerMessageId,
+    message.createdAt,
+    message.updatedAt,
+  ]
+  return message.id === 0
+    ? {
+        text: `INSERT INTO invoice_messages (${columns})
+          SELECT ${values.map(() => '?').join(', ')}
+          WHERE NOT EXISTS (SELECT 1 FROM invoice_messages WHERE harvest_id = ?)`,
+        params: [...values, message.harvestId],
+      }
+    : {
+        text: `INSERT INTO invoice_messages (id, ${columns})
+          SELECT ?, ${values.map(() => '?').join(', ')}
+          WHERE NOT EXISTS (SELECT 1 FROM invoice_messages WHERE harvest_id = ?)`,
+        params: [message.id, ...values, message.harvestId],
+      }
+}
+
+const messageUpdateStatement = (
+  invoiceId: number,
+  existing: StoredMessage | undefined,
+  incoming: StoredMessage,
+): Statement => ({
+  text: `UPDATE invoice_messages SET
+    recipients = ?, subject = ?, body = ?, attach_pdf = ?, send_me_a_copy = ?,
+    thank_you = ?, reminder = ?, send_reminder_on = ?, event_type = ?, updated_at = ?
+    WHERE invoice_id = ? AND harvest_id = ? AND id = ? AND updated_at = ?`,
+  params: [
+    incoming.recipients,
+    incoming.subject,
+    incoming.body,
+    incoming.attachPdf,
+    incoming.sendMeACopy,
+    incoming.thankYou,
+    incoming.reminder,
+    incoming.sendReminderOn,
+    incoming.eventType,
+    incoming.updatedAt,
+    invoiceId,
+    incoming.harvestId,
+    existing?.id ?? incoming.id,
+    existing?.updatedAt ?? incoming.updatedAt,
+  ],
+})
+
+const canonicalLine = (line: ImportedInvoiceLine, allowUnallocated = false): StoredLine => {
   assertTimestamp(line.createdAt, 'line.createdAt')
   assertTimestamp(line.updatedAt, 'line.updatedAt')
   if (
@@ -444,7 +687,7 @@ const canonicalLine = (line: ImportedInvoiceLine): StoredLine => {
     !Number.isFinite(line.quantity) ||
     !Number.isSafeInteger(line.unitPriceCents) ||
     !Number.isSafeInteger(line.amountCents) ||
-    line.id <= 0 ||
+    line.id < (allowUnallocated ? 0 : 1) ||
     line.harvestId <= 0 ||
     line.position < 0 ||
     Math.abs(line.unitPriceCents) > 9_000_000_000_000 ||
@@ -472,21 +715,143 @@ const canonicalLine = (line: ImportedInvoiceLine): StoredLine => {
 const sameLine = (left: StoredLine, right: StoredLine): boolean =>
   Object.keys(left).every((key) => left[key as keyof StoredLine] === right[key as keyof StoredLine])
 
+const lineInsertStatement = (invoiceId: number, line: StoredLine): Statement =>
+  line.id === 0
+    ? {
+        text: `INSERT INTO invoice_line_items (
+          harvest_id, invoice_id, position, kind, description, quantity,
+          unit_price_cents, amount_cents, taxed, taxed2, project_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          line.harvestId,
+          invoiceId,
+          line.position,
+          line.kind,
+          line.description,
+          line.quantity,
+          line.unitPriceCents,
+          line.amountCents,
+          line.taxed,
+          line.taxed2,
+          line.projectId,
+          line.createdAt,
+          line.updatedAt,
+        ],
+      }
+    : {
+        text: `INSERT INTO invoice_line_items (
+          id, harvest_id, invoice_id, position, kind, description, quantity,
+          unit_price_cents, amount_cents, taxed, taxed2, project_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          line.id,
+          line.harvestId,
+          invoiceId,
+          line.position,
+          line.kind,
+          line.description,
+          line.quantity,
+          line.unitPriceCents,
+          line.amountCents,
+          line.taxed,
+          line.taxed2,
+          line.projectId,
+          line.createdAt,
+          line.updatedAt,
+        ],
+      }
+
+const lineUpdateStatement = (
+  invoiceId: number,
+  existing: StoredLine,
+  incoming: StoredLine,
+): Statement => ({
+  text: `UPDATE invoice_line_items SET
+    position = ?, kind = ?, description = ?, quantity = ?, unit_price_cents = ?,
+    amount_cents = ?, taxed = ?, taxed2 = ?, project_id = ?, updated_at = ?
+    WHERE invoice_id = ? AND harvest_id = ? AND id = ? AND updated_at = ?`,
+  params: [
+    incoming.position,
+    incoming.kind,
+    incoming.description,
+    incoming.quantity,
+    incoming.unitPriceCents,
+    incoming.amountCents,
+    incoming.taxed,
+    incoming.taxed2,
+    incoming.projectId,
+    incoming.updatedAt,
+    invoiceId,
+    existing.harvestId,
+    existing.id,
+    existing.updatedAt,
+  ],
+})
+
 const byHarvestIdentity = <T extends { harvestId: number | null; id: number }>(
   left: T,
   right: T,
 ): number => (left.harvestId ?? 0) - (right.harvestId ?? 0) || left.id - right.id
 
 const normalizeImportInput = (input: ReconcileImportedInvoiceInput): NormalizedImportInput => ({
-  lines: input.lines.map(canonicalLine).sort(byHarvestIdentity),
+  lines: input.lines
+    .map((line) => canonicalLine(line, input.allocateNativeChildIds))
+    .sort(byHarvestIdentity),
   messages: input.messages.map(canonicalMessage).sort(byHarvestIdentity),
   payments: input.payments.map(canonicalPayment).sort(byHarvestIdentity),
 })
 
+/** Pure validation seam used before a loader is allowed to create a bare header. */
+export const validateImportedInvoiceReconciliation = (
+  input: ReconcileImportedInvoiceInput,
+): void => {
+  if (input.sourceBatchComplete !== true) {
+    throw new Error('import reconciliation requires a complete invoice source batch')
+  }
+  assertTimestamp(input.sourceUpdatedAt, 'sourceUpdatedAt')
+  if (input.expectedSourceUpdatedAt !== null) {
+    assertTimestamp(input.expectedSourceUpdatedAt, 'expectedSourceUpdatedAt')
+  }
+  if (input.sourceSentAt !== null) assertTimestamp(input.sourceSentAt, 'sourceSentAt')
+  if (input.sourcePaidAt !== null) assertTimestamp(input.sourcePaidAt, 'sourcePaidAt')
+  if (input.sourcePaidDate !== null) assertDate(input.sourcePaidDate, 'sourcePaidDate')
+  if (input.sourceClosedAt !== null) assertTimestamp(input.sourceClosedAt, 'sourceClosedAt')
+  if (input.sourceHeader !== undefined && input.sourceHeader.updatedAt !== input.sourceUpdatedAt) {
+    throw new Error('sourceHeader.updatedAt must equal sourceUpdatedAt')
+  }
+  assertNullableCents(input.sourceAmountCents, 'sourceAmountCents')
+  assertNullableCents(input.sourceDueAmountCents, 'sourceDueAmountCents')
+  assertNullableCents(input.sourceTaxAmountCents, 'sourceTaxAmountCents')
+  assertNullableCents(input.sourceTax2AmountCents, 'sourceTax2AmountCents')
+  assertNullableCents(input.sourceDiscountAmountCents, 'sourceDiscountAmountCents')
+  if (
+    input.sourcePaymentOptions !== null &&
+    (!Array.isArray(input.sourcePaymentOptions) ||
+      input.sourcePaymentOptions.some((option) => typeof option !== 'string'))
+  ) {
+    throw new Error('sourcePaymentOptions must be a source string array or null')
+  }
+  if (
+    !Number.isSafeInteger(input.sourceWrittenOffCents) ||
+    input.sourceWrittenOffCents < 0 ||
+    input.sourceWrittenOffCents > 9_000_000_000_000
+  ) {
+    throw new Error('sourceWrittenOffCents is outside the cents limit')
+  }
+  if (
+    input.maximumStatements !== undefined &&
+    (!Number.isSafeInteger(input.maximumStatements) ||
+      input.maximumStatements < 3 ||
+      input.maximumStatements > d1AtomicStatementLimit)
+  ) {
+    throw new Error(`maximumStatements must be between 3 and ${d1AtomicStatementLimit}`)
+  }
+  normalizeImportInput(input)
+}
+
 const fullSourceManifest = (input: ReconcileImportedInvoiceInput): Record<string, unknown> => ({
   invoice_id: input.invoiceId,
   source_batch_complete: input.sourceBatchComplete,
-  expected_source_updated_at: input.expectedSourceUpdatedAt,
   source_updated_at: input.sourceUpdatedAt,
   source_state: input.sourceState,
   source_sent_at: input.sourceSentAt,
@@ -502,6 +867,7 @@ const fullSourceManifest = (input: ReconcileImportedInvoiceInput): Record<string
   source_payment_options:
     input.sourcePaymentOptions === null ? null : [...input.sourcePaymentOptions],
   source_written_off_cents: input.sourceWrittenOffCents,
+  source_header: input.sourceHeader ?? null,
 })
 
 const fullLineManifest = (lines: readonly StoredLine[]): Record<string, unknown>[] =>
@@ -712,36 +1078,7 @@ export const reconcileImportedInvoice = async (
   database: Database,
   input: ReconcileImportedInvoiceInput,
 ): Promise<ImportReconciliationResult> => {
-  if (input.sourceBatchComplete !== true) {
-    throw new Error('import reconciliation requires a complete invoice source batch')
-  }
-  assertTimestamp(input.sourceUpdatedAt, 'sourceUpdatedAt')
-  if (input.expectedSourceUpdatedAt !== null) {
-    assertTimestamp(input.expectedSourceUpdatedAt, 'expectedSourceUpdatedAt')
-  }
-  if (input.sourceSentAt !== null) assertTimestamp(input.sourceSentAt, 'sourceSentAt')
-  if (input.sourcePaidAt !== null) assertTimestamp(input.sourcePaidAt, 'sourcePaidAt')
-  if (input.sourcePaidDate !== null) assertDate(input.sourcePaidDate, 'sourcePaidDate')
-  if (input.sourceClosedAt !== null) assertTimestamp(input.sourceClosedAt, 'sourceClosedAt')
-  assertNullableCents(input.sourceAmountCents, 'sourceAmountCents')
-  assertNullableCents(input.sourceDueAmountCents, 'sourceDueAmountCents')
-  assertNullableCents(input.sourceTaxAmountCents, 'sourceTaxAmountCents')
-  assertNullableCents(input.sourceTax2AmountCents, 'sourceTax2AmountCents')
-  assertNullableCents(input.sourceDiscountAmountCents, 'sourceDiscountAmountCents')
-  if (
-    input.sourcePaymentOptions !== null &&
-    (!Array.isArray(input.sourcePaymentOptions) ||
-      input.sourcePaymentOptions.some((option) => typeof option !== 'string'))
-  ) {
-    throw new Error('sourcePaymentOptions must be a source string array or null')
-  }
-  if (
-    !Number.isSafeInteger(input.sourceWrittenOffCents) ||
-    input.sourceWrittenOffCents < 0 ||
-    input.sourceWrittenOffCents > 9_000_000_000_000
-  ) {
-    throw new Error('sourceWrittenOffCents is outside the cents limit')
-  }
+  validateImportedInvoiceReconciliation(input)
   const normalized = normalizeImportInput(input)
   const manifests = await buildManifests(input, normalized)
   const { inputFingerprint } = manifests
@@ -757,6 +1094,43 @@ export const reconcileImportedInvoice = async (
   if (invoice === null || invoice.harvestId === null) {
     throw new Error('import reconciliation requires an imported invoice')
   }
+  const priorReceipt = await first<Receipt>(database, {
+    text: `SELECT input_fingerprint AS "inputFingerprint", target_state AS "targetState", completed
+      FROM invoice_import_reconciliations WHERE invoice_id = ? AND source_updated_at = ?`,
+    params: [input.invoiceId, input.sourceUpdatedAt],
+  })
+  if (priorReceipt !== null) {
+    if (priorReceipt.inputFingerprint !== inputFingerprint) {
+      if (
+        input.allocateNativeChildIds !== true &&
+        invoice.sourceUpdatedAt !== null &&
+        Date.parse(input.sourceUpdatedAt) <= Date.parse(invoice.sourceUpdatedAt)
+      ) {
+        return {
+          invoiceId: input.invoiceId,
+          sourceUpdatedAt: invoice.sourceUpdatedAt,
+          state: invoice.state,
+          diagnostics: [
+            ...sourceStateDiagnostics(input.invoiceId, input.sourceState, invoice.state),
+            ...paidDateDiagnostics,
+          ],
+        }
+      }
+      throw new Error('import reconciliation identity was reused with different input')
+    }
+    if (priorReceipt.completed === 1) {
+      const diagnostics: ImportReconciliationDiagnostic[] = [
+        ...sourceStateDiagnostics(input.invoiceId, input.sourceState, priorReceipt.targetState),
+        ...paidDateDiagnostics,
+      ]
+      return {
+        invoiceId: input.invoiceId,
+        sourceUpdatedAt: input.sourceUpdatedAt,
+        state: priorReceipt.targetState,
+        diagnostics,
+      }
+    }
+  }
   if (
     invoice.sourceUpdatedAt !== null &&
     Date.parse(input.sourceUpdatedAt) <= Date.parse(invoice.sourceUpdatedAt)
@@ -769,28 +1143,6 @@ export const reconcileImportedInvoice = async (
         ...sourceStateDiagnostics(input.invoiceId, input.sourceState, invoice.state),
         ...paidDateDiagnostics,
       ],
-    }
-  }
-  const priorReceipt = await first<Receipt>(database, {
-    text: `SELECT input_fingerprint AS "inputFingerprint", target_state AS "targetState", completed
-      FROM invoice_import_reconciliations WHERE invoice_id = ? AND source_updated_at = ?`,
-    params: [input.invoiceId, input.sourceUpdatedAt],
-  })
-  if (priorReceipt !== null) {
-    if (priorReceipt.inputFingerprint !== inputFingerprint || priorReceipt.completed !== 1) {
-      throw new Error(
-        'import reconciliation identity was reused with different or incomplete input',
-      )
-    }
-    const diagnostics: ImportReconciliationDiagnostic[] = [
-      ...sourceStateDiagnostics(input.invoiceId, input.sourceState, priorReceipt.targetState),
-      ...paidDateDiagnostics,
-    ]
-    return {
-      invoiceId: input.invoiceId,
-      sourceUpdatedAt: input.sourceUpdatedAt,
-      state: priorReceipt.targetState,
-      diagnostics,
     }
   }
 
@@ -839,7 +1191,11 @@ export const reconcileImportedInvoice = async (
   const linesByHarvestId = new Map<number, StoredLine>(
     importedLines.map((line) => [line.harvestId, line]),
   )
-  const incomingLines = normalized.lines
+  const incomingLines = normalized.lines.map((line) =>
+    input.allocateNativeChildIds
+      ? { ...line, id: linesByHarvestId.get(line.harvestId ?? 0)?.id ?? 0 }
+      : line,
+  )
   const seenLineHarvestIds = new Set<number>()
   const seenLinePositions = new Set<number>(nativeLines.map((line) => line.position))
   const lineInserts: StoredLine[] = []
@@ -853,7 +1209,9 @@ export const reconcileImportedInvoice = async (
     seenLinePositions.add(line.position)
     const existing = linesByHarvestId.get(harvestId)
     if (existing === undefined) lineInserts.push(line)
-    else if (!sameLine(existing, line)) {
+    else if (existing.id !== line.id || existing.createdAt !== line.createdAt) {
+      throw new Error('imported line identity or provenance drifted')
+    } else if (!sameLine(existing, line)) {
       lineDeletes.push(existing)
       lineInserts.push(line)
     }
@@ -881,7 +1239,11 @@ export const reconcileImportedInvoice = async (
   const byHarvestId = new Map<number, StoredPayment>(
     existingPayments.map((payment) => [payment.harvestId, payment]),
   )
-  const incoming = normalized.payments
+  const incoming = normalized.payments.map((payment) =>
+    input.allocateNativeChildIds
+      ? { ...payment, id: byHarvestId.get(payment.harvestId ?? 0)?.id ?? 0 }
+      : payment,
+  )
   const seenHarvestIds = new Set<number>()
   const inserts: StoredPayment[] = []
   const deletes: StoredPayment[] = []
@@ -890,7 +1252,7 @@ export const reconcileImportedInvoice = async (
       !Number.isSafeInteger(payment.id) ||
       !Number.isSafeInteger(payment.harvestId) ||
       !Number.isSafeInteger(payment.amountCents) ||
-      payment.id <= 0 ||
+      payment.id < (input.allocateNativeChildIds ? 0 : 1) ||
       payment.harvestId <= 0 ||
       payment.amountCents <= 0 ||
       payment.amountCents > 9_000_000_000_000 ||
@@ -902,6 +1264,9 @@ export const reconcileImportedInvoice = async (
     const existing = byHarvestId.get(payment.harvestId)
     if (existing === undefined) inserts.push(payment)
     else if (!samePayment(existing, payment)) {
+      if (!samePaymentIdentityAndProvenance(existing, payment)) {
+        throw new Error('imported payment identity or provenance drifted')
+      }
       deletes.push(existing)
       inserts.push(payment)
     }
@@ -930,16 +1295,18 @@ export const reconcileImportedInvoice = async (
       message.harvestId === null ? [] : [[message.harvestId, message] as const],
     ),
   )
-  const incomingMessages = normalized.messages
+  const incomingMessages = normalized.messages.map((message) =>
+    input.allocateNativeChildIds
+      ? { ...message, id: messagesByHarvestId.get(message.harvestId ?? 0)?.id ?? 0 }
+      : message,
+  )
   const seenMessageHarvestIds = new Set<number>()
-  const messageInserts: StoredMessage[] = []
-  const messageUpdates: StoredMessage[] = []
   const messageDeletes: StoredMessage[] = []
   for (const message of incomingMessages) {
     if (
       !Number.isSafeInteger(message.id) ||
       !Number.isSafeInteger(message.harvestId) ||
-      message.id <= 0 ||
+      message.id < (input.allocateNativeChildIds ? 0 : 1) ||
       (message.harvestId ?? 0) <= 0 ||
       seenMessageHarvestIds.has(message.harvestId ?? 0)
     ) {
@@ -948,12 +1315,10 @@ export const reconcileImportedInvoice = async (
     const harvestId = message.harvestId ?? 0
     seenMessageHarvestIds.add(harvestId)
     const existing = messagesByHarvestId.get(harvestId)
-    if (existing === undefined) messageInserts.push(message)
-    else if (!sameSourceMessage(existing, message)) {
+    if (existing !== undefined && !sameSourceMessage(existing, message)) {
       if (!sameMessageIdentityAndSender(existing, message)) {
         throw new Error('imported message identity or sender provenance drifted')
       }
-      messageUpdates.push(message)
     }
   }
   for (const message of existingMessages) {
@@ -961,6 +1326,12 @@ export const reconcileImportedInvoice = async (
       messageDeletes.push(message)
     }
   }
+  // A source-only input uses id=0 for DB allocation. Once a Harvest child
+  // already exists, pin the pending authority to that exact native row so the
+  // completion guard can prove reconciliation did not rotate its storage id.
+  const lineAuthorityManifestJson = canonicalJson(membershipManifest(incomingLines))
+  const messageAuthorityManifestJson = canonicalJson(membershipManifest(incomingMessages))
+  const paymentAuthorityManifestJson = canonicalJson(membershipManifest(incoming))
 
   const paymentCents = [...nativePayments, ...incoming].reduce(
     (sum, payment) => sum + payment.amountCents,
@@ -1006,9 +1377,11 @@ export const reconcileImportedInvoice = async (
     ...paidDateDiagnostics,
   ]
 
-  const statements: Statement[] = [
-    {
-      text: `INSERT INTO invoice_import_reconciliations (
+  const statements: Statement[] =
+    priorReceipt === null
+      ? [
+          {
+            text: `INSERT INTO invoice_import_reconciliations (
           invoice_id, source_updated_at, expected_source_updated_at, input_fingerprint,
           source_manifest_json, source_manifest_hash, line_manifest_json, line_manifest_hash,
           message_manifest_json, message_manifest_hash, payment_manifest_json,
@@ -1021,169 +1394,314 @@ export const reconcileImportedInvoice = async (
           (SELECT count(*) FROM event_outbox event
            WHERE event.aggregate_type = 'invoice' AND event.aggregate_id = invoice.id)
         FROM invoices invoice WHERE invoice.id = ?`,
+            params: [
+              input.invoiceId,
+              input.sourceUpdatedAt,
+              input.expectedSourceUpdatedAt,
+              inputFingerprint,
+              manifests.sourceManifestJson,
+              manifests.sourceManifestHash,
+              lineAuthorityManifestJson,
+              manifests.lineManifestHash,
+              messageAuthorityManifestJson,
+              manifests.messageManifestHash,
+              paymentAuthorityManifestJson,
+              manifests.paymentManifestHash,
+              input.sourceState,
+              targetState,
+              input.sourceUpdatedAt,
+              closeReason,
+              input.sourceWrittenOffCents,
+              input.sourceSentAt,
+              paidAt,
+              paidDate,
+              closedAt,
+              input.invoiceId,
+            ],
+          },
+        ]
+      : []
+  if (input.sourceHeader !== undefined && priorReceipt === null) {
+    const source = input.sourceHeader
+    statements.push({
+      text: `UPDATE invoices SET client_id = ?, created_by_user_id = ?,
+          source_creator_id = ?, source_creator_name = ?, number = ?, subject = ?,
+          purchase_order = ?, notes = ?, currency = ?, issue_date = ?, due_date = ?,
+          payment_terms = ?, period_start = ?, period_end = ?, project_id = ?, estimate_id = ?,
+          tax_rate_ppm = ?, tax2_rate_ppm = ?, discount_rate_ppm = ?,
+          created_at = ?
+        WHERE id = ? AND harvest_id IS NOT NULL AND version = ? AND source_updated_at IS ?`,
       params: [
+        source.clientId,
+        source.createdByUserId,
+        source.sourceCreatorId,
+        source.sourceCreatorName,
+        source.number,
+        source.subject,
+        source.purchaseOrder,
+        source.notes,
+        source.currency,
+        source.issueDate,
+        source.dueDate,
+        source.paymentTerms,
+        source.periodStart,
+        source.periodEnd,
+        source.projectId,
+        source.estimateId ?? null,
+        source.taxRatePpm,
+        source.tax2RatePpm,
+        source.discountRatePpm,
+        source.createdAt,
         input.invoiceId,
-        input.sourceUpdatedAt,
+        invoice.version,
         input.expectedSourceUpdatedAt,
-        inputFingerprint,
-        manifests.sourceManifestJson,
-        manifests.sourceManifestHash,
-        manifests.lineManifestJson,
-        manifests.lineManifestHash,
-        manifests.messageManifestJson,
-        manifests.messageManifestHash,
-        manifests.paymentManifestJson,
-        manifests.paymentManifestHash,
-        input.sourceState,
-        targetState,
-        input.sourceUpdatedAt,
-        closeReason,
-        input.sourceWrittenOffCents,
-        input.sourceSentAt,
-        paidAt,
-        paidDate,
-        closedAt,
-        input.invoiceId,
       ],
-    },
-  ]
+    })
+  }
+  const pendingLineInserts = new Map(lineInserts.map((line) => [line.harvestId, line]))
+  const lineUpdates = new Map<number, { existing: StoredLine; replacement: StoredLine }>()
   for (const line of lineDeletes) {
-    statements.push({
-      text: `DELETE FROM invoice_line_items
-        WHERE invoice_id = ? AND harvest_id = ? AND id = ?`,
-      params: [input.invoiceId, line.harvestId, line.id],
-    })
+    if (line.harvestId === null) throw new Error('imported line identity is missing')
+    const replacement = pendingLineInserts.get(line.harvestId)
+    if (replacement !== undefined) {
+      lineUpdates.set(line.harvestId, { existing: line, replacement })
+      pendingLineInserts.delete(line.harvestId)
+    } else {
+      statements.push(
+        ...importOperationStatements(
+          input,
+          inputFingerprint,
+          'line',
+          'delete',
+          line.harvestId,
+          line.id,
+          line.updatedAt,
+          null,
+          {
+            text: `DELETE FROM invoice_line_items
+              WHERE invoice_id = ? AND harvest_id = ? AND id = ? AND updated_at = ?`,
+            params: [input.invoiceId, line.harvestId, line.id, line.updatedAt],
+          },
+        ),
+      )
+    }
   }
-  for (const line of lineInserts) {
-    statements.push({
-      text: `INSERT INTO invoice_line_items (
-          id, harvest_id, invoice_id, position, kind, description, quantity,
-          unit_price_cents, amount_cents, taxed, taxed2, project_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      params: [
-        line.id,
+  // Order acyclic moves from vacant target positions backwards. Any remainder
+  // is a true position cycle under UNIQUE(invoice_id, position); replace that
+  // whole cycle atomically with the same native IDs so no retry can observe a
+  // missing row or rotate identity.
+  while (lineUpdates.size > 0) {
+    const occupied = new Set([...lineUpdates.values()].map(({ existing }) => existing.position))
+    const safe = [...lineUpdates.entries()].find(
+      ([, pair]) =>
+        pair.existing.position === pair.replacement.position ||
+        !occupied.has(pair.replacement.position),
+    )
+    if (safe === undefined) break
+    const [harvestId, pair] = safe
+    statements.push(
+      ...importOperationStatements(
+        input,
+        inputFingerprint,
+        'line',
+        'update',
+        harvestId,
+        pair.existing.id,
+        pair.existing.updatedAt,
+        pair.replacement.updatedAt,
+        lineUpdateStatement(input.invoiceId, pair.existing, pair.replacement),
+      ),
+    )
+    lineUpdates.delete(harvestId)
+  }
+  while (lineUpdates.size > 0) {
+    const positionOwners = new Map(
+      [...lineUpdates.entries()].map(([harvestId, pair]) => [pair.existing.position, harvestId]),
+    )
+    const start = lineUpdates.keys().next().value
+    if (start === undefined) break
+    const cycle: Array<{ harvestId: number; existing: StoredLine; replacement: StoredLine }> = []
+    let harvestId = start
+    while (!cycle.some((member) => member.harvestId === harvestId)) {
+      const pair = lineUpdates.get(harvestId)
+      if (pair === undefined) throw new Error('imported line position cycle is inconsistent')
+      cycle.push({ harvestId, ...pair })
+      const next = positionOwners.get(pair.replacement.position)
+      if (next === undefined) throw new Error('imported line position cycle has no owner')
+      harvestId = next
+    }
+    if (harvestId !== start) throw new Error('imported line position cycles overlap')
+    const atomicGroup = `line:reorder:${cycle.map((member) => member.harvestId).join(',')}`
+    const cycleStatements = [
+      ...cycle.flatMap((member) =>
+        importOperationStatements(
+          input,
+          inputFingerprint,
+          'line',
+          'delete',
+          member.harvestId,
+          member.existing.id,
+          member.existing.updatedAt,
+          null,
+          {
+            text: `DELETE FROM invoice_line_items
+              WHERE invoice_id = ? AND harvest_id = ? AND id = ? AND updated_at = ?`,
+            params: [
+              input.invoiceId,
+              member.harvestId,
+              member.existing.id,
+              member.existing.updatedAt,
+            ],
+          },
+        ),
+      ),
+      ...cycle.flatMap((member) =>
+        importOperationStatements(
+          input,
+          inputFingerprint,
+          'line',
+          'insert',
+          member.harvestId,
+          member.existing.id,
+          null,
+          member.replacement.updatedAt,
+          lineInsertStatement(input.invoiceId, member.replacement),
+        ),
+      ),
+    ].map((statement) => ({ ...statement, atomicGroup }))
+    statements.push(...cycleStatements)
+    for (const member of cycle) lineUpdates.delete(member.harvestId)
+  }
+  for (const line of pendingLineInserts.values()) {
+    if (line.harvestId === null) throw new Error('imported line identity is missing')
+    statements.push(
+      ...importOperationStatements(
+        input,
+        inputFingerprint,
+        'line',
+        'insert',
         line.harvestId,
-        input.invoiceId,
-        line.position,
-        line.kind,
-        line.description,
-        line.quantity,
-        line.unitPriceCents,
-        line.amountCents,
-        line.taxed,
-        line.taxed2,
-        line.projectId,
-        line.createdAt,
+        line.id === 0 ? null : line.id,
+        null,
         line.updatedAt,
-      ],
-    })
+        lineInsertStatement(input.invoiceId, line),
+      ),
+    )
   }
+  const pendingPaymentInserts = new Map(inserts.map((payment) => [payment.harvestId, payment]))
   for (const payment of deletes) {
-    statements.push({
-      text: `DELETE FROM invoice_payments
-        WHERE invoice_id = ? AND harvest_id = ? AND id = ?`,
-      params: [input.invoiceId, payment.harvestId, payment.id],
-    })
+    if (payment.harvestId === null) throw new Error('imported payment identity is missing')
+    const replacement = pendingPaymentInserts.get(payment.harvestId)
+    if (replacement !== undefined) {
+      statements.push(
+        ...importOperationStatements(
+          input,
+          inputFingerprint,
+          'payment',
+          'update',
+          payment.harvestId,
+          payment.id,
+          payment.updatedAt,
+          replacement.updatedAt,
+          paymentUpdateStatement(input.invoiceId, payment, replacement),
+        ),
+      )
+      pendingPaymentInserts.delete(payment.harvestId)
+    } else {
+      statements.push(
+        ...importOperationStatements(
+          input,
+          inputFingerprint,
+          'payment',
+          'delete',
+          payment.harvestId,
+          payment.id,
+          payment.updatedAt,
+          null,
+          {
+            text: `DELETE FROM invoice_payments
+              WHERE invoice_id = ? AND harvest_id = ? AND id = ? AND updated_at = ?`,
+            params: [input.invoiceId, payment.harvestId, payment.id, payment.updatedAt],
+          },
+        ),
+      )
+    }
   }
-  for (const payment of inserts) {
-    statements.push({
-      text: `INSERT INTO invoice_payments (
-          id, harvest_id, invoice_id, currency, amount_cents, paid_at, paid_date,
-          source_paid_at, source_paid_date, source_recorded_by_name,
-          source_recorded_by_email, source_gateway_id, source_gateway_name, notes,
-          recorded_by_user_id, provider, provider_shape, provider_transaction_id,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', 'manual', ?, ?, ?)`,
-      params: [
-        payment.id,
+  for (const payment of pendingPaymentInserts.values()) {
+    if (payment.harvestId === null) throw new Error('imported payment identity is missing')
+    statements.push(
+      ...importOperationStatements(
+        input,
+        inputFingerprint,
+        'payment',
+        'insert',
         payment.harvestId,
-        input.invoiceId,
-        invoice.currency,
-        payment.amountCents,
-        payment.paidAt,
-        payment.paidDate,
-        payment.sourcePaidAt,
-        payment.sourcePaidDate,
-        payment.sourceRecordedByName,
-        payment.sourceRecordedByEmail,
-        payment.sourceGatewayId,
-        payment.sourceGatewayName,
-        payment.notes,
-        payment.recordedByUserId,
-        payment.providerTransactionId,
-        payment.createdAt,
+        payment.id === 0 ? null : payment.id,
+        null,
         payment.updatedAt,
-      ],
-    })
+        paymentInsertStatement(input.invoiceId, invoice.currency, payment),
+      ),
+    )
   }
   for (const message of messageDeletes) {
-    statements.push({
-      text: `DELETE FROM invoice_messages
-        WHERE invoice_id = ? AND harvest_id = ? AND id = ?`,
-      params: [input.invoiceId, message.harvestId, message.id],
-    })
-  }
-  for (const message of messageUpdates) {
-    statements.push({
-      text: `UPDATE invoice_messages SET
-          sent_by = ?, sent_by_email = ?, sent_from = ?, sent_from_email = ?,
-          recipients = ?, subject = ?, body = ?, attach_pdf = ?, send_me_a_copy = ?,
-          thank_you = ?, reminder = ?, send_reminder_on = ?, event_type = ?,
-          created_at = ?, updated_at = ?
-        WHERE invoice_id = ? AND harvest_id = ? AND id = ?`,
-      params: [
-        message.sentBy,
-        message.sentByEmail,
-        message.sentFrom,
-        message.sentFromEmail,
-        message.recipients,
-        message.subject,
-        message.body,
-        message.attachPdf,
-        message.sendMeACopy,
-        message.thankYou,
-        message.reminder,
-        message.sendReminderOn,
-        message.eventType,
-        message.createdAt,
-        message.updatedAt,
-        input.invoiceId,
+    if (message.harvestId === null) throw new Error('imported message identity is missing')
+    statements.push(
+      ...importOperationStatements(
+        input,
+        inputFingerprint,
+        'message',
+        'delete',
         message.harvestId,
         message.id,
-      ],
-    })
-  }
-  for (const message of messageInserts) {
-    statements.push({
-      text: `INSERT INTO invoice_messages (
-          id, harvest_id, invoice_id, sent_by, sent_by_email, sent_from, sent_from_email,
-          recipients, subject, body, attach_pdf, send_me_a_copy, thank_you, reminder,
-          send_reminder_on, event_type, delivery_status, provider_message_id,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      params: [
-        message.id,
-        message.harvestId,
-        input.invoiceId,
-        message.sentBy,
-        message.sentByEmail,
-        message.sentFrom,
-        message.sentFromEmail,
-        message.recipients,
-        message.subject,
-        message.body,
-        message.attachPdf,
-        message.sendMeACopy,
-        message.thankYou,
-        message.reminder,
-        message.sendReminderOn,
-        message.eventType,
-        message.deliveryStatus,
-        message.providerMessageId,
-        message.createdAt,
         message.updatedAt,
-      ],
-    })
+        null,
+        {
+          text: `DELETE FROM invoice_messages
+            WHERE invoice_id = ? AND harvest_id = ? AND id = ? AND updated_at = ?`,
+          params: [input.invoiceId, message.harvestId, message.id, message.updatedAt],
+        },
+      ),
+    )
+  }
+  for (const message of incomingMessages) {
+    if (message.harvestId === null) throw new Error('imported message identity is missing')
+    const existing = messagesByHarvestId.get(message.harvestId)
+    if (existing !== undefined && sameSourceMessage(existing, message)) continue
+    if (existing === undefined) {
+      statements.push(
+        ...importOperationStatements(
+          input,
+          inputFingerprint,
+          'message',
+          'insert',
+          message.harvestId,
+          message.id === 0 ? null : message.id,
+          null,
+          message.updatedAt,
+          [
+            messageUpdateStatement(input.invoiceId, existing, message),
+            messageInsertStatement(input.invoiceId, message),
+          ],
+        ),
+      )
+    } else {
+      statements.push(
+        ...importOperationStatements(
+          input,
+          inputFingerprint,
+          'message',
+          'update',
+          message.harvestId,
+          existing.id,
+          existing.updatedAt,
+          message.updatedAt,
+          [
+            messageUpdateStatement(input.invoiceId, existing, message),
+            messageInsertStatement(input.invoiceId, message),
+          ],
+        ),
+      )
+    }
   }
   statements.push(
     {
@@ -1221,11 +1739,26 @@ export const reconcileImportedInvoice = async (
       params: [input.invoiceId, input.sourceUpdatedAt],
     },
   )
-  if (isD1(database.$client) && statements.length > d1AtomicStatementLimit) {
-    throw new InvoiceImportBatchLimitError(statements.length, d1AtomicStatementLimit)
+  const maximumStatements = input.maximumStatements ?? d1AtomicStatementLimit
+  let stepStatements = statements
+  const complete = statements.length <= maximumStatements
+  if (!complete) {
+    let cut = Math.min(maximumStatements, statements.length - 2)
+    while (cut > 0) {
+      const previous = statements[cut - 1]?.atomicGroup
+      const next = statements[cut]?.atomicGroup
+      const splitsOperation = previous !== undefined && previous === next
+      if (!splitsOperation) break
+      cut -= 1
+    }
+    if (cut < 1) throw new InvoiceImportBatchLimitError(statements.length, maximumStatements)
+    stepStatements = statements.slice(0, cut)
+  }
+  if (isD1(database.$client) && stepStatements.length > d1AtomicStatementLimit) {
+    throw new InvoiceImportBatchLimitError(stepStatements.length, d1AtomicStatementLimit)
   }
   try {
-    await atomic(database, statements)
+    await atomic(database, stepStatements)
   } catch (error) {
     // A concurrent identical first attempt can win after our initial receipt read.
     // Re-read only after the entire atomic batch failed; exact completed identity is
@@ -1257,6 +1790,7 @@ export const reconcileImportedInvoice = async (
     invoiceId: input.invoiceId,
     sourceUpdatedAt: input.sourceUpdatedAt,
     state: targetState,
+    ...(complete ? {} : { complete: false as const }),
     diagnostics,
   }
 }

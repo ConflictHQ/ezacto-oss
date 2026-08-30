@@ -10,6 +10,7 @@ import {
   REPORTS_RATE_LIMIT,
   REPORTS_RATE_WINDOW_MS,
   runVerify,
+  snapshotDigest,
   verifySnapshot,
 } from '../src/verify.js'
 import { preflight, resourceProgress } from './fixtures.js'
@@ -54,6 +55,152 @@ describe('snapshot verification', () => {
       }),
     )
   })
+
+  it('[unit] rejects billed links and people associations whose targets are absent', async () => {
+    await writeFile(join(dir, 'raw', 'users.jsonl'), `${JSON.stringify(row(1))}\n`)
+    await writeFile(join(dir, 'raw', 'invoices.jsonl'), '')
+    await writeFile(
+      join(dir, 'raw', 'time_entries.jsonl'),
+      `${JSON.stringify(row(2, { invoice: { id: 404 } }))}\n`,
+    )
+    await writeFile(
+      join(dir, 'raw', 'expenses.jsonl'),
+      `${JSON.stringify(row(3, { invoice: { id: 405 } }))}\n`,
+    )
+    await writeFile(
+      join(dir, 'raw', 'roles.jsonl'),
+      `${JSON.stringify(row(4, { user_ids: [406] }))}\n`,
+    )
+    await writeFile(join(dir, 'raw', 'teammates.jsonl'), `${JSON.stringify(row(407))}\n`)
+    await writeFile(
+      join(dir, 'raw', 'teammates.lineage.jsonl'),
+      `${JSON.stringify({ source_id: 407, parent_id: 1 })}\n`,
+    )
+    manifest.resources.users = resourceProgress({ count: 1 })
+    manifest.resources.invoices = resourceProgress({ count: 0 })
+    manifest.resources.time_entries = resourceProgress({ count: 1 })
+    manifest.resources.expenses = resourceProgress({ count: 1 })
+    manifest.resources.roles = resourceProgress({ count: 1 })
+    manifest.resources.teammates = resourceProgress({ count: 1 })
+
+    const issues = await verifySnapshot(dir, manifest)
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'dangling_fk',
+          path: 'raw/time_entries.jsonl:1.invoice.id',
+          id: 404,
+        }),
+        expect.objectContaining({
+          kind: 'dangling_fk',
+          path: 'raw/expenses.jsonl:1.invoice.id',
+          id: 405,
+        }),
+        expect.objectContaining({
+          kind: 'dangling_fk',
+          path: 'raw/roles.jsonl:1.user_ids[0]',
+          id: 406,
+        }),
+        expect.objectContaining({
+          kind: 'dangling_fk',
+          path: 'raw/teammates.jsonl:1.id',
+          id: 407,
+        }),
+      ]),
+    )
+  })
+
+  it('[unit] rejects duplicate source identities before load can discard a row', async () => {
+    await writeFile(
+      join(dir, 'raw', 'clients.jsonl'),
+      `${JSON.stringify(row(7, { name: 'first' }))}\n${JSON.stringify(row(7, { name: 'second' }))}\n`,
+    )
+    manifest.resources.clients = resourceProgress({ count: 2 })
+
+    expect(await verifySnapshot(dir, manifest)).toContainEqual(
+      expect.objectContaining({
+        kind: 'invalid_row',
+        path: 'raw/clients.jsonl:2.id',
+        id: 7,
+      }),
+    )
+  })
+
+  it('[unit] compares duplicate time-entry identities from their exact number tokens', async () => {
+    await writeFile(
+      join(dir, 'raw', 'time_entries.jsonl'),
+      '{"id":9007199254740993}\n{"id":9007199254740993}\n',
+    )
+    manifest.resources.time_entries = resourceProgress({ count: 2 })
+
+    expect(await verifySnapshot(dir, manifest)).toContainEqual(
+      expect.objectContaining({
+        kind: 'invalid_row',
+        path: 'raw/time_entries.jsonl:2.id',
+        id: '9007199254740993',
+      }),
+    )
+  })
+
+  it('[unit] allows one teammate user under different managers but rejects a repeated pair', async () => {
+    await writeFile(
+      join(dir, 'raw', 'users.jsonl'),
+      `${JSON.stringify(row(1))}\n${JSON.stringify(row(2))}\n${JSON.stringify(row(7))}\n`,
+    )
+    await writeFile(
+      join(dir, 'raw', 'teammates.jsonl'),
+      `${JSON.stringify(row(7))}\n${JSON.stringify(row(7))}\n`,
+    )
+    await writeFile(
+      join(dir, 'raw', 'teammates.lineage.jsonl'),
+      `${JSON.stringify({ source_id: 7, parent_id: 1 })}\n${JSON.stringify({ source_id: 7, parent_id: 2 })}\n`,
+    )
+    manifest.resources.users = resourceProgress({ count: 3 })
+    manifest.resources.teammates = resourceProgress({ count: 2 })
+    expect(await verifySnapshot(dir, manifest)).toEqual([])
+
+    await writeFile(
+      join(dir, 'raw', 'teammates.lineage.jsonl'),
+      `${JSON.stringify({ source_id: 7, parent_id: 1 })}\n${JSON.stringify({ source_id: 7, parent_id: 1 })}\n`,
+    )
+    expect(await verifySnapshot(dir, manifest)).toContainEqual(
+      expect.objectContaining({
+        kind: 'invalid_row',
+        path: 'raw/teammates.lineage.jsonl:2',
+        id: 7,
+      }),
+    )
+  })
+
+  it('[unit] refuses child snapshots without aligned parent lineage', async () => {
+    await writeFile(join(dir, 'raw', 'invoices.jsonl'), `${JSON.stringify(row(7))}\n`)
+    await writeFile(join(dir, 'raw', 'invoice_messages.jsonl'), `${JSON.stringify(row(10))}\n`)
+    manifest.resources.invoices = resourceProgress({ count: 1 })
+    manifest.resources.invoice_messages = resourceProgress({ count: 1 })
+    expect(await verifySnapshot(dir, manifest)).toContainEqual(
+      expect.objectContaining({
+        kind: 'lineage_mismatch',
+        path: 'raw/invoice_messages.lineage.jsonl',
+      }),
+    )
+  })
+
+  it('[unit] includes child lineage in the stable snapshot digest', async () => {
+    await writeFile(join(dir, 'raw', 'invoices.jsonl'), `${JSON.stringify(row(7))}\n`)
+    await writeFile(join(dir, 'raw', 'invoice_messages.jsonl'), `${JSON.stringify(row(10))}\n`)
+    await writeFile(
+      join(dir, 'raw', 'invoice_messages.lineage.jsonl'),
+      `${JSON.stringify({ source_id: 10, parent_id: 7 })}\n`,
+    )
+    manifest.resources.invoices = resourceProgress({ count: 1 })
+    manifest.resources.invoice_messages = resourceProgress({ count: 1 })
+    const first = await snapshotDigest(dir, manifest)
+    await writeFile(
+      join(dir, 'raw', 'invoice_messages.lineage.jsonl'),
+      `${JSON.stringify({ source_id: 10, parent_id: 8 })}\n`,
+    )
+    expect(await snapshotDigest(dir, manifest)).not.toBe(first)
+  })
 })
 
 describe('report checksums', () => {
@@ -81,12 +228,13 @@ describe('report checksums', () => {
     })
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1')
-      const results = url.pathname === '/v2/reports/time/clients'
-        ? [
-            { client_id: 7, currency: 'USD', total_hours: 1 },
-            { client_id: 7, currency: 'EUR', total_hours: 2 },
-          ]
-        : []
+      const results =
+        url.pathname === '/v2/reports/time/clients'
+          ? [
+              { client_id: 7, currency: 'USD', total_hours: 1 },
+              { client_id: 7, currency: 'EUR', total_hours: 2 },
+            ]
+          : []
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ results, total_entries: results.length, links: { next: null } }))
     })
@@ -132,8 +280,9 @@ describe('report checksums', () => {
       grants.push(clock)
     }
     for (const at of grants) {
-      expect(grants.filter((grant) => grant >= at && grant < at + REPORTS_RATE_WINDOW_MS).length)
-        .toBeLessThanOrEqual(REPORTS_RATE_LIMIT)
+      expect(
+        grants.filter((grant) => grant >= at && grant < at + REPORTS_RATE_WINDOW_MS).length,
+      ).toBeLessThanOrEqual(REPORTS_RATE_LIMIT)
     }
   })
 })

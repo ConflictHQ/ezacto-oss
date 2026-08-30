@@ -339,7 +339,7 @@ for (const [runtime, factory] of factories) {
       ).toEqual([{ recorded_by_user_id: null }])
       await expect(
         database.run(`UPDATE invoice_payments SET notes = 'raw mutation' WHERE id = 1`),
-      ).rejects.toThrow(/pending command|immutable/)
+      ).rejects.toThrow(/pending command|immutable|exact import authority/)
     })
 
     it('[unit] guards source-owned imported messages but permits provider delivery fields', async () => {

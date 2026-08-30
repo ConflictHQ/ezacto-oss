@@ -289,6 +289,19 @@ const requireNumber = (o: Record<string, unknown>, key: string, endpoint: string
   return value
 }
 
+const optionalBoolean = (
+  o: Record<string, unknown>,
+  key: string,
+  endpoint: string,
+): boolean | 'unknown' => {
+  const value = o[key]
+  if (value === undefined) return 'unknown'
+  if (typeof value !== 'boolean') {
+    throw badResponse(endpoint, `"${key}" is ${describe(value)}, expected a boolean when present`)
+  }
+  return value
+}
+
 const parseAccounts = (raw: unknown): HarvestAccount[] => {
   const endpoint = 'id.getharvest.com/api/v2/accounts'
   const body = asRecord(raw, endpoint)
@@ -323,6 +336,16 @@ const parseCompany = (raw: unknown): CompanyPreflight => {
       invoice_feature: requireBoolean(body, 'invoice_feature', endpoint),
       estimate_feature: requireBoolean(body, 'estimate_feature', endpoint),
       approval_feature: requireBoolean(body, 'approval_feature', endpoint),
+      // Documented by Harvest, but absent from older/live Company responses.
+      // Unknown is intentional: extract probes the optional teammates endpoint
+      // parent-by-parent and records refusals instead of treating absence as off.
+      team_feature: optionalBoolean(body, 'team_feature', endpoint),
+      // Harvest's Company endpoint exposes neither the organization address nor
+      // its default currency. Null is evidence, not a guessed USD/default value;
+      // load requires an explicit override unless one unique client currency can
+      // prove the latter from the snapshot.
+      organization_currency: null,
+      organization_address: null,
       // Display settings: not parse inputs, but the `organization` row is built
       // from them at load, and re-fetching means re-running the rate-limited step.
       week_start_day: requireString(body, 'week_start_day', endpoint),

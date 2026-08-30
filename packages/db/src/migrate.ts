@@ -21,6 +21,7 @@ import { attachmentsMigration } from './migrations/0019_attachments.js'
 import { argon2PasswordsMigration } from './migrations/0020_argon2_passwords.js'
 import { estimateCommandsMigration } from './migrations/0021_estimate_commands.js'
 import { resourceCreateCommandsMigration } from './migrations/0022_resource_create_commands.js'
+import { migrationImportAuthorityMigration } from './migrations/0023_migration_import_authority.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL
@@ -1347,9 +1348,13 @@ const migrations = [
   { id: '0020_argon2_passwords', statements: argon2PasswordsMigration },
   { id: '0021_estimate_commands', statements: estimateCommandsMigration },
   { id: '0022_resource_create_commands', statements: resourceCreateCommandsMigration },
+  { id: '0023_migration_import_authority', statements: migrationImportAuthorityMigration },
 ] as const
 
-export const migrateContainer = (database: BetterSqlite3.Database): void => {
+const migrateContainerPlan = (
+  database: BetterSqlite3.Database,
+  through: (typeof migrations)[number]['id'] | null,
+): void => {
   database.pragma('foreign_keys = ON')
   database.exec(ledger)
   for (const migration of migrations) {
@@ -1357,6 +1362,7 @@ export const migrateContainer = (database: BetterSqlite3.Database): void => {
     try {
       if (database.prepare('SELECT 1 FROM _ezacto_migrations WHERE id = ?').get(migration.id)) {
         database.exec('COMMIT')
+        if (migration.id === through) return
         continue
       }
       if ('preflight' in migration) {
@@ -1373,8 +1379,18 @@ export const migrateContainer = (database: BetterSqlite3.Database): void => {
       database.exec('ROLLBACK')
       throw error
     }
+    if (migration.id === through) return
   }
 }
+
+export const migrateContainer = (database: BetterSqlite3.Database): void =>
+  migrateContainerPlan(database, null)
+
+/** Version-boundary acceptance seam; production callers should use migrateContainer. */
+export const migrateContainerThrough = (
+  database: BetterSqlite3.Database,
+  through: (typeof migrations)[number]['id'],
+): void => migrateContainerPlan(database, through)
 
 export const migrateD1 = async (database: D1Database): Promise<void> => {
   // The ledger insert leads the atomic batch. If two Worker isolates observe a

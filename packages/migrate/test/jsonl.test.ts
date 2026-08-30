@@ -9,10 +9,14 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   appendPage,
+  appendLineagePage,
   mergeIncremental,
   reconcileToCount,
+  reconcileLineageToCount,
+  readLineage,
   reconcileToFile,
   startResource,
+  startLineage,
 } from '../src/jsonl.js'
 
 let dir: string
@@ -240,6 +244,27 @@ describe('reconcileToFile', () => {
     expect((await readFile(rawPath('time_entries'), 'utf8')).length).toBeGreaterThan(1 << 16)
 
     expect(await reconcileToFile(dir, 'time_entries', 3999)).toBe(4000)
+  })
+})
+
+describe('child lineage', () => {
+  it('[unit] stays positionally aligned and reconciles an unclaimed page after a crash', async () => {
+    await startResource(dir, 'invoice_messages')
+    await startLineage(dir, 'invoice_messages')
+    await appendPage(dir, 'invoice_messages', ['{"id":10}', '{"id":11}'])
+    await appendLineagePage(dir, 'invoice_messages', 7, [{ id: 10 }, { id: 11 }])
+
+    expect(await readLineage(dir, 'invoice_messages')).toEqual([
+      { source_id: 10, parent_id: 7 },
+      { source_id: 11, parent_id: 7 },
+    ])
+
+    await reconcileToCount(dir, 'invoice_messages', 1)
+    await reconcileLineageToCount(dir, 'invoice_messages', 1)
+    expect(await readFile(rawPath('invoice_messages'), 'utf8')).toBe('{"id":10}\n')
+    expect(await readLineage(dir, 'invoice_messages')).toEqual([
+      { source_id: 10, parent_id: 7 },
+    ])
   })
 })
 

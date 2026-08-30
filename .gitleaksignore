@@ -16,3 +16,8 @@
 # in the same commit that adds this line (the fixture is now four characters);
 # history is not rewritten, so the historical occurrence is pinned here.
 8a37092d61a3c8df18e274ced30d6a4cb4f6136e:packages/migrate/test/cli.test.ts:harvest-pat-assignment:79
+
+# An invoice-import mutation-guard fixture uses a syntactically valid product
+# reference token. It is neither an API key nor accepted by any authentication
+# path; the historical occurrence is pinned because the branch history is scanned.
+30d0d8781fa36f41f0501d0da65b055833d9db3f:packages/db/test/invoice-import-contract.test.ts:generic-api-key:628

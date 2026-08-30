@@ -43,6 +43,11 @@ export interface ManifestCompanySettings {
   invoice_feature: boolean
   estimate_feature: boolean
   approval_feature: boolean
+  /** Harvest documents this flag but older responses omitted it. `unknown` means probe safely. */
+  team_feature: boolean | 'unknown'
+  /** The Company API exposes neither value. Load must resolve/override them explicitly. */
+  organization_currency: string | null
+  organization_address: string | null
   week_start_day: string
   time_format: string
   date_format: string
@@ -63,6 +68,9 @@ export const COMPANY_SETTING_KEYS = [
   'invoice_feature',
   'estimate_feature',
   'approval_feature',
+  'team_feature',
+  'organization_currency',
+  'organization_address',
   'week_start_day',
   'time_format',
   'date_format',

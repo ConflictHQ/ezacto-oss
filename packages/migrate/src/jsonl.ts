@@ -16,6 +16,13 @@ import { createInterface } from 'node:readline'
 const rawPath = (dir: string, resource: string): string => join(dir, 'raw', `${resource}.jsonl`)
 
 /**
+ * Secret-free parent identity for child endpoint rows. The nth lineage row owns
+ * the nth raw row; raw payload bytes remain exactly as Harvest sent them.
+ */
+export const lineagePath = (dir: string, resource: string): string =>
+  join(dir, 'raw', `${resource}.lineage.jsonl`)
+
+/**
  * Where an `updated_since` pass parks its rows until it finishes: they are
  * *fresher copies* of rows raw/<resource>.jsonl already holds, so appending them
  * straight onto it would leave the snapshot with two of each (see mergeIncremental).
@@ -75,6 +82,50 @@ export const appendPage = async (
   }
 }
 
+export interface ChildLineage {
+  source_id: number
+  parent_id: number
+}
+
+export const startLineage = async (dir: string, resource: string): Promise<void> => {
+  await mkdir(join(dir, 'raw'), { recursive: true })
+  const handle = await open(lineagePath(dir, resource), 'w')
+  await handle.close()
+}
+
+/** Fsyncs one lineage page before the manifest may claim the matching raw page. */
+export const appendLineagePage = async (
+  dir: string,
+  resource: string,
+  parentId: number,
+  objects: readonly unknown[],
+): Promise<void> => {
+  if (!Number.isSafeInteger(parentId) || parentId < 1) {
+    throw new Error(`${resource} parent id is not a positive safe integer`)
+  }
+  const rows = objects.map((value, index): ChildLineage => {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      throw new Error(`${resource} row ${index + 1} is not an object; cannot record lineage`)
+    }
+    const sourceId = (value as Record<string, unknown>).id
+    if (typeof sourceId !== 'number' || !Number.isSafeInteger(sourceId) || sourceId < 1) {
+      throw new Error(
+        `${resource} row ${index + 1} has no positive safe integer id; cannot align child lineage`,
+      )
+    }
+    return { source_id: sourceId, parent_id: parentId }
+  })
+  const handle = await open(lineagePath(dir, resource), 'a')
+  try {
+    if (rows.length > 0) {
+      await handle.writeFile(rows.map((row) => `${JSON.stringify(row)}\n`).join(''), 'utf8')
+    }
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
 /**
  * Reconciles raw/<resource>.jsonl with the manifest's own count after a crash.
  * `appendPage` fsyncs a page's bytes to disk *before* the manifest is rewritten
@@ -94,12 +145,7 @@ export const appendPage = async (
  * reading the file in: the resource most likely to be interrupted is also the
  * one whose file is too big to be a JS string at all.
  */
-export const reconcileToCount = async (
-  dir: string,
-  resource: string,
-  count: number,
-): Promise<void> => {
-  const path = rawPath(dir, resource)
+const reconcilePathToCount = async (path: string, count: number): Promise<void> => {
   const handle = await open(path, 'r+')
   try {
     const chunk = Buffer.allocUnsafe(CHUNK)
@@ -136,6 +182,46 @@ export const reconcileToCount = async (
   } finally {
     await handle.close()
   }
+}
+
+export const reconcileToCount = async (
+  dir: string,
+  resource: string,
+  count: number,
+): Promise<void> => reconcilePathToCount(rawPath(dir, resource), count)
+
+export const reconcileLineageToCount = async (
+  dir: string,
+  resource: string,
+  count: number,
+): Promise<void> => reconcilePathToCount(lineagePath(dir, resource), count)
+
+export const readLineage = async (dir: string, resource: string): Promise<ChildLineage[]> => {
+  const path = lineagePath(dir, resource)
+  const rows: ChildLineage[] = []
+  const handle = await open(path, 'r')
+  const lines = createInterface({ input: handle.createReadStream(), crlfDelay: Infinity })
+  try {
+    let lineNo = 0
+    for await (const line of lines) {
+      lineNo += 1
+      if (!line.trim()) continue
+      const value = JSON.parse(line) as Partial<ChildLineage>
+      if (
+        !Number.isSafeInteger(value.source_id) ||
+        (value.source_id ?? 0) < 1 ||
+        !Number.isSafeInteger(value.parent_id) ||
+        (value.parent_id ?? 0) < 1
+      ) {
+        throw new Error(`${path}:${lineNo} is not valid child lineage`)
+      }
+      rows.push(value as ChildLineage)
+    }
+  } finally {
+    lines.close()
+    await handle.close()
+  }
+  return rows
 }
 
 /**
