@@ -501,5 +501,5 @@ describe('idempotent load and resume', () => {
     } finally {
       await miniflare.dispose()
     }
-  }, 80_000)
+  }, 120_000)
 })

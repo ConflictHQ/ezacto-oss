@@ -633,7 +633,7 @@ for (const [runtime, factory] of factories) {
       await db.migrateAgain()
       expect(await db.rows(`SELECT id, number FROM invoices`)).toEqual(before)
       expect(await db.rows(`PRAGMA foreign_key_check`)).toEqual([])
-    }, 20_000)
+    })
 
     it('[unit] imports a Harvest receipt as an expense-owned shared attachment', async () => {
       database = await factory()
