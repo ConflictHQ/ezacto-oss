@@ -1047,6 +1047,7 @@ for (const [runtime, factory] of factories) {
         '0021_estimate_commands',
         '0022_resource_create_commands',
         '0023_migration_import_authority',
+        '0024_migration_worksheet_completions',
       ])
       expect(firstLedger.slice(0, 2).map(({ applied_at: appliedAt }) => appliedAt)).toEqual([
         originalAppliedAt,
@@ -1131,6 +1132,7 @@ for (const [runtime, factory] of factories) {
         { id: '0021_estimate_commands' },
         { id: '0022_resource_create_commands' },
         { id: '0023_migration_import_authority' },
+        { id: '0024_migration_worksheet_completions' },
       ])
       expect(
         await db.rows<{ name: string }>(

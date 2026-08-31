@@ -26,6 +26,16 @@ export {
   ensureHarvestRetainerStub,
   type EnsureHarvestRetainerStubInput,
 } from './internal/retainer-import.js'
+export {
+  completeHarvestRecurringInvoice,
+  completeHarvestRetainerBalance,
+  type CompleteHarvestRecurringInvoiceInput,
+  type CompleteHarvestRetainerBalanceInput,
+  type HarvestRecurringInvoiceCompletionResult,
+  type HarvestRetainerCompletionResult,
+  type SourceRecurringAmountConfig,
+  type WorksheetCompletionResult,
+} from './internal/worksheet-import.js'
 
 export type ImportDatabase =
   | (BetterSQLite3Database<typeof schema> & { $client: BetterSqlite3.Database })

@@ -45,6 +45,7 @@ describe('D1 migration concurrency', () => {
       '0021_estimate_commands',
       '0022_resource_create_commands',
       '0023_migration_import_authority',
+      '0024_migration_worksheet_completions',
     ])
     expect(
       await database.prepare('SELECT count(*) AS count FROM api_tokens').first<{ count: number }>(),

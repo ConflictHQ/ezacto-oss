@@ -1,6 +1,6 @@
 // A snapshot is one mutable artifact shared by auth, extract, sync, verify,
-// load and reconcile. This lock serializes their whole transactions, including
-// sync's nested extract.
+// load, reconcile and the offline worksheets. This lock serializes their whole
+// transactions, including sync's nested extract.
 
 import { mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import { hostname } from 'node:os'
@@ -10,7 +10,7 @@ import { createHash, randomUUID } from 'node:crypto'
 interface SnapshotLockOwner {
   pid: number
   host: string
-  command: 'auth' | 'extract' | 'sync' | 'verify' | 'load' | 'reconcile'
+  command: 'auth' | 'extract' | 'sync' | 'verify' | 'load' | 'reconcile' | 'worksheets'
   started_at: string
   token: string
 }
@@ -99,7 +99,8 @@ export const acquireSnapshotLock = async (
         owner.command !== 'sync' &&
         owner.command !== 'verify' &&
         owner.command !== 'load' &&
-        owner.command !== 'reconcile')
+        owner.command !== 'reconcile' &&
+        owner.command !== 'worksheets')
     ) {
       throw new Error('invalid owner')
     }
