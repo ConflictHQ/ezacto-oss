@@ -113,6 +113,7 @@ for (const [runtime, factory] of factories) {
         { id: '0021_estimate_commands' },
         { id: '0022_resource_create_commands' },
         { id: '0023_migration_import_authority' },
+        { id: '0024_migration_worksheet_completions' },
       ])
     })
 
@@ -138,6 +139,7 @@ for (const [runtime, factory] of factories) {
         { id: '0021_estimate_commands' },
         { id: '0022_resource_create_commands' },
         { id: '0023_migration_import_authority' },
+        { id: '0024_migration_worksheet_completions' },
       ])
       expect(
         await current.rows<{ name: string }>(

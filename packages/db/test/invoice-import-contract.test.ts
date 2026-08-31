@@ -1381,7 +1381,7 @@ it('[integration] upgrades a populated 0022 ledger and authorizes every imported
       await database.rows<{ id: string }>(
         'SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1',
       ),
-    ).toEqual([{ id: '0023_migration_import_authority' }])
+    ).toEqual([{ id: '0024_migration_worksheet_completions' }])
   } finally {
     await database.close()
   }

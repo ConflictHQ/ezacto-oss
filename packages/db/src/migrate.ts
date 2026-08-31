@@ -22,6 +22,7 @@ import { argon2PasswordsMigration } from './migrations/0020_argon2_passwords.js'
 import { estimateCommandsMigration } from './migrations/0021_estimate_commands.js'
 import { resourceCreateCommandsMigration } from './migrations/0022_resource_create_commands.js'
 import { migrationImportAuthorityMigration } from './migrations/0023_migration_import_authority.js'
+import { migrationWorksheetCompletionsMigration } from './migrations/0024_migration_worksheet_completions.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL
@@ -1349,6 +1350,10 @@ const migrations = [
   { id: '0021_estimate_commands', statements: estimateCommandsMigration },
   { id: '0022_resource_create_commands', statements: resourceCreateCommandsMigration },
   { id: '0023_migration_import_authority', statements: migrationImportAuthorityMigration },
+  {
+    id: '0024_migration_worksheet_completions',
+    statements: migrationWorksheetCompletionsMigration,
+  },
 ] as const
 
 const migrateContainerPlan = (
@@ -1392,7 +1397,10 @@ export const migrateContainerThrough = (
   through: (typeof migrations)[number]['id'],
 ): void => migrateContainerPlan(database, through)
 
-export const migrateD1 = async (database: D1Database): Promise<void> => {
+const migrateD1Plan = async (
+  database: D1Database,
+  through: (typeof migrations)[number]['id'] | null,
+): Promise<void> => {
   // The ledger insert leads the atomic batch. If two Worker isolates observe a
   // migration as absent, D1 serializes their batches: one commits the complete
   // migration and the other's unique ledger insert aborts before any DDL runs.
@@ -1408,6 +1416,7 @@ export const migrateD1 = async (database: D1Database): Promise<void> => {
         .bind(migration.id)
         .first()
     ) {
+      if (migration.id === through) return
       continue
     }
     if ('preflight' in migration) {
@@ -1429,5 +1438,15 @@ export const migrateD1 = async (database: D1Database): Promise<void> => {
         .first()
       if (completed === null) throw error
     }
+    if (migration.id === through) return
   }
 }
+
+export const migrateD1 = async (database: D1Database): Promise<void> =>
+  migrateD1Plan(database, null)
+
+/** Version-boundary acceptance seam; production callers should use migrateD1. */
+export const migrateD1Through = async (
+  database: D1Database,
+  through: (typeof migrations)[number]['id'],
+): Promise<void> => migrateD1Plan(database, through)

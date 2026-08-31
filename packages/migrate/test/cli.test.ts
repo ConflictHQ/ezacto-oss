@@ -16,6 +16,7 @@ import { resourceProgress } from './fixtures.js'
 const execFileAsync = promisify(execFile)
 const pkgDir = fileURLToPath(new URL('..', import.meta.url))
 const cliPath = join(pkgDir, 'dist', 'cli.js')
+const tscPath = join(pkgDir, '..', '..', 'node_modules', 'typescript', 'bin', 'tsc')
 
 interface RunResult {
   code: number
@@ -47,7 +48,7 @@ describe('ezacto-migrate CLI entrypoint', () => {
   let dir: string
 
   beforeAll(async () => {
-    await execFileAsync('npm', ['run', 'build'], { cwd: pkgDir })
+    await execFileAsync(process.execPath, [tscPath, '-p', 'tsconfig.build.json'], { cwd: pkgDir })
   }, 120_000)
 
   beforeEach(async () => {
@@ -77,6 +78,8 @@ describe('ezacto-migrate CLI entrypoint', () => {
     expect(stdout).toContain('verify')
     expect(stdout).toContain('load')
     expect(stdout).toContain('reconcile')
+    expect(stdout).toContain('finish-retainers')
+    expect(stdout).toContain('finish-recurring-invoices')
   })
 
   it('[unit] reconcile is offline and requires only the snapshot and database paths', async () => {
@@ -88,6 +91,19 @@ describe('ezacto-migrate CLI entrypoint', () => {
     expect(stderr).not.toContain('HARVEST_PAT')
     expect(code).toBe(1)
   })
+
+  it.each(['finish-retainers', 'finish-recurring-invoices'])(
+    '[unit] %s is offline and requires only snapshot, database, and optional input paths',
+    async (command) => {
+      const { code, stderr } = await runNode(cliPath, [command, '--snapshot-dir', dir], {
+        cwd: dir,
+      })
+
+      expect(stderr).toContain(`--database is required for ${command}`)
+      expect(stderr).not.toContain('HARVEST_PAT')
+      expect(code).toBe(1)
+    },
+  )
 
   it('[unit] advertises the resume and incremental behavior extract now has', async () => {
     const { stdout } = await runNode(cliPath)

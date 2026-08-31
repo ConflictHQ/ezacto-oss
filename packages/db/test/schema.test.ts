@@ -869,6 +869,7 @@ for (const [runtime, factory] of factories) {
         { id: '0021_estimate_commands' },
         { id: '0022_resource_create_commands' },
         { id: '0023_migration_import_authority' },
+        { id: '0024_migration_worksheet_completions' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -913,6 +914,7 @@ for (const [runtime, factory] of factories) {
         { id: '0021_estimate_commands' },
         { id: '0022_resource_create_commands' },
         { id: '0023_migration_import_authority' },
+        { id: '0024_migration_worksheet_completions' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -975,6 +977,7 @@ for (const [runtime, factory] of factories) {
         { id: '0021_estimate_commands' },
         { id: '0022_resource_create_commands' },
         { id: '0023_migration_import_authority' },
+        { id: '0024_migration_worksheet_completions' },
       ])
       expect(
         await db.rows<{ name: string }>(
@@ -1013,6 +1016,7 @@ for (const [runtime, factory] of factories) {
         { id: '0021_estimate_commands' },
         { id: '0022_resource_create_commands' },
         { id: '0023_migration_import_authority' },
+        { id: '0024_migration_worksheet_completions' },
       ])
     })
   })
@@ -1122,6 +1126,8 @@ describe('package contents', () => {
         'dist/migrations/0022_resource_create_commands.d.ts',
         'dist/migrations/0023_migration_import_authority.js',
         'dist/migrations/0023_migration_import_authority.d.ts',
+        'dist/migrations/0024_migration_worksheet_completions.js',
+        'dist/migrations/0024_migration_worksheet_completions.d.ts',
         'dist/attachments.js',
         'dist/attachments.d.ts',
         'dist/estimates.js',
