@@ -383,8 +383,33 @@ describe('three-way reconciliation', () => {
     expect(new Set(first.report.gaps.map((row) => row.check))).toEqual(
       new Set(['retainer_balance', 'recurring_invoice_definition']),
     )
+    expect(first.report.gaps.every((row) => row.gap_citation !== undefined)).toBe(true)
+    expect(first.report.gaps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          check: 'retainer_balance',
+          gap_citation: {
+            id: 'migration-spec-7-retainers-no-api',
+            reference: 'docs/migration-spec.md §7: Retainers: no API.',
+          },
+        }),
+        expect.objectContaining({
+          check: 'recurring_invoice_definition',
+          gap_citation: {
+            id: 'migration-spec-7-recurring-invoices-no-api',
+            reference: 'docs/migration-spec.md §7: Recurring invoices: no API.',
+          },
+        }),
+      ]),
+    )
     const firstJson = await readFile(first.jsonPath, 'utf8')
     const firstMarkdown = await readFile(first.markdownPath, 'utf8')
+    expect(firstMarkdown).toContain(
+      'gap `migration-spec-7-retainers-no-api` (docs/migration-spec.md §7: Retainers: no API.)',
+    )
+    expect(firstMarkdown).toContain(
+      'gap `migration-spec-7-recurring-invoices-no-api` (docs/migration-spec.md §7: Recurring invoices: no API.)',
+    )
 
     const second = await runReconcile({ snapshotDir, databasePath })
     expect(reportHash(second.report)).toBe(reportHash(first.report))
