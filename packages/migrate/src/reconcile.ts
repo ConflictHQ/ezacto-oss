@@ -22,6 +22,14 @@ import {
 export type ReconciliationClassification = 'match' | 'rounding' | 'gap' | 'UNEXPLAINED'
 export type ReconciliationSection = 'A' | 'B' | 'C'
 export type ReconciliationValue = number | string | null
+export type ReconciliationGapId =
+  | 'migration-spec-7-retainers-no-api'
+  | 'migration-spec-7-recurring-invoices-no-api'
+
+export interface ReconciliationGapCitation {
+  id: ReconciliationGapId
+  reference: string
+}
 
 export interface ReconciliationCheck {
   section: ReconciliationSection
@@ -33,7 +41,19 @@ export interface ReconciliationCheck {
   delta: number | null
   classification: ReconciliationClassification
   detail: string | null
+  gap_citation?: ReconciliationGapCitation
 }
+
+const MIGRATION_SPEC_GAP_CITATIONS = {
+  retainersNoApi: {
+    id: 'migration-spec-7-retainers-no-api',
+    reference: 'docs/migration-spec.md §7: Retainers: no API.',
+  },
+  recurringInvoicesNoApi: {
+    id: 'migration-spec-7-recurring-invoices-no-api',
+    reference: 'docs/migration-spec.md §7: Recurring invoices: no API.',
+  },
+} as const satisfies Record<string, ReconciliationGapCitation>
 
 export interface ReconciliationReport {
   version: 1
@@ -318,7 +338,7 @@ class Checks {
     metric: string,
     expected: ReconciliationValue,
     actual: ReconciliationValue,
-    mismatch: Exclude<ReconciliationClassification, 'match'> = 'UNEXPLAINED',
+    mismatch: Exclude<ReconciliationClassification, 'match' | 'gap'> = 'UNEXPLAINED',
     detail: string | null = null,
   ): void {
     const same = expected === actual
@@ -339,9 +359,28 @@ class Checks {
     section: ReconciliationSection,
     check: string,
     key: string,
+    classification: 'gap',
+    detail: string,
+    gapCitation: ReconciliationGapCitation,
+  ): void
+  note(
+    section: ReconciliationSection,
+    check: string,
+    key: string,
+    classification: Exclude<ReconciliationClassification, 'match' | 'gap'>,
+    detail: string,
+  ): void
+  note(
+    section: ReconciliationSection,
+    check: string,
+    key: string,
     classification: Exclude<ReconciliationClassification, 'match'>,
     detail: string,
+    gapCitation?: ReconciliationGapCitation,
   ): void {
+    if ((classification === 'gap') !== (gapCitation !== undefined)) {
+      throw new Error('gap reconciliation checks must carry exactly one gap citation')
+    }
     this.rows.push({
       section,
       check,
@@ -352,6 +391,7 @@ class Checks {
       delta: 1,
       classification,
       detail,
+      ...(gapCitation === undefined ? {} : { gap_citation: gapCitation }),
     })
   }
 }
@@ -1793,6 +1833,7 @@ const stubChecks = (
         `retainer:${id}`,
         'gap',
         'Harvest exposes this retainer identifier on an invoice but no balance API',
+        MIGRATION_SPEC_GAP_CITATIONS.retainersNoApi,
       )
     }
   }
@@ -1812,6 +1853,7 @@ const stubChecks = (
         `recurring_invoice:${id}`,
         'gap',
         'Harvest exposes this recurring invoice identifier but no definition API',
+        MIGRATION_SPEC_GAP_CITATIONS.recurringInvoicesNoApi,
       )
     }
   }
@@ -2123,7 +2165,7 @@ const loadAnomalyChecks = (
     const key = `${row.resource}:${row.sourceId ?? 'none'}:${row.kind}:${row.detail}`
     const exactRounding = row.kind === 'hours_residue' && source.roundingAnomalies.has(key)
     if (exactRounding) observedRounding.add(key)
-    const classification: Exclude<ReconciliationClassification, 'match'> = exactRounding
+    const classification: Exclude<ReconciliationClassification, 'match' | 'gap'> = exactRounding
       ? 'rounding'
       : 'UNEXPLAINED'
     checks.note(
@@ -2293,9 +2335,13 @@ const renderMarkdown = (report: ReconciliationReport): string => {
       return
     }
     for (const row of rows) {
+      const citation =
+        row.gap_citation === undefined
+          ? ''
+          : ` — gap \`${row.gap_citation.id}\` (${row.gap_citation.reference})`
       const detail = row.detail === null ? '' : ` — ${row.detail}`
       lines.push(
-        `- [${row.section}] \`${row.check}\` \`${row.key}\` ${row.metric}: expected \`${String(row.expected)}\`, actual \`${String(row.actual)}\`${detail}`,
+        `- [${row.section}] \`${row.check}\` \`${row.key}\` ${row.metric}: expected \`${String(row.expected)}\`, actual \`${String(row.actual)}\`${citation}${detail}`,
       )
     }
     lines.push('')
