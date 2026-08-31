@@ -335,7 +335,6 @@ export const startTimer = async (
   api: ShellApi,
   projectValue: string,
   taskValue: string,
-  now = new Date(),
   signal?: AbortSignal,
   notes?: string,
 ): Promise<TimeEntry> => {
@@ -349,7 +348,6 @@ export const startTimer = async (
   const input: TimeEntryInput = {
     project_id: selection.project.id,
     task_id: selection.task.id,
-    spent_date: localDate(now),
     ...(notes === undefined || notes.trim() === '' ? {} : { notes }),
   }
   return signal === undefined

@@ -1214,7 +1214,6 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       api,
       project,
       task,
-      new Date(),
       operation.signal,
       notes.trim() === '' ? undefined : notes,
     )

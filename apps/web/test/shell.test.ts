@@ -263,7 +263,6 @@ describe('S-1 through S-5 application shell', () => {
         api,
         'northpeak',
         'devops',
-        new Date(timestamp),
         undefined,
         'four',
       ),
@@ -275,13 +274,14 @@ describe('S-1 through S-5 application shell', () => {
       api,
       'northpeak',
       'devops',
-      new Date(timestamp),
       undefined,
       'timer notes',
     )
-    expect(api.createTimeEntry).toHaveBeenLastCalledWith(
-      expect.objectContaining({ notes: 'timer notes' }),
-    )
+    expect(api.createTimeEntry).toHaveBeenLastCalledWith({
+      project_id: 1,
+      task_id: 1,
+      notes: 'timer notes',
+    })
     expect(timeEntryNoteLength('  🚀🚀  ')).toBe(2)
 
     api.listTimeEntryOptions = vi.fn(async () => [])
