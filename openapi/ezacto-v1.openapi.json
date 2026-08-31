@@ -4989,6 +4989,127 @@
         ]
       }
     },
+    "/api/v1/time-entry-note-settings": {
+      "get": {
+        "operationId": "getTimeEntryNoteSettings",
+        "summary": "Get organization time-entry note settings",
+        "tags": [
+          "time-entries"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimeEntryNoteSettingsEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/time-entry-note-settings",
+        "x-ezacto-generate-client": true
+      },
+      "patch": {
+        "operationId": "updateTimeEntryNoteSettings",
+        "summary": "Update organization time-entry note settings",
+        "tags": [
+          "time-entries"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimeEntryNoteSettingsEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/time-entry-note-settings",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TimeEntryNoteSettingsPatch"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/time-entry-options": {
       "get": {
         "operationId": "listTimeEntryOptions",
@@ -10707,6 +10828,11 @@
           },
           "message": {
             "type": "string"
+          },
+          "minimum_length": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000
           }
         },
         "additionalProperties": false
@@ -11808,6 +11934,7 @@
           "approval_status",
           "is_billed",
           "is_locked",
+          "minimum_note_length",
           "created_at",
           "updated_at"
         ],
@@ -11970,6 +12097,11 @@
                 "type": "null"
               }
             ]
+          },
+          "minimum_note_length": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
           },
           "billable_rate_cents": {
             "anyOf": [
@@ -12174,11 +12306,61 @@
         },
         "additionalProperties": false
       },
+      "TimeEntryNoteSettings": {
+        "type": "object",
+        "required": [
+          "required",
+          "minimum_length"
+        ],
+        "properties": {
+          "required": {
+            "type": "boolean"
+          },
+          "minimum_length": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000
+          }
+        },
+        "additionalProperties": false
+      },
+      "TimeEntryNoteSettingsPatch": {
+        "type": "object",
+        "minProperties": 1,
+        "properties": {
+          "required": {
+            "type": "boolean"
+          },
+          "minimum_length": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000
+          }
+        },
+        "additionalProperties": false
+      },
+      "TimeEntryNoteSettingsEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TimeEntryNoteSettings"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
       "TimeEntryOption": {
         "type": "object",
         "required": [
           "project_id",
-          "task_id"
+          "task_id",
+          "minimum_note_length"
         ],
         "properties": {
           "project_id": {
@@ -12188,6 +12370,11 @@
           "task_id": {
             "type": "integer",
             "minimum": 1
+          },
+          "minimum_note_length": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
           }
         },
         "additionalProperties": false

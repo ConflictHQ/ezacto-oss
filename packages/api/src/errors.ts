@@ -8,6 +8,7 @@ export interface FieldError {
   field: string
   code: string
   message: string
+  minimum_length?: number
 }
 
 export interface ApiErrorBody {
@@ -48,6 +49,12 @@ export class ApiError extends Error {
       if (field.field.trim().length === 0) throw new TypeError('field error path cannot be empty')
       assertCode(field.code, 'field error code')
       if (field.message.trim().length === 0) throw new TypeError('field error message cannot be empty')
+      if (
+        field.minimum_length !== undefined &&
+        (!Number.isSafeInteger(field.minimum_length) || field.minimum_length < 1)
+      ) {
+        throw new TypeError('field error minimum_length must be a positive safe integer')
+      }
     }
     if (status === 422 && fields.length === 0) {
       throw new TypeError('422 API errors must carry at least one field error')

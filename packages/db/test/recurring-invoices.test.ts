@@ -233,7 +233,7 @@ for (const [runtime, factory] of factories) {
         await database.rows<{ id: string }>(
           `SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`,
         ),
-      ).toEqual([{ id: '0024_migration_worksheet_completions' }])
+      ).toEqual([{ id: '0025_time_entry_note_requirements' }])
       const recurringForeignKeys = await database.rows<{
         from: string
         table: string

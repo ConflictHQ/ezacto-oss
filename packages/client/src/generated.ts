@@ -34,6 +34,7 @@ export type FieldError = {
   "field": string;
   "code": string;
   "message": string;
+  "minimum_length"?: number;
 };
 
 export type ErrorDetail = {
@@ -301,6 +302,7 @@ export type TimeEntry = {
   "calendar_event_ref"?: {
   [key: string]: unknown;
 } | null;
+  "minimum_note_length": number;
   "billable_rate_cents"?: number | null;
   "cost_rate_cents"?: number | null;
   "created_at": string;
@@ -352,9 +354,25 @@ export type TimeEntryPage = {
   "page": PageMetadata;
 };
 
+export type TimeEntryNoteSettings = {
+  "required": boolean;
+  "minimum_length": number;
+};
+
+export type TimeEntryNoteSettingsPatch = {
+  "required"?: boolean;
+  "minimum_length"?: number;
+};
+
+export type TimeEntryNoteSettingsEnvelope = {
+  "data": TimeEntryNoteSettings;
+  "links": Links;
+};
+
 export type TimeEntryOption = {
   "project_id": number;
   "task_id": number;
+  "minimum_note_length": number;
 };
 
 export type TimeEntryOptionListEnvelope = {
@@ -1796,6 +1814,25 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<UserRateEnvelope>("GET", "/api/v1/users/:userId/cost-rates/:id".replace(":userId", encodeURIComponent(String(args["userId"]))).replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getTimeEntryNoteSettings(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimeEntryNoteSettingsEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimeEntryNoteSettingsEnvelope>("GET", "/api/v1/time-entry-note-settings", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateTimeEntryNoteSettings(args: { body: TimeEntryNoteSettingsPatch; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimeEntryNoteSettingsEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimeEntryNoteSettingsEnvelope>("PATCH", "/api/v1/time-entry-note-settings", {
+      body: args.body,
       signal: args.signal,
       headers,
     });

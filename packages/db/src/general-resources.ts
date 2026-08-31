@@ -98,6 +98,7 @@ const definitions: Readonly<Record<GeneralResourceKind, ResourceDefinition>> = {
       endsOn: 'ends_on',
       notes: 'notes',
       billingCurrency: 'billing_currency',
+      timeEntryNotesMinimumLength: 'time_entry_notes_minimum_length',
     },
     booleans: new Set([
       'isActive',
@@ -155,6 +156,7 @@ const definitions: Readonly<Record<GeneralResourceKind, ResourceDefinition>> = {
       useDefaultRates: 'use_default_rates',
       hourlyRateCents: 'hourly_rate_cents',
       budgetSeconds: 'budget_seconds',
+      timeEntryNotesMinimumLength: 'time_entry_notes_minimum_length',
     },
     booleans: new Set(['isActive', 'isProjectManager', 'useDefaultRates']),
     json: new Set(),
@@ -184,6 +186,7 @@ const definitions: Readonly<Record<GeneralResourceKind, ResourceDefinition>> = {
       samlExempt: 'saml_exempt',
       isOwner: 'is_owner',
       email: '__email_relation__',
+      timeEntryNotesMinimumLength: 'time_entry_notes_minimum_length',
     },
     booleans: new Set([
       'isContractor',

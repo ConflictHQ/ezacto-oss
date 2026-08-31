@@ -203,11 +203,13 @@ export const renderAppShell = (options: AppShellOptions): string => {
     </form>
   </dialog>
   <dialog class="timer-dialog" data-timer-dialog aria-labelledby="timer-title">
-    <form data-timer-form>
+    <form data-timer-form novalidate>
       <header><div><p class="eyebrow">Global timer</p><h2 id="timer-title">Start a timer</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
       <label>Project<input name="project" autocomplete="off" required></label>
       <label>Task<input name="task" autocomplete="off" required></label>
-      <p class="form-result" data-timer-result role="status"></p>
+      <label for="ez-timer-note">Note<textarea id="ez-timer-note" name="notes" data-timer-note rows="3" maxlength="10000" aria-describedby="timer-note-hint timer-result"></textarea></label>
+      <p class="hint" id="timer-note-hint" data-timer-note-hint>Optional. Up to 10,000 characters.</p>
+      <p class="form-result" id="timer-result" data-timer-result role="status"></p>
       <div class="timer-actions"><button class="primary-action" type="submit">Start timer</button><button type="button" data-stop-timer>Stop running timer</button></div>
     </form>
   </dialog>
@@ -225,10 +227,11 @@ export const renderAppShell = (options: AppShellOptions): string => {
     </form>
   </dialog>
   <dialog class="note-dialog" data-note-dialog aria-labelledby="note-title">
-    <form data-note-form>
+    <form data-note-form novalidate>
       <header><div><p class="eyebrow">Cell note</p><h2 id="note-title" data-note-title>Add a note</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
-      <label>Note<textarea name="notes" data-note-input rows="5" maxlength="65535"></textarea></label>
-      <p class="form-result" data-note-result role="status"></p>
+      <label for="ez-cell-note">Note<textarea id="ez-cell-note" name="notes" data-note-input rows="5" maxlength="10000" aria-describedby="note-hint note-result"></textarea></label>
+      <p class="hint" id="note-hint" data-note-hint>Optional. Up to 10,000 characters.</p>
+      <p class="form-result" id="note-result" data-note-result role="status"></p>
       <button class="primary-action" type="submit">Save note</button>
     </form>
   </dialog>

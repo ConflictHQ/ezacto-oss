@@ -36,6 +36,7 @@ const entry = (id: number, overrides: Partial<DisplayTimeEntry> = {}): DisplayTi
   approval_status: 'unsubmitted',
   is_billed: false,
   is_locked: false,
+  minimum_note_length: 0,
   created_at: timestamp,
   updated_at: timestamp,
   project_label: 'Northpeak',
@@ -50,8 +51,8 @@ const snapshot = (entries: readonly DisplayTimeEntry[]): ShellSnapshot => ({
     projects: [project(1, 'Northpeak'), project(2, 'Acme')],
     tasks: [task(1, 'Development'), task(2, 'Design')],
     timeEntryOptions: [
-      { project_id: 1, task_id: 1 },
-      { project_id: 2, task_id: 2 },
+      { project_id: 1, task_id: 1, minimum_note_length: 0 },
+      { project_id: 2, task_id: 2, minimum_note_length: 0 },
     ],
   },
 })
@@ -114,8 +115,8 @@ const apiFor = (
     listProjects: vi.fn(),
     listTasks: vi.fn(),
     listTimeEntryOptions: vi.fn(async () => [
-      { project_id: 1, task_id: 1 },
-      { project_id: 2, task_id: 2 },
+      { project_id: 1, task_id: 1, minimum_note_length: 0 },
+      { project_id: 2, task_id: 2, minimum_note_length: 0 },
     ]),
     listTimeEntries: vi.fn(),
     stopTimeEntry: vi.fn(),
@@ -168,6 +169,28 @@ describe('timesheet week grid', () => {
     })
     expect(grid.dayTotals).toEqual([1_800, 0, 0, 0, 4_500, 0, 1_200])
     expect(grid.totalSeconds).toBe(7_500)
+  })
+
+  it('[unit] carries the effective note minimum into populated and empty cells', () => {
+    const base = snapshot([
+      entry(1, {
+        spent_date: '2026-08-24',
+        minimum_note_length: 3,
+      }),
+    ])
+    const state: ShellSnapshot = {
+      ...base,
+      catalog: {
+        ...base.catalog,
+        timeEntryOptions: [
+          { project_id: 1, task_id: 1, minimum_note_length: 8 },
+        ],
+      },
+    }
+
+    const grid = buildWeekGrid(state, '2026-08-28')
+    expect(grid.rows[0]?.cells[0]?.minimumNoteLength).toBe(8)
+    expect(grid.rows[0]?.cells[1]?.minimumNoteLength).toBe(8)
   })
 
   it('[unit] parses and formats decimal or clock-form hours without ambiguous values', () => {

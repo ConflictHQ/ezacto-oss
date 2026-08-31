@@ -2,6 +2,7 @@ import { EzactoApiError, type Whoami } from '@ezacto/client'
 import {
   buildWeekGrid,
   formatCellHours,
+  parseCellSeconds,
   saveWeekCellWithRetry,
   seedsFromEntries,
   weekDates,
@@ -18,10 +19,12 @@ import {
   quickAdd,
   runningElapsedSeconds,
   startTimer,
+  timeEntryNoteLength,
   weekRange,
   type DisplayTimeEntry,
   type ShellApi,
   type ShellSnapshot,
+  TimeEntryNoteValidationError,
 } from './model.js'
 
 type GridView = 'desktop' | 'phone'
@@ -31,6 +34,7 @@ interface CellSaveState {
   readonly rawValue: string
   readonly message?: string
   readonly notes?: string | null
+  readonly minimumNoteLength?: number
   readonly retry?: () => Promise<WeekCellSaveResult>
 }
 
@@ -55,6 +59,12 @@ interface GridHandlers {
   ): Promise<boolean>
   retry(cell: WeekGridCell, view: GridView): Promise<void>
   openNote(cell: WeekGridCell, view: GridView): void
+}
+
+interface ActiveNote {
+  readonly cell: WeekGridCell
+  readonly view: GridView
+  readonly minimumNoteLength: number
 }
 
 const required = <ElementType extends Element>(selector: string): ElementType => {
@@ -109,6 +119,51 @@ const apiErrorCode = (error: EzactoApiError): string | null => {
   return typeof code === 'string' ? code : null
 }
 
+const minimumNoteLengthFromError = (error: unknown): number | null => {
+  if (!(error instanceof EzactoApiError) || error.status !== 422) return null
+  if (typeof error.body !== 'object' || error.body === null) return null
+  const detail = Reflect.get(error.body, 'error')
+  if (typeof detail !== 'object' || detail === null) return null
+  const fields = Reflect.get(detail, 'fields')
+  if (!Array.isArray(fields)) return null
+  for (const field of fields) {
+    if (typeof field !== 'object' || field === null) continue
+    if (
+      Reflect.get(field, 'field') !== 'notes' ||
+      Reflect.get(field, 'code') !== 'minimum_length'
+    )
+      continue
+    const minimum = Reflect.get(field, 'minimum_length')
+    if (Number.isSafeInteger(minimum) && Number(minimum) > 0) {
+      return Number(minimum)
+    }
+  }
+  return null
+}
+
+const requiredMinimumFromError = (error: unknown): number | null =>
+  error instanceof TimeEntryNoteValidationError
+    ? error.minimumLength
+    : minimumNoteLengthFromError(error)
+
+const noteRequirementMessage = (minimumLength: number): string =>
+  `A note of at least ${minimumLength} ${minimumLength === 1 ? 'character is' : 'characters are'} required for this project and task.`
+
+const noteHint = (minimumLength: number): string =>
+  minimumLength === 0
+    ? 'Optional. Up to 10,000 characters.'
+    : `Required. Enter at least ${minimumLength} ${minimumLength === 1 ? 'character' : 'characters'}; leading and trailing spaces do not count.`
+
+const effectiveMinimumNoteLength = (
+  cell: WeekGridCell,
+  state: CellSaveState | undefined,
+): number => Math.max(cell.minimumNoteLength, state?.minimumNoteLength ?? 0)
+
+const notesForCell = (
+  cell: WeekGridCell,
+  state: CellSaveState | undefined,
+): string | null => (state?.notes === undefined ? cell.notes : state.notes)
+
 const signInMessage = (error: unknown): string => {
   if (!(error instanceof EzactoApiError)) {
     return 'Sign-in is unavailable right now. Try again.'
@@ -162,9 +217,12 @@ const renderCellControl = (
   noteContext: string,
 ): HTMLElement => {
   const state = handlers.cellStates.get(cell.key)
+  const minimumNoteLength = effectiveMinimumNoteLength(cell, state)
+  const currentNotes = notesForCell(cell, state)
   const wrapper = document.createElement('div')
   wrapper.className = 'week-cell'
   wrapper.dataset.cellKey = cell.key
+  wrapper.dataset.minimumNoteLength = String(minimumNoteLength)
   wrapper.dataset.cellState = cell.isConflict
     ? 'conflict'
     : cell.isLocked
@@ -180,7 +238,15 @@ const renderCellControl = (
 
   const input = cellInput(cell, view, state)
   input.addEventListener('input', () => {
-    const dirty: CellSaveState = { state: 'dirty', rawValue: input.value }
+    const current = handlers.cellStates.get(cell.key)
+    const dirty: CellSaveState = {
+      state: 'dirty',
+      rawValue: input.value,
+      ...(current?.notes === undefined ? {} : { notes: current.notes }),
+      ...(current?.minimumNoteLength === undefined
+        ? {}
+        : { minimumNoteLength: current.minimumNoteLength }),
+    }
     handlers.cellStates.set(cell.key, dirty)
     wrapper.dataset.cellState = 'dirty'
     status.textContent = 'Unsaved'
@@ -200,9 +266,9 @@ const renderCellControl = (
   note.type = 'button'
   note.className = 'cell-note'
   note.dataset.noteCell = cell.key
-  note.ariaLabel = `${cell.notes === null ? 'Add' : 'Edit'} note for ${noteContext} on ${dayLabel(cell.date)}`
-  note.title = cell.notes ?? 'Add note'
-  note.textContent = cell.notes === null ? '+' : '•'
+  note.ariaLabel = `${currentNotes === null ? 'Add' : 'Edit'} note for ${noteContext} on ${dayLabel(cell.date)}${minimumNoteLength > 0 ? `; at least ${minimumNoteLength} characters required` : ''}`
+  note.title = currentNotes ?? (minimumNoteLength > 0 ? noteHint(minimumNoteLength) : 'Add note')
+  note.textContent = currentNotes === null ? '+' : '•'
   note.disabled = cell.entries.length !== 1 || cell.isConflict || cell.isLocked || cell.isRunning
   note.addEventListener('click', () => handlers.openNote(cell, view))
   wrapper.append(note)
@@ -221,7 +287,10 @@ const renderCellControl = (
               ? 'Saved'
               : state?.state === 'dirty'
                 ? 'Unsaved'
-                : ''
+                : cell.entries.length === 1 &&
+                    timeEntryNoteLength(currentNotes) < minimumNoteLength
+                  ? 'Note required'
+                  : ''
   wrapper.append(status)
 
   if (state?.state === 'retry') {
@@ -341,6 +410,10 @@ const renderPhoneDay = (grid: WeekGrid, selectedDay: number, handlers: GridHandl
         entries: [entry],
         totalSeconds: entry.seconds,
         notes: entry.notes ?? null,
+        minimumNoteLength: Math.max(
+          cell.minimumNoteLength,
+          entry.minimum_note_length,
+        ),
         isConflict: false,
         isLocked: entry.is_locked,
         isRunning: entry.is_running,
@@ -537,6 +610,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const timerForm = required<HTMLFormElement>('[data-timer-form]')
   const rowForm = required<HTMLFormElement>('[data-row-form]')
   const noteForm = required<HTMLFormElement>('[data-note-form]')
+  const noteInput = required<HTMLTextAreaElement>('[data-note-input]')
+  const noteResult = required<HTMLElement>('[data-note-result]')
+  const noteHintElement = required<HTMLElement>('[data-note-hint]')
+  const timerNoteInput = required<HTMLTextAreaElement>('[data-timer-note]')
+  const timerNoteHint = required<HTMLElement>('[data-timer-note-hint]')
+  const timerResult = required<HTMLElement>('[data-timer-result]')
   const requestedView = new URL(globalThis.location.href).searchParams.get('view')
   document.documentElement.dataset.timeView = requestedView === 'day' ? 'day' : 'week'
   for (const link of document.querySelectorAll<HTMLAnchorElement>('.tabstrip a')) {
@@ -551,12 +630,22 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   let selectedDay = Math.max(0, weekDates(within).indexOf(localDate()))
   let snapshot: ShellSnapshot | null = null
   let grid: WeekGrid | null = null
-  let activeNote: { cell: WeekGridCell; view: GridView } | null = null
+  let activeNote: ActiveNote | null = null
   let currentIdentity: Whoami | null = null
   let signingIn = false
   let signingOut = false
   let authGeneration = 0
   let authController = new AbortController()
+
+  const configureNoteInput = (
+    input: HTMLTextAreaElement,
+    hint: HTMLElement,
+    minimumLength: number,
+  ): void => {
+    input.required = minimumLength > 0
+    input.minLength = minimumLength
+    hint.textContent = noteHint(minimumLength)
+  }
 
   const beginAuthGeneration = (userId: number | null): AuthOperation => {
     authController.abort()
@@ -642,12 +731,14 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     timerForm.reset()
     rowForm.reset()
     noteForm.reset()
+    configureNoteInput(noteInput, noteHintElement, 0)
+    configureNoteInput(timerNoteInput, timerNoteHint, 0)
     required<HTMLSelectElement>('[data-row-project]').replaceChildren()
     required<HTMLSelectElement>('[data-row-task]').replaceChildren()
     required<HTMLElement>('[data-command-result]').textContent = ''
-    required<HTMLElement>('[data-timer-result]').textContent = ''
+    timerResult.textContent = ''
     required<HTMLElement>('[data-row-result]').textContent = ''
-    required<HTMLElement>('[data-note-result]').textContent = ''
+    noteResult.textContent = ''
     required<HTMLElement>('[data-note-title]').textContent = 'Add a note'
     required<HTMLElement>('[data-current-user-id]').textContent = '—'
     required<HTMLElement>('[data-current-profile]').textContent = '—'
@@ -881,10 +972,33 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       focusCell(focus)
       return true
     }
+    const minimumNoteLength = effectiveMinimumNoteLength(cell, current)
+    const pendingNotes = notesForCell(cell, current)
+    try {
+      if (
+        parseCellSeconds(rawValue) > 0 &&
+        timeEntryNoteLength(pendingNotes) < minimumNoteLength
+      ) {
+        cellStates.set(cell.key, {
+          state: 'dirty',
+          rawValue,
+          notes: pendingNotes,
+          minimumNoteLength,
+        })
+        render()
+        openNote(cell, view, noteRequirementMessage(minimumNoteLength))
+        return false
+      }
+    } catch {
+      // Duration syntax errors use the normal retry result and retain the input.
+    }
     cellStates.set(cell.key, {
       state: 'saving',
       rawValue,
       ...(current?.notes === undefined ? {} : { notes: current.notes }),
+      ...(minimumNoteLength === cell.minimumNoteLength
+        ? {}
+        : { minimumNoteLength }),
     })
     render()
     const result = await saveWeekCellWithRetry(
@@ -897,12 +1011,32 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     if (!isSessionCurrent(operation)) return false
     if (result.state === 'retry') {
       if (handleSessionFailure(result.error, operation)) return false
+      const changedMinimum = minimumNoteLengthFromError(result.error)
+      if (changedMinimum !== null) {
+        const currentMinimum = Math.max(minimumNoteLength, changedMinimum)
+        cellStates.set(cell.key, {
+          state: 'dirty',
+          rawValue: result.rawValue,
+          notes: pendingNotes,
+          minimumNoteLength: currentMinimum,
+        })
+        render()
+        openNote(
+          cell,
+          view,
+          `The note policy changed. ${noteRequirementMessage(currentMinimum)}`,
+        )
+        return false
+      }
       cellStates.set(cell.key, {
         state: 'retry',
         rawValue: result.rawValue,
         message: result.message,
         retry: result.retry,
         ...(current?.notes === undefined ? {} : { notes: current.notes }),
+        ...(minimumNoteLength === cell.minimumNoteLength
+          ? {}
+          : { minimumNoteLength }),
       })
       render()
       focusCell({ key: cell.key, view })
@@ -929,6 +1063,26 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     if (!isSessionCurrent(operation)) return
     if (result.state === 'retry') {
       if (handleSessionFailure(result.error, operation)) return
+      const changedMinimum = minimumNoteLengthFromError(result.error)
+      if (changedMinimum !== null) {
+        const currentMinimum = Math.max(
+          effectiveMinimumNoteLength(cell, failed),
+          changedMinimum,
+        )
+        cellStates.set(cell.key, {
+          state: 'dirty',
+          rawValue: failed.rawValue,
+          notes: notesForCell(cell, failed),
+          minimumNoteLength: currentMinimum,
+        })
+        render()
+        openNote(
+          cell,
+          view,
+          `The note policy changed. ${noteRequirementMessage(currentMinimum)}`,
+        )
+        return
+      }
       cellStates.set(cell.key, {
         ...failed,
         state: 'retry',
@@ -947,21 +1101,35 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
   }
 
-  function openNote(cell: WeekGridCell, view: GridView): void {
+  function openNote(
+    cell: WeekGridCell,
+    view: GridView,
+    message = '',
+  ): void {
+    const state = cellStates.get(cell.key)
     if (
       currentIdentity === null ||
-      cell.entries.length !== 1 ||
+      cell.entries.length > 1 ||
       cell.isConflict ||
-      cell.isLocked
+      cell.isLocked ||
+      cell.isRunning
     )
       return
-    activeNote = { cell, view }
+    const minimumNoteLength = effectiveMinimumNoteLength(cell, state)
+    activeNote = { cell, view, minimumNoteLength }
+    const project = snapshot?.catalog.projects.find(
+      (candidate) => candidate.id === cell.projectId,
+    )
+    const projectLabel =
+      cell.entries[0]?.project_label ??
+      (project === undefined ? `#${cell.projectId}` : resourceLabel(project))
     required<HTMLElement>('[data-note-title]').textContent =
-      `${dayLabel(cell.date)} · ${cell.entries[0]!.project_label}`
-    required<HTMLTextAreaElement>('[data-note-input]').value = cell.notes ?? ''
-    required<HTMLElement>('[data-note-result]').textContent = ''
+      `${dayLabel(cell.date)} · ${projectLabel}`
+    noteInput.value = notesForCell(cell, state) ?? ''
+    configureNoteInput(noteInput, noteHintElement, minimumNoteLength)
+    noteResult.textContent = message
     open(noteDialog)
-    required<HTMLTextAreaElement>('[data-note-input]').focus()
+    noteInput.focus()
   }
 
   for (const trigger of document.querySelectorAll<HTMLElement>('[data-command-trigger]')) {
@@ -1014,8 +1182,16 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       })
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return
-        result.textContent = messageFor(error)
+        const minimumNoteLength = requiredMinimumFromError(error)
+        result.textContent =
+          minimumNoteLength === null
+            ? messageFor(error)
+            : `${noteRequirementMessage(minimumNoteLength)} Add it after the task name.`
       })
+  })
+
+  required<HTMLInputElement>('[name="command"]').addEventListener('input', () => {
+    required<HTMLElement>('[data-command-result]').textContent = ''
   })
 
   timerForm.addEventListener('submit', (event) => {
@@ -1026,20 +1202,55 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const form = new FormData(timerForm)
     const project = form.get('project')
     const task = form.get('task')
-    if (typeof project !== 'string' || typeof task !== 'string') return
+    const notes = form.get('notes')
+    if (
+      typeof project !== 'string' ||
+      typeof task !== 'string' ||
+      typeof notes !== 'string'
+    )
+      return
     result.textContent = 'Starting timer…'
-    void startTimer(api, project, task, new Date(), operation.signal)
+    void startTimer(
+      api,
+      project,
+      task,
+      operation.signal,
+      notes.trim() === '' ? undefined : notes,
+    )
       .then(async (entry) => {
         if (!isSessionCurrent(operation)) return
         if (!(await refresh(operation))) return
         result.textContent = 'Timer started.'
+        timerDialog.close()
         document.dispatchEvent(new CustomEvent('ezacto:time-entry-created', { detail: entry }))
       })
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return
-        result.textContent = messageFor(error)
+        const minimumNoteLength = requiredMinimumFromError(error)
+        if (minimumNoteLength === null) {
+          result.textContent = messageFor(error)
+          return
+        }
+        configureNoteInput(
+          timerNoteInput,
+          timerNoteHint,
+          minimumNoteLength,
+        )
+        result.textContent = noteRequirementMessage(minimumNoteLength)
+        timerNoteInput.focus()
       })
   })
+
+  for (const input of timerForm.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
+    'input, textarea',
+  )) {
+    input.addEventListener('input', () => {
+      timerResult.textContent = ''
+      if (input !== timerNoteInput) {
+        configureNoteInput(timerNoteInput, timerNoteHint, 0)
+      }
+    })
+  }
 
   required<HTMLButtonElement>('[data-stop-timer]').addEventListener('click', () => {
     const operation = sessionOperation()
@@ -1124,6 +1335,13 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     if (operation === null || activeNote === null) return
     const notes = new FormData(noteForm).get('notes')
     if (typeof notes !== 'string') return
+    if (timeEntryNoteLength(notes) < activeNote.minimumNoteLength) {
+      noteResult.textContent = noteRequirementMessage(
+        activeNote.minimumNoteLength,
+      )
+      noteInput.focus()
+      return
+    }
     const input = [...document.querySelectorAll<HTMLInputElement>('input[data-cell-key]')].find(
       (candidate) =>
         candidate.dataset.cellKey === activeNote?.cell.key &&
@@ -1134,20 +1352,25 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       state: 'dirty',
       rawValue: input.value,
       notes: notes.trim() === '' ? null : notes,
+      minimumNoteLength: activeNote.minimumNoteLength,
     })
-    const result = required<HTMLElement>('[data-note-result]')
-    result.textContent = 'Saving note…'
+    noteResult.textContent = 'Saving note…'
     void commitCell(input, activeNote.cell, activeNote.view, {
       key: activeNote.cell.key,
       view: activeNote.view,
     }).then((saved) => {
       if (!isSessionCurrent(operation)) return
       if (saved) {
-        result.textContent = 'Saved.'
+        noteResult.textContent = 'Saved.'
         noteDialog.close()
         activeNote = null
-      } else result.textContent = 'The note was not saved. Use Retry in the cell.'
+      } else if (noteResult.textContent === 'Saving note…') {
+        noteResult.textContent = 'The note was not saved. Use Retry in the cell.'
+      }
     })
+  })
+  noteInput.addEventListener('input', () => {
+    noteResult.textContent = ''
   })
 
   const moveWeek = (days: number): void => {

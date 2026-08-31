@@ -41,6 +41,23 @@ export interface QuickAddCommand {
   readonly notes?: string
 }
 
+export const maximumTimeEntryNoteLength = 10_000
+
+export const timeEntryNoteLength = (notes: string | null | undefined): number =>
+  notes === null || notes === undefined ? 0 : Array.from(notes.trim()).length
+
+export class TimeEntryNoteValidationError extends Error {
+  readonly minimumLength: number
+
+  constructor(minimumLength: number) {
+    super(
+      `A note of at least ${minimumLength} ${minimumLength === 1 ? 'character is' : 'characters are'} required for that project and task.`,
+    )
+    this.name = 'TimeEntryNoteValidationError'
+    this.minimumLength = minimumLength
+  }
+}
+
 export interface DisplayTimeEntry extends TimeEntry {
   readonly project_label: string
   readonly task_label: string
@@ -115,6 +132,55 @@ const loadCatalogResources = async (
     collect((cursor) => api.listTasks(cursor, signal), signal),
   ])
   return { projects, tasks }
+}
+
+const assertNoteIsAllowed = (
+  notes: string | null | undefined,
+  minimumLength: number,
+): void => {
+  if (
+    notes !== null &&
+    notes !== undefined &&
+    notes.length > maximumTimeEntryNoteLength
+  ) {
+    throw new Error(
+      `Notes cannot exceed ${maximumTimeEntryNoteLength.toLocaleString('en-US')} characters.`,
+    )
+  }
+  const length = timeEntryNoteLength(notes)
+  if (length < minimumLength) {
+    throw new TimeEntryNoteValidationError(minimumLength)
+  }
+}
+
+const resolveAvailableEntrySelection = async (
+  api: ShellApi,
+  projectValue: string,
+  taskValue: string,
+  signal?: AbortSignal,
+): Promise<{
+  project: GeneralResource
+  task: GeneralResource
+  minimumNoteLength: number
+}> => {
+  const [resources, options] = await Promise.all([
+    loadCatalogResources(api, signal),
+    api.listTimeEntryOptions(signal),
+  ])
+  const project = resolveResource('project', projectValue, resources.projects)
+  const task = resolveResource('task', taskValue, resources.tasks)
+  const selected = options.find(
+    (option) =>
+      option.project_id === project.id && option.task_id === task.id,
+  )
+  if (selected === undefined) {
+    throw new Error('That project and task combination is not available.')
+  }
+  return {
+    project,
+    task,
+    minimumNoteLength: selected.minimum_note_length,
+  }
 }
 
 const resolveResource = (
@@ -246,16 +312,16 @@ export const quickAdd = async (
   signal?: AbortSignal,
 ): Promise<TimeEntry> => {
   const command = parseQuickAdd(value)
-  const resources = await loadCatalogResources(api, signal)
-  const project = resolveResource(
-    'project',
+  const selection = await resolveAvailableEntrySelection(
+    api,
     command.project,
-    resources.projects,
+    command.task,
+    signal,
   )
-  const task = resolveResource('task', command.task, resources.tasks)
+  assertNoteIsAllowed(command.notes, selection.minimumNoteLength)
   const input: TimeEntryInput = {
-    project_id: project.id,
-    task_id: task.id,
+    project_id: selection.project.id,
+    task_id: selection.task.id,
     spent_date: localDate(now),
     seconds: command.seconds,
     ...(command.notes === undefined ? {} : { notes: command.notes }),
@@ -269,16 +335,20 @@ export const startTimer = async (
   api: ShellApi,
   projectValue: string,
   taskValue: string,
-  now = new Date(),
   signal?: AbortSignal,
+  notes?: string,
 ): Promise<TimeEntry> => {
-  const resources = await loadCatalogResources(api, signal)
-  const project = resolveResource('project', projectValue, resources.projects)
-  const task = resolveResource('task', taskValue, resources.tasks)
+  const selection = await resolveAvailableEntrySelection(
+    api,
+    projectValue,
+    taskValue,
+    signal,
+  )
+  assertNoteIsAllowed(notes, selection.minimumNoteLength)
   const input: TimeEntryInput = {
-    project_id: project.id,
-    task_id: task.id,
-    spent_date: localDate(now),
+    project_id: selection.project.id,
+    task_id: selection.task.id,
+    ...(notes === undefined || notes.trim() === '' ? {} : { notes }),
   }
   return signal === undefined
     ? api.createTimeEntry(input)

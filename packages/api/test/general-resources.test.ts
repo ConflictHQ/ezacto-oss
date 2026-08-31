@@ -533,6 +533,102 @@ for (const [runtime, createHarness] of factories) {
       }
     }, 20_000);
 
+    it("[api] persists bounded project, person, and pair note minimums through generic resources", async () => {
+      const client = await data(
+        await harness.request("/clients", json({ name: "Policy client" })),
+      );
+      const user = await data(
+        await harness.request(
+          "/users",
+          json({
+            first_name: "Policy",
+            last_name: "Person",
+            email: "policy-person@example.test",
+            time_entry_notes_minimum_length: 10_000,
+          }),
+        ),
+      );
+      expect(user.time_entry_notes_minimum_length).toBe(10_000);
+      const project = await data(
+        await harness.request(
+          "/projects",
+          json({
+            client_id: client.id,
+            name: "Policy project",
+            time_entry_notes_minimum_length: 1,
+          }),
+        ),
+      );
+      expect(project.time_entry_notes_minimum_length).toBe(1);
+      const pair = await data(
+        await harness.request(
+          "/user-assignments",
+          json({
+            project_id: project.id,
+            user_id: user.id,
+            time_entry_notes_minimum_length: 57,
+          }),
+        ),
+      );
+      expect(pair.time_entry_notes_minimum_length).toBe(57);
+
+      const updates = [
+        [`/projects/${project.id as number}`, null],
+        [`/users/${user.id as number}`, 1],
+        [`/user-assignments/${pair.id as number}`, 10_000],
+      ] as const;
+      for (const [path, minimum] of updates) {
+        const updated = await data(
+          await harness.request(
+            path,
+            json({ time_entry_notes_minimum_length: minimum }, "PATCH"),
+          ),
+        );
+        expect(updated.time_entry_notes_minimum_length, path).toBe(minimum);
+      }
+
+      for (const path of updates.map(([candidate]) => candidate)) {
+        for (const minimum of [0, 10_001, 1.5]) {
+          const response = await harness.request(
+            path,
+            json({ time_entry_notes_minimum_length: minimum }, "PATCH"),
+          );
+          expect(response.status, `${path}:${minimum}`).toBe(422);
+          expect(await response.json()).toMatchObject({
+            error: {
+              code: "validation_failed",
+              fields: [
+                {
+                  field: "time_entry_notes_minimum_length",
+                  code: "invalid_integer",
+                },
+              ],
+            },
+          });
+        }
+      }
+
+      expect(
+        await harness.rows<{
+          project_minimum: number | null;
+          person_minimum: number | null;
+          pair_minimum: number | null;
+        }>(
+          `SELECT project.time_entry_notes_minimum_length AS project_minimum,
+            person.time_entry_notes_minimum_length AS person_minimum,
+            pair.time_entry_notes_minimum_length AS pair_minimum
+          FROM projects AS project
+          JOIN user_assignments AS pair ON pair.project_id = project.id
+          JOIN users AS person ON person.id = pair.user_id
+          WHERE project.id = ? AND person.id = ?`,
+          project.id,
+          user.id,
+        ),
+      ).toEqual([
+        { project_minimum: null, person_minimum: 1, pair_minimum: 10_000 },
+      ]);
+    }, 20_000);
+
     it("[api] exposes rates as append-only POST/read collections", async () => {
       const user = await data(
         await harness.request(

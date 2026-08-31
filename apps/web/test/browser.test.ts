@@ -62,7 +62,11 @@ const resource = (id: number, name: string): GeneralResource => ({
   updated_at: timestamp,
 })
 
-const timeEntry = (id: number, input: TimeEntryInput): TimeEntry => ({
+const timeEntry = (
+  id: number,
+  input: TimeEntryInput,
+  minimumNoteLength = 0,
+): TimeEntry => ({
   id,
   user_id: 1,
   project_id: input.project_id,
@@ -77,13 +81,18 @@ const timeEntry = (id: number, input: TimeEntryInput): TimeEntry => ({
   approval_status: 'unsubmitted',
   is_billed: false,
   is_locked: false,
+  minimum_note_length: minimumNoteLength,
   created_at: timestamp,
   updated_at: timestamp,
 })
 
-const browserApi = (): ShellApi & {
+const browserApi = (
+  minimumNoteLength = 0,
+): ShellApi & {
   readonly entries: TimeEntry[]
   failNextCreate: boolean
+  minimumNoteLength: number
+  staleMinimumOnNextCreate: number | null
 } => {
   const entries = [
     timeEntry(1, {
@@ -91,17 +100,19 @@ const browserApi = (): ShellApi & {
       task_id: 1,
       spent_date: '2026-08-28',
       seconds: 3_600,
-    }),
+    }, minimumNoteLength),
     timeEntry(2, {
       project_id: 2,
       task_id: 2,
       spent_date: '2026-08-21',
       seconds: 99_999,
-    }),
+    }, minimumNoteLength),
   ]
   const api = {
     entries,
     failNextCreate: false,
+    minimumNoteLength,
+    staleMinimumOnNextCreate: null,
     whoami: vi.fn(async () => identity),
     signIn: vi.fn(async () => principal),
     logoutCurrentSession: vi.fn(async () => ({
@@ -119,8 +130,8 @@ const browserApi = (): ShellApi & {
       page: { next_cursor: null },
     })),
     listTimeEntryOptions: vi.fn(async () => [
-      { project_id: 1, task_id: 1 },
-      { project_id: 2, task_id: 2 },
+      { project_id: 1, task_id: 1, minimum_note_length: api.minimumNoteLength },
+      { project_id: 2, task_id: 2, minimum_note_length: api.minimumNoteLength },
     ]),
     listTimeEntries: vi.fn(async (query) =>
       entries.filter((entry) => {
@@ -135,7 +146,34 @@ const browserApi = (): ShellApi & {
         api.failNextCreate = false
         throw new Error('network unavailable')
       }
-      const created = timeEntry(Math.max(...entries.map((entry) => entry.id)) + 1, input)
+      if (api.staleMinimumOnNextCreate !== null) {
+        const changedMinimum = api.staleMinimumOnNextCreate
+        api.staleMinimumOnNextCreate = null
+        api.minimumNoteLength = changedMinimum
+        throw new EzactoApiError(
+          422,
+          {
+            error: {
+              code: 'validation_failed',
+              message: 'The request contains invalid fields.',
+              fields: [
+                {
+                  field: 'notes',
+                  code: 'minimum_length',
+                  message: 'Time entry notes are too short.',
+                  minimum_length: changedMinimum,
+                },
+              ],
+            },
+          },
+          null,
+        )
+      }
+      const created = timeEntry(
+        Math.max(...entries.map((entry) => entry.id)) + 1,
+        input,
+        api.minimumNoteLength,
+      )
       entries.push(created)
       return created
     }),
@@ -255,6 +293,9 @@ describe('week-grid browser behavior', () => {
       true,
     )
     const note = document.querySelector<HTMLTextAreaElement>('[data-note-input]')!
+    expect(note.required).toBe(false)
+    expect(note.minLength).toBe(0)
+    expect(note.maxLength).toBe(10_000)
     note.value = 'Keyboard-first delivery'
     document
       .querySelector<HTMLFormElement>('[data-note-form]')!
@@ -328,6 +369,169 @@ describe('week-grid browser behavior', () => {
       expect(api.entries).toContainEqual(
         expect.objectContaining({ spent_date: spentDate, seconds: 900 }),
       ),
+    )
+  })
+
+  it('[e2e:track-week] preserves a required cell through a stale note-policy correction', async () => {
+    renderBrowserShell()
+    const api = browserApi(3)
+    api.staleMinimumOnNextCreate = 8
+
+    await mountShell(api)
+    const tuesday = desktopInputs()[1]!
+    edit(tuesday, '0.5')
+    tuesday.blur()
+
+    const noteDialog = document.querySelector<HTMLDialogElement>(
+      '[data-note-dialog]',
+    )!
+    const note = document.querySelector<HTMLTextAreaElement>(
+      '[data-note-input]',
+    )!
+    expect(noteDialog.open).toBe(true)
+    expect(document.activeElement).toBe(note)
+    expect(note.required).toBe(true)
+    expect(note.minLength).toBe(3)
+    expect(note.getAttribute('aria-describedby')).toBe('note-hint note-result')
+    expect(document.querySelector('[data-note-hint]')?.textContent).toContain(
+      'at least 3 characters',
+    )
+    expect(desktopInputs()[1]?.value).toBe('0.5')
+    expect(api.createTimeEntry).not.toHaveBeenCalled()
+
+    note.value = 'no'
+    document
+      .querySelector<HTMLFormElement>('[data-note-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    expect(api.createTimeEntry).not.toHaveBeenCalled()
+    expect(noteDialog.open).toBe(true)
+    expect(document.querySelector('[data-note-result]')?.textContent).toContain(
+      'at least 3 characters',
+    )
+
+    note.value = 'yes'
+    document
+      .querySelector<HTMLFormElement>('[data-note-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(note.minLength).toBe(8))
+    expect(noteDialog.open).toBe(true)
+    expect(document.activeElement).toBe(note)
+    expect(note.value).toBe('yes')
+    expect(desktopInputs()[1]?.value).toBe('0.5')
+    expect(document.querySelector('[data-note-result]')?.textContent).toContain(
+      'policy changed',
+    )
+    expect(document.querySelector('.cell-retry')).toBeNull()
+
+    note.value = 'eight ok'
+    document
+      .querySelector<HTMLFormElement>('[data-note-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(noteDialog.open).toBe(false))
+    expect(api.createTimeEntry).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        spent_date: '2026-08-25',
+        seconds: 1_800,
+        notes: 'eight ok',
+      }),
+      expect.any(AbortSignal),
+    )
+    expect(api.entries).toContainEqual(
+      expect.objectContaining({
+        spent_date: '2026-08-25',
+        minimum_note_length: 8,
+        notes: 'eight ok',
+      }),
+    )
+  })
+
+  it('[e2e:track-week] applies exact note policy to quick-add and timer notes', async () => {
+    renderBrowserShell()
+    const api = browserApi(5)
+    await mountShell(api)
+
+    document.querySelector<HTMLButtonElement>('[data-command-trigger]')!.click()
+    const command = document.querySelector<HTMLInputElement>('[name="command"]')!
+    const submitCommand = (): void => {
+      document
+        .querySelector<HTMLFormElement>('[data-command-form]')!
+        .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    }
+    command.value = 'log 1h northpeak development'
+    submitCommand()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-command-result]')?.textContent).toContain(
+        'at least 5 characters',
+      ),
+    )
+    expect(command.value).toBe('log 1h northpeak development')
+    expect(api.createTimeEntry).not.toHaveBeenCalled()
+
+    command.value = 'log 1h northpeak design enough detail'
+    submitCommand()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-command-result]')?.textContent).toContain(
+        'combination is not available',
+      ),
+    )
+    expect(api.createTimeEntry).not.toHaveBeenCalled()
+
+    command.value = 'log 1h northpeak development shipped'
+    command.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(document.querySelector('[data-command-result]')?.textContent).toBe('')
+    submitCommand()
+    await vi.waitFor(() => expect(api.createTimeEntry).toHaveBeenCalledTimes(1))
+
+    document.querySelector<HTMLButtonElement>('[data-timer-chip]')!.click()
+    const timerDialog = document.querySelector<HTMLDialogElement>(
+      '[data-timer-dialog]',
+    )!
+    expect(timerDialog.open).toBe(true)
+    const timerProject = document.querySelector<HTMLInputElement>(
+      '[data-timer-form] [name="project"]',
+    )!
+    const timerTask = document.querySelector<HTMLInputElement>(
+      '[data-timer-form] [name="task"]',
+    )!
+    const timerNote = document.querySelector<HTMLTextAreaElement>(
+      '[data-timer-note]',
+    )!
+    const submitTimer = (): void => {
+      document
+        .querySelector<HTMLFormElement>('[data-timer-form]')!
+        .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    }
+    timerProject.value = 'northpeak'
+    timerTask.value = 'design'
+    timerNote.value = 'enough detail'
+    submitTimer()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-timer-result]')?.textContent).toContain(
+        'combination is not available',
+      ),
+    )
+    expect(api.createTimeEntry).toHaveBeenCalledTimes(1)
+
+    timerTask.value = 'development'
+    timerNote.value = ''
+    submitTimer()
+    await vi.waitFor(() => expect(timerNote.minLength).toBe(5))
+    expect(timerNote.required).toBe(true)
+    expect(document.activeElement).toBe(timerNote)
+    expect(document.querySelector('[data-timer-result]')?.textContent).toContain(
+      'at least 5 characters',
+    )
+    expect(api.createTimeEntry).toHaveBeenCalledTimes(1)
+
+    timerNote.value = 'timer notes'
+    timerNote.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(document.querySelector('[data-timer-result]')?.textContent).toBe('')
+    submitTimer()
+    await vi.waitFor(() => expect(api.createTimeEntry).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(timerDialog.open).toBe(false))
+    expect(api.createTimeEntry).toHaveBeenLastCalledWith(
+      expect.objectContaining({ notes: 'timer notes' }),
+      expect.any(AbortSignal),
     )
   })
 

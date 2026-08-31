@@ -111,6 +111,7 @@ export const organizations = sqliteTable(
     timeEntryNotesRequired: integer('time_entry_notes_required', { mode: 'boolean' })
       .notNull()
       .default(false),
+    timeEntryNotesMinimumLength: integer('time_entry_notes_minimum_length').notNull().default(1),
     timeRounding: text('time_rounding', {
       enum: ['none', 'nearest_6', 'nearest_15', 'nearest_30', 'up_6', 'up_15', 'up_30'],
     })
@@ -125,6 +126,10 @@ export const organizations = sqliteTable(
     check('organizations_singleton', sql`${table.id} = 1`),
     check('organizations_fiscal_month', sql`${table.fiscalYearStartMonth} between 1 and 12`),
     check('organizations_capacity_nonnegative', sql`${table.weeklyCapacityDefault} >= 0`),
+    check(
+      'organizations_time_entry_notes_minimum_length',
+      sql`${table.timeEntryNotesMinimumLength} between 1 and 10000`,
+    ),
     check('organizations_modules_json', sql`json_valid(${table.modules})`),
     check(
       'organizations_timesheet_deadline_json',
@@ -171,6 +176,7 @@ export const users = sqliteTable(
     isOwner: integer('is_owner', { mode: 'boolean' }).notNull().default(false),
     avatarUrl: text('avatar_url'),
     samlExempt: integer('saml_exempt', { mode: 'boolean' }).notNull().default(false),
+    timeEntryNotesMinimumLength: integer('time_entry_notes_minimum_length'),
     ...timestamps,
   },
   (table) => [
@@ -185,6 +191,11 @@ export const users = sqliteTable(
     check('users_future_projects_boolean', sql`${table.hasAccessToAllFutureProjects} in (0, 1)`),
     check('users_is_owner_boolean', sql`${table.isOwner} in (0, 1)`),
     check('users_saml_exempt_boolean', sql`${table.samlExempt} in (0, 1)`),
+    check(
+      'users_time_entry_notes_minimum_length',
+      sql`${table.timeEntryNotesMinimumLength} is null
+        or ${table.timeEntryNotesMinimumLength} between 1 and 10000`,
+    ),
     check(
       'users_owner_is_administrator',
       sql`${table.isOwner} = 0 or ${table.profile} = 'administrator'`,
@@ -736,6 +747,7 @@ export const projects = sqliteTable(
     endsOn: text('ends_on'),
     notes: text('notes'),
     billingCurrency: text('billing_currency'),
+    timeEntryNotesMinimumLength: integer('time_entry_notes_minimum_length'),
     ...timestamps,
   },
   (table) => [
@@ -763,6 +775,11 @@ export const projects = sqliteTable(
       sql`${table.overBudgetPct} is null or ${table.overBudgetPct} >= 0`,
     ),
     check('projects_show_budget_boolean', sql`${table.showBudgetToAll} in (0, 1)`),
+    check(
+      'projects_time_entry_notes_minimum_length',
+      sql`${table.timeEntryNotesMinimumLength} is null
+        or ${table.timeEntryNotesMinimumLength} between 1 and 10000`,
+    ),
   ],
 )
 
@@ -2499,6 +2516,7 @@ export const userAssignments = sqliteTable(
     useDefaultRates: integer('use_default_rates', { mode: 'boolean' }).notNull().default(true),
     hourlyRateCents: integer('hourly_rate_cents'),
     budgetSeconds: integer('budget_seconds'),
+    timeEntryNotesMinimumLength: integer('time_entry_notes_minimum_length'),
     ...timestamps,
   },
   (table) => [
@@ -2520,6 +2538,11 @@ export const userAssignments = sqliteTable(
     check(
       'user_assignments_budget_nonnegative',
       sql`${table.budgetSeconds} is null or ${table.budgetSeconds} >= 0`,
+    ),
+    check(
+      'user_assignments_time_entry_notes_minimum_length',
+      sql`${table.timeEntryNotesMinimumLength} is null
+        or ${table.timeEntryNotesMinimumLength} between 1 and 10000`,
     ),
   ],
 )
