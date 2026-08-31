@@ -312,7 +312,11 @@ for (const [runtime, factory] of factories) {
         timestamp,
       )
       const options = async (): Promise<
-        readonly { project_id: number; task_id: number }[]
+        readonly {
+          project_id: number
+          task_id: number
+          minimum_note_length: number
+        }[]
       > => {
         const response = await test.request('/api/v1/time-entry-options')
         expect(response.status).toBe(200)
@@ -325,8 +329,8 @@ for (const [runtime, factory] of factories) {
 
       const initial = await options()
       expect(initial).toEqual([
-        { project_id: 1, task_id: 1 },
-        { project_id: 1, task_id: 2 },
+        { project_id: 1, task_id: 1, minimum_note_length: 0 },
+        { project_id: 1, task_id: 2, minimum_note_length: 0 },
       ])
       expect(initial).not.toContainEqual({ project_id: 1, task_id: 3 })
       expect(initial).not.toContainEqual({ project_id: 2, task_id: 1 })
@@ -343,7 +347,7 @@ for (const [runtime, factory] of factories) {
         `UPDATE task_assignments SET is_active = 0 WHERE id = 1`,
       )
       await expect(options()).resolves.toEqual([
-        { project_id: 1, task_id: 2 },
+        { project_id: 1, task_id: 2, minimum_note_length: 0 },
       ])
       await test.database.run(
         `UPDATE task_assignments SET is_active = 1 WHERE id = 1`,
@@ -351,7 +355,7 @@ for (const [runtime, factory] of factories) {
 
       await test.database.run(`UPDATE tasks SET is_active = 0 WHERE id = 1`)
       await expect(options()).resolves.toEqual([
-        { project_id: 1, task_id: 2 },
+        { project_id: 1, task_id: 2, minimum_note_length: 0 },
       ])
       await test.database.run(`UPDATE tasks SET is_active = 1 WHERE id = 1`)
 
@@ -362,6 +366,230 @@ for (const [runtime, factory] of factories) {
       await test.database.run(`UPDATE clients SET is_active = 0 WHERE id = 1`)
       await expect(options()).resolves.toEqual([])
     }, slowRuntimeTimeout)
+
+    it('[api] exposes organization note settings and restricts changes to organization admins', async () => {
+      const test = await setup()
+      const initial = await test.request('/api/v1/time-entry-note-settings')
+      expect(initial.status).toBe(200)
+      expect(await initial.json()).toMatchObject({
+        data: { required: false, minimum_length: 1 },
+      })
+
+      const forbidden = await test.request(
+        '/api/v1/time-entry-note-settings',
+        jsonRequest('PATCH', { required: true, minimum_length: 12 }),
+      )
+      expect(forbidden.status).toBe(403)
+
+      const adminRequest = jsonRequest('PATCH', {
+        required: true,
+        minimum_length: 12,
+      })
+      const adminHeaders = new Headers(adminRequest.headers)
+      adminHeaders.set('x-test-profile', 'administrator')
+      const updated = await test.request('/api/v1/time-entry-note-settings', {
+        ...adminRequest,
+        headers: adminHeaders,
+      })
+      expect(updated.status).toBe(200)
+      expect(await updated.json()).toMatchObject({
+        data: { required: true, minimum_length: 12 },
+      })
+      expect(
+        await test.database.rows<{
+          required: number
+          minimum_length: number
+        }>(
+          `SELECT time_entry_notes_required AS required,
+            time_entry_notes_minimum_length AS minimum_length
+           FROM organizations WHERE id = 1`,
+        ),
+      ).toEqual([{ required: 1, minimum_length: 12 }])
+
+      const invalidRequest = jsonRequest('PATCH', {
+        minimum_length: 10_001,
+      })
+      const invalidHeaders = new Headers(invalidRequest.headers)
+      invalidHeaders.set('x-test-profile', 'administrator')
+      const invalid = await test.request('/api/v1/time-entry-note-settings', {
+        ...invalidRequest,
+        headers: invalidHeaders,
+      })
+      expect(invalid.status).toBe(422)
+    }, slowRuntimeTimeout)
+
+    it('[api] enforces the strongest scoped note rule on every native write path', async () => {
+      const test = await setup()
+      await test.database.run(
+        `UPDATE organizations
+         SET time_entry_notes_required = 1, time_entry_notes_minimum_length = 4
+         WHERE id = 1`,
+      )
+      await test.database.run(
+        `UPDATE projects SET time_entry_notes_minimum_length = 5 WHERE id = 1`,
+      )
+      await test.database.run(
+        `UPDATE users SET time_entry_notes_minimum_length = 6 WHERE id = 1`,
+      )
+      await test.database.run(
+        `UPDATE user_assignments SET time_entry_notes_minimum_length = 7 WHERE id = 1`,
+      )
+
+      expect(
+        await data<unknown[]>(await test.request('/api/v1/time-entry-options')),
+      ).toEqual([
+        { project_id: 1, task_id: 1, minimum_note_length: 7 },
+        { project_id: 1, task_id: 2, minimum_note_length: 7 },
+      ])
+
+      const sixCodePoints = '😀😀😀😀😀😀'
+      const rejectedCreate = await test.request(
+        '/api/v1/time-entries',
+        jsonRequest('POST', {
+          project_id: 1,
+          task_id: 1,
+          spent_date: '2026-08-28',
+          seconds: 60,
+          notes: sixCodePoints,
+        }),
+      )
+      expect(rejectedCreate.status).toBe(422)
+      expect(await rejectedCreate.json()).toMatchObject({
+        error: {
+          code: 'validation_failed',
+          fields: [
+            {
+              field: 'notes',
+              code: 'minimum_length',
+              minimum_length: 7,
+            },
+          ],
+        },
+      })
+      expect(
+        await test.database.rows<{ count: number }>(
+          `SELECT count(*) AS count FROM time_entries`,
+        ),
+      ).toEqual([{ count: 0 }])
+
+      const exactNotes = '  😀😀😀😀😀😀😀  '
+      const exactResponse = await test.request(
+        '/api/v1/time-entries',
+        jsonRequest('POST', {
+          project_id: 1,
+          task_id: 1,
+          spent_date: '2026-08-28',
+          seconds: 60,
+          notes: exactNotes,
+        }),
+      )
+      expect(exactResponse.status).toBe(201)
+      const exact = await data<{
+        id: number
+        notes: string
+        minimum_note_length: number
+      }>(exactResponse)
+      expect(exact).toMatchObject({
+        notes: exactNotes,
+        minimum_note_length: 7,
+      })
+
+      const rejectedClear = await test.request(
+        `/api/v1/time-entries/${exact.id}`,
+        jsonRequest('PATCH', { notes: sixCodePoints }),
+      )
+      expect(rejectedClear.status).toBe(422)
+      expect(
+        await test.database.rows<{ notes: string }>(
+          `SELECT notes FROM time_entries WHERE id = ?`,
+          exact.id,
+        ),
+      ).toEqual([{ notes: exactNotes }])
+
+      await test.database.run(
+        `INSERT INTO user_assignments (
+          id, project_id, user_id, time_entry_notes_minimum_length, created_at, updated_at
+        ) VALUES (3, 2, 1, 9, ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+      const rejectedReassignment = await test.request(
+        `/api/v1/time-entries/${exact.id}`,
+        jsonRequest('PATCH', { project_id: 2, task_id: 1 }),
+      )
+      expect(rejectedReassignment.status).toBe(422)
+      expect(await rejectedReassignment.json()).toMatchObject({
+        error: {
+          fields: [{ field: 'notes', minimum_length: 9 }],
+        },
+      })
+
+      const runningResponse = await test.request(
+        '/api/v1/time-entries',
+        jsonRequest('POST', {
+          project_id: 1,
+          task_id: 1,
+          notes: '1234567',
+        }),
+      )
+      expect(runningResponse.status).toBe(201)
+      const running = await data<{ id: number }>(runningResponse)
+      await test.database.run(
+        `UPDATE user_assignments SET time_entry_notes_minimum_length = 8 WHERE id = 1`,
+      )
+
+      const rejectedReplacement = await test.request(
+        '/api/v1/time-entries',
+        jsonRequest('POST', {
+          project_id: 1,
+          task_id: 1,
+          notes: '1234567',
+        }),
+      )
+      expect(rejectedReplacement.status).toBe(422)
+      expect(
+        await data<{ is_running: boolean }>(
+          await test.request(`/api/v1/time-entries/${running.id}`),
+        ),
+      ).toMatchObject({ is_running: true })
+
+      const stopped = await test.request(
+        `/api/v1/time-entries/${running.id}/stop`,
+        { method: 'POST' },
+      )
+      expect(stopped.status).toBe(200)
+      const rejectedRestart = await test.request(
+        `/api/v1/time-entries/${running.id}/restart`,
+        { method: 'POST' },
+      )
+      expect(rejectedRestart.status).toBe(422)
+
+      await test.database.run(
+        `UPDATE organizations SET time_entry_notes_required = 0 WHERE id = 1`,
+      )
+      await test.database.run(
+        `UPDATE projects SET time_entry_notes_minimum_length = NULL WHERE id = 1`,
+      )
+      await test.database.run(
+        `UPDATE users SET time_entry_notes_minimum_length = NULL WHERE id = 1`,
+      )
+      await test.database.run(
+        `UPDATE user_assignments SET time_entry_notes_minimum_length = NULL WHERE id = 1`,
+      )
+      expect(
+        (
+          await test.request(
+            '/api/v1/time-entries',
+            jsonRequest('POST', {
+              project_id: 1,
+              task_id: 1,
+              spent_date: '2026-08-28',
+              seconds: 60,
+            }),
+          )
+        ).status,
+      ).toBe(201)
+    }, 40_000)
 
     it('[security] redacts both time-entry rate snapshots across all six profiles', async () => {
       const test = await setup()

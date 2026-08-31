@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   loadShellSnapshot,
+  maximumTimeEntryNoteLength,
   navigationDestination,
   parseQuickAdd,
   quickAdd,
@@ -8,6 +9,9 @@ import {
   renderDataQualityBanner,
   renderDocumentShell,
   runningElapsedSeconds,
+  startTimer,
+  timeEntryNoteLength,
+  TimeEntryNoteValidationError,
   webAssets,
   type ShellApi,
 } from '../src/index.js'
@@ -40,7 +44,11 @@ const task: GeneralResource = {
   updated_at: timestamp,
 }
 
-const entry = (input: TimeEntryInput, id: number): TimeEntry => ({
+const entry = (
+  input: TimeEntryInput,
+  id: number,
+  minimumNoteLength = 0,
+): TimeEntry => ({
   id,
   user_id: 1,
   project_id: input.project_id,
@@ -55,11 +63,14 @@ const entry = (input: TimeEntryInput, id: number): TimeEntry => ({
   approval_status: 'unsubmitted',
   is_billed: false,
   is_locked: false,
+  minimum_note_length: minimumNoteLength,
   created_at: timestamp,
   updated_at: timestamp,
 })
 
-const memoryApi = (): ShellApi & { entries: TimeEntry[] } => {
+const memoryApi = (
+  minimumNoteLength = 0,
+): ShellApi & { entries: TimeEntry[] } => {
   const entries: TimeEntry[] = []
   return {
     entries,
@@ -88,12 +99,18 @@ const memoryApi = (): ShellApi & { entries: TimeEntry[] } => {
       data: [task],
       page: { next_cursor: null },
     })),
-    listTimeEntryOptions: vi.fn(async () => [{ project_id: 1, task_id: 1 }]),
+    listTimeEntryOptions: vi.fn(async () => [
+      {
+        project_id: 1,
+        task_id: 1,
+        minimum_note_length: minimumNoteLength,
+      },
+    ]),
     listTimeEntries: vi.fn(async (query) =>
       query.is_running === true ? entries.filter((item) => item.is_running) : [...entries],
     ),
     createTimeEntry: vi.fn(async (input) => {
-      const created = entry(input, entries.length + 1)
+      const created = entry(input, entries.length + 1, minimumNoteLength)
       entries.push(created)
       return created
     }),
@@ -133,6 +150,11 @@ describe('S-1 through S-5 application shell', () => {
     expect(html).toContain('data-copy-last-week')
     expect(html).toContain('data-add-row-trigger')
     expect(html).toContain('data-note-dialog')
+    expect(html).toContain('data-timer-note')
+    expect(html).toContain('<form data-timer-form novalidate>')
+    expect(html).toContain('data-note-hint')
+    expect(html).toContain('maxlength="10000"')
+    expect(html).not.toContain('maxlength="65535"')
     expect(html).toContain('data-sign-in-form')
     expect(html).toContain('data-auth-gateway data-state="checking"')
     expect(html).toContain('data-authenticated-shell hidden inert')
@@ -228,6 +250,63 @@ describe('S-1 through S-5 application shell', () => {
       task_label: 'DevOps',
       seconds: 7_200,
     })
+  })
+
+  it('[unit] enforces the exact assignment note policy for quick-add and timers', async () => {
+    const api = memoryApi(5)
+
+    await expect(
+      quickAdd(api, 'log 2h northpeak devops no', new Date(timestamp)),
+    ).rejects.toBeInstanceOf(TimeEntryNoteValidationError)
+    await expect(
+      startTimer(
+        api,
+        'northpeak',
+        'devops',
+        new Date(timestamp),
+        undefined,
+        'four',
+      ),
+    ).rejects.toMatchObject({ minimumLength: 5 })
+    expect(api.createTimeEntry).not.toHaveBeenCalled()
+
+    await quickAdd(api, 'log 2h northpeak devops shipped', new Date(timestamp))
+    await startTimer(
+      api,
+      'northpeak',
+      'devops',
+      new Date(timestamp),
+      undefined,
+      'timer notes',
+    )
+    expect(api.createTimeEntry).toHaveBeenLastCalledWith(
+      expect.objectContaining({ notes: 'timer notes' }),
+    )
+    expect(timeEntryNoteLength('  🚀🚀  ')).toBe(2)
+
+    api.listTimeEntryOptions = vi.fn(async () => [])
+    await expect(
+      quickAdd(api, 'log 1h northpeak devops enough detail', new Date(timestamp)),
+    ).rejects.toThrow('combination is not available')
+  })
+
+  it('[unit] aligns the note maximum with the API UTF-16 request limit', async () => {
+    const api = memoryApi()
+    const exact = 'a'.repeat(maximumTimeEntryNoteLength)
+    await quickAdd(api, `log 1h northpeak devops ${exact}`, new Date(timestamp))
+    expect(api.createTimeEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ notes: exact }),
+    )
+
+    const overInUtf16 = '😀'.repeat(5_001)
+    expect(timeEntryNoteLength(overInUtf16)).toBe(5_001)
+    await expect(
+      quickAdd(
+        api,
+        `log 1h northpeak devops ${overInUtf16}`,
+        new Date(timestamp),
+      ),
+    ).rejects.toThrow('cannot exceed 10,000 characters')
   })
 
   it('[unit] renders an escaped DV-11 fix deep-link and rejects external targets', () => {

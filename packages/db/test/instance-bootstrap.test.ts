@@ -227,6 +227,25 @@ for (const [runtime, factory] of factories) {
       expect(JSON.stringify(stored)).not.toContain(token)
       expect(JSON.stringify(stored)).not.toContain('A'.repeat(43))
 
+      await harness.run(
+        `UPDATE organizations SET time_entry_notes_minimum_length = 2 WHERE id = 1`,
+      )
+      await expect(harness.bootstrap()).rejects.toBeInstanceOf(
+        InstanceBootstrapConflictError,
+      )
+      await harness.run(
+        `UPDATE organizations SET time_entry_notes_minimum_length = 1 WHERE id = 1`,
+      )
+      await harness.run(
+        `UPDATE users SET time_entry_notes_minimum_length = 2 WHERE id = 1`,
+      )
+      await expect(harness.bootstrap()).rejects.toBeInstanceOf(
+        InstanceBootstrapConflictError,
+      )
+      await harness.run(
+        `UPDATE users SET time_entry_notes_minimum_length = NULL WHERE id = 1`,
+      )
+
       for (const mismatch of [
         { ...input, organizationName: 'Different Organization' },
         { ...input, ownerFirstName: 'Rosalind' },

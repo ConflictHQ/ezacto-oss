@@ -120,10 +120,11 @@ await run(
 )
 await run(
   `INSERT INTO projects (
-     id, client_id, name, code, hourly_rate_cents, created_at, updated_at
+     id, client_id, name, code, hourly_rate_cents,
+     time_entry_notes_minimum_length, created_at, updated_at
    ) VALUES
-     (1, 1, 'Browser Acceptance Project', 'BROWSER', 10000, ?, ?),
-     (2, 1, 'Browser Secondary Project', 'SECONDARY', 12500, ?, ?)`,
+     (1, 1, 'Browser Acceptance Project', 'BROWSER', 10000, NULL, ?, ?),
+     (2, 1, 'Browser Secondary Project', 'SECONDARY', 12500, 8, ?, ?)`,
   timestamp,
   timestamp,
   timestamp,

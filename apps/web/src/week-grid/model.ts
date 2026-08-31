@@ -14,6 +14,7 @@ export interface WeekGridCell {
   readonly entries: readonly DisplayTimeEntry[]
   readonly totalSeconds: number
   readonly notes: string | null
+  readonly minimumNoteLength: number
   readonly isConflict: boolean
   readonly isLocked: boolean
   readonly isRunning: boolean
@@ -92,6 +93,12 @@ export const buildWeekGrid = (
   }
   const projects = catalogLabels(snapshot.catalog.projects)
   const tasks = catalogLabels(snapshot.catalog.tasks)
+  const options = new Map(
+    snapshot.catalog.timeEntryOptions.map((option) => [
+      rowKey(option.project_id, option.task_id),
+      option,
+    ]),
+  )
   const rows = [...rowSeeds.values()]
     .map((seed): WeekGridRow => {
       const matching = entries.filter(
@@ -99,6 +106,9 @@ export const buildWeekGrid = (
       )
       const cells = dates.map((date): WeekGridCell => {
         const cellEntries = matching.filter((entry) => entry.spent_date === date)
+        const optionMinimum =
+          options.get(rowKey(seed.projectId, seed.taskId))
+            ?.minimum_note_length ?? 0
         return {
           key: `${rowKey(seed.projectId, seed.taskId)}:${date}`,
           date,
@@ -107,6 +117,10 @@ export const buildWeekGrid = (
           entries: cellEntries,
           totalSeconds: cellEntries.reduce((total, entry) => total + entry.seconds, 0),
           notes: cellEntries.length === 1 ? (cellEntries[0]!.notes ?? null) : null,
+          minimumNoteLength:
+            cellEntries.length === 1
+              ? Math.max(cellEntries[0]!.minimum_note_length, optionMinimum)
+              : optionMinimum,
           isConflict: cellEntries.length > 1,
           isLocked: cellEntries.some((entry) => entry.is_locked),
           isRunning: cellEntries.some((entry) => entry.is_running),

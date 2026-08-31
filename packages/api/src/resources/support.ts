@@ -1,4 +1,5 @@
 import {
+  TimeEntryNoteRequirementError,
   TrackedMutationLockedError,
   TrackedResourceAssignmentError,
   TrackedResourceConflictError,
@@ -287,6 +288,16 @@ export const translateResourceError = (
       code: error.code,
       message: error.message,
     })
+  }
+  if (error instanceof TimeEntryNoteRequirementError) {
+    throw validationError([
+      {
+        field: 'notes',
+        code: 'minimum_length',
+        message: `Notes must contain at least ${error.minimumLength} characters.`,
+        minimum_length: error.minimumLength,
+      },
+    ])
   }
   if (error instanceof TrackedResourceInputError) {
     throw validationError([

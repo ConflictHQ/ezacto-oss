@@ -425,62 +425,49 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   ).toHaveCount(0)
   expect(timeEntryWrites).toEqual([])
 
-  // Entering time persists the valid row. Its null note is shown explicitly and
-  // opens an empty Add-note form rather than borrowing another same-day note.
+  // This exact assignment requires eight note characters. The duration remains
+  // in the cell while the accessible dialog gathers a valid note, and no
+  // incomplete write reaches D1.
+  await secondaryCell.fill('0.25')
+  await secondaryCell.press('Enter')
+  const noteDialog = page.locator('[data-note-dialog]')
+  const noteInput = noteDialog.getByLabel('Note')
+  await expect(noteDialog).toBeVisible()
+  await expect(noteInput).toBeFocused()
+  await expect(noteInput).toHaveValue('')
+  await expect(noteInput).toHaveAttribute('required', '')
+  await expect(noteInput).toHaveAttribute('minlength', '8')
+  await expect(noteInput).toHaveAttribute('maxlength', '10000')
+  await expect(page.locator('[data-note-hint]')).toContainText(
+    'at least 8 characters',
+  )
+  await expect(secondaryCell).toHaveValue('0.25')
+  expect(timeEntryWrites).toEqual([])
+
+  await noteInput.fill('short')
+  await noteDialog.getByRole('button', { name: 'Save note' }).click()
+  await expect(noteDialog).toBeVisible()
+  await expect(page.locator('[data-note-result]')).toContainText(
+    'at least 8 characters',
+  )
+  expect(timeEntryWrites).toEqual([])
+
+  await noteInput.fill('Added row delivery note')
   const created = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === '/api/v1/time-entries' &&
       response.request().method() === 'POST',
   )
-  await secondaryCell.fill('0.25')
-  await secondaryCell.press('Enter')
+  await noteDialog.getByRole('button', { name: 'Save note' }).click()
   expect((await created).ok()).toBe(true)
-  await expect(page.locator('[data-week-total]')).toHaveText('1:00')
-  let secondaryDayRow = page
-    .locator('[data-day-rows] .day-row')
-    .filter({ hasText: 'Browser Secondary Project' })
-  await expect(secondaryDayRow.locator('[data-entry-note]')).toHaveText('No note')
-  await expect(secondaryDayRow.locator('[data-entry-note]')).toHaveAttribute('data-empty', 'true')
-  let secondaryNote = secondaryDayRow.getByRole('button', {
-    name: 'Add note for Browser Secondary Project / Browser Secondary Task on Sunday, Aug 30',
-  })
-  await secondaryNote.click()
-  const noteDialog = page.locator('[data-note-dialog]')
-  const noteInput = noteDialog.getByLabel('Note')
-  await expect(noteInput).toHaveValue('')
-  const emptyNoteSaved = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname.startsWith('/api/v1/time-entries/') &&
-      response.request().method() === 'PATCH',
-  )
-  await noteDialog.getByRole('button', { name: 'Save note' }).click()
-  expect((await emptyNoteSaved).ok()).toBe(true)
   await expect(noteDialog).toBeHidden()
-  secondaryDayRow = page
-    .locator('[data-day-rows] .day-row')
-    .filter({ hasText: 'Browser Secondary Project' })
-  await expect(secondaryDayRow.locator('[data-entry-note]')).toHaveText('No note')
-
-  secondaryNote = secondaryDayRow.getByRole('button', {
-    name: 'Add note for Browser Secondary Project / Browser Secondary Task on Sunday, Aug 30',
-  })
-  await secondaryNote.click()
-  await noteInput.fill('Added row delivery note')
-  const detailSaved = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname.startsWith('/api/v1/time-entries/') &&
-      response.request().method() === 'PATCH',
-  )
-  await noteDialog.getByRole('button', { name: 'Save note' }).click()
-  expect((await detailSaved).ok()).toBe(true)
+  await expect(page.locator('[data-week-total]')).toHaveText('1:00')
   await expect(
     page.locator('[data-day-rows] .day-row').filter({ hasText: 'Browser Secondary Project' }),
   ).toContainText('Added row delivery note')
   expect(timeEntryWrites).toEqual([
-    expect.objectContaining({ method: 'POST' }),
-    { method: 'PATCH', body: expect.objectContaining({ notes: null }) },
     {
-      method: 'PATCH',
+      method: 'POST',
       body: expect.objectContaining({ notes: 'Added row delivery note' }),
     },
   ])
@@ -508,6 +495,43 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
       '/api/v1/time-entry-options': 200,
       '/api/v1/time-entries': 200,
     })
+
+  // Native form submission must recover when the user switches from a
+  // required-note assignment to an optional one. A stale minlength attribute
+  // must never prevent the new exact pair from reaching explicit validation.
+  const writesBeforeTimer = timeEntryWrites.length
+  await page.locator('[data-timer-chip]').click()
+  const timerDialog = page.locator('[data-timer-dialog]')
+  const timerProject = timerDialog.getByLabel('Project')
+  const timerTask = timerDialog.getByLabel('Task')
+  const timerNote = timerDialog.getByLabel('Note')
+  const startTimer = timerDialog.getByRole('button', {
+    name: 'Start timer',
+    exact: true,
+  })
+  await timerProject.fill('SECONDARY')
+  await timerTask.fill('Browser Secondary Task')
+  await startTimer.click()
+  await expect(page.locator('[data-timer-result]')).toContainText(
+    'at least 8 characters',
+  )
+  await expect(timerNote).toHaveAttribute('required', '')
+  await expect(timerNote).toHaveAttribute('minlength', '8')
+  expect(timeEntryWrites).toHaveLength(writesBeforeTimer)
+
+  await timerProject.fill('BROWSER')
+  await timerTask.fill('Browser Acceptance Task')
+  await expect(timerNote).not.toHaveAttribute('required', '')
+  await expect(timerNote).toHaveAttribute('minlength', '0')
+  const timerStarted = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/time-entries' &&
+      response.request().method() === 'POST',
+  )
+  await startTimer.click()
+  expect((await timerStarted).ok()).toBe(true)
+  await expect(page.locator('[data-timer-result]')).toHaveText('Timer started.')
+  expect(timeEntryWrites).toHaveLength(writesBeforeTimer + 1)
 
   const browserSession = (await context.cookies()).find(
     (cookie) => cookie.name === '__Host-ezacto_session',

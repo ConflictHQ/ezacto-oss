@@ -1,6 +1,7 @@
 import {
   canViewMoneyField,
   GeneralResourceError,
+  maximumTimeEntryNoteLength,
   type GeneralMutationInput,
   type GeneralResourceFilters,
   type GeneralResourceKind,
@@ -44,6 +45,7 @@ type FieldType =
 interface FieldSpec {
   type: FieldType;
   values?: readonly string[];
+  maximum?: number;
 }
 interface ResourceRouteDefinition {
   fields: Readonly<Record<string, FieldSpec>>;
@@ -69,6 +71,10 @@ const nonnegativeInt = { type: "nonnegative-int" } as const;
 const nullableNonnegativeInt = { type: "nullable-nonnegative-int" } as const;
 const nullableNonnegativeNumber = {
   type: "nullable-nonnegative-number",
+} as const;
+const nullableTimeEntryNoteMinimumLength = {
+  type: "nullable-positive-int",
+  maximum: maximumTimeEntryNoteLength,
 } as const;
 const valueEnum = (...values: string[]): FieldSpec => ({
   type: "enum",
@@ -151,6 +157,7 @@ const routeDefinitions: Readonly<
       ends_on: { type: "nullable-date" },
       notes: nullableString,
       billing_currency: nullableString,
+      time_entry_notes_minimum_length: nullableTimeEntryNoteMinimumLength,
     },
     required: new Set(["client_id", "name"]),
     filters: {
@@ -197,6 +204,7 @@ const routeDefinitions: Readonly<
       use_default_rates: bool,
       hourly_rate_cents: nullableNonnegativeInt,
       budget_seconds: nullableNonnegativeInt,
+      time_entry_notes_minimum_length: nullableTimeEntryNoteMinimumLength,
     },
     required: new Set(["project_id", "user_id"]),
     filters: {
@@ -229,6 +237,7 @@ const routeDefinitions: Readonly<
       manager_grants: { type: "string-array", values: managerGrantValues },
       avatar_url: nullableString,
       saml_exempt: bool,
+      time_entry_notes_minimum_length: nullableTimeEntryNoteMinimumLength,
     },
     required: new Set(["first_name", "last_name", "email"]),
     filters: {
@@ -361,11 +370,15 @@ const parseField = (
       : invalid("invalid_integer", `${field} must be a positive safe integer`);
   if (spec.type === "nullable-positive-int")
     return value === null ||
-      (Number.isSafeInteger(value) && (value as number) > 0)
+      (Number.isSafeInteger(value) &&
+        (value as number) > 0 &&
+        (spec.maximum === undefined || (value as number) <= spec.maximum))
       ? (value as number | null)
       : invalid(
           "invalid_integer",
-          `${field} must be a positive safe integer or null`,
+          spec.maximum === undefined
+            ? `${field} must be a positive safe integer or null`
+            : `${field} must be an integer between 1 and ${spec.maximum} or null`,
         );
   if (spec.type === "nonnegative-int")
     return Number.isSafeInteger(value) && (value as number) >= 0

@@ -37,6 +37,7 @@ export type {
   CreateTimeEntryRequest,
   ExpenseFilters,
   ExpenseRecord,
+  OrganizationTimeEntryNoteSettings,
   ResourceTimeBoundary,
   TimeEntryFilters,
   TimeEntryOption,
@@ -44,5 +45,6 @@ export type {
   TrackedResourceClock,
   TrackedResourceRepository,
   UpdateExpenseRequest,
+  UpdateOrganizationTimeEntryNoteSettings,
   UpdateTimeEntryRequest,
 } from './tracked-repository.js'
