@@ -6,6 +6,7 @@ import {
   type Session,
   type TimeEntry,
   type TimeEntryInput,
+  type TimeEntryOption,
   type TimeEntryPatch,
   type Whoami,
 } from '@ezacto/client'
@@ -21,6 +22,7 @@ export interface ShellApi {
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
   listProjects(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listTasks(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
+  listTimeEntryOptions(signal?: AbortSignal): Promise<readonly TimeEntryOption[]>
   listTimeEntries(query: {
     readonly from?: string
     readonly to?: string
@@ -50,6 +52,7 @@ export interface ShellSnapshot {
   readonly catalog: {
     readonly projects: readonly GeneralResource[]
     readonly tasks: readonly GeneralResource[]
+    readonly timeEntryOptions: readonly TimeEntryOption[]
   }
 }
 
@@ -219,10 +222,11 @@ export const loadShellSnapshot = async (
   signal?: AbortSignal,
 ): Promise<ShellSnapshot> => {
   const range = weekRange(localDate(now))
-  const [resources, entries, running] = await Promise.all([
+  const [resources, entries, running, timeEntryOptions] = await Promise.all([
     loadCatalogResources(api, signal),
     api.listTimeEntries(range, signal),
     api.listTimeEntries({ is_running: true }, signal),
+    api.listTimeEntryOptions(signal),
   ])
   const displayedEntries = displayEntries(entries, resources)
   const displayedRunning = displayEntries(running, resources)
@@ -231,7 +235,7 @@ export const loadShellSnapshot = async (
   return {
     entries: displayedEntries,
     running: displayedRunning[0] ?? null,
-    catalog: resources,
+    catalog: { ...resources, timeEntryOptions },
   }
 }
 
@@ -323,6 +327,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     }),
+  listTimeEntryOptions: async (signal) =>
+    (await client.listTimeEntryOptions(withSignal(signal))).data,
   listTimeEntries: async (query, signal) => {
     const entries: TimeEntry[] = []
     let cursor: string | undefined

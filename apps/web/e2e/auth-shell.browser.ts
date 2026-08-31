@@ -164,6 +164,7 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
     if (
       path === '/api/v1/projects' ||
       path === '/api/v1/tasks' ||
+      path === '/api/v1/time-entry-options' ||
       path === '/api/v1/time-entries'
     ) {
       protectedRequests.push(path)
@@ -239,6 +240,7 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
     expect.arrayContaining([
       '/api/v1/projects',
       '/api/v1/tasks',
+      '/api/v1/time-entry-options',
       '/api/v1/time-entries',
     ]),
   )
@@ -272,6 +274,7 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   let leakedToConsole = false
   let leakedToUrl = false
   const protectedResponses = new Map<string, number>()
+  const timeEntryWrites: Array<{ method: string; body: unknown }> = []
 
   page.on('console', (message) => {
     const value = message.text()
@@ -285,6 +288,16 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   })
   page.on('request', (request) => {
     const value = request.url()
+    const path = new URL(value).pathname
+    if (
+      path.startsWith('/api/v1/time-entries') &&
+      (request.method() === 'POST' || request.method() === 'PATCH')
+    ) {
+      timeEntryWrites.push({
+        method: request.method(),
+        body: request.postDataJSON(),
+      })
+    }
     if (
       value.includes(fixtureEmail) ||
       value.includes(fixturePassword) ||
@@ -299,6 +312,7 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
       path === '/api/v1/whoami' ||
       path === '/api/v1/projects' ||
       path === '/api/v1/tasks' ||
+      path === '/api/v1/time-entry-options' ||
       path === '/api/v1/time-entries'
     ) {
       protectedResponses.set(path, response.status())
@@ -345,20 +359,155 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   await expect(authenticatedShell).toBeVisible()
   await expect(identity).toContainText('User #1')
   await expect(identity).toContainText('administrator')
-  await expect(page.locator('[data-day-rows]')).toContainText(
-    'Browser Acceptance Project',
-  )
-  await expect(page.locator('[data-day-rows]')).toContainText(
-    'Browser Acceptance Task',
-  )
+  await expect(page.locator('[data-day-rows]')).toContainText('Browser Acceptance Project')
+  await expect(page.locator('[data-day-rows]')).toContainText('Browser Acceptance Task')
   await expect(page.locator('[data-day-label]')).toHaveText('Sunday, Aug 30')
-  await expect(page.locator('[data-week-total]')).toHaveText('0:30')
-  await expect.poll(() => Object.fromEntries(protectedResponses)).toMatchObject({
-    '/api/v1/whoami': 200,
-    '/api/v1/projects': 200,
-    '/api/v1/tasks': 200,
-    '/api/v1/time-entries': 200,
+  await expect(page.locator('[data-week-total]')).toHaveText('0:45')
+  await expect(page.locator('[data-entry-note="1"]')).toHaveText(
+    'First line\nSecond line with delivery detail',
+  )
+  await expect(page.locator('[data-entry-note="2"]')).toHaveText('Separate follow-up')
+
+  // A real assignment pair can be added as a row without creating a time entry
+  // until the user enters duration.
+  await page.getByRole('button', { name: 'Add row', exact: true }).click()
+  const rowForm = page.locator('[data-row-form]')
+  await rowForm.getByLabel('Project').selectOption('2')
+  await expect(rowForm.getByLabel('Task')).toHaveValue('2')
+  await rowForm.getByRole('button', { name: 'Add row', exact: true }).click()
+  await expect(page.locator('[data-session-message]')).toHaveText(
+    'Project/task row added. Enter time to save it.',
+  )
+  const secondaryCell = page.locator('[data-day-list] input[data-cell-key^="2:2:"]')
+  await expect(secondaryCell).toBeFocused()
+  expect(timeEntryWrites).toEqual([])
+
+  // Submitting the same pair focuses its existing row rather than duplicating it.
+  await page.getByRole('button', { name: 'Add row', exact: true }).click()
+  await rowForm.getByLabel('Project').selectOption('2')
+  await rowForm.getByRole('button', { name: 'Add row', exact: true }).click()
+  await expect(page.locator('[data-session-message]')).toHaveText(
+    'That project/task row already exists; it is focused now.',
+  )
+  await expect(secondaryCell).toBeFocused()
+
+  // The browser must reject a forged cross-product which the options endpoint
+  // never returned; it must not reach D1 or supplemental-row storage.
+  await page.getByRole('button', { name: 'Add row', exact: true }).click()
+  await rowForm.getByLabel('Project').selectOption('1')
+  await rowForm.getByLabel('Task').evaluate((select) => {
+    const taskSelect = select as HTMLSelectElement
+    const forged = document.createElement('option')
+    forged.value = '2'
+    forged.textContent = 'Browser Secondary Task'
+    taskSelect.append(forged)
+    taskSelect.value = '2'
   })
+  await rowForm.getByRole('button', { name: 'Add row', exact: true }).click()
+  await expect(page.locator('[data-row-dialog]')).toBeVisible()
+  await expect(page.locator('[data-row-result]')).toHaveText(
+    'Choose an available project and task.',
+  )
+  expect(timeEntryWrites).toEqual([])
+  expect(
+    await page.evaluate(() =>
+      Object.values(globalThis.localStorage).some((value) =>
+        value.includes('{"projectId":1,"taskId":2}'),
+      ),
+    ),
+  ).toBe(false)
+  await rowForm.getByRole('button', { name: 'Close' }).click()
+
+  await page.reload()
+  await expect(secondaryCell).toHaveValue('')
+  await expect(
+    page.locator('[data-day-list] input[data-cell-key^="1:2:"]'),
+  ).toHaveCount(0)
+  expect(timeEntryWrites).toEqual([])
+
+  // Entering time persists the valid row. Its null note is shown explicitly and
+  // opens an empty Add-note form rather than borrowing another same-day note.
+  const created = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/time-entries' &&
+      response.request().method() === 'POST',
+  )
+  await secondaryCell.fill('0.25')
+  await secondaryCell.press('Enter')
+  expect((await created).ok()).toBe(true)
+  await expect(page.locator('[data-week-total]')).toHaveText('1:00')
+  let secondaryDayRow = page
+    .locator('[data-day-rows] .day-row')
+    .filter({ hasText: 'Browser Secondary Project' })
+  await expect(secondaryDayRow.locator('[data-entry-note]')).toHaveText('No note')
+  await expect(secondaryDayRow.locator('[data-entry-note]')).toHaveAttribute('data-empty', 'true')
+  let secondaryNote = secondaryDayRow.getByRole('button', {
+    name: 'Add note for Browser Secondary Project / Browser Secondary Task on Sunday, Aug 30',
+  })
+  await secondaryNote.click()
+  const noteDialog = page.locator('[data-note-dialog]')
+  const noteInput = noteDialog.getByLabel('Note')
+  await expect(noteInput).toHaveValue('')
+  const emptyNoteSaved = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.startsWith('/api/v1/time-entries/') &&
+      response.request().method() === 'PATCH',
+  )
+  await noteDialog.getByRole('button', { name: 'Save note' }).click()
+  expect((await emptyNoteSaved).ok()).toBe(true)
+  await expect(noteDialog).toBeHidden()
+  secondaryDayRow = page
+    .locator('[data-day-rows] .day-row')
+    .filter({ hasText: 'Browser Secondary Project' })
+  await expect(secondaryDayRow.locator('[data-entry-note]')).toHaveText('No note')
+
+  secondaryNote = secondaryDayRow.getByRole('button', {
+    name: 'Add note for Browser Secondary Project / Browser Secondary Task on Sunday, Aug 30',
+  })
+  await secondaryNote.click()
+  await noteInput.fill('Added row delivery note')
+  const detailSaved = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.startsWith('/api/v1/time-entries/') &&
+      response.request().method() === 'PATCH',
+  )
+  await noteDialog.getByRole('button', { name: 'Save note' }).click()
+  expect((await detailSaved).ok()).toBe(true)
+  await expect(
+    page.locator('[data-day-rows] .day-row').filter({ hasText: 'Browser Secondary Project' }),
+  ).toContainText('Added row delivery note')
+  expect(timeEntryWrites).toEqual([
+    expect.objectContaining({ method: 'POST' }),
+    { method: 'PATCH', body: expect.objectContaining({ notes: null }) },
+    {
+      method: 'PATCH',
+      body: expect.objectContaining({ notes: 'Added row delivery note' }),
+    },
+  ])
+
+  // Both the D1 entry/note and the locally remembered row survive a full reload;
+  // the rejected cross-product remains absent.
+  await page.reload()
+  await expect(page.locator('[data-week-total]')).toHaveText('1:00')
+  await expect(page.locator('[data-entry-note="1"]')).toHaveText(
+    'First line\nSecond line with delivery detail',
+  )
+  await expect(page.locator('[data-entry-note="2"]')).toHaveText('Separate follow-up')
+  const reloadedSecondary = page
+    .locator('[data-day-rows] .day-row')
+    .filter({ hasText: 'Browser Secondary Project' })
+  await expect(reloadedSecondary.locator('input[data-cell-key^="2:2:"]')).toHaveValue('0.25')
+  await expect(reloadedSecondary.locator('[data-entry-note]')).toHaveText('Added row delivery note')
+  await expect(page.locator('[data-day-list] input[data-cell-key^="1:2:"]')).toHaveCount(0)
+  await expect
+    .poll(() => Object.fromEntries(protectedResponses))
+    .toMatchObject({
+      '/api/v1/whoami': 200,
+      '/api/v1/projects': 200,
+      '/api/v1/tasks': 200,
+      '/api/v1/time-entry-options': 200,
+      '/api/v1/time-entries': 200,
+    })
 
   const browserSession = (await context.cookies()).find(
     (cookie) => cookie.name === '__Host-ezacto_session',

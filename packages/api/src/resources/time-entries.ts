@@ -293,6 +293,27 @@ export const installTimeEntryRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   options: TimeEntryRouteOptions,
 ): void => {
+  api.get('/time-entry-options', async (context) => {
+    requireApiScope(context, 'time_entries:read')
+    const principal = context.get('principal')
+    try {
+      const rows = await options.repository.timeEntryOptions(principal.userId)
+      return context.json(
+        {
+          data: rows.map((row) => ({
+            project_id: row.projectId,
+            task_id: row.taskId,
+          })),
+          links: { self: '/api/v1/time-entry-options' },
+        },
+        200,
+        { 'cache-control': 'no-store' },
+      )
+    } catch (error) {
+      return translateResourceError(error, 'time entry')
+    }
+  })
+
   api.get('/time-entries', async (context) => {
     requireApiScope(context, 'time_entries:read')
     const principal = context.get('principal')

@@ -88,6 +88,7 @@ const memoryApi = (): ShellApi & { entries: TimeEntry[] } => {
       data: [task],
       page: { next_cursor: null },
     })),
+    listTimeEntryOptions: vi.fn(async () => [{ project_id: 1, task_id: 1 }]),
     listTimeEntries: vi.fn(async (query) =>
       query.is_running === true ? entries.filter((item) => item.is_running) : [...entries],
     ),

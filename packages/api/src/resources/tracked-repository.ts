@@ -44,6 +44,11 @@ export interface TimeEntryRecord extends TrackedRecord {
   calendarEventRef: Record<string, unknown> | null
 }
 
+export interface TimeEntryOption {
+  projectId: number
+  taskId: number
+}
+
 export type ReimbursementStatus = 'none' | 'pending' | 'approved' | 'paid'
 
 export interface ExpenseRecord extends TrackedRecord {
@@ -138,6 +143,7 @@ export interface UpdateExpenseRequest {
 }
 
 export interface TrackedResourceRepository {
+  timeEntryOptions(userId: number): Promise<readonly TimeEntryOption[]>
   timeEntries(
     userId: number,
     filters: Readonly<TimeEntryFilters>,
