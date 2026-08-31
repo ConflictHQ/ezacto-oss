@@ -354,6 +354,17 @@ export type TimeEntryPage = {
   "page": PageMetadata;
 };
 
+export type TimeEntrySettings = {
+  "time_entry_mode": "duration" | "start_end";
+  "time_format": "decimal" | "hours_minutes";
+  "clock": "12h" | "24h";
+};
+
+export type TimeEntrySettingsEnvelope = {
+  "data": TimeEntrySettings;
+  "links": Links;
+};
+
 export type TimeEntryNoteSettings = {
   "required": boolean;
   "minimum_length": number;
@@ -1814,6 +1825,15 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<UserRateEnvelope>("GET", "/api/v1/users/:userId/cost-rates/:id".replace(":userId", encodeURIComponent(String(args["userId"]))).replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getTimeEntrySettings(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimeEntrySettingsEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimeEntrySettingsEnvelope>("GET", "/api/v1/time-entry-settings", {
       signal: args.signal,
       headers,
     });

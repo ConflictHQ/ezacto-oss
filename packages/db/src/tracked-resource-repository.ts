@@ -146,6 +146,12 @@ export interface OrganizationTimeEntryNoteSettings {
   minimumLength: number
 }
 
+export interface OrganizationTimeEntrySettings {
+  mode: 'duration' | 'start_end'
+  timeFormat: 'decimal' | 'hours_minutes'
+  clock: '12h' | '24h'
+}
+
 export interface UpdateOrganizationTimeEntryNoteSettings {
   required?: boolean
   minimumLength?: number
@@ -207,7 +213,7 @@ interface AssignmentResolution {
 
 type TimeSettings = Pick<
   typeof organizations.$inferSelect,
-  'timeEntryMode' | 'timeRounding'
+  'timeEntryMode' | 'timeFormat' | 'clock' | 'timeRounding'
 >
 
 const moneyUpperBound = 9_000_000_000_000
@@ -248,6 +254,15 @@ export class DrizzleTrackedResourceRepository {
       .limit(1)
     if (!settings) throw new Error('organization must exist before serving tracked resources')
     return settings
+  }
+
+  async timeEntrySettings(): Promise<OrganizationTimeEntrySettings> {
+    const settings = await this.#timeSettings()
+    return {
+      mode: settings.timeEntryMode,
+      timeFormat: settings.timeFormat,
+      clock: settings.clock,
+    }
   }
 
   async timeEntryNoteSettings(): Promise<OrganizationTimeEntryNoteSettings> {

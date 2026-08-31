@@ -106,6 +106,11 @@ const memoryApi = (
         minimum_note_length: minimumNoteLength,
       },
     ]),
+    getTimeEntrySettings: vi.fn(async () => ({
+      time_entry_mode: 'duration' as const,
+      time_format: 'decimal' as const,
+      clock: '12h' as const,
+    })),
     listTimeEntries: vi.fn(async (query) =>
       query.is_running === true ? entries.filter((item) => item.is_running) : [...entries],
     ),
@@ -151,7 +156,8 @@ describe('S-1 through S-5 application shell', () => {
     expect(html).toContain('data-add-row-trigger')
     expect(html).toContain('data-note-dialog')
     expect(html).toContain('data-timer-note')
-    expect(html).toContain('<form data-timer-form novalidate>')
+    expect(html).toContain('<form data-timer-form novalidate data-entry-form data-note-form>')
+    expect(html.match(/data-entry-form/gu)).toHaveLength(1)
     expect(html).toContain('data-note-hint')
     expect(html).toContain('maxlength="10000"')
     expect(html).not.toContain('maxlength="65535"')

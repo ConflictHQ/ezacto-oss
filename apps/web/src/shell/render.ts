@@ -263,15 +263,24 @@ export const renderAppShell = (options: AppShellOptions): string => {
       <button class="primary-action" type="submit">Run command</button>
     </form>
   </dialog>
-  <dialog class="timer-dialog" data-timer-dialog aria-labelledby="timer-title">
-    <form data-timer-form novalidate>
-      <header><div><p class="eyebrow">Global timer</p><h2 id="timer-title">Start a timer</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
-      <label>Project<input name="project" autocomplete="off" required></label>
-      <label>Task<input name="task" autocomplete="off" required></label>
-      <label for="ez-timer-note">Note<textarea id="ez-timer-note" name="notes" data-timer-note rows="3" maxlength="10000" aria-describedby="timer-note-hint timer-result"></textarea></label>
-      <p class="hint" id="timer-note-hint" data-timer-note-hint>Optional. Up to 10,000 characters.</p>
-      <p class="form-result" id="timer-result" data-timer-result role="status"></p>
-      <div class="timer-actions"><button class="primary-action" type="submit">Start timer</button><button type="button" data-stop-timer>Stop running timer</button></div>
+  <dialog class="entry-dialog" data-entry-dialog data-timer-dialog data-note-dialog aria-labelledby="entry-title">
+    <form data-timer-form novalidate data-entry-form data-note-form>
+      <header><div><p class="eyebrow" data-entry-context>Time entry</p><h2 id="entry-title" data-entry-title data-note-title>Log time</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
+      <div class="entry-assignment">
+        <label>Project<input name="project" data-entry-project autocomplete="off" required></label>
+        <label>Task<input name="task" data-entry-task autocomplete="off" required></label>
+      </div>
+      <label>Date<input name="spent_date" data-entry-date type="date" required></label>
+      <label data-entry-duration>Duration<input name="duration" data-entry-duration-input inputmode="decimal" autocomplete="off" placeholder="1:30"></label>
+      <div class="entry-times" data-entry-times hidden>
+        <label>Start<input name="started_time" data-entry-start autocomplete="off" placeholder="9:00 AM"></label>
+        <label>End<input name="ended_time" data-entry-end autocomplete="off" placeholder="5:00 PM"></label>
+      </div>
+      <p class="hint" data-entry-running hidden>This entry is running. Stop it before changing its assignment or timing.</p>
+      <label for="ez-entry-note">Note<textarea id="ez-entry-note" name="notes" data-entry-note-input data-timer-note data-note-input rows="5" maxlength="10000" aria-describedby="note-hint note-result"></textarea></label>
+      <p class="hint" id="note-hint" data-entry-note-hint data-timer-note-hint data-note-hint>Optional. Up to 10,000 characters.</p>
+      <p class="form-result" id="note-result" data-entry-result data-timer-result data-note-result role="status"></p>
+      <div class="timer-actions"><button class="primary-action" type="submit" data-entry-submit>Save entry</button><button type="button" data-stop-timer hidden>Stop running timer</button></div>
     </form>
   </dialog>
   <dialog class="menu-dialog" data-menu-dialog aria-labelledby="menu-title">
@@ -285,15 +294,6 @@ export const renderAppShell = (options: AppShellOptions): string => {
       <label>Task<select name="task" data-row-task required></select></label>
       <p class="form-result" data-row-result role="status"></p>
       <button class="primary-action" type="submit">Add row</button>
-    </form>
-  </dialog>
-  <dialog class="note-dialog" data-note-dialog aria-labelledby="note-title">
-    <form data-note-form novalidate>
-      <header><div><p class="eyebrow">Cell note</p><h2 id="note-title" data-note-title>Add a note</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
-      <label for="ez-cell-note">Note<textarea id="ez-cell-note" name="notes" data-note-input rows="5" maxlength="10000" aria-describedby="note-hint note-result"></textarea></label>
-      <p class="hint" id="note-hint" data-note-hint>Optional. Up to 10,000 characters.</p>
-      <p class="form-result" id="note-result" data-note-result role="status"></p>
-      <button class="primary-action" type="submit">Save note</button>
     </form>
   </dialog>
   <footer class="build-stamp">${escapeHtml(options.environment)} · ${escapeHtml(shortRelease)}</footer>

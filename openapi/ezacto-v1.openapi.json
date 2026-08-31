@@ -4989,6 +4989,64 @@
         ]
       }
     },
+    "/api/v1/time-entry-settings": {
+      "get": {
+        "operationId": "getTimeEntrySettings",
+        "summary": "Get organization time-entry display and entry-mode settings",
+        "tags": [
+          "time-entries"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimeEntrySettingsEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/time-entry-settings",
+        "x-ezacto-generate-client": true
+      }
+    },
     "/api/v1/time-entry-note-settings": {
       "get": {
         "operationId": "getTimeEntryNoteSettings",
@@ -12302,6 +12360,54 @@
           },
           "page": {
             "$ref": "#/components/schemas/PageMetadata"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TimeEntrySettings": {
+        "type": "object",
+        "required": [
+          "time_entry_mode",
+          "time_format",
+          "clock"
+        ],
+        "properties": {
+          "time_entry_mode": {
+            "type": "string",
+            "enum": [
+              "duration",
+              "start_end"
+            ]
+          },
+          "time_format": {
+            "type": "string",
+            "enum": [
+              "decimal",
+              "hours_minutes"
+            ]
+          },
+          "clock": {
+            "type": "string",
+            "enum": [
+              "12h",
+              "24h"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "TimeEntrySettingsEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TimeEntrySettings"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
           }
         },
         "additionalProperties": false

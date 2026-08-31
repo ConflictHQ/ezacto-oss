@@ -640,6 +640,76 @@ describe("Worker D1 runtime composition", () => {
         .first(),
     ).toEqual({ count: 7, seconds: 100_800 });
   }, 20_000);
+
+  it("[e2e:track-week] round-trips canonical start/end times through the generated client and D1", async () => {
+    const client = new EzactoClient({
+      baseUrl: "https://worker.test",
+      token: bearer,
+      fetch: workerFetch,
+    });
+    await run(
+      `UPDATE organizations
+       SET time_entry_mode = 'start_end', time_format = 'hours_minutes', clock = '12h'
+       WHERE id = 1`,
+    );
+
+    try {
+      await expect(client.getTimeEntrySettings()).resolves.toMatchObject({
+        data: {
+          time_entry_mode: "start_end",
+          time_format: "hours_minutes",
+          clock: "12h",
+        },
+      });
+      const created = await client.createTimeEntry({
+        body: {
+          project_id: 1,
+          task_id: 1,
+          spent_date: "2026-09-14",
+          started_time: "23:45",
+          ended_time: "00:15",
+          notes: "canonical start/end create",
+        },
+      });
+      expect(created.data).toMatchObject({
+        started_time: "23:45",
+        ended_time: "00:15",
+        seconds: 1_800,
+      });
+
+      await expect(client.getTimeEntry({ id: created.data.id })).resolves.toMatchObject({
+        data: {
+          started_time: "23:45",
+          ended_time: "00:15",
+          seconds: 1_800,
+        },
+      });
+      const updated = await client.updateTimeEntry({
+        id: created.data.id,
+        body: { started_time: "22:30", ended_time: "01:00" },
+      });
+      expect(updated.data).toMatchObject({
+        started_time: "22:30",
+        ended_time: "01:00",
+        seconds: 9_000,
+      });
+      expect(
+        await database
+          .prepare(
+            `SELECT started_time, ended_time, seconds
+             FROM time_entries WHERE id = ?`,
+          )
+          .bind(created.data.id)
+          .first(),
+      ).toEqual({ started_time: "22:30", ended_time: "01:00", seconds: 9_000 });
+    } finally {
+      await run(
+        `UPDATE organizations
+         SET time_entry_mode = 'duration', time_format = 'decimal', clock = '12h'
+         WHERE id = 1`,
+      );
+    }
+  }, 20_000);
 });
 
 describe("cursor signing binding", () => {

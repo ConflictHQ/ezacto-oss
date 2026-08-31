@@ -302,6 +302,15 @@ const trackedListParameters = [
 const timeEntryOperations: ApiContractOperation[] = [
   {
     method: "get",
+    path: "/api/v1/time-entry-settings",
+    operationId: "getTimeEntrySettings",
+    summary: "Get organization time-entry display and entry-mode settings",
+    tag: "time-entries",
+    responseStatus: 200,
+    responseSchema: "TimeEntrySettingsEnvelope",
+  },
+  {
+    method: "get",
     path: "/api/v1/time-entry-note-settings",
     operationId: "getTimeEntryNoteSettings",
     summary: "Get organization time-entry note settings",
@@ -1680,6 +1689,17 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   TimeEntryEnvelope: envelope("TimeEntry"),
   TimeEntryPage: page("TimeEntry"),
+  TimeEntrySettings: {
+    type: "object",
+    required: ["time_entry_mode", "time_format", "clock"],
+    properties: {
+      time_entry_mode: { type: "string", enum: ["duration", "start_end"] },
+      time_format: { type: "string", enum: ["decimal", "hours_minutes"] },
+      clock: { type: "string", enum: ["12h", "24h"] },
+    },
+    additionalProperties: false,
+  },
+  TimeEntrySettingsEnvelope: envelope("TimeEntrySettings"),
   TimeEntryNoteSettings: {
     type: "object",
     required: ["required", "minimum_length"],

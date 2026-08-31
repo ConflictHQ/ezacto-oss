@@ -9,6 +9,8 @@ import { Miniflare, NoOpLog } from 'miniflare'
 const listenHost = '127.0.0.1'
 const listenPort = 4173
 const cursorSigningKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+const fixtureControlPath = '/__ezacto_browser_fixture__/start-end'
+const fixtureControlHeader = 'start-end-round-trip'
 const fixtureEmail = process.env.EZACTO_BROWSER_FIXTURE_EMAIL
 const fixtureInstant = process.env.EZACTO_BROWSER_FIXTURE_INSTANT
 const fixtureTimeZone = process.env.EZACTO_BROWSER_FIXTURE_TIME_ZONE
@@ -112,6 +114,75 @@ const run = async (statement, ...bindings) => {
   await database.prepare(statement).bind(...bindings).run()
 }
 
+const fixtureControl = async (request, response) => {
+  if (
+    request.method !== 'POST' ||
+    request.headers['x-ezacto-browser-fixture-control'] !== fixtureControlHeader
+  ) {
+    response.statusCode = 404
+    response.end()
+    return
+  }
+  const chunks = []
+  let length = 0
+  for await (const chunk of request) {
+    length += chunk.length
+    if (length > 1_024) {
+      response.statusCode = 413
+      response.end()
+      return
+    }
+    chunks.push(chunk)
+  }
+  let action
+  try {
+    action = JSON.parse(Buffer.concat(chunks).toString('utf8')).action
+  } catch {
+    response.statusCode = 400
+    response.end()
+    return
+  }
+  if (action === 'seed') {
+    await database.batch([
+      database.prepare(
+        `UPDATE organizations
+         SET time_entry_mode = 'start_end', time_format = 'hours_minutes', clock = '12h'
+         WHERE id = 1`,
+      ),
+      database.prepare('DELETE FROM time_entries WHERE id = 900'),
+      database
+        .prepare(
+          `INSERT INTO time_entries (
+             id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+             spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+             billable_rate_cents, cost_rate_cents, started_time, ended_time, notes,
+             created_at, updated_at
+           ) VALUES (
+             900, 1, 1, 1, 1, 1, '2026-08-29', 30600, 30600, 30600, 1,
+             10000, 5000, '09:05', '17:35', 'Real D1 start/end entry', ?, ?
+           )`,
+        )
+        .bind(timestamp, timestamp),
+    ])
+  } else if (action === 'reset') {
+    await database.batch([
+      database.prepare('DELETE FROM time_entries WHERE id = 900'),
+      database.prepare(
+        `UPDATE organizations
+         SET time_entry_mode = 'duration', time_format = 'decimal', clock = '12h'
+         WHERE id = 1`,
+      ),
+    ])
+  } else {
+    response.statusCode = 400
+    response.end()
+    return
+  }
+  response.statusCode = 204
+  response.setHeader('cache-control', 'no-store')
+  response.end()
+}
+
 await run(
   `INSERT INTO clients (id, name, currency, created_at, updated_at)
    VALUES (1, 'Browser Acceptance Client', 'USD', ?, ?)`,
@@ -185,10 +256,14 @@ await run(
 )
 
 const proxyFetch = async (request, response) => {
+  const url = new URL(request.url ?? '/', `http://${listenHost}:${listenPort}`)
+  if (url.pathname === fixtureControlPath) {
+    await fixtureControl(request, response)
+    return
+  }
   const chunks = []
   for await (const chunk of request) chunks.push(chunk)
   const body = chunks.length === 0 ? undefined : Buffer.concat(chunks)
-  const url = new URL(request.url ?? '/', `http://${listenHost}:${listenPort}`)
   const upstream = await miniflare.dispatchFetch(url, {
     method: request.method,
     headers: request.headers,

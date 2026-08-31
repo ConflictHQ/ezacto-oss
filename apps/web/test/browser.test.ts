@@ -66,25 +66,42 @@ const timeEntry = (
   id: number,
   input: TimeEntryInput,
   minimumNoteLength = 0,
-): TimeEntry => ({
-  id,
-  user_id: 1,
-  project_id: input.project_id,
-  task_id: input.task_id,
-  spent_date: input.spent_date ?? '2026-08-28',
-  seconds: input.seconds ?? 0,
-  is_running: input.seconds === undefined,
-  timer_started_at: input.seconds === undefined ? timestamp : null,
-  notes: input.notes ?? null,
-  billable: true,
-  budgeted: false,
-  approval_status: 'unsubmitted',
-  is_billed: false,
-  is_locked: false,
-  minimum_note_length: minimumNoteLength,
-  created_at: timestamp,
-  updated_at: timestamp,
-})
+): TimeEntry => {
+  const running =
+    input.seconds === undefined &&
+    input.started_time === undefined &&
+    input.ended_time === undefined
+  const clockSeconds = (value: string): number => {
+    const [hours, minutes] = value.split(':').map(Number)
+    return hours! * 3_600 + minutes! * 60
+  }
+  const elapsed =
+    input.started_time === undefined || input.ended_time === undefined
+      ? 0
+      : (clockSeconds(input.ended_time) - clockSeconds(input.started_time) + 86_400) %
+        86_400
+  return {
+    id,
+    user_id: 1,
+    project_id: input.project_id,
+    task_id: input.task_id,
+    spent_date: input.spent_date ?? '2026-08-28',
+    seconds: input.seconds ?? elapsed,
+    is_running: running,
+    timer_started_at: running ? timestamp : null,
+    started_time: input.started_time ?? null,
+    ended_time: input.ended_time ?? null,
+    notes: input.notes ?? null,
+    billable: true,
+    budgeted: false,
+    approval_status: 'unsubmitted',
+    is_billed: false,
+    is_locked: false,
+    minimum_note_length: minimumNoteLength,
+    created_at: timestamp,
+    updated_at: timestamp,
+  }
+}
 
 const browserApi = (
   minimumNoteLength = 0,
@@ -93,6 +110,9 @@ const browserApi = (
   failNextCreate: boolean
   minimumNoteLength: number
   staleMinimumOnNextCreate: number | null
+  timeEntryMode: 'duration' | 'start_end'
+  timeFormat: 'decimal' | 'hours_minutes'
+  clock: '12h' | '24h'
 } => {
   const entries = [
     timeEntry(1, {
@@ -113,6 +133,9 @@ const browserApi = (
     failNextCreate: false,
     minimumNoteLength,
     staleMinimumOnNextCreate: null,
+    timeEntryMode: 'duration' as const,
+    timeFormat: 'decimal' as const,
+    clock: '12h' as const,
     whoami: vi.fn(async () => identity),
     signIn: vi.fn(async () => principal),
     logoutCurrentSession: vi.fn(async () => ({
@@ -133,6 +156,11 @@ const browserApi = (
       { project_id: 1, task_id: 1, minimum_note_length: api.minimumNoteLength },
       { project_id: 2, task_id: 2, minimum_note_length: api.minimumNoteLength },
     ]),
+    getTimeEntrySettings: vi.fn(async () => ({
+      time_entry_mode: api.timeEntryMode,
+      time_format: api.timeFormat,
+      clock: api.clock,
+    })),
     listTimeEntries: vi.fn(async (query) =>
       entries.filter((entry) => {
         if (query.is_running === true) return entry.is_running
@@ -469,14 +497,24 @@ describe('week-grid browser behavior', () => {
     }
     command.value = 'log 1h northpeak development'
     submitCommand()
-    await vi.waitFor(() =>
-      expect(document.querySelector('[data-command-result]')?.textContent).toContain(
-        'at least 5 characters',
-      ),
-    )
+    const entryDialog = document.querySelector<HTMLDialogElement>('[data-entry-dialog]')!
+    const entryNote = document.querySelector<HTMLTextAreaElement>('[data-entry-note-input]')!
+    await vi.waitFor(() => expect(entryDialog.open).toBe(true))
+    expect(entryDialog.dataset.entryContext).toBe('quick-add')
+    expect(entryNote.required).toBe(true)
+    expect(entryNote.minLength).toBe(5)
+    expect(document.activeElement).toBe(entryNote)
     expect(command.value).toBe('log 1h northpeak development')
     expect(api.createTimeEntry).not.toHaveBeenCalled()
+    document
+      .querySelector<HTMLFormElement>('[data-entry-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    expect(document.querySelector('[data-entry-result]')?.textContent).toContain(
+      'at least 5 characters',
+    )
+    entryDialog.querySelector<HTMLButtonElement>('[data-dialog-close]')!.click()
 
+    document.querySelector<HTMLButtonElement>('[data-command-trigger]')!.click()
     command.value = 'log 1h northpeak design enough detail'
     submitCommand()
     await vi.waitFor(() =>
@@ -490,6 +528,10 @@ describe('week-grid browser behavior', () => {
     command.dispatchEvent(new Event('input', { bubbles: true }))
     expect(document.querySelector('[data-command-result]')?.textContent).toBe('')
     submitCommand()
+    await vi.waitFor(() => expect(entryDialog.open).toBe(true))
+    document
+      .querySelector<HTMLFormElement>('[data-entry-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
     await vi.waitFor(() => expect(api.createTimeEntry).toHaveBeenCalledTimes(1))
 
     document.querySelector<HTMLButtonElement>('[data-timer-chip]')!.click()
@@ -541,6 +583,209 @@ describe('week-grid browser behavior', () => {
     await vi.waitFor(() => expect(timerDialog.open).toBe(false))
     expect(api.createTimeEntry).toHaveBeenLastCalledWith(
       expect.objectContaining({ notes: 'timer notes' }),
+      expect.any(AbortSignal),
+    )
+  })
+
+  it('[e2e:track-week] routes week, Day, K-bar, and edit through one editor instance', async () => {
+    renderBrowserShell()
+    const api = browserApi()
+    await mountShell(api)
+
+    const editor = document.querySelector<HTMLDialogElement>('[data-entry-dialog]')!
+    expect(document.querySelectorAll('[data-entry-dialog]')).toHaveLength(1)
+    expect(document.querySelectorAll('[data-entry-form]')).toHaveLength(1)
+    const closeEditor = (): void => {
+      editor.querySelector<HTMLButtonElement>('[data-dialog-close]')!.click()
+    }
+
+    document
+      .querySelector<HTMLButtonElement>(
+        '[data-week-grid] [data-cell-key="1:1:2026-08-24"] .cell-note',
+      )!
+      .click()
+    expect(editor.open).toBe(true)
+    expect(editor.dataset.entryContext).toBe('week-cell')
+    closeEditor()
+
+    document
+      .querySelector<HTMLButtonElement>(
+        '[data-day-list] [data-cell-key="1:1:2026-08-24"] .cell-note',
+      )!
+      .click()
+    expect(editor).toBe(document.querySelector('[data-entry-dialog]'))
+    expect(editor.dataset.entryContext).toBe('day')
+    closeEditor()
+
+    document.querySelector<HTMLButtonElement>('[data-command-trigger]')!.click()
+    const command = document.querySelector<HTMLInputElement>('[name="command"]')!
+    command.value = 'log 1h northpeak development context note'
+    document
+      .querySelector<HTMLFormElement>('[data-command-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(editor.open).toBe(true))
+    expect(editor).toBe(document.querySelector('[data-entry-dialog]'))
+    expect(editor.dataset.entryContext).toBe('quick-add')
+    closeEditor()
+
+    document
+      .querySelector<HTMLButtonElement>(
+        '[data-week-grid] [data-cell-key="1:1:2026-08-28"] .cell-note',
+      )!
+      .click()
+    expect(editor).toBe(document.querySelector('[data-entry-dialog]'))
+    expect(editor.dataset.entryContext).toBe('edit')
+  })
+
+  it('[e2e:track-week] displays 12-hour times and submits canonical start/end values', async () => {
+    renderBrowserShell()
+    const api = browserApi()
+    api.timeEntryMode = 'start_end'
+    api.timeFormat = 'hours_minutes'
+    api.clock = '12h'
+    api.entries.splice(
+      0,
+      api.entries.length,
+      timeEntry(1, {
+        project_id: 1,
+        task_id: 1,
+        spent_date: '2026-08-28',
+        started_time: '09:05',
+        ended_time: '17:35',
+      }),
+    )
+    await mountShell(api)
+
+    const existingInput = document.querySelector<HTMLInputElement>(
+      '[data-week-grid] [data-cell-key="1:1:2026-08-28"] input',
+    )!
+    expect(existingInput.disabled).toBe(true)
+    expect(existingInput.value).toBe('8:30')
+    document
+      .querySelector<HTMLButtonElement>(
+        '[data-week-grid] [data-cell-key="1:1:2026-08-28"] .cell-note',
+      )!
+      .click()
+    const start = document.querySelector<HTMLInputElement>('[data-entry-start]')!
+    const end = document.querySelector<HTMLInputElement>('[data-entry-end]')!
+    expect(start.value).toBe('9:05 AM')
+    expect(end.value).toBe('5:35 PM')
+    start.value = '10:15 PM'
+    end.value = '1:45 AM'
+    document
+      .querySelector<HTMLFormElement>('[data-entry-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(api.updateTimeEntry).toHaveBeenCalled())
+    expect(api.updateTimeEntry).toHaveBeenLastCalledWith(
+      1,
+      expect.objectContaining({
+        started_time: '22:15',
+        ended_time: '01:45',
+      }),
+      expect.any(AbortSignal),
+    )
+    expect(vi.mocked(api.updateTimeEntry).mock.lastCall?.[1]).not.toHaveProperty('seconds')
+
+    document
+      .querySelector<HTMLButtonElement>(
+        '[data-week-grid] [data-cell-key="1:1:2026-08-24"] .cell-note',
+      )!
+      .click()
+    start.value = '12:05 AM'
+    end.value = '12:35 AM'
+    document
+      .querySelector<HTMLFormElement>('[data-entry-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(api.createTimeEntry).toHaveBeenCalled())
+    expect(api.createTimeEntry).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        spent_date: '2026-08-24',
+        started_time: '00:05',
+        ended_time: '00:35',
+      }),
+      expect.any(AbortSignal),
+    )
+    expect(vi.mocked(api.createTimeEntry).mock.lastCall?.[0]).not.toHaveProperty('seconds')
+  })
+
+  it('[e2e:track-week] preserves exact sub-minute duration on note-only and no-op saves', async () => {
+    renderBrowserShell()
+    const api = browserApi()
+    api.timeFormat = 'hours_minutes'
+    api.entries.splice(
+      0,
+      api.entries.length,
+      timeEntry(1, {
+        project_id: 1,
+        task_id: 1,
+        spent_date: '2026-08-28',
+        seconds: 90,
+        notes: 'Exact duration',
+      }),
+    )
+    await mountShell(api)
+
+    const openExisting = (): void => {
+      document
+        .querySelector<HTMLButtonElement>(
+          '[data-week-grid] [data-cell-key="1:1:2026-08-28"] .cell-note',
+        )!
+        .click()
+    }
+    const submit = (): void => {
+      document
+        .querySelector<HTMLFormElement>('[data-entry-form]')!
+        .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    }
+    const dialog = document.querySelector<HTMLDialogElement>('[data-entry-dialog]')!
+
+    openExisting()
+    expect(document.querySelector<HTMLInputElement>('[data-entry-duration-input]')?.value).toBe(
+      '0:02',
+    )
+    document.querySelector<HTMLTextAreaElement>('[data-entry-note-input]')!.value =
+      'Note-only change'
+    submit()
+    await vi.waitFor(() => expect(dialog.open).toBe(false))
+    expect(vi.mocked(api.updateTimeEntry).mock.lastCall?.[1]).not.toHaveProperty('seconds')
+    expect(api.entries[0]).toMatchObject({ seconds: 90, notes: 'Note-only change' })
+
+    openExisting()
+    submit()
+    await vi.waitFor(() => expect(dialog.open).toBe(false))
+    expect(api.updateTimeEntry).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(api.updateTimeEntry).mock.lastCall?.[1]).not.toHaveProperty('seconds')
+    expect(api.entries[0]?.seconds).toBe(90)
+  })
+
+  it('[e2e:track-week] edits a running entry note without changing timer fields', async () => {
+    renderBrowserShell()
+    const api = browserApi()
+    api.entries[0] = timeEntry(1, {
+      project_id: 1,
+      task_id: 1,
+      spent_date: '2026-08-28',
+      notes: 'Initial running note',
+    })
+    await mountShell(api)
+
+    const noteButton = document.querySelector<HTMLButtonElement>(
+      '[data-week-grid] [data-cell-key="1:1:2026-08-28"] .cell-note',
+    )!
+    expect(noteButton.disabled).toBe(false)
+    noteButton.click()
+    const note = document.querySelector<HTMLTextAreaElement>('[data-entry-note-input]')!
+    expect(note.disabled).toBe(false)
+    expect(document.querySelector<HTMLButtonElement>('[data-entry-submit]')?.hidden).toBe(false)
+    expect(document.querySelector<HTMLButtonElement>('[data-stop-timer]')?.hidden).toBe(false)
+    note.value = 'Updated while running'
+    document
+      .querySelector<HTMLFormElement>('[data-entry-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(api.updateTimeEntry).toHaveBeenCalled())
+    expect(api.updateTimeEntry).toHaveBeenLastCalledWith(
+      1,
+      { notes: 'Updated while running' },
       expect.any(AbortSignal),
     )
   })

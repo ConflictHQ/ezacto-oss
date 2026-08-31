@@ -2,8 +2,18 @@ import {
   EzactoApiError,
   type GeneralResource,
   type InvoiceGenerationInput,
+  type TimeEntryInput,
+  type TimeEntryPatch,
   type Whoami,
 } from '@ezacto/client'
+import {
+  contextLabel,
+  formatTimeForClock,
+  modeForEntryDraft,
+  parseTimeForClock,
+  type EntryEditorContext,
+  type TimeEntryMode,
+} from '../components/time-entry-editor.js'
 import {
   buildWeekGrid,
   formatCellHours,
@@ -21,9 +31,8 @@ import {
   loadShellSnapshot,
   localDate,
   navigationDestination,
-  quickAdd,
+  prepareQuickAdd,
   runningElapsedSeconds,
-  startTimer,
   timeEntryNoteLength,
   weekRange,
   type DisplayTimeEntry,
@@ -56,6 +65,8 @@ interface AuthOperation {
 
 interface GridHandlers {
   readonly cellStates: Map<string, CellSaveState>
+  readonly organizationMode: TimeEntryMode
+  readonly organizationTimeFormat: 'decimal' | 'hours_minutes'
   commit(
     input: HTMLInputElement,
     cell: WeekGridCell,
@@ -63,13 +74,24 @@ interface GridHandlers {
     focus?: FocusTarget,
   ): Promise<boolean>
   retry(cell: WeekGridCell, view: GridView): Promise<void>
-  openNote(cell: WeekGridCell, view: GridView): void
+  openEntry(cell: WeekGridCell, view: GridView): void
 }
 
-interface ActiveNote {
-  readonly cell: WeekGridCell
-  readonly view: GridView
+interface ActiveEntryEditor {
+  readonly context: EntryEditorContext
+  readonly cell?: WeekGridCell
+  readonly view?: GridView
+  readonly entry: DisplayTimeEntry | null
+  readonly projectId: number
+  readonly taskId: number
+  readonly spentDate: string
+  readonly seconds: number
+  readonly notes: string | null
+  readonly mode: TimeEntryMode
+  readonly timer: boolean
   readonly minimumNoteLength: number
+  readonly initialDurationValue?: string
+  readonly durationWasEditedBeforeOpen?: boolean
 }
 
 const required = <ElementType extends Element>(selector: string): ElementType => {
@@ -212,22 +234,26 @@ const cellInput = (
   cell: WeekGridCell,
   view: GridView,
   state: CellSaveState | undefined,
+  organizationMode: TimeEntryMode,
+  organizationTimeFormat: 'decimal' | 'hours_minutes',
 ): HTMLInputElement => {
   const input = document.createElement('input')
   input.type = 'text'
   input.inputMode = 'decimal'
   input.autocomplete = 'off'
   input.dataset.cellKey = cell.key
-  input.dataset.savedValue = formatCellHours(cell.totalSeconds)
+  input.dataset.savedValue = formatCellHours(cell.totalSeconds, organizationTimeFormat)
   input.dataset.view = view
   input.value = state?.rawValue ?? input.dataset.savedValue
   input.ariaLabel = `${dayLabel(cell.date)} hours`
   input.placeholder = '0'
-  input.disabled = cell.isConflict || cell.isLocked || cell.isRunning
+  const mode = modeForEntryDraft(cell.entries[0] ?? null, organizationMode)
+  input.disabled = cell.isConflict || cell.isLocked || cell.isRunning || mode === 'start_end'
   if (cell.isConflict)
     input.title = 'Multiple entries share this cell. Open Day view to edit them separately.'
   if (cell.isLocked) input.title = 'This entry is locked.'
   if (cell.isRunning) input.title = 'Stop the running timer before editing this cell.'
+  if (mode === 'start_end') input.title = 'Open entry details to edit start and end times.'
   return input
 }
 
@@ -258,7 +284,13 @@ const renderCellControl = (
   status.className = 'cell-status'
   status.setAttribute('role', 'status')
 
-  const input = cellInput(cell, view, state)
+  const input = cellInput(
+    cell,
+    view,
+    state,
+    handlers.organizationMode,
+    handlers.organizationTimeFormat,
+  )
   input.addEventListener('input', () => {
     const current = handlers.cellStates.get(cell.key)
     const dirty: CellSaveState = {
@@ -288,11 +320,15 @@ const renderCellControl = (
   note.type = 'button'
   note.className = 'cell-note'
   note.dataset.noteCell = cell.key
-  note.ariaLabel = `${currentNotes === null ? 'Add' : 'Edit'} note for ${noteContext} on ${dayLabel(cell.date)}${minimumNoteLength > 0 ? `; at least ${minimumNoteLength} characters required` : ''}`
-  note.title = currentNotes ?? (minimumNoteLength > 0 ? noteHint(minimumNoteLength) : 'Add note')
+  note.ariaLabel = `${cell.entries.length === 0 ? 'Add time' : currentNotes === null ? 'Add note' : 'Edit note'} for ${noteContext} on ${dayLabel(cell.date)}${minimumNoteLength > 0 ? `; at least ${minimumNoteLength} characters required` : ''}`
+  note.title = currentNotes ?? (minimumNoteLength > 0 ? noteHint(minimumNoteLength) : cell.entries.length === 0 ? 'Add time' : 'Add note')
   note.textContent = currentNotes === null ? '+' : '•'
-  note.disabled = cell.entries.length !== 1 || cell.isConflict || cell.isLocked || cell.isRunning
-  note.addEventListener('click', () => handlers.openNote(cell, view))
+  note.disabled =
+    cell.entries.length > 1 ||
+    cell.isConflict ||
+    cell.isLocked ||
+    state?.state === 'saving'
+  note.addEventListener('click', () => handlers.openEntry(cell, view))
   wrapper.append(note)
 
   status.textContent = cell.isConflict
@@ -650,20 +686,28 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const logout = required<HTMLButtonElement>('[data-logout]')
   const logoutResult = required<HTMLElement>('[data-logout-result]')
   const commandDialog = required<HTMLDialogElement>('[data-command-dialog]')
-  const timerDialog = required<HTMLDialogElement>('[data-timer-dialog]')
+  const entryDialog = required<HTMLDialogElement>('[data-entry-dialog]')
+  const entryContext = required<HTMLElement>('[data-entry-context]')
+  const entryTitle = required<HTMLElement>('[data-entry-title]')
   const menuDialog = required<HTMLDialogElement>('[data-menu-dialog]')
   const rowDialog = required<HTMLDialogElement>('[data-row-dialog]')
-  const noteDialog = required<HTMLDialogElement>('[data-note-dialog]')
   const commandForm = required<HTMLFormElement>('[data-command-form]')
-  const timerForm = required<HTMLFormElement>('[data-timer-form]')
+  const entryForm = required<HTMLFormElement>('[data-entry-form]')
   const rowForm = required<HTMLFormElement>('[data-row-form]')
-  const noteForm = required<HTMLFormElement>('[data-note-form]')
-  const noteInput = required<HTMLTextAreaElement>('[data-note-input]')
-  const noteResult = required<HTMLElement>('[data-note-result]')
-  const noteHintElement = required<HTMLElement>('[data-note-hint]')
-  const timerNoteInput = required<HTMLTextAreaElement>('[data-timer-note]')
-  const timerNoteHint = required<HTMLElement>('[data-timer-note-hint]')
-  const timerResult = required<HTMLElement>('[data-timer-result]')
+  const entryProject = required<HTMLInputElement>('[data-entry-project]')
+  const entryTask = required<HTMLInputElement>('[data-entry-task]')
+  const entryDate = required<HTMLInputElement>('[data-entry-date]')
+  const entryDuration = required<HTMLElement>('[data-entry-duration]')
+  const entryDurationInput = required<HTMLInputElement>('[data-entry-duration-input]')
+  const entryTimes = required<HTMLElement>('[data-entry-times]')
+  const entryStart = required<HTMLInputElement>('[data-entry-start]')
+  const entryEnd = required<HTMLInputElement>('[data-entry-end]')
+  const entryRunning = required<HTMLElement>('[data-entry-running]')
+  const entryNoteInput = required<HTMLTextAreaElement>('[data-entry-note-input]')
+  const entryNoteHint = required<HTMLElement>('[data-entry-note-hint]')
+  const entryResult = required<HTMLElement>('[data-entry-result]')
+  const entrySubmit = required<HTMLButtonElement>('[data-entry-submit]')
+  const stopTimer = required<HTMLButtonElement>('[data-stop-timer]')
   const invoiceForm = required<HTMLFormElement>('[data-invoice-generation-form]')
   const invoiceClient = required<HTMLSelectElement>('[data-invoice-client]')
   const invoiceProjects = required<HTMLElement>('[data-invoice-projects]')
@@ -685,7 +729,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   let selectedDay = Math.max(0, weekDates(within).indexOf(localDate()))
   let snapshot: ShellSnapshot | null = null
   let grid: WeekGrid | null = null
-  let activeNote: ActiveNote | null = null
+  let activeEntry: ActiveEntryEditor | null = null
   let currentIdentity: Whoami | null = null
   let signingIn = false
   let signingOut = false
@@ -798,19 +842,16 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const clearFormState = (): void => {
     signInForm.reset()
     commandForm.reset()
-    timerForm.reset()
+    entryForm.reset()
     rowForm.reset()
-    noteForm.reset()
     invoiceForm.reset()
-    configureNoteInput(noteInput, noteHintElement, 0)
-    configureNoteInput(timerNoteInput, timerNoteHint, 0)
+    configureNoteInput(entryNoteInput, entryNoteHint, 0)
     required<HTMLSelectElement>('[data-row-project]').replaceChildren()
     required<HTMLSelectElement>('[data-row-task]').replaceChildren()
     required<HTMLElement>('[data-command-result]').textContent = ''
-    timerResult.textContent = ''
+    entryResult.textContent = ''
     required<HTMLElement>('[data-row-result]').textContent = ''
-    noteResult.textContent = ''
-    required<HTMLElement>('[data-note-title]').textContent = 'Add a note'
+    entryTitle.textContent = 'Log time'
     required<HTMLElement>('[data-current-user-id]').textContent = '—'
     required<HTMLElement>('[data-current-profile]').textContent = '—'
     required<HTMLElement>('[data-timer-label]').textContent = 'Timer'
@@ -827,12 +868,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     invoiceCatalog = null
     setInvoiceFormPending(false)
     invoiceCommandId = null
-    activeNote = null
+    activeEntry = null
     supplementalRows = []
     snapshot = null
     grid = null
     cellStates.clear()
-    for (const dialog of [commandDialog, timerDialog, menuDialog, rowDialog, noteDialog]) {
+    for (const dialog of [commandDialog, entryDialog, menuDialog, rowDialog]) {
       if (dialog.open) dialog.close()
     }
     if (timerInterval !== undefined) {
@@ -983,9 +1024,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     required<HTMLElement>('[data-week-total]').textContent = formatSeconds(grid.totalSeconds)
     const handlers: GridHandlers = {
       cellStates,
+      organizationMode: snapshot.timeEntrySettings.time_entry_mode,
+      organizationTimeFormat: snapshot.timeEntrySettings.time_format,
       commit: commitCell,
       retry: retryCell,
-      openNote,
+      openEntry,
     }
     renderDesktopGrid(grid, handlers)
     renderPhoneDay(grid, selectedDay, handlers)
@@ -1139,7 +1182,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
           minimumNoteLength,
         })
         render()
-        openNote(cell, view, noteRequirementMessage(minimumNoteLength))
+        openEntry(cell, view, noteRequirementMessage(minimumNoteLength))
         return false
       }
     } catch {
@@ -1174,7 +1217,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
           minimumNoteLength: currentMinimum,
         })
         render()
-        openNote(
+        openEntry(
           cell,
           view,
           `The note policy changed. ${noteRequirementMessage(currentMinimum)}`,
@@ -1229,7 +1272,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
           minimumNoteLength: currentMinimum,
         })
         render()
-        openNote(
+        openEntry(
           cell,
           view,
           `The note policy changed. ${noteRequirementMessage(currentMinimum)}`,
@@ -1254,7 +1297,106 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
   }
 
-  function openNote(
+  const editorResourceId = (
+    kind: 'project' | 'task',
+    value: string,
+    fallback: number,
+  ): number | null => {
+    if (snapshot === null) return null
+    const resources = kind === 'project' ? snapshot.catalog.projects : snapshot.catalog.tasks
+    const wanted = value.trim().toLocaleLowerCase('en-US')
+    const candidates = (resource: GeneralResource): string[] => [
+      String(resource.id),
+      ...['name', 'code'].flatMap((field) => {
+        const candidate = resource[field]
+        return typeof candidate === 'string' && candidate.trim() !== ''
+          ? [candidate.trim()]
+          : []
+      }),
+    ]
+    const matches = resources.filter((resource) =>
+      candidates(resource).some(
+        (candidate) => candidate.toLocaleLowerCase('en-US') === wanted,
+      ),
+    )
+    if (matches.length === 1) return matches[0]!.id
+    const fallbackResource = resources.find((resource) => resource.id === fallback)
+    return fallbackResource !== undefined && candidates(fallbackResource).includes(value.trim())
+      ? fallback
+      : null
+  }
+
+  const configureEntryEditor = (
+    next: ActiveEntryEditor,
+    message = '',
+    durationValue?: string,
+  ): void => {
+    if (snapshot === null) return
+    const initialDurationValue =
+      durationValue ?? formatCellHours(next.seconds, snapshot.timeEntrySettings.time_format)
+    activeEntry = { ...next, initialDurationValue }
+    entryDialog.dataset.entryContext = next.context
+    entryContext.textContent =
+      next.context === 'timer' ? 'Global timer' : 'Time entry'
+    entryTitle.textContent = contextLabel(
+      next.context,
+      next.entry !== null,
+    )
+    const project = snapshot.catalog.projects.find((resource) => resource.id === next.projectId)
+    const task = snapshot.catalog.tasks.find((resource) => resource.id === next.taskId)
+    entryProject.value = project === undefined ? String(next.projectId) : resourceLabel(project)
+    entryTask.value = task === undefined ? String(next.taskId) : resourceLabel(task)
+    entryDate.value = next.spentDate
+    entryDurationInput.value = initialDurationValue
+    entryStart.value =
+      next.entry?.started_time === null || next.entry?.started_time === undefined
+        ? ''
+        : formatTimeForClock(next.entry.started_time, snapshot.timeEntrySettings.clock)
+    entryEnd.value =
+      next.entry?.ended_time === null || next.entry?.ended_time === undefined
+        ? ''
+        : formatTimeForClock(next.entry.ended_time, snapshot.timeEntrySettings.clock)
+    entryStart.placeholder = snapshot.timeEntrySettings.clock === '12h' ? '9:00 AM' : '09:00'
+    entryEnd.placeholder = snapshot.timeEntrySettings.clock === '12h' ? '5:00 PM' : '17:00'
+    entryNoteInput.value = next.notes ?? ''
+    configureNoteInput(entryNoteInput, entryNoteHint, next.minimumNoteLength)
+    const running = next.entry?.is_running === true
+    entryDuration.hidden = next.mode !== 'duration' || next.timer || running
+    entryTimes.hidden = next.mode !== 'start_end' || next.timer || running
+    entryRunning.hidden = !running
+    const immutable = running || next.entry?.is_locked === true
+    for (const field of [
+      entryProject,
+      entryTask,
+      entryDate,
+      entryDurationInput,
+      entryStart,
+      entryEnd,
+    ]) field.disabled = immutable
+    entryNoteInput.disabled = next.entry?.is_locked === true
+    entrySubmit.hidden = next.entry?.is_locked === true
+    entrySubmit.textContent = running
+      ? 'Save note'
+      : next.timer
+        ? 'Start timer'
+        : next.entry === null
+          ? 'Log time'
+          : 'Save entry'
+    stopTimer.hidden = !running
+    entryResult.textContent = message
+    open(entryDialog)
+    ;(running ||
+    (next.minimumNoteLength > 0 && timeEntryNoteLength(next.notes) < next.minimumNoteLength)
+      ? entryNoteInput
+      : next.mode === 'start_end' && !next.timer
+        ? entryStart
+        : next.mode === 'duration' && !next.timer
+          ? entryDurationInput
+          : entryProject
+    ).focus()
+  }
+
+  function openEntry(
     cell: WeekGridCell,
     view: GridView,
     message = '',
@@ -1262,27 +1404,37 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const state = cellStates.get(cell.key)
     if (
       currentIdentity === null ||
+      state?.state === 'saving' ||
       cell.entries.length > 1 ||
       cell.isConflict ||
       cell.isLocked ||
-      cell.isRunning
+      snapshot === null
     )
       return
     const minimumNoteLength = effectiveMinimumNoteLength(cell, state)
-    activeNote = { cell, view, minimumNoteLength }
-    const project = snapshot?.catalog.projects.find(
-      (candidate) => candidate.id === cell.projectId,
+    const entry = cell.entries[0] ?? null
+    configureEntryEditor(
+      {
+        context: view === 'phone' ? 'day' : entry === null ? 'week-cell' : 'edit',
+        cell,
+        view,
+        entry,
+        projectId: cell.projectId,
+        taskId: cell.taskId,
+        spentDate: cell.date,
+        seconds: cell.totalSeconds,
+        notes: notesForCell(cell, state),
+        mode: modeForEntryDraft(entry, snapshot.timeEntrySettings.time_entry_mode),
+        timer: false,
+        minimumNoteLength,
+        durationWasEditedBeforeOpen:
+          state?.rawValue !== undefined &&
+          state.rawValue !==
+            formatCellHours(cell.totalSeconds, snapshot.timeEntrySettings.time_format),
+      },
+      message,
+      state?.rawValue,
     )
-    const projectLabel =
-      cell.entries[0]?.project_label ??
-      (project === undefined ? `#${cell.projectId}` : resourceLabel(project))
-    required<HTMLElement>('[data-note-title]').textContent =
-      `${dayLabel(cell.date)} · ${projectLabel}`
-    noteInput.value = notesForCell(cell, state) ?? ''
-    configureNoteInput(noteInput, noteHintElement, minimumNoteLength)
-    noteResult.textContent = message
-    open(noteDialog)
-    noteInput.focus()
   }
 
   for (const trigger of document.querySelectorAll<HTMLElement>('[data-command-trigger]')) {
@@ -1291,7 +1443,35 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     })
   }
   required<HTMLButtonElement>('[data-timer-chip]').addEventListener('click', () => {
-    if (currentIdentity !== null) open(timerDialog)
+    if (currentIdentity === null || snapshot === null) return
+    if (snapshot.running !== null) {
+      const running = snapshot.running
+      configureEntryEditor({
+        context: 'timer',
+        entry: running,
+        projectId: running.project_id,
+        taskId: running.task_id,
+        spentDate: running.spent_date,
+        seconds: running.seconds,
+        notes: running.notes ?? null,
+        mode: modeForEntryDraft(running, snapshot.timeEntrySettings.time_entry_mode),
+        timer: false,
+        minimumNoteLength: running.minimum_note_length,
+      })
+      return
+    }
+    configureEntryEditor({
+      context: 'timer',
+      entry: null,
+      projectId: snapshot.catalog.timeEntryOptions[0]?.project_id ?? 0,
+      taskId: snapshot.catalog.timeEntryOptions[0]?.task_id ?? 0,
+      spentDate: localDate(),
+      seconds: 0,
+      notes: null,
+      mode: snapshot.timeEntrySettings.time_entry_mode,
+      timer: true,
+      minimumNoteLength: snapshot.catalog.timeEntryOptions[0]?.minimum_note_length ?? 0,
+    })
   })
   required<HTMLButtonElement>('[data-menu-trigger]').addEventListener('click', () =>
     open(menuDialog),
@@ -1325,13 +1505,24 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       globalThis.location.assign(destination)
       return
     }
-    result.textContent = 'Logging time…'
-    void quickAdd(api, command, new Date(), operation.signal)
-      .then(async (entry) => {
-        if (!isSessionCurrent(operation)) return
-        if (!(await refresh(operation))) return
-        result.textContent = `Logged ${formatSeconds(entry.seconds)}.`
-        document.dispatchEvent(new CustomEvent('ezacto:time-entry-created', { detail: entry }))
+    result.textContent = 'Preparing entry…'
+    void prepareQuickAdd(api, command, new Date(), operation.signal)
+      .then((draft) => {
+        if (!isSessionCurrent(operation) || snapshot === null) return
+        commandDialog.close()
+        configureEntryEditor({
+          context: 'quick-add',
+          entry: null,
+          projectId: draft.input.project_id,
+          taskId: draft.input.task_id,
+          spentDate: draft.input.spent_date ?? localDate(),
+          seconds: draft.input.seconds ?? 0,
+          notes: draft.input.notes ?? null,
+          mode: snapshot.timeEntrySettings.time_entry_mode,
+          timer: false,
+          minimumNoteLength: draft.minimumNoteLength,
+        })
+        result.textContent = ''
       })
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return
@@ -1347,83 +1538,189 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     required<HTMLElement>('[data-command-result]').textContent = ''
   })
 
-  timerForm.addEventListener('submit', (event) => {
+  entryForm.addEventListener('submit', (event) => {
     event.preventDefault()
     const operation = sessionOperation()
-    if (operation === null) return
-    const result = required<HTMLElement>('[data-timer-result]')
-    const form = new FormData(timerForm)
-    const project = form.get('project')
-    const task = form.get('task')
-    const notes = form.get('notes')
+    if (operation === null || activeEntry === null || snapshot === null) return
+    const editor = activeEntry
+    const projectValue = entryProject.value
+    const taskValue = entryTask.value
+    const notes = entryNoteInput.value
+    const projectId = editorResourceId('project', projectValue, editor.projectId)
+    const taskId = editorResourceId('task', taskValue, editor.taskId)
+    const selectedOption = snapshot.catalog.timeEntryOptions.find(
+      (option) => option.project_id === projectId && option.task_id === taskId,
+    )
+    const sameExistingAssignment =
+      editor.entry !== null &&
+      projectId === editor.entry.project_id &&
+      taskId === editor.entry.task_id
     if (
-      typeof project !== 'string' ||
-      typeof task !== 'string' ||
-      typeof notes !== 'string'
-    )
+      projectId === null ||
+      taskId === null ||
+      (selectedOption === undefined && !sameExistingAssignment)
+    ) {
+      entryResult.textContent = 'That project/task combination is not available.'
       return
-    result.textContent = 'Starting timer…'
-    void startTimer(
-      api,
-      project,
-      task,
-      operation.signal,
-      notes.trim() === '' ? undefined : notes,
+    }
+    const minimumNoteLength = Math.max(
+      editor.minimumNoteLength,
+      selectedOption?.minimum_note_length ?? 0,
     )
+    if (timeEntryNoteLength(notes) < minimumNoteLength) {
+      activeEntry = { ...editor, minimumNoteLength }
+      configureNoteInput(entryNoteInput, entryNoteHint, minimumNoteLength)
+      entryResult.textContent = noteRequirementMessage(minimumNoteLength)
+      entryNoteInput.focus()
+      return
+    }
+    const running = editor.entry?.is_running === true
+    let timing: Pick<TimeEntryInput, 'seconds' | 'started_time' | 'ended_time'>
+    try {
+      if (editor.timer || running) timing = {}
+      else if (editor.mode === 'duration') {
+        const durationChanged =
+          editor.durationWasEditedBeforeOpen === true ||
+          entryDurationInput.value !== editor.initialDurationValue
+        if (editor.entry !== null && !durationChanged) {
+          timing = {}
+        } else {
+          const seconds = parseCellSeconds(entryDurationInput.value)
+          if (seconds < 1) throw new Error('duration must be greater than zero')
+          timing = { seconds }
+        }
+      } else {
+        timing = {
+          started_time: parseTimeForClock(
+            entryStart.value,
+            snapshot.timeEntrySettings.clock,
+          ),
+          ended_time: parseTimeForClock(
+            entryEnd.value,
+            snapshot.timeEntrySettings.clock,
+          ),
+        }
+      }
+    } catch (error) {
+      entryResult.textContent = messageFor(error)
+      ;(editor.mode === 'start_end' ? entryStart : entryDurationInput).focus()
+      return
+    }
+    const common = {
+      project_id: projectId,
+      task_id: taskId,
+      notes: notes.trim() === '' ? null : notes,
+    }
+    const request = editor.entry === null
+      ? api.createTimeEntry(
+          editor.timer
+            ? common
+            : { ...common, spent_date: entryDate.value, ...timing },
+          operation.signal,
+        )
+      : api.updateTimeEntry(
+          editor.entry.id,
+          running
+            ? { notes: common.notes }
+            : {
+                ...common,
+                spent_date: entryDate.value,
+                ...timing,
+              } satisfies TimeEntryPatch,
+          operation.signal,
+        )
+    entryResult.textContent = editor.timer ? 'Starting timer…' : 'Saving entry…'
+    entrySubmit.disabled = true
+    void request
       .then(async (entry) => {
         if (!isSessionCurrent(operation)) return
         if (!(await refresh(operation))) return
-        result.textContent = 'Timer started.'
-        timerDialog.close()
-        document.dispatchEvent(new CustomEvent('ezacto:time-entry-created', { detail: entry }))
+        if (editor.cell !== undefined) cellStates.delete(editor.cell.key)
+        if (editor.timer) entryResult.textContent = 'Timer started.'
+        entryDialog.close()
+        activeEntry = null
+        if (editor.entry === null) {
+          document.dispatchEvent(new CustomEvent('ezacto:time-entry-created', { detail: entry }))
+        }
       })
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return
         const minimumNoteLength = requiredMinimumFromError(error)
         if (minimumNoteLength === null) {
-          result.textContent = messageFor(error)
+          entryResult.textContent = messageFor(error)
           return
         }
-        configureNoteInput(
-          timerNoteInput,
-          timerNoteHint,
-          minimumNoteLength,
-        )
-        result.textContent = noteRequirementMessage(minimumNoteLength)
-        timerNoteInput.focus()
+        activeEntry = { ...editor, minimumNoteLength }
+        configureNoteInput(entryNoteInput, entryNoteHint, minimumNoteLength)
+        entryResult.textContent = `The note policy changed. ${noteRequirementMessage(minimumNoteLength)}`
+        entryNoteInput.focus()
+      })
+      .finally(() => {
+        if (isSessionCurrent(operation) && entryDialog.open) entrySubmit.disabled = false
       })
   })
 
-  for (const input of timerForm.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
+  for (const input of entryForm.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
     'input, textarea',
   )) {
     input.addEventListener('input', () => {
-      timerResult.textContent = ''
-      if (input !== timerNoteInput) {
-        configureNoteInput(timerNoteInput, timerNoteHint, 0)
+      entryResult.textContent = ''
+      if (
+        activeEntry !== null &&
+        snapshot !== null &&
+        (input === entryProject || input === entryTask)
+      ) {
+        const projectId = editorResourceId(
+          'project',
+          entryProject.value,
+          activeEntry.projectId,
+        )
+        const taskId = editorResourceId('task', entryTask.value, activeEntry.taskId)
+        const option = snapshot.catalog.timeEntryOptions.find(
+          (candidate) =>
+            candidate.project_id === projectId && candidate.task_id === taskId,
+        )
+        if (option !== undefined) {
+          activeEntry = {
+            ...activeEntry,
+            projectId: option.project_id,
+            taskId: option.task_id,
+            minimumNoteLength: option.minimum_note_length,
+          }
+          configureNoteInput(
+            entryNoteInput,
+            entryNoteHint,
+            option.minimum_note_length,
+          )
+        }
       }
     })
   }
 
-  required<HTMLButtonElement>('[data-stop-timer]').addEventListener('click', () => {
+  stopTimer.addEventListener('click', () => {
     const operation = sessionOperation()
     if (operation === null) return
-    const result = required<HTMLElement>('[data-timer-result]')
-    if (snapshot?.running === null || snapshot === null) {
-      result.textContent = 'No timer is running.'
+    const running = activeEntry?.entry
+    if (running?.is_running !== true) {
+      entryResult.textContent = 'No timer is running.'
       return
     }
-    result.textContent = 'Stopping timer…'
+    entryResult.textContent = 'Stopping timer…'
+    stopTimer.disabled = true
     void api
-      .stopTimeEntry(snapshot.running.id, operation.signal)
+      .stopTimeEntry(running.id, operation.signal)
       .then(async () => {
         if (!isSessionCurrent(operation)) return
         if (!(await refresh(operation))) return
-        result.textContent = 'Timer stopped.'
+        entryDialog.close()
+        activeEntry = null
       })
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return
-        result.textContent = messageFor(error)
+        entryResult.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (isSessionCurrent(operation)) stopTimer.disabled = false
       })
   })
 
@@ -1480,50 +1777,6 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   })
   required<HTMLSelectElement>('[data-row-project]').addEventListener('change', (event) => {
     updateRowTaskOptions(Number((event.currentTarget as HTMLSelectElement).value))
-  })
-
-  noteForm.addEventListener('submit', (event) => {
-    event.preventDefault()
-    const operation = sessionOperation()
-    if (operation === null || activeNote === null) return
-    const notes = new FormData(noteForm).get('notes')
-    if (typeof notes !== 'string') return
-    if (timeEntryNoteLength(notes) < activeNote.minimumNoteLength) {
-      noteResult.textContent = noteRequirementMessage(
-        activeNote.minimumNoteLength,
-      )
-      noteInput.focus()
-      return
-    }
-    const input = [...document.querySelectorAll<HTMLInputElement>('input[data-cell-key]')].find(
-      (candidate) =>
-        candidate.dataset.cellKey === activeNote?.cell.key &&
-        candidate.dataset.view === activeNote?.view,
-    )
-    if (input === undefined) return
-    cellStates.set(activeNote.cell.key, {
-      state: 'dirty',
-      rawValue: input.value,
-      notes: notes.trim() === '' ? null : notes,
-      minimumNoteLength: activeNote.minimumNoteLength,
-    })
-    noteResult.textContent = 'Saving note…'
-    void commitCell(input, activeNote.cell, activeNote.view, {
-      key: activeNote.cell.key,
-      view: activeNote.view,
-    }).then((saved) => {
-      if (!isSessionCurrent(operation)) return
-      if (saved) {
-        noteResult.textContent = 'Saved.'
-        noteDialog.close()
-        activeNote = null
-      } else if (noteResult.textContent === 'Saving note…') {
-        noteResult.textContent = 'The note was not saved. Use Retry in the cell.'
-      }
-    })
-  })
-  noteInput.addEventListener('input', () => {
-    noteResult.textContent = ''
   })
 
   const moveWeek = (days: number): void => {

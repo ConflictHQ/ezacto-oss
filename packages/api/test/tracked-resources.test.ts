@@ -303,6 +303,34 @@ for (const [runtime, factory] of factories) {
       return active
     }
 
+    it('[api] exposes organization time-entry mode and display settings', async () => {
+      const test = await setup()
+      const initial = await test.request('/api/v1/time-entry-settings')
+      expect(initial.status).toBe(200)
+      expect(initial.headers.get('cache-control')).toBe('no-store')
+      expect(await initial.json()).toEqual({
+        data: {
+          time_entry_mode: 'duration',
+          time_format: 'decimal',
+          clock: '12h',
+        },
+        links: { self: '/api/v1/time-entry-settings' },
+      })
+
+      await test.database.run(
+        `UPDATE organizations
+         SET time_entry_mode = 'start_end', time_format = 'hours_minutes', clock = '24h'
+         WHERE id = 1`,
+      )
+      expect(
+        await data(await test.request('/api/v1/time-entry-settings')),
+      ).toEqual({
+        time_entry_mode: 'start_end',
+        time_format: 'hours_minutes',
+        clock: '24h',
+      })
+    })
+
     it('[api] lists only active time-entry project/task options for the member', async () => {
       const test = await setup()
       await test.database.run(

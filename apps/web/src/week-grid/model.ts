@@ -153,9 +153,16 @@ export const buildWeekGrid = (
   }
 }
 
-export const formatCellHours = (seconds: number): string => {
+export const formatCellHours = (
+  seconds: number,
+  timeFormat: 'decimal' | 'hours_minutes' = 'decimal',
+): string => {
   if (!Number.isSafeInteger(seconds) || seconds < 0) throw new Error('invalid cell seconds')
   if (seconds === 0) return ''
+  if (timeFormat === 'hours_minutes') {
+    const totalMinutes = Math.round(seconds / 60)
+    return `${Math.floor(totalMinutes / 60)}:${String(totalMinutes % 60).padStart(2, '0')}`
+  }
   const hours = seconds / 3_600
   return Number.isInteger(hours)
     ? String(hours)

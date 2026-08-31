@@ -161,6 +161,18 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
       })
       return
     }
+    if (path === '/api/v1/time-entry-settings') {
+      protectedRequests.push(path)
+      await fulfillJson(route, {
+        data: {
+          time_entry_mode: 'duration',
+          time_format: 'decimal',
+          clock: '12h',
+        },
+        links: { self: '/api/v1/time-entry-settings' },
+      })
+      return
+    }
     if (
       path === '/api/v1/projects' ||
       path === '/api/v1/tasks' ||
@@ -265,6 +277,224 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
   const desktopCard = await page.locator('.auth-card').boundingBox()
   expect(desktopCard).not.toBeNull()
   expect(desktopCard!.x + desktopCard!.width).toBeLessThanOrEqual(1280)
+})
+
+test('[e2e:track-week] uses one editor and submits 12-hour UI times as canonical HH:MM', async ({
+  page,
+}) => {
+  const resources = {
+    project: {
+      id: 1,
+      name: 'Run',
+      code: 'RUN',
+      created_at: timestamp,
+      updated_at: timestamp,
+    },
+    task: {
+      id: 1,
+      name: 'RuntimeTask',
+      created_at: timestamp,
+      updated_at: timestamp,
+    },
+  }
+  let entry = {
+    id: 1,
+    user_id: 7,
+    project_id: 1,
+    task_id: 1,
+    spent_date: '2026-08-30',
+    seconds: 30_600,
+    is_running: false,
+    timer_started_at: null,
+    started_time: '09:05',
+    ended_time: '17:35',
+    notes: 'Start/end browser entry',
+    billable: true,
+    budgeted: false,
+    approval_status: 'unsubmitted',
+    is_billed: false,
+    is_locked: false,
+    minimum_note_length: 0,
+    created_at: timestamp,
+    updated_at: timestamp,
+  }
+  let updateBody: unknown
+
+  await page.route('https://fonts.googleapis.com/**', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/css', body: '' }),
+  )
+  await page.route('**/api/v1/**', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    if (url.pathname === '/api/v1/whoami') {
+      await fulfillJson(route, {
+        data: {
+          user_id: 7,
+          profile: 'administrator',
+          manager_grants: [],
+          authentication: { kind: 'session' },
+        },
+      })
+      return
+    }
+    if (url.pathname === '/api/v1/projects') {
+      await fulfillJson(route, {
+        data: [resources.project],
+        page: { next_cursor: null },
+        links: { next: null },
+      })
+      return
+    }
+    if (url.pathname === '/api/v1/tasks') {
+      await fulfillJson(route, {
+        data: [resources.task],
+        page: { next_cursor: null },
+        links: { next: null },
+      })
+      return
+    }
+    if (url.pathname === '/api/v1/time-entry-options') {
+      await fulfillJson(route, {
+        data: [{ project_id: 1, task_id: 1, minimum_note_length: 0 }],
+        links: { self: '/api/v1/time-entry-options' },
+      })
+      return
+    }
+    if (url.pathname === '/api/v1/time-entry-settings') {
+      await fulfillJson(route, {
+        data: {
+          time_entry_mode: 'start_end',
+          time_format: 'hours_minutes',
+          clock: '12h',
+        },
+        links: { self: '/api/v1/time-entry-settings' },
+      })
+      return
+    }
+    if (url.pathname === '/api/v1/time-entries/1' && request.method() === 'PATCH') {
+      updateBody = request.postDataJSON()
+      entry = { ...entry, ...(updateBody as object) }
+      await fulfillJson(route, { data: entry, links: { self: '/api/v1/time-entries/1' } })
+      return
+    }
+    if (url.pathname === '/api/v1/time-entries') {
+      const data = url.searchParams.get('is_running') === 'true' ? [] : [entry]
+      await fulfillJson(route, {
+        data,
+        page: { next_cursor: null },
+        links: { next: null },
+      })
+      return
+    }
+    await fulfillJson(route, { error: { code: 'unexpected_test_request' } }, 500)
+  })
+
+  await page.goto('/?view=day&week=2026-08-30')
+  const editor = page.locator('[data-entry-dialog]')
+  await expect(editor).toHaveCount(1)
+  await expect(page.locator('[data-entry-form]')).toHaveCount(1)
+
+  await page
+    .locator('[data-day-list] [data-cell-key="1:1:2026-08-30"] .cell-note')
+    .click()
+  await expect(editor).toHaveAttribute('data-entry-context', 'day')
+  await editor.getByRole('button', { name: 'Close' }).click()
+
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.evaluate(() => {
+    document.documentElement.dataset.timeView = 'week'
+  })
+  await page
+    .locator('[data-week-grid] [data-cell-key="1:1:2026-08-24"] .cell-note')
+    .click()
+  await expect(editor).toHaveAttribute('data-entry-context', 'week-cell')
+  await editor.getByRole('button', { name: 'Close' }).click()
+
+  await page
+    .locator('[data-week-grid] [data-cell-key="1:1:2026-08-30"] .cell-note')
+    .click()
+  await expect(editor).toHaveAttribute('data-entry-context', 'edit')
+  await expect(editor.getByLabel('Start')).toHaveValue('9:05 AM')
+  await expect(editor.getByLabel('End')).toHaveValue('5:35 PM')
+  await editor.getByLabel('Start').fill('10:15 PM')
+  await editor.getByLabel('End').fill('1:45 AM')
+  await editor.getByRole('button', { name: 'Save entry' }).click()
+  await expect(editor).toBeHidden()
+  expect(updateBody).toMatchObject({
+    started_time: '22:15',
+    ended_time: '01:45',
+  })
+  expect(updateBody).not.toHaveProperty('seconds')
+})
+
+test('[e2e:track-week] persists start/end editor changes through the real worker and D1', async ({
+  context,
+  page,
+}) => {
+  const fixtureControl = (action: 'seed' | 'reset') =>
+    context.request.post('/__ezacto_browser_fixture__/start-end', {
+      data: { action },
+      headers: { 'x-ezacto-browser-fixture-control': 'start-end-round-trip' },
+    })
+  const seeded = await fixtureControl('seed')
+  expect(seeded.status()).toBe(204)
+
+  try {
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+    await page.goto('/?week=2026-08-29')
+    await page.getByLabel('Email').fill(fixtureEmail)
+    await page.getByLabel('Password').fill(fixturePassword)
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+    const cell = page.locator(
+      '[data-week-grid] [data-cell-key="1:1:2026-08-29"]',
+    )
+    await expect(cell.locator('input')).toHaveValue('8:30')
+    await cell.locator('.cell-note').click()
+    const editor = page.locator('[data-entry-dialog]')
+    await expect(editor).toHaveAttribute('data-entry-context', 'edit')
+    await expect(editor.getByLabel('Start')).toHaveValue('9:05 AM')
+    await expect(editor.getByLabel('End')).toHaveValue('5:35 PM')
+
+    await editor.getByLabel('Start').fill('10:15 PM')
+    await editor.getByLabel('End').fill('1:45 AM')
+    const patched = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === '/api/v1/time-entries/900' &&
+        response.request().method() === 'PATCH',
+    )
+    await editor.getByRole('button', { name: 'Save entry' }).click()
+    expect((await patched).ok()).toBe(true)
+    await expect(editor).toBeHidden()
+
+    const persisted = await page.evaluate(async () => {
+      const response = await fetch('/api/v1/time-entries/900')
+      return { body: await response.json(), status: response.status }
+    })
+    expect(persisted).toMatchObject({
+      status: 200,
+      body: {
+        data: {
+          started_time: '22:15',
+          ended_time: '01:45',
+          seconds: 12_600,
+        },
+      },
+    })
+
+    await page.reload()
+    const reloadedCell = page.locator(
+      '[data-week-grid] [data-cell-key="1:1:2026-08-29"]',
+    )
+    await expect(reloadedCell.locator('input')).toHaveValue('3:30')
+    await reloadedCell.locator('.cell-note').click()
+    await expect(editor.getByLabel('Start')).toHaveValue('10:15 PM')
+    await expect(editor.getByLabel('End')).toHaveValue('1:45 AM')
+  } finally {
+    const reset = await fixtureControl('reset')
+    expect(reset.status()).toBe(204)
+  }
 })
 
 test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', async ({
@@ -445,7 +675,7 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   expect(timeEntryWrites).toEqual([])
 
   await noteInput.fill('short')
-  await noteDialog.getByRole('button', { name: 'Save note' }).click()
+  await noteDialog.getByRole('button', { name: 'Log time' }).click()
   await expect(noteDialog).toBeVisible()
   await expect(page.locator('[data-note-result]')).toContainText(
     'at least 8 characters',
@@ -458,7 +688,7 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
       new URL(response.url()).pathname === '/api/v1/time-entries' &&
       response.request().method() === 'POST',
   )
-  await noteDialog.getByRole('button', { name: 'Save note' }).click()
+  await noteDialog.getByRole('button', { name: 'Log time' }).click()
   expect((await created).ok()).toBe(true)
   await expect(noteDialog).toBeHidden()
   await expect(page.locator('[data-week-total]')).toHaveText('1:00')

@@ -56,6 +56,12 @@ export interface OrganizationTimeEntryNoteSettings {
   minimumLength: number
 }
 
+export interface OrganizationTimeEntrySettings {
+  mode: 'duration' | 'start_end'
+  timeFormat: 'decimal' | 'hours_minutes'
+  clock: '12h' | '24h'
+}
+
 export interface UpdateOrganizationTimeEntryNoteSettings {
   required?: boolean
   minimumLength?: number
@@ -155,6 +161,7 @@ export interface UpdateExpenseRequest {
 }
 
 export interface TrackedResourceRepository {
+  timeEntrySettings(): Promise<OrganizationTimeEntrySettings>
   timeEntryNoteSettings(): Promise<OrganizationTimeEntryNoteSettings>
   updateTimeEntryNoteSettings(
     input: Readonly<UpdateOrganizationTimeEntryNoteSettings>,

@@ -12,6 +12,7 @@ import {
   type TimeEntryPatch,
   type Whoami,
 } from '@ezacto/client'
+import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 
 interface CursorPage<T> {
   readonly data: readonly T[]
@@ -26,6 +27,7 @@ export interface ShellApi {
   listClients?(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listTasks(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listTimeEntryOptions(signal?: AbortSignal): Promise<readonly TimeEntryOption[]>
+  getTimeEntrySettings(signal?: AbortSignal): Promise<TimeEntrySettings>
   listTimeEntries(query: {
     readonly from?: string
     readonly to?: string
@@ -74,6 +76,7 @@ export interface DisplayTimeEntry extends TimeEntry {
 export interface ShellSnapshot {
   readonly entries: readonly DisplayTimeEntry[]
   readonly running: DisplayTimeEntry | null
+  readonly timeEntrySettings: TimeEntrySettings
   readonly catalog: {
     readonly projects: readonly GeneralResource[]
     readonly tasks: readonly GeneralResource[]
@@ -296,11 +299,12 @@ export const loadShellSnapshot = async (
   signal?: AbortSignal,
 ): Promise<ShellSnapshot> => {
   const range = weekRange(localDate(now))
-  const [resources, entries, running, timeEntryOptions] = await Promise.all([
+  const [resources, entries, running, timeEntryOptions, timeEntrySettings] = await Promise.all([
     loadCatalogResources(api, signal),
     api.listTimeEntries(range, signal),
     api.listTimeEntries({ is_running: true }, signal),
     api.listTimeEntryOptions(signal),
+    api.getTimeEntrySettings(signal),
   ])
   const displayedEntries = displayEntries(entries, resources)
   const displayedRunning = displayEntries(running, resources)
@@ -309,8 +313,45 @@ export const loadShellSnapshot = async (
   return {
     entries: displayedEntries,
     running: displayedRunning[0] ?? null,
+    timeEntrySettings,
     catalog: { ...resources, timeEntryOptions },
   }
+}
+
+export const prepareQuickAdd = async (
+  api: ShellApi,
+  value: string,
+  now = new Date(),
+  signal?: AbortSignal,
+): Promise<{ input: TimeEntryInput; minimumNoteLength: number }> => {
+  const command = parseQuickAdd(value)
+  const selection = await resolveAvailableEntrySelection(
+    api,
+    command.project,
+    command.task,
+    signal,
+  )
+  return {
+    input: {
+      project_id: selection.project.id,
+      task_id: selection.task.id,
+      spent_date: localDate(now),
+      seconds: command.seconds,
+      ...(command.notes === undefined ? {} : { notes: command.notes }),
+    },
+    minimumNoteLength: selection.minimumNoteLength,
+  }
+}
+
+export const quickAddInput = async (
+  api: ShellApi,
+  value: string,
+  now = new Date(),
+  signal?: AbortSignal,
+): Promise<TimeEntryInput> => {
+  const draft = await prepareQuickAdd(api, value, now, signal)
+  assertNoteIsAllowed(draft.input.notes, draft.minimumNoteLength)
+  return draft.input
 }
 
 export const quickAdd = async (
@@ -319,24 +360,8 @@ export const quickAdd = async (
   now = new Date(),
   signal?: AbortSignal,
 ): Promise<TimeEntry> => {
-  const command = parseQuickAdd(value)
-  const selection = await resolveAvailableEntrySelection(
-    api,
-    command.project,
-    command.task,
-    signal,
-  )
-  assertNoteIsAllowed(command.notes, selection.minimumNoteLength)
-  const input: TimeEntryInput = {
-    project_id: selection.project.id,
-    task_id: selection.task.id,
-    spent_date: localDate(now),
-    seconds: command.seconds,
-    ...(command.notes === undefined ? {} : { notes: command.notes }),
-  }
-  return signal === undefined
-    ? api.createTimeEntry(input)
-    : api.createTimeEntry(input, signal)
+  const input = await quickAddInput(api, value, now, signal)
+  return signal === undefined ? api.createTimeEntry(input) : api.createTimeEntry(input, signal)
 }
 
 export const startTimer = async (
@@ -416,6 +441,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     }),
   listTimeEntryOptions: async (signal) =>
     (await client.listTimeEntryOptions(withSignal(signal))).data,
+  getTimeEntrySettings: async (signal) =>
+    (await client.getTimeEntrySettings(withSignal(signal))).data,
   listTimeEntries: async (query, signal) => {
     const entries: TimeEntry[] = []
     let cursor: string | undefined

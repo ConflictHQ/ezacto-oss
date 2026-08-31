@@ -47,6 +47,11 @@ const entry = (id: number, overrides: Partial<DisplayTimeEntry> = {}): DisplayTi
 const snapshot = (entries: readonly DisplayTimeEntry[]): ShellSnapshot => ({
   entries,
   running: entries.find((item) => item.is_running) ?? null,
+  timeEntrySettings: {
+    time_entry_mode: 'duration',
+    time_format: 'decimal',
+    clock: '12h',
+  },
   catalog: {
     projects: [project(1, 'Northpeak'), project(2, 'Acme')],
     tasks: [task(1, 'Development'), task(2, 'Design')],
@@ -118,6 +123,11 @@ const apiFor = (
       { project_id: 1, task_id: 1, minimum_note_length: 0 },
       { project_id: 2, task_id: 2, minimum_note_length: 0 },
     ]),
+    getTimeEntrySettings: vi.fn(async () => ({
+      time_entry_mode: 'duration' as const,
+      time_format: 'decimal' as const,
+      clock: '12h' as const,
+    })),
     listTimeEntries: vi.fn(),
     stopTimeEntry: vi.fn(),
     createTimeEntry,
@@ -199,6 +209,8 @@ describe('timesheet week grid', () => {
     expect(parseCellSeconds('1:30')).toBe(5_400)
     expect(parseCellSeconds('')).toBe(0)
     expect(formatCellHours(5_400)).toBe('1.5')
+    expect(formatCellHours(5_400, 'hours_minutes')).toBe('1:30')
+    expect(formatCellHours(3_600, 'hours_minutes')).toBe('1:00')
     expect(formatCellHours(0)).toBe('')
     for (const seconds of [1, 59, 60, 3_599, 3_601, 86_399]) {
       expect(parseCellSeconds(formatCellHours(seconds))).toBe(seconds)
