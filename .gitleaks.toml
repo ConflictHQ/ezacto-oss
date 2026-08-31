@@ -32,3 +32,11 @@ description = "HARVEST_PAT assigned a literal value"
 # false positive, and a gate that cries wolf gets switched off.
 regex = '''(?i)\bharvest_pat\b[ \t]*[:=][ \t]*['"]?([A-Za-z0-9._\-]{16,})['"]?'''
 keywords = ["harvest_pat"]
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Deterministic invoice reference token used by the mutation-guard test"
+condition = "AND"
+regexTarget = "line"
+regexes = ['''reference_token = 'EZ-123456789ABC' WHERE id = 1''']
+paths = ['''^packages/db/test/invoice-import-contract\.test\.ts$''']
