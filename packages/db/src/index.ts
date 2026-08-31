@@ -8,6 +8,7 @@ export * from './general-resources.js'
 export * from './identity.js'
 export * from './instance-bootstrap.js'
 export * from './invoice-state.js'
+export * from './invoice-generation.js'
 export {
   canonicalizeHarvestPaymentDates,
   percentageToRatePpm,

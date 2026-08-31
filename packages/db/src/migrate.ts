@@ -24,6 +24,7 @@ import { resourceCreateCommandsMigration } from './migrations/0022_resource_crea
 import { migrationImportAuthorityMigration } from './migrations/0023_migration_import_authority.js'
 import { migrationWorksheetCompletionsMigration } from './migrations/0024_migration_worksheet_completions.js'
 import { timeEntryNoteRequirementsMigration } from './migrations/0025_time_entry_note_requirements.js'
+import { invoiceGenerationMigration } from './migrations/0026_invoice_generation.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL
@@ -1359,6 +1360,7 @@ const migrations = [
     id: '0025_time_entry_note_requirements',
     statements: timeEntryNoteRequirementsMigration,
   },
+  { id: '0026_invoice_generation', statements: invoiceGenerationMigration },
 ] as const
 
 const migrateContainerPlan = (

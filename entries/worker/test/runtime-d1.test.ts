@@ -200,9 +200,9 @@ describe("Worker D1 runtime composition", () => {
       .prepare("SELECT id FROM _ezacto_migrations ORDER BY id")
       .all<{ id: string }>();
     expect(migrations.results.at(-1)?.id).toBe(
-      "0025_time_entry_note_requirements",
+      "0026_invoice_generation",
     );
-    expect(migrations.results).toHaveLength(26);
+    expect(migrations.results).toHaveLength(27);
   });
 
   it("[security] keeps unverified session-like cookies fail-closed", async () => {
@@ -307,6 +307,56 @@ describe("Worker D1 runtime composition", () => {
         .bind(1)
         .first(),
     ).toEqual({ eventCount: 1 });
+  });
+
+  it("[api] [inv-06] concurrently generates one invoice through the deployed Worker binding", async () => {
+    const client = new EzactoClient({
+      baseUrl: "https://worker.test",
+      token: moneyBearer,
+      fetch: workerFetch,
+    });
+    const generation = {
+      "Idempotency-Key": "runtime-invoice-cycle",
+      body: {
+        client_id: 1,
+        from: "2026-08-27",
+        to: "2026-08-28",
+        project_ids: [1],
+        time_summary_type: "project" as const,
+        expense_summary_type: "project" as const,
+      },
+    };
+
+    const [created, replay] = await Promise.all([
+      client.generateInvoice(generation),
+      client.generateInvoice(generation),
+    ]);
+
+    expect(replay).toEqual(created);
+    expect(created.data).toMatchObject({
+      client_id: 1,
+      state: "draft",
+      amount_cents: 4_267,
+      due_amount_cents: 4_267,
+      line_items: [
+        expect.objectContaining({ kind: "Service", amount_cents: 4_167 }),
+        expect.objectContaining({ kind: "Expense", amount_cents: 100 }),
+      ],
+    });
+    expect(
+      await database
+        .prepare(
+          `SELECT
+             (SELECT count(*) FROM time_entries WHERE invoice_id = ?) AS timeEntries,
+             (SELECT count(*) FROM expenses WHERE invoice_id = ?) AS expenses,
+             (SELECT count(*) FROM event_outbox
+               WHERE aggregate_id = ? AND event_type = 'invoice.created') AS createdEvents,
+             (SELECT count(*) FROM event_outbox
+               WHERE aggregate_id = ? AND event_type = 'invoice.updated') AS updatedEvents`,
+        )
+        .bind(created.data.id, created.data.id, created.data.id, created.data.id)
+        .first(),
+    ).toEqual({ timeEntries: 2, expenses: 1, createdEvents: 1, updatedEvents: 0 });
   });
 
   it("[api] uploads and downloads an owner-scoped attachment through real D1 and R2 bindings", async () => {

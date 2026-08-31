@@ -210,12 +210,22 @@ const edit = (input: HTMLInputElement, value: string): void => {
   input.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
-const renderBrowserShell = (options: { preserveStorage?: boolean } = {}): void => {
-  window.history.replaceState(null, '', '/?week=2026-08-28')
+const renderBrowserShell = (
+  options: { preserveStorage?: boolean; view?: 'time' | 'invoice-generation' } = {},
+): void => {
+  window.history.replaceState(
+    null,
+    '',
+    options.view === 'invoice-generation' ? '/invoices/new?week=2026-08-28' : '/?week=2026-08-28',
+  )
   if (options.preserveStorage !== true) globalThis.localStorage.clear()
   document.open()
   document.write(
-    renderAppShell({ environment: 'test', release: 'browser-test' })
+    renderAppShell({
+      environment: 'test',
+      release: 'browser-test',
+      ...(options.view === undefined ? {} : { view: options.view }),
+    })
       .replace(
         / {2}<link[^>]+(?:fonts\.googleapis|fonts\.gstatic|\/assets\/ezacto\.css)[^>]*>\n/gu,
         '',
@@ -693,6 +703,29 @@ describe('week-grid browser behavior', () => {
     expect(document.querySelector('[data-session-message]')?.textContent).toContain(
       'focused now',
     )
+  })
+})
+
+describe('invoice generation browser behavior', () => {
+  it('[unit] loads and operates the global running timer on the invoice page', async () => {
+    renderBrowserShell({ view: 'invoice-generation' })
+    const api = browserApi()
+    api.entries.push(
+      timeEntry(3, {
+        project_id: 1,
+        task_id: 1,
+        spent_date: '2026-08-28',
+        notes: 'Running from the invoice workspace',
+      }),
+    )
+
+    await mountShell(api)
+
+    const timerChip = document.querySelector<HTMLButtonElement>('[data-timer-chip]')!
+    await vi.waitFor(() => expect(timerChip.textContent).toContain('Northpeak / Development'))
+    timerChip.click()
+    document.querySelector<HTMLButtonElement>('[data-stop-timer]')!.click()
+    await vi.waitFor(() => expect(api.stopTimeEntry).toHaveBeenCalledWith(3, expect.anything()))
   })
 })
 

@@ -1233,6 +1233,65 @@ for (const [runtime, factory] of factories) {
       expect(captured).toHaveLength(1);
     });
 
+    it("[api] translates invoice generation domain failures without masking unexpected faults", async () => {
+      let failure: Error = Object.assign(new Error("selected rows have no usable billable rate"), {
+        code: "invalid_command_input",
+      });
+      const test = await setup(() => {
+        throw failure;
+      });
+      const body = {
+        client_id: 1,
+        from: "2026-08-01",
+        to: "2026-08-31",
+        project_ids: [1],
+        time_summary_type: "project",
+        expense_summary_type: null,
+      };
+      const request = (commandId: string) =>
+        test.request(
+          "/api/v1/invoice-generations",
+          jsonRequest("POST", body, commandId),
+        );
+
+      const invalid = await request("invalid-generation");
+      expect(invalid.status).toBe(422);
+      expect(await invalid.json()).toMatchObject({
+        error: {
+          fields: [
+            {
+              field: "command",
+              code: "invalid_command_input",
+              message: "selected rows have no usable billable rate",
+            },
+          ],
+        },
+      });
+
+      for (const code of ["generation_conflict", "command_id_reused"] as const) {
+        failure = Object.assign(new Error(`internal ${code} detail`), { code });
+        const conflict = await request(`conflict-${code}`);
+        expect(conflict.status).toBe(409);
+        expect(await conflict.json()).toMatchObject({ error: { code } });
+      }
+
+      failure = Object.assign(new Error("internal authorization detail"), {
+        code: "forbidden",
+      });
+      const forbidden = await request("forbidden-generation");
+      expect(forbidden.status).toBe(403);
+      expect(await forbidden.json()).toMatchObject({
+        error: { code: "profile_forbidden" },
+      });
+
+      failure = new Error("unexpected database fault");
+      const unexpected = await request("unexpected-generation");
+      expect(unexpected.status).toBe(500);
+      expect(await unexpected.json()).toMatchObject({
+        error: { code: "internal_error", fields: [] },
+      });
+    });
+
     it("[api] leaves state untouched and returns 503 until the generation engine is bound", async () => {
       const test = await setup();
       const generated = await test.request(

@@ -29,6 +29,13 @@ export {
 export { createGeneralResourceRepository } from './general-resources.js'
 export { createMoneyResourceRepository } from './money-resources.js'
 export {
+  createInvoiceGenerationService,
+  InvoiceGenerationError,
+  type GenerateInvoiceCommand,
+  type GenerateInvoiceRequest,
+  type InvoiceGenerationService,
+} from './invoice-generation.js'
+export {
   createD1EmailLogStore,
   type EmailLogStoreOptions,
 } from './email-log.js'

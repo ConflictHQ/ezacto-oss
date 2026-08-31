@@ -2,6 +2,8 @@ import {
   EzactoClient,
   type AuthPrincipal,
   type GeneralResource,
+  type Invoice,
+  type InvoiceGenerationInput,
   type PasswordSignInInput,
   type Session,
   type TimeEntry,
@@ -21,6 +23,7 @@ export interface ShellApi {
   signIn(credentials: PasswordSignInInput, signal?: AbortSignal): Promise<AuthPrincipal>
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
   listProjects(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
+  listClients?(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listTasks(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listTimeEntryOptions(signal?: AbortSignal): Promise<readonly TimeEntryOption[]>
   listTimeEntries(query: {
@@ -32,6 +35,11 @@ export interface ShellApi {
   updateTimeEntry(id: number, patch: TimeEntryPatch, signal?: AbortSignal): Promise<TimeEntry>
   deleteTimeEntry(id: number, signal?: AbortSignal): Promise<void>
   stopTimeEntry(id: number, signal?: AbortSignal): Promise<TimeEntry>
+  generateInvoice?(
+    commandId: string,
+    input: InvoiceGenerationInput,
+    signal?: AbortSignal,
+  ): Promise<Invoice>
 }
 
 export interface QuickAddCommand {
@@ -388,6 +396,15 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     }),
+  listClients: (cursor, signal) =>
+    client.listClients({
+      query: {
+        per_page: 200,
+        is_active: true,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
   listTasks: (cursor, signal) =>
     client.listTasks({
       query: {
@@ -425,6 +442,14 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   },
   stopTimeEntry: async (id, signal) =>
     (await client.stopTimeEntry({ id, ...withSignal(signal) })).data,
+  generateInvoice: async (commandId, input, signal) =>
+    (
+      await client.generateInvoice({
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data,
 })
 
 export const createSameOriginShellApi = (): ShellApi =>

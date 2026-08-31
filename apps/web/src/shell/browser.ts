@@ -1,4 +1,9 @@
-import { EzactoApiError, type Whoami } from '@ezacto/client'
+import {
+  EzactoApiError,
+  type GeneralResource,
+  type InvoiceGenerationInput,
+  type Whoami,
+} from '@ezacto/client'
 import {
   buildWeekGrid,
   formatCellHours,
@@ -108,6 +113,23 @@ const weekLabel = (dates: readonly string[]): string => {
 
 const messageFor = (error: unknown): string => {
   if (error instanceof EzactoApiError && error.status === 401) return 'Sign in is required.'
+  if (error instanceof EzactoApiError && typeof error.body === 'object' && error.body !== null) {
+    const detail = Reflect.get(error.body, 'error')
+    if (typeof detail === 'object' && detail !== null) {
+      const fields = Reflect.get(detail, 'fields')
+      if (Array.isArray(fields)) {
+        const field = fields.find(
+          (candidate) =>
+            typeof candidate === 'object' &&
+            candidate !== null &&
+            typeof Reflect.get(candidate, 'message') === 'string',
+        )
+        if (field !== undefined) return String(Reflect.get(field, 'message'))
+      }
+      const message = Reflect.get(detail, 'message')
+      if (typeof message === 'string' && message.trim() !== '') return message
+    }
+  }
   return error instanceof Error ? error.message : 'The request could not be completed.'
 }
 
@@ -583,12 +605,38 @@ const resourceLabel = (resource: Record<string, unknown>): string => {
   return `#${String(resource.id)}`
 }
 
+const collectResources = async (
+  load: (
+    cursor?: string,
+    signal?: AbortSignal,
+  ) => Promise<{
+    readonly data: readonly GeneralResource[]
+    readonly page: { readonly next_cursor: string | null }
+  }>,
+  signal: AbortSignal,
+): Promise<GeneralResource[]> => {
+  const resources: GeneralResource[] = []
+  let cursor: string | undefined
+  do {
+    signal.throwIfAborted()
+    const page = await load(cursor, signal)
+    resources.push(...page.data)
+    cursor = page.page.next_cursor ?? undefined
+  } while (cursor !== undefined)
+  return resources
+}
+
 export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Promise<void> => {
   const authGateway = required<HTMLElement>('[data-auth-gateway]')
   const authChecking = required<HTMLElement>('[data-auth-checking]')
   const authenticatedShell = required<HTMLElement>('[data-authenticated-shell]')
+  const invoiceGenerationPage =
+    document.documentElement.dataset.appView === 'invoice-generation'
   const signedOutDocumentTitle = document.title
-  const authenticatedDocumentTitle = signedOutDocumentTitle.replace(/ — Sign in$/u, ' — Time')
+  const authenticatedDocumentTitle = signedOutDocumentTitle.replace(
+    / — Sign in$/u,
+    invoiceGenerationPage ? ' — Generate invoice' : ' — Time',
+  )
   const status = required<HTMLElement>('[data-session-status]')
   const statusMessage = required<HTMLElement>('[data-session-message]')
   const retryWeek = required<HTMLButtonElement>('[data-retry-week]')
@@ -616,6 +664,13 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const timerNoteInput = required<HTMLTextAreaElement>('[data-timer-note]')
   const timerNoteHint = required<HTMLElement>('[data-timer-note-hint]')
   const timerResult = required<HTMLElement>('[data-timer-result]')
+  const invoiceForm = required<HTMLFormElement>('[data-invoice-generation-form]')
+  const invoiceClient = required<HTMLSelectElement>('[data-invoice-client]')
+  const invoiceProjects = required<HTMLElement>('[data-invoice-projects]')
+  const invoiceResult = required<HTMLElement>('[data-invoice-generation-result]')
+  const invoiceSubmit = required<HTMLButtonElement>('[data-invoice-generation-submit]')
+  const invoiceRetry = required<HTMLButtonElement>('[data-retry-invoice-catalog]')
+  const invoiceSuccess = required<HTMLElement>('[data-invoice-generation-success]')
   const requestedView = new URL(globalThis.location.href).searchParams.get('view')
   document.documentElement.dataset.timeView = requestedView === 'day' ? 'day' : 'week'
   for (const link of document.querySelectorAll<HTMLAnchorElement>('.tabstrip a')) {
@@ -636,6 +691,21 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   let signingOut = false
   let authGeneration = 0
   let authController = new AbortController()
+  let invoiceCatalog: {
+    readonly clients: readonly GeneralResource[]
+    readonly projects: readonly GeneralResource[]
+  } | null = null
+  let invoiceGenerationPending = false
+  let invoiceCommandId: string | null = null
+
+  const setInvoiceFormPending = (pending: boolean): void => {
+    invoiceGenerationPending = pending
+    for (const fieldset of invoiceForm.querySelectorAll<HTMLFieldSetElement>('fieldset')) {
+      fieldset.disabled = pending
+    }
+    invoiceSubmit.disabled = pending
+    invoiceRetry.disabled = pending
+  }
 
   const configureNoteInput = (
     input: HTMLTextAreaElement,
@@ -731,6 +801,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     timerForm.reset()
     rowForm.reset()
     noteForm.reset()
+    invoiceForm.reset()
     configureNoteInput(noteInput, noteHintElement, 0)
     configureNoteInput(timerNoteInput, timerNoteHint, 0)
     required<HTMLSelectElement>('[data-row-project]').replaceChildren()
@@ -748,6 +819,14 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     required<HTMLElement>('[data-week-grid-rows]').replaceChildren()
     required<HTMLElement>('[data-week-grid-totals]').replaceChildren()
     required<HTMLElement>('[data-day-rows]').replaceChildren()
+    invoiceClient.replaceChildren()
+    invoiceProjects.replaceChildren()
+    invoiceResult.textContent = ''
+    invoiceSuccess.hidden = true
+    invoiceRetry.hidden = true
+    invoiceCatalog = null
+    setInvoiceFormPending(false)
+    invoiceCommandId = null
     activeNote = null
     supplementalRows = []
     snapshot = null
@@ -948,13 +1027,87 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
   }
 
+  const renderInvoiceProjects = (): void => {
+    if (invoiceCatalog === null) return
+    const clientId = Number(invoiceClient.value)
+    const projects = invoiceCatalog.projects.filter((project) => {
+      const value = project['client_id'] ?? project['clientId']
+      return typeof value === 'number' && value === clientId
+    })
+    if (projects.length === 0) {
+      const empty = document.createElement('p')
+      empty.textContent = 'This client has no active projects.'
+      invoiceProjects.replaceChildren(empty)
+      return
+    }
+    invoiceProjects.replaceChildren(
+      ...projects.map((project) => {
+        const label = document.createElement('label')
+        const input = document.createElement('input')
+        input.type = 'checkbox'
+        input.name = 'project'
+        input.value = String(project.id)
+        input.checked = true
+        label.append(input, document.createTextNode(resourceLabel(project)))
+        return label
+      }),
+    )
+  }
+
+  const loadInvoiceGeneration = async (operation: AuthOperation): Promise<void> => {
+    if (!isSessionCurrent(operation)) return
+    if (api.listClients === undefined || api.generateInvoice === undefined) {
+      invoiceResult.textContent = 'Invoice generation is unavailable in this build.'
+      invoiceSubmit.disabled = true
+      return
+    }
+    setInvoiceFormPending(true)
+    invoiceRetry.hidden = true
+    invoiceResult.textContent = 'Loading clients and projects…'
+    try {
+      const [clients, projects] = await Promise.all([
+        collectResources(api.listClients, operation.signal),
+        collectResources(api.listProjects, operation.signal),
+      ])
+      if (!isSessionCurrent(operation)) return
+      invoiceCatalog = { clients, projects }
+      invoiceClient.replaceChildren(
+        ...clients.map((client) => option(client.id, resourceLabel(client))),
+      )
+      const today = localDate()
+      const from = required<HTMLInputElement>('[name="from"]')
+      const to = required<HTMLInputElement>('[name="to"]')
+      from.value = `${today.slice(0, 8)}01`
+      to.value = today
+      renderInvoiceProjects()
+      if (clients.length === 0) {
+        invoiceResult.textContent = 'Create an active client before generating an invoice.'
+        setInvoiceFormPending(false)
+        invoiceSubmit.disabled = true
+        return
+      }
+      invoiceResult.textContent = 'Review the selection, then generate a draft.'
+      setInvoiceFormPending(false)
+    } catch (error) {
+      if (handleSessionFailure(error, operation)) return
+      invoiceResult.textContent = messageFor(error)
+      setInvoiceFormPending(false)
+      invoiceSubmit.disabled = true
+      invoiceRetry.hidden = false
+    }
+  }
+
   const loadAuthenticatedShell = async (
     operation: AuthOperation,
   ): Promise<void> => {
     const identity = await api.whoami(operation.signal)
     if (!isGenerationCurrent(operation)) return
     const authenticated = showAuthenticated(identity)
-    await loadWeek(authenticated)
+    if (invoiceGenerationPage) {
+      await Promise.all([loadInvoiceGeneration(authenticated), loadWeek(authenticated)])
+    } else {
+      await loadWeek(authenticated)
+    }
   }
 
   async function commitCell(
@@ -1443,6 +1596,105 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return
         setSessionStatus(messageFor(error), 'error')
+      })
+  })
+
+  invoiceClient.addEventListener('change', renderInvoiceProjects)
+  invoiceRetry.addEventListener('click', () => {
+    const operation = sessionOperation()
+    if (operation === null) return
+    void loadInvoiceGeneration(operation)
+  })
+  invoiceForm.addEventListener('change', () => {
+    invoiceCommandId = null
+    invoiceSuccess.hidden = true
+    if (!invoiceGenerationPending) invoiceResult.textContent = ''
+  })
+  invoiceForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const operation = sessionOperation()
+    if (
+      operation === null ||
+      invoiceGenerationPending ||
+      api.generateInvoice === undefined
+    ) {
+      return
+    }
+    const data = new FormData(invoiceForm)
+    const clientId = Number(data.get('client'))
+    const from = data.get('from')
+    const to = data.get('to')
+    const projectIds = data
+      .getAll('project')
+      .map(Number)
+      .filter((projectId) => Number.isSafeInteger(projectId) && projectId > 0)
+    const rawTimeSummary = data.get('timeSummary')
+    const rawExpenseSummary = data.get('expenseSummary')
+    const timeSummaries = new Set(['project', 'task', 'people', 'detailed'])
+    const expenseSummaries = new Set(['project', 'category', 'people', 'detailed'])
+    if (
+      !Number.isSafeInteger(clientId) ||
+      clientId < 1 ||
+      typeof from !== 'string' ||
+      typeof to !== 'string' ||
+      projectIds.length === 0 ||
+      typeof rawTimeSummary !== 'string' ||
+      typeof rawExpenseSummary !== 'string' ||
+      (rawTimeSummary !== '' && !timeSummaries.has(rawTimeSummary)) ||
+      (rawExpenseSummary !== '' && !expenseSummaries.has(rawExpenseSummary))
+    ) {
+      invoiceResult.textContent = 'Choose a client, date range, and at least one project.'
+      return
+    }
+    if (rawTimeSummary === '' && rawExpenseSummary === '') {
+      invoiceResult.textContent = 'Include time, expenses, or both.'
+      return
+    }
+    const input: InvoiceGenerationInput = {
+      client_id: clientId,
+      from,
+      to,
+      project_ids: projectIds,
+      time_summary_type: (rawTimeSummary === '' ? null : rawTimeSummary) as
+        | 'project'
+        | 'task'
+        | 'people'
+        | 'detailed'
+        | null,
+      expense_summary_type: (rawExpenseSummary === '' ? null : rawExpenseSummary) as
+        | 'project'
+        | 'category'
+        | 'people'
+        | 'detailed'
+        | null,
+    }
+    invoiceCommandId ??= `web.invoice.create:${globalThis.crypto.randomUUID()}`
+    const commandId = invoiceCommandId
+    setInvoiceFormPending(true)
+    invoiceSubmit.textContent = 'Generating…'
+    invoiceResult.textContent = 'Atomically claiming tracked work and creating the draft…'
+    invoiceSuccess.hidden = true
+    void api
+      .generateInvoice(commandId, input, operation.signal)
+      .then((invoice) => {
+        if (!isSessionCurrent(operation)) return
+        required<HTMLElement>('[data-generated-invoice-number]').textContent = invoice.number
+        required<HTMLElement>('[data-generated-invoice-total]').textContent =
+          `${new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: invoice.currency,
+          }).format(invoice.amount_cents / 100)} · ${invoice.line_items.length} ${invoice.line_items.length === 1 ? 'line' : 'lines'}`
+        invoiceResult.textContent = 'Draft invoice generated successfully.'
+        invoiceSuccess.hidden = false
+      })
+      .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
+        invoiceResult.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (!isSessionCurrent(operation)) return
+        setInvoiceFormPending(false)
+        invoiceSubmit.textContent = 'Generate draft invoice'
       })
   })
 

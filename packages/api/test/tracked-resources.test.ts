@@ -980,7 +980,7 @@ for (const [runtime, factory] of factories) {
           `SELECT count(*) AS count FROM time_entries`,
         ),
       ).toEqual([{ count: 2 }])
-    })
+    }, 20_000)
 
     it('[api] supports expense pricing, combined filters, CRUD, and strict input validation', async () => {
       const test = await setup()

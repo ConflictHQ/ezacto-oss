@@ -75,6 +75,7 @@ export interface RuntimeServices {
   generalResources: GeneralResourceRouteOptions['repository']
   trackedResources: TrackedResourceRepository
   moneyResources: MoneyResourceRouteOptions['service']
+  invoiceGeneration: NonNullable<MoneyResourceRouteOptions['generation']>
   reports: ReportReader
   cursorSigningKey: Uint8Array
   passwordAuth: PasswordAuthService
@@ -116,6 +117,7 @@ export const createApp = (services?: RuntimeServices) =>
             })
             installMoneyResourceRoutes(api, {
               service: services.moneyResources,
+              generation: services.invoiceGeneration,
               cursorSigningKey: services.cursorSigningKey,
               clock: () => systemClock.now().instant,
             })
@@ -336,6 +338,28 @@ export const createApp = (services?: RuntimeServices) =>
           },
         ),
       )
+
+      app.get('/invoices/new', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            activeSection: 'Invoices',
+            view: 'invoice-generation',
+            signInProviders: configuredSignInProviders(context.env),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/invoices', (context) => context.redirect('/invoices/new', 302))
     },
   })
 
