@@ -483,6 +483,10 @@ describe('week-grid browser behavior', () => {
     await vi.waitFor(() => expect(api.createTimeEntry).toHaveBeenCalledTimes(1))
 
     document.querySelector<HTMLButtonElement>('[data-timer-chip]')!.click()
+    const timerDialog = document.querySelector<HTMLDialogElement>(
+      '[data-timer-dialog]',
+    )!
+    expect(timerDialog.open).toBe(true)
     const timerProject = document.querySelector<HTMLInputElement>(
       '[data-timer-form] [name="project"]',
     )!
@@ -524,6 +528,7 @@ describe('week-grid browser behavior', () => {
     expect(document.querySelector('[data-timer-result]')?.textContent).toBe('')
     submitTimer()
     await vi.waitFor(() => expect(api.createTimeEntry).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(timerDialog.open).toBe(false))
     expect(api.createTimeEntry).toHaveBeenLastCalledWith(
       expect.objectContaining({ notes: 'timer notes' }),
       expect.any(AbortSignal),

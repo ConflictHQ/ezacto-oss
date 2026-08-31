@@ -1221,6 +1221,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         if (!isSessionCurrent(operation)) return
         if (!(await refresh(operation))) return
         result.textContent = 'Timer started.'
+        timerDialog.close()
         document.dispatchEvent(new CustomEvent('ezacto:time-entry-created', { detail: entry }))
       })
       .catch((error: unknown) => {

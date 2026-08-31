@@ -531,6 +531,7 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   await startTimer.click()
   expect((await timerStarted).ok()).toBe(true)
   await expect(page.locator('[data-timer-result]')).toHaveText('Timer started.')
+  await expect(timerDialog).not.toBeVisible()
   expect(timeEntryWrites).toHaveLength(writesBeforeTimer + 1)
 
   const browserSession = (await context.cookies()).find(
