@@ -62,3 +62,13 @@ jobs:
           ./gitleaks git . --log-opts="--full-history --diff-merges=first-parent --diff-filter=tuxdb HEAD" --config .gitleaks.toml --redact --no-banner --verbose
         env:
           GITLEAKS_VERSION: 8.30.0
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: build and exercise the first-run container
+        run: npm run test:container

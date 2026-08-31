@@ -47,19 +47,23 @@ export type Env = {
   RELEASE: string
 }
 
-export type WorkerEnv = Env & {
+export type AppEnv = Env & {
+  APP_BASE_URL?: string
+  OIDC_GOOGLE_CLIENT_ID?: string
+  OIDC_GOOGLE_CLIENT_SECRET?: string
+  EZACTO_BOOTSTRAP_TOKEN?: string
+}
+
+export type WorkerEnv = AppEnv & {
   DB: D1Database
   /** Content-addressed attachment objects. Metadata remains in DB. */
   ATTACHMENTS?: R2Bucket
   API_CURSOR_SIGNING_KEY: string
   /** Bound together with a provider implementation; absent deployments fail auth email closed. */
   EMAIL_QUEUE?: Queue<QueuedEmailJob>
-  APP_BASE_URL?: string
   /** Optional Cloudflare Access provider; both values are required together. */
   ACCESS_TEAM_DOMAIN?: string
   ACCESS_POLICY_AUD?: string
-  OIDC_GOOGLE_CLIENT_ID?: string
-  OIDC_GOOGLE_CLIENT_SECRET?: string
   /** SES credentials are Worker secrets; never place them in wrangler vars. */
   AWS_ACCESS_KEY_ID?: string
   AWS_SECRET_ACCESS_KEY?: string
@@ -68,8 +72,6 @@ export type WorkerEnv = Env & {
   SES_REGION?: string
   SES_FROM?: string
   SES_CONFIGURATION_SET?: string
-  /** Temporary Worker secret installed only while the operator workflow runs. */
-  EZACTO_BOOTSTRAP_TOKEN?: string
 }
 
 export interface RuntimeServices {
@@ -103,7 +105,7 @@ export type Health = {
 }
 
 export const createApp = (services?: RuntimeServices) =>
-  createApiApp<WorkerEnv>({
+  createApiApp<AppEnv>({
     ...(services === undefined
       ? {}
       : {
@@ -393,7 +395,7 @@ export const cloudflareAccessConfig = (
   return config
 }
 
-const redirectOrigin = (env: WorkerEnv): string => {
+const redirectOrigin = (env: AppEnv): string => {
   if (env.ENVIRONMENT === 'dev') return 'https://ezacto.io'
   if (env.ENVIRONMENT === 'prod') return 'https://app.example.com'
   const configured = configuredCredential(env.APP_BASE_URL)
@@ -406,7 +408,7 @@ const redirectOrigin = (env: WorkerEnv): string => {
 /** Application-owned provider registry. Request input never selects an issuer. */
 export const oidcProvider = (
   key: string,
-  env: WorkerEnv,
+  env: AppEnv,
 ): OidcProviderConfig | null => {
   if (key !== 'google') return null
   const clientId = configuredCredential(env.OIDC_GOOGLE_CLIENT_ID)
@@ -428,7 +430,7 @@ export const oidcProvider = (
 
 /** Public shell availability contains provider keys only, never credentials. */
 export const configuredSignInProviders = (
-  env: WorkerEnv,
+  env: AppEnv,
 ): readonly SignInProvider[] => {
   try {
     const google = oidcProvider('google', env)
