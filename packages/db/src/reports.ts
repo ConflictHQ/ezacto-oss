@@ -123,25 +123,51 @@ const checkedAdd = (left: number, right: number, field: string): number => {
   return Number(sum)
 }
 
-interface TimeCandidateRow {
+export interface UninvoicedTimeCandidateRow {
   id: number
   clientId: number
   projectId: number
+  projectName: string
+  taskId: number
+  taskName: string
+  userId: number
+  userName: string
+  spentDate: string
+  notes: string | null
   currency: string
   roundedSeconds: number
   billableRateCents: number | null
+  updatedAt: string
 }
 
-interface ExpenseCandidateRow {
+export interface UninvoicedExpenseCandidateRow {
   id: number
   clientId: number
   projectId: number
+  projectName: string
+  categoryId: number
+  categoryName: string
+  userId: number
+  userName: string
+  spentDate: string
+  notes: string | null
+  units: number | null
   currency: string
   totalCostCents: number
+  updatedAt: string
 }
 
-const projectFilter = (projectId: number | undefined) =>
-  projectId === undefined ? sql`1` : sql`project.id = ${projectId}`
+export interface UninvoicedCandidateFilter extends UninvoicedReportFilter {
+  projectIds?: readonly number[]
+}
+
+const projectFilter = (filter: Readonly<UninvoicedCandidateFilter>) => {
+  if (filter.projectId !== undefined) return sql`project.id = ${filter.projectId}`
+  if (filter.projectIds === undefined) return sql`1`
+  return sql`project.id IN (
+    SELECT CAST(value AS INTEGER) FROM json_each(${JSON.stringify(filter.projectIds)})
+  )`
+}
 
 const clientFilter = (clientId: number | undefined) =>
   clientId === undefined
@@ -158,24 +184,44 @@ const clientFilter = (clientId: number | undefined) =>
         SELECT id FROM descendants
       )`
 
-const uninvoicedCandidates = async (
+export const readUninvoicedCandidates = async (
   database: Database,
-  filter: Readonly<UninvoicedReportFilter>,
+  filter: Readonly<UninvoicedCandidateFilter>,
 ): Promise<{
-  timeEntries: readonly TimeCandidateRow[]
-  expenses: readonly ExpenseCandidateRow[]
+  timeEntries: readonly UninvoicedTimeCandidateRow[]
+  expenses: readonly UninvoicedExpenseCandidateRow[]
 }> => {
-  const projectWhere = projectFilter(filter.projectId)
+  assertRange(filter)
+  if (filter.clientId !== undefined) assertId(filter.clientId, 'client id')
+  if (filter.projectId !== undefined) assertId(filter.projectId, 'project id')
+  if (filter.projectId !== undefined && filter.projectIds !== undefined) {
+    throw new RangeError('project id and project ids cannot both be supplied')
+  }
+  if (filter.projectIds !== undefined) {
+    if (
+      filter.projectIds.length === 0 ||
+      filter.projectIds.some((projectId) => !Number.isSafeInteger(projectId) || projectId < 1) ||
+      new Set(filter.projectIds).size !== filter.projectIds.length
+    ) {
+      throw new RangeError('project ids must be a non-empty unique positive integer list')
+    }
+  }
+  const projectWhere = projectFilter(filter)
   const clientWhere = clientFilter(filter.clientId)
-  const timeEntries = await database.all<TimeCandidateRow>(sql`
+  const timeEntries = await database.all<UninvoicedTimeCandidateRow>(sql`
     SELECT entry.id AS "id", project.client_id AS "clientId",
-      project.id AS "projectId",
+      project.id AS "projectId", project.name AS "projectName",
+      task.id AS "taskId", task.name AS "taskName", user.id AS "userId",
+      trim(user.first_name || ' ' || coalesce(user.last_name, '')) AS "userName",
+      entry.spent_date AS "spentDate", entry.notes AS "notes",
       upper(coalesce(project.billing_currency, client.currency)) AS "currency",
       entry.rounded_seconds AS "roundedSeconds",
-      entry.billable_rate_cents AS "billableRateCents"
+      entry.billable_rate_cents AS "billableRateCents", entry.updated_at AS "updatedAt"
     FROM time_entries entry
     JOIN projects project ON project.id = entry.project_id
     JOIN clients client ON client.id = project.client_id
+    JOIN tasks task ON task.id = entry.task_id
+    JOIN users user ON user.id = entry.user_id
     WHERE entry.spent_date BETWEEN ${filter.from} AND ${filter.to}
       AND entry.billable = 1 AND entry.invoice_id IS NULL
       AND entry.timer_started_at IS NULL
@@ -183,14 +229,20 @@ const uninvoicedCandidates = async (
       AND ${projectWhere} AND ${clientWhere}
     ORDER BY entry.id
   `)
-  const expenses = await database.all<ExpenseCandidateRow>(sql`
+  const expenses = await database.all<UninvoicedExpenseCandidateRow>(sql`
     SELECT expense.id AS "id", project.client_id AS "clientId",
-      project.id AS "projectId",
+      project.id AS "projectId", project.name AS "projectName",
+      category.id AS "categoryId", category.name AS "categoryName",
+      user.id AS "userId",
+      trim(user.first_name || ' ' || coalesce(user.last_name, '')) AS "userName",
+      expense.spent_date AS "spentDate", expense.notes AS "notes", expense.units AS "units",
       upper(coalesce(project.billing_currency, client.currency)) AS "currency",
-      expense.total_cost_cents AS "totalCostCents"
+      expense.total_cost_cents AS "totalCostCents", expense.updated_at AS "updatedAt"
     FROM expenses expense
     JOIN projects project ON project.id = expense.project_id
     JOIN clients client ON client.id = project.client_id
+    JOIN expense_categories category ON category.id = expense.expense_category_id
+    JOIN users user ON user.id = expense.user_id
     WHERE expense.spent_date BETWEEN ${filter.from} AND ${filter.to}
       AND expense.billable = 1 AND expense.invoice_id IS NULL
       AND ${projectWhere} AND ${clientWhere}
@@ -206,7 +258,7 @@ const uninvoicedReport = async (
   assertRange(filter)
   if (filter.clientId !== undefined) assertId(filter.clientId, 'client id')
   if (filter.projectId !== undefined) assertId(filter.projectId, 'project id')
-  const candidates = await uninvoicedCandidates(database, filter)
+  const candidates = await readUninvoicedCandidates(database, filter)
   return {
     from: filter.from,
     to: filter.to,

@@ -586,3 +586,60 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   expect(leakedToConsole).toBe(false)
   expect(leakedToUrl).toBe(false)
 })
+
+test('[e2e:invoice-cycle] generates a real draft through the authenticated wizard', async ({
+  page,
+}) => {
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto('/invoices/new')
+
+  await expect(page).toHaveTitle('ezacto — Sign in')
+  await expect(page.locator('[data-invoice-generation-page]')).toBeHidden()
+  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+  const wizard = page.locator('[data-invoice-generation-page]')
+  await expect(wizard).toBeVisible()
+  await expect(page).toHaveTitle('ezacto — Generate invoice')
+  await expect(wizard.getByRole('heading', { name: 'Generate an invoice' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+  await expect(wizard.getByLabel('Client')).toHaveValue('1')
+  await expect(wizard.getByLabel('From')).toHaveValue('2026-08-01')
+  await expect(wizard.getByLabel('To')).toHaveValue('2026-08-30')
+  await expect(wizard.getByRole('checkbox')).toHaveCount(2)
+  await expectPhoneControl(
+    wizard.getByRole('checkbox', { name: 'Browser Acceptance Project' }).locator('..'),
+  )
+  await wizard.getByRole('checkbox', { name: 'Browser Secondary Project' }).uncheck()
+  await wizard.getByLabel('Expenses').selectOption('')
+  for (const control of [
+    wizard.getByLabel('Client'),
+    wizard.getByLabel('From'),
+    wizard.getByLabel('To'),
+    wizard.getByLabel('Time entries'),
+    wizard.getByLabel('Expenses'),
+    wizard.getByRole('button', { name: 'Generate draft invoice' }),
+  ]) {
+    await expectPhoneControl(control)
+  }
+  await expectNoPageOverflow(page)
+
+  const generated = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/invoice-generations' &&
+      response.request().method() === 'POST',
+  )
+  await wizard.getByRole('button', { name: 'Generate draft invoice' }).click()
+  expect((await generated).status()).toBe(201)
+
+  await expect(page.locator('[data-invoice-generation-result]')).toHaveText(
+    'Draft invoice generated successfully.',
+  )
+  const success = page.locator('[data-invoice-generation-success]')
+  await expect(success).toBeVisible()
+  await expect(success.locator('[data-generated-invoice-number]')).toHaveText(/^\d+$/u)
+  await expect(success.locator('[data-generated-invoice-total]')).toContainText('$75.00')
+  await expect(success.locator('[data-generated-invoice-total]')).toContainText('1 line')
+  await expect(success).toContainText('The draft is saved.')
+})

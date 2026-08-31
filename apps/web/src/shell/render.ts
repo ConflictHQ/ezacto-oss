@@ -6,6 +6,7 @@ export interface AppShellOptions {
   readonly release: string
   readonly brand?: string
   readonly activeSection?: 'Time' | 'Expenses' | 'Projects' | 'Clients' | 'Invoices' | 'Reports'
+  readonly view?: 'time' | 'invoice-generation'
   readonly signInProviders?: readonly SignInProvider[]
 }
 
@@ -50,7 +51,11 @@ export const renderDocumentShell = (title: string, content: string): string =>
 const sections = ['Time', 'Expenses', 'Projects', 'Clients', 'Invoices', 'Reports'] as const
 
 const hrefFor = (section: (typeof sections)[number]): string =>
-  section === 'Time' ? '/' : `/${section.toLocaleLowerCase('en-US')}`
+  section === 'Time'
+    ? '/'
+    : section === 'Invoices'
+      ? '/invoices/new'
+      : `/${section.toLocaleLowerCase('en-US')}`
 
 const providerSignIn = (providers: readonly SignInProvider[]): string => {
   if (!providers.includes('google')) return ''
@@ -64,6 +69,7 @@ const providerSignIn = (providers: readonly SignInProvider[]): string => {
 
 export const renderAppShell = (options: AppShellOptions): string => {
   const active = options.activeSection ?? 'Time'
+  const view = options.view ?? 'time'
   const brand = options.brand ?? 'ezacto'
   const shortRelease = options.release.slice(0, 7)
   const navigation = sections
@@ -74,7 +80,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
     .join('')
 
   return `<!doctype html>
-<html lang="en" data-ez-theme="precision">
+<html lang="en" data-ez-theme="precision" data-app-view="${view}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -138,24 +144,24 @@ export const renderAppShell = (options: AppShellOptions): string => {
     <button class="command-trigger" type="button" data-command-trigger data-auth-action disabled aria-haspopup="dialog">⌘K</button>
     <button class="menu-trigger" type="button" data-menu-trigger aria-label="Open navigation" aria-haspopup="dialog">Menu</button>
   </header>
-  <nav class="tabstrip" aria-label="Time views">
+  <nav class="tabstrip" aria-label="Time views"${view === 'time' ? '' : ' hidden'}>
     <a href="/" aria-current="page">Week</a><a href="/?view=day">Day</a><a href="/?view=calendar">Calendar</a>
   </nav>
-  <main class="app-content" data-app-content>
+  <section class="auth-shell workspace-identity" data-auth-shell data-state="loading" aria-label="Account">
+    <div class="current-identity" data-current-identity hidden>
+      <div>
+        <p class="eyebrow">Signed in</p>
+        <p class="identity-label"><strong>User #<span data-current-user-id>—</span></strong><span data-current-profile>—</span></p>
+      </div>
+      <button type="button" data-logout>Sign out</button>
+      <p class="auth-result" data-logout-result role="status" aria-live="polite"></p>
+    </div>
+  </section>
+  <main class="app-content" data-app-content${view === 'time' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">This week</p><h1>Time</h1></div>
       <button class="primary-action" type="button" data-command-trigger data-auth-action disabled>Log time</button>
     </header>
-    <section class="auth-shell" data-auth-shell data-state="loading" aria-label="Account">
-      <div class="current-identity" data-current-identity hidden>
-        <div>
-          <p class="eyebrow">Signed in</p>
-          <p class="identity-label"><strong>User #<span data-current-user-id>—</span></strong><span data-current-profile>—</span></p>
-        </div>
-        <button type="button" data-logout>Sign out</button>
-        <p class="auth-result" data-logout-result role="status" aria-live="polite"></p>
-      </div>
-    </section>
     <aside class="session-status" data-session-status role="status">
       <span data-session-message>Connecting to your ezacto session…</span>
       <button type="button" data-retry-week hidden>Retry week</button>
@@ -190,6 +196,61 @@ export const renderAppShell = (options: AppShellOptions): string => {
         </header>
         <div data-day-rows><p class="day-empty">Loading time entries…</p></div>
       </div>
+    </section>
+  </main>
+  <main class="app-content invoice-generation" data-invoice-generation-page${view === 'invoice-generation' ? '' : ' hidden'}>
+    <header class="context-row">
+      <div><p class="eyebrow">Invoices</p><h1>Generate an invoice</h1></div>
+      <a href="/">Back to time</a>
+    </header>
+    <p class="invoice-intro">Choose one client, a bounded date range, and the tracked work to turn into a draft invoice.</p>
+    <form class="invoice-generation-form" data-invoice-generation-form>
+      <fieldset>
+        <legend>1. Client and period</legend>
+        <label for="ez-invoice-client">Client
+          <select id="ez-invoice-client" name="client" data-invoice-client required></select>
+        </label>
+        <div class="invoice-period">
+          <label for="ez-invoice-from">From<input id="ez-invoice-from" name="from" type="date" required></label>
+          <label for="ez-invoice-to">To<input id="ez-invoice-to" name="to" type="date" required></label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>2. Projects</legend>
+        <div class="invoice-projects" data-invoice-projects role="group" aria-label="Projects">
+          <p>Loading projects…</p>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>3. Line detail</legend>
+        <label for="ez-invoice-time-summary">Time entries
+          <select id="ez-invoice-time-summary" name="timeSummary">
+            <option value="project">Summarize by project</option>
+            <option value="task">Summarize by task</option>
+            <option value="people">Summarize by person</option>
+            <option value="detailed">One line per entry</option>
+            <option value="">Do not include time</option>
+          </select>
+        </label>
+        <label for="ez-invoice-expense-summary">Expenses
+          <select id="ez-invoice-expense-summary" name="expenseSummary">
+            <option value="project">Summarize by project</option>
+            <option value="category">Summarize by category</option>
+            <option value="people">Summarize by person</option>
+            <option value="detailed">One line per expense</option>
+            <option value="">Do not include expenses</option>
+          </select>
+        </label>
+      </fieldset>
+      <p class="form-result" data-invoice-generation-result role="status" aria-live="polite"></p>
+      <button type="button" data-retry-invoice-catalog hidden>Retry loading clients and projects</button>
+      <button class="primary-action" type="submit" data-invoice-generation-submit data-auth-action disabled>Generate draft invoice</button>
+    </form>
+    <section class="invoice-generation-success" data-invoice-generation-success hidden aria-live="polite">
+      <p class="eyebrow">Draft created</p>
+      <h2 data-generated-invoice-number>Invoice</h2>
+      <p data-generated-invoice-total></p>
+      <p>The draft is saved. Invoice editing arrives with the invoice workspace.</p>
     </section>
   </main>
   <dialog class="command-dialog" data-command-dialog aria-labelledby="command-title">

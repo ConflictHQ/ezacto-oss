@@ -2032,6 +2032,8 @@ export const invoiceCommandLedger = sqliteTable(
     commandId: text('command_id').notNull(),
     commandKind: text('command_kind', {
       enum: [
+        'invoice.create',
+        'invoice.delete',
         'invoice.send',
         'invoice.view',
         'invoice.draft',
@@ -2054,6 +2056,13 @@ export const invoiceCommandLedger = sqliteTable(
     actorId: integer('actor_id'),
     expectedInvoiceVersion: integer('expected_invoice_version'),
     occurredAt: text('occurred_at').notNull(),
+    requestJson: text('request_json', { mode: 'json' }).$type<Record<string, unknown>>(),
+    sourceManifestJson: text('source_manifest_json', { mode: 'json' }).$type<
+      Record<string, unknown>
+    >(),
+    lineManifestJson: text('line_manifest_json', { mode: 'json' }).$type<
+      Record<string, unknown>
+    >(),
     eventCount: integer('event_count'),
     completed: integer('completed', { mode: 'boolean' }).notNull().default(false),
     firstAggregateSequence: integer('first_aggregate_sequence'),
@@ -2087,6 +2096,58 @@ export const invoiceCommandLedger = sqliteTable(
         or (${table.commandKind} <> 'invoice.view' and ${table.expectedInvoiceVersion} >= 0)`,
     ),
     check('invoice_command_ledger_occurred_at_canonical', canonicalTimestamp(table.occurredAt)),
+    check(
+      'invoice_command_ledger_creation_manifests',
+      sql`(${table.commandKind} = 'invoice.create' and coalesce((
+          json_valid(${table.requestJson}) and json_type(${table.requestJson}) = 'object'
+          and json_extract(${table.requestJson}, '$.schema_version') = 1
+          and json_type(${table.requestJson}, '$.schema_version') = 'integer'
+          and json_extract(${table.requestJson}, '$.expected_version') = 0
+          and json_type(${table.requestJson}, '$.expected_version') = 'integer'
+          and json_type(${table.requestJson}, '$.client_id') = 'integer'
+          and json_extract(${table.requestJson}, '$.client_id') > 0
+          and json_type(${table.requestJson}, '$.from') = 'text'
+          and date(json_extract(${table.requestJson}, '$.from'))
+            = json_extract(${table.requestJson}, '$.from')
+          and json_type(${table.requestJson}, '$.to') = 'text'
+          and date(json_extract(${table.requestJson}, '$.to'))
+            = json_extract(${table.requestJson}, '$.to')
+          and json_extract(${table.requestJson}, '$.from')
+            <= json_extract(${table.requestJson}, '$.to')
+          and json_type(${table.requestJson}, '$.project_ids') = 'array'
+          and json_array_length(${table.requestJson}, '$.project_ids') > 0
+          and (json_type(${table.requestJson}, '$.time_summary_type') in ('text','null')
+            and (json_extract(${table.requestJson}, '$.time_summary_type') is null
+              or json_extract(${table.requestJson}, '$.time_summary_type')
+                in ('project','task','people','detailed')))
+          and (json_type(${table.requestJson}, '$.expense_summary_type') in ('text','null')
+            and (json_extract(${table.requestJson}, '$.expense_summary_type') is null
+              or json_extract(${table.requestJson}, '$.expense_summary_type')
+                in ('project','category','people','detailed')))
+          and json_type(${table.requestJson}, '$.currency') = 'text'
+          and length(json_extract(${table.requestJson}, '$.currency')) = 3
+          and json_type(${table.requestJson}, '$.amount_cents') = 'integer'
+          and json_extract(${table.requestJson}, '$.amount_cents') >= 0
+          and json_type(${table.requestJson}, '$.line_count') = 'integer'
+          and json_extract(${table.requestJson}, '$.line_count') > 0
+          and json_type(${table.requestJson}, '$.time_entry_count') = 'integer'
+          and json_extract(${table.requestJson}, '$.time_entry_count') >= 0
+          and json_type(${table.requestJson}, '$.expense_count') = 'integer'
+          and json_extract(${table.requestJson}, '$.expense_count') >= 0
+          and json_valid(${table.sourceManifestJson})
+          and json_type(${table.sourceManifestJson}) = 'object'
+          and json_extract(${table.sourceManifestJson}, '$.schema_version') = 1
+          and json_type(${table.sourceManifestJson}, '$.time_entries') = 'array'
+          and json_type(${table.sourceManifestJson}, '$.expenses') = 'array'
+          and json_valid(${table.lineManifestJson})
+          and json_type(${table.lineManifestJson}) = 'object'
+          and json_extract(${table.lineManifestJson}, '$.schema_version') = 1
+          and json_type(${table.lineManifestJson}, '$.lines') = 'array'
+        ), 0))
+        or (${table.commandKind} <> 'invoice.create'
+          and ${table.requestJson} is null and ${table.sourceManifestJson} is null
+          and ${table.lineManifestJson} is null)`,
+    ),
     check('invoice_command_ledger_completed_boolean', sql`${table.completed} in (0, 1)`),
     check(
       'invoice_command_ledger_completion_shape',
@@ -2101,6 +2162,21 @@ export const invoiceCommandLedger = sqliteTable(
     check(
       'invoice_command_ledger_completed_at_canonical',
       nullableCanonicalTimestamp(table.completedAt),
+    ),
+  ],
+)
+
+export const invoiceNumberSequence = sqliteTable(
+  'invoice_number_sequence',
+  {
+    singleton: integer('singleton').primaryKey(),
+    nextNumber: integer('next_number').notNull(),
+  },
+  (table) => [
+    check('invoice_number_sequence_singleton', sql`${table.singleton} = 1`),
+    check(
+      'invoice_number_sequence_safe',
+      sql`${table.nextNumber} between 1 and 9007199254740991`,
     ),
   ],
 )

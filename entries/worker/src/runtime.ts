@@ -8,6 +8,7 @@ import {
   createD1OidcTransactionStore,
   createGeneralResourceRepository,
   createMoneyResourceRepository,
+  createInvoiceGenerationService,
   createReportRepository,
   createD1EmailLogStore,
   createD1PasswordAuthService,
@@ -271,6 +272,7 @@ export const createRuntimeServices = async (
     tokens: createApiTokenStore(drizzle),
     generalResources: createGeneralResourceRepository(drizzle),
     moneyResources: createMoneyResourceRepository(drizzle),
+    invoiceGeneration: createInvoiceGenerationService(drizzle),
     trackedResources: new DrizzleTrackedResourceRepository(
       drizzle,
       organizationPolicy,
