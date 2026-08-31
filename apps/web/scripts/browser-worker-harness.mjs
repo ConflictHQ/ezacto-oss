@@ -121,27 +121,43 @@ await run(
 await run(
   `INSERT INTO projects (
      id, client_id, name, code, hourly_rate_cents, created_at, updated_at
-   ) VALUES (1, 1, 'Browser Acceptance Project', 'BROWSER', 10000, ?, ?)`,
+   ) VALUES
+     (1, 1, 'Browser Acceptance Project', 'BROWSER', 10000, ?, ?),
+     (2, 1, 'Browser Secondary Project', 'SECONDARY', 12500, ?, ?)`,
+  timestamp,
+  timestamp,
   timestamp,
   timestamp,
 )
 await run(
   `INSERT INTO tasks (id, name, created_at, updated_at)
-   VALUES (1, 'Browser Acceptance Task', ?, ?)`,
+   VALUES
+     (1, 'Browser Acceptance Task', ?, ?),
+     (2, 'Browser Secondary Task', ?, ?)`,
+  timestamp,
+  timestamp,
   timestamp,
   timestamp,
 )
 await run(
   `INSERT INTO user_assignments (
      id, project_id, user_id, created_at, updated_at
-   ) VALUES (1, 1, 1, ?, ?)`,
+   ) VALUES
+     (1, 1, 1, ?, ?),
+     (2, 2, 1, ?, ?)`,
+  timestamp,
+  timestamp,
   timestamp,
   timestamp,
 )
 await run(
   `INSERT INTO task_assignments (
      id, project_id, task_id, billable, created_at, updated_at
-   ) VALUES (1, 1, 1, 1, ?, ?)`,
+   ) VALUES
+     (1, 1, 1, 1, ?, ?),
+     (2, 2, 2, 1, ?, ?)`,
+  timestamp,
+  timestamp,
   timestamp,
   timestamp,
 )
@@ -149,8 +165,19 @@ await run(
   `INSERT INTO time_entries (
      id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
      spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
-     billable_rate_cents, cost_rate_cents, created_at, updated_at
-   ) VALUES (1, 1, 1, 1, 1, 1, ?, 1800, 1800, 1800, 1, 10000, 5000, ?, ?)`,
+     billable_rate_cents, cost_rate_cents, notes, created_at, updated_at
+   ) VALUES
+     (
+       1, 1, 1, 1, 1, 1, ?, 1800, 1800, 1800, 1, 10000, 5000,
+       'First line\nSecond line with delivery detail', ?, ?
+     ),
+     (
+       2, 1, 1, 1, 1, 1, ?, 900, 900, 900, 1, 10000, 5000,
+       'Separate follow-up', ?, ?
+     )`,
+  spentDate,
+  timestamp,
+  timestamp,
   spentDate,
   timestamp,
   timestamp,

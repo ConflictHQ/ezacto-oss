@@ -303,6 +303,66 @@ for (const [runtime, factory] of factories) {
       return active
     }
 
+    it('[api] lists only active time-entry project/task options for the member', async () => {
+      const test = await setup()
+      await test.database.run(
+        `INSERT INTO tasks (id, name, created_at, updated_at)
+         VALUES (3, 'Unassigned Task', ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+      const options = async (): Promise<
+        readonly { project_id: number; task_id: number }[]
+      > => {
+        const response = await test.request('/api/v1/time-entry-options')
+        expect(response.status).toBe(200)
+        expect(response.headers.get('cache-control')).toBe('no-store')
+        expect(await response.clone().json()).toMatchObject({
+          links: { self: '/api/v1/time-entry-options' },
+        })
+        return data(response)
+      }
+
+      const initial = await options()
+      expect(initial).toEqual([
+        { project_id: 1, task_id: 1 },
+        { project_id: 1, task_id: 2 },
+      ])
+      expect(initial).not.toContainEqual({ project_id: 1, task_id: 3 })
+      expect(initial).not.toContainEqual({ project_id: 2, task_id: 1 })
+
+      await test.database.run(
+        `UPDATE user_assignments SET is_active = 0 WHERE id = 1`,
+      )
+      await expect(options()).resolves.toEqual([])
+      await test.database.run(
+        `UPDATE user_assignments SET is_active = 1 WHERE id = 1`,
+      )
+
+      await test.database.run(
+        `UPDATE task_assignments SET is_active = 0 WHERE id = 1`,
+      )
+      await expect(options()).resolves.toEqual([
+        { project_id: 1, task_id: 2 },
+      ])
+      await test.database.run(
+        `UPDATE task_assignments SET is_active = 1 WHERE id = 1`,
+      )
+
+      await test.database.run(`UPDATE tasks SET is_active = 0 WHERE id = 1`)
+      await expect(options()).resolves.toEqual([
+        { project_id: 1, task_id: 2 },
+      ])
+      await test.database.run(`UPDATE tasks SET is_active = 1 WHERE id = 1`)
+
+      await test.database.run(`UPDATE projects SET is_active = 0 WHERE id = 1`)
+      await expect(options()).resolves.toEqual([])
+      await test.database.run(`UPDATE projects SET is_active = 1 WHERE id = 1`)
+
+      await test.database.run(`UPDATE clients SET is_active = 0 WHERE id = 1`)
+      await expect(options()).resolves.toEqual([])
+    }, slowRuntimeTimeout)
+
     it('[security] redacts both time-entry rate snapshots across all six profiles', async () => {
       const test = await setup()
       await test.database.run(

@@ -4989,6 +4989,64 @@
         ]
       }
     },
+    "/api/v1/time-entry-options": {
+      "get": {
+        "operationId": "listTimeEntryOptions",
+        "summary": "List the acting user's active project and task combinations",
+        "tags": [
+          "time-entries"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimeEntryOptionListEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/time-entry-options",
+        "x-ezacto-generate-client": true
+      }
+    },
     "/api/v1/time-entries": {
       "get": {
         "operationId": "listTimeEntries",
@@ -12112,6 +12170,43 @@
           },
           "page": {
             "$ref": "#/components/schemas/PageMetadata"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TimeEntryOption": {
+        "type": "object",
+        "required": [
+          "project_id",
+          "task_id"
+        ],
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "task_id": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "TimeEntryOptionListEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimeEntryOption"
+            }
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
           }
         },
         "additionalProperties": false

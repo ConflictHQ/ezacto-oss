@@ -721,6 +721,18 @@ button[data-auth-action]:disabled {
 .day-row-label {
   min-width: 0;
 }
+.day-entry-note {
+  margin: 8px 0 0;
+  color: var(--ez-ink);
+  font-size: 14px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.day-entry-note[data-empty="true"] {
+  color: var(--ez-muted);
+  font-style: italic;
+}
 .day-empty {
   margin: 0;
   padding: 28px 16px;

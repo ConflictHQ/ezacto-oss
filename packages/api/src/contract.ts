@@ -302,6 +302,15 @@ const trackedListParameters = [
 const timeEntryOperations: ApiContractOperation[] = [
   {
     method: "get",
+    path: "/api/v1/time-entry-options",
+    operationId: "listTimeEntryOptions",
+    summary: "List the acting user's active project and task combinations",
+    tag: "time-entries",
+    responseStatus: 200,
+    responseSchema: "TimeEntryOptionListEnvelope",
+  },
+  {
+    method: "get",
     path: "/api/v1/time-entries",
     operationId: "listTimeEntries",
     summary: "List the acting user's time entries",
@@ -1647,6 +1656,24 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   TimeEntryEnvelope: envelope("TimeEntry"),
   TimeEntryPage: page("TimeEntry"),
+  TimeEntryOption: {
+    type: "object",
+    required: ["project_id", "task_id"],
+    properties: {
+      project_id: integerSchema,
+      task_id: integerSchema,
+    },
+    additionalProperties: false,
+  },
+  TimeEntryOptionListEnvelope: {
+    type: "object",
+    required: ["data", "links"],
+    properties: {
+      data: { type: "array", items: reference("TimeEntryOption") },
+      links: reference("Links"),
+    },
+    additionalProperties: false,
+  },
   Expense: {
     type: "object",
     required: [

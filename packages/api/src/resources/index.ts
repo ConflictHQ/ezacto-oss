@@ -39,6 +39,7 @@ export type {
   ExpenseRecord,
   ResourceTimeBoundary,
   TimeEntryFilters,
+  TimeEntryOption,
   TimeEntryRecord,
   TrackedResourceClock,
   TrackedResourceRepository,

@@ -49,6 +49,10 @@ const snapshot = (entries: readonly DisplayTimeEntry[]): ShellSnapshot => ({
   catalog: {
     projects: [project(1, 'Northpeak'), project(2, 'Acme')],
     tasks: [task(1, 'Development'), task(2, 'Design')],
+    timeEntryOptions: [
+      { project_id: 1, task_id: 1 },
+      { project_id: 2, task_id: 2 },
+    ],
   },
 })
 
@@ -109,6 +113,10 @@ const apiFor = (
     })),
     listProjects: vi.fn(),
     listTasks: vi.fn(),
+    listTimeEntryOptions: vi.fn(async () => [
+      { project_id: 1, task_id: 1 },
+      { project_id: 2, task_id: 2 },
+    ]),
     listTimeEntries: vi.fn(),
     stopTimeEntry: vi.fn(),
     createTimeEntry,

@@ -159,6 +159,7 @@ const renderCellControl = (
   view: GridView,
   handlers: GridHandlers,
   next: FocusTarget | undefined,
+  noteContext: string,
 ): HTMLElement => {
   const state = handlers.cellStates.get(cell.key)
   const wrapper = document.createElement('div')
@@ -199,7 +200,7 @@ const renderCellControl = (
   note.type = 'button'
   note.className = 'cell-note'
   note.dataset.noteCell = cell.key
-  note.ariaLabel = `${cell.notes === null ? 'Add' : 'Edit'} note for ${dayLabel(cell.date)}`
+  note.ariaLabel = `${cell.notes === null ? 'Add' : 'Edit'} note for ${noteContext} on ${dayLabel(cell.date)}`
   note.title = cell.notes ?? 'Add note'
   note.textContent = cell.notes === null ? '+' : '•'
   note.disabled = cell.entries.length !== 1 || cell.isConflict || cell.isLocked || cell.isRunning
@@ -286,6 +287,7 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers): void => {
               'desktop',
               handlers,
               nextCell === undefined ? undefined : { key: nextCell.key, view: 'desktop' },
+              `${row.projectLabel} / ${row.taskLabel}`,
             ),
           )
           tr.append(td)
@@ -357,6 +359,12 @@ const renderPhoneDay = (grid: WeekGrid, selectedDay: number, handlers: GridHandl
       const task = document.createElement('span')
       task.textContent = `${row.taskLabel}${suffix}`
       label.append(project, task)
+      const note = document.createElement('p')
+      note.className = 'day-entry-note'
+      note.dataset.entryNote = String(cell.entries[0]?.id ?? '')
+      note.textContent = cell.notes ?? 'No note'
+      if (cell.notes === null) note.dataset.empty = 'true'
+      label.append(note)
       const nextCell = dayItems[(itemIndex + 1) % dayItems.length]?.cell
       item.append(
         label,
@@ -365,6 +373,7 @@ const renderPhoneDay = (grid: WeekGrid, selectedDay: number, handlers: GridHandl
           'phone',
           handlers,
           nextCell === undefined ? undefined : { key: nextCell.key, view: 'phone' },
+          `${row.projectLabel} / ${row.taskLabel}${suffix}`,
         ),
       )
       return item
@@ -459,13 +468,25 @@ const focusedCell = (): FocusTarget | undefined => {
   return key === undefined || (view !== 'desktop' && view !== 'phone') ? undefined : { key, view }
 }
 
-const focusCell = (target: FocusTarget | undefined): void => {
-  if (target === undefined) return
-  const match = [...document.querySelectorAll<HTMLInputElement>('input[data-cell-key]')].find(
-    (input) => input.dataset.cellKey === target.key && input.dataset.view === target.view,
+const focusCell = (target: FocusTarget | undefined): boolean => {
+  if (target === undefined) return false
+  const matches = [...document.querySelectorAll<HTMLInputElement>('input[data-cell-key]')].filter(
+    (input) =>
+      input.dataset.view === target.view &&
+      (input.dataset.cellKey === target.key ||
+        input.dataset.cellKey?.startsWith(`${target.key}:entry:`) === true),
   )
-  match?.focus()
-  match?.select()
+  const editable = matches.find((input) => !input.disabled)
+  if (editable !== undefined) {
+    editable.focus()
+    editable.select()
+    return true
+  }
+  const wrapper = matches[0]?.closest<HTMLElement>('.week-cell')
+  if (wrapper === undefined || wrapper === null) return false
+  wrapper.tabIndex = -1
+  wrapper.focus()
+  return true
 }
 
 const visibleGridView = (): GridView =>
@@ -751,18 +772,42 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     return false
   }
 
-  const updateRowOptions = (): void => {
+  const updateRowTaskOptions = (projectId: number): void => {
     if (snapshot === null) return
-    required<HTMLSelectElement>('[data-row-project]').replaceChildren(
-      ...snapshot.catalog.projects.map((resource) => option(resource.id, resourceLabel(resource))),
+    const taskIds = new Set(
+      snapshot.catalog.timeEntryOptions
+        .filter((option) => option.project_id === projectId)
+        .map((option) => option.task_id),
     )
     required<HTMLSelectElement>('[data-row-task]').replaceChildren(
-      ...snapshot.catalog.tasks.map((resource) => option(resource.id, resourceLabel(resource))),
+      ...snapshot.catalog.tasks
+        .filter((resource) => taskIds.has(resource.id))
+        .map((resource) => option(resource.id, resourceLabel(resource))),
     )
+  }
+
+  const updateRowOptions = (): void => {
+    if (snapshot === null) return
+    const projectIds = new Set(
+      snapshot.catalog.timeEntryOptions.map((option) => option.project_id),
+    )
+    const projects = snapshot.catalog.projects.filter((resource) => projectIds.has(resource.id))
+    required<HTMLSelectElement>('[data-row-project]').replaceChildren(
+      ...projects.map((resource) => option(resource.id, resourceLabel(resource))),
+    )
+    updateRowTaskOptions(projects[0]?.id ?? 0)
   }
 
   const render = (): void => {
     if (snapshot === null) return
+    const availableRows = new Set(
+      snapshot.catalog.timeEntryOptions.map(
+        (candidate) => `${candidate.project_id}:${candidate.task_id}`,
+      ),
+    )
+    supplementalRows = supplementalRows.filter((row) =>
+      availableRows.has(`${row.projectId}:${row.taskId}`),
+    )
     grid = buildWeekGrid(snapshot, within, supplementalRows)
     required<HTMLElement>('[data-week-label]').textContent = weekLabel(grid.dates)
     required<HTMLElement>('[data-week-total]').textContent = formatSeconds(grid.totalSeconds)
@@ -1025,8 +1070,23 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const data = new FormData(rowForm)
     const projectId = Number(data.get('project'))
     const taskId = Number(data.get('task'))
-    if (!Number.isSafeInteger(projectId) || !Number.isSafeInteger(taskId)) return
+    const result = required<HTMLElement>('[data-row-result]')
+    const optionExists =
+      snapshot?.catalog.timeEntryOptions.some(
+        (option) => option.project_id === projectId && option.task_id === taskId,
+      ) ?? false
+    if (
+      !Number.isSafeInteger(projectId) ||
+      projectId < 1 ||
+      !Number.isSafeInteger(taskId) ||
+      taskId < 1 ||
+      !optionExists
+    ) {
+      result.textContent = 'Choose an available project and task.'
+      return
+    }
     const key = `${projectId}:${taskId}`
+    const alreadyExists = grid?.rows.some((row) => row.key === key) ?? false
     supplementalRows = [
       ...new Map(
         [...supplementalRows, { projectId, taskId }].map((row) => [
@@ -1038,9 +1098,24 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     saveSupplementalRows(operation.userId, within, supplementalRows)
     render()
     rowDialog.close()
-    required<HTMLElement>('[data-row-result]').textContent = ''
+    result.textContent = ''
     const firstDate = grid?.dates[selectedDay]
-    if (firstDate !== undefined) focusCell({ key: `${key}:${firstDate}`, view: visibleGridView() })
+    if (firstDate !== undefined) {
+      const focused = focusCell({ key: `${key}:${firstDate}`, view: visibleGridView() })
+      setSessionStatus(
+        alreadyExists
+          ? focused
+            ? 'That project/task row already exists; it is focused now.'
+            : 'That project/task row already exists.'
+          : focused
+            ? 'Project/task row added. Enter time to save it.'
+            : 'Project/task row added.',
+        'ready',
+      )
+    }
+  })
+  required<HTMLSelectElement>('[data-row-project]').addEventListener('change', (event) => {
+    updateRowTaskOptions(Number((event.currentTarget as HTMLSelectElement).value))
   })
 
   noteForm.addEventListener('submit', (event) => {
