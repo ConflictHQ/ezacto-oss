@@ -352,6 +352,16 @@ export type TimeEntryPage = {
   "page": PageMetadata;
 };
 
+export type TimeEntryOption = {
+  "project_id": number;
+  "task_id": number;
+};
+
+export type TimeEntryOptionListEnvelope = {
+  "data": Array<TimeEntryOption>;
+  "links": Links;
+};
+
 export type Expense = {
   "id": number;
   "user_id": number;
@@ -1786,6 +1796,15 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<UserRateEnvelope>("GET", "/api/v1/users/:userId/cost-rates/:id".replace(":userId", encodeURIComponent(String(args["userId"]))).replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listTimeEntryOptions(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimeEntryOptionListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimeEntryOptionListEnvelope>("GET", "/api/v1/time-entry-options", {
       signal: args.signal,
       headers,
     });

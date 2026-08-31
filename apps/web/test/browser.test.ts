@@ -118,6 +118,10 @@ const browserApi = (): ShellApi & {
       data: [resource(1, 'Development'), resource(2, 'Design')],
       page: { next_cursor: null },
     })),
+    listTimeEntryOptions: vi.fn(async () => [
+      { project_id: 1, task_id: 1 },
+      { project_id: 2, task_id: 2 },
+    ]),
     listTimeEntries: vi.fn(async (query) =>
       entries.filter((entry) => {
         if (query.is_running === true) return entry.is_running
@@ -168,8 +172,9 @@ const edit = (input: HTMLInputElement, value: string): void => {
   input.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
-const renderBrowserShell = (): void => {
-  window.history.replaceState(null, '', '/')
+const renderBrowserShell = (options: { preserveStorage?: boolean } = {}): void => {
+  window.history.replaceState(null, '', '/?week=2026-08-28')
+  if (options.preserveStorage !== true) globalThis.localStorage.clear()
   document.open()
   document.write(
     renderAppShell({ environment: 'test', release: 'browser-test' })
@@ -263,6 +268,12 @@ describe('week-grid browser behavior', () => {
         }),
       ),
     )
+    document.documentElement.dataset.timeView = 'day'
+    await vi.waitFor(() =>
+      expect(
+        [...document.querySelectorAll('[data-entry-note]')].map((item) => item.textContent),
+      ).toContain('Keyboard-first delivery'),
+    )
 
     const tuesday = desktopInputs()[1]!
     api.failNextCreate = true
@@ -306,7 +317,6 @@ describe('week-grid browser behavior', () => {
       )?.value,
     ).toBe('')
 
-    document.documentElement.dataset.timeView = 'day'
     document.querySelector<HTMLButtonElement>('[data-day-next]')!.click()
     const nextDay = document.querySelector<HTMLInputElement>(
       '[data-day-list] input[data-cell-key^="1:1:"]',
@@ -318,6 +328,166 @@ describe('week-grid browser behavior', () => {
       expect(api.entries).toContainEqual(
         expect.objectContaining({ spent_date: spentDate, seconds: 900 }),
       ),
+    )
+  })
+
+  it('[e2e:track-week] adds and focuses a row with explicit duplicate and invalid outcomes', async () => {
+    renderBrowserShell()
+    window.history.replaceState(null, '', '/?week=2026-08-28')
+    const api = browserApi()
+
+    await mountShell(api)
+    const openAddRow = (): void => {
+      document.querySelector<HTMLButtonElement>('[data-add-row-trigger]')!.click()
+    }
+    const submitRow = (): void => {
+      document
+        .querySelector<HTMLFormElement>('[data-row-form]')!
+        .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    }
+
+    openAddRow()
+    document.querySelector<HTMLSelectElement>('[data-row-project]')!.value = '2'
+    document
+      .querySelector<HTMLSelectElement>('[data-row-project]')!
+      .dispatchEvent(new Event('change', { bubbles: true }))
+    document.querySelector<HTMLSelectElement>('[data-row-task]')!.value = '2'
+    submitRow()
+
+    const added = document.querySelector<HTMLInputElement>(
+      '[data-week-grid] input[data-cell-key="2:2:2026-08-24"]',
+    )
+    expect(added).not.toBeNull()
+    expect(document.activeElement).toBe(added)
+    expect(document.querySelector('[data-session-message]')?.textContent).toContain('row added')
+
+    renderBrowserShell({ preserveStorage: true })
+    window.history.replaceState(null, '', '/?week=2026-08-28')
+    await mountShell(api)
+    expect(
+      document.querySelector('[data-week-grid] input[data-cell-key="2:2:2026-08-24"]'),
+    ).not.toBeNull()
+
+    openAddRow()
+    document.querySelector<HTMLSelectElement>('[data-row-project]')!.value = '2'
+    document
+      .querySelector<HTMLSelectElement>('[data-row-project]')!
+      .dispatchEvent(new Event('change', { bubbles: true }))
+    document.querySelector<HTMLSelectElement>('[data-row-task]')!.value = '2'
+    submitRow()
+    const existing = document.querySelector<HTMLInputElement>(
+      '[data-week-grid] input[data-cell-key="2:2:2026-08-24"]',
+    )
+    expect(document.activeElement).toBe(existing)
+    expect(document.querySelector('[data-session-message]')?.textContent).toContain(
+      'already exists',
+    )
+
+    openAddRow()
+    const storageKey = 'ezacto:user:1:week-rows:2026-08-24'
+    const beforeInvalid = globalThis.localStorage.getItem(storageKey)
+    const project = document.querySelector<HTMLSelectElement>('[data-row-project]')!
+    const unavailable = document.createElement('option')
+    unavailable.textContent = 'Northpeak'
+    unavailable.value = '1'
+    project.append(unavailable)
+    project.value = '1'
+    const task = document.querySelector<HTMLSelectElement>('[data-row-task]')!
+    const mismatched = document.createElement('option')
+    mismatched.textContent = 'Design'
+    mismatched.value = '2'
+    task.append(mismatched)
+    task.value = '2'
+    submitRow()
+    expect(document.querySelector<HTMLDialogElement>('[data-row-dialog]')?.open).toBe(true)
+    expect(document.querySelector('[data-row-result]')?.textContent).toContain(
+      'available project and task',
+    )
+    expect(document.querySelector('[data-week-grid] [data-cell-key^="1:2:"]')).toBeNull()
+    expect(globalThis.localStorage.getItem(storageKey)).toBe(beforeInvalid)
+  })
+
+  it('[e2e:phone-week] renders the full note on each individual day entry', async () => {
+    renderBrowserShell()
+    window.history.replaceState(null, '', '/?view=day&week=2026-08-28')
+    const api = browserApi()
+    api.entries.splice(
+      0,
+      api.entries.length,
+      timeEntry(1, {
+        project_id: 1,
+        task_id: 1,
+        spent_date: '2026-08-24',
+        seconds: 1_800,
+        notes: 'First line\nSecond line with delivery detail',
+      }),
+      timeEntry(2, {
+        project_id: 1,
+        task_id: 1,
+        spent_date: '2026-08-24',
+        seconds: 900,
+        notes: 'Separate follow-up',
+      }),
+      timeEntry(3, {
+        project_id: 1,
+        task_id: 1,
+        spent_date: '2026-08-24',
+        seconds: 300,
+        notes: null,
+      }),
+    )
+
+    await mountShell(api)
+
+    const rows = [...document.querySelectorAll<HTMLElement>('[data-day-rows] .day-row')]
+    expect(rows).toHaveLength(3)
+    expect(rows[0]?.querySelector('[data-entry-note]')?.textContent).toBe(
+      'First line\nSecond line with delivery detail',
+    )
+    expect(rows[1]?.querySelector('[data-entry-note]')?.textContent).toBe('Separate follow-up')
+    expect(rows[2]?.querySelector('[data-entry-note]')?.textContent).toBe('No note')
+    const noteLabels = rows.map(
+      (row) => row.querySelector<HTMLButtonElement>('.cell-note')?.ariaLabel,
+    )
+    expect(new Set(noteLabels).size).toBe(3)
+    expect(noteLabels[0]).toContain('Edit note for Northpeak / Development · entry 1')
+    expect(noteLabels[1]).toContain('Edit note for Northpeak / Development · entry 2')
+    expect(noteLabels[2]).toContain('Add note for Northpeak / Development · entry 3')
+    expect(rows[1]?.querySelector<HTMLInputElement>('input')?.value).toBe('0.25')
+
+    document.querySelector<HTMLButtonElement>('[data-add-row-trigger]')!.click()
+    document.querySelector<HTMLSelectElement>('[data-row-project]')!.value = '1'
+    document.querySelector<HTMLSelectElement>('[data-row-task]')!.value = '1'
+    document
+      .querySelector<HTMLFormElement>('[data-row-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    expect(document.activeElement?.getAttribute('data-cell-key')).toBe(
+      '1:1:2026-08-24:entry:1',
+    )
+  })
+
+  it.each([
+    ['locked', { spent_date: '2026-08-24', is_locked: true }],
+    ['running', { spent_date: '2026-08-24', is_running: true, timer_started_at: timestamp }],
+  ])('[e2e:track-week] focuses the %s cell wrapper for an existing row', async (_state, patch) => {
+    renderBrowserShell()
+    const api = browserApi()
+    api.entries[0] = { ...api.entries[0]!, ...patch }
+
+    await mountShell(api)
+    document.querySelector<HTMLButtonElement>('[data-add-row-trigger]')!.click()
+    document.querySelector<HTMLSelectElement>('[data-row-project]')!.value = '1'
+    document.querySelector<HTMLSelectElement>('[data-row-task]')!.value = '1'
+    document
+      .querySelector<HTMLFormElement>('[data-row-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    const wrapper = document.querySelector<HTMLElement>(
+      '[data-week-grid] .week-cell[data-cell-key="1:1:2026-08-24"]',
+    )
+    expect(document.activeElement).toBe(wrapper)
+    expect(document.querySelector('[data-session-message]')?.textContent).toContain(
+      'focused now',
     )
   })
 })
@@ -711,6 +881,7 @@ describe('native browser authentication', () => {
     const project = document.querySelector<HTMLSelectElement>('[data-row-project]')!
     const task = document.querySelector<HTMLSelectElement>('[data-row-task]')!
     project.value = '2'
+    project.dispatchEvent(new Event('change', { bubbles: true }))
     task.value = '2'
     document
       .querySelector<HTMLFormElement>('[data-row-form]')!

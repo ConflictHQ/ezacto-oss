@@ -441,6 +441,33 @@ export class DrizzleTrackedResourceRepository {
     return conditions
   }
 
+  async timeEntryOptions(
+    userId: number,
+  ): Promise<readonly { projectId: number; taskId: number }[]> {
+    const rows = await this.#database
+      .select()
+      .from(userAssignments)
+      .innerJoin(projects, eq(projects.id, userAssignments.projectId))
+      .innerJoin(clients, eq(clients.id, projects.clientId))
+      .innerJoin(taskAssignments, eq(taskAssignments.projectId, projects.id))
+      .innerJoin(tasks, eq(tasks.id, taskAssignments.taskId))
+      .where(
+        and(
+          eq(userAssignments.userId, userId),
+          eq(userAssignments.isActive, true),
+          eq(projects.isActive, true),
+          eq(clients.isActive, true),
+          eq(taskAssignments.isActive, true),
+          eq(tasks.isActive, true),
+        ),
+      )
+      .orderBy(asc(userAssignments.projectId), asc(taskAssignments.taskId))
+    return rows.map((row) => ({
+      projectId: row.user_assignments.projectId,
+      taskId: row.task_assignments.taskId,
+    }))
+  }
+
   timeEntries(
     userId: number,
     filters: Readonly<TimeEntryFilters>,
