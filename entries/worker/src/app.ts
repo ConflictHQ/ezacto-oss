@@ -1,6 +1,7 @@
 import {
   createApiApp,
   ApiError,
+  assertValidCloudflareAccessConfig,
   assertValidOidcProviderConfig,
   generateOpenApiDocument,
   installAttachmentRoutes,
@@ -15,8 +16,10 @@ import {
   readJsonBody,
   validationError,
   type ApiTokenService,
+  type ApiSessionResolver,
   type AttachmentRouteOptions,
   type AuthMailer,
+  type CloudflareAccessVerifierConfig,
   type ApiSessionService,
   type GeneralResourceRouteOptions,
   type MoneyResourceRouteOptions,
@@ -52,6 +55,9 @@ export type WorkerEnv = Env & {
   /** Bound together with a provider implementation; absent deployments fail auth email closed. */
   EMAIL_QUEUE?: Queue<QueuedEmailJob>
   APP_BASE_URL?: string
+  /** Optional Cloudflare Access provider; both values are required together. */
+  ACCESS_TEAM_DOMAIN?: string
+  ACCESS_POLICY_AUD?: string
   OIDC_GOOGLE_CLIENT_ID?: string
   OIDC_GOOGLE_CLIENT_SECRET?: string
   /** SES credentials are Worker secrets; never place them in wrangler vars. */
@@ -80,6 +86,8 @@ export interface RuntimeServices {
   cursorSigningKey: Uint8Array
   passwordAuth: PasswordAuthService
   sessions: ApiSessionService
+  /** Composite browser resolver when an optional edge identity provider is configured. */
+  authenticationSessions?: ApiSessionResolver
   emailLog: EmailLogStore
   identities: OidcIdentityResolver
   oidcTransactions: OidcTransactionStorePort
@@ -101,7 +109,7 @@ export const createApp = (services?: RuntimeServices) =>
       : {
           authentication: {
             tokens: services.tokens,
-            sessions: services.sessions,
+            sessions: services.authenticationSessions ?? services.sessions,
           },
           installApi: (api) => {
             installSessionRoutes(api, services.sessions)
@@ -367,6 +375,22 @@ const configuredCredential = (value: string | undefined): string | null => {
   if (value === undefined) return null
   const normalized = value.trim()
   return normalized === '' ? null : normalized
+}
+
+export const cloudflareAccessConfig = (
+  env: WorkerEnv,
+): CloudflareAccessVerifierConfig | null => {
+  const teamDomain = configuredCredential(env.ACCESS_TEAM_DOMAIN)
+  const audience = configuredCredential(env.ACCESS_POLICY_AUD)
+  if (teamDomain === null && audience === null) return null
+  if (teamDomain === null || audience === null) {
+    throw new TypeError(
+      'Cloudflare Access team domain and policy audience must be configured together',
+    )
+  }
+  const config = { teamDomain, audience }
+  assertValidCloudflareAccessConfig(config)
+  return config
 }
 
 const redirectOrigin = (env: WorkerEnv): string => {

@@ -14,8 +14,9 @@
   // No per-branch preview workers — deploy targets are hosts we own and name.
   // The runtime reads D1 as DB, R2 as ATTACHMENTS, and the mail producer as
   // EMAIL_QUEUE.
-  // API_CURSOR_SIGNING_KEY and AWS credentials are Worker secrets; SES_REGION,
-  // SES_FROM, and the optional SES_CONFIGURATION_SET are deployment vars.
+  // API_CURSOR_SIGNING_KEY and AWS credentials are Worker secrets. The optional
+  // ACCESS_TEAM_DOMAIN/ACCESS_POLICY_AUD pair, SES_REGION, SES_FROM, and the
+  // optional SES_CONFIGURATION_SET are deployment vars.
   // Queue and R2 names are the provisioning contract; the reviewed provision
   // workflows converge durable resources before this configuration is deployed.
   "env": {

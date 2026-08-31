@@ -17,21 +17,57 @@ import {
   migrateD1,
   type TrackedPolicyResolver,
 } from "@ezacto/db/d1";
-import { createApiSessionService } from "@ezacto/api";
-import type { AttachmentObjectPort, AttachmentRouteOptions } from "@ezacto/api";
+import {
+  createApiSessionService,
+  createCloudflareAccessSessionResolver,
+  createCloudflareAccessVerifier,
+} from "@ezacto/api";
+import type {
+  AttachmentObjectPort,
+  AttachmentRouteOptions,
+  CloudflareAccessFetch,
+  CloudflareAccessVerifier,
+  CloudflareAccessVerifierConfig,
+} from "@ezacto/api";
 import {
   SesMailer,
   type HttpEmailProvider,
   type SesMailerOptions,
 } from "@ezacto/mailer";
 import type { RuntimeServices } from "./app.js";
-import type { WorkerEnv } from "./app.js";
+import { cloudflareAccessConfig, type WorkerEnv } from "./app.js";
 import { createWorkerAuthMailer } from "./email-queue.js";
 
 const cursorSecretPattern = /^[A-Za-z0-9_-]+$/;
 const cursorSecretBytes = 32;
 
 const readiness = new WeakMap<object, Promise<void>>();
+
+let cachedAccessVerifier:
+  | {
+      teamDomain: string;
+      audience: string;
+      verifier: CloudflareAccessVerifier;
+    }
+  | undefined;
+
+const accessVerifier = (
+  config: CloudflareAccessVerifierConfig,
+): CloudflareAccessVerifier => {
+  if (
+    cachedAccessVerifier?.teamDomain === config.teamDomain &&
+    cachedAccessVerifier.audience === config.audience
+  ) {
+    return cachedAccessVerifier.verifier;
+  }
+  const verifier = createCloudflareAccessVerifier(config);
+  cachedAccessVerifier = {
+    teamDomain: config.teamDomain,
+    audience: config.audience,
+    verifier,
+  };
+  return verifier;
+};
 
 export const createWorkerSesMailer = (
   env: WorkerEnv,
@@ -249,6 +285,7 @@ export const createRuntimeServices = async (
   options: {
     emailProvider?: HttpEmailProvider;
     ses?: SesMailerOptions;
+    cloudflareAccessFetch?: CloudflareAccessFetch;
   } = {},
 ): Promise<RuntimeServices> => {
   const database = requireDatabase(env);
@@ -256,6 +293,22 @@ export const createRuntimeServices = async (
   await ensureRuntimeDatabaseReady(database);
   const drizzle = createD1Database(database);
   const sessions = createApiSessionService(createD1SessionStore(database));
+  const identities = createD1IdentityStore(database);
+  const access = cloudflareAccessConfig(env);
+  const authenticationSessions =
+    access === null
+      ? sessions
+      : createCloudflareAccessSessionResolver({
+          sessions,
+          identities,
+          verifier:
+            options.cloudflareAccessFetch === undefined
+              ? accessVerifier(access)
+              : createCloudflareAccessVerifier({
+                  ...access,
+                  fetch: options.cloudflareAccessFetch,
+                }),
+        });
   const emailLog = createD1EmailLogStore(database);
   const emailProvider =
     options.emailProvider ?? createWorkerSesMailer(env, options.ses);
@@ -281,8 +334,9 @@ export const createRuntimeServices = async (
     cursorSigningKey,
     passwordAuth: createD1PasswordAuthService(database),
     sessions,
+    authenticationSessions,
     emailLog,
-    identities: createD1IdentityStore(database),
+    identities,
     oidcTransactions: createD1OidcTransactionStore(database),
     ...(authMailer === undefined ? {} : { authMailer }),
     ...(env.ATTACHMENTS === undefined

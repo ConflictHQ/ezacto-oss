@@ -1,5 +1,18 @@
 export { createApiApp } from './app.js'
 export {
+  assertValidCloudflareAccessConfig,
+  CLOUDFLARE_ACCESS_JWT_HEADER,
+  createCloudflareAccessSessionResolver,
+  createCloudflareAccessVerifier,
+  type CloudflareAccessAssertion,
+  type CloudflareAccessFetch,
+  type CloudflareAccessIdentityResolver,
+  type CloudflareAccessSessionResolverOptions,
+  type CloudflareAccessSessionService,
+  type CloudflareAccessVerifier,
+  type CloudflareAccessVerifierConfig,
+} from './cloudflare-access.js'
+export {
   installAttachmentRoutes,
   MAX_ATTACHMENT_BYTES,
   type AttachmentMetadataInput,

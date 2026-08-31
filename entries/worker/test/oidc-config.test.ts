@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { configuredSignInProviders, oidcProvider, type WorkerEnv } from '../src/app.js'
+import {
+  cloudflareAccessConfig,
+  configuredSignInProviders,
+  oidcProvider,
+  type WorkerEnv,
+} from '../src/app.js'
 
 const environment = (
   values: Partial<WorkerEnv> = {},
@@ -97,5 +102,40 @@ describe('Worker OIDC provider registry', () => {
         }),
       )?.redirectOrigin,
     ).toBe('https://local-tunnel.example')
+  })
+})
+
+describe('Worker Cloudflare Access provider registry', () => {
+  const access = {
+    ACCESS_TEAM_DOMAIN: 'https://ezacto-test.cloudflareaccess.com',
+    ACCESS_POLICY_AUD: 'a'.repeat(64),
+  }
+
+  it('[unit] remains optional and accepts only a complete fixed provider pair', () => {
+    expect(cloudflareAccessConfig(environment())).toBeNull()
+    expect(cloudflareAccessConfig(environment(access))).toEqual({
+      teamDomain: access.ACCESS_TEAM_DOMAIN,
+      audience: access.ACCESS_POLICY_AUD,
+    })
+  })
+
+  it.each([
+    { ACCESS_TEAM_DOMAIN: access.ACCESS_TEAM_DOMAIN },
+    { ACCESS_POLICY_AUD: access.ACCESS_POLICY_AUD },
+    {
+      ...access,
+      ACCESS_TEAM_DOMAIN: 'http://ezacto-test.cloudflareaccess.com',
+    },
+    { ...access, ACCESS_TEAM_DOMAIN: 'https://attacker.example' },
+    { ...access, ACCESS_TEAM_DOMAIN: `${access.ACCESS_TEAM_DOMAIN}/` },
+  ])(
+    '[security] rejects partial or malformed Access configuration %#',
+    (values) => {
+      expect(() => cloudflareAccessConfig(environment(values))).toThrow()
+    },
+  )
+
+  it('[security] does not advertise edge Access as an application redirect provider', () => {
+    expect(configuredSignInProviders(environment(access))).toEqual([])
   })
 })
