@@ -30,3 +30,7 @@
 15234222dddd2bc9683189346769cabffdb83b64:packages/db/test/invoice-import-contract.test.ts:generic-api-key:646
 2f178a98e8ef6dee345ed4755cb20b790311f687:packages/db/test/invoice-import-contract.test.ts:generic-api-key:646
 41246407df66dcf3ea2d555acfe6bb5545a5bfc8:packages/migrate/test/cli.test.ts:harvest-pat-assignment:91
+
+# A historical test-only synthetic JWT fixture; current source constructs the
+# detector-shaped value from separate segments.
+a7f98dc929b3dc4d98abe951e6b0cc9c9df26aeb:packages/migrate/test/worksheets.test.ts:jwt:543

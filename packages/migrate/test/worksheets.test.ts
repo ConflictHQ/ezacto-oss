@@ -539,8 +539,12 @@ describe('migration worksheets', () => {
     await expect(
       applyRetainerWorksheet({ snapshotDir, databasePath, inputPath: retainerPath }),
     ).rejects.toThrow('credential-shaped')
-    retainer.rows[0]!.notes =
-      'Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dGVzdHNpZ25hdHVyZQ'
+    const encodedJwtSegments = [
+      'eyJhbGciOiJIUzI1NiJ9',
+      'eyJzdWIiOiIxMjM0NTY3ODkwIn0',
+      'dGVzdHNpZ25hdHVyZQ',
+    ]
+    retainer.rows[0]!.notes = `Bearer ${encodedJwtSegments.join('.')}`
     await writeFile(retainerPath, jsonBytes(retainer))
     await expect(
       applyRetainerWorksheet({ snapshotDir, databasePath, inputPath: retainerPath }),
