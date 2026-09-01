@@ -18,6 +18,11 @@ import {
   type EntryEditorContext,
   type TimeEntryMode,
 } from '../components/time-entry-editor.js'
+import { renderInvoiceDetail, renderInvoiceListItems } from '../invoices/browser.js'
+import {
+  invoiceIdFromPathname,
+  invoiceProfileHasAccess,
+} from '../invoices/model.js'
 import {
   buildWeekGrid,
   formatCellHours,
@@ -695,6 +700,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const authenticatedShell = required<HTMLElement>('[data-authenticated-shell]')
   const invoiceGenerationPage =
     document.documentElement.dataset.appView === 'invoice-generation'
+  const invoiceListPage = document.documentElement.dataset.appView === 'invoice-list'
+  const invoiceDetailPage = document.documentElement.dataset.appView === 'invoice-detail'
   const timesheetApprovalsPage =
     document.documentElement.dataset.appView === 'timesheet-approvals'
   const signedOutDocumentTitle = document.title
@@ -702,9 +709,13 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     / — Sign in$/u,
     invoiceGenerationPage
       ? ' — Generate invoice'
-      : timesheetApprovalsPage
-        ? ' — Approvals'
-        : ' — Time',
+      : invoiceListPage
+        ? ' — Invoices'
+        : invoiceDetailPage
+          ? ' — Invoice detail'
+          : timesheetApprovalsPage
+            ? ' — Approvals'
+            : ' — Time',
   )
   const status = required<HTMLElement>('[data-session-status]')
   const statusMessage = required<HTMLElement>('[data-session-message]')
@@ -752,6 +763,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const invoiceSubmit = required<HTMLButtonElement>('[data-invoice-generation-submit]')
   const invoiceRetry = required<HTMLButtonElement>('[data-retry-invoice-catalog]')
   const invoiceSuccess = required<HTMLElement>('[data-invoice-generation-success]')
+  const generatedInvoiceLink = required<HTMLAnchorElement>('[data-generated-invoice-link]')
+  const invoiceList = required<HTMLElement>('[data-invoice-list]')
+  const invoiceListStatus = required<HTMLElement>('[data-invoice-list-status]')
+  const invoiceLoadMore = required<HTMLButtonElement>('[data-invoice-load-more]')
+  const invoiceDetailStatus = required<HTMLElement>('[data-invoice-detail-status]')
+  const invoiceDocument = required<HTMLElement>('[data-invoice-document]')
   const timesheetStatus = required<HTMLElement>('[data-timesheet-status]')
   const timesheetStatusLabel = required<HTMLElement>('[data-timesheet-status-label]')
   const timesheetRejectionReason = required<HTMLElement>('[data-timesheet-rejection-reason]')
@@ -809,6 +826,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   } | null = null
   let invoiceGenerationPending = false
   let invoiceCommandId: string | null = null
+  let invoiceNextCursor: string | null = null
+  let invoiceListCount = 0
   let approvalModuleAvailable = false
   let lockPolicyAvailable = false
   let currentSubmission: TimesheetSubmission | null = null
@@ -952,10 +971,20 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     invoiceProjects.replaceChildren()
     invoiceResult.textContent = ''
     invoiceSuccess.hidden = true
+    generatedInvoiceLink.hidden = true
+    generatedInvoiceLink.href = '/invoices'
     invoiceRetry.hidden = true
     invoiceCatalog = null
     setInvoiceFormPending(false)
     invoiceCommandId = null
+    invoiceList.replaceChildren()
+    invoiceListStatus.textContent = 'Loading invoices…'
+    invoiceLoadMore.hidden = true
+    invoiceLoadMore.disabled = false
+    invoiceNextCursor = null
+    invoiceListCount = 0
+    invoiceDetailStatus.textContent = 'Loading invoice…'
+    invoiceDocument.hidden = true
     timesheetStatus.hidden = true
     timesheetStatusLabel.textContent = 'Not submitted'
     timesheetRejectionReason.hidden = true
@@ -1622,6 +1651,90 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
   }
 
+  const loadInvoiceList = async (
+    operation: AuthOperation,
+    cursor?: string,
+  ): Promise<void> => {
+    if (!isSessionCurrent(operation) || !invoiceListPage) return
+    if (currentIdentity === null || !invoiceProfileHasAccess(currentIdentity.profile)) {
+      invoiceListStatus.textContent = 'Your profile does not have access to invoices.'
+      invoiceList.replaceChildren()
+      invoiceLoadMore.hidden = true
+      return
+    }
+    const listInvoices = api.listInvoices
+    if (listInvoices === undefined) {
+      invoiceListStatus.textContent = 'Invoice browsing is unavailable in this build.'
+      invoiceLoadMore.hidden = true
+      return
+    }
+    const append = cursor !== undefined
+    invoiceList.setAttribute('aria-busy', 'true')
+    invoiceLoadMore.disabled = true
+    invoiceListStatus.textContent = append ? 'Loading more invoices…' : 'Loading invoices…'
+    try {
+      const page = await listInvoices(cursor, operation.signal)
+      if (!isSessionCurrent(operation)) return
+      invoiceListCount = append
+        ? invoiceListCount + page.data.length
+        : page.data.length
+      renderInvoiceListItems(page.data, append)
+      invoiceNextCursor = page.page.next_cursor
+      invoiceLoadMore.hidden = invoiceNextCursor === null
+      invoiceListStatus.textContent =
+        invoiceListCount === 0
+          ? 'No invoices found.'
+          : `${invoiceListCount} ${invoiceListCount === 1 ? 'invoice' : 'invoices'} loaded${invoiceNextCursor === null ? '.' : '; more are available.'}`
+    } catch (error) {
+      if (handleSessionFailure(error, operation)) return
+      invoiceListStatus.textContent = messageFor(error)
+      invoiceLoadMore.hidden = invoiceNextCursor === null
+    } finally {
+      if (isSessionCurrent(operation)) {
+        invoiceList.removeAttribute('aria-busy')
+        invoiceLoadMore.disabled = false
+      }
+    }
+  }
+
+  const loadInvoiceDetail = async (operation: AuthOperation): Promise<void> => {
+    if (!isSessionCurrent(operation) || !invoiceDetailPage) return
+    if (currentIdentity === null || !invoiceProfileHasAccess(currentIdentity.profile)) {
+      invoiceDetailStatus.textContent = 'Your profile does not have access to invoices.'
+      invoiceDocument.hidden = true
+      return
+    }
+    const invoiceId = invoiceIdFromPathname(globalThis.location.pathname)
+    const getInvoice = api.getInvoice
+    const listMessages = api.listInvoiceMessages
+    const listPayments = api.listInvoicePayments
+    if (
+      invoiceId === null ||
+      getInvoice === undefined ||
+      listMessages === undefined ||
+      listPayments === undefined
+    ) {
+      invoiceDetailStatus.textContent = 'Invoice detail is unavailable in this build.'
+      invoiceDocument.hidden = true
+      return
+    }
+    invoiceDetailStatus.textContent = 'Loading invoice…'
+    invoiceDocument.hidden = true
+    try {
+      const [invoice, messages, payments] = await Promise.all([
+        getInvoice(invoiceId, operation.signal),
+        listMessages(invoiceId, operation.signal),
+        listPayments(invoiceId, operation.signal),
+      ])
+      if (!isSessionCurrent(operation)) return
+      renderInvoiceDetail(invoice, messages, payments)
+    } catch (error) {
+      if (handleSessionFailure(error, operation)) return
+      invoiceDetailStatus.textContent = messageFor(error)
+      invoiceDocument.hidden = true
+    }
+  }
+
   const loadAuthenticatedShell = async (
     operation: AuthOperation,
   ): Promise<void> => {
@@ -1630,6 +1743,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const authenticated = showAuthenticated(identity)
     if (invoiceGenerationPage) {
       await Promise.all([loadInvoiceGeneration(authenticated), loadWeek(authenticated)])
+    } else if (invoiceListPage) {
+      await Promise.all([loadInvoiceList(authenticated), loadWeek(authenticated)])
+    } else if (invoiceDetailPage) {
+      await Promise.all([loadInvoiceDetail(authenticated), loadWeek(authenticated)])
     } else {
       await loadWeek(authenticated)
     }
@@ -2653,7 +2770,13 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   invoiceForm.addEventListener('change', () => {
     invoiceCommandId = null
     invoiceSuccess.hidden = true
+    generatedInvoiceLink.hidden = true
     if (!invoiceGenerationPending) invoiceResult.textContent = ''
+  })
+  invoiceLoadMore.addEventListener('click', () => {
+    const operation = sessionOperation()
+    if (operation === null || invoiceNextCursor === null) return
+    void loadInvoiceList(operation, invoiceNextCursor)
   })
   invoiceForm.addEventListener('submit', (event) => {
     event.preventDefault()
@@ -2729,6 +2852,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
             style: 'currency',
             currency: invoice.currency,
           }).format(invoice.amount_cents / 100)} · ${invoice.line_items.length} ${invoice.line_items.length === 1 ? 'line' : 'lines'}`
+        generatedInvoiceLink.href = `/invoices/${invoice.id}`
+        generatedInvoiceLink.hidden = false
         invoiceResult.textContent = 'Draft invoice generated successfully.'
         invoiceSuccess.hidden = false
       })

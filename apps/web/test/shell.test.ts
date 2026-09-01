@@ -148,6 +148,37 @@ const memoryApi = (
 }
 
 describe('S-1 through S-5 application shell', () => {
+  it('[unit] maps invoice browse operations to the generated client', async () => {
+    const listInvoices = vi.fn(async () => ({
+      data: [],
+      links: {},
+      page: { next_cursor: null },
+    }))
+    const getInvoice = vi.fn(async () => ({ data: {}, links: {} }))
+    const listInvoiceMessages = vi.fn(async () => ({ data: [], links: {} }))
+    const listInvoicePayments = vi.fn(async () => ({ data: [], links: {} }))
+    const api = createShellApi({
+      listInvoices,
+      getInvoice,
+      listInvoiceMessages,
+      listInvoicePayments,
+    } as unknown as EzactoClient)
+    const signal = new AbortController().signal
+
+    await api.listInvoices!('opaque-cursor', signal)
+    await api.getInvoice!(7, signal)
+    await api.listInvoiceMessages!(7, signal)
+    await api.listInvoicePayments!(7, signal)
+
+    expect(listInvoices).toHaveBeenCalledWith({
+      query: { cursor: 'opaque-cursor', per_page: 50 },
+      signal,
+    })
+    expect(getInvoice).toHaveBeenCalledWith({ id: 7, signal })
+    expect(listInvoiceMessages).toHaveBeenCalledWith({ id: 7, signal })
+    expect(listInvoicePayments).toHaveBeenCalledWith({ id: 7, signal })
+  })
+
   it('[unit] requests only one bounded approval queue page', async () => {
     const listPendingTimesheetSubmissions = vi.fn(async () => ({
       data: [],
@@ -408,5 +439,41 @@ describe('S-1 through S-5 application shell', () => {
     expect(html).toContain('Invoice &lt;123&gt;')
     expect(html).toContain('&lt;script&gt;unsafe()&lt;/script&gt;')
     expect(html).not.toContain('<script>unsafe()</script>')
+  })
+
+  it('[acceptance] renders honest invoice list and pinned detail workspaces', () => {
+    const list = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      activeSection: 'Invoices',
+      view: 'invoice-list',
+    })
+    const detail = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      activeSection: 'Invoices',
+      view: 'invoice-detail',
+    })
+    const generation = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      activeSection: 'Invoices',
+      view: 'invoice-generation',
+    })
+
+    expect(list).toContain('data-invoice-list-page')
+    expect(list).toContain('data-invoice-list aria-label="Invoices"')
+    expect(list).toContain('href="/invoices" aria-current="page"')
+    expect(detail).toContain('data-invoice-detail-page')
+    expect(detail).toContain('data-invoice-document data-document-shell')
+    expect(detail).toContain('data-ez-theme="precision"')
+    expect(detail).toContain('data-invoice-detail-lines')
+    expect(detail).toContain('data-invoice-detail-payments')
+    expect(detail).toContain('data-invoice-detail-messages')
+    expect(generation).toContain('data-generated-invoice-link')
+    expect(generation).toContain('The draft is saved and ready to review.')
+    expect(detail).not.toMatch(/>Send<|Download PDF|Send reminder/u)
+    expect(webAssets.stylesheet).toContain('.invoice-document {')
+    expect(webAssets.stylesheet).toContain('.invoice-load-more {')
   })
 })
