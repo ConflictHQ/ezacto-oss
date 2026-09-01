@@ -69,6 +69,10 @@ const bool = { type: "boolean" } as const;
 const positiveInt = { type: "positive-int" } as const;
 const nonnegativeInt = { type: "nonnegative-int" } as const;
 const nullableNonnegativeInt = { type: "nullable-nonnegative-int" } as const;
+const nullableExpenseUnitPriceCents = {
+  type: "nullable-nonnegative-int",
+  maximum: 9_000_000_000_000,
+} as const;
 const nullableNonnegativeNumber = {
   type: "nullable-nonnegative-number",
 } as const;
@@ -126,6 +130,16 @@ const routeDefinitions: Readonly<
     },
     required: new Set(["client_id", "first_name"]),
     filters: { client_id: "clientId", updated_since: "updatedSince" },
+  },
+  "expense-categories": {
+    fields: {
+      name: string,
+      unit_name: nullableString,
+      unit_price_cents: nullableExpenseUnitPriceCents,
+      is_active: bool,
+    },
+    required: new Set(["name"]),
+    filters: { is_active: "isActive", updated_since: "updatedSince" },
   },
   projects: {
     fields: {
@@ -389,11 +403,15 @@ const parseField = (
         );
   if (spec.type === "nullable-nonnegative-int")
     return value === null ||
-      (Number.isSafeInteger(value) && (value as number) >= 0)
+      (Number.isSafeInteger(value) &&
+        (value as number) >= 0 &&
+        (spec.maximum === undefined || (value as number) <= spec.maximum))
       ? (value as number | null)
       : invalid(
           "invalid_integer",
-          `${field} must be a non-negative safe integer or null`,
+          spec.maximum === undefined
+            ? `${field} must be a non-negative safe integer or null`
+            : `${field} must be an integer between 0 and ${spec.maximum} or null`,
         );
   if (spec.type === "nonnegative-number")
     return typeof value === "number" && Number.isFinite(value) && value >= 0
@@ -597,6 +615,7 @@ const profileForbidden = (): never => {
 const sessionWriteProfiles: Readonly<
   Partial<Record<GeneralResourceKind, ReadonlySet<UserProfile>>>
 > = {
+  "expense-categories": new Set(["administrator"]),
   "user-assignments": new Set([
     "project_manager",
     "people_admin",
@@ -611,13 +630,14 @@ const resourceScopes: Readonly<
   Record<
     Exclude<GeneralResourceKind, "user-assignments" | "users" | "roles">,
     {
-      read: "clients:read" | "projects:read";
-      write: "clients:write" | "projects:write";
+      read: "clients:read" | "expenses:read" | "projects:read";
+      write: "clients:write" | "expenses:write" | "projects:write";
     }
   >
 > = {
   clients: { read: "clients:read", write: "clients:write" },
   contacts: { read: "clients:read", write: "clients:write" },
+  "expense-categories": { read: "expenses:read", write: "expenses:write" },
   projects: { read: "projects:read", write: "projects:write" },
   tasks: { read: "projects:read", write: "projects:write" },
   "task-assignments": { read: "projects:read", write: "projects:write" },

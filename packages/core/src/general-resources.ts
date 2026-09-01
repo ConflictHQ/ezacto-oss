@@ -1,6 +1,7 @@
 export type GeneralResourceKind =
   | "clients"
   | "contacts"
+  | "expense-categories"
   | "projects"
   | "tasks"
   | "task-assignments"

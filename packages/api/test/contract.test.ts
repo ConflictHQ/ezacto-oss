@@ -163,6 +163,32 @@ describe("OpenAPI contract", () => {
     ).toMatchObject({ "200": expect.any(Object) });
     expect(schemas).toHaveProperty("TimesheetSubmissionDetail");
     expect(schemas).toHaveProperty("TimesheetSubmissionEntry");
+
+    const categoryCollection = paths["/api/v1/expense-categories"] as
+      | {
+          get?: {
+            operationId: string;
+            security: Array<Record<string, unknown>>;
+            parameters: Array<{ name: string }>;
+          };
+          post?: {
+            operationId: string;
+            security: Array<Record<string, unknown>>;
+          };
+        }
+      | undefined;
+    expect(categoryCollection?.get).toMatchObject({
+      operationId: "listExpenseCategories",
+      security: [{ bearerAuth: [] }, { cookieSession: [] }],
+      parameters: expect.arrayContaining([
+        expect.objectContaining({ name: "is_active" }),
+        expect.objectContaining({ name: "updated_since" }),
+      ]),
+    });
+    expect(categoryCollection?.post).toMatchObject({
+      operationId: "createExpenseCategory",
+      security: [{ cookieSession: [] }],
+    });
   });
 
   it("[contract] documents exact durable and discriminated money request shapes", () => {
