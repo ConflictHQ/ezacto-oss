@@ -256,6 +256,18 @@ describe('Reports Stage 1 browser controller', () => {
 
     resolveOldClients(page([client(8, 'Old session client')]))
     await oldActivation
+    window.history.pushState(
+      null,
+      '',
+      '/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31&client_id=9&project_id=10',
+    )
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    expect(document.querySelector('[data-report-client]')?.textContent).toContain(
+      'New session client',
+    )
+    expect(document.querySelector('[data-report-project]')?.textContent).toContain(
+      'New session project',
+    )
     expect(document.querySelector('[data-report-client]')?.textContent).not.toContain(
       'Old session client',
     )
@@ -263,6 +275,184 @@ describe('Reports Stage 1 browser controller', () => {
       'Old project',
     )
     newSession.abort()
+  })
+
+  it('[security] ignores an old catalog failure after the next session is active', async () => {
+    writeDocument('/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31')
+    let rejectOldClients!: (reason: unknown) => void
+    const oldClients = new Promise<ReturnType<typeof page>>((_, reject) => {
+      rejectOldClients = reject
+    })
+    const listReportClients = vi
+      .fn()
+      .mockImplementationOnce(async () => oldClients)
+      .mockResolvedValueOnce(page([client(9, 'Current client')]))
+    const listReportProjects = vi
+      .fn()
+      .mockResolvedValueOnce(page([project(8, 'Old project')]))
+      .mockResolvedValueOnce(page([project(10, 'Current project')]))
+    const controller = createReportsController(
+      baseApi({ listReportClients, listReportProjects }),
+    )
+    const oldSessionFailure = vi.fn(() => false)
+    const oldSession = new AbortController()
+    const oldActivation = controller.activate(
+      identity('administrator'),
+      oldSession.signal,
+      oldSessionFailure,
+    )
+    await vi.waitFor(() => expect(listReportClients).toHaveBeenCalledTimes(1))
+
+    oldSession.abort()
+    const newSession = new AbortController()
+    await controller.activate(identity('administrator'), newSession.signal, () => false)
+    rejectOldClients(new Error('Old session catalog failed.'))
+    await oldActivation
+
+    expect(oldSessionFailure).not.toHaveBeenCalled()
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    expect(document.querySelector('[data-report-client]')?.textContent).toContain(
+      'Current client',
+    )
+    expect(document.querySelector('[data-report-project]')?.textContent).toContain(
+      'Current project',
+    )
+    expect(document.querySelector('[data-report-status]')?.textContent).not.toContain(
+      'Old session catalog failed.',
+    )
+    newSession.abort()
+  })
+
+  it('[browser] clears old results and retry state when new filters are invalid', async () => {
+    writeDocument('/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31')
+    const getUninvoicedReport = vi.fn(async () => ({
+      from: '2026-08-01',
+      to: '2026-08-31',
+      client_id: null,
+      project_id: null,
+      totals: [
+        {
+          currency: 'USD',
+          rounded_seconds: 3_600,
+          time_entry_count: 1,
+          unpriced_time_entry_count: 0,
+          expense_count: 0,
+          total_cents: 12_345,
+        },
+      ],
+    }))
+    const controller = createReportsController(baseApi({ getUninvoicedReport }))
+    const session = new AbortController()
+    await controller.activate(identity('administrator'), session.signal, () => false)
+
+    const form = document.querySelector<HTMLFormElement>('[data-report-form]')!
+    const from = document.querySelector<HTMLInputElement>('[data-report-from]')!
+    const to = document.querySelector<HTMLInputElement>('[data-report-to]')!
+    const results = document.querySelector<HTMLElement>('[data-report-results]')!
+    const retry = document.querySelector<HTMLButtonElement>('[data-report-retry]')!
+    const run = document.querySelector<HTMLButtonElement>('[data-report-run]')!
+    expect(results.textContent).toContain('$123.45')
+
+    from.value = '2026-09-02'
+    to.value = '2026-09-01'
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    expect(results.textContent).toBe('')
+    expect(results.hasAttribute('aria-busy')).toBe(false)
+    expect(retry.hidden).toBe(true)
+    expect(run.disabled).toBe(false)
+    expect(document.querySelector('[data-report-status]')?.textContent).toBe(
+      'To must be on or after From.',
+    )
+
+    from.value = '2026-08-01'
+    to.value = '2026-08-31'
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(getUninvoicedReport).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(results.textContent).toContain('$123.45'))
+
+    window.history.pushState(
+      null,
+      '',
+      '/reports?report=uninvoiced&from=2026-09-02&to=2026-09-01',
+    )
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    expect(results.textContent).toBe('')
+    expect(results.hasAttribute('aria-busy')).toBe(false)
+    expect(retry.hidden).toBe(true)
+    expect(run.disabled).toBe(false)
+    expect(document.querySelector('[data-report-status]')?.textContent).toBe(
+      'To must be on or after From.',
+    )
+    session.abort()
+  })
+
+  it('[browser] clears a stale retry action before showing validation feedback', async () => {
+    writeDocument('/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31')
+    const getUninvoicedReport = vi.fn().mockRejectedValue(new Error('Temporary failure.'))
+    const session = new AbortController()
+    await createReportsController(baseApi({ getUninvoicedReport })).activate(
+      identity('administrator'),
+      session.signal,
+      () => false,
+    )
+    const retry = document.querySelector<HTMLButtonElement>('[data-report-retry]')!
+    expect(retry.hidden).toBe(false)
+
+    document.querySelector<HTMLInputElement>('[data-report-from]')!.value = '2026-09-02'
+    document.querySelector<HTMLInputElement>('[data-report-to]')!.value = '2026-09-01'
+    document
+      .querySelector<HTMLFormElement>('[data-report-form]')!
+      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    expect(retry.hidden).toBe(true)
+    retry.click()
+    expect(getUninvoicedReport).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('[data-report-results]')?.textContent).toBe('')
+    session.abort()
+  })
+
+  it('[browser] clears old results when report APIs become unavailable', async () => {
+    writeDocument('/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31')
+    const api = baseApi({
+      getUninvoicedReport: vi.fn(async () => ({
+        from: '2026-08-01',
+        to: '2026-08-31',
+        client_id: null,
+        project_id: null,
+        totals: [
+          {
+            currency: 'USD',
+            rounded_seconds: 0,
+            time_entry_count: 0,
+            unpriced_time_entry_count: 0,
+            expense_count: 0,
+            total_cents: 10_000,
+          },
+        ],
+      })),
+    })
+    const session = new AbortController()
+    await createReportsController(api).activate(
+      identity('administrator'),
+      session.signal,
+      () => false,
+    )
+    expect(document.querySelector('[data-report-results]')?.textContent).toContain('$100.00')
+
+    delete api.getClientRollupReport
+    document
+      .querySelector<HTMLFormElement>('[data-report-form]')!
+      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    expect(document.querySelector('[data-report-results]')?.textContent).toBe('')
+    expect(document.querySelector('[data-report-results]')?.hasAttribute('aria-busy')).toBe(
+      false,
+    )
+    expect(document.querySelector('[data-report-retry]')?.hasAttribute('hidden')).toBe(
+      true,
+    )
+    expect(document.querySelector('[data-report-status]')?.textContent).toBe(
+      'Reports are unavailable in this build.',
+    )
+    session.abort()
   })
 
   it('[browser] pages catalogs and renders every uninvoiced currency without inventing redacted money', async () => {
@@ -403,6 +593,21 @@ describe('Reports Stage 1 browser controller', () => {
     expect(results.textContent).toContain('Project #7')
     expect(results.textContent).toContain('2 h')
     expect(results.textContent).toContain('2 entries cannot be priced')
+
+    window.history.pushState(
+      null,
+      '',
+      '/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31',
+    )
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    expect(results.textContent).toBe('')
+    expect(results.hasAttribute('aria-busy')).toBe(false)
+    expect(document.querySelector('[data-report-retry]')?.hasAttribute('hidden')).toBe(
+      true,
+    )
+    expect(document.querySelector('[data-report-status]')?.textContent).toBe(
+      'Your profile does not have access to this financial report.',
+    )
   })
 
   it('[security] denies an explicit financial report URL before an API request', async () => {

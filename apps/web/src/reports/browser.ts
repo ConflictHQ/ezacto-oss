@@ -381,6 +381,13 @@ export const createReportsController = (
     else results.removeAttribute('aria-busy')
   }
 
+  const clearReportPresentation = (): void => {
+    setPending(false)
+    retryAction = null
+    retry.hidden = true
+    results.replaceChildren()
+  }
+
   const selectedId = (input: HTMLSelectElement): number | null => {
     const value = Number(input.value)
     return Number.isSafeInteger(value) && value > 0 ? value : null
@@ -447,14 +454,13 @@ export const createReportsController = (
     }
     const validation = validateReportFilters(filters)
     if (validation !== null) {
+      clearReportPresentation()
       status.textContent = validation
-      retry.hidden = true
       return
     }
     if (filters.kind !== 'project-budget' && !canReadFinancialReports(active.identity.profile)) {
+      clearReportPresentation()
       status.textContent = 'Your profile does not have access to this financial report.'
-      results.replaceChildren()
-      retry.hidden = true
       return
     }
     if (
@@ -462,6 +468,7 @@ export const createReportsController = (
       api.getClientRollupReport === undefined ||
       api.getProjectBudgetReport === undefined
     ) {
+      clearReportPresentation()
       status.textContent = 'Reports are unavailable in this build.'
       return
     }
@@ -604,11 +611,13 @@ export const createReportsController = (
         let loaded = false
         let filtersToLoad: ReportFilters | null = null
         try {
-          ;[clients, projects] = await Promise.all([
+          const [loadedClients, loadedProjects] = await Promise.all([
             collect((cursor) => api.listReportClients!(cursor, signal), signal),
             collect((cursor) => api.listReportProjects!(cursor, signal), signal),
           ])
-          if (currentSession()?.signal !== signal) return
+          if (currentSession() !== active) return
+          clients = loadedClients
+          projects = loadedProjects
           const next = queuedLocationFilters ?? initial
           queuedLocationFilters = null
           kindInput.value = next.kind
@@ -619,12 +628,13 @@ export const createReportsController = (
           filtersToLoad = next
           loaded = true
         } catch (error) {
-          if (onSessionFailure(error) || signal.aborted) return
+          if (currentSession() !== active) return
+          if (active.onSessionFailure(error) || active.signal.aborted) return
           status.textContent = messageFor(error)
           retry.hidden = false
           retryAction = () => void loadCatalogAndReport()
         } finally {
-          if (currentSession()?.signal === signal) setPending(false)
+          if (currentSession() === active) setPending(false)
         }
         if (loaded && filtersToLoad !== null) await loadReport(filtersToLoad, false)
       }
