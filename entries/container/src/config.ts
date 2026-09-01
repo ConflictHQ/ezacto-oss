@@ -1,0 +1,153 @@
+import { isAbsolute, normalize, resolve } from 'node:path'
+import type { AppEnv } from '../../worker/src/app.js'
+
+export interface ContainerConfig {
+  host: string
+  port: number
+  dataDirectory: string
+  databasePath: string
+  attachmentDirectory: string
+  appBaseUrl: string
+  cursorSigningKey: Uint8Array
+  smtp: { url: string; from: string }
+  appEnv: AppEnv
+}
+
+const required = (
+  environment: NodeJS.ProcessEnv,
+  name: string,
+  maximum: number,
+): string => {
+  const value = environment[name]
+  if (
+    value === undefined ||
+    value.length < 1 ||
+    value.length > maximum ||
+    value.trim() !== value ||
+    [...value].some((character) => {
+      const code = character.codePointAt(0)!
+      return code <= 31 || code === 127
+    })
+  ) {
+    throw new TypeError(`${name} is missing or invalid`)
+  }
+  return value
+}
+
+const optional = (
+  environment: NodeJS.ProcessEnv,
+  name: string,
+  maximum: number,
+): string | undefined => {
+  if (environment[name] === undefined) return undefined
+  return required(environment, name, maximum)
+}
+
+const origin = (value: string): string => {
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw new TypeError('APP_BASE_URL must be an absolute application origin')
+  }
+  if (
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.pathname !== '/' ||
+    parsed.search !== '' ||
+    parsed.hash !== '' ||
+    (parsed.protocol !== 'https:' &&
+      !(parsed.protocol === 'http:' && parsed.hostname === 'localhost'))
+  ) {
+    throw new TypeError(
+      'APP_BASE_URL must use HTTPS outside localhost and contain only an origin',
+    )
+  }
+  return parsed.origin
+}
+
+const signingKey = (encoded: string): Uint8Array => {
+  if (
+    encoded.length > 128 ||
+    encoded.length % 4 === 1 ||
+    !/^[A-Za-z0-9_-]+$/u.test(encoded)
+  ) {
+    throw new TypeError('API_CURSOR_SIGNING_KEY must be canonical base64url')
+  }
+  const bytes = Buffer.from(encoded, 'base64url')
+  if (bytes.byteLength !== 32 || bytes.toString('base64url') !== encoded) {
+    throw new TypeError('API_CURSOR_SIGNING_KEY must decode to exactly 32 bytes')
+  }
+  return new Uint8Array(bytes)
+}
+
+const port = (value: string | undefined): number => {
+  const candidate = value ?? '3000'
+  if (!/^[1-9][0-9]{0,4}$/u.test(candidate)) {
+    throw new TypeError('PORT must be an integer between 1 and 65535')
+  }
+  const parsed = Number(candidate)
+  if (parsed > 65_535) {
+    throw new TypeError('PORT must be an integer between 1 and 65535')
+  }
+  return parsed
+}
+
+const dataDirectory = (value: string | undefined): string => {
+  const candidate = value ?? '/data'
+  if (
+    !isAbsolute(candidate) ||
+    normalize(candidate) !== candidate ||
+    resolve(candidate) === '/' ||
+    candidate.length > 2_048
+  ) {
+    throw new TypeError(
+      'EZACTO_DATA_DIR must be a normalized absolute directory below root',
+    )
+  }
+  return candidate
+}
+
+export const readContainerConfig = (
+  environment: NodeJS.ProcessEnv,
+): ContainerConfig => {
+  const directory = dataDirectory(environment.EZACTO_DATA_DIR)
+  const appBaseUrl = origin(required(environment, 'APP_BASE_URL', 2_048))
+  const googleClientId = optional(environment, 'OIDC_GOOGLE_CLIENT_ID', 512)
+  const googleClientSecret = optional(
+    environment,
+    'OIDC_GOOGLE_CLIENT_SECRET',
+    4_096,
+  )
+  const bootstrapToken = optional(environment, 'EZACTO_BOOTSTRAP_TOKEN', 512)
+  const appEnv: AppEnv = {
+    ENVIRONMENT: optional(environment, 'ENVIRONMENT', 64) ?? 'container',
+    RELEASE: optional(environment, 'RELEASE', 128) ?? 'container',
+    APP_BASE_URL: appBaseUrl,
+    ...(googleClientId === undefined
+      ? {}
+      : { OIDC_GOOGLE_CLIENT_ID: googleClientId }),
+    ...(googleClientSecret === undefined
+      ? {}
+      : { OIDC_GOOGLE_CLIENT_SECRET: googleClientSecret }),
+    ...(bootstrapToken === undefined
+      ? {}
+      : { EZACTO_BOOTSTRAP_TOKEN: bootstrapToken }),
+  }
+  return {
+    host: optional(environment, 'HOST', 255) ?? '0.0.0.0',
+    port: port(environment.PORT),
+    dataDirectory: directory,
+    databasePath: `${directory}/db.sqlite`,
+    attachmentDirectory: `${directory}/attachments`,
+    appBaseUrl,
+    cursorSigningKey: signingKey(
+      required(environment, 'API_CURSOR_SIGNING_KEY', 128),
+    ),
+    smtp: {
+      url: required(environment, 'SMTP_URL', 8_192),
+      from: required(environment, 'SMTP_FROM', 320),
+    },
+    appEnv,
+  }
+}

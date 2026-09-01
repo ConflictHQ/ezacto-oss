@@ -44,6 +44,7 @@ export {
   type IssuedApiToken,
   type SessionPrincipal,
 } from './auth.js'
+export { createQueuedAuthMailer } from './auth-email.js'
 export {
   installGeneralResourceRoutes,
   type GeneralResourceRouteOptions,

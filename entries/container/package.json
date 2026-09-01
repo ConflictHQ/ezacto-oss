@@ -1,0 +1,35 @@
+{
+  "name": "ezacto-container",
+  "version": "0.0.0",
+  "description": "Single-process Node container entry for self-hosted Ezacto.",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run --testTimeout=30000",
+    "build": "esbuild src/index.ts --bundle --conditions=development --platform=node --format=esm --target=node22 --outfile=dist/index.js --external:better-sqlite3 --external:nodemailer"
+  },
+  "dependencies": {
+    "@ezacto/api": "0.0.0",
+    "@ezacto/db": "0.0.0",
+    "@ezacto/mailer": "0.0.0",
+    "@ezacto/web": "0.0.0",
+    "@hono/node-server": "^2.1.1",
+    "better-sqlite3": "^13.0.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260826.1",
+    "@eslint/js": "^10.0.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.28.1",
+    "eslint": "^10.9.1",
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.68.0",
+    "vitest": "^4.1.11"
+  }
+}

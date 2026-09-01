@@ -9,6 +9,11 @@
       "types": "./src/index.ts",
       "development": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./smtp": {
+      "types": "./src/smtp.ts",
+      "development": "./src/smtp.ts",
+      "default": "./dist/smtp.js"
     }
   },
   "engines": { "node": ">=22" },
@@ -20,11 +25,13 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "aws4fetch": "^1.0.20"
+    "aws4fetch": "^1.0.20",
+    "nodemailer": "^9.1.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.10.0",
+    "@types/nodemailer": "^8.0.1",
     "eslint": "^10.9.1",
     "prettier": "^3.9.6",
     "typescript": "^5.9.3",
