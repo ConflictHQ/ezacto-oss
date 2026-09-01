@@ -328,6 +328,7 @@ const app = createApiApp({
     installGeneralResourceRoutes(api, {
       repository: generalResources,
       cursorSigningKey: new Uint8Array(32).fill(7),
+      isExpensesModuleEnabled: async () => true,
     })
     installReportRoutes(api, reportReader)
   },

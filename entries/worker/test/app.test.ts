@@ -154,7 +154,34 @@ describe('worker entry', () => {
     },
   )
 
-  it.each(['/', '/clients', '/clients/42', '/projects', '/projects/42', '/invoices', '/invoices/42', '/invoices/new', '/approvals', '/reports'])(
+  it('[acceptance] serves the Expenses V1 list and numeric detail shells', async () => {
+    const list = await app.request('/expenses', {}, env)
+    const detail = await app.request('/expenses/42', {}, env)
+
+    expect(list.status).toBe(200)
+    expect(list.headers.get('location')).toBeNull()
+    const listHtml = await list.text()
+    expect(listHtml).toContain('data-app-view="expense-list"')
+    expect(listHtml).toContain('data-expense-list-page')
+    expect(listHtml).toContain('data-expense-create-form')
+    expect(listHtml).toContain('href="/expenses" aria-current="page"')
+
+    expect(detail.status).toBe(200)
+    const detailHtml = await detail.text()
+    expect(detailHtml).toContain('data-app-view="expense-detail"')
+    expect(detailHtml).toContain('data-expense-detail-page')
+    expect(detailHtml).toContain('data-expense-edit-form')
+    expect(detailHtml).toContain('data-expense-attachment-form')
+  })
+
+  it.each(['/expenses/0', '/expenses/nope', '/expenses/9007199254740992'])(
+    '[security] rejects invalid expense detail path %s',
+    async (path) => {
+      expect((await app.request(path, {}, env)).status).toBe(404)
+    },
+  )
+
+  it.each(['/', '/clients', '/clients/42', '/projects', '/projects/42', '/expenses', '/expenses/42', '/invoices', '/invoices/42', '/invoices/new', '/approvals', '/reports'])(
     '[security] renders %s as an inert shell under an overlay when a session cookie is present',
     async (path) => {
       const res = await app.request(

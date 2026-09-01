@@ -1244,6 +1244,109 @@ test('[e2e:reports-ui] runs uninvoiced, client rollup, and project budget report
   await expectNoPageOverflow(page)
 })
 
+test('[e2e:expense-receipt] creates, filters, edits, and downloads a receipt through real D1 and R2', async ({
+  page,
+}) => {
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto('/expenses')
+  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+  const create = page.locator('[data-expense-create-form]')
+  await expect(create).toBeVisible()
+  await create.getByLabel('Project').selectOption({ label: '[BROWSER] Browser Acceptance Project' })
+  await create.getByLabel('Category').selectOption({ label: 'Travel' })
+  await create.getByLabel('Date').fill('2026-08-25')
+  await create.getByLabel('Amount').fill('18.75')
+  await create.getByLabel('Notes').fill('Airport shuttle receipt\nCustomer kickoff')
+  await create.getByLabel('Billable').check()
+  await create.getByLabel('Reimbursable').check()
+  const created = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/expenses' &&
+      response.request().method() === 'POST',
+  )
+  await create.getByRole('button', { name: 'Add expense' }).click()
+  const createdResponse = await created
+  expect(createdResponse.status()).toBe(201)
+  const createdBody = await createdResponse.json()
+  const expenseId = Number(createdBody.data.id)
+  expect(Number.isSafeInteger(expenseId)).toBe(true)
+
+  const filters = page.locator('[data-expense-filter-form]')
+  await filters.locator('input[name="from"]').fill('2026-08-25')
+  await filters.locator('input[name="to"]').fill('2026-08-25')
+  await filters.locator('select[name="client_id"]').selectOption({ label: 'Browser Acceptance Client' })
+  await filters.locator('select[name="project_id"]').selectOption({ label: '[BROWSER] Browser Acceptance Project' })
+  await filters.locator('select[name="expense_category_id"]').selectOption({ label: 'Travel' })
+  await filters.locator('select[name="approval_status"]').selectOption('unsubmitted')
+  await filters.locator('select[name="reimbursement_status"]').selectOption('none')
+  const filtered = page.waitForResponse((response) => {
+    const url = new URL(response.url())
+    return (
+      url.pathname === '/api/v1/expenses' &&
+      response.request().method() === 'GET' &&
+      url.searchParams.get('client_id') === '1' &&
+      url.searchParams.get('expense_category_id') === '1'
+    )
+  })
+  await filters.getByRole('button', { name: 'Apply filters' }).click()
+  expect((await filtered).status()).toBe(200)
+  await expect(page).toHaveURL(/\/expenses\?.*approval_status=unsubmitted/u)
+  const row = page.locator(`[data-expense-id="${expenseId}"]`)
+  await expect(row).toBeVisible()
+  await expect(row).toContainText('Airport shuttle receipt')
+  await expect(row).toContainText('$18.75')
+  await expect(row).toContainText('Reimbursement: None')
+  await expect(page.locator('.expense-week-heading')).toContainText('Week of Aug 24, 2026')
+  await expectNoPageOverflow(page)
+
+  await row.getByRole('link').click()
+  await expect(page).toHaveURL(new RegExp(`/expenses/${expenseId}$`, 'u'))
+  const edit = page.locator('[data-expense-edit-form]')
+  await expect(edit.getByLabel('Notes')).toHaveValue(/Customer kickoff/u)
+  await expect(page.locator('[data-expense-detail-approval-fact]')).toHaveText('Unsubmitted')
+  await edit.getByLabel('Notes').fill('Airport shuttle receipt\nReviewed detail')
+  const updated = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/expenses/${expenseId}` &&
+      response.request().method() === 'PATCH',
+  )
+  await edit.getByRole('button', { name: 'Save expense' }).click()
+  expect((await updated).status()).toBe(200)
+  await expect(page.locator('[data-expense-edit-result]')).toHaveText('Expense saved.')
+
+  const uploaded = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/expenses/${expenseId}/attachments` &&
+      response.request().method() === 'POST',
+  )
+  await page
+    .getByLabel('Attach a receipt')
+    .setInputFiles({
+      name: 'airport-shuttle.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('real R2 receipt bytes'),
+    })
+  await page.getByRole('button', { name: 'Upload receipt' }).click()
+  expect((await uploaded).status()).toBe(201)
+  const receiptLink = page.getByRole('link', { name: 'airport-shuttle.txt' })
+  await expect(receiptLink).toBeVisible()
+  const href = await receiptLink.getAttribute('href')
+  expect(href).not.toBeNull()
+  expect(await page.evaluate(async (path) => (await fetch(path)).text(), href!)).toBe(
+    'real R2 receipt bytes',
+  )
+
+  await page.goto(
+    '/expenses?from=2026-08-25&to=2026-08-25&client_id=1&project_id=1&expense_category_id=1&approval_status=unsubmitted&reimbursement_status=none',
+  )
+  await expect(page.locator(`[data-expense-id="${expenseId}"]`)).toContainText(
+    'Reviewed detail',
+  )
+})
+
 test('[e2e:invoice-cycle] generates a real draft through the authenticated wizard', async ({
   page,
 }) => {

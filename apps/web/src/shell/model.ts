@@ -30,6 +30,7 @@ import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 import type { ClientDirectoryApi } from '../clients/model.js'
 import type { ProjectDirectoryApi } from '../projects/model.js'
 import type { ReportWorkspaceApi } from '../reports/model.js'
+import type { ExpenseWorkflowApi } from '../expenses/model.js'
 
 interface CursorPage<T> {
   readonly data: readonly T[]
@@ -39,7 +40,8 @@ interface CursorPage<T> {
 export interface ShellApi
   extends Partial<ClientDirectoryApi>,
     Partial<ProjectDirectoryApi>,
-    Partial<ReportWorkspaceApi> {
+    Partial<ReportWorkspaceApi>,
+    Partial<ExpenseWorkflowApi> {
   whoami(signal?: AbortSignal): Promise<Whoami>
   signIn(credentials: PasswordSignInInput, signal?: AbortSignal): Promise<AuthPrincipal>
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
@@ -674,6 +676,58 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (
       await client.createProjectAttachment({
         projectId,
+        'Idempotency-Key': commandId,
+        body,
+        ...withSignal(signal),
+      })
+    ).data,
+  listWorkflowExpenses: (filters, cursor, signal) =>
+    client.listExpenses({
+      query: {
+        ...filters,
+        per_page: 100,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  getExpenseWeekStartDay: async (signal) =>
+    (await client.getTimeEntrySettings(withSignal(signal))).data.week_start_day,
+  getWorkflowExpense: async (id, signal) =>
+    (await client.getExpense({ id, ...withSignal(signal) })).data,
+  createWorkflowExpense: async (input, signal) =>
+    (await client.createExpense({ body: input, ...withSignal(signal) })).data,
+  updateWorkflowExpense: async (id, input, signal) =>
+    (await client.updateExpense({ id, body: input, ...withSignal(signal) })).data,
+  listExpenseCategories: (cursor, signal) =>
+    client.listExpenseCategories({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listExpenseProjects: (cursor, signal) =>
+    client.listProjects({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listExpenseClients: (cursor, signal) =>
+    client.listClients({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listWorkflowExpenseAttachments: async (expenseId, signal) =>
+    (await client.listExpenseAttachments({ expenseId, ...withSignal(signal) })).data,
+  uploadWorkflowExpenseAttachment: async (expenseId, commandId, body, signal) =>
+    (
+      await client.createExpenseAttachment({
+        expenseId,
         'Idempotency-Key': commandId,
         body,
         ...withSignal(signal),

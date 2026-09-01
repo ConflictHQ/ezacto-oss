@@ -26,6 +26,7 @@ export interface GeneralResourceRouteOptions {
   repository: GeneralResourceRepository;
   cursorSigningKey: Uint8Array;
   clock?: () => string;
+  isExpensesModuleEnabled(): Promise<boolean>;
 }
 
 type FieldType =
@@ -619,6 +620,20 @@ const translate = (error: unknown): never => {
   ]);
 };
 
+const requireResourceModule = async (
+  kind: GeneralResourceKind,
+  options: Required<GeneralResourceRouteOptions>,
+): Promise<void> => {
+  if (kind !== "expense-categories" || (await options.isExpensesModuleEnabled())) {
+    return;
+  }
+  throw new ApiError({
+    status: 403,
+    code: "module_disabled",
+    message: "The expenses module is not enabled for this organization.",
+  });
+};
+
 const profileForbidden = (): never => {
   throw new ApiError({
     status: 403,
@@ -778,6 +793,7 @@ const installResource = <Bindings extends object>(
   const definition = routeDefinitions[kind];
   api.get(`/${kind}`, async (context) => {
     const principal = requireResourceRead(context, kind);
+    await requireResourceModule(kind, options);
     const filters = parseFilters(new URL(context.req.url), definition);
     try {
       return context.json(
@@ -800,6 +816,7 @@ const installResource = <Bindings extends object>(
   });
   api.post(`/${kind}`, async (context) => {
     const principal = requireResourceWrite(context, kind);
+    await requireResourceModule(kind, options);
     const input = await parseMutation(context, definition, true);
     authorizeMutationFields(kind, input, principal);
     try {
@@ -815,6 +832,7 @@ const installResource = <Bindings extends object>(
   });
   api.get(`/${kind}/:id`, async (context) => {
     const principal = requireResourceRead(context, kind);
+    await requireResourceModule(kind, options);
     try {
       return context.json(
         envelope(
@@ -832,6 +850,7 @@ const installResource = <Bindings extends object>(
   });
   api.patch(`/${kind}/:id`, async (context) => {
     const principal = requireResourceWrite(context, kind);
+    await requireResourceModule(kind, options);
     const input = await parseMutation(context, definition, false);
     authorizeMutationFields(kind, input, principal);
     try {
@@ -848,6 +867,7 @@ const installResource = <Bindings extends object>(
   });
   api.delete(`/${kind}/:id`, async (context) => {
     requireResourceWrite(context, kind);
+    await requireResourceModule(kind, options);
     try {
       await options.repository.remove(
         kind,

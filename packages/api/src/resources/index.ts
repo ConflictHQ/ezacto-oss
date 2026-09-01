@@ -11,6 +11,7 @@ export interface TrackedResourceRouteOptions {
   repository: TrackedResourceRepository
   clock: TrackedResourceClock
   cursorSigningKey: Uint8Array
+  isExpensesModuleEnabled(): Promise<boolean>
 }
 
 /** Narrow composition seam for the application entry point to install later. */
