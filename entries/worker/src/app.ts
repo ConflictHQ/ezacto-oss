@@ -443,6 +443,56 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
+      app.get('/clients', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            activeSection: 'Clients',
+            view: 'client-list',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/clients/:clientId', (context) => {
+        const rawClientId = context.req.param('clientId')
+        const clientId = Number(rawClientId)
+        if (
+          !/^[1-9][0-9]*$/u.test(rawClientId) ||
+          !Number.isSafeInteger(clientId)
+        ) {
+          return context.notFound()
+        }
+        return context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            activeSection: 'Clients',
+            view: 'client-detail',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        )
+      })
+
       app.get('/invoices/:invoiceId', (context) => {
         const rawInvoiceId = context.req.param('invoiceId')
         const invoiceId = Number(rawInvoiceId)
