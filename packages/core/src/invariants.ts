@@ -335,7 +335,7 @@ export const invariantRegistry = [
       state: "executable",
       testFile: "packages/db/test/invoice-generation.test.ts",
       testName:
-        "[unit] [inv-11] equals the uninvoiced report to the cent for the identical filter",
+        "[unit] [inv-11] reconciles every client report currency to generated invoices",
       runtimes: bothRuntimes,
     },
   },

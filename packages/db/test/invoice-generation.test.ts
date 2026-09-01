@@ -251,7 +251,7 @@ for (const [runtime, factory] of factories) {
       ])
     })
 
-    it('[unit] [inv-11] equals the uninvoiced report to the cent for the identical filter', async () => {
+    it('[unit] equals the uninvoiced report to the cent for the identical filter', async () => {
       const database = await setup()
       const preview = await createReportRepository(database.orm).uninvoiced({
         clientId: 1,
