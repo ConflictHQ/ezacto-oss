@@ -2,13 +2,56 @@ import type {
   Invoice,
   InvoiceMessage,
   InvoicePayment,
+  InvoicePaymentInput,
+  InvoicePaymentUpdateInput,
+  VersionedRowDeleteInput,
   Whoami,
 } from '@ezacto/client'
+
+export interface InvoicePaymentApi {
+  getInvoice(id: number, signal?: AbortSignal): Promise<Invoice>
+  listInvoiceMessages(id: number, signal?: AbortSignal): Promise<readonly InvoiceMessage[]>
+  listInvoicePayments(id: number, signal?: AbortSignal): Promise<readonly InvoicePayment[]>
+  recordInvoicePayment(
+    id: number,
+    commandId: string,
+    input: InvoicePaymentInput,
+    signal?: AbortSignal,
+  ): Promise<Invoice>
+  updateInvoicePayment(
+    id: number,
+    paymentId: number,
+    commandId: string,
+    input: InvoicePaymentUpdateInput,
+    signal?: AbortSignal,
+  ): Promise<Invoice>
+  deleteInvoicePayment(
+    id: number,
+    paymentId: number,
+    commandId: string,
+    input: VersionedRowDeleteInput,
+    signal?: AbortSignal,
+  ): Promise<Invoice>
+}
 
 export const invoiceProfileHasAccess = (profile: Whoami['profile']): boolean =>
   profile === 'accounting' ||
   profile === 'executive_manager' ||
   profile === 'administrator'
+
+const invoiceIdentityHasScope = (
+  identity: Readonly<Whoami>,
+  scope: 'invoices:read' | 'invoices:write',
+): boolean =>
+  invoiceProfileHasAccess(identity.profile) &&
+  (identity.authentication.kind === 'session' ||
+    identity.authentication.scopes.includes(scope))
+
+export const invoiceIdentityCanRead = (identity: Readonly<Whoami>): boolean =>
+  invoiceIdentityHasScope(identity, 'invoices:read')
+
+export const invoiceIdentityCanWrite = (identity: Readonly<Whoami>): boolean =>
+  invoiceIdentityHasScope(identity, 'invoices:write')
 
 export const invoiceIdFromPathname = (pathname: string): number | null => {
   const match = /^\/invoices\/([1-9][0-9]*)\/?$/u.exec(pathname)
@@ -38,6 +81,108 @@ export const invoiceMessageLabel = (
 export const invoicePaymentDate = (
   payment: Readonly<InvoicePayment>,
 ): string | null => payment.paid_date ?? payment.paid_at
+
+export const invoiceCanRecordPayment = (invoice: Readonly<Invoice>): boolean =>
+  invoice.state === 'open' && invoice.due_amount_cents > 0
+
+export const invoicePaymentCanUpdate = (
+  invoice: Readonly<Invoice>,
+  payment: Readonly<InvoicePayment>,
+): boolean =>
+  (invoice.state === 'open' || invoice.state === 'paid') &&
+  payment.provider === 'manual' &&
+  payment.provider_shape === 'manual' &&
+  payment.recorded_by_user_id !== null
+
+export const invoicePaymentCanDelete = (
+  invoice: Readonly<Invoice>,
+  payment: Readonly<InvoicePayment>,
+): boolean =>
+  (invoice.state === 'open' || invoice.state === 'paid') &&
+  payment.recorded_by_user_id !== null
+
+const moneyPattern = /^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,2})?$/u
+
+export const invoicePaymentAmountCents = (raw: string): number => {
+  const value = raw.trim()
+  if (!moneyPattern.test(value)) {
+    throw new Error('Amount must be greater than zero with no more than two decimals.')
+  }
+  const [whole, fraction = ''] = value.split('.')
+  const cents = Number(BigInt(whole!) * 100n + BigInt(fraction.padEnd(2, '0')))
+  if (!Number.isSafeInteger(cents) || cents < 1) {
+    throw new Error('Amount must be greater than zero with no more than two decimals.')
+  }
+  if (cents > 9_000_000_000_000) throw new Error('Amount is too large.')
+  return cents
+}
+
+export const invoicePaymentAmountForForm = (cents: number): string =>
+  `${Math.trunc(cents / 100)}.${String(cents % 100).padStart(2, '0')}`
+
+const localTimestampPattern =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/u
+
+export const invoicePaymentInstant = (raw: string): string => {
+  const match = localTimestampPattern.exec(raw)
+  if (match === null) throw new Error('Choose a valid payment date and time.')
+  const date = new Date(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    Number(match[4]),
+    Number(match[5]),
+    Number(match[6] ?? 0),
+  )
+  if (
+    date.getFullYear() !== Number(match[1]) ||
+    date.getMonth() !== Number(match[2]) - 1 ||
+    date.getDate() !== Number(match[3]) ||
+    date.getHours() !== Number(match[4]) ||
+    date.getMinutes() !== Number(match[5]) ||
+    date.getSeconds() !== Number(match[6] ?? 0)
+  ) {
+    throw new Error('Choose a valid payment date and time.')
+  }
+  return date.toISOString()
+}
+
+export const invoicePaymentLocalInstant = (instant: string): string => {
+  const date = new Date(instant)
+  if (!Number.isFinite(date.valueOf())) return ''
+  const part = (value: number): string => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${part(date.getMonth() + 1)}-${part(date.getDate())}T${part(date.getHours())}:${part(date.getMinutes())}`
+}
+
+export type InvoicePaymentTiming =
+  | { readonly paid_date: string }
+  | { readonly paid_at: string }
+
+export const invoicePaymentTiming = (
+  precision: 'date' | 'timestamp',
+  value: string,
+): InvoicePaymentTiming => {
+  if (precision === 'timestamp') return { paid_at: invoicePaymentInstant(value) }
+  const date = new Date(`${value}T00:00:00.000Z`)
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/u.test(value) ||
+    !Number.isFinite(date.valueOf()) ||
+    date.toISOString().slice(0, 10) !== value
+  ) {
+    throw new Error('Choose a valid payment date.')
+  }
+  return { paid_date: value }
+}
+
+export const invoicePaymentProviderLabel = (
+  payment: Readonly<InvoicePayment>,
+): string => {
+  if (payment.provider === 'manual') return 'Manual'
+  return payment.provider
+    .split('_')
+    .map((part) => part[0]!.toLocaleUpperCase('en-US') + part.slice(1))
+    .join(' ')
+}
 
 export const invoicePeriod = (invoice: Readonly<Invoice>): string | null =>
   invoice.period_start === null || invoice.period_end === null

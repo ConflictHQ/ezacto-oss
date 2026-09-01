@@ -3,6 +3,10 @@ import { themeManifest } from '../theme.js'
 import { renderClientDirectoryPages } from '../clients/render.js'
 import { renderProjectDirectoryPages } from '../projects/render.js'
 import { renderExpenseWorkflowPages } from '../expenses/render.js'
+import {
+  renderInvoicePaymentDialogs,
+  renderInvoicePaymentSection,
+} from '../invoices/render.js'
 
 export interface AppShellOptions {
   readonly environment: string
@@ -303,6 +307,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
       <a href="/invoices">Back to invoices</a>
     </header>
     <p class="form-result invoice-page-status" data-invoice-detail-status role="status" aria-live="polite">Loading invoice…</p>
+    <button class="invoice-load-more" type="button" data-invoice-detail-retry hidden>Retry invoice</button>
     <article class="invoice-document" data-invoice-document data-document-shell data-ez-theme="precision" hidden>
       <header class="invoice-document-heading">
         <div>
@@ -334,10 +339,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
       <section class="invoice-notes" data-invoice-detail-notes-section hidden>
         <h3>Notes</h3><p data-invoice-detail-notes></p>
       </section>
-      <section class="invoice-history" aria-labelledby="invoice-payment-heading">
-        <h3 id="invoice-payment-heading">Payments</h3>
-        <ul data-invoice-detail-payments></ul>
-      </section>
+      ${renderInvoicePaymentSection()}
       <section class="invoice-history" aria-labelledby="invoice-message-heading">
         <h3 id="invoice-message-heading">History</h3>
         <ul data-invoice-detail-messages></ul>
@@ -403,6 +405,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   ${renderClientDirectoryPages(view)}
   ${renderProjectDirectoryPages(view)}
   ${renderExpenseWorkflowPages(view)}
+  ${renderInvoicePaymentDialogs()}
   <dialog class="command-dialog" data-command-dialog aria-labelledby="command-title">
     <form data-command-form>
       <header><div><p class="eyebrow">Command bar</p><h2 id="command-title">Go or log time</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>

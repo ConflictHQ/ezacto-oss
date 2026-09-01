@@ -6,8 +6,6 @@ import {
   type GeneralResource,
   type Invoice,
   type InvoiceGenerationInput,
-  type InvoiceMessage,
-  type InvoicePayment,
   type PasswordSignInInput,
   type Session,
   type TimeEntry,
@@ -30,6 +28,7 @@ import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 import type { ClientDirectoryApi } from '../clients/model.js'
 import type { ProjectDirectoryApi } from '../projects/model.js'
 import type { ExpenseWorkflowApi } from '../expenses/model.js'
+import type { InvoicePaymentApi } from '../invoices/model.js'
 
 interface CursorPage<T> {
   readonly data: readonly T[]
@@ -37,16 +36,16 @@ interface CursorPage<T> {
 }
 
 export interface ShellApi
-  extends Partial<ClientDirectoryApi>, Partial<ProjectDirectoryApi>, Partial<ExpenseWorkflowApi> {
+  extends Partial<ClientDirectoryApi>,
+    Partial<ProjectDirectoryApi>,
+    Partial<ExpenseWorkflowApi>,
+    Partial<InvoicePaymentApi> {
   whoami(signal?: AbortSignal): Promise<Whoami>
   signIn(credentials: PasswordSignInInput, signal?: AbortSignal): Promise<AuthPrincipal>
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
   listProjects(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listClients?(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listInvoices?(cursor?: string, signal?: AbortSignal): Promise<CursorPage<Invoice>>
-  getInvoice?(id: number, signal?: AbortSignal): Promise<Invoice>
-  listInvoiceMessages?(id: number, signal?: AbortSignal): Promise<readonly InvoiceMessage[]>
-  listInvoicePayments?(id: number, signal?: AbortSignal): Promise<readonly InvoicePayment[]>
   listTasks(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listTimeEntryOptions(signal?: AbortSignal): Promise<readonly TimeEntryOption[]>
   getTimeEntrySettings(signal?: AbortSignal): Promise<TimeEntrySettings>
@@ -704,6 +703,35 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.listInvoiceMessages({ id, ...withSignal(signal) })).data,
   listInvoicePayments: async (id, signal) =>
     (await client.listInvoicePayments({ id, ...withSignal(signal) })).data,
+  recordInvoicePayment: async (id, commandId, input, signal) =>
+    (
+      await client.recordInvoicePayment({
+        id,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data.invoice,
+  updateInvoicePayment: async (id, paymentId, commandId, input, signal) =>
+    (
+      await client.updateInvoicePayment({
+        id,
+        paymentId,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data.invoice,
+  deleteInvoicePayment: async (id, paymentId, commandId, input, signal) =>
+    (
+      await client.deleteInvoicePayment({
+        id,
+        paymentId,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data.invoice,
   listTasks: (cursor, signal) =>
     client.listTasks({
       query: {
