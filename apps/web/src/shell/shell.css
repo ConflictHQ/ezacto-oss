@@ -294,6 +294,197 @@
   border-color: var(--ez-action);
 }
 
+.client-workspace {
+  width: min(1040px, 100%);
+  margin-inline: auto;
+}
+.client-intro {
+  max-width: 64ch;
+  color: var(--ez-muted);
+}
+.client-page-status {
+  min-height: 20px;
+}
+.client-list-toolbar,
+.client-header-actions,
+.client-confirm-actions,
+.client-contact-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.client-list-toolbar {
+  margin: 24px 0 12px;
+}
+.client-list-toolbar button,
+.client-header-actions button,
+.client-contacts header button,
+.client-contact-actions button,
+.client-confirm-actions button,
+.client-workspace [data-client-create],
+[data-client-list-retry],
+[data-client-detail-retry] {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.client-list-toolbar button[aria-pressed='true'] {
+  border-color: var(--ez-data);
+  background: var(--ez-status-bg);
+  color: var(--ez-status-fg);
+}
+.client-tree,
+.client-projects ul,
+.client-contacts ul {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.client-tree-row {
+  padding: 16px 18px;
+  border: 1px solid var(--ez-border);
+  border-inline-start: 3px solid var(--ez-data);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+.client-tree-row > div,
+.client-contact-card > div:first-child,
+.client-projects li,
+.client-contacts header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.client-tree-row a {
+  color: var(--ez-ink);
+  font-size: 17px;
+  font-weight: 700;
+  text-underline-offset: 3px;
+}
+.client-tree-row p,
+.client-contact-card p {
+  margin: 7px 0 0;
+  color: var(--ez-muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.client-status-pill,
+.client-recipient-pill {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--ez-status-bg);
+  color: var(--ez-status-fg);
+  font: 600 11px/1.2 var(--ez-font-mono), monospace;
+  text-transform: uppercase;
+}
+.client-tree-empty,
+.client-related-empty {
+  padding: 28px 18px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  color: var(--ez-muted);
+  text-align: center;
+}
+.client-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.55fr);
+  gap: 18px;
+}
+.client-facts,
+.client-projects,
+.client-contacts {
+  padding: 20px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+.client-facts {
+  grid-row: span 2;
+}
+.client-facts h2,
+.client-projects h2,
+.client-contacts h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.client-facts dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin: 22px 0 0;
+}
+.client-facts dl > div {
+  display: grid;
+  gap: 4px;
+}
+.client-facts dt {
+  color: var(--ez-muted);
+  font-size: 12px;
+}
+.client-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.client-facts .client-address {
+  grid-column: 1 / -1;
+}
+.client-facts .client-address dd {
+  white-space: pre-wrap;
+}
+.client-projects header,
+.client-contacts header {
+  margin-bottom: 14px;
+}
+.client-projects li,
+.client-contact-card {
+  padding: 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+}
+.client-projects li > span {
+  color: var(--ez-muted);
+  font-size: 12px;
+  text-transform: capitalize;
+}
+.client-contact-actions {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+.client-form-pair,
+.client-defaults {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.client-defaults {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+}
+.client-defaults legend {
+  padding-inline: 6px;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.client-confirm-actions {
+  justify-content: flex-end;
+}
+.danger-action {
+  border-color: var(--ez-live) !important;
+  background: var(--ez-live) !important;
+  color: var(--ez-ground) !important;
+}
+
 .timesheet-approvals {
   width: min(960px, 100%);
   margin-inline: auto;
@@ -1594,6 +1785,19 @@ dialog textarea {
   }
   .context-row h1 {
     font-size: 32px;
+  }
+  .client-header-actions {
+    align-items: flex-end;
+    flex-direction: column;
+  }
+  .client-detail,
+  .client-facts dl,
+  .client-form-pair,
+  .client-defaults {
+    grid-template-columns: 1fr;
+  }
+  .client-facts {
+    grid-row: auto;
   }
   .current-identity {
     align-items: stretch;

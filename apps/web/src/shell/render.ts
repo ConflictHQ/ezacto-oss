@@ -1,5 +1,6 @@
 import { shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
 import { themeManifest } from '../theme.js'
+import { renderClientDirectoryPages } from '../clients/render.js'
 
 export interface AppShellOptions {
   readonly environment: string
@@ -13,6 +14,8 @@ export interface AppShellOptions {
     | 'invoice-list'
     | 'invoice-detail'
     | 'invoice-generation'
+    | 'client-list'
+    | 'client-detail'
   readonly signInProviders?: readonly SignInProvider[]
   /** Presentation hint only. The browser still validates the session before enabling the app. */
   readonly sessionCookiePresent?: boolean
@@ -391,6 +394,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
       <a data-generated-invoice-link href="/invoices" hidden>Open draft invoice</a>
     </section>
   </main>
+  ${renderClientDirectoryPages(view)}
   <dialog class="command-dialog" data-command-dialog aria-labelledby="command-title">
     <form data-command-form>
       <header><div><p class="eyebrow">Command bar</p><h2 id="command-title">Go or log time</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>

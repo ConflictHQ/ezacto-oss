@@ -27,13 +27,14 @@ import {
   type Whoami,
 } from '@ezacto/client'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
+import type { ClientDirectoryApi } from '../clients/model.js'
 
 interface CursorPage<T> {
   readonly data: readonly T[]
   readonly page: { readonly next_cursor: string | null }
 }
 
-export interface ShellApi {
+export interface ShellApi extends Partial<ClientDirectoryApi> {
   whoami(signal?: AbortSignal): Promise<Whoami>
   signIn(credentials: PasswordSignInInput, signal?: AbortSignal): Promise<AuthPrincipal>
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
@@ -528,6 +529,48 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       query: {
         per_page: 200,
         is_active: true,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listDirectoryClients: (cursor, signal) =>
+    client.listClients({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  getDirectoryClient: async (id, signal) =>
+    (await client.getClient({ id, ...withSignal(signal) })).data,
+  createDirectoryClient: async (input, signal) =>
+    (await client.createClient({ body: input, ...withSignal(signal) })).data,
+  updateDirectoryClient: async (id, input, signal) =>
+    (await client.updateClient({ id, body: input, ...withSignal(signal) })).data,
+  archiveDirectoryClient: async (id, signal) => {
+    await client.deleteClient({ id, ...withSignal(signal) })
+  },
+  listClientContacts: (clientId, cursor, signal) =>
+    client.listContacts({
+      query: {
+        client_id: clientId,
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  createClientContact: async (input, signal) =>
+    (await client.createContact({ body: input, ...withSignal(signal) })).data,
+  updateClientContact: async (id, input, signal) =>
+    (await client.updateContact({ id, body: input, ...withSignal(signal) })).data,
+  deleteClientContact: async (id, signal) => {
+    await client.deleteContact({ id, ...withSignal(signal) })
+  },
+  listClientProjects: (clientId, cursor, signal) =>
+    client.listProjects({
+      query: {
+        client_id: clientId,
+        per_page: 200,
         ...(cursor === undefined ? {} : { cursor }),
       },
       ...withSignal(signal),
