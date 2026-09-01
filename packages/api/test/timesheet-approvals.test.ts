@@ -331,6 +331,28 @@ describe('timesheet approval API', () => {
     expect(approve.status).toBe(200)
     expect((await approve.json()) as object).toMatchObject({ data: { status: 'approved' } })
 
+    const approvedHistory = await harness.request(
+      '/timesheet-submissions/approved?period_start=2026-08-01&per_page=20',
+      {},
+      { userId: 10, profile: 'administrator' },
+    )
+    expect(approvedHistory.status).toBe(200)
+    expect((await approvedHistory.json()) as object).toMatchObject({
+      data: [{ id: submitted.data.id, user_id: 1, status: 'approved' }],
+    })
+    const approvedDetail = await harness.request(
+      `/timesheet-submissions/${submitted.data.id}`,
+      {},
+      { userId: 10, profile: 'administrator' },
+    )
+    expect(approvedDetail.status).toBe(200)
+    expect((await approvedDetail.json()) as object).toMatchObject({
+      data: { id: submitted.data.id, status: 'approved', entries: [{ id: 1 }] },
+    })
+
+    const memberHistory = await harness.request('/timesheet-submissions/approved')
+    expect(memberHistory.status).toBe(403)
+
     const entry = await harness.request('/time-entries/1')
     expect(entry.status).toBe(200)
     expect((await entry.json()) as object).toMatchObject({
@@ -385,6 +407,7 @@ describe('timesheet approval API', () => {
     const cases: Array<[string, RequestInit]> = [
       ['/timesheet-submissions?period_start=not-a-date', {}],
       ['/timesheet-submissions/pending', {}],
+      ['/timesheet-submissions/approved', {}],
       ['/timesheet-submissions/not-an-id', {}],
       ['/timesheet-submissions', { method: 'POST', body: 'not-json' }],
       ['/timesheet-submissions/not-an-id/approve', { method: 'POST' }],
@@ -497,6 +520,7 @@ describe('timesheet approval API', () => {
         '/timesheet-submissions',
         `/timesheet-submissions/${id}`,
         '/timesheet-submissions/pending',
+        '/timesheet-submissions/approved',
       ]) {
         const response = await harness.request(path, {
           headers: { authorization: `Bearer ${token}` },

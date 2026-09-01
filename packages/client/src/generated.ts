@@ -511,6 +511,10 @@ export type TimesheetRejectionInput = {
   "reason": string;
 };
 
+export type TimesheetWithdrawalInput = {
+  "reason": string;
+};
+
 export type TimesheetSubmissionEnvelope = {
   "data": TimesheetSubmission;
   "links": Links;
@@ -523,6 +527,64 @@ export type TimesheetSubmissionDetailEnvelope = {
 
 export type TimesheetSubmissionPage = {
   "data": Array<TimesheetSubmission>;
+  "links": PageLinks;
+  "page": PageMetadata;
+};
+
+export type TimesheetDeadline = {
+  "day": "sunday" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday";
+  "time": string;
+};
+
+export type TimesheetLockPolicy = {
+  "auto_lock": boolean;
+  "timesheet_deadline": TimesheetDeadline | null;
+  "timezone": string;
+  "week_start_day": "saturday" | "sunday" | "monday";
+  "updated_at": string;
+};
+
+export type TimesheetLockPolicyPatch = {
+  "auto_lock"?: boolean;
+  "timesheet_deadline"?: TimesheetDeadline | null;
+  "timezone"?: string;
+};
+
+export type TimesheetLockPolicyEnvelope = {
+  "data": TimesheetLockPolicy;
+  "links": Links;
+};
+
+export type TimesheetLockWindow = {
+  "id": number;
+  "kind": "manual" | "auto";
+  "period_start": string | null;
+  "period_end": string;
+  "reason": string;
+  "locked_by_user_id": number | null;
+  "locked_at": string;
+  "unlocked_by_user_id": number | null;
+  "unlocked_at": string | null;
+  "unlock_reason": string | null;
+  "active": boolean;
+};
+
+export type TimesheetManualLockInput = {
+  "locked_through": string;
+  "reason": string;
+};
+
+export type TimesheetUnlockInput = {
+  "reason": string;
+};
+
+export type TimesheetLockWindowEnvelope = {
+  "data": TimesheetLockWindow;
+  "links": Links;
+};
+
+export type TimesheetLockWindowPage = {
+  "data": Array<TimesheetLockWindow>;
   "links": PageLinks;
   "page": PageMetadata;
 };
@@ -2147,6 +2209,16 @@ export class EzactoClient {
     });
   }
 
+  async listApprovedTimesheetSubmissions(args: { query?: { "cursor"?: string; "per_page"?: number; "period_start"?: string; "period_end"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimesheetSubmissionPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetSubmissionPage>("GET", "/api/v1/timesheet-submissions/approved", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
   async getTimesheetSubmission(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetSubmissionDetailEnvelope> {
     const headers = new Headers(args.headers);
 
@@ -2169,6 +2241,74 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<TimesheetSubmissionEnvelope>("POST", "/api/v1/timesheet-submissions/:id/reject".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async withdrawTimesheetSubmission(args: { "id": number; body: TimesheetWithdrawalInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetSubmissionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetSubmissionEnvelope>("POST", "/api/v1/timesheet-submissions/:id/withdraw".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getTimesheetLockPolicy(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimesheetLockPolicyEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetLockPolicyEnvelope>("GET", "/api/v1/timesheet-lock-policy", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateTimesheetLockPolicy(args: { body: TimesheetLockPolicyPatch; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetLockPolicyEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetLockPolicyEnvelope>("PATCH", "/api/v1/timesheet-lock-policy", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listTimesheetLocks(args: { query?: { "cursor"?: string; "per_page"?: number; "active"?: boolean; "kind"?: "manual" | "auto" }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimesheetLockWindowPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetLockWindowPage>("GET", "/api/v1/timesheet-locks", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getTimesheetLock(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetLockWindowEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetLockWindowEnvelope>("GET", "/api/v1/timesheet-locks/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createTimesheetManualLock(args: { "Idempotency-Key": string; body: TimesheetManualLockInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetLockWindowEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<TimesheetLockWindowEnvelope>("POST", "/api/v1/timesheet-locks", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async unlockTimesheetLock(args: { "id": number; body: TimesheetUnlockInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetLockWindowEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetLockWindowEnvelope>("POST", "/api/v1/timesheet-locks/:id/unlock".replace(":id", encodeURIComponent(String(args["id"]))), {
       body: args.body,
       signal: args.signal,
       headers,

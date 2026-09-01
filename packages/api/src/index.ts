@@ -104,6 +104,7 @@ export {
 } from './reports.js'
 export {
   installTimesheetApprovalRoutes,
+  serializeTimesheetSubmission,
   type TimesheetApprovalActor,
   type TimesheetApprovalRouteOptions,
   type TimesheetApprovalService,
@@ -114,6 +115,18 @@ export {
   type TimesheetSubmissionRecord,
   type TimesheetSubmissionStatus,
 } from './timesheet-approvals.js'
+export {
+  installTimesheetLockPolicyRoutes,
+  type TimesheetDeadline,
+  type TimesheetDeadlineDay,
+  type TimesheetLockFilters,
+  type TimesheetLockPolicyActor,
+  type TimesheetLockPolicyRouteOptions,
+  type TimesheetLockPolicyService,
+  type TimesheetLockPolicySettings,
+  type TimesheetLockWindowRecord,
+  type UpdateTimesheetLockPolicySettings,
+} from './timesheet-lock-policy.js'
 export {
   assertValidOidcProviderConfig,
   installOidcRoutes,

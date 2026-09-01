@@ -14,6 +14,7 @@ import {
   installSessionRoutes,
   installTrackedResourceRoutes,
   installTimesheetApprovalRoutes,
+  installTimesheetLockPolicyRoutes,
   type ApiSessionService,
   type AuthMailer,
   type ApiTokenService,
@@ -24,6 +25,7 @@ import {
   type ReportReader,
   type TrackedResourceRepository,
   type TimesheetApprovalService,
+  type TimesheetLockPolicyService,
 } from "../src/index.js";
 
 const unavailable = () => Promise.reject(new Error("contract fixture only"));
@@ -39,6 +41,10 @@ const timesheetApprovals = new Proxy(
   {},
   { get: () => unavailable },
 ) as TimesheetApprovalService;
+const timesheetLockPolicy = new Proxy(
+  {},
+  { get: () => unavailable },
+) as TimesheetLockPolicyService;
 const moneyResources = new Proxy(
   {},
   { get: () => unavailable },
@@ -99,6 +105,11 @@ const documentedApp = () =>
       });
       installTimesheetApprovalRoutes(api, {
         service: timesheetApprovals,
+        cursorSigningKey: new Uint8Array(32),
+        clock: () => "2026-08-28T12:00:00.000Z",
+      });
+      installTimesheetLockPolicyRoutes(api, {
+        service: timesheetLockPolicy,
         cursorSigningKey: new Uint8Array(32),
         clock: () => "2026-08-28T12:00:00.000Z",
       });
