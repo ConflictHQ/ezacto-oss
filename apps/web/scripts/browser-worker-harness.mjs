@@ -281,8 +281,13 @@ await run(
   timestamp,
 )
 await run(
-  `INSERT INTO expense_categories (id, name, created_at, updated_at)
-   VALUES (1, 'Travel', ?, ?)`,
+  `INSERT INTO expense_categories (
+     id, name, unit_name, unit_price_cents, created_at, updated_at
+   ) VALUES
+     (1, 'Travel', NULL, NULL, ?, ?),
+     (2, 'Mileage', 'mile', 67, ?, ?)`,
+  timestamp,
+  timestamp,
   timestamp,
   timestamp,
 )

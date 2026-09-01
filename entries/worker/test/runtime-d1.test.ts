@@ -195,6 +195,8 @@ beforeAll(async () => {
         "projects:write",
         "time_entries:read",
         "time_entries:write",
+        "expenses:read",
+        "expenses:write",
       ],
     })
   ).token;
@@ -275,6 +277,91 @@ describe("Worker D1 runtime composition", () => {
     };
     expect(project.data).toMatchObject({ id: 1, name: "Runtime Project" });
     expect(project.data).not.toHaveProperty("hourly_rate_cents");
+  });
+
+  it("[security] enforces the expenses module at every Worker expense route and attachment boundary", async () => {
+    await run(
+      `UPDATE organizations
+       SET modules = json_set(modules, '$.expenses', json('false'))
+       WHERE id = 1`,
+    );
+    try {
+      const requests: Array<Promise<Response>> = [
+        request("/api/v1/expenses", {
+          headers: { authorization: `Bearer ${projectBearer}` },
+        }),
+        request("/api/v1/expenses/1", {
+          headers: { authorization: `Bearer ${projectBearer}` },
+        }),
+        request("/api/v1/expenses", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${projectBearer}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            project_id: 1,
+            expense_category_id: 1,
+            spent_date: "2026-08-28",
+            total_cost_cents: 125,
+          }),
+        }),
+        request("/api/v1/expenses/1", {
+          method: "PATCH",
+          headers: {
+            authorization: `Bearer ${projectBearer}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ notes: "must not write" }),
+        }),
+        request("/api/v1/expenses/1", {
+          method: "DELETE",
+          headers: { authorization: `Bearer ${projectBearer}` },
+        }),
+        request("/api/v1/expense-categories", {
+          headers: { authorization: `Bearer ${projectBearer}` },
+        }),
+        request("/api/v1/expense-categories/1", {
+          headers: { authorization: `Bearer ${projectBearer}` },
+        }),
+      ];
+      for (const response of await Promise.all(requests)) {
+        expect(response.status).toBe(403);
+        expect(await response.json()).toMatchObject({
+          error: { code: "module_disabled", fields: [] },
+        });
+      }
+      const receipt = new FormData();
+      receipt.set("file", new File(["denied"], "denied.txt"));
+      const attachmentAttempts = await Promise.all([
+        request("/api/v1/expenses/1/attachments", {
+          headers: { authorization: `Bearer ${projectBearer}` },
+        }),
+        request("/api/v1/expenses/1/attachments/1", {
+          headers: { authorization: `Bearer ${projectBearer}` },
+        }),
+        request("/api/v1/expenses/1/attachments/1/content", {
+          headers: { authorization: `Bearer ${projectBearer}` },
+        }),
+        request("/api/v1/expenses/1/attachments", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${projectBearer}`,
+            "idempotency-key": "module-disabled-receipt",
+          },
+          body: receipt,
+        }),
+      ]);
+      expect(attachmentAttempts.map((response) => response.status)).toEqual([
+        404, 404, 404, 404,
+      ]);
+    } finally {
+      await run(
+        `UPDATE organizations
+         SET modules = json_set(modules, '$.expenses', json('true'))
+         WHERE id = 1`,
+      );
+    }
   });
 
   it("[api] executes and replays a generated-client money command through the real D1 binding", async () => {

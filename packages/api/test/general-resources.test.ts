@@ -16,6 +16,7 @@ interface Harness {
   run(sql: string, ...params: unknown[]): Promise<void>;
   rows<T>(sql: string, ...params: unknown[]): Promise<T[]>;
   close(): Promise<void>;
+  setExpensesModuleEnabled(enabled: boolean): void;
 }
 
 const signingKey = new Uint8Array(32).fill(0x71);
@@ -128,6 +129,7 @@ const containerHarness = async (): Promise<Harness> => {
   const repository = createGeneralResourceRepository(
     createContainerDatabase(sqlite),
   );
+  let expensesModuleEnabled = true;
   const app = createApiApp({
     authentication,
     installApi: (api) =>
@@ -135,6 +137,7 @@ const containerHarness = async (): Promise<Harness> => {
         repository,
         cursorSigningKey: signingKey,
         clock: () => now,
+        isExpensesModuleEnabled: async () => expensesModuleEnabled,
       }),
   });
   return {
@@ -152,6 +155,9 @@ const containerHarness = async (): Promise<Harness> => {
       sqlite.prepare(sql).all(...params) as T[],
     close: async () => {
       sqlite.close();
+    },
+    setExpensesModuleEnabled: (enabled) => {
+      expensesModuleEnabled = enabled;
     },
   };
 };
@@ -171,6 +177,7 @@ const d1Harness = async (): Promise<Harness> => {
     .bind("Test org", "{}", now, now)
     .run();
   const repository = createGeneralResourceRepository(createD1Database(d1));
+  let expensesModuleEnabled = true;
   const app = createApiApp({
     authentication,
     installApi: (api) =>
@@ -178,6 +185,7 @@ const d1Harness = async (): Promise<Harness> => {
         repository,
         cursorSigningKey: signingKey,
         clock: () => now,
+        isExpensesModuleEnabled: async () => expensesModuleEnabled,
       }),
   });
   return {
@@ -203,6 +211,9 @@ const d1Harness = async (): Promise<Harness> => {
       ).results,
     close: async () => {
       await miniflare.dispose();
+    },
+    setExpensesModuleEnabled: (enabled) => {
+      expensesModuleEnabled = enabled;
     },
   };
 };
@@ -695,6 +706,27 @@ for (const [runtime, createHarness] of factories) {
         },
       });
     }, 20_000);
+
+    it("[security] closes every expense-category route when the expenses module is disabled", async () => {
+      harness.setExpensesModuleEnabled(false);
+      const attempts = [
+        harness.request("/expense-categories"),
+        harness.request("/expense-categories/1"),
+        harness.request("/expense-categories", json({ name: "Denied" })),
+        harness.request(
+          "/expense-categories/1",
+          json({ name: "Denied patch" }, "PATCH"),
+        ),
+        harness.request("/expense-categories/1", { method: "DELETE" }),
+      ];
+      for (const response of await Promise.all(attempts)) {
+        expect(response.status).toBe(403);
+        expect(await response.json()).toMatchObject({
+          error: { code: "module_disabled", fields: [] },
+        });
+      }
+      expect((await harness.request("/projects")).status).toBe(200);
+    });
 
     it("[security] limits expense-category mutation to administrator browser sessions", async () => {
       const protectedCategory = await data(
