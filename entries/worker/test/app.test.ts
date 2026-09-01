@@ -55,6 +55,43 @@ describe('worker entry', () => {
     )
   })
 
+  it.each(['/', '/invoices/new', '/approvals'])(
+    '[security] renders %s as an inert shell under an overlay when a session cookie is present',
+    async (path) => {
+      const res = await app.request(
+        path,
+        { headers: { cookie: '__Host-ezacto_session=opaque-session-token' } },
+        env,
+      )
+
+      expect(res.status).toBe(200)
+      const html = await res.text()
+      expect(html).toMatch(/data-auth-gateway[^>]+ hidden>/u)
+      expect(html).toContain(
+        'data-session-check-overlay role="status" aria-live="polite" aria-atomic="true">',
+      )
+      expect(html).toContain('data-authenticated-shell inert aria-busy="true"')
+      expect(html).toContain('data-auth-action disabled')
+      expect(html).not.toContain('opaque-session-token')
+    },
+  )
+
+  it.each([
+    'unrelated=value',
+    '__Host-ezacto_session=',
+    '__Host-ezacto_sessionish=opaque-session-token',
+  ])('[security] does not resume the shell for non-session cookie %s', async (cookie) => {
+    const res = await app.request('/', { headers: { cookie } }, env)
+    const html = await res.text()
+
+    expect(res.status).toBe(200)
+    expect(html).toContain('data-authenticated-shell hidden inert aria-busy="true"')
+    expect(html).toContain(
+      'data-session-check-overlay role="status" aria-live="polite" aria-atomic="true" hidden>',
+    )
+    expect(html).not.toMatch(/data-auth-gateway[^>]+ hidden>/u)
+  })
+
   it('serves deterministic shell assets with explicit content types', async () => {
     const [style, script] = await Promise.all([
       app.request('/assets/ezacto.css', {}, env),

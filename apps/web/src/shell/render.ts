@@ -9,6 +9,8 @@ export interface AppShellOptions {
     'Time' | 'Approvals' | 'Expenses' | 'Projects' | 'Clients' | 'Invoices' | 'Reports'
   readonly view?: 'time' | 'timesheet-approvals' | 'invoice-generation'
   readonly signInProviders?: readonly SignInProvider[]
+  /** Presentation hint only. The browser still validates the session before enabling the app. */
+  readonly sessionCookiePresent?: boolean
 }
 
 export type SignInProvider = 'google'
@@ -82,6 +84,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const active = options.activeSection ?? 'Time'
   const view = options.view ?? 'time'
   const brand = options.brand ?? 'ezacto'
+  const resumeSession = options.sessionCookiePresent === true
   const shortRelease = options.release.slice(0, 7)
   const navigation = sections
     .map(
@@ -91,7 +94,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
     .join('')
 
   return `<!doctype html>
-<html lang="en" data-ez-theme="precision" data-app-view="${view}">
+<html lang="en" data-ez-theme="precision" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -106,7 +109,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   <script type="module" src="/assets/ezacto.js"></script>
 </head>
 <body>
-  <section class="auth-gateway" data-auth-gateway data-state="checking" aria-label="${escapeHtml(brand)} sign in" aria-busy="true">
+  <section class="auth-gateway" data-auth-gateway data-state="checking" aria-label="${escapeHtml(brand)} sign in" aria-busy="true"${resumeSession ? ' hidden' : ''}>
     <div class="auth-splash">
       <a class="auth-wordmark" href="/" aria-label="${escapeHtml(brand)} home">${escapeHtml(brand)}</a>
       <div class="auth-splash-copy">
@@ -143,7 +146,13 @@ export const renderAppShell = (options: AppShellOptions): string => {
       <p class="auth-build-stamp">${escapeHtml(options.environment)} · ${escapeHtml(shortRelease)}</p>
     </div>
   </section>
-  <div class="authenticated-shell" data-authenticated-shell hidden inert>
+  <aside class="session-check-overlay" data-session-check-overlay role="status" aria-live="polite" aria-atomic="true"${resumeSession ? '' : ' hidden'}>
+    <div class="session-check-card">
+      <span class="session-check-spinner" aria-hidden="true"></span>
+      <p>Checking your session…</p>
+    </div>
+  </aside>
+  <div class="authenticated-shell" data-authenticated-shell${resumeSession ? '' : ' hidden'} inert aria-busy="true">
   <header class="topbar">
     <a class="brand" href="/" aria-label="${escapeHtml(brand)} home">${escapeHtml(brand)}</a>
     <nav class="primary-nav" aria-label="Primary">${navigation}</nav>

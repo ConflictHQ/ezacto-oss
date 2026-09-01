@@ -212,6 +212,8 @@ describe('S-1 through S-5 application shell', () => {
     expect(html).toContain('data-sign-in-form')
     expect(html).toContain('data-auth-gateway data-state="checking"')
     expect(html).toContain('data-authenticated-shell hidden inert')
+    expect(html).toContain('data-session-check-overlay role="status"')
+    expect(html).toContain('data-session-check-overlay role="status" aria-live="polite" aria-atomic="true" hidden')
     expect(html).toContain('method="post" action="/auth/sign-in"')
     expect(html).toContain('autocomplete="username"')
     expect(html).toContain('autocomplete="current-password"')
@@ -221,8 +223,27 @@ describe('S-1 through S-5 application shell', () => {
     expect(webAssets.stylesheet).toContain('@media (max-width: 720px)')
     expect(webAssets.stylesheet).toContain('.timer-chip {')
     expect(webAssets.stylesheet).toContain('.auth-gateway {')
+    expect(webAssets.stylesheet).toContain('.session-check-overlay {')
     expect(webAssets.stylesheet).not.toMatch(/\.timer-chip\s*\{[^}]*display:\s*none/su)
     expect(webAssets.javascript).toContain('credentials:"same-origin"')
+  })
+
+  it('[security] uses a cookie-presence hint only to show an inert shell under a session-check overlay', () => {
+    const html = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      sessionCookiePresent: true,
+    })
+
+    expect(html).toContain('data-auth-state="checking"')
+    expect(html).toContain('data-auth-gateway data-state="checking"')
+    expect(html).toMatch(/data-auth-gateway[^>]+ hidden>/u)
+    expect(html).toContain(
+      'data-session-check-overlay role="status" aria-live="polite" aria-atomic="true">',
+    )
+    expect(html).toContain('data-authenticated-shell inert aria-busy="true"')
+    expect(html).not.toContain('data-authenticated-shell hidden inert')
+    expect(html).toContain('data-auth-action disabled')
   })
 
   it('[e2e:phone-week] swaps the seven-day table for a touch-sized day switcher', () => {

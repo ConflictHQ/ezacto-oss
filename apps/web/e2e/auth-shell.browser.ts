@@ -666,7 +666,30 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   ).toBe(false)
   await rowForm.getByRole('button', { name: 'Close' }).click()
 
-  await page.reload()
+  let releaseSessionCheck = (): void => undefined
+  const sessionCheckBarrier = new Promise<void>((resolve) => {
+    releaseSessionCheck = resolve
+  })
+  await page.route(
+    '**/api/v1/whoami',
+    async (route) => {
+      await sessionCheckBarrier
+      await route.continue()
+    },
+    { times: 1 },
+  )
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  const sessionCheckOverlay = page.locator('[data-session-check-overlay]')
+  await expect(sessionCheckOverlay).toBeVisible()
+  await expect(authGateway).toBeHidden()
+  await expect(authenticatedShell).toBeVisible()
+  await expect(authenticatedShell).toHaveAttribute('inert', '')
+  await expect(authenticatedShell).toHaveAttribute('aria-busy', 'true')
+  await expect(page.locator('[data-auth-action]:not([disabled])')).toHaveCount(0)
+  releaseSessionCheck()
+  await expect(sessionCheckOverlay).toBeHidden()
+  await expect(authenticatedShell).not.toHaveAttribute('inert', '')
+  await expect(authenticatedShell).toHaveAttribute('aria-busy', 'false')
   await expect(secondaryCell).toHaveValue('')
   await expect(
     page.locator('[data-day-list] input[data-cell-key^="1:2:"]'),

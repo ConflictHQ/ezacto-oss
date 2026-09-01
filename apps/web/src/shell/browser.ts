@@ -691,6 +691,7 @@ const collectResources = async (
 export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Promise<void> => {
   const authGateway = required<HTMLElement>('[data-auth-gateway]')
   const authChecking = required<HTMLElement>('[data-auth-checking]')
+  const sessionCheckOverlay = required<HTMLElement>('[data-session-check-overlay]')
   const authenticatedShell = required<HTMLElement>('[data-authenticated-shell]')
   const invoiceGenerationPage =
     document.documentElement.dataset.appView === 'invoice-generation'
@@ -888,8 +889,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   }
 
   const showSignedOutScreen = (): void => {
+    sessionCheckOverlay.hidden = true
     authenticatedShell.hidden = true
     authenticatedShell.inert = true
+    authenticatedShell.setAttribute('aria-busy', 'false')
     authGateway.hidden = false
     authGateway.dataset.state = 'signed-out'
     authGateway.setAttribute('aria-busy', 'false')
@@ -900,6 +903,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   }
 
   const showAuthenticatedShell = (): void => {
+    sessionCheckOverlay.hidden = true
     authGateway.hidden = true
     authGateway.dataset.state = 'authenticated'
     authGateway.setAttribute('aria-busy', 'false')
@@ -907,6 +911,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     signInForm.hidden = true
     authenticatedShell.hidden = false
     authenticatedShell.inert = false
+    authenticatedShell.setAttribute('aria-busy', 'false')
     document.documentElement.dataset.authState = 'authenticated'
     document.title = authenticatedDocumentTitle
   }
