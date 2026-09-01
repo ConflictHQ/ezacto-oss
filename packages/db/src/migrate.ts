@@ -25,6 +25,10 @@ import { migrationImportAuthorityMigration } from './migrations/0023_migration_i
 import { migrationWorksheetCompletionsMigration } from './migrations/0024_migration_worksheet_completions.js'
 import { timeEntryNoteRequirementsMigration } from './migrations/0025_time_entry_note_requirements.js'
 import { invoiceGenerationMigration } from './migrations/0026_invoice_generation.js'
+import {
+  timesheetApprovalsMigration,
+  timesheetApprovalsPreflight,
+} from './migrations/0027_timesheet_approvals.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL
@@ -1323,6 +1327,18 @@ const assertInvoiceLifecyclePreflight = (rows: MigrationPreflightRow[]): void =>
   )
 }
 
+const assertTimesheetApprovalsPreflight = (rows: MigrationPreflightRow[]): void => {
+  if (rows.length === 0) return
+  const shown = rows
+    .slice(0, 10)
+    .map(({ id }) => id)
+    .join(',')
+  const more = rows.length > 10 ? ',…' : ''
+  throw new Error(
+    `timesheet approval migration preflight failed: code=${rows[0]!.code} time_entry_ids=${shown}${more}`,
+  )
+}
+
 const migrations = [
   { id: '0000_org_people', statements: orgPeopleMigration },
   { id: '0001_clients', statements: clientsMigration },
@@ -1361,6 +1377,11 @@ const migrations = [
     statements: timeEntryNoteRequirementsMigration,
   },
   { id: '0026_invoice_generation', statements: invoiceGenerationMigration },
+  {
+    id: '0027_timesheet_approvals',
+    statements: timesheetApprovalsMigration,
+    preflight: timesheetApprovalsPreflight,
+  },
 ] as const
 
 const migrateContainerPlan = (
@@ -1378,9 +1399,9 @@ const migrateContainerPlan = (
         continue
       }
       if ('preflight' in migration) {
-        assertInvoiceLifecyclePreflight(
-          database.prepare(migration.preflight).all() as MigrationPreflightRow[],
-        )
+        const rows = database.prepare(migration.preflight).all() as MigrationPreflightRow[]
+        if (migration.id === '0006_invoice_state_events') assertInvoiceLifecyclePreflight(rows)
+        else assertTimesheetApprovalsPreflight(rows)
       }
       for (const statement of migration.statements) database.exec(statement)
       database
@@ -1427,9 +1448,9 @@ const migrateD1Plan = async (
       continue
     }
     if ('preflight' in migration) {
-      assertInvoiceLifecyclePreflight(
-        (await database.prepare(migration.preflight).all<MigrationPreflightRow>()).results,
-      )
+      const rows = (await database.prepare(migration.preflight).all<MigrationPreflightRow>()).results
+      if (migration.id === '0006_invoice_state_events') assertInvoiceLifecyclePreflight(rows)
+      else assertTimesheetApprovalsPreflight(rows)
     }
     try {
       await database.batch([

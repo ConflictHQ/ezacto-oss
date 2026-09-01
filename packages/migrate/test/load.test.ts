@@ -73,6 +73,37 @@ describe('transform and load', () => {
       expect(
         db
           .prepare(
+            `SELECT entry.approval_status, entry.source_approval_status,
+              submission.status, submission.origin, submission.source_status,
+              submission.period_start, submission.period_end,
+              submission.submitted_by_user_id, submission.submitted_at,
+              submission.reviewed_by_user_id, submission.reviewed_at,
+              event.event_type
+             FROM time_entries entry
+             JOIN timesheet_submissions submission
+               ON submission.id = entry.timesheet_submission_id
+             JOIN event_outbox event ON event.aggregate_type = 'timesheet_submission'
+               AND event.aggregate_id = submission.id
+             WHERE entry.harvest_id = '9007199254740993'`,
+          )
+          .get(),
+      ).toEqual({
+        approval_status: 'approved',
+        source_approval_status: 'approved',
+        status: 'approved',
+        origin: 'harvest_import',
+        source_status: 'approved',
+        period_start: '2026-08-10',
+        period_end: '2026-08-16',
+        submitted_by_user_id: null,
+        submitted_at: null,
+        reviewed_by_user_id: null,
+        reviewed_at: null,
+        event_type: 'timesheet.status_imported',
+      })
+      expect(
+        db
+          .prepare(
             `SELECT harvest_id, seconds, seconds_without_timer, timer_started_at, started_time
         FROM time_entries WHERE harvest_id = '9007199254740994'`,
           )

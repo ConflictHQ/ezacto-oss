@@ -2623,6 +2623,108 @@ export const userAssignments = sqliteTable(
   ],
 )
 
+export const timesheetSubmissions = sqliteTable(
+  'timesheet_submissions',
+  {
+    id: integer('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    periodStart: text('period_start').notNull(),
+    periodEnd: text('period_end').notNull(),
+    status: text('status', { enum: ['unsubmitted', 'submitted', 'approved'] }).notNull(),
+    origin: text('origin', {
+      enum: ['native', 'harvest_import', 'legacy_backfill'],
+    })
+      .notNull()
+      .default('native'),
+    sourceStatus: text('source_status', { enum: ['submitted', 'approved'] }),
+    sourceObservedAt: text('source_observed_at'),
+    submittedByUserId: integer('submitted_by_user_id')
+      .references(() => users.id, { onDelete: 'restrict' }),
+    submittedAt: text('submitted_at'),
+    reviewedByUserId: integer('reviewed_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    reviewedAt: text('reviewed_at'),
+    rejectionReason: text('rejection_reason'),
+    version: integer('version').notNull().default(0),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('timesheet_submissions_user_period_unique').on(
+      table.userId,
+      table.periodStart,
+      table.periodEnd,
+    ),
+    index('timesheet_submissions_queue').on(
+      table.status,
+      sql`coalesce(${table.submittedAt}, ${table.sourceObservedAt})`,
+      table.id,
+    ),
+    check(
+      'timesheet_submissions_status_valid',
+      sql`${table.status} in ('unsubmitted', 'submitted', 'approved')`,
+    ),
+    check('timesheet_submissions_period_start_date', sql`date(${table.periodStart}) is ${table.periodStart}`),
+    check('timesheet_submissions_period_end_date', sql`date(${table.periodEnd}) is ${table.periodEnd}`),
+    check('timesheet_submissions_period_order', sql`${table.periodEnd} >= ${table.periodStart}`),
+    check(
+      'timesheet_submissions_period_length',
+      sql`julianday(${table.periodEnd}) - julianday(${table.periodStart}) between 0 and 30`,
+    ),
+    check(
+      'timesheet_submissions_self_submit',
+      sql`${table.submittedByUserId} is null or ${table.submittedByUserId} = ${table.userId}`,
+    ),
+    check('timesheet_submissions_version_safe', sql`${table.version} between 0 and 9007199254740991`),
+    check(
+      'timesheet_submissions_submitted_at_canonical',
+      nullableCanonicalTimestamp(table.submittedAt),
+    ),
+    check(
+      'timesheet_submissions_source_observed_at_canonical',
+      nullableCanonicalTimestamp(table.sourceObservedAt),
+    ),
+    check('timesheet_submissions_reviewed_at_canonical', nullableCanonicalTimestamp(table.reviewedAt)),
+    check(
+      'timesheet_submissions_review_state_consistent',
+      sql`(
+        (${table.status} = 'submitted' AND ${table.reviewedByUserId} IS NULL
+          AND ${table.reviewedAt} IS NULL AND ${table.rejectionReason} IS NULL
+          AND ((${table.submittedByUserId} IS NOT NULL AND ${table.submittedAt} IS NOT NULL)
+            OR (${table.origin} <> 'native' AND ${table.version} = 0
+              AND ${table.sourceStatus} = 'submitted'
+              AND ${table.submittedByUserId} IS NULL AND ${table.submittedAt} IS NULL)))
+        OR (${table.status} = 'approved' AND ${table.rejectionReason} IS NULL AND (
+          (${table.reviewedByUserId} IS NOT NULL AND ${table.reviewedAt} IS NOT NULL
+            AND ((${table.submittedByUserId} IS NOT NULL AND ${table.submittedAt} IS NOT NULL)
+              OR (${table.origin} <> 'native' AND ${table.sourceStatus} = 'submitted'
+                AND ${table.submittedByUserId} IS NULL AND ${table.submittedAt} IS NULL)))
+          OR (${table.origin} <> 'native' AND ${table.version} = 0
+            AND ${table.sourceStatus} = 'approved'
+            AND ${table.submittedByUserId} IS NULL AND ${table.submittedAt} IS NULL
+            AND ${table.reviewedByUserId} IS NULL AND ${table.reviewedAt} IS NULL)
+        ))
+        OR (${table.status} = 'unsubmitted' AND ${table.reviewedByUserId} IS NOT NULL
+          AND ${table.reviewedAt} IS NOT NULL AND ${table.rejectionReason} IS NOT NULL
+          AND length(trim(${table.rejectionReason})) BETWEEN 1 AND 10000)
+      )`,
+    ),
+    check(
+      'timesheet_submissions_source_consistent',
+      sql`(
+        (${table.origin} = 'native' AND ${table.sourceStatus} IS NULL
+          AND ${table.sourceObservedAt} IS NULL)
+        OR (${table.origin} <> 'native' AND ${table.sourceStatus} IS NOT NULL
+          AND ${table.sourceObservedAt} IS NOT NULL)
+      )`,
+    ),
+    check('timesheet_submissions_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('timesheet_submissions_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+  ],
+)
+
 export const timeEntries = sqliteTable(
   'time_entries',
   {
@@ -2656,6 +2758,13 @@ export const timeEntries = sqliteTable(
     })
       .notNull()
       .default('unsubmitted'),
+    timesheetSubmissionId: integer('timesheet_submission_id').references(
+      () => timesheetSubmissions.id,
+      { onDelete: 'restrict' },
+    ),
+    sourceApprovalStatus: text('source_approval_status', {
+      enum: ['unsubmitted', 'submitted', 'approved'],
+    }),
     invoiceId: integer('invoice_id').references(() => invoices.id, { onDelete: 'restrict' }),
     externalRef: text('external_ref', { mode: 'json' }).$type<Record<string, unknown>>(),
     calendarEventRef: text('calendar_event_ref', { mode: 'json' }).$type<Record<string, unknown>>(),
@@ -2666,6 +2775,9 @@ export const timeEntries = sqliteTable(
     index('time_entries_user_spent_date').on(table.userId, table.spentDate),
     index('time_entries_project_spent_date').on(table.projectId, table.spentDate),
     index('time_entries_invoice_id').on(table.invoiceId),
+    index('time_entries_timesheet_submission_id')
+      .on(table.timesheetSubmissionId)
+      .where(sql`${table.timesheetSubmissionId} is not null`),
     index('time_entries_external_ref_id')
       .on(sql`cast(json_extract(${table.externalRef}, '$.id') as text)`)
       .where(sql`${table.externalRef} is not null`),

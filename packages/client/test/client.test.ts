@@ -88,6 +88,16 @@ const app = createApiApp({
         201,
       );
     });
+    api.get("/timesheet-submissions/:id", (context) =>
+      context.json({
+        data: {
+          id: Number(context.req.param("id")),
+          status: "submitted",
+          entries: [{ id: 11, notes: "Reviewer-visible context" }],
+        },
+        links: { self: `/api/v1/timesheet-submissions/${context.req.param("id")}` },
+      }),
+    );
     api.patch("/invoices/:id", async (context) =>
       context.json({
         data: {
@@ -174,6 +184,18 @@ const client = (token = "generated-client-test") =>
     token,
     fetch: async (input, init) => app.fetch(new Request(input, init)),
   });
+
+it("[unit] dereferences timesheet submission detail through the generated client", async () => {
+  const response = await client().getTimesheetSubmission({ id: 42 });
+  expect(response).toMatchObject({
+    data: {
+      id: 42,
+      status: "submitted",
+      entries: [{ id: 11, notes: "Reviewer-visible context" }],
+    },
+    links: { self: "/api/v1/timesheet-submissions/42" },
+  });
+});
 
 it("[unit] sends required report range filters through the generated client", async () => {
   const report = await client().getUninvoicedReport({

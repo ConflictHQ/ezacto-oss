@@ -7,6 +7,7 @@ import {
   saveWeekCellWithRetry,
   seedsFromEntries,
   weekDates,
+  weekRange,
   type DisplayTimeEntry,
   type ShellApi,
   type ShellSnapshot,
@@ -51,6 +52,7 @@ const snapshot = (entries: readonly DisplayTimeEntry[]): ShellSnapshot => ({
     time_entry_mode: 'duration',
     time_format: 'decimal',
     clock: '12h',
+    week_start_day: 'monday',
   },
   catalog: {
     projects: [project(1, 'Northpeak'), project(2, 'Acme')],
@@ -127,6 +129,7 @@ const apiFor = (
       time_entry_mode: 'duration' as const,
       time_format: 'decimal' as const,
       clock: '12h' as const,
+      week_start_day: 'monday' as const,
     })),
     listTimeEntries: vi.fn(),
     stopTimeEntry: vi.fn(),
@@ -205,6 +208,14 @@ describe('timesheet week grid', () => {
 
   it('[unit] parses and formats decimal or clock-form hours without ambiguous values', () => {
     expect(weekDates('2026-08-24')).toHaveLength(7)
+    expect(weekDates('2026-08-24', 'sunday')).toEqual([
+      '2026-08-23', '2026-08-24', '2026-08-25', '2026-08-26',
+      '2026-08-27', '2026-08-28', '2026-08-29',
+    ])
+    expect(weekRange('2026-08-24', 'saturday')).toEqual({
+      from: '2026-08-22',
+      to: '2026-08-28',
+    })
     expect(parseCellSeconds('1.25')).toBe(4_500)
     expect(parseCellSeconds('1:30')).toBe(5_400)
     expect(parseCellSeconds('')).toBe(0)

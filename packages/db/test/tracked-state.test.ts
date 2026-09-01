@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import { expenses } from '../src/schema.js'
+import { createTimesheetApprovalRepository } from '../src/timesheet-approvals.js'
 import {
   executeAtomicTrackedMutation,
   getTrackedState,
@@ -29,7 +30,7 @@ interface TestDatabase {
 }
 
 const timestamp = '2026-08-28T00:00:00.000Z'
-const modules = JSON.stringify({ expenses: true, invoices: true })
+const modules = JSON.stringify({ approval: true, expenses: true, invoices: true })
 
 const ormWithNativeClient = (orm: OrmDatabase, client: unknown): OrmDatabase =>
   new Proxy(orm, {
@@ -156,6 +157,30 @@ const boundary = (time: string, instant: string): TimeBoundary => ({
   instant,
 })
 
+const submitFixtureEntry = async (database: TestDatabase) =>
+  createTimesheetApprovalRepository(database.orm).submit(
+    1,
+    '2026-08-28',
+    '2026-08-28',
+    timestamp,
+  )
+
+const approveSubmittedFixtureEntry = async (
+  database: TestDatabase,
+  submissionId: number,
+): Promise<void> => {
+  await createTimesheetApprovalRepository(database.orm).approve(
+    { userId: 1, profile: 'administrator' },
+    submissionId,
+    timestamp,
+  )
+}
+
+const approveFixtureEntry = async (database: TestDatabase): Promise<void> => {
+  const submission = await submitFixtureEntry(database)
+  await approveSubmittedFixtureEntry(database, submission.id)
+}
+
 const installFixture = async (database: TestDatabase): Promise<void> => {
   await database.run(
     `INSERT INTO organizations (name, modules, created_at, updated_at)
@@ -251,7 +276,7 @@ for (const [runtime, factory] of factories) {
       const db = await setup()
       expect(
         await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`),
-      ).toEqual([{ id: '0026_invoice_generation' }])
+      ).toEqual([{ id: '0027_timesheet_approvals' }])
       for (const table of ['time_entries', 'expenses']) {
         const columns = await db.rows<{
           name: string
@@ -308,29 +333,12 @@ for (const [runtime, factory] of factories) {
         } as unknown as TrackedEntityReference),
       ).rejects.toThrow(/already-computed boolean fact/)
 
-      await db.run(`UPDATE time_entries SET invoice_id = 1, approval_status = 'approved'`)
-      await db.run(`UPDATE expenses SET invoice_id = 1, approval_status = 'approved'`)
+      const submission = await submitFixtureEntry(db)
+      await db.run(`UPDATE expenses SET approval_status = 'submitted'`)
       await db.run(`UPDATE clients SET is_active = 0`)
       await db.run(`UPDATE projects SET is_active = 0`)
       await db.run(`UPDATE tasks SET is_active = 0`)
 
-      for (const entityType of ['time_entry', 'expense'] as const) {
-        expect(await getTrackedState(db.orm, reference(entityType, true))).toMatchObject({
-          isBilled: true,
-          isLocked: true,
-          lockedReasonCode: 'invoiced',
-        })
-      }
-      await db.run(`UPDATE time_entries SET invoice_id = NULL`)
-      await db.run(`UPDATE expenses SET invoice_id = NULL`)
-      for (const entityType of ['time_entry', 'expense'] as const) {
-        expect(await getTrackedState(db.orm, reference(entityType, true))).toMatchObject({
-          isBilled: false,
-          lockedReasonCode: 'approved',
-        })
-      }
-      await db.run(`UPDATE time_entries SET approval_status = 'submitted'`)
-      await db.run(`UPDATE expenses SET approval_status = 'submitted'`)
       for (const entityType of ['time_entry', 'expense'] as const) {
         expect(await getTrackedState(db.orm, reference(entityType, true))).toMatchObject({
           lockedReasonCode: 'policy_locked',
@@ -353,6 +361,27 @@ for (const [runtime, factory] of factories) {
         isLocked: false,
         lockedReasonCode: null,
       })
+
+      await db.run(`UPDATE tasks SET is_active = 1`)
+      await approveSubmittedFixtureEntry(db, submission.id)
+      await db.run(`UPDATE expenses SET approval_status = 'approved'`)
+      await db.run(`UPDATE time_entries SET invoice_id = 1`)
+      await db.run(`UPDATE expenses SET invoice_id = 1`)
+      for (const entityType of ['time_entry', 'expense'] as const) {
+        expect(await getTrackedState(db.orm, reference(entityType, true))).toMatchObject({
+          isBilled: true,
+          isLocked: true,
+          lockedReasonCode: 'invoiced',
+        })
+      }
+      await db.run(`UPDATE time_entries SET invoice_id = NULL`)
+      await db.run(`UPDATE expenses SET invoice_id = NULL`)
+      for (const entityType of ['time_entry', 'expense'] as const) {
+        expect(await getTrackedState(db.orm, reference(entityType, true))).toMatchObject({
+          isBilled: false,
+          lockedReasonCode: 'approved',
+        })
+      }
     })
 
     it('[unit] [inv-03] atomically rejects every locked stop and restart without changing data', async () => {
@@ -372,11 +401,6 @@ for (const [runtime, factory] of factories) {
           reasonCode: 'invoiced',
           policyLocked: false,
           lock: () => db.run(`UPDATE time_entries SET invoice_id = 1 WHERE id = 1`),
-        },
-        {
-          reasonCode: 'approved',
-          policyLocked: false,
-          lock: () => db.run(`UPDATE time_entries SET approval_status = 'approved' WHERE id = 1`),
         },
         {
           reasonCode: 'policy_locked',
@@ -439,7 +463,15 @@ for (const [runtime, factory] of factories) {
 
       await unlock()
       await stopTimeEntry(db.orm, 1, boundary('09:05', '2026-08-28T09:05:00.000Z'), false)
-      for (const lockCase of lockCases) {
+      const restartLockCases = [
+        ...lockCases,
+        {
+          reasonCode: 'approved',
+          policyLocked: false,
+          lock: () => approveFixtureEntry(db),
+        },
+      ] as const
+      for (const lockCase of restartLockCases) {
         await unlock()
         await lockCase.lock()
         const before = await snapshot()
@@ -557,11 +589,6 @@ for (const [runtime, factory] of factories) {
           lock: () => db.run(`UPDATE time_entries SET invoice_id = 1 WHERE id = 1`),
         },
         {
-          reasonCode: 'approved',
-          policyLocked: false,
-          lock: () => db.run(`UPDATE time_entries SET approval_status = 'approved' WHERE id = 1`),
-        },
-        {
           reasonCode: 'policy_locked',
           policyLocked: true,
           lock: async () => undefined,
@@ -600,30 +627,6 @@ for (const [runtime, factory] of factories) {
         expect(await snapshot()).toEqual(before)
       }
 
-      await unlock()
-      await db.run(
-        `UPDATE time_entries
-         SET timer_started_at = NULL, approval_status = 'unsubmitted', invoice_id = NULL
-         WHERE id = 1`,
-      )
-      await db.run(
-        `INSERT INTO time_entries
-          (id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
-           spent_date, seconds, seconds_without_timer, rounded_seconds,
-           timer_started_at, notes, billable, approval_status, created_at, updated_at)
-         VALUES
-          (3, 1, 1, 1, 1, 1, '2026-08-28', 0, 0, 0,
-           '2026-08-28T09:30:00.000Z', 'current running', 1, 'approved', ?, ?)`,
-        timestamp,
-        timestamp,
-      )
-      const beforeRestart = await snapshot()
-      await expectLocked(
-        () =>
-          restartTimeEntry(db.orm, 1, boundary('10:00', '2026-08-28T10:00:00.000Z'), false, false),
-        'approved',
-      )
-      expect(await snapshot()).toEqual(beforeRestart)
     })
 
     it('[unit] classifies denial from its atomic snapshot and returns its exact success row', async () => {
@@ -631,13 +634,13 @@ for (const [runtime, factory] of factories) {
       await db.run(
         `UPDATE time_entries
          SET timer_started_at = '2026-08-28T09:00:00.000Z',
-             approval_status = 'approved', updated_at = ?
+             invoice_id = 1, updated_at = ?
          WHERE id = 1`,
         timestamp,
       )
       const unlockAfterDenial = db.interleaveAtomic(
         'after',
-        `UPDATE time_entries SET approval_status = 'unsubmitted' WHERE id = 1`,
+        `UPDATE time_entries SET invoice_id = NULL WHERE id = 1`,
       )
       let caught: unknown
       try {
@@ -651,7 +654,7 @@ for (const [runtime, factory] of factories) {
         caught = error
       }
       expect(caught).toBeInstanceOf(TrackedMutationLockedError)
-      expect(caught).toMatchObject({ reasonCode: 'approved' })
+      expect(caught).toMatchObject({ reasonCode: 'invoiced' })
       expect(
         await db.rows<Record<string, unknown>>(
           `SELECT seconds, seconds_without_timer, timer_started_at, updated_at

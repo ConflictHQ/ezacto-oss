@@ -13,6 +13,7 @@ import {
   installReportRoutes,
   installSessionRoutes,
   installTrackedResourceRoutes,
+  installTimesheetApprovalRoutes,
   type ApiSessionService,
   type AuthMailer,
   type ApiTokenService,
@@ -22,6 +23,7 @@ import {
   type MoneyResourceRouteOptions,
   type ReportReader,
   type TrackedResourceRepository,
+  type TimesheetApprovalService,
 } from "../src/index.js";
 
 const unavailable = () => Promise.reject(new Error("contract fixture only"));
@@ -33,6 +35,10 @@ const trackedRepository = new Proxy(
   {},
   { get: () => unavailable },
 ) as TrackedResourceRepository;
+const timesheetApprovals = new Proxy(
+  {},
+  { get: () => unavailable },
+) as TimesheetApprovalService;
 const moneyResources = new Proxy(
   {},
   { get: () => unavailable },
@@ -91,6 +97,11 @@ const documentedApp = () =>
           }),
         },
       });
+      installTimesheetApprovalRoutes(api, {
+        service: timesheetApprovals,
+        cursorSigningKey: new Uint8Array(32),
+        clock: () => "2026-08-28T12:00:00.000Z",
+      });
       installMoneyResourceRoutes(api, {
         service: moneyResources,
         cursorSigningKey: new Uint8Array(32),
@@ -139,6 +150,19 @@ describe("OpenAPI contract", () => {
     );
     for (const reference of references)
       expect(schemas, reference[1]).toHaveProperty(reference[1]!);
+
+    const paths = first.paths as Record<
+      string,
+      Record<string, { responses: Record<string, unknown> }>
+    >;
+    expect(
+      paths["/api/v1/timesheet-submissions"]?.post?.responses,
+    ).toMatchObject({ "200": expect.any(Object), "201": expect.any(Object) });
+    expect(
+      paths["/api/v1/timesheet-submissions/{id}"]?.get?.responses,
+    ).toMatchObject({ "200": expect.any(Object) });
+    expect(schemas).toHaveProperty("TimesheetSubmissionDetail");
+    expect(schemas).toHaveProperty("TimesheetSubmissionEntry");
   });
 
   it("[contract] documents exact durable and discriminated money request shapes", () => {

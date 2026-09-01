@@ -160,6 +160,7 @@ const browserApi = (
       time_entry_mode: api.timeEntryMode,
       time_format: api.timeFormat,
       clock: api.clock,
+      week_start_day: 'monday' as const,
     })),
     listTimeEntries: vi.fn(async (query) =>
       entries.filter((entry) => {

@@ -2590,6 +2590,7 @@ const rowStatements = (
             'updated_at',
             'invoice_id',
             'approval_status',
+            'source_approval_status',
           ],
           [
             harvestId,
@@ -2617,6 +2618,7 @@ const rowStatements = (
             nestedId(row, 'invoice') === null
               ? null
               : idFrom('invoices', nestedId(row, 'invoice')!),
+            'unsubmitted',
             stringValue(row, 'approval_status', 'unsubmitted'),
           ],
           harvestId,

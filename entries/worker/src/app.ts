@@ -13,6 +13,7 @@ import {
   installReportRoutes,
   installSessionRoutes,
   installTrackedResourceRoutes,
+  installTimesheetApprovalRoutes,
   readJsonBody,
   validationError,
   type ApiTokenService,
@@ -29,6 +30,7 @@ import {
   type PasswordAuthService,
   type ReportReader,
   type TrackedResourceRepository,
+  type TimesheetApprovalService,
 } from '@ezacto/api'
 import {
   InstanceBootstrapConflictError,
@@ -80,6 +82,7 @@ export interface RuntimeServices {
   tokens: ApiTokenService
   generalResources: GeneralResourceRouteOptions['repository']
   trackedResources: TrackedResourceRepository
+  timesheetApprovals: TimesheetApprovalService
   moneyResources: MoneyResourceRouteOptions['service']
   invoiceGeneration: NonNullable<MoneyResourceRouteOptions['generation']>
   reports: ReportReader
@@ -122,6 +125,11 @@ export const createApp = (services?: RuntimeServices) =>
               repository: services.trackedResources,
               clock: systemClock,
               cursorSigningKey: services.cursorSigningKey,
+            })
+            installTimesheetApprovalRoutes(api, {
+              service: services.timesheetApprovals,
+              cursorSigningKey: services.cursorSigningKey,
+              clock: () => systemClock.now().instant,
             })
             installMoneyResourceRoutes(api, {
               service: services.moneyResources,
@@ -354,6 +362,26 @@ export const createApp = (services?: RuntimeServices) =>
             release: context.env.RELEASE,
             activeSection: 'Invoices',
             view: 'invoice-generation',
+            signInProviders: configuredSignInProviders(context.env),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/approvals', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            activeSection: 'Approvals',
+            view: 'timesheet-approvals',
             signInProviders: configuredSignInProviders(context.env),
           }),
           200,

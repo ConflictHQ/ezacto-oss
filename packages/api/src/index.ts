@@ -102,6 +102,17 @@ export {
   type ReportReader,
 } from './reports.js'
 export {
+  installTimesheetApprovalRoutes,
+  type TimesheetApprovalActor,
+  type TimesheetApprovalRouteOptions,
+  type TimesheetApprovalService,
+  type TimesheetSubmissionDetailRecord,
+  type TimesheetSubmissionEntryRecord,
+  type TimesheetSubmissionFilters,
+  type TimesheetSubmissionRecord,
+  type TimesheetSubmissionStatus,
+} from './timesheet-approvals.js'
+export {
   assertValidOidcProviderConfig,
   installOidcRoutes,
   OIDC_STATE_COOKIE_NAME,

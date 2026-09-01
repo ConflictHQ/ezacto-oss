@@ -8,6 +8,7 @@ export interface TimeEntrySettings {
   readonly time_entry_mode: TimeEntryMode
   readonly time_format: 'decimal' | 'hours_minutes'
   readonly clock: OrganizationClock
+  readonly week_start_day: 'saturday' | 'sunday' | 'monday'
 }
 
 export interface EntryEditorDraft {

@@ -27,6 +27,17 @@ export {
   type CreateApiTokenStoreOptions,
 } from './api-tokens.js'
 export { createGeneralResourceRepository } from './general-resources.js'
+export {
+  createTimesheetApprovalRepository,
+  TimesheetApprovalError,
+  type TimesheetApprovalActor,
+  type TimesheetSubmissionFilters,
+  type TimesheetSubmissionDetailRecord,
+  type TimesheetSubmissionEntryRecord,
+  type TimesheetSubmissionRecord,
+  type TimesheetSubmissionSource,
+  type TimesheetSubmissionStatus,
+} from './timesheet-approvals.js'
 export { createMoneyResourceRepository } from './money-resources.js'
 export {
   createInvoiceGenerationService,

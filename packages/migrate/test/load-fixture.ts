@@ -331,7 +331,7 @@ export const buildSanitizedLoadSnapshot = async (
       '"timer_started_at":null,"started_time":"3:30pm","ended_time":null,' +
       '"notes":"Sanitized running time","billable":true,"budgeted":true,' +
       '"billable_rate":175.00,"cost_rate":80.50,"external_reference":null,' +
-      `"calendar_event":null,"invoice":null,"approval_status":"approved",` +
+      `"calendar_event":null,"invoice":null,"approval_status":"unsubmitted",` +
       `"created_at":"${timestamp}","updated_at":"${timestamp}"}`,
   ])
   await writeRows('expenses', [
