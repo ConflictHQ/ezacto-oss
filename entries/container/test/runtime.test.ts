@@ -154,11 +154,15 @@ describe('container runtime composition', () => {
         authenticated({ project_id: project.id, task_id: task.id }),
       ),
     )
-    await data(
-      await request(
-        '/api/v1/user-assignments',
-        authenticated({ project_id: project.id, user_id: 1 }),
+    expect(
+      await data<Array<{ project_id: number; user_id: number; is_active: boolean }>>(
+        await request(
+          `/api/v1/user-assignments?project_id=${project.id}&user_id=1`,
+          { headers: { cookie } },
+        ),
       ),
+    ).toEqual(
+      [expect.objectContaining({ project_id: project.id, user_id: 1, is_active: true })],
     )
     const entry = await data<{ id: number; seconds: number; notes: string }>(
       await request(
