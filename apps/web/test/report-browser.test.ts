@@ -220,6 +220,56 @@ describe('Reports Stage 1 browser controller', () => {
     newSession.abort()
   })
 
+  it('[security] ignores an old report failure after the next session is active', async () => {
+    writeDocument('/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31')
+    let rejectOldReport!: (reason: unknown) => void
+    const oldReport = new Promise<never>((_, reject) => {
+      rejectOldReport = reject
+    })
+    const getUninvoicedReport = vi
+      .fn()
+      .mockImplementationOnce(async () => oldReport)
+      .mockResolvedValueOnce({
+        from: '2026-08-01',
+        to: '2026-08-31',
+        client_id: null,
+        project_id: null,
+        totals: [
+          {
+            currency: 'USD',
+            rounded_seconds: 0,
+            time_entry_count: 0,
+            unpriced_time_entry_count: 0,
+            expense_count: 0,
+            total_cents: 20_000,
+          },
+        ],
+      })
+    const controller = createReportsController(baseApi({ getUninvoicedReport }))
+    const oldSessionFailure = vi.fn(() => false)
+    const oldSession = new AbortController()
+    const oldActivation = controller.activate(
+      identity('administrator'),
+      oldSession.signal,
+      oldSessionFailure,
+    )
+    await vi.waitFor(() => expect(getUninvoicedReport).toHaveBeenCalledTimes(1))
+
+    oldSession.abort()
+    const newSession = new AbortController()
+    await controller.activate(identity('administrator'), newSession.signal, () => false)
+    expect(document.querySelector('[data-report-results]')?.textContent).toContain('$200.00')
+    rejectOldReport(new Error('Old report failed.'))
+    await oldActivation
+
+    expect(oldSessionFailure).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-report-results]')?.textContent).toContain('$200.00')
+    expect(document.querySelector('[data-report-status]')?.textContent).not.toContain(
+      'Old report failed.',
+    )
+    newSession.abort()
+  })
+
   it('[security] discards an old paginated catalog after logout and relogin', async () => {
     writeDocument('/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31')
     let resolveOldClients!: (value: ReturnType<typeof page>) => void

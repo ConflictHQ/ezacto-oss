@@ -498,6 +498,7 @@ export const createReportsController = (
       renderReport(filters, report)
       status.textContent = 'Report loaded.'
     } catch (error) {
+      if (currentSession() !== active) return
       if (active.onSessionFailure(error)) return
       if (active.signal.aborted) return
       if (queuedLocationFilters !== null) return
