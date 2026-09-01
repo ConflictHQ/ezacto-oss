@@ -360,11 +360,48 @@ dialog h2,
   font-weight: 600;
 }
 .authenticated-shell[hidden],
-.auth-gateway[hidden] {
+.auth-gateway[hidden],
+.session-check-overlay[hidden] {
   display: none;
 }
 .authenticated-shell {
   min-height: 100vh;
+}
+.session-check-overlay {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--ez-ink) 24%, transparent);
+  backdrop-filter: blur(2px);
+}
+.session-check-card {
+  min-width: min(320px, 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 18px 22px;
+  border: 1px solid var(--ez-border);
+  border-radius: calc(var(--ez-radius) * 2);
+  background: var(--ez-ground);
+  box-shadow: 0 20px 56px color-mix(in srgb, var(--ez-ink) 24%, transparent);
+  color: var(--ez-ink);
+}
+.session-check-card p {
+  margin: 0;
+  font: 500 14px/1.4 var(--ez-font-mono), monospace;
+}
+.session-check-spinner {
+  width: 24px;
+  aspect-ratio: 1;
+  flex: 0 0 auto;
+  border: 3px solid var(--ez-border);
+  border-top-color: var(--ez-action);
+  border-radius: 50%;
+  animation: auth-spin 900ms linear infinite;
 }
 .auth-gateway {
   min-height: 100vh;
@@ -622,7 +659,8 @@ button[data-auth-action]:disabled {
   opacity: 0.55;
 }
 @media (prefers-reduced-motion: reduce) {
-  .auth-checking span {
+  .auth-checking span,
+  .session-check-spinner {
     animation: none;
   }
 }

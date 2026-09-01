@@ -15,6 +15,7 @@ import {
   installTrackedResourceRoutes,
   installTimesheetApprovalRoutes,
   readJsonBody,
+  SESSION_COOKIE_NAME,
   validationError,
   type ApiTokenService,
   type ApiSessionResolver,
@@ -106,6 +107,19 @@ export type Health = {
   environment: string
   release: string
 }
+
+const hasSessionCookie = (request: Request): boolean =>
+  (request.headers.get('cookie') ?? '')
+    .split(';')
+    .map((part) => part.trim())
+    .some((part) => {
+      const separator = part.indexOf('=')
+      return (
+        separator > 0 &&
+        part.slice(0, separator) === SESSION_COOKIE_NAME &&
+        part.slice(separator + 1) !== ''
+      )
+    })
 
 export const createApp = (services?: RuntimeServices) =>
   createApiApp<AppEnv>({
@@ -345,6 +359,7 @@ export const createApp = (services?: RuntimeServices) =>
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
             signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
           {
@@ -365,6 +380,7 @@ export const createApp = (services?: RuntimeServices) =>
             activeSection: 'Invoices',
             view: 'invoice-generation',
             signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
           {
@@ -385,6 +401,7 @@ export const createApp = (services?: RuntimeServices) =>
             activeSection: 'Approvals',
             view: 'timesheet-approvals',
             signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
           {
