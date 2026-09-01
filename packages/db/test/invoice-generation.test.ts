@@ -275,6 +275,82 @@ for (const [runtime, factory] of factories) {
       )
     })
 
+    it('[unit] [inv-11] reconciles every client report currency to generated invoices', async () => {
+      const database = await setup()
+      await database.run(
+        `INSERT INTO projects (
+           id, client_id, name, code, hourly_rate_cents, billing_currency,
+           created_at, updated_at
+         ) VALUES (2, 1, 'Euro Project', 'EUR', 9001, 'EUR', ?, ?)`,
+        occurredAt,
+        occurredAt,
+      )
+      await database.run(
+        `INSERT INTO user_assignments (id, project_id, user_id, created_at, updated_at)
+         VALUES (2, 2, 2, ?, ?)`,
+        occurredAt,
+        occurredAt,
+      )
+      await database.run(
+        `INSERT INTO task_assignments (
+           id, project_id, task_id, billable, created_at, updated_at
+         ) VALUES (3, 2, 1, 1, ?, ?)`,
+        occurredAt,
+        occurredAt,
+      )
+      await database.run(
+        `INSERT INTO time_entries (
+           id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+           spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+           billable_rate_cents, cost_rate_cents, created_at, updated_at
+         ) VALUES (3, 2, 2, 1, 2, 3, '2026-08-13', 1200, 1200, 1200, 1,
+           9001, 5000, ?, ?)`,
+        occurredAt,
+        occurredAt,
+      )
+      await database.run(
+        `INSERT INTO expenses (
+           id, user_id, project_id, expense_category_id, spent_date, notes,
+           total_cost_cents, billable, created_at, updated_at
+         ) VALUES (2, 2, 2, 1, '2026-08-14', 'Euro train', 222, 1, ?, ?)`,
+        occurredAt,
+        occurredAt,
+      )
+
+      const report = await createReportRepository(database.orm).uninvoiced({
+        clientId: 1,
+        from: request.from,
+        to: request.to,
+      })
+      const usdInvoice = await generator(database).generate(command('report-parity-usd'))
+      const eurInvoice = await generator(database).generate({
+        commandId: 'report-parity-eur',
+        principal,
+        request: { ...request, projectIds: [2] },
+      })
+
+      expect(report.totals).toEqual([
+        expect.objectContaining({
+          currency: 'EUR',
+          timeCents: 3_000,
+          expenseCents: 222,
+          totalCents: 3_222,
+        }),
+        expect.objectContaining({
+          currency: 'USD',
+          timeCents: 7_501,
+          expenseCents: 333,
+          totalCents: 7_834,
+        }),
+      ])
+      expect(
+        new Map([
+          [eurInvoice.currency, eurInvoice.amount_cents],
+          [usdInvoice.currency, usdInvoice.amount_cents],
+        ]),
+      ).toEqual(new Map(report.totals.map((total) => [total.currency, total.totalCents])))
+    })
+
     it('[unit] lets one different command win the same filter and rolls the loser back', async () => {
       const database = await setup()
       const service = generator(database)

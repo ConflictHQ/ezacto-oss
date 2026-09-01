@@ -100,6 +100,7 @@ export {
   serializeClientRollup,
   serializeProjectBudget,
   serializeUninvoiced,
+  type ProjectReportViewer,
   type ReportReader,
 } from './reports.js'
 export {
