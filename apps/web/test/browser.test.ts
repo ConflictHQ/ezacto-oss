@@ -240,7 +240,11 @@ const edit = (input: HTMLInputElement, value: string): void => {
 }
 
 const renderBrowserShell = (
-  options: { preserveStorage?: boolean; view?: 'time' | 'invoice-generation' } = {},
+  options: {
+    preserveStorage?: boolean
+    view?: 'time' | 'invoice-generation'
+    sessionCookiePresent?: boolean
+  } = {},
 ): void => {
   window.history.replaceState(
     null,
@@ -254,6 +258,9 @@ const renderBrowserShell = (
       environment: 'test',
       release: 'browser-test',
       ...(options.view === undefined ? {} : { view: options.view }),
+      ...(options.sessionCookiePresent === undefined
+        ? {}
+        : { sessionCookiePresent: options.sessionCookiePresent }),
     })
       .replace(
         / {2}<link[^>]+(?:fonts\.googleapis|fonts\.gstatic|\/assets\/ezacto\.css)[^>]*>\n/gu,
@@ -976,6 +983,58 @@ describe('invoice generation browser behavior', () => {
 })
 
 describe('native browser authentication', () => {
+  it('[security] keeps the hinted shell inert under an overlay until whoami succeeds', async () => {
+    renderBrowserShell({ sessionCookiePresent: true })
+    const base = browserApi()
+    const identityCheck = deferred<Whoami>()
+    const api = { ...base, whoami: vi.fn(() => identityCheck.promise) }
+
+    const mounted = mountShell(api)
+    const gateway = document.querySelector<HTMLElement>('[data-auth-gateway]')!
+    const overlay = document.querySelector<HTMLElement>('[data-session-check-overlay]')!
+    const shell = document.querySelector<HTMLElement>('[data-authenticated-shell]')!
+
+    expect(gateway.hidden).toBe(true)
+    expect(overlay.hidden).toBe(false)
+    expect(shell.hidden).toBe(false)
+    expect(shell.inert).toBe(true)
+    expect(shell.getAttribute('aria-busy')).toBe('true')
+    expect(base.listProjects).not.toHaveBeenCalled()
+    expect(base.listTimeEntries).not.toHaveBeenCalled()
+    expect(document.querySelectorAll('[data-auth-action]:not([disabled])')).toHaveLength(0)
+
+    identityCheck.resolve(identity)
+    await mounted
+
+    expect(overlay.hidden).toBe(true)
+    expect(shell.hidden).toBe(false)
+    expect(shell.inert).toBe(false)
+    expect(shell.getAttribute('aria-busy')).toBe('false')
+    expect(gateway.hidden).toBe(true)
+    expect(base.listProjects).toHaveBeenCalledTimes(1)
+  })
+
+  it('[security] replaces a hinted shell with sign-in when the cookie is expired', async () => {
+    renderBrowserShell({ sessionCookiePresent: true })
+    const base = browserApi()
+    const api = {
+      ...base,
+      whoami: vi.fn(async () => {
+        throw authenticationError(401, 'authentication_required')
+      }),
+    }
+
+    await mountShell(api)
+
+    expect(document.querySelector<HTMLElement>('[data-session-check-overlay]')?.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-auth-gateway]')?.hidden).toBe(false)
+    expect(document.querySelector<HTMLElement>('[data-authenticated-shell]')?.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-authenticated-shell]')?.inert).toBe(true)
+    expect(document.querySelector<HTMLInputElement>('[name="email"]')).toBe(document.activeElement)
+    expect(base.listProjects).not.toHaveBeenCalled()
+    expect(base.listTimeEntries).not.toHaveBeenCalled()
+  })
+
   it.each([
     [401, 'invalid_credentials', 'Email or password is incorrect.'],
     [403, 'email_verification_required', 'Verify your email before signing in.'],
