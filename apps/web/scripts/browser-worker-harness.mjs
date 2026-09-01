@@ -68,6 +68,7 @@ const miniflare = new Miniflare({
   },
   compatibilityDate: '2026-08-06',
   d1Databases: ['DB'],
+  r2Buckets: ['ATTACHMENTS'],
   host: listenHost,
   log: new NoOpLog(),
   modules: true,

@@ -279,13 +279,14 @@ for (const [runtime, createHarness] of factories) {
         ),
       );
 
-      await data(
+      const owner = await data(
         await harness.request(
           "/users",
           json({
             first_name: "Owner",
             last_name: "Admin",
             email: "owner@example.test",
+            has_access_to_all_future_projects: true,
           }),
         ),
       );
@@ -346,10 +347,19 @@ for (const [runtime, createHarness] of factories) {
       const project = await data(
         await harness.request(
           "/projects",
-          json({ client_id: childId, name: "Launch" }),
+          json({ client_id: childId, name: "Launch", code: "" }),
         ),
       );
+      expect(project.code).toBe("");
       const projectId = project.id as number;
+      expect(
+        await harness.rows<{ project_id: number; user_id: number }>(
+          `SELECT project_id, user_id FROM user_assignments
+           WHERE project_id = ? AND user_id = ?`,
+          projectId,
+          owner.id,
+        ),
+      ).toEqual([{ project_id: projectId, user_id: owner.id }]);
       const commonAssignmentsResponse = await harness.request(
         `/task-assignments?project_id=${projectId}&task_id=${commonTask.id as number}`,
       );
@@ -989,9 +999,9 @@ for (const [runtime, createHarness] of factories) {
           path: `/projects/${project.id as number}`,
           readableBy: profiles,
           fields: {
-            hourly_rate_cents: "billable_rate",
-            fee_cents: "billable_rate",
-            cost_budget_cents: "money_budget",
+            hourly_rate_cents: "project_billable_rate",
+            fee_cents: "project_billable_rate",
+            cost_budget_cents: "project_cost_budget",
           },
         },
         {
@@ -1003,8 +1013,8 @@ for (const [runtime, createHarness] of factories) {
           path: `/task-assignments/${taskAssignment.id as number}`,
           readableBy: profiles,
           fields: {
-            hourly_rate_cents: "billable_rate",
-            budget_cents: "money_budget",
+            hourly_rate_cents: "project_billable_rate",
+            budget_cents: "project_cost_budget",
           },
         },
         {
@@ -1021,15 +1031,50 @@ for (const [runtime, createHarness] of factories) {
       const matrix: Readonly<
         Record<
           UserProfile,
-          Readonly<{ billable_rate: boolean; money_budget: boolean }>
+          Readonly<{
+            billable_rate: boolean;
+            money_budget: boolean;
+            project_billable_rate: boolean;
+            project_cost_budget: boolean;
+          }>
         >
       > = {
-        member: { billable_rate: false, money_budget: false },
-        project_manager: { billable_rate: false, money_budget: false },
-        people_admin: { billable_rate: false, money_budget: false },
-        accounting: { billable_rate: true, money_budget: true },
-        executive_manager: { billable_rate: true, money_budget: true },
-        administrator: { billable_rate: true, money_budget: true },
+        member: {
+          billable_rate: false,
+          money_budget: false,
+          project_billable_rate: false,
+          project_cost_budget: false,
+        },
+        project_manager: {
+          billable_rate: false,
+          money_budget: false,
+          project_billable_rate: false,
+          project_cost_budget: false,
+        },
+        people_admin: {
+          billable_rate: false,
+          money_budget: false,
+          project_billable_rate: false,
+          project_cost_budget: false,
+        },
+        accounting: {
+          billable_rate: true,
+          money_budget: true,
+          project_billable_rate: false,
+          project_cost_budget: false,
+        },
+        executive_manager: {
+          billable_rate: true,
+          money_budget: true,
+          project_billable_rate: true,
+          project_cost_budget: true,
+        },
+        administrator: {
+          billable_rate: true,
+          money_budget: true,
+          project_billable_rate: true,
+          project_cost_budget: true,
+        },
       };
       const allProfiles: readonly UserProfile[] = [
         "member",
@@ -1088,7 +1133,10 @@ for (const [runtime, createHarness] of factories) {
           expect(
             Object.hasOwn(serialized, field),
             `granted_project_manager:${path}:${field}`,
-          ).toBe(category === "billable_rate");
+          ).toBe(
+            category === "billable_rate" ||
+              category === "project_billable_rate",
+          );
         }
       }
       expect(
@@ -1189,13 +1237,12 @@ for (const [runtime, createHarness] of factories) {
         asProfile("accounting"),
       );
       expect(accounting.status).toBe(200);
-      expect(
-        ((await accounting.json()) as { data: Record<string, unknown> }).data,
-      ).toMatchObject({
-        hourly_rate_cents: 20_000,
-        fee_cents: 100_000,
-        cost_budget_cents: 50_000,
-      });
+      const accountingData = (
+        (await accounting.json()) as { data: Record<string, unknown> }
+      ).data;
+      expect(accountingData).not.toHaveProperty("hourly_rate_cents");
+      expect(accountingData).not.toHaveProperty("fee_cents");
+      expect(accountingData).not.toHaveProperty("cost_budget_cents");
       expect(
         (
           (await (

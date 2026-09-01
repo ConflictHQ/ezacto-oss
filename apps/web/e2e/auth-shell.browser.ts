@@ -1012,6 +1012,158 @@ test('[e2e:client-directory] persists hierarchy, bill-to, contacts, projects, an
   expect(archived.contacts).toEqual([])
 })
 
+test('[e2e:project-directory] creates selectable work, edits assignments, uploads, and archives through real D1', async ({
+  page,
+}) => {
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto('/projects')
+  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+  await expect(page.locator('[data-project-list]')).toContainText(
+    'Browser Acceptance Project',
+  )
+  await expectPhoneControl(page.getByRole('button', { name: 'Add project' }))
+  await expectPhoneControl(page.getByRole('button', { name: 'Active', exact: true }))
+  await expectNoPageOverflow(page)
+
+  await page.getByRole('button', { name: 'Add project' }).click()
+  const projectDialog = page.locator('[data-project-form-dialog]')
+  await projectDialog.getByLabel('Client').selectOption({
+    label: 'Browser Acceptance Client',
+  })
+  await projectDialog.getByLabel('Name').fill('Browser UI Project')
+  await projectDialog.getByLabel('Code').fill('BPROJ')
+  await projectDialog.getByLabel('Bill by').selectOption('tasks')
+  await projectDialog.getByLabel('Budget by').selectOption('project')
+  await projectDialog.getByLabel('Hours budget').fill('12.5')
+  await projectDialog.getByLabel('Hourly rate').fill('175.25')
+  await projectDialog.getByLabel('Cost budget', { exact: true }).fill('2345.67')
+  await projectDialog.getByLabel('Minimum time-entry note length').fill('3')
+  await projectDialog.getByLabel('Administrator notes').fill('Browser delivery detail')
+  const created = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/projects' &&
+      response.request().method() === 'POST',
+  )
+  await projectDialog.getByRole('button', { name: 'Add project' }).click()
+  expect((await created).status()).toBe(201)
+  await expect(projectDialog).toBeHidden()
+
+  const row = page.locator('[data-project-list] li').filter({
+    hasText: 'Browser UI Project',
+  })
+  await expect(row).toContainText('Browser Acceptance Client')
+  await row.getByRole('link', { name: '[BPROJ] Browser UI Project' }).click()
+  await expect(page.locator('[data-project-facts]')).toContainText(
+    'Browser delivery detail',
+  )
+  await expect(page.locator('[data-project-facts]')).toContainText('$175.25')
+  await expectNoPageOverflow(page)
+
+  await page.getByRole('button', { name: 'Assign task' }).click()
+  const assignmentDialog = page.locator('[data-task-assignment-dialog]')
+  await assignmentDialog.locator('select[name="task_id"]').selectOption({
+    label: 'Browser Acceptance Task',
+  })
+  await assignmentDialog.getByLabel('Hours budget').fill('7.25')
+  await assignmentDialog.getByLabel('Task hourly rate').fill('201.01')
+  await assignmentDialog.getByLabel('Task fee budget').fill('999.99')
+  const assigned = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/task-assignments' &&
+      response.request().method() === 'POST',
+  )
+  await assignmentDialog.getByRole('button', { name: 'Assign task' }).click()
+  const assignedResponse = await assigned
+  expect(assignedResponse.status()).toBe(201)
+  const assignedBody = await assignedResponse.json()
+  const taskCard = page.locator('[data-project-task-assignments] li').filter({
+    hasText: 'Browser Acceptance Task',
+  })
+  await expect(taskCard).toContainText('7.25 hours')
+  await expect(taskCard).toContainText('$201.01')
+
+  const projectId = Number(new URL(page.url()).pathname.split('/').at(-1))
+  expect(Number.isSafeInteger(projectId)).toBe(true)
+  const selectable = await page.evaluate(async (expectedProjectId) => {
+    const response = await fetch('/api/v1/time-entry-options')
+    const body = await response.json()
+    return body.data.some(
+      (option: { project_id: number; minimum_note_length: number }) =>
+        option.project_id === expectedProjectId && option.minimum_note_length === 3,
+    )
+  }, projectId)
+  expect(selectable).toBe(true)
+
+  const upload = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/v1/projects/${projectId}/attachments` &&
+      response.request().method() === 'POST',
+  )
+  await page
+    .getByLabel('Attach a file')
+    .setInputFiles({ name: 'browser-project.txt', mimeType: 'text/plain', buffer: Buffer.from('browser project') })
+  await page.getByRole('button', { name: 'Upload' }).click()
+  expect((await upload).status()).toBe(201)
+  const attachment = page.getByRole('link', { name: 'browser-project.txt' })
+  await expect(attachment).toBeVisible()
+  const attachmentHref = await attachment.getAttribute('href')
+  expect(attachmentHref).not.toBeNull()
+  expect(
+    await page.evaluate(async (href) => (await fetch(href)).text(), attachmentHref!),
+  ).toBe('browser project')
+
+  await page
+    .locator('.project-header-actions')
+    .getByRole('button', { name: 'Edit', exact: true })
+    .click()
+  await projectDialog.getByLabel('Starts on').fill('2026-08-01')
+  await projectDialog.getByLabel('Ends on').fill('2026-12-31')
+  await projectDialog.getByLabel('Administrator notes').fill('Updated browser detail')
+  const updatedProject = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/projects/${projectId}` &&
+      response.request().method() === 'PATCH',
+  )
+  await projectDialog.getByRole('button', { name: 'Save project' }).click()
+  expect((await updatedProject).status()).toBe(200)
+  await expect(page.locator('[data-project-facts]')).toContainText('Updated browser detail')
+  await expect(page.locator('[data-project-facts]')).toContainText('2026-12-31')
+
+  await taskCard.getByRole('button', { name: 'Edit', exact: true }).click()
+  await assignmentDialog.getByLabel('Hours budget').fill('8.5')
+  const updatedAssignment = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/v1/task-assignments/${assignedBody.data.id}` &&
+      response.request().method() === 'PATCH',
+  )
+  await assignmentDialog.getByRole('button', { name: 'Save assignment' }).click()
+  expect((await updatedAssignment).status()).toBe(200)
+  await expect(taskCard).toContainText('8.5 hours')
+
+  await taskCard.getByRole('button', { name: 'Archive' }).click()
+  const assignmentArchive = page.locator('[data-task-assignment-archive-dialog]')
+  await assignmentArchive.getByRole('button', { name: 'Archive assignment' }).click()
+  await expect(taskCard).toContainText('Archived')
+
+  await page.locator('[data-project-header-actions], .project-header-actions').getByRole('button', {
+    name: 'Archive',
+    exact: true,
+  }).click()
+  const projectArchive = page.locator('[data-project-archive-dialog]')
+  await projectArchive.getByRole('button', { name: 'Archive project' }).click()
+  await expect(page).toHaveURL(/\/projects$/u)
+  await page.getByRole('button', { name: 'All', exact: true }).click()
+  const archivedRow = page.locator('[data-project-list] li').filter({
+    hasText: 'Browser UI Project',
+  })
+  await expect(archivedRow).toContainText('Archived')
+})
+
 test('[e2e:invoice-cycle] generates a real draft through the authenticated wizard', async ({
   page,
 }) => {

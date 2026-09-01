@@ -28,13 +28,15 @@ import {
 } from '@ezacto/client'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 import type { ClientDirectoryApi } from '../clients/model.js'
+import type { ProjectDirectoryApi } from '../projects/model.js'
 
 interface CursorPage<T> {
   readonly data: readonly T[]
   readonly page: { readonly next_cursor: string | null }
 }
 
-export interface ShellApi extends Partial<ClientDirectoryApi> {
+export interface ShellApi
+  extends Partial<ClientDirectoryApi>, Partial<ProjectDirectoryApi> {
   whoami(signal?: AbortSignal): Promise<Whoami>
   signIn(credentials: PasswordSignInInput, signal?: AbortSignal): Promise<AuthPrincipal>
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
@@ -575,6 +577,66 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     }),
+  listDirectoryProjects: (cursor, signal) =>
+    client.listProjects({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listProjectClients: (cursor, signal) =>
+    client.listClients({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  getDirectoryProject: async (id, signal) =>
+    (await client.getProject({ id, ...withSignal(signal) })).data,
+  createDirectoryProject: async (input, signal) =>
+    (await client.createProject({ body: input, ...withSignal(signal) })).data,
+  updateDirectoryProject: async (id, input, signal) =>
+    (await client.updateProject({ id, body: input, ...withSignal(signal) })).data,
+  archiveDirectoryProject: async (id, signal) => {
+    await client.deleteProject({ id, ...withSignal(signal) })
+  },
+  listDirectoryTasks: (cursor, signal) =>
+    client.listTasks({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listProjectTaskAssignments: (projectId, cursor, signal) =>
+    client.listTaskAssignments({
+      query: {
+        project_id: projectId,
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  createProjectTaskAssignment: async (input, signal) =>
+    (await client.createTaskAssignment({ body: input, ...withSignal(signal) })).data,
+  updateProjectTaskAssignment: async (id, input, signal) =>
+    (await client.updateTaskAssignment({ id, body: input, ...withSignal(signal) })).data,
+  archiveProjectTaskAssignment: async (id, signal) => {
+    await client.deleteTaskAssignment({ id, ...withSignal(signal) })
+  },
+  listDirectoryProjectAttachments: async (projectId, signal) =>
+    (await client.listProjectAttachments({ projectId, ...withSignal(signal) })).data,
+  uploadDirectoryProjectAttachment: async (projectId, commandId, body, signal) =>
+    (
+      await client.createProjectAttachment({
+        projectId,
+        'Idempotency-Key': commandId,
+        body,
+        ...withSignal(signal),
+      })
+    ).data,
   listInvoices: (cursor, signal) =>
     client.listInvoices({
       query: {

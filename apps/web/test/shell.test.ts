@@ -476,4 +476,33 @@ describe('S-1 through S-5 application shell', () => {
     expect(webAssets.stylesheet).toContain('.invoice-document {')
     expect(webAssets.stylesheet).toContain('.invoice-load-more {')
   })
+
+  it('[acceptance] renders project list and detail workspaces without server-side restricted fields', () => {
+    const list = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      activeSection: 'Projects',
+      view: 'project-list',
+    })
+    const detail = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      activeSection: 'Projects',
+      view: 'project-detail',
+    })
+
+    expect(list).toContain('data-project-list-page')
+    expect(list).toContain('data-project-client-filter')
+    expect(list).toContain('href="/projects" aria-current="page"')
+    expect(detail).toContain('data-project-detail-page')
+    expect(detail).toContain('data-project-task-assignments')
+    expect(detail).toContain('data-project-attachment-form hidden')
+    expect(detail).toContain('<div class="project-form-body" data-project-form-body></div>')
+    expect(detail).not.toContain('name="hourly_rate_cents"')
+    expect(detail).not.toContain('name="cost_budget_cents"')
+    expect(webAssets.stylesheet).toContain('.project-detail {')
+    expect(webAssets.stylesheet).toMatch(
+      /@media \(max-width: 720px\)[\s\S]*\.project-detail,[\s\S]*grid-template-columns: 1fr;/u,
+    )
+  })
 })

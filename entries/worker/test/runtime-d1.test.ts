@@ -20,6 +20,7 @@ let database: D1Database;
 let bootstrapResponse: Response;
 let bearer: string;
 let moneyBearer: string;
+let projectBearer: string;
 
 const request = (path: string, init?: RequestInit): Promise<Response> =>
   miniflare.dispatchFetch(
@@ -76,10 +77,11 @@ beforeAll(async () => {
   );
   await run(
     `INSERT INTO users (
-      id, first_name, last_name, profile, manager_grants, created_at, updated_at
+      id, first_name, last_name, profile, manager_grants,
+      has_access_to_all_future_projects, created_at, updated_at
     ) VALUES
-      (1, 'Runtime', 'Owner', 'administrator', '[]', ?, ?),
-      (2, 'Runtime', 'Member', 'member', '[]', ?, ?)`,
+      (1, 'Runtime', 'Owner', 'administrator', '[]', 1, ?, ?),
+      (2, 'Runtime', 'Member', 'member', '[]', 0, ?, ?)`,
     timestamp,
     timestamp,
     timestamp,
@@ -182,8 +184,25 @@ beforeAll(async () => {
       scopes: ["invoices:read", "invoices:write"],
     })
   ).token;
+  projectBearer = (
+    await store.issue({
+      userId: 1,
+      name: "Runtime project lifecycle test",
+      scopes: [
+        "clients:read",
+        "clients:write",
+        "projects:read",
+        "projects:write",
+        "time_entries:read",
+        "time_entries:write",
+      ],
+    })
+  ).token;
   expect(await store.authenticate(bearer)).toMatchObject({ profile: "member" });
   expect(await store.authenticate(moneyBearer)).toMatchObject({
+    profile: "administrator",
+  });
+  expect(await store.authenticate(projectBearer)).toMatchObject({
     profile: "administrator",
   });
 }, 20_000);
@@ -307,6 +326,104 @@ describe("Worker D1 runtime composition", () => {
         .bind(1)
         .first(),
     ).toEqual({ eventCount: 1 });
+  });
+
+  it("[e2e:projects] creates client → project → task assignment → selectable time through real D1 and R2", async () => {
+    const client = new EzactoClient({
+      baseUrl: "https://worker.test",
+      token: projectBearer,
+      fetch: workerFetch,
+    });
+    const createdClient = await client.createClient({
+      body: { name: "Native project client", currency: "USD" },
+    });
+    const task = await client.createTask({
+      body: { name: "Native project task", billable_by_default: true },
+    });
+    const project = await client.createProject({
+      body: {
+        client_id: createdClient.data.id,
+        name: "Native project",
+        code: "",
+        billing_method: "time_materials",
+        bill_by: "tasks",
+        budget_by: "project",
+        budget_seconds: 36_000,
+        time_entry_notes_minimum_length: 3,
+      },
+    });
+
+    expect(project.data).toMatchObject({
+      client_id: createdClient.data.id,
+      name: "Native project",
+      code: "",
+      budget_seconds: 36_000,
+    });
+    expect(
+      await database
+        .prepare(
+          `SELECT project_id AS projectId, user_id AS userId
+           FROM user_assignments WHERE project_id = ? AND user_id = ?`,
+        )
+        .bind(project.data.id, 1)
+        .first(),
+    ).toEqual({ projectId: project.data.id, userId: 1 });
+
+    const assignment = await client.createTaskAssignment({
+      body: {
+        project_id: project.data.id,
+        task_id: task.data.id,
+        billable: true,
+        budget_seconds: 18_000,
+      },
+    });
+    expect((await client.listTimeEntryOptions()).data).toContainEqual({
+      project_id: project.data.id,
+      task_id: task.data.id,
+      minimum_note_length: 3,
+    });
+    const entry = await client.createTimeEntry({
+      body: {
+        project_id: project.data.id,
+        task_id: task.data.id,
+        spent_date: "2026-08-28",
+        seconds: 1_800,
+        notes: "Built",
+      },
+    });
+    expect(entry.data).toMatchObject({
+      project_id: project.data.id,
+      task_id: task.data.id,
+      seconds: 1_800,
+      notes: "Built",
+    });
+
+    const form = new FormData();
+    form.set(
+      "file",
+      new File(["project brief"], "brief.txt", { type: "text/plain" }),
+    );
+    const attachment = await client.createProjectAttachment({
+      projectId: project.data.id,
+      "Idempotency-Key": "runtime-project-attachment",
+      body: form,
+    });
+    expect(
+      new TextDecoder().decode(
+        await client.downloadProjectAttachment({
+          projectId: project.data.id,
+          attachmentId: attachment.data.id,
+        }),
+      ),
+    ).toBe("project brief");
+
+    await client.deleteTaskAssignment({ id: assignment.data.id });
+    expect((await client.listTimeEntryOptions()).data).not.toContainEqual(
+      expect.objectContaining({
+        project_id: project.data.id,
+        task_id: task.data.id,
+      }),
+    );
   });
 
   it("[api] [inv-06] concurrently generates one invoice through the deployed Worker binding", async () => {

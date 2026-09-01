@@ -19,6 +19,7 @@ import {
   type TimeEntryMode,
 } from '../components/time-entry-editor.js'
 import { createClientDirectoryController } from '../clients/browser.js'
+import { createProjectDirectoryController } from '../projects/browser.js'
 import { renderInvoiceDetail, renderInvoiceListItems } from '../invoices/browser.js'
 import {
   invoiceIdFromPathname,
@@ -705,6 +706,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const invoiceDetailPage = document.documentElement.dataset.appView === 'invoice-detail'
   const clientListPage = document.documentElement.dataset.appView === 'client-list'
   const clientDetailPage = document.documentElement.dataset.appView === 'client-detail'
+  const projectListPage = document.documentElement.dataset.appView === 'project-list'
+  const projectDetailPage = document.documentElement.dataset.appView === 'project-detail'
   const timesheetApprovalsPage =
     document.documentElement.dataset.appView === 'timesheet-approvals'
   const signedOutDocumentTitle = document.title
@@ -720,6 +723,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
             ? ' — Clients'
             : clientDetailPage
               ? ' — Client detail'
+              : projectListPage
+                ? ' — Projects'
+                : projectDetailPage
+                  ? ' — Project detail'
               : timesheetApprovalsPage
                 ? ' — Approvals'
                 : ' — Time',
@@ -772,6 +779,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const invoiceSuccess = required<HTMLElement>('[data-invoice-generation-success]')
   const generatedInvoiceLink = required<HTMLAnchorElement>('[data-generated-invoice-link]')
   const clientDirectory = createClientDirectoryController(api)
+  const projectDirectory = createProjectDirectoryController(api)
   const invoiceList = required<HTMLElement>('[data-invoice-list]')
   const invoiceListStatus = required<HTMLElement>('[data-invoice-list-status]')
   const invoiceLoadMore = required<HTMLButtonElement>('[data-invoice-load-more]')
@@ -1758,6 +1766,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     } else if (clientListPage || clientDetailPage) {
       await Promise.all([
         clientDirectory.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (projectListPage || projectDetailPage) {
+      await Promise.all([
+        projectDirectory.activate(
           identity,
           authenticated.signal,
           (error) => handleSessionFailure(error, authenticated),

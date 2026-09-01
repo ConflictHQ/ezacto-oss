@@ -107,7 +107,35 @@ describe('worker entry', () => {
     },
   )
 
-  it.each(['/', '/clients', '/clients/42', '/invoices', '/invoices/42', '/invoices/new', '/approvals'])(
+  it('[acceptance] serves the Projects V1 list and numeric detail shells', async () => {
+    const list = await app.request('/projects', {}, env)
+    const detail = await app.request('/projects/42', {}, env)
+
+    expect(list.status).toBe(200)
+    expect(list.headers.get('location')).toBeNull()
+    const listHtml = await list.text()
+    expect(listHtml).toContain('data-app-view="project-list"')
+    expect(listHtml).toContain('data-project-list-page')
+    expect(listHtml).toContain('href="/projects" aria-current="page"')
+
+    expect(detail.status).toBe(200)
+    const detailHtml = await detail.text()
+    expect(detailHtml).toContain('data-app-view="project-detail"')
+    expect(detailHtml).toContain('data-project-detail-page')
+    expect(detailHtml).toContain('data-project-task-assignments')
+    expect(detailHtml).toContain('<div class="project-form-body" data-project-form-body></div>')
+    expect(detailHtml).not.toContain('name="hourly_rate_cents"')
+    expect(detailHtml).not.toContain('name="cost_budget_cents"')
+  })
+
+  it.each(['/projects/0', '/projects/nope', '/projects/9007199254740992'])(
+    '[security] rejects invalid project detail path %s',
+    async (path) => {
+      expect((await app.request(path, {}, env)).status).toBe(404)
+    },
+  )
+
+  it.each(['/', '/clients', '/clients/42', '/projects', '/projects/42', '/invoices', '/invoices/42', '/invoices/new', '/approvals'])(
     '[security] renders %s as an inert shell under an overlay when a session cookie is present',
     async (path) => {
       const res = await app.request(
