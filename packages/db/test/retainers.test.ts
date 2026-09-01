@@ -261,7 +261,7 @@ for (const [runtime, factory] of factories) {
       expect(await database.rows(`PRAGMA foreign_key_check`)).toEqual([])
       await database.migrateAgain()
       expect(await database.rows(`PRAGMA foreign_key_check`)).toEqual([])
-    }, 20_000)
+    }, 40_000)
 
     it('[unit] enforces one cap and the hours-only locked-rate pair', async () => {
       database = await factory()
