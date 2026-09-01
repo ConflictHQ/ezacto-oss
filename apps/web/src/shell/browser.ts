@@ -4,6 +4,8 @@ import {
   type InvoiceGenerationInput,
   type TimeEntryInput,
   type TimeEntryPatch,
+  type TimesheetLockPolicy,
+  type TimesheetLockWindow,
   type TimesheetSubmission,
   type TimesheetSubmissionDetail,
   type Whoami,
@@ -734,10 +736,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const menuDialog = required<HTMLDialogElement>('[data-menu-dialog]')
   const rowDialog = required<HTMLDialogElement>('[data-row-dialog]')
   const rejectionDialog = required<HTMLDialogElement>('[data-rejection-dialog]')
+  const withdrawalDialog = required<HTMLDialogElement>('[data-withdrawal-dialog]')
   const commandForm = required<HTMLFormElement>('[data-command-form]')
   const entryForm = required<HTMLFormElement>('[data-entry-form]')
   const rowForm = required<HTMLFormElement>('[data-row-form]')
   const rejectionForm = required<HTMLFormElement>('[data-rejection-form]')
+  const withdrawalForm = required<HTMLFormElement>('[data-withdrawal-form]')
   const entryProject = required<HTMLInputElement>('[data-entry-project]')
   const entryTask = required<HTMLInputElement>('[data-entry-task]')
   const entryDate = required<HTMLInputElement>('[data-entry-date]')
@@ -770,12 +774,31 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const timesheetRejectionReason = required<HTMLElement>('[data-timesheet-rejection-reason]')
   const timesheetResult = required<HTMLElement>('[data-timesheet-result]')
   const submitTimesheet = required<HTMLButtonElement>('[data-submit-timesheet]')
+  const withdrawTimesheet = required<HTMLButtonElement>('[data-withdraw-timesheet]')
   const approvalsPageElement = required<HTMLElement>('[data-timesheet-approvals-page]')
+  const approvalReviewPanel = required<HTMLElement>('[data-approval-review-panel]')
   const approvalQueue = required<HTMLElement>('[data-approval-queue]')
+  const approvalHistory = required<HTMLElement>('[data-approval-history]')
   const approvalQueueResult = required<HTMLElement>('[data-approval-queue-result]')
   const rejectionReason = required<HTMLTextAreaElement>('[data-rejection-reason]')
   const rejectionResult = required<HTMLElement>('[data-rejection-result]')
   const rejectionSubmit = required<HTMLButtonElement>('[data-rejection-submit]')
+  const withdrawalReason = required<HTMLTextAreaElement>('[data-withdrawal-reason]')
+  const withdrawalResult = required<HTMLElement>('[data-withdrawal-result]')
+  const withdrawalSubmit = required<HTMLButtonElement>('[data-withdrawal-submit]')
+  const lockPolicyPanel = required<HTMLElement>('[data-lock-policy-panel]')
+  const lockPolicyForm = required<HTMLFormElement>('[data-lock-policy-form]')
+  const lockPolicyAuto = required<HTMLInputElement>('[data-lock-policy-auto]')
+  const lockPolicyDay = required<HTMLSelectElement>('[data-lock-policy-day]')
+  const lockPolicyTime = required<HTMLInputElement>('[data-lock-policy-time]')
+  const lockPolicyTimezone = required<HTMLInputElement>('[data-lock-policy-timezone]')
+  const lockPolicySubmit = required<HTMLButtonElement>('[data-lock-policy-submit]')
+  const manualLockForm = required<HTMLFormElement>('[data-manual-lock-form]')
+  const manualLockThrough = required<HTMLInputElement>('[data-manual-lock-through]')
+  const manualLockReason = required<HTMLTextAreaElement>('[data-manual-lock-reason]')
+  const manualLockSubmit = required<HTMLButtonElement>('[data-manual-lock-submit]')
+  const lockPolicyResult = required<HTMLElement>('[data-lock-policy-result]')
+  const timesheetLockList = required<HTMLElement>('[data-timesheet-lock-list]')
   const requestedView = new URL(globalThis.location.href).searchParams.get('view')
   document.documentElement.dataset.timeView = requestedView === 'day' ? 'day' : 'week'
   for (const link of document.querySelectorAll<HTMLAnchorElement>('.tabstrip a')) {
@@ -806,10 +829,17 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   let invoiceNextCursor: string | null = null
   let invoiceListCount = 0
   let approvalModuleAvailable = false
+  let lockPolicyAvailable = false
   let currentSubmission: TimesheetSubmission | null = null
   let pendingSubmissions: readonly TimesheetSubmissionDetail[] = []
+  let approvedSubmissions: readonly TimesheetSubmission[] = []
+  let lockPolicy: TimesheetLockPolicy | null = null
+  let activeTimesheetLocks: readonly TimesheetLockWindow[] = []
   let timesheetTransitionPending = false
+  let lockPolicyTransitionPending = false
+  let manualLockCommandId: string | null = null
   let rejectionSubmissionId: number | null = null
+  let withdrawalSubmissionId: number | null = null
 
   const setInvoiceFormPending = (pending: boolean): void => {
     invoiceGenerationPending = pending
@@ -918,6 +948,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     entryForm.reset()
     rowForm.reset()
     rejectionForm.reset()
+    withdrawalForm.reset()
+    lockPolicyForm.reset()
+    manualLockForm.reset()
     invoiceForm.reset()
     configureNoteInput(entryNoteInput, entryNoteHint, 0)
     required<HTMLSelectElement>('[data-row-project]').replaceChildren()
@@ -959,13 +992,26 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     timesheetResult.textContent = ''
     approvalsPageElement.hidden = !timesheetApprovalsPage
     approvalQueue.replaceChildren()
+    approvalHistory.replaceChildren()
     approvalQueueResult.textContent = ''
     rejectionResult.textContent = ''
+    withdrawalResult.textContent = ''
+    lockPolicyResult.textContent = ''
+    lockPolicyPanel.hidden = true
+    timesheetLockList.replaceChildren()
+    withdrawTimesheet.hidden = true
     approvalModuleAvailable = false
+    lockPolicyAvailable = false
     currentSubmission = null
     pendingSubmissions = []
+    approvedSubmissions = []
+    lockPolicy = null
+    activeTimesheetLocks = []
     timesheetTransitionPending = false
+    lockPolicyTransitionPending = false
+    manualLockCommandId = null
     rejectionSubmissionId = null
+    withdrawalSubmissionId = null
     activeEntry = null
     supplementalRows = []
     snapshot = null
@@ -977,6 +1023,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       menuDialog,
       rowDialog,
       rejectionDialog,
+      withdrawalDialog,
     ]) {
       if (dialog.open) dialog.close()
     }
@@ -1122,8 +1169,14 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     currentIdentity?.profile === 'executive_manager' ||
     currentIdentity?.profile === 'project_manager'
 
+  const canManageTimesheetLocks = (): boolean =>
+    currentIdentity?.profile === 'administrator' ||
+    currentIdentity?.profile === 'executive_manager'
+
   const renderApprovalNavigation = (): void => {
-    const visible = approvalModuleAvailable && canReviewTimesheets()
+    const visible =
+      (approvalModuleAvailable && canReviewTimesheets()) ||
+      (lockPolicyAvailable && canManageTimesheetLocks())
     for (const link of document.querySelectorAll<HTMLElement>('[data-approvals-nav]')) {
       link.hidden = !visible
     }
@@ -1162,12 +1215,73 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       snapshot === null ||
       (snapshot.entries.length === 0 && snapshot.expenses.length === 0) ||
       snapshot.entries.some((entry) => entry.is_running)
+    withdrawTimesheet.hidden = status !== 'approved' || !canManageTimesheetLocks()
+    withdrawTimesheet.disabled = timesheetTransitionPending || withdrawTimesheet.hidden
+  }
+
+  const renderLockPolicy = (): void => {
+    const visible =
+      timesheetApprovalsPage && lockPolicyAvailable && canManageTimesheetLocks()
+    lockPolicyPanel.hidden = !visible
+    approvalReviewPanel.hidden = !approvalModuleAvailable
+    if (!visible || lockPolicy === null) {
+      timesheetLockList.replaceChildren()
+      return
+    }
+    lockPolicyAuto.checked = lockPolicy.auto_lock
+    lockPolicyDay.value = lockPolicy.timesheet_deadline?.day ?? 'monday'
+    lockPolicyTime.value = lockPolicy.timesheet_deadline?.time ?? '17:00'
+    lockPolicyTimezone.value = lockPolicy.timezone
+    lockPolicySubmit.disabled = lockPolicyTransitionPending
+    manualLockSubmit.disabled = lockPolicyTransitionPending
+    if (manualLockThrough.value === '') manualLockThrough.value = localDate()
+    if (activeTimesheetLocks.length === 0) {
+      const empty = document.createElement('p')
+      empty.className = 'approval-empty'
+      empty.textContent = 'No active manual or deadline locks.'
+      timesheetLockList.replaceChildren(empty)
+      return
+    }
+    timesheetLockList.replaceChildren(
+      ...activeTimesheetLocks.map((lock) => {
+        const card = document.createElement('article')
+        card.className = 'timesheet-lock-card'
+        card.dataset.lockId = String(lock.id)
+        const summary = document.createElement('div')
+        const title = document.createElement('strong')
+        title.textContent = lock.kind === 'manual' ? 'Manual cutoff' : 'Weekly deadline'
+        const period = document.createElement('p')
+        period.textContent =
+          lock.period_start === null
+            ? `All tracked work through ${dayLabel(lock.period_end, true)}`
+            : `${dayLabel(lock.period_start, true)} – ${dayLabel(lock.period_end, true)}`
+        const detail = document.createElement('p')
+        detail.textContent = lock.reason
+        summary.append(title, period, detail)
+        const label = document.createElement('label')
+        label.textContent = 'Unlock reason'
+        const reason = document.createElement('input')
+        reason.type = 'text'
+        reason.maxLength = 10_000
+        reason.required = true
+        reason.dataset.lockUnlockReason = String(lock.id)
+        label.append(reason)
+        const unlock = document.createElement('button')
+        unlock.type = 'button'
+        unlock.textContent = 'Unlock'
+        unlock.disabled = lockPolicyTransitionPending
+        unlock.addEventListener('click', () => void unlockTimesheetWindow(lock.id, reason))
+        card.append(summary, label, unlock)
+        return card
+      }),
+    )
   }
 
   const renderApprovalQueue = (): void => {
     renderApprovalNavigation()
     if (!timesheetApprovalsPage || !approvalModuleAvailable || !canReviewTimesheets()) {
       approvalQueue.replaceChildren()
+      approvalHistory.replaceChildren()
       return
     }
     if (pendingSubmissions.length === 0) {
@@ -1175,10 +1289,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       empty.className = 'approval-empty'
       empty.textContent = 'No timesheets are waiting for review.'
       approvalQueue.replaceChildren(empty)
-      return
-    }
-    approvalQueue.replaceChildren(
-      ...pendingSubmissions.map((submission) => {
+    } else {
+      approvalQueue.replaceChildren(
+        ...pendingSubmissions.map((submission) => {
         const card = document.createElement('article')
         card.className = 'approval-card'
         card.dataset.submissionId = String(submission.id)
@@ -1255,6 +1368,44 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         actions.append(approve, reject)
         card.append(summary, actions)
         return card
+        }),
+      )
+    }
+    if (!canManageTimesheetLocks()) {
+      approvalHistory.replaceChildren()
+      return
+    }
+    const heading = document.createElement('h2')
+    heading.textContent = 'Recently approved'
+    if (approvedSubmissions.length === 0) {
+      const empty = document.createElement('p')
+      empty.className = 'approval-empty'
+      empty.textContent = 'No approved timesheets are available to reopen.'
+      approvalHistory.replaceChildren(heading, empty)
+      return
+    }
+    approvalHistory.replaceChildren(
+      heading,
+      ...approvedSubmissions.map((submission) => {
+        const card = document.createElement('article')
+        card.className = 'approval-card'
+        card.dataset.approvedSubmissionId = String(submission.id)
+        const summary = document.createElement('div')
+        const title = document.createElement('h3')
+        title.textContent = submission.user_name
+        const period = document.createElement('p')
+        period.textContent = `${dayLabel(submission.period_start, true)} – ${dayLabel(submission.period_end, true)}`
+        const totals = document.createElement('p')
+        totals.className = 'approval-totals'
+        totals.textContent = `${formatSeconds(submission.total_seconds)} · ${submission.entry_count} time ${submission.expense_count > 0 ? ` · ${submission.expense_count} expenses` : ''}`
+        summary.append(title, period, totals)
+        const reopen = document.createElement('button')
+        reopen.type = 'button'
+        reopen.textContent = 'Reopen'
+        reopen.disabled = timesheetTransitionPending
+        reopen.addEventListener('click', () => openWithdrawal(submission.id))
+        card.append(summary, reopen)
+        return card
       }),
     )
   }
@@ -1287,6 +1438,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     renderApprovalNavigation()
     renderTimesheetStatus()
     renderApprovalQueue()
+    renderLockPolicy()
   }
 
   const loadApprovalData = async (
@@ -1297,9 +1449,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     available: boolean
     current: TimesheetSubmission | null
     pending: readonly TimesheetSubmissionDetail[]
+    approved: readonly TimesheetSubmission[]
   }> => {
     if (api.listTimesheetSubmissions === undefined) {
-      return { available: false, current: null, pending: [] }
+      return { available: false, current: null, pending: [], approved: [] }
     }
     const range = weekRange(requestedWithin, requestedWeekStartDay)
     try {
@@ -1311,6 +1464,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
           ? await api.listPendingTimesheetSubmissions(operation.signal)
           : []
       const getSubmission = api.getTimesheetSubmission
+      const approved =
+        timesheetApprovalsPage &&
+        canManageTimesheetLocks() &&
+        api.listApprovedTimesheetSubmissions !== undefined
+          ? await api.listApprovedTimesheetSubmissions(
+              shiftDate(localDate(), -90),
+              operation.signal,
+            )
+          : []
       const pending =
         getSubmission === undefined
           ? []
@@ -1327,10 +1489,40 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
               submission.period_start === range.from && submission.period_end === range.to,
           ) ?? null,
         pending,
+        approved,
       }
     } catch (error) {
       if (error instanceof EzactoApiError && error.status === 404) {
-        return { available: false, current: null, pending: [] }
+        return { available: false, current: null, pending: [], approved: [] }
+      }
+      throw error
+    }
+  }
+
+  const loadLockPolicyData = async (
+    operation: AuthOperation,
+  ): Promise<{
+    available: boolean
+    policy: TimesheetLockPolicy | null
+    locks: readonly TimesheetLockWindow[]
+  }> => {
+    if (!canManageTimesheetLocks() || api.getTimesheetLockPolicy === undefined) {
+      return { available: false, policy: null, locks: [] }
+    }
+    try {
+      const [policy, locks] = await Promise.all([
+        api.getTimesheetLockPolicy(operation.signal),
+        timesheetApprovalsPage && api.listTimesheetLocks !== undefined
+          ? api.listTimesheetLocks(operation.signal)
+          : Promise.resolve([]),
+      ])
+      return { available: true, policy, locks }
+    } catch (error) {
+      if (
+        error instanceof EzactoApiError &&
+        (error.status === 403 || error.status === 404)
+      ) {
+        return { available: false, policy: null, locks: [] }
       }
       throw error
     }
@@ -1349,7 +1541,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       operation.signal,
     )
     const loadedWeekStartDay = loaded.timeEntrySettings.week_start_day
-    const approval = await loadApprovalData(operation, requestedWithin, loadedWeekStartDay)
+    const [approval, policy] = await Promise.all([
+      loadApprovalData(operation, requestedWithin, loadedWeekStartDay),
+      loadLockPolicyData(operation),
+    ])
     if (!isSessionCurrent(operation) || within !== requestedWithin) return false
     weekStartDay = loadedWeekStartDay
     snapshot = loaded
@@ -1360,6 +1555,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     approvalModuleAvailable = approval.available
     currentSubmission = approval.current
     pendingSubmissions = approval.pending
+    approvedSubmissions = approval.approved
+    lockPolicyAvailable = policy.available
+    lockPolicy = policy.policy
+    activeTimesheetLocks = policy.locks
     render()
     focusCell(focus)
     return true
@@ -1587,6 +1786,42 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     rejectionResult.textContent = ''
     open(rejectionDialog)
     rejectionReason.focus()
+  }
+
+  async function unlockTimesheetWindow(
+    lockId: number,
+    reasonInput: HTMLInputElement,
+  ): Promise<void> {
+    const operation = sessionOperation()
+    const reason = reasonInput.value.trim()
+    if (reason === '') {
+      lockPolicyResult.textContent = 'Enter a reason before unlocking this period.'
+      reasonInput.focus()
+      return
+    }
+    if (
+      operation === null ||
+      lockPolicyTransitionPending ||
+      api.unlockTimesheetLock === undefined
+    ) {
+      return
+    }
+    lockPolicyTransitionPending = true
+    lockPolicyResult.textContent = 'Unlocking tracked work…'
+    renderLockPolicy()
+    try {
+      await api.unlockTimesheetLock(lockId, { reason }, operation.signal)
+      if (!(await refresh(operation))) return
+      lockPolicyResult.textContent = 'Tracked work unlocked. The reason was added to the audit trail.'
+    } catch (error) {
+      if (handleSessionFailure(error, operation)) return
+      lockPolicyResult.textContent = messageFor(error)
+    } finally {
+      if (isSessionCurrent(operation)) {
+        lockPolicyTransitionPending = false
+        renderLockPolicy()
+      }
+    }
   }
 
   async function commitCell(
@@ -2239,6 +2474,173 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         timesheetTransitionPending = false
         renderTimesheetStatus()
       })
+  })
+
+  const openWithdrawal = (submissionId: number): void => {
+    if (timesheetTransitionPending || !canManageTimesheetLocks()) return
+    withdrawalSubmissionId = submissionId
+    withdrawalForm.reset()
+    withdrawalResult.textContent = ''
+    open(withdrawalDialog)
+    withdrawalReason.focus()
+  }
+
+  withdrawTimesheet.addEventListener('click', () => {
+    if (currentSubmission?.status !== 'approved') return
+    openWithdrawal(currentSubmission.id)
+  })
+
+  withdrawalForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const operation = sessionOperation()
+    const reason = withdrawalReason.value.trim()
+    if (reason === '') {
+      withdrawalResult.textContent = 'Enter a reason before reopening this timesheet.'
+      withdrawalReason.focus()
+      return
+    }
+    if (
+      operation === null ||
+      withdrawalSubmissionId === null ||
+      timesheetTransitionPending ||
+      api.withdrawTimesheetSubmission === undefined
+    ) {
+      return
+    }
+    const submissionId = withdrawalSubmissionId
+    timesheetTransitionPending = true
+    withdrawalSubmit.disabled = true
+    withdrawalResult.textContent = 'Reopening approved time and expenses…'
+    void api
+      .withdrawTimesheetSubmission(submissionId, { reason }, operation.signal)
+      .then(async () => {
+        if (!(await refresh(operation))) return
+        withdrawalSubmissionId = null
+        withdrawalDialog.close()
+        timesheetResult.textContent =
+          'Approval withdrawn. Time and expenses are editable unless another lock applies.'
+      })
+      .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
+        withdrawalResult.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (!isSessionCurrent(operation)) return
+        timesheetTransitionPending = false
+        withdrawalSubmit.disabled = false
+        renderTimesheetStatus()
+      })
+  })
+
+  withdrawalReason.addEventListener('input', () => {
+    withdrawalResult.textContent = ''
+  })
+
+  lockPolicyForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const operation = sessionOperation()
+    if (
+      operation === null ||
+      lockPolicyTransitionPending ||
+      api.updateTimesheetLockPolicy === undefined
+    ) {
+      return
+    }
+    const autoLock = lockPolicyAuto.checked
+    const day = lockPolicyDay.value
+    const time = lockPolicyTime.value
+    const timezone = lockPolicyTimezone.value.trim()
+    if (timezone === '' || time === '') {
+      lockPolicyResult.textContent = 'Enter a deadline time and organization timezone.'
+      return
+    }
+    if (
+      day !== 'sunday' &&
+      day !== 'monday' &&
+      day !== 'tuesday' &&
+      day !== 'wednesday' &&
+      day !== 'thursday' &&
+      day !== 'friday' &&
+      day !== 'saturday'
+    ) {
+      lockPolicyResult.textContent = 'Choose a valid deadline day.'
+      return
+    }
+    lockPolicyTransitionPending = true
+    lockPolicyResult.textContent = 'Saving lock policy…'
+    renderLockPolicy()
+    void api
+      .updateTimesheetLockPolicy(
+        {
+          auto_lock: autoLock,
+          timesheet_deadline: { day, time },
+          timezone,
+        },
+        operation.signal,
+      )
+      .then(async () => {
+        if (!(await refresh(operation))) return
+        lockPolicyResult.textContent = autoLock
+          ? 'Deadline saved. Due weeks are locked in the organization timezone.'
+          : 'Automatic locking disabled. Existing lock records remain in effect.'
+      })
+      .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
+        lockPolicyResult.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (!isSessionCurrent(operation)) return
+        lockPolicyTransitionPending = false
+        renderLockPolicy()
+      })
+  })
+
+  manualLockForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const operation = sessionOperation()
+    const lockedThrough = manualLockThrough.value
+    const reason = manualLockReason.value.trim()
+    if (lockedThrough === '' || reason === '') {
+      lockPolicyResult.textContent = 'Choose a cutoff date and enter a lock reason.'
+      return
+    }
+    if (
+      operation === null ||
+      lockPolicyTransitionPending ||
+      api.createTimesheetManualLock === undefined
+    ) {
+      return
+    }
+    lockPolicyTransitionPending = true
+    manualLockCommandId ??= crypto.randomUUID()
+    const commandId = manualLockCommandId
+    lockPolicyResult.textContent = 'Locking tracked work…'
+    renderLockPolicy()
+    void api
+      .createTimesheetManualLock(
+        commandId,
+        { locked_through: lockedThrough, reason },
+        operation.signal,
+      )
+      .then(async () => {
+        if (!(await refresh(operation))) return
+        manualLockCommandId = null
+        manualLockReason.value = ''
+        lockPolicyResult.textContent = `Tracked work through ${dayLabel(lockedThrough, true)} is locked.`
+      })
+      .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
+        lockPolicyResult.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (!isSessionCurrent(operation)) return
+        lockPolicyTransitionPending = false
+        renderLockPolicy()
+      })
+  })
+
+  manualLockForm.addEventListener('input', () => {
+    if (!lockPolicyTransitionPending) manualLockCommandId = null
   })
 
   rejectionForm.addEventListener('submit', (event) => {

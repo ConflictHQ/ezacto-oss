@@ -28,8 +28,18 @@ interface TestDatabase {
   orm: OrmDatabase
   run(sql: string, ...params: unknown[]): Promise<void>
   rows<T>(sql: string, ...params: unknown[]): Promise<T[]>
+  interleaveAtomic(sql: string, ...params: unknown[]): OrmDatabase
   close(): Promise<void>
 }
+
+const ormWithNativeClient = (orm: OrmDatabase, client: unknown): OrmDatabase =>
+  new Proxy(orm, {
+    get(target, property) {
+      if (property === '$client') return client
+      const value: unknown = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
 
 const timestamp = '2026-08-28T08:00:00.000Z'
 const modules = JSON.stringify({
@@ -41,13 +51,38 @@ const modules = JSON.stringify({
 const containerDatabase = (): TestDatabase => {
   const sqlite = new BetterSqlite3(':memory:')
   migrateContainer(sqlite)
+  const orm = createContainerDatabase(sqlite)
   return {
-    orm: createContainerDatabase(sqlite),
+    orm,
     run: async (statement, ...params) => {
       sqlite.prepare(statement).run(...params)
     },
     rows: async <T>(statement: string, ...params: unknown[]) =>
       sqlite.prepare(statement).all(...params) as T[],
+    interleaveAtomic: (statement, ...params) => {
+      let pending = true
+      const client = new Proxy(sqlite, {
+        get(target, property) {
+          if (property === 'transaction') {
+            return (callback: () => unknown) => {
+              const transaction = target.transaction(callback)
+              return {
+                immediate: () => {
+                  if (pending) {
+                    pending = false
+                    target.prepare(statement).run(...params)
+                  }
+                  return transaction.immediate()
+                },
+              }
+            }
+          }
+          const value: unknown = Reflect.get(target, property, target)
+          return typeof value === 'function' ? value.bind(target) : value
+        },
+      })
+      return ormWithNativeClient(orm, client)
+    },
     close: async () => {
       sqlite.close()
     },
@@ -62,8 +97,9 @@ const d1Database = async (): Promise<TestDatabase> => {
   })
   const d1 = await miniflare.getD1Database('DB')
   await migrateD1(d1)
+  const orm = createD1Database(d1)
   return {
-    orm: createD1Database(d1),
+    orm,
     run: async (statement, ...params) => {
       await d1
         .prepare(statement)
@@ -77,6 +113,25 @@ const d1Database = async (): Promise<TestDatabase> => {
           .bind(...params)
           .all<T>()
       ).results,
+    interleaveAtomic: (statement, ...params) => {
+      let pending = true
+      const client = new Proxy(d1, {
+        get(target, property) {
+          if (property === 'batch') {
+            return async (statements: D1PreparedStatement[]) => {
+              if (pending) {
+                pending = false
+                await target.prepare(statement).bind(...params).run()
+              }
+              return target.batch(statements)
+            }
+          }
+          const value: unknown = Reflect.get(target, property, target)
+          return typeof value === 'function' ? value.bind(target) : value
+        },
+      })
+      return ormWithNativeClient(orm, client)
+    },
     close: async () => miniflare.dispose(),
   }
 }
@@ -218,6 +273,8 @@ const authentication: ApiAuthentication = {
 const policyKey = (subject: Readonly<PolicySubject>): string =>
   subject.entityType === 'running_time_entry_replacement'
     ? `running:${subject.userId}`
+    : subject.entityType === 'tracked_date'
+      ? `tracked_date:${subject.spentDate}`
     : `${subject.entityType}:${subject.entityId}`
 
 interface Harness {
@@ -229,12 +286,24 @@ interface Harness {
 
 const harness = async (
   factory: () => Promise<TestDatabase>,
+  interleave?: { sql: string; params: readonly unknown[] },
+  policyInterleave?: { sql: string; params: readonly unknown[] },
 ): Promise<Harness> => {
   const database = await factory()
   await seed(database)
   const locks = new Set<string>()
-  const implementation = new DrizzleTrackedResourceRepository(database.orm, {
-    isLocked: async (subject) => locks.has(policyKey(subject)),
+  const orm = interleave === undefined
+    ? database.orm
+    : database.interleaveAtomic(interleave.sql, ...interleave.params)
+  let pendingPolicyInterleave = policyInterleave !== undefined
+  const implementation = new DrizzleTrackedResourceRepository(orm, {
+    isLocked: async (subject) => {
+      if (pendingPolicyInterleave && subject.entityType === 'tracked_date') {
+        pendingPolicyInterleave = false
+        await database.run(policyInterleave!.sql, ...policyInterleave!.params)
+      }
+      return locks.has(policyKey(subject))
+    },
   })
   const repository: TrackedResourceRepository = implementation
   let current: ResourceTimeBoundary = {
@@ -293,6 +362,14 @@ const asProfile = (
 
 for (const [runtime, factory] of factories) {
   const slowRuntimeTimeout = runtime === 'D1' ? 20_000 : undefined
+  const interleavedLock = {
+    sql: `INSERT INTO timesheet_lock_windows (
+      kind, period_start, period_end, locked_by_user_id, locked_at, lock_reason,
+      command_id, input_fingerprint, version, created_at, updated_at
+    ) VALUES ('manual_cutoff', NULL, '2026-08-28', 3, ?, 'Concurrent close',
+      'race-lock', ?, 0, ?, ?)`,
+    params: [timestamp, `sha256:${'a'.repeat(64)}`, timestamp, timestamp],
+  } as const
 
   describe(`tracked resource API (${runtime})`, () => {
     let active: Harness | undefined
@@ -303,6 +380,81 @@ for (const [runtime, factory] of factories) {
       active = await harness(factory)
       return active
     }
+
+    it('[api] translates a policy lock created after the time-entry precheck to 422', async () => {
+      active = await harness(factory, interleavedLock)
+      const test = active
+      await test.database.run(
+        `INSERT INTO users
+          (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
+         VALUES (3, 'Policy', 'Admin', 'administrator', '[]', ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+      await test.database.run(
+        `INSERT INTO time_entries (
+          id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+          spent_date, seconds, seconds_without_timer, rounded_seconds, notes,
+          billable, created_at, updated_at
+        ) VALUES (99, 1, 1, 1, 1, 1, '2026-08-28', 60, 60, 60,
+          'before race', 1, ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+
+      const response = await test.request(
+        '/api/v1/time-entries/99',
+        jsonRequest('PATCH', { notes: 'must not persist' }),
+      )
+
+      expect(response.status).toBe(422)
+      expect(await response.json()).toMatchObject({
+        error: {
+          code: 'tracked_mutation_locked',
+          fields: [{ code: 'policy_locked' }],
+        },
+      })
+      expect(
+        await test.database.rows<{ notes: string }>(
+          `SELECT notes FROM time_entries WHERE id = 99`,
+        ),
+      ).toEqual([{ notes: 'before race' }])
+    }, slowRuntimeTimeout)
+
+    it('[api] translates a policy lock created after the expense precheck to 422', async () => {
+      active = await harness(factory, undefined, interleavedLock)
+      const test = active
+      await test.database.run(
+        `INSERT INTO users
+          (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
+         VALUES (3, 'Policy', 'Admin', 'administrator', '[]', ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+
+      const response = await test.request(
+        '/api/v1/expenses',
+        jsonRequest('POST', {
+          project_id: 1,
+          expense_category_id: 1,
+          spent_date: '2026-08-28',
+          total_cost_cents: 500,
+        }),
+      )
+
+      expect(response.status).toBe(422)
+      expect(await response.json()).toMatchObject({
+        error: {
+          code: 'tracked_mutation_locked',
+          fields: [{ code: 'policy_locked' }],
+        },
+      })
+      expect(
+        await test.database.rows<{ count: number }>(
+          `SELECT count(*) AS count FROM expenses`,
+        ),
+      ).toEqual([{ count: 0 }])
+    }, slowRuntimeTimeout)
 
     it('[api] exposes organization time-entry mode and display settings', async () => {
       const test = await setup()

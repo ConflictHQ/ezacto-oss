@@ -14,6 +14,7 @@ import {
   installSessionRoutes,
   installTrackedResourceRoutes,
   installTimesheetApprovalRoutes,
+  installTimesheetLockPolicyRoutes,
   readJsonBody,
   SESSION_COOKIE_NAME,
   validationError,
@@ -32,6 +33,7 @@ import {
   type ReportReader,
   type TrackedResourceRepository,
   type TimesheetApprovalService,
+  type TimesheetLockPolicyService,
 } from '@ezacto/api'
 import {
   InstanceBootstrapConflictError,
@@ -86,6 +88,7 @@ export interface RuntimeServices {
   generalResources: GeneralResourceRouteOptions['repository']
   trackedResources: TrackedResourceRepository
   timesheetApprovals: TimesheetApprovalService
+  timesheetLockPolicy: TimesheetLockPolicyService
   moneyResources: MoneyResourceRouteOptions['service']
   invoiceGeneration: NonNullable<MoneyResourceRouteOptions['generation']>
   reports: ReportReader
@@ -144,6 +147,11 @@ export const createApp = (services?: RuntimeServices) =>
             })
             installTimesheetApprovalRoutes(api, {
               service: services.timesheetApprovals,
+              cursorSigningKey: services.cursorSigningKey,
+              clock: () => systemClock.now().instant,
+            })
+            installTimesheetLockPolicyRoutes(api, {
+              service: services.timesheetLockPolicy,
               cursorSigningKey: services.cursorSigningKey,
               clock: () => systemClock.now().instant,
             })

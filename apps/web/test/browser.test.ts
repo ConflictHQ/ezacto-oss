@@ -11,6 +11,7 @@ import {
   type TimeEntry,
   type TimeEntryInput,
   type TimeEntryPatch,
+  type TimesheetSubmission,
   type Whoami,
 } from '@ezacto/client'
 import { describe, expect, it, vi } from 'vitest'
@@ -345,7 +346,12 @@ const edit = (input: HTMLInputElement, value: string): void => {
 const renderBrowserShell = (
   options: {
     preserveStorage?: boolean
-    view?: 'time' | 'invoice-generation' | 'invoice-list' | 'invoice-detail'
+    view?:
+      | 'time'
+      | 'timesheet-approvals'
+      | 'invoice-generation'
+      | 'invoice-list'
+      | 'invoice-detail'
     sessionCookiePresent?: boolean
   } = {},
 ): void => {
@@ -356,7 +362,9 @@ const renderBrowserShell = (
         ? '/invoices?week=2026-08-28'
         : options.view === 'invoice-detail'
           ? '/invoices/7?week=2026-08-28'
-          : '/?week=2026-08-28'
+          : options.view === 'timesheet-approvals'
+            ? '/approvals?week=2026-08-28'
+            : '/?week=2026-08-28'
   window.history.replaceState(
     null,
     '',
@@ -1585,6 +1593,206 @@ describe('native browser authentication', () => {
       true,
     )
     storage.mockRestore()
+  })
+
+  it('[browser][lock-policy] manages organization deadline and manual locks', async () => {
+    renderBrowserShell({ view: 'timesheet-approvals' })
+    const base = browserApi()
+    let policy = {
+      auto_lock: true,
+      timesheet_deadline: { day: 'monday' as const, time: '17:00' },
+      timezone: 'America/New_York',
+      week_start_day: 'monday' as const,
+      updated_at: timestamp,
+    }
+    const locks = [
+      {
+        id: 9,
+        kind: 'manual' as const,
+        period_start: null,
+        period_end: '2026-08-31',
+        reason: 'Month-end close',
+        locked_by_user_id: 1,
+        locked_at: timestamp,
+        unlocked_by_user_id: null,
+        unlocked_at: null,
+        unlock_reason: null,
+        active: true,
+      },
+    ]
+    const updateTimesheetLockPolicy = vi.fn(async (input) => {
+      policy = {
+        ...policy,
+        auto_lock: input.auto_lock ?? policy.auto_lock,
+        timesheet_deadline: input.timesheet_deadline ?? policy.timesheet_deadline,
+        timezone: input.timezone ?? policy.timezone,
+        updated_at: timestamp,
+      }
+      return policy
+    })
+    const unlockTimesheetLock = vi.fn(async (id, input) => {
+      const lock = locks.find((candidate) => candidate.id === id)!
+      Object.assign(lock, {
+        active: false,
+        unlocked_by_user_id: 1,
+        unlocked_at: timestamp,
+        unlock_reason: input.reason,
+      })
+      return lock
+    })
+    const createTimesheetManualLock = vi.fn(async (_commandId, input) => {
+      const created = {
+        id: 10,
+        kind: 'manual' as const,
+        period_start: null,
+        period_end: input.locked_through,
+        reason: input.reason,
+        locked_by_user_id: 1,
+        locked_at: timestamp,
+        unlocked_by_user_id: null,
+        unlocked_at: null,
+        unlock_reason: null,
+        active: true,
+      }
+      locks.push(created)
+      return created
+    })
+    const api: ShellApi = {
+      ...base,
+      listTimesheetSubmissions: vi.fn(async () => []),
+      listPendingTimesheetSubmissions: vi.fn(async () => []),
+      getTimesheetLockPolicy: vi.fn(async () => policy),
+      listTimesheetLocks: vi.fn(async () => locks.filter((lock) => lock.active)),
+      updateTimesheetLockPolicy,
+      unlockTimesheetLock,
+      createTimesheetManualLock,
+    }
+
+    await mountShell(api)
+    const panel = document.querySelector<HTMLElement>('[data-lock-policy-panel]')!
+    expect(panel.hidden).toBe(false)
+    expect(document.querySelector<HTMLInputElement>('[data-lock-policy-auto]')?.checked).toBe(
+      true,
+    )
+    expect(panel.textContent).toContain('Month-end close')
+
+    const unlockReason = document.querySelector<HTMLInputElement>(
+      '[data-lock-unlock-reason="9"]',
+    )!
+    unlockReason.value = 'Books reopened'
+    document.querySelector<HTMLButtonElement>('[data-lock-id="9"] button')!.click()
+    await vi.waitFor(() =>
+      expect(unlockTimesheetLock).toHaveBeenCalledWith(
+        9,
+        { reason: 'Books reopened' },
+        expect.any(AbortSignal),
+      ),
+    )
+    await vi.waitFor(() => expect(panel.textContent).not.toContain('Month-end close'))
+
+    const automatic = document.querySelector<HTMLInputElement>('[data-lock-policy-auto]')!
+    automatic.checked = false
+    document.querySelector<HTMLInputElement>('[data-lock-policy-timezone]')!.value = 'UTC'
+    document
+      .querySelector<HTMLFormElement>('[data-lock-policy-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() =>
+      expect(updateTimesheetLockPolicy).toHaveBeenCalledWith(
+        expect.objectContaining({ auto_lock: false, timezone: 'UTC' }),
+        expect.any(AbortSignal),
+      ),
+    )
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-lock-policy-result]')?.textContent).toContain(
+        'Automatic locking disabled',
+      ),
+    )
+
+    document.querySelector<HTMLInputElement>('[data-manual-lock-through]')!.value =
+      '2026-09-30'
+    document.querySelector<HTMLTextAreaElement>('[data-manual-lock-reason]')!.value =
+      'Quarter close'
+    document
+      .querySelector<HTMLFormElement>('[data-manual-lock-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() =>
+      expect(createTimesheetManualLock).toHaveBeenCalledWith(
+        expect.any(String),
+        { locked_through: '2026-09-30', reason: 'Quarter close' },
+        expect.any(AbortSignal),
+      ),
+    )
+    await vi.waitFor(() => expect(panel.textContent).toContain('Quarter close'))
+  })
+
+  it('[browser][lock-policy] explicitly reopens an approved timesheet with a reason', async () => {
+    renderBrowserShell()
+    const base = browserApi()
+    let submission: TimesheetSubmission = {
+      id: 21,
+      user_id: 1,
+      user_name: 'Ada Admin',
+      period_start: '2026-08-24',
+      period_end: '2026-08-30',
+      status: 'approved',
+      origin: 'native',
+      source_status: null,
+      source_observed_at: null,
+      submitted_by_user_id: 1,
+      submitted_at: timestamp,
+      reviewed_by_user_id: 1,
+      reviewed_at: timestamp,
+      rejection_reason: null,
+      version: 2,
+      entry_count: 1,
+      expense_count: 0,
+      total_seconds: 3_600,
+      billable_seconds: 3_600,
+      nonbillable_seconds: 0,
+      created_at: timestamp,
+      updated_at: timestamp,
+    }
+    const withdrawTimesheetSubmission = vi.fn(async (_id, input) => {
+      submission = {
+        ...submission,
+        status: 'unsubmitted',
+        rejection_reason: input.reason,
+        version: submission.version + 1,
+      }
+      return submission
+    })
+    const api: ShellApi = {
+      ...base,
+      listTimesheetSubmissions: vi.fn(async () => [submission]),
+      listPendingTimesheetSubmissions: vi.fn(async () => []),
+      withdrawTimesheetSubmission,
+    }
+
+    await mountShell(api)
+    const reopen = document.querySelector<HTMLButtonElement>('[data-withdraw-timesheet]')!
+    expect(reopen.hidden).toBe(false)
+    reopen.click()
+    expect(document.querySelector<HTMLDialogElement>('[data-withdrawal-dialog]')?.open).toBe(
+      true,
+    )
+    document.querySelector<HTMLTextAreaElement>('[data-withdrawal-reason]')!.value =
+      'Correct a late expense'
+    document
+      .querySelector<HTMLFormElement>('[data-withdrawal-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() =>
+      expect(withdrawTimesheetSubmission).toHaveBeenCalledWith(
+        21,
+        { reason: 'Correct a late expense' },
+        expect.any(AbortSignal),
+      ),
+    )
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-timesheet-result]')?.textContent).toContain(
+        'Approval withdrawn',
+      ),
+    )
+    expect(reopen.hidden).toBe(true)
   })
 
   it('[security] aborts and ignores prior-account work across logout and a different sign-in', async () => {

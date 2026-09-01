@@ -120,6 +120,7 @@ export const organizations = sqliteTable(
     modules: text('modules', { mode: 'json' }).$type<Record<string, boolean>>().notNull(),
     require2fa: integer('require_2fa', { mode: 'boolean' }).notNull().default(false),
     requireSso: integer('require_sso', { mode: 'boolean' }).notNull().default(false),
+    timezone: text('timezone').notNull().default('UTC'),
     ...timestamps,
   },
   (table) => [
@@ -131,6 +132,10 @@ export const organizations = sqliteTable(
       sql`${table.timeEntryNotesMinimumLength} between 1 and 10000`,
     ),
     check('organizations_modules_json', sql`json_valid(${table.modules})`),
+    check(
+      'organizations_timezone_nonempty',
+      sql`length(trim(${table.timezone})) between 1 and 255`,
+    ),
     check(
       'organizations_timesheet_deadline_json',
       sql`${table.timesheetDeadline} is null or json_valid(${table.timesheetDeadline})`,
@@ -2732,6 +2737,88 @@ export const timesheetSubmissions = sqliteTable(
     ),
     check('timesheet_submissions_created_at_canonical', canonicalTimestamp(table.createdAt)),
     check('timesheet_submissions_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+  ],
+)
+
+export const timesheetLockWindows = sqliteTable(
+  'timesheet_lock_windows',
+  {
+    id: integer('id').primaryKey(),
+    kind: text('kind', { enum: ['manual_cutoff', 'weekly_deadline'] }).notNull(),
+    periodStart: text('period_start'),
+    periodEnd: text('period_end').notNull(),
+    lockedByUserId: integer('locked_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    lockedAt: text('locked_at').notNull(),
+    lockReason: text('lock_reason').notNull(),
+    commandId: text('command_id'),
+    inputFingerprint: text('input_fingerprint'),
+    weekStartDay: text('week_start_day', { enum: ['saturday', 'sunday', 'monday'] }),
+    deadlineDay: text('deadline_day', {
+      enum: ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'],
+    }),
+    deadlineTime: text('deadline_time'),
+    timezone: text('timezone'),
+    unlockedByUserId: integer('unlocked_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    unlockedAt: text('unlocked_at'),
+    unlockReason: text('unlock_reason'),
+    version: integer('version').notNull().default(0),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('timesheet_lock_windows_weekly_fact')
+      .on(table.periodStart, table.periodEnd)
+      .where(sql`${table.kind} = 'weekly_deadline'`),
+    uniqueIndex('timesheet_lock_windows_manual_command')
+      .on(table.commandId)
+      .where(sql`${table.commandId} is not null`),
+    index('timesheet_lock_windows_active_dates')
+      .on(table.periodEnd, table.periodStart)
+      .where(sql`${table.unlockedAt} is null`),
+    check(
+      'timesheet_lock_windows_kind_valid',
+      sql`${table.kind} in ('manual_cutoff','weekly_deadline')`,
+    ),
+    check(
+      'timesheet_lock_windows_period_start_date',
+      sql`${table.periodStart} is null or date(${table.periodStart}) is ${table.periodStart}`,
+    ),
+    check('timesheet_lock_windows_period_end_date', sql`date(${table.periodEnd}) is ${table.periodEnd}`),
+    check(
+      'timesheet_lock_windows_period_order',
+      sql`${table.periodStart} is null or ${table.periodStart} <= ${table.periodEnd}`,
+    ),
+    check(
+      'timesheet_lock_windows_reason_length',
+      sql`length(trim(${table.lockReason})) between 1 and 10000`,
+    ),
+    check(
+      'timesheet_lock_windows_command_shape',
+      sql`(${table.commandId} is null and ${table.inputFingerprint} is null)
+        or (length(${table.commandId}) between 1 and 128
+          and ${table.commandId} not glob '*[^A-Za-z0-9._:-]*'
+          and length(${table.inputFingerprint}) = 71
+          and substr(${table.inputFingerprint}, 1, 7) = 'sha256:'
+          and substr(${table.inputFingerprint}, 8) not glob '*[^0-9a-f]*')`,
+    ),
+    check(
+      'timesheet_lock_windows_kind_shape',
+      sql`(${table.kind} = 'manual_cutoff' and ${table.commandId} is not null
+          and ${table.inputFingerprint} is not null)
+        or (${table.kind} = 'weekly_deadline' and ${table.commandId} is null
+          and ${table.inputFingerprint} is null)`,
+    ),
+    check('timesheet_lock_windows_locked_at_canonical', canonicalTimestamp(table.lockedAt)),
+    check(
+      'timesheet_lock_windows_unlocked_at_canonical',
+      nullableCanonicalTimestamp(table.unlockedAt),
+    ),
+    check('timesheet_lock_windows_version', sql`${table.version} in (0, 1)`),
+    check('timesheet_lock_windows_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('timesheet_lock_windows_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
   ],
 )
 

@@ -16,10 +16,10 @@ import {
   createMoneyResourceRepository,
   createReportRepository,
   createTimesheetApprovalRepository,
+  createTimesheetLockPolicyRepository,
   DrizzleTrackedResourceRepository,
   enrollInstanceOwnerPasswordContainer,
   migrateContainer,
-  type TrackedPolicyResolver,
 } from '@ezacto/db'
 import {
   createApiSessionService,
@@ -36,10 +36,6 @@ import type { RuntimeServices } from '../../worker/src/app.js'
 import type { ContainerConfig } from './config.js'
 import { createDiskAttachmentObjectStore } from './disk-attachments.js'
 import { ContainerEmailQueue } from './email-queue.js'
-
-const organizationPolicy: TrackedPolicyResolver = {
-  isLocked: async () => false,
-}
 
 const exists = (
   database: BetterSqlite3.Database,
@@ -200,6 +196,7 @@ export const createContainerRuntime = async (
     await chmod(config.databasePath, 0o600)
 
     const drizzle = createContainerDatabase(database)
+    const timesheetLockPolicy = createTimesheetLockPolicyRepository(drizzle)
     const sessions = createApiSessionService(
       createContainerSessionStore(database),
     )
@@ -224,12 +221,13 @@ export const createContainerRuntime = async (
       generalResources: createGeneralResourceRepository(drizzle),
       trackedResources: new DrizzleTrackedResourceRepository(
         drizzle,
-        organizationPolicy,
+        timesheetLockPolicy,
       ),
       moneyResources: createMoneyResourceRepository(drizzle),
       invoiceGeneration: createInvoiceGenerationService(drizzle),
       reports: createReportRepository(drizzle),
       timesheetApprovals: createTimesheetApprovalRepository(drizzle),
+      timesheetLockPolicy,
       cursorSigningKey: config.cursorSigningKey,
       passwordAuth: createContainerPasswordAuthService(database),
       sessions,
