@@ -2,6 +2,7 @@ import {
   trackedAmountCents,
   uninvoicedGenerationPreview,
   type UninvoicedCurrencyTotal,
+  type UserProfile,
 } from '@ezacto/core'
 import { sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -80,6 +81,11 @@ export interface ProjectBudgetReportRecord extends ReportDateRange {
   grains: readonly ProjectBudgetGrainRecord[]
 }
 
+export interface ProjectReportViewer {
+  userId: number
+  profile: UserProfile
+}
+
 export interface ReportRepository {
   uninvoiced(filter: Readonly<UninvoicedReportFilter>): Promise<UninvoicedReportRecord>
   clientRollup(
@@ -89,6 +95,7 @@ export interface ReportRepository {
   projectBudget(
     projectId: number,
     range: Readonly<ReportDateRange>,
+    viewer: Readonly<ProjectReportViewer>,
   ): Promise<ProjectBudgetReportRecord | null>
 }
 
@@ -614,14 +621,32 @@ const projectBudgetReport = async (
   database: Database,
   projectId: number,
   range: Readonly<ReportDateRange>,
+  viewer: Readonly<ProjectReportViewer>,
 ): Promise<ProjectBudgetReportRecord | null> => {
   assertId(projectId, 'project id')
+  assertId(viewer.userId, 'report viewer user id')
   assertRange(range)
+  const accountWide = new Set<UserProfile>([
+    'accounting',
+    'executive_manager',
+    'administrator',
+  ]).has(viewer.profile)
   const projects = await database.all<ProjectRow>(sql`
     SELECT id AS "id", budget_by AS "budgetBy", budget_seconds AS "budgetSeconds",
       cost_budget_cents AS "costBudgetCents",
       cost_budget_include_expenses AS "costBudgetIncludeExpenses"
-    FROM projects WHERE id = ${projectId}
+    FROM projects project WHERE id = ${projectId} AND (
+      ${accountWide ? 1 : 0} = 1 OR EXISTS (
+        SELECT 1 FROM user_assignments assignment
+        WHERE assignment.project_id = project.id
+          AND assignment.user_id = ${viewer.userId}
+          AND assignment.is_active = 1
+          AND (
+            project.report_visibility = 'everyone'
+            OR (${viewer.profile} = 'project_manager' AND assignment.is_project_manager = 1)
+          )
+      )
+    )
   `)
   const project = projects[0]
   if (project === undefined) return null
@@ -752,5 +777,6 @@ const projectBudgetReport = async (
 export const createReportRepository = (database: Database): ReportRepository => ({
   uninvoiced: (filter) => uninvoicedReport(database, filter),
   clientRollup: (clientId, range) => clientRollupReport(database, clientId, range),
-  projectBudget: (projectId, range) => projectBudgetReport(database, projectId, range),
+  projectBudget: (projectId, range, viewer) =>
+    projectBudgetReport(database, projectId, range, viewer),
 })
