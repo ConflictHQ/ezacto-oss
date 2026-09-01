@@ -210,6 +210,41 @@ export type GeneralResourcePage = {
   "page": PageMetadata;
 };
 
+export type ExpenseCategory = {
+  "id": number;
+  "name": string;
+  "unit_name": string | null;
+  "unit_price_cents": number | null;
+  "is_active": boolean;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type ExpenseCategoryInput = {
+  "name": string;
+  "unit_name"?: string | null;
+  "unit_price_cents"?: number | null;
+  "is_active"?: boolean;
+};
+
+export type ExpenseCategoryPatch = {
+  "name"?: string;
+  "unit_name"?: string | null;
+  "unit_price_cents"?: number | null;
+  "is_active"?: boolean;
+};
+
+export type ExpenseCategoryEnvelope = {
+  "data": ExpenseCategory;
+  "links": Links;
+};
+
+export type ExpenseCategoryPage = {
+  "data": Array<ExpenseCategory>;
+  "links": PageLinks;
+  "page": PageMetadata;
+};
+
 export type UserRate = {
   "id": number;
   "user_id": number;
@@ -1642,6 +1677,54 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<void>("DELETE", "/api/v1/contacts/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listExpenseCategories(args: { query?: { "cursor"?: string; "per_page"?: number; "is_active"?: boolean; "updated_since"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ExpenseCategoryPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ExpenseCategoryPage>("GET", "/api/v1/expense-categories", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createExpenseCategory(args: { body: ExpenseCategoryInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<ExpenseCategoryEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ExpenseCategoryEnvelope>("POST", "/api/v1/expense-categories", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getExpenseCategory(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<ExpenseCategoryEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ExpenseCategoryEnvelope>("GET", "/api/v1/expense-categories/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateExpenseCategory(args: { "id": number; body: ExpenseCategoryPatch; signal?: AbortSignal; headers?: HeadersInit }): Promise<ExpenseCategoryEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ExpenseCategoryEnvelope>("PATCH", "/api/v1/expense-categories/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async deleteExpenseCategory(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/expense-categories/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });

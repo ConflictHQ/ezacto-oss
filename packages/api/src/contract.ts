@@ -111,6 +111,16 @@ const generalResources = [
     filters: ["client_id", "updated_since"],
   },
   {
+    plural: "expense-categories",
+    singular: "ExpenseCategory",
+    listOperationId: "listExpenseCategories",
+    responseSchema: "ExpenseCategory",
+    createSchema: "ExpenseCategoryInput",
+    updateSchema: "ExpenseCategoryPatch",
+    filters: ["is_active", "updated_since"],
+    sessionOnlyMutation: true,
+  },
+  {
     plural: "projects",
     singular: "Project",
     filters: ["client_id", "is_active", "updated_since"],
@@ -149,6 +159,22 @@ const generalOperations = (): ApiContractOperation[] =>
   generalResources.flatMap((resource) => {
     const collection = `/api/v1/${resource.plural}`;
     const member = `${collection}/:id`;
+    const responseSchema =
+      "responseSchema" in resource ? resource.responseSchema : null;
+    const envelopeSchema =
+      responseSchema === null
+        ? "GeneralResourceEnvelope"
+        : `${responseSchema}Envelope`;
+    const pageSchema =
+      responseSchema === null ? "GeneralResourcePage" : `${responseSchema}Page`;
+    const createSchema =
+      "createSchema" in resource
+        ? resource.createSchema
+        : "GeneralMutationInput";
+    const updateSchema =
+      "updateSchema" in resource
+        ? resource.updateSchema
+        : "GeneralMutationInput";
     const listParameters = [
       ...pageParameters,
       ...resource.filters.map((name) => query(name, filterSchemas[name]!)),
@@ -157,11 +183,14 @@ const generalOperations = (): ApiContractOperation[] =>
       {
         method: "get",
         path: collection,
-        operationId: `list${resource.singular}s`,
+        operationId:
+          "listOperationId" in resource
+            ? resource.listOperationId
+            : `list${resource.singular}s`,
         summary: `List ${resource.plural}`,
         tag: resource.plural,
         responseStatus: 200,
-        responseSchema: "GeneralResourcePage",
+        responseSchema: pageSchema,
         parameters: listParameters,
       },
       {
@@ -171,8 +200,8 @@ const generalOperations = (): ApiContractOperation[] =>
         summary: `Create a ${resource.singular.toLowerCase()}`,
         tag: resource.plural,
         responseStatus: 201,
-        responseSchema: "GeneralResourceEnvelope",
-        requestSchema: "GeneralMutationInput",
+        responseSchema: envelopeSchema,
+        requestSchema: createSchema,
         requestRequired: true,
         ...("sessionOnlyMutation" in resource &&
         resource.sessionOnlyMutation === true
@@ -186,7 +215,7 @@ const generalOperations = (): ApiContractOperation[] =>
         summary: `Get a ${resource.singular.toLowerCase()}`,
         tag: resource.plural,
         responseStatus: 200,
-        responseSchema: "GeneralResourceEnvelope",
+        responseSchema: envelopeSchema,
         parameters: [path("id")],
       },
       {
@@ -196,8 +225,8 @@ const generalOperations = (): ApiContractOperation[] =>
         summary: `Update a ${resource.singular.toLowerCase()}`,
         tag: resource.plural,
         responseStatus: 200,
-        responseSchema: "GeneralResourceEnvelope",
-        requestSchema: "GeneralMutationInput",
+        responseSchema: envelopeSchema,
+        requestSchema: updateSchema,
         requestRequired: true,
         parameters: [path("id")],
         ...("sessionOnlyMutation" in resource &&
@@ -1671,6 +1700,64 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   GeneralResourceEnvelope: envelope("GeneralResource"),
   GeneralResourcePage: page("GeneralResource"),
+  ExpenseCategory: {
+    type: "object",
+    required: [
+      "id",
+      "name",
+      "unit_name",
+      "unit_price_cents",
+      "is_active",
+      "created_at",
+      "updated_at",
+    ],
+    properties: {
+      id: integerSchema,
+      name: stringSchema,
+      unit_name: nullable(stringSchema),
+      unit_price_cents: nullable({
+        type: "integer",
+        minimum: 0,
+        maximum: 9_000_000_000_000,
+      }),
+      is_active: booleanSchema,
+      created_at: timestampSchema,
+      updated_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  ExpenseCategoryInput: {
+    type: "object",
+    required: ["name"],
+    properties: {
+      name: stringSchema,
+      unit_name: nullable(stringSchema),
+      unit_price_cents: nullable({
+        type: "integer",
+        minimum: 0,
+        maximum: 9_000_000_000_000,
+      }),
+      is_active: booleanSchema,
+    },
+    additionalProperties: false,
+  },
+  ExpenseCategoryPatch: {
+    type: "object",
+    minProperties: 1,
+    properties: {
+      name: stringSchema,
+      unit_name: nullable(stringSchema),
+      unit_price_cents: nullable({
+        type: "integer",
+        minimum: 0,
+        maximum: 9_000_000_000_000,
+      }),
+      is_active: booleanSchema,
+    },
+    additionalProperties: false,
+  },
+  ExpenseCategoryEnvelope: envelope("ExpenseCategory"),
+  ExpenseCategoryPage: page("ExpenseCategory"),
   UserRate: {
     type: "object",
     required: [
@@ -1878,7 +1965,10 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       time_entry_mode: { type: "string", enum: ["duration", "start_end"] },
       time_format: { type: "string", enum: ["decimal", "hours_minutes"] },
       clock: { type: "string", enum: ["12h", "24h"] },
-      week_start_day: { type: "string", enum: ["saturday", "sunday", "monday"] },
+      week_start_day: {
+        type: "string",
+        enum: ["saturday", "sunday", "monday"],
+      },
     },
     additionalProperties: false,
   },
@@ -1961,7 +2051,10 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         type: "string",
         enum: ["native", "harvest_import", "legacy_backfill"],
       },
-      source_status: nullable({ type: "string", enum: ["submitted", "approved"] }),
+      source_status: nullable({
+        type: "string",
+        enum: ["submitted", "approved"],
+      }),
       source_observed_at: nullable(timestampSchema),
       submitted_by_user_id: nullable(integerSchema),
       submitted_at: nullable(timestampSchema),
@@ -2084,7 +2177,10 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         type: "string",
         enum: ["native", "harvest_import", "legacy_backfill"],
       },
-      source_status: nullable({ type: "string", enum: ["submitted", "approved"] }),
+      source_status: nullable({
+        type: "string",
+        enum: ["submitted", "approved"],
+      }),
       source_observed_at: nullable(timestampSchema),
       submitted_by_user_id: nullable(integerSchema),
       submitted_at: nullable(timestampSchema),

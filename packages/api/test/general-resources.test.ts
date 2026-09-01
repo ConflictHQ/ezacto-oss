@@ -44,6 +44,16 @@ const bearerPrincipals: Readonly<
     managerGrants: [],
     scopes: ["projects:read"],
   },
+  "member-expenses": {
+    profile: "member",
+    managerGrants: [],
+    scopes: ["expenses:read"],
+  },
+  "administrator-expenses": {
+    profile: "administrator",
+    managerGrants: [],
+    scopes: ["expenses:read", "expenses:write"],
+  },
   "people-team": {
     profile: "people_admin",
     managerGrants: [],
@@ -531,6 +541,211 @@ for (const [runtime, createHarness] of factories) {
           false,
         );
       }
+    }, 20_000);
+
+    it("[api] administers expense categories from a fresh organization without breaking expense references", async () => {
+      const initial = await harness.request(
+        "/expense-categories?is_active=true",
+        asBearer("member-expenses"),
+      );
+      expect(initial.status).toBe(200);
+      expect(await initial.json()).toMatchObject({ data: [] });
+
+      const direct = await data(
+        await harness.request(
+          "/expense-categories",
+          json({
+            name: "Travel",
+            unit_name: null,
+            unit_price_cents: null,
+          }),
+        ),
+      );
+      expect(direct).toMatchObject({
+        name: "Travel",
+        unit_name: null,
+        unit_price_cents: null,
+        is_active: true,
+      });
+      expect(direct).not.toHaveProperty("harvest_id");
+
+      const unitPriced = await data(
+        await harness.request(
+          "/expense-categories",
+          json({
+            name: "Mileage",
+            unit_name: "mile",
+            unit_price_cents: 67,
+          }),
+        ),
+      );
+      expect(unitPriced).toMatchObject({
+        name: "Mileage",
+        unit_name: "mile",
+        unit_price_cents: 67,
+        is_active: true,
+      });
+
+      await harness.run(
+        "UPDATE expense_categories SET updated_at = ? WHERE id = ?",
+        "2026-08-27T12:00:00.000Z",
+        direct.id,
+      );
+      const updatedSince = await harness.request(
+        "/expense-categories?updated_since=2026-08-28T00%3A00%3A00.000Z",
+        asBearer("member-expenses"),
+      );
+      expect(updatedSince.status).toBe(200);
+      expect(
+        ((await updatedSince.json()) as { data: Array<{ id: number }> }).data,
+      ).toEqual([expect.objectContaining({ id: unitPriced.id })]);
+
+      const user = await data(
+        await harness.request(
+          "/users",
+          json({
+            first_name: "Fresh",
+            last_name: "Owner",
+            email: "fresh-owner@example.test",
+          }),
+        ),
+      );
+      const client = await data(
+        await harness.request("/clients", json({ name: "Fresh client" })),
+      );
+      const project = await data(
+        await harness.request(
+          "/projects",
+          json({ client_id: client.id, name: "Fresh project" }),
+        ),
+      );
+      await harness.run(
+        `INSERT INTO expenses (
+          user_id, project_id, expense_category_id, spent_date,
+          total_cost_cents, created_at, updated_at
+        ) VALUES (?, ?, ?, '2026-08-28', 1250, ?, ?)`,
+        user.id,
+        project.id,
+        direct.id,
+        now,
+        now,
+      );
+
+      const archived = await harness.request(
+        `/expense-categories/${direct.id as number}`,
+        { method: "DELETE" },
+      );
+      expect(archived.status).toBe(204);
+      expect(
+        await data(
+          await harness.request(
+            `/expense-categories/${direct.id as number}`,
+            asBearer("member-expenses"),
+          ),
+        ),
+      ).toMatchObject({ id: direct.id, is_active: false });
+      expect(
+        await harness.rows<{ expense_category_id: number }>(
+          "SELECT expense_category_id FROM expenses",
+        ),
+      ).toEqual([{ expense_category_id: direct.id }]);
+      expect(
+        (
+          (await (
+            await harness.request(
+              "/expense-categories?is_active=true",
+              asBearer("member-expenses"),
+            )
+          ).json()) as { data: Array<{ id: number }> }
+        ).data,
+      ).toEqual([expect.objectContaining({ id: unitPriced.id })]);
+
+      const patched = await data(
+        await harness.request(
+          `/expense-categories/${unitPriced.id as number}`,
+          json({ unit_name: "km", unit_price_cents: 42 }, "PATCH"),
+        ),
+      );
+      expect(patched).toMatchObject({ unit_name: "km", unit_price_cents: 42 });
+
+      const outOfRange = await harness.request(
+        "/expense-categories",
+        json({ name: "Too expensive", unit_price_cents: 9_000_000_000_001 }),
+      );
+      expect(outOfRange.status).toBe(422);
+      expect(await outOfRange.json()).toMatchObject({
+        error: {
+          code: "validation_failed",
+          fields: [
+            {
+              field: "unit_price_cents",
+              code: "invalid_integer",
+            },
+          ],
+        },
+      });
+    }, 20_000);
+
+    it("[security] limits expense-category mutation to administrator browser sessions", async () => {
+      const protectedCategory = await data(
+        await harness.request(
+          "/expense-categories",
+          json({ name: "Administrator owned" }),
+        ),
+      );
+      for (const profile of [
+        "member",
+        "project_manager",
+        "people_admin",
+        "accounting",
+        "executive_manager",
+      ] as const) {
+        for (const [path, init] of [
+          ["/expense-categories", json({ name: `Denied ${profile}` })],
+          [
+            `/expense-categories/${protectedCategory.id as number}`,
+            json({ name: `Denied ${profile}` }, "PATCH"),
+          ],
+          [
+            `/expense-categories/${protectedCategory.id as number}`,
+            { method: "DELETE" },
+          ],
+        ] as const) {
+          const response = await harness.request(
+            path,
+            asProfile(profile, init),
+          );
+          expect(response.status, `${profile}:${init.method}`).toBe(403);
+          expect(await response.json()).toMatchObject({
+            error: { code: "profile_forbidden" },
+          });
+        }
+      }
+
+      const tokenMutation = await harness.request(
+        "/expense-categories",
+        asBearer("administrator-expenses", json({ name: "Token denied" })),
+      );
+      expect(tokenMutation.status).toBe(403);
+      expect(await tokenMutation.json()).toMatchObject({
+        error: { code: "session_required" },
+      });
+      expect(
+        (
+          await harness.request(
+            "/expense-categories",
+            asBearer("member-projects"),
+          )
+        ).status,
+      ).toBe(403);
+      expect(
+        (
+          await harness.request(
+            "/expense-categories",
+            asBearer("member-expenses"),
+          )
+        ).status,
+      ).toBe(200);
     }, 20_000);
 
     it("[api] persists bounded project, person, and pair note minimums through generic resources", async () => {
