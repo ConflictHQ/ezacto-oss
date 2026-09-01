@@ -342,9 +342,8 @@ export const buildSanitizedLoadSnapshot = async (
   ) as Record<string, unknown>
   // Keep this synthetic week internally consistent with its approved time
   // entry while retaining the golden source files as immutable extraction
-  // examples. The signed direct adjustment exercises imported money fidelity.
+  // examples.
   mileageExpense.approval_status = 'approved'
-  directExpense.total_cost = -100
   await writeRows('expenses', [JSON.stringify(mileageExpense), JSON.stringify(directExpense)])
 
   const receiptBytes = await readFile(golden('harvest-receipt.pdf'))

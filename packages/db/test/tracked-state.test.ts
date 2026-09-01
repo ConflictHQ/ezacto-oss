@@ -463,15 +463,7 @@ for (const [runtime, factory] of factories) {
 
       await unlock()
       await stopTimeEntry(db.orm, 1, boundary('09:05', '2026-08-28T09:05:00.000Z'), false)
-      const restartLockCases = [
-        ...lockCases,
-        {
-          reasonCode: 'approved',
-          policyLocked: false,
-          lock: () => approveFixtureEntry(db),
-        },
-      ] as const
-      for (const lockCase of restartLockCases) {
+      for (const lockCase of lockCases) {
         await unlock()
         await lockCase.lock()
         const before = await snapshot()
@@ -503,11 +495,6 @@ for (const [runtime, factory] of factories) {
           reasonCode: 'invoiced',
           policyLocked: false,
           lock: () => db.run(`UPDATE expenses SET invoice_id = 1 WHERE id = 2`),
-        },
-        {
-          reasonCode: 'approved',
-          policyLocked: false,
-          lock: () => db.run(`UPDATE expenses SET approval_status = 'approved' WHERE id = 2`),
         },
         {
           reasonCode: 'policy_locked',
@@ -546,6 +533,40 @@ for (const [runtime, factory] of factories) {
         )
         expect(await expenseSnapshot()).toEqual(before)
       }
+
+      await unlock()
+      await unlockExpense()
+      await approveFixtureEntry(db)
+      const approvedTimeBefore = await snapshot()
+      await expectLocked(
+        () =>
+          restartTimeEntry(
+            db.orm,
+            1,
+            boundary('10:00', '2026-08-28T10:00:00.000Z'),
+            false,
+            false,
+          ),
+        'approved',
+      )
+      expect(await snapshot()).toEqual(approvedTimeBefore)
+      const approvedExpenseBefore = await expenseSnapshot()
+      await expectLocked(
+        () =>
+          executeAtomicTrackedMutation(
+            db.orm,
+            reference('expense'),
+            (mutationPredicate) =>
+              db.orm
+                .update(expenses)
+                .set({ notes: 'after' })
+                .where(mutationPredicate)
+                .returning(),
+            () => new Error('expense changed concurrently'),
+          ),
+        'approved',
+      )
+      expect(await expenseSnapshot()).toEqual(approvedExpenseBefore)
     })
 
     it('[unit] rejects locked trigger-driven timer replacement without changing either entry', async () => {
