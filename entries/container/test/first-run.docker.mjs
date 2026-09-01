@@ -304,7 +304,22 @@ try {
     project_id: project.id,
     task_id: task.id,
   })
-  await created('user-assignments', { project_id: project.id, user_id: 1 })
+  const futureAssignmentResponse = await fetch(
+    `${origin}/api/v1/user-assignments?project_id=${project.id}&user_id=1`,
+    { headers: { cookie } },
+  )
+  const futureAssignmentBody = await futureAssignmentResponse.json()
+  if (
+    !futureAssignmentResponse.ok ||
+    futureAssignmentBody.data?.length !== 1 ||
+    futureAssignmentBody.data[0]?.project_id !== project.id ||
+    futureAssignmentBody.data[0]?.user_id !== 1 ||
+    futureAssignmentBody.data[0]?.is_active !== true
+  ) {
+    throw new Error(
+      `future-project assignment mismatch: ${JSON.stringify(futureAssignmentBody)}`,
+    )
+  }
   const entry = await created('time-entries', {
     project_id: project.id,
     task_id: task.id,
