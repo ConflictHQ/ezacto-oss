@@ -29,6 +29,7 @@ import {
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 import type { ClientDirectoryApi } from '../clients/model.js'
 import type { ProjectDirectoryApi } from '../projects/model.js'
+import type { ReportWorkspaceApi } from '../reports/model.js'
 
 interface CursorPage<T> {
   readonly data: readonly T[]
@@ -36,7 +37,9 @@ interface CursorPage<T> {
 }
 
 export interface ShellApi
-  extends Partial<ClientDirectoryApi>, Partial<ProjectDirectoryApi> {
+  extends Partial<ClientDirectoryApi>,
+    Partial<ProjectDirectoryApi>,
+    Partial<ReportWorkspaceApi> {
   whoami(signal?: AbortSignal): Promise<Whoami>
   signIn(credentials: PasswordSignInInput, signal?: AbortSignal): Promise<AuthPrincipal>
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
@@ -593,6 +596,45 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     }),
+  listReportClients: (cursor, signal) =>
+    client.listClients({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listReportProjects: (cursor, signal) =>
+    client.listProjects({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  getUninvoicedReport: async (filter, signal) =>
+    (
+      await client.getUninvoicedReport({
+        query: filter,
+        ...withSignal(signal),
+      })
+    ).data,
+  getClientRollupReport: async (clientId, filter, signal) =>
+    (
+      await client.getClientRollupReport({
+        clientId,
+        query: filter,
+        ...withSignal(signal),
+      })
+    ).data,
+  getProjectBudgetReport: async (projectId, filter, signal) =>
+    (
+      await client.getProjectBudgetReport({
+        projectId,
+        query: filter,
+        ...withSignal(signal),
+      })
+    ).data,
   getDirectoryProject: async (id, signal) =>
     (await client.getProject({ id, ...withSignal(signal) })).data,
   createDirectoryProject: async (input, signal) =>

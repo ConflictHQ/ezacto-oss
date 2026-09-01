@@ -485,6 +485,27 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
+      app.get('/reports', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            activeSection: 'Reports',
+            view: 'reports',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
       app.get('/projects/:projectId', (context) => {
         const rawProjectId = context.req.param('projectId')
         const projectId = Number(rawProjectId)

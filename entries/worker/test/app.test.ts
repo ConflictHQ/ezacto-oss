@@ -128,6 +128,25 @@ describe('worker entry', () => {
     expect(detailHtml).not.toContain('name="cost_budget_cents"')
   })
 
+  it('[acceptance] serves the operational Reports shell without a redirect', async () => {
+    const response = await app.request(
+      '/reports?report=project-budget&from=2026-08-01&to=2026-08-31&project_id=42',
+      {},
+      env,
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('location')).toBeNull()
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    const html = await response.text()
+    expect(html).toContain('data-app-view="reports"')
+    expect(html).toContain('data-reports-page')
+    expect(html).toContain('href="/reports" aria-current="page"')
+    expect(html).toContain('Each currency remains separate.')
+    expect(html).not.toContain('Export')
+    expect(html).not.toContain('Profit')
+  })
+
   it.each(['/projects/0', '/projects/nope', '/projects/9007199254740992'])(
     '[security] rejects invalid project detail path %s',
     async (path) => {
@@ -135,7 +154,7 @@ describe('worker entry', () => {
     },
   )
 
-  it.each(['/', '/clients', '/clients/42', '/projects', '/projects/42', '/invoices', '/invoices/42', '/invoices/new', '/approvals'])(
+  it.each(['/', '/clients', '/clients/42', '/projects', '/projects/42', '/invoices', '/invoices/42', '/invoices/new', '/approvals', '/reports'])(
     '[security] renders %s as an inert shell under an overlay when a session cookie is present',
     async (path) => {
       const res = await app.request(

@@ -1164,6 +1164,86 @@ test('[e2e:project-directory] creates selectable work, edits assignments, upload
   await expect(archivedRow).toContainText('Archived')
 })
 
+test('[e2e:reports-ui] runs uninvoiced, client rollup, and project budget reports through real D1', async ({
+  page,
+}) => {
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto(
+    '/reports?report=uninvoiced&from=2026-08-01&to=2026-08-30',
+  )
+  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+  const reports = page.locator('[data-reports-page]')
+  await expect(reports).toBeVisible()
+  await expect(page).toHaveTitle('ezacto — Reports')
+  await expect(reports.getByRole('heading', { name: 'Uninvoiced work' })).toBeVisible()
+  await expect(reports.locator('.report-currency-card')).toContainText('USD')
+  const uninvoicedTotal = await page.evaluate(async () => {
+    const response = await fetch(
+      '/api/v1/reports/uninvoiced?from=2026-08-01&to=2026-08-30',
+    )
+    return (await response.json()).data.totals.find(
+      (total: { currency: string }) => total.currency === 'USD',
+    ).total_cents as number
+  })
+  await expect(reports.locator('.report-currency-card strong')).toHaveText(
+    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(
+      uninvoicedTotal / 100,
+    ),
+  )
+  for (const control of [
+    reports.getByLabel('Report', { exact: true }),
+    reports.getByLabel('From'),
+    reports.getByLabel('To'),
+    reports.getByLabel('Client (optional)'),
+    reports.getByLabel('Project (optional)'),
+    reports.getByRole('button', { name: 'Run report' }),
+  ]) {
+    await expectPhoneControl(control)
+  }
+  await expectNoPageOverflow(page)
+
+  await reports.getByLabel('Report', { exact: true }).selectOption('client-rollup')
+  await reports.getByLabel('Root client').selectOption({
+    label: 'Browser Acceptance Client',
+  })
+  const runReport = reports.getByRole('button', { name: 'Run report' })
+  await expect(runReport).toBeEnabled()
+  await runReport.click()
+  await expect(page).toHaveURL(
+    /\/reports\?report=client-rollup&from=2026-08-01&to=2026-08-30&client_id=1$/u,
+  )
+  await expect(reports.getByRole('heading', { name: 'Client rollup' })).toBeVisible()
+  await expect(reports).toContainText('Root client · client #1')
+  await expect(reports).toContainText('Direct activity')
+  await expect(reports).toContainText('Including descendants')
+  await expectNoPageOverflow(page)
+
+  await reports.getByLabel('Report', { exact: true }).selectOption('project-budget')
+  await reports.getByLabel('Project').selectOption({
+    label: '[BROWSER] Browser Acceptance Project',
+  })
+  await reports.getByRole('button', { name: 'Run report' }).click()
+  await expect(page).toHaveURL(
+    /\/reports\?report=project-budget&from=2026-08-01&to=2026-08-30&project_id=1$/u,
+  )
+  await expect(reports.getByRole('heading', { name: 'Project budget' })).toBeVisible()
+  await expect(reports).toContainText('Project #1')
+  await expect(reports).toContainText('Budget4 h')
+  const budgetSpent = await page.evaluate(async () => {
+    const response = await fetch(
+      '/api/v1/reports/project-budget/1?from=2026-08-01&to=2026-08-30',
+    )
+    return (await response.json()).data.grains[0].spent_seconds as number
+  })
+  await expect(reports).toContainText(
+    `Spent${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(budgetSpent / 3_600)} h`,
+  )
+  await expectNoPageOverflow(page)
+})
+
 test('[e2e:invoice-cycle] generates a real draft through the authenticated wizard', async ({
   page,
 }) => {

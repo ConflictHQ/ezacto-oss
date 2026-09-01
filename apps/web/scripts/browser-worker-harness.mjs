@@ -261,10 +261,10 @@ await run(
 await run(
   `INSERT INTO projects (
      id, client_id, name, code, hourly_rate_cents,
-     time_entry_notes_minimum_length, created_at, updated_at
+     budget_by, budget_seconds, time_entry_notes_minimum_length, created_at, updated_at
    ) VALUES
-     (1, 1, 'Browser Acceptance Project', 'BROWSER', 10000, NULL, ?, ?),
-     (2, 1, 'Browser Secondary Project', 'SECONDARY', 12500, 8, ?, ?)`,
+     (1, 1, 'Browser Acceptance Project', 'BROWSER', 10000, 'project', 14400, NULL, ?, ?),
+     (2, 1, 'Browser Secondary Project', 'SECONDARY', 12500, 'none', NULL, 8, ?, ?)`,
   timestamp,
   timestamp,
   timestamp,
@@ -312,15 +312,15 @@ await run(
   `INSERT INTO time_entries (
      id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
      spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
-     billable_rate_cents, cost_rate_cents, notes, created_at, updated_at
+     billable_rate_cents, cost_rate_cents, budgeted, notes, created_at, updated_at
    ) VALUES
      (
        1, 1, 1, 1, 1, 1, ?, 1800, 1800, 1800, 1, 10000, 5000,
-       'First line\nSecond line with delivery detail', ?, ?
+       1, 'First line\nSecond line with delivery detail', ?, ?
      ),
      (
        2, 1, 1, 1, 1, 1, ?, 900, 900, 900, 1, 10000, 5000,
-       'Separate follow-up', ?, ?
+       1, 'Separate follow-up', ?, ?
      )`,
   spentDate,
   timestamp,
