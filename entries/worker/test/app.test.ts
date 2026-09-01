@@ -81,7 +81,33 @@ describe('worker entry', () => {
     },
   )
 
-  it.each(['/', '/invoices', '/invoices/42', '/invoices/new', '/approvals'])(
+  it('[acceptance] serves the Clients V1 list and numeric detail shells', async () => {
+    const list = await app.request('/clients', {}, env)
+    const detail = await app.request('/clients/42', {}, env)
+
+    expect(list.status).toBe(200)
+    expect(list.headers.get('location')).toBeNull()
+    const listHtml = await list.text()
+    expect(listHtml).toContain('data-app-view="client-list"')
+    expect(listHtml).toContain('data-client-list-page')
+    expect(listHtml).toContain('href="/clients" aria-current="page"')
+
+    expect(detail.status).toBe(200)
+    const detailHtml = await detail.text()
+    expect(detailHtml).toContain('data-app-view="client-detail"')
+    expect(detailHtml).toContain('data-client-detail-page')
+    expect(detailHtml).toContain('<dt>Worked-for parent</dt>')
+    expect(detailHtml).toContain('<dt>Bill-to client</dt>')
+  })
+
+  it.each(['/clients/0', '/clients/nope', '/clients/9007199254740992'])(
+    '[security] rejects invalid client detail path %s',
+    async (path) => {
+      expect((await app.request(path, {}, env)).status).toBe(404)
+    },
+  )
+
+  it.each(['/', '/clients', '/clients/42', '/invoices', '/invoices/42', '/invoices/new', '/approvals'])(
     '[security] renders %s as an inert shell under an overlay when a session cookie is present',
     async (path) => {
       const res = await app.request(

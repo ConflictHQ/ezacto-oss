@@ -858,6 +858,160 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   expect(leakedToUrl).toBe(false)
 })
 
+test('[e2e:client-directory] persists hierarchy, bill-to, contacts, projects, and archives through real D1', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto('/clients')
+  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+  await expect(page.locator('[data-client-tree]')).toContainText(
+    'Browser Acceptance Client',
+  )
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expectPhoneControl(page.getByRole('button', { name: 'Add client' }))
+  await expectPhoneControl(page.getByRole('button', { name: 'Active', exact: true }))
+  await expectNoPageOverflow(page)
+  await page.setViewportSize({ width: 1280, height: 900 })
+
+  await page.getByRole('button', { name: 'Add client' }).click()
+  const clientDialog = page.locator('[data-client-form-dialog]')
+  await clientDialog.getByLabel('Name').fill('Browser Parent Group')
+  await clientDialog.getByLabel('Currency').fill('USD')
+  await clientDialog.getByLabel('Payment terms').selectOption('net_30')
+  await clientDialog.getByRole('button', { name: 'Add client' }).click()
+  await expect(clientDialog).toBeHidden()
+  await expect(page.locator('[data-client-tree]')).toContainText('Browser Parent Group')
+
+  await page.getByRole('button', { name: 'Add client' }).click()
+  await clientDialog.getByLabel('Name').fill('Browser Worked-For Studio')
+  await clientDialog.getByLabel('Currency').fill('USD')
+  await clientDialog
+    .getByLabel('Worked-for parent')
+    .selectOption({ label: 'Browser Parent Group' })
+  await clientDialog
+    .getByLabel('Bill-to client')
+    .selectOption({ label: 'Browser Parent Group' })
+  await clientDialog.getByRole('button', { name: 'Add client' }).click()
+  await expect(clientDialog).toBeHidden()
+
+  const childRow = page
+    .locator('[data-client-tree] [data-client-id]')
+    .filter({ hasText: 'Browser Worked-For Studio' })
+  await expect(childRow).toContainText('Worked-for parent: Browser Parent Group')
+  await expect(childRow).toContainText('Bill-to client: Browser Parent Group')
+  await childRow.getByRole('link', { name: 'Browser Worked-For Studio' }).click()
+
+  await expect(page.locator('[data-client-detail-parent]')).toHaveText(
+    'Browser Parent Group',
+  )
+  await expect(page.locator('[data-client-detail-bill-to]')).toHaveText(
+    'Browser Parent Group',
+  )
+  const childId = Number(new URL(page.url()).pathname.split('/').at(-1))
+  expect(Number.isSafeInteger(childId)).toBe(true)
+
+  const project = await page.evaluate(async (clientId) => {
+    const response = await fetch('/api/v1/projects', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        client_id: clientId,
+        name: 'Browser Client Project',
+        code: 'CLIENT',
+      }),
+    })
+    return { status: response.status, body: await response.json() }
+  }, childId)
+  expect(project.status).toBe(201)
+
+  await page.reload()
+  await expect(page.locator('[data-client-projects]')).toContainText(
+    '[CLIENT] Browser Client Project',
+  )
+
+  await page.getByRole('button', { name: 'Add contact' }).click()
+  const contactDialog = page.locator('[data-contact-form-dialog]')
+  await contactDialog.getByLabel('First name').fill('Jordan')
+  await contactDialog.getByLabel('Last name').fill('Invoice')
+  await contactDialog.getByLabel('Contact address').fill('jordan.invoice@example.test')
+  await contactDialog.getByLabel('Invoice routing').selectOption('recipient')
+  await contactDialog.getByRole('button', { name: 'Add contact' }).click()
+  await expect(contactDialog).toBeHidden()
+
+  const contactCard = page
+    .locator('[data-client-contacts] [data-contact-id]')
+    .filter({ hasText: 'Jordan Invoice' })
+  await expect(contactCard).toContainText('Invoice recipient')
+  await contactCard.getByRole('button', { name: 'Edit' }).click()
+  await contactDialog.getByLabel('Invoice routing').selectOption('cc')
+  await contactDialog.getByRole('button', { name: 'Save contact' }).click()
+  await expect(contactCard).toContainText('Invoice CC')
+
+  const persisted = await page.evaluate(async (clientId) => {
+    const [clientResponse, contactsResponse, projectsResponse] = await Promise.all([
+      fetch(`/api/v1/clients/${clientId}`),
+      fetch(`/api/v1/contacts?client_id=${clientId}&per_page=200`),
+      fetch(`/api/v1/projects?client_id=${clientId}&per_page=200`),
+    ])
+    return {
+      client: await clientResponse.json(),
+      contacts: await contactsResponse.json(),
+      projects: await projectsResponse.json(),
+    }
+  }, childId)
+  expect(persisted.client.data).toMatchObject({
+    id: childId,
+    name: 'Browser Worked-For Studio',
+    parent_client_id: expect.any(Number),
+    bill_to_client_id: expect.any(Number),
+  })
+  expect(persisted.client.data.parent_client_id).toBe(
+    persisted.client.data.bill_to_client_id,
+  )
+  expect(persisted.contacts.data).toEqual([
+    expect.objectContaining({
+      client_id: childId,
+      email: 'jordan.invoice@example.test',
+      invoice_recipient_status: 'cc',
+    }),
+  ])
+  expect(persisted.projects.data).toEqual([
+    expect.objectContaining({ client_id: childId, code: 'CLIENT' }),
+  ])
+
+  await contactCard.getByRole('button', { name: 'Delete' }).click()
+  const contactDelete = page.locator('[data-contact-delete-dialog]')
+  await expect(contactDelete).toContainText('cannot be undone')
+  await contactDelete.getByRole('button', { name: 'Delete contact' }).click()
+  await expect(contactDelete).toBeHidden()
+  await expect(page.locator('[data-client-contacts]')).toContainText(
+    'No contacts have been added',
+  )
+
+  await page.getByRole('button', { name: 'Archive', exact: true }).first().click()
+  const clientArchive = page.locator('[data-client-archive-dialog]')
+  await clientArchive.getByRole('button', { name: 'Archive client' }).click()
+  await expect(clientArchive).toBeHidden()
+  await expect(page.locator('[data-client-detail-active]')).toHaveText('Archived')
+
+  const archived = await page.evaluate(async (clientId) => {
+    const [clientResponse, contactsResponse] = await Promise.all([
+      fetch(`/api/v1/clients/${clientId}`),
+      fetch(`/api/v1/contacts?client_id=${clientId}&per_page=200`),
+    ])
+    return {
+      client: (await clientResponse.json()).data,
+      contacts: (await contactsResponse.json()).data,
+    }
+  }, childId)
+  expect(archived.client.is_active).toBe(false)
+  expect(archived.contacts).toEqual([])
+})
+
 test('[e2e:invoice-cycle] generates a real draft through the authenticated wizard', async ({
   page,
 }) => {
