@@ -16,6 +16,7 @@ import {
   expenseIsEditable,
   expenseLockExplanation,
   expenseMoney,
+  expensePatch,
   expenseProjectLabel,
   expenseResourceNumber,
   expenseResourceText,
@@ -131,8 +132,6 @@ const expensePayload = (
   }
 }
 
-const asPatch = (input: ExpenseInput): ExpensePatch => ({ ...input })
-
 const setValuePrompt = (
   category: ExpenseCategory | undefined,
   label: HTMLElement,
@@ -164,6 +163,7 @@ interface ActiveSession {
   readonly identity: Whoami
   readonly signal: AbortSignal
   readonly onSessionFailure: (error: unknown) => boolean
+  readonly generation: number
 }
 
 export interface ExpenseWorkflowController {
@@ -185,6 +185,7 @@ export const createExpenseWorkflowController = (
   const listRetry = required<HTMLButtonElement>('[data-expense-list-retry]')
   const filterForm = required<HTMLFormElement>('[data-expense-filter-form]')
   const filterReset = required<HTMLButtonElement>('[data-expense-filter-reset]')
+  const createPanel = required<HTMLElement>('[data-expense-create-panel]')
   const createForm = required<HTMLFormElement>('[data-expense-create-form]')
   const createSubmit = required<HTMLButtonElement>('[data-expense-create-submit]')
   const createResult = required<HTMLElement>('[data-expense-create-result]')
@@ -203,6 +204,7 @@ export const createExpenseWorkflowController = (
   const attachmentSubmit = required<HTMLButtonElement>('[data-expense-attachment-submit]')
   const attachmentStatus = required<HTMLElement>('[data-expense-attachment-status]')
   const attachmentList = required<HTMLUListElement>('[data-expense-attachments]')
+  const moduleNotices = [...document.querySelectorAll<HTMLElement>('[data-expense-module-unavailable]')]
 
   let active: ActiveSession | null = null
   let catalog: Catalog = { categories: [], projects: [], clients: [] }
@@ -214,20 +216,27 @@ export const createExpenseWorkflowController = (
   let listPending = false
   let mutationPending = false
   let attachmentCommand: string | null = null
+  let moduleAvailable = true
+  let activationGeneration = 0
+  let catalogRequestGeneration = 0
+  let listRequestGeneration = 0
+  let detailRequestGeneration = 0
 
   const current = (): ActiveSession | null =>
-    active !== null && !active.signal.aborted ? active : null
+    active !== null &&
+    active.generation === activationGeneration &&
+    !active.signal.aborted
+      ? active
+      : null
 
-  const sessionFailure = (error: unknown): boolean => {
-    const session = current()
-    if (session === null || !(error instanceof EzactoApiError) || error.status !== 401) return false
-    listPending = false
-    mutationPending = false
-    attachmentCommand = null
-    createSubmit.disabled = false
-    editSubmit.disabled = false
-    attachmentSubmit.disabled = false
-    return session.onSessionFailure(error)
+  const apiErrorCode = (error: unknown): string | null => {
+    if (!(error instanceof EzactoApiError) || typeof error.body !== 'object' || error.body === null) {
+      return null
+    }
+    const detail = Reflect.get(error.body, 'error')
+    if (typeof detail !== 'object' || detail === null) return null
+    const code = Reflect.get(detail, 'code')
+    return typeof code === 'string' ? code : null
   }
 
   const fillCatalogSelect = (
@@ -286,6 +295,111 @@ export const createExpenseWorkflowController = (
       const value = currentFilters[name as keyof ExpenseFilters]
       field.value = value === undefined ? '' : String(value)
     }
+  }
+
+  const syncDetailActions = (): void => {
+    const usable = current() !== null && moduleAvailable && !mutationPending
+    editSubmit.disabled =
+      !usable || currentExpense === null || !expenseIsEditable(currentExpense)
+    attachmentSubmit.disabled = !usable || currentExpense === null
+  }
+
+  const clearPrivatePresentation = (): void => {
+    catalogRequestGeneration += 1
+    listRequestGeneration += 1
+    detailRequestGeneration += 1
+    catalog = { categories: [], projects: [], clients: [] }
+    currentExpense = null
+    currentFilters = filtersFromSearch(globalThis.location.search)
+    nextCursor = null
+    listedExpenses = []
+    weekStartDay = 'monday'
+    listPending = false
+    mutationPending = false
+    attachmentCommand = null
+    moduleAvailable = true
+
+    createForm.reset()
+    editForm.reset()
+    attachmentForm.reset()
+    populateCatalogs()
+    applyFilterValues()
+    formInput(createForm, 'spent_date').value = localDate()
+    list.replaceChildren()
+    attachmentList.replaceChildren()
+    createResult.textContent = ''
+    editResult.textContent = ''
+    attachmentStatus.textContent = ''
+    lockMessage.textContent = ''
+    lockMessage.hidden = true
+    listStatus.textContent = 'Loading expenses…'
+    detailStatus.textContent = 'Loading expense…'
+    detailArticle.hidden = true
+    listRetry.hidden = true
+    detailRetry.hidden = true
+    loadMore.hidden = true
+    loadMore.disabled = false
+    createSubmit.disabled = true
+    editSubmit.hidden = false
+    for (const field of [...editForm.elements]) {
+      if (
+        field instanceof HTMLInputElement ||
+        field instanceof HTMLSelectElement ||
+        field instanceof HTMLTextAreaElement ||
+        field instanceof HTMLButtonElement
+      ) field.disabled = true
+    }
+    syncDetailActions()
+    for (const selector of [
+      '[data-expense-detail-approval]',
+      '[data-expense-detail-approval-fact]',
+      '[data-expense-detail-reimbursement]',
+      '[data-expense-detail-invoice]',
+      '[data-expense-detail-total]',
+    ]) required<HTMLElement>(selector).textContent = '—'
+
+    createPanel.hidden = false
+    filterForm.hidden = false
+    list.hidden = false
+    for (const notice of moduleNotices) notice.hidden = true
+  }
+
+  const showModuleUnavailable = (): void => {
+    catalogRequestGeneration += 1
+    listRequestGeneration += 1
+    detailRequestGeneration += 1
+    listPending = false
+    mutationPending = false
+    moduleAvailable = false
+    listedExpenses = []
+    nextCursor = null
+    currentExpense = null
+    list.replaceChildren()
+    attachmentList.replaceChildren()
+    detailArticle.hidden = true
+    createPanel.hidden = true
+    filterForm.hidden = true
+    list.hidden = true
+    loadMore.hidden = true
+    listRetry.hidden = true
+    detailRetry.hidden = true
+    createSubmit.disabled = true
+    syncDetailActions()
+    const message = 'The expenses module is not enabled for this organization.'
+    listStatus.textContent = message
+    detailStatus.textContent = message
+    for (const notice of moduleNotices) notice.hidden = false
+  }
+
+  const sessionFailure = (error: unknown, expected: ActiveSession): boolean => {
+    if (
+      current() !== expected ||
+      !(error instanceof EzactoApiError) ||
+      error.status !== 401
+    ) return false
+    clearPrivatePresentation()
+    active = null
+    return expected.onSessionFailure(error)
   }
 
   const filtersFromForm = (): ExpenseFilters => {
@@ -382,18 +496,31 @@ export const createExpenseWorkflowController = (
 
   const loadList = async (append = false): Promise<void> => {
     const session = current()
-    if (session === null || api.listWorkflowExpenses === undefined || listPending) return
+    if (
+      session === null ||
+      api.listWorkflowExpenses === undefined ||
+      (append && (listPending || nextCursor === null))
+    ) return
+    const requestGeneration = ++listRequestGeneration
+    const filters = { ...currentFilters }
+    const cursor = append ? nextCursor ?? undefined : undefined
+    if (!append) {
+      listedExpenses = []
+      nextCursor = null
+      renderList()
+      loadMore.hidden = true
+    }
     listPending = true
     listStatus.textContent = append ? 'Loading more expenses…' : 'Loading expenses…'
     listRetry.hidden = true
     loadMore.disabled = true
     try {
       const page = await api.listWorkflowExpenses(
-        currentFilters,
-        append ? nextCursor ?? undefined : undefined,
+        filters,
+        cursor,
         session.signal,
       )
-      if (current() !== session) return
+      if (current() !== session || requestGeneration !== listRequestGeneration) return
       listedExpenses = append ? [...listedExpenses, ...page.data] : [...page.data]
       renderList()
       nextCursor = page.page.next_cursor
@@ -403,12 +530,19 @@ export const createExpenseWorkflowController = (
         ? 'No expenses match these filters.'
         : `${expenseCount} ${expenseCount === 1 ? 'expense' : 'expenses'} shown by week.`
     } catch (error) {
-      if (sessionFailure(error)) return
+      if (current() !== session || requestGeneration !== listRequestGeneration) return
+      if (sessionFailure(error, session)) return
+      if (apiErrorCode(error) === 'module_disabled') {
+        showModuleUnavailable()
+        return
+      }
       listStatus.textContent = apiMessage(error)
       listRetry.hidden = false
     } finally {
-      listPending = false
-      loadMore.disabled = false
+      if (current() === session && requestGeneration === listRequestGeneration) {
+        listPending = false
+        loadMore.disabled = false
+      }
     }
   }
 
@@ -475,6 +609,7 @@ export const createExpenseWorkflowController = (
     editResult.textContent = editable && expense.approval_status === 'submitted'
       ? 'Submitted expenses remain editable until approval or another lock applies.'
       : ''
+    syncDetailActions()
     detailArticle.hidden = false
     detailStatus.textContent = ''
   }
@@ -488,26 +623,36 @@ export const createExpenseWorkflowController = (
       api.getWorkflowExpense === undefined ||
       api.listWorkflowExpenseAttachments === undefined
     ) return
+    const requestGeneration = ++detailRequestGeneration
     detailStatus.textContent = 'Loading expense…'
+    detailArticle.hidden = true
     detailRetry.hidden = true
     try {
       const [expense, attachments] = await Promise.all([
         api.getWorkflowExpense(expenseId, session.signal),
         api.listWorkflowExpenseAttachments(expenseId, session.signal),
       ])
-      if (current() !== session) return
+      if (current() !== session || requestGeneration !== detailRequestGeneration) return
       renderDetail(expense)
       renderAttachments(expense.id, attachments)
       attachmentStatus.textContent = attachments.length === 0 ? '' : `${attachments.length} receipt ${attachments.length === 1 ? 'file' : 'files'}.`
     } catch (error) {
-      if (sessionFailure(error)) return
+      if (current() !== session || requestGeneration !== detailRequestGeneration) return
+      if (sessionFailure(error, session)) return
+      if (apiErrorCode(error) === 'module_disabled') {
+        showModuleUnavailable()
+        return
+      }
       detailStatus.textContent = apiMessage(error)
       detailArticle.hidden = true
       detailRetry.hidden = false
     }
   }
 
-  const loadCatalog = async (session: ActiveSession): Promise<void> => {
+  const loadCatalog = async (
+    session: ActiveSession,
+    requestGeneration: number,
+  ): Promise<boolean> => {
     if (
       api.listExpenseCategories === undefined ||
       api.listExpenseProjects === undefined ||
@@ -520,6 +665,10 @@ export const createExpenseWorkflowController = (
       collect((cursor) => api.listExpenseClients!(cursor, session.signal), session.signal),
       api.getExpenseWeekStartDay(session.signal),
     ])
+    if (
+      current() !== session ||
+      requestGeneration !== catalogRequestGeneration
+    ) return false
     catalog = { categories, projects, clients }
     weekStartDay = configuredWeekStart
     populateCatalogs()
@@ -527,6 +676,44 @@ export const createExpenseWorkflowController = (
     createSubmit.disabled =
       categories.every((item) => !item.is_active) ||
       projects.every((item) => item['is_active'] === false)
+    return true
+  }
+
+  const reloadWorkflow = async (): Promise<void> => {
+    const session = current()
+    if (session === null) return
+    const requestGeneration = ++catalogRequestGeneration
+    if (listPage) {
+      listStatus.textContent = 'Loading expenses…'
+      listRetry.hidden = true
+    }
+    if (detailPage) {
+      detailStatus.textContent = 'Loading expense…'
+      detailRetry.hidden = true
+    }
+    try {
+      if (
+        !(await loadCatalog(session, requestGeneration)) ||
+        current() !== session ||
+        requestGeneration !== catalogRequestGeneration
+      ) return
+      if (listPage) await loadList()
+      if (detailPage) await loadDetail()
+    } catch (error) {
+      if (
+        current() !== session ||
+        requestGeneration !== catalogRequestGeneration
+      ) return
+      if (sessionFailure(error, session)) return
+      if (apiErrorCode(error) === 'module_disabled') {
+        showModuleUnavailable()
+        return
+      }
+      const status = listPage ? listStatus : detailStatus
+      status.textContent = apiMessage(error)
+      if (listPage) listRetry.hidden = false
+      if (detailPage) detailRetry.hidden = false
+    }
   }
 
   createCategory.addEventListener('change', () => {
@@ -569,9 +756,12 @@ export const createExpenseWorkflowController = (
       createResult.textContent = `Expense added. Open expense #${expense.id} to attach a receipt.`
       void loadList()
     }).catch((error: unknown) => {
-      if (!sessionFailure(error)) createResult.textContent = apiMessage(error)
+      if (current() !== session) return
+      if (sessionFailure(error, session)) return
+      if (apiErrorCode(error) === 'module_disabled') showModuleUnavailable()
+      else createResult.textContent = apiMessage(error)
     }).finally(() => {
-      if (current() === session) {
+      if (current() === session && moduleAvailable) {
         mutationPending = false
         createSubmit.disabled = false
       }
@@ -589,24 +779,34 @@ export const createExpenseWorkflowController = (
     ) return
     let payload: ExpensePatch
     try {
-      payload = asPatch(expensePayload(editForm, catalog.categories))
+      payload = expensePatch(
+        currentExpense,
+        expensePayload(editForm, catalog.categories),
+      )
     } catch (error) {
       editResult.textContent = apiMessage(error)
       return
     }
+    if (Object.keys(payload).length === 0) {
+      editResult.textContent = 'No changes to save.'
+      return
+    }
     mutationPending = true
-    editSubmit.disabled = true
+    syncDetailActions()
     editResult.textContent = 'Saving expense…'
     api.updateWorkflowExpense(currentExpense.id, payload, session.signal).then((expense) => {
       if (current() !== session) return
       renderDetail(expense)
       editResult.textContent = 'Expense saved.'
     }).catch((error: unknown) => {
-      if (!sessionFailure(error)) editResult.textContent = apiMessage(error)
+      if (current() !== session) return
+      if (sessionFailure(error, session)) return
+      if (apiErrorCode(error) === 'module_disabled') showModuleUnavailable()
+      else editResult.textContent = apiMessage(error)
     }).finally(() => {
-      if (current() === session) {
+      if (current() === session && moduleAvailable) {
         mutationPending = false
-        editSubmit.disabled = currentExpense === null || !expenseIsEditable(currentExpense)
+        syncDetailActions()
       }
     })
   })
@@ -634,7 +834,7 @@ export const createExpenseWorkflowController = (
     const data = new FormData()
     data.set('file', file)
     mutationPending = true
-    attachmentSubmit.disabled = true
+    syncDetailActions()
     attachmentCommand ??= `web.expense.attachment:${crypto.randomUUID()}`
     const command = attachmentCommand
     const expenseId = currentExpense.id
@@ -648,11 +848,14 @@ export const createExpenseWorkflowController = (
       renderAttachments(expenseId, attachments)
       attachmentStatus.textContent = 'Receipt uploaded.'
     }).catch((error: unknown) => {
-      if (!sessionFailure(error)) attachmentStatus.textContent = apiMessage(error)
+      if (current() !== session) return
+      if (sessionFailure(error, session)) return
+      if (apiErrorCode(error) === 'module_disabled') showModuleUnavailable()
+      else attachmentStatus.textContent = apiMessage(error)
     }).finally(() => {
-      if (current() === session) {
+      if (current() === session && moduleAvailable) {
         mutationPending = false
-        attachmentSubmit.disabled = false
+        syncDetailActions()
       }
     })
   })
@@ -691,27 +894,30 @@ export const createExpenseWorkflowController = (
   })
 
   loadMore.addEventListener('click', () => void loadList(true))
-  listRetry.addEventListener('click', () => void loadList())
-  detailRetry.addEventListener('click', () => void loadDetail())
+  listRetry.addEventListener('click', () => void reloadWorkflow())
+  detailRetry.addEventListener('click', () => void reloadWorkflow())
 
   return {
     async activate(identity, signal, onSessionFailure) {
-      active = { identity, signal, onSessionFailure }
-      createResult.textContent = ''
-      editResult.textContent = ''
-      formInput(createForm, 'spent_date').value = localDate()
-      try {
-        await loadCatalog(active)
-        if (signal.aborted) return
-        if (listPage) await loadList()
-        if (detailPage) await loadDetail()
-      } catch (error) {
-        if (sessionFailure(error)) return
-        const status = listPage ? listStatus : detailStatus
-        status.textContent = apiMessage(error)
-        if (listPage) listRetry.hidden = false
-        if (detailPage) detailRetry.hidden = false
+      const session: ActiveSession = {
+        identity,
+        signal,
+        onSessionFailure,
+        generation: ++activationGeneration,
       }
+      active = session
+      clearPrivatePresentation()
+      const abort = (): void => {
+        if (active !== session) return
+        active = null
+        clearPrivatePresentation()
+      }
+      signal.addEventListener('abort', abort, { once: true })
+      if (signal.aborted) {
+        abort()
+        return
+      }
+      await reloadWorkflow()
     },
   }
 }

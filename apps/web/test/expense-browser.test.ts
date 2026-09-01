@@ -85,6 +85,15 @@ const identity: Whoami = {
   authentication: { kind: 'session' },
 }
 const page = <Item>(data: readonly Item[]) => ({ data, page: { next_cursor: null } })
+const deferred = <Value>() => {
+  let resolve!: (value: Value | PromiseLike<Value>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<Value>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
 
 const writeDocument = (view: 'expense-list' | 'expense-detail', pathname: string): void => {
   window.history.replaceState(null, '', pathname)
@@ -227,16 +236,17 @@ describe('Expenses V1 browser controller', () => {
     expect(document.querySelector('[data-expense-edit-form]')?.textContent).toContain('Notes')
     expect((document.querySelector('[data-expense-edit-form] [name="notes"]') as HTMLTextAreaElement).value).toContain('Client kickoff')
     expect(document.querySelector('[data-expense-edit-result]')?.textContent).toContain('Submitted expenses remain editable')
+    expect(document.querySelector<HTMLButtonElement>('[data-expense-attachment-submit]')?.disabled).toBe(false)
 
     const editForm = document.querySelector<HTMLFormElement>('[data-expense-edit-form]')!
     ;(editForm.elements.namedItem('notes') as HTMLTextAreaElement).value = 'Updated submitted receipt note'
     editForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
     await vi.waitFor(() => expect(updateWorkflowExpense).toHaveBeenCalledTimes(1))
-    expect(updateWorkflowExpense.mock.calls[0]![1]).toMatchObject({
+    expect(updateWorkflowExpense.mock.calls[0]![1]).toEqual({
       notes: 'Updated submitted receipt note',
-      total_cost_cents: 4299,
     })
     await vi.waitFor(() => expect(document.querySelector<HTMLButtonElement>('[data-expense-edit-submit]')?.disabled).toBe(false))
+    expect(document.querySelector<HTMLButtonElement>('[data-expense-attachment-submit]')?.disabled).toBe(false)
 
     const file = new File(['receipt bytes'], 'taxi-receipt.pdf', { type: 'application/pdf' })
     const fileInput = document.querySelector<HTMLInputElement>('[data-expense-attachment-form] input[type="file"]')!
@@ -250,6 +260,34 @@ describe('Expenses V1 browser controller', () => {
     expect(uploadWorkflowExpenseAttachment.mock.calls[0]![1]).toMatch(/^web\.expense\.attachment:/u)
     await vi.waitFor(() => expect(document.querySelector('[data-expense-attachments]')?.textContent).toContain('taxi-receipt.pdf'))
     expect(document.querySelector<HTMLAnchorElement>('[data-expense-attachments] a')?.href).toContain('/api/v1/expenses/8/attachments/9/content')
+  })
+
+  it('[browser] preserves stored unit economics when only notes change on an archived category', async () => {
+    writeDocument('expense-detail', '/expenses/8')
+    const archivedMileage = { ...mileage, unit_price_cents: 70, is_active: false }
+    const stored = {
+      ...baseExpense,
+      expense_category_id: 2,
+      units: 10,
+      total_cost_cents: 670,
+    }
+    const updateWorkflowExpense = vi.fn(async (_id, patch) => ({ ...stored, ...patch }))
+    const controller = createExpenseWorkflowController({
+      ...catalogs(),
+      listExpenseCategories: vi.fn(async () => page([direct, archivedMileage])),
+      getWorkflowExpense: vi.fn(async () => stored),
+      updateWorkflowExpense,
+      listWorkflowExpenseAttachments: vi.fn(async () => []),
+    })
+    await controller.activate(identity, new AbortController().signal, () => false)
+    const form = document.querySelector<HTMLFormElement>('[data-expense-edit-form]')!
+    ;(form.elements.namedItem('notes') as HTMLTextAreaElement).value = 'Notes only after price change'
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() => expect(updateWorkflowExpense).toHaveBeenCalledTimes(1))
+    expect(updateWorkflowExpense.mock.calls[0]![1]).toEqual({
+      notes: 'Notes only after price change',
+    })
   })
 
   it('[browser] explains and disables approved or policy-locked mutations', async () => {
@@ -318,6 +356,7 @@ describe('Expenses V1 browser controller', () => {
     await controller.activate(identity, new AbortController().signal, onSessionFailure)
     const form = document.querySelector<HTMLFormElement>('[data-expense-edit-form]')!
 
+    ;(form.elements.namedItem('notes') as HTMLTextAreaElement).value = 'First attempted update'
     form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
     await vi.waitFor(() =>
       expect(document.querySelector('[data-expense-edit-result]')?.textContent).toBe(
@@ -328,8 +367,163 @@ describe('Expenses V1 browser controller', () => {
       expect(document.querySelector<HTMLButtonElement>('[data-expense-edit-submit]')?.disabled).toBe(false),
     )
 
+    ;(form.elements.namedItem('notes') as HTMLTextAreaElement).value = 'Second attempted update'
     form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
     await vi.waitFor(() => expect(onSessionFailure).toHaveBeenCalledTimes(1))
-    expect(document.querySelector<HTMLButtonElement>('[data-expense-edit-submit]')?.disabled).toBe(false)
+    expect(document.querySelector<HTMLButtonElement>('[data-expense-edit-submit]')?.disabled).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-expense-detail]')?.hidden).toBe(true)
+  })
+
+  it('[security] clears private detail state on abort before a different session catalog can fail', async () => {
+    writeDocument('expense-detail', '/expenses/8')
+    const listExpenseCategories = vi
+      .fn<ExpenseWorkflowApi['listExpenseCategories']>()
+      .mockResolvedValueOnce(page([direct, mileage]))
+      .mockRejectedValueOnce(new Error('Catalog offline'))
+    const controller = createExpenseWorkflowController({
+      ...catalogs(),
+      listExpenseCategories,
+      getWorkflowExpense: vi.fn(async () => baseExpense),
+      listWorkflowExpenseAttachments: vi.fn(async () => [receipt]),
+    })
+    const first = new AbortController()
+    await controller.activate(identity, first.signal, () => false)
+    expect((document.querySelector('[data-expense-edit-form] [name="notes"]') as HTMLTextAreaElement).value).toContain('Client kickoff')
+    expect(document.querySelector('[data-expense-attachments]')?.textContent).toContain('taxi-receipt.pdf')
+
+    first.abort()
+    expect((document.querySelector('[data-expense-edit-form] [name="notes"]') as HTMLTextAreaElement).value).toBe('')
+    expect(document.querySelector<HTMLElement>('[data-expense-detail]')?.hidden).toBe(true)
+    expect(document.querySelector('[data-expense-attachments]')?.textContent).toBe('')
+
+    await controller.activate(
+      { ...identity, user_id: 2 },
+      new AbortController().signal,
+      () => false,
+    )
+    expect(document.querySelector('[data-expense-detail-status]')?.textContent).toBe('Catalog offline')
+    expect((document.querySelector('[data-expense-edit-form] [name="notes"]') as HTMLTextAreaElement).value).toBe('')
+    expect(document.querySelector<HTMLElement>('[data-expense-detail]')?.hidden).toBe(true)
+  })
+
+  it('[security] resets mutation ownership between activations and ignores the old result', async () => {
+    writeDocument('expense-detail', '/expenses/8')
+    const oldUpdate = deferred<Expense>()
+    const updateWorkflowExpense = vi
+      .fn<ExpenseWorkflowApi['updateWorkflowExpense']>()
+      .mockImplementationOnce(async () => oldUpdate.promise)
+      .mockImplementationOnce(async (_id, patch) => ({
+        ...baseExpense,
+        user_id: 2,
+        ...patch,
+      }))
+    const controller = createExpenseWorkflowController({
+      ...catalogs(),
+      getWorkflowExpense: vi
+        .fn<ExpenseWorkflowApi['getWorkflowExpense']>()
+        .mockResolvedValueOnce(baseExpense)
+        .mockResolvedValueOnce({ ...baseExpense, user_id: 2, notes: 'Second user note' }),
+      updateWorkflowExpense,
+      listWorkflowExpenseAttachments: vi.fn(async () => []),
+    })
+    const first = new AbortController()
+    await controller.activate(identity, first.signal, () => false)
+    const form = document.querySelector<HTMLFormElement>('[data-expense-edit-form]')!
+    ;(form.elements.namedItem('notes') as HTMLTextAreaElement).value = 'First user pending secret'
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(updateWorkflowExpense).toHaveBeenCalledTimes(1))
+
+    first.abort()
+    await controller.activate(
+      { ...identity, user_id: 2 },
+      new AbortController().signal,
+      () => false,
+    )
+    ;(form.elements.namedItem('notes') as HTMLTextAreaElement).value = 'Second user saved note'
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(updateWorkflowExpense).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect((form.elements.namedItem('notes') as HTMLTextAreaElement).value).toBe('Second user saved note'))
+
+    oldUpdate.resolve({ ...baseExpense, notes: 'First user stale secret' })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect((form.elements.namedItem('notes') as HTMLTextAreaElement).value).toBe('Second user saved note')
+  })
+
+  it('[browser] replaces an in-flight list when filters change and rejects the stale response', async () => {
+    writeDocument('expense-list', '/expenses')
+    const initial = deferred<ReturnType<typeof page<Expense>>>()
+    const filtered = deferred<ReturnType<typeof page<Expense>>>()
+    const listWorkflowExpenses = vi
+      .fn<ExpenseWorkflowApi['listWorkflowExpenses']>()
+      .mockImplementationOnce(async () => initial.promise)
+      .mockImplementationOnce(async () => filtered.promise)
+    const controller = createExpenseWorkflowController({
+      ...catalogs(),
+      listWorkflowExpenses,
+    })
+    const activation = controller.activate(identity, new AbortController().signal, () => false)
+    await vi.waitFor(() => expect(listWorkflowExpenses).toHaveBeenCalledTimes(1))
+    const filter = document.querySelector<HTMLFormElement>('[data-expense-filter-form]')!
+    ;(filter.elements.namedItem('from') as HTMLInputElement).value = '2026-09-01'
+    filter.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(listWorkflowExpenses).toHaveBeenCalledTimes(2))
+    expect(listWorkflowExpenses.mock.calls[1]![0]).toEqual({ from: '2026-09-01' })
+
+    initial.resolve(page([{ ...baseExpense, notes: 'Stale unfiltered secret' }]))
+    await activation
+    expect(document.querySelector('[data-expense-list]')?.textContent).not.toContain('Stale unfiltered secret')
+    filtered.resolve(page([{ ...baseExpense, id: 10, notes: 'Fresh filtered row' }]))
+    await vi.waitFor(() => expect(document.querySelector('[data-expense-list]')?.textContent).toContain('Fresh filtered row'))
+    expect(document.querySelector('[data-expense-list]')?.textContent).not.toContain('Stale unfiltered secret')
+  })
+
+  it('[browser] retries catalogs together with the page after catalog failure', async () => {
+    writeDocument('expense-list', '/expenses')
+    const listExpenseCategories = vi
+      .fn<ExpenseWorkflowApi['listExpenseCategories']>()
+      .mockRejectedValueOnce(new Error('Catalog unavailable'))
+      .mockResolvedValueOnce(page([direct, mileage]))
+    const listWorkflowExpenses = vi.fn(async () => page([baseExpense]))
+    const controller = createExpenseWorkflowController({
+      ...catalogs(),
+      listExpenseCategories,
+      listWorkflowExpenses,
+    })
+    await controller.activate(identity, new AbortController().signal, () => false)
+    expect(listWorkflowExpenses).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-expense-list-status]')?.textContent).toBe('Catalog unavailable')
+
+    document.querySelector<HTMLButtonElement>('[data-expense-list-retry]')!.click()
+    await vi.waitFor(() => expect(listExpenseCategories).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(listWorkflowExpenses).toHaveBeenCalledTimes(1))
+    expect(document.querySelector('[data-expense-list]')?.textContent).toContain('Travel')
+  })
+
+  it('[browser] renders an honest unavailable state when the expenses module is disabled', async () => {
+    writeDocument('expense-list', '/expenses')
+    const controller = createExpenseWorkflowController({
+      ...catalogs(),
+      listWorkflowExpenses: vi.fn(async () => {
+        throw new EzactoApiError(
+          403,
+          {
+            error: {
+              code: 'module_disabled',
+              message: 'The expenses module is not enabled for this organization.',
+              fields: [],
+            },
+          },
+          'module-disabled',
+        )
+      }),
+    })
+    await controller.activate(identity, new AbortController().signal, () => false)
+
+    expect(document.querySelector<HTMLElement>('[data-expense-module-unavailable]')?.hidden).toBe(false)
+    expect(document.querySelector<HTMLElement>('[data-expense-create-panel]')?.hidden).toBe(true)
+    expect(document.querySelector<HTMLFormElement>('[data-expense-filter-form]')?.hidden).toBe(true)
+    expect(document.querySelector<HTMLOListElement>('[data-expense-list]')?.hidden).toBe(true)
+    expect(document.querySelector('[data-expense-list-status]')?.textContent).toContain('not enabled')
   })
 })

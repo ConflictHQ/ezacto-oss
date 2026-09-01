@@ -243,7 +243,12 @@ export const createD1AttachmentOwnerAuthorizer =
         );
       case "expense":
         return exists(
-          "SELECT 1 AS authorized FROM expenses WHERE id = ? AND user_id = ?",
+          `SELECT 1 AS authorized FROM expenses
+           WHERE id = ? AND user_id = ?
+             AND COALESCE((
+               SELECT json_extract(modules, '$.expenses')
+               FROM organizations WHERE id = 1
+             ), 0) = 1`,
           parentId,
           principal.userId,
         );
@@ -326,6 +331,15 @@ export const createRuntimeServices = async (
       drizzle,
       timesheetLockPolicy,
     ),
+    isExpensesModuleEnabled: async () => {
+      const row = await database
+        .prepare(
+          `SELECT COALESCE(json_extract(modules, '$.expenses'), 0) AS enabled
+           FROM organizations WHERE id = 1`,
+        )
+        .first<{ enabled: number | boolean }>();
+      return row?.enabled === 1 || row?.enabled === true;
+    },
     timesheetApprovals: createTimesheetApprovalRepository(drizzle),
     timesheetLockPolicy,
     reports: createReportRepository(drizzle),

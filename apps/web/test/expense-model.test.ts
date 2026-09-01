@@ -4,6 +4,7 @@ import {
   expenseAmountCents,
   expenseIdFromPathname,
   expenseIsEditable,
+  expensePatch,
   expenseUnits,
   expenseValueInput,
   expenseWeekLabel,
@@ -67,6 +68,43 @@ describe('expense workflow model', () => {
     expect(expenseUnits('0')).toBe(0)
     expect(() => expenseAmountCents('1.999')).toThrow(/two decimals/u)
     expect(() => expenseUnits('1.5')).toThrow(/whole number/u)
+  })
+
+  it('[unit] omits pricing from notes-only patches and sends it only for value/category changes', () => {
+    const unitExpense = expense({
+      expense_category_id: 2,
+      units: 10,
+      total_cost_cents: 670,
+    })
+    const desired = {
+      project_id: 1,
+      expense_category_id: 2,
+      spent_date: '2026-09-01',
+      notes: 'Updated note',
+      units: 10,
+      billable: true,
+      reimbursable: true,
+    }
+    expect(expensePatch(unitExpense, desired)).toEqual({ notes: 'Updated note' })
+    expect(expensePatch(unitExpense, { ...desired, units: 11 })).toEqual({
+      notes: 'Updated note',
+      units: 11,
+    })
+    expect(
+      expensePatch(unitExpense, {
+        project_id: desired.project_id,
+        expense_category_id: 1,
+        spent_date: desired.spent_date,
+        notes: desired.notes,
+        total_cost_cents: 995,
+        billable: desired.billable,
+        reimbursable: desired.reimbursable,
+      }),
+    ).toEqual({
+      expense_category_id: 1,
+      notes: 'Updated note',
+      total_cost_cents: 995,
+    })
   })
 
   it('[unit] keeps submitted expenses editable but closes approved, billed, and policy-locked rows', () => {

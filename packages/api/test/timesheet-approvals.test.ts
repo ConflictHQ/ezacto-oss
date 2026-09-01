@@ -171,6 +171,7 @@ const createHarness = async (): Promise<Harness> => {
         repository: tracked,
         cursorSigningKey,
         clock: { now: () => ({ instant: now, date: '2026-08-31', time: '12:00' }) },
+        isExpensesModuleEnabled: async () => true,
       })
       installTimesheetApprovalRoutes(api, {
         service: approvals,

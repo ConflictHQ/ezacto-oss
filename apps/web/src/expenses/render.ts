@@ -4,7 +4,11 @@ export const renderExpenseWorkflowPages = (view?: string): string => `
       <div><p class="eyebrow">Money out</p><h1>Expenses</h1></div>
     </header>
     <p class="expense-intro">Record your own expenses, then narrow the list by work, category, approval, or reimbursement status.</p>
-    <section class="expense-create-panel" aria-labelledby="expense-create-heading">
+    <section class="expense-module-unavailable" data-expense-module-unavailable hidden>
+      <h2>Expenses are unavailable</h2>
+      <p>The expenses module is not enabled for this organization.</p>
+    </section>
+    <section class="expense-create-panel" data-expense-create-panel aria-labelledby="expense-create-heading">
       <header><div><p class="eyebrow">New expense</p><h2 id="expense-create-heading">Add an expense</h2></div></header>
       <form class="expense-form" data-expense-create-form>
         <label>Project<select name="project_id" data-expense-create-project required></select></label>
@@ -38,6 +42,10 @@ export const renderExpenseWorkflowPages = (view?: string): string => `
       <div><p class="eyebrow">Expenses</p><h1>Expense detail</h1></div>
       <a href="/expenses">Back to expenses</a>
     </header>
+    <section class="expense-module-unavailable" data-expense-module-unavailable hidden>
+      <h2>Expenses are unavailable</h2>
+      <p>The expenses module is not enabled for this organization.</p>
+    </section>
     <p class="form-result expense-page-status" data-expense-detail-status role="status" aria-live="polite">Loading expense…</p>
     <article class="expense-detail" data-expense-detail hidden>
       <section class="expense-edit-panel" aria-labelledby="expense-edit-heading">

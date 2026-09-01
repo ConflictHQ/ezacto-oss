@@ -696,7 +696,8 @@
 .expense-create-panel,
 .expense-filter-form,
 .expense-edit-panel,
-.expense-attachments {
+.expense-attachments,
+.expense-module-unavailable {
   padding: 20px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
@@ -704,6 +705,18 @@
 }
 .expense-create-panel {
   margin: 24px 0 16px;
+}
+.expense-module-unavailable {
+  margin: 24px 0;
+  border-inline-start: 3px solid var(--ez-live);
+}
+.expense-module-unavailable h2,
+.expense-module-unavailable p {
+  margin: 0;
+}
+.expense-module-unavailable p {
+  margin-top: 8px;
+  color: var(--ez-muted);
 }
 .expense-create-panel h2,
 .expense-edit-panel h2,

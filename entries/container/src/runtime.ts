@@ -61,7 +61,12 @@ export const createContainerAttachmentOwnerAuthorizer = (
       case 'expense':
         return exists(
           database,
-          'SELECT 1 FROM expenses WHERE id = ? AND user_id = ?',
+          `SELECT 1 FROM expenses
+           WHERE id = ? AND user_id = ?
+             AND COALESCE((
+               SELECT json_extract(modules, '$.expenses')
+               FROM organizations WHERE id = 1
+             ), 0) = 1`,
           parentId,
           principal.userId,
         )
@@ -223,6 +228,15 @@ export const createContainerRuntime = async (
         drizzle,
         timesheetLockPolicy,
       ),
+      isExpensesModuleEnabled: async () => {
+        const row = database
+          .prepare(
+            `SELECT COALESCE(json_extract(modules, '$.expenses'), 0) AS enabled
+             FROM organizations WHERE id = 1`,
+          )
+          .get() as { enabled: number } | undefined
+        return row?.enabled === 1
+      },
       moneyResources: createMoneyResourceRepository(drizzle),
       invoiceGeneration: createInvoiceGenerationService(drizzle),
       reports: createReportRepository(drizzle),

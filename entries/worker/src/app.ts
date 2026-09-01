@@ -87,6 +87,7 @@ export interface RuntimeServices {
   tokens: ApiTokenService
   generalResources: GeneralResourceRouteOptions['repository']
   trackedResources: TrackedResourceRepository
+  isExpensesModuleEnabled(): Promise<boolean>
   timesheetApprovals: TimesheetApprovalService
   timesheetLockPolicy: TimesheetLockPolicyService
   moneyResources: MoneyResourceRouteOptions['service']
@@ -139,11 +140,13 @@ export const createApp = (services?: RuntimeServices) =>
             installGeneralResourceRoutes(api, {
               repository: services.generalResources,
               cursorSigningKey: services.cursorSigningKey,
+              isExpensesModuleEnabled: services.isExpensesModuleEnabled,
             })
             installTrackedResourceRoutes(api, {
               repository: services.trackedResources,
               clock: systemClock,
               cursorSigningKey: services.cursorSigningKey,
+              isExpensesModuleEnabled: services.isExpensesModuleEnabled,
             })
             installTimesheetApprovalRoutes(api, {
               service: services.timesheetApprovals,

@@ -230,6 +230,41 @@ export const expenseValueForForm = (
     ? String(expense.total_cost_cents / 100)
     : String(expense.units ?? 0)
 
+/**
+ * Build a semantic PATCH instead of replaying the create payload. In
+ * particular, a notes-only edit must not ask the repository to reprice an
+ * existing unit-based expense against today's category price.
+ */
+export const expensePatch = (
+  expense: Readonly<Expense>,
+  desired: Readonly<ExpenseInput>,
+): ExpensePatch => {
+  const patch: ExpensePatch = {}
+  if (desired.project_id !== expense.project_id) patch.project_id = desired.project_id
+  if (desired.expense_category_id !== expense.expense_category_id) {
+    patch.expense_category_id = desired.expense_category_id
+  }
+  if (desired.spent_date !== expense.spent_date) patch.spent_date = desired.spent_date
+  if (desired.notes !== undefined && desired.notes !== expense.notes) patch.notes = desired.notes
+  if (desired.billable !== undefined && desired.billable !== expense.billable) {
+    patch.billable = desired.billable
+  }
+  if (desired.reimbursable !== undefined && desired.reimbursable !== expense.reimbursable) {
+    patch.reimbursable = desired.reimbursable
+  }
+
+  const categoryChanged = desired.expense_category_id !== expense.expense_category_id
+  if (desired.units !== undefined) {
+    if (categoryChanged || desired.units !== expense.units) patch.units = desired.units
+  } else if (
+    desired.total_cost_cents !== undefined &&
+    (categoryChanged || desired.total_cost_cents !== expense.total_cost_cents)
+  ) {
+    patch.total_cost_cents = desired.total_cost_cents
+  }
+  return patch
+}
+
 export const filtersFromSearch = (search: string): ExpenseFilters => {
   const params = new URLSearchParams(search)
   const date = (name: string): string | undefined => {

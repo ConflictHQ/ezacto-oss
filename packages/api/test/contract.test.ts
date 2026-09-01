@@ -91,6 +91,7 @@ const documentedApp = () =>
       installGeneralResourceRoutes(api, {
         repository: generalRepository,
         cursorSigningKey: new Uint8Array(32),
+        isExpensesModuleEnabled: async () => true,
       });
       installTrackedResourceRoutes(api, {
         repository: trackedRepository,
@@ -102,6 +103,7 @@ const documentedApp = () =>
             time: "12:00",
           }),
         },
+        isExpensesModuleEnabled: async () => true,
       });
       installTimesheetApprovalRoutes(api, {
         service: timesheetApprovals,
