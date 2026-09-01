@@ -271,7 +271,10 @@ describe('Expenses V1 browser controller', () => {
       units: 10,
       total_cost_cents: 670,
     }
-    const updateWorkflowExpense = vi.fn(async (_id, patch) => ({ ...stored, ...patch }))
+    const saved = deferred<Expense>()
+    const updateWorkflowExpense = vi.fn<ExpenseWorkflowApi['updateWorkflowExpense']>(
+      async () => saved.promise,
+    )
     const controller = createExpenseWorkflowController({
       ...catalogs(),
       listExpenseCategories: vi.fn(async () => page([direct, archivedMileage])),
@@ -288,6 +291,34 @@ describe('Expenses V1 browser controller', () => {
     expect(updateWorkflowExpense.mock.calls[0]![1]).toEqual({
       notes: 'Notes only after price change',
     })
+    expect(
+      [...form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input, select, textarea')]
+        .every((field) => field.disabled),
+    ).toBe(true)
+    expect(
+      [...document.querySelectorAll<HTMLInputElement | HTMLButtonElement>('[data-expense-attachment-form] input, [data-expense-attachment-form] button')]
+        .every((field) => field.disabled),
+    ).toBe(true)
+
+    saved.resolve({ ...stored, notes: 'Notes only after price change' })
+    await vi.waitFor(() => expect(document.querySelector('[data-expense-edit-result]')?.textContent).toBe('Expense saved.'))
+    await vi.waitFor(() =>
+      expect(
+        [...form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input, select, textarea')]
+          .every((field) => !field.disabled),
+      ).toBe(true),
+    )
+    expect((form.elements.namedItem('project_id') as HTMLSelectElement).disabled).toBe(false)
+    expect((form.elements.namedItem('expense_category_id') as HTMLSelectElement).disabled).toBe(false)
+    expect((form.elements.namedItem('spent_date') as HTMLInputElement).disabled).toBe(false)
+    expect((form.elements.namedItem('expense_value') as HTMLInputElement).disabled).toBe(false)
+    expect((form.elements.namedItem('notes') as HTMLTextAreaElement).disabled).toBe(false)
+    expect((form.elements.namedItem('billable') as HTMLInputElement).disabled).toBe(false)
+    expect((form.elements.namedItem('reimbursable') as HTMLInputElement).disabled).toBe(false)
+    expect(
+      [...document.querySelectorAll<HTMLInputElement | HTMLButtonElement>('[data-expense-attachment-form] input, [data-expense-attachment-form] button')]
+        .every((field) => !field.disabled),
+    ).toBe(true)
   })
 
   it('[browser] explains and disables approved or policy-locked mutations', async () => {
@@ -476,6 +507,49 @@ describe('Expenses V1 browser controller', () => {
     filtered.resolve(page([{ ...baseExpense, id: 10, notes: 'Fresh filtered row' }]))
     await vi.waitFor(() => expect(document.querySelector('[data-expense-list]')?.textContent).toContain('Fresh filtered row'))
     expect(document.querySelector('[data-expense-list]')?.textContent).not.toContain('Stale unfiltered secret')
+  })
+
+  it('[browser] reloads URL filters on popstate, rejects stale rows, and removes the session listener on abort', async () => {
+    writeDocument('expense-list', '/expenses')
+    const superseded = deferred<ReturnType<typeof page<Expense>>>()
+    const traversed = deferred<ReturnType<typeof page<Expense>>>()
+    const listWorkflowExpenses = vi
+      .fn<ExpenseWorkflowApi['listWorkflowExpenses']>()
+      .mockResolvedValueOnce(page([]))
+      .mockImplementationOnce(async () => superseded.promise)
+      .mockImplementationOnce(async () => traversed.promise)
+    const controller = createExpenseWorkflowController({
+      ...catalogs(),
+      listWorkflowExpenses,
+    })
+    const session = new AbortController()
+    await controller.activate(identity, session.signal, () => false)
+    const filter = document.querySelector<HTMLFormElement>('[data-expense-filter-form]')!
+    ;(filter.elements.namedItem('from') as HTMLInputElement).value = '2026-08-01'
+    filter.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(listWorkflowExpenses).toHaveBeenCalledTimes(2))
+
+    window.history.pushState(null, '', '/expenses?from=2026-09-01&approval_status=submitted')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await vi.waitFor(() => expect(listWorkflowExpenses).toHaveBeenCalledTimes(3))
+    expect(listWorkflowExpenses.mock.calls[2]![0]).toEqual({
+      from: '2026-09-01',
+      approval_status: 'submitted',
+    })
+    expect((filter.elements.namedItem('from') as HTMLInputElement).value).toBe('2026-09-01')
+    expect((filter.elements.namedItem('approval_status') as HTMLSelectElement).value).toBe('submitted')
+
+    superseded.resolve(page([{ ...baseExpense, notes: 'Superseded history row' }]))
+    await Promise.resolve()
+    expect(document.querySelector('[data-expense-list]')?.textContent).not.toContain('Superseded history row')
+    traversed.resolve(page([{ ...baseExpense, id: 11, notes: 'Traversed history row' }]))
+    await vi.waitFor(() => expect(document.querySelector('[data-expense-list]')?.textContent).toContain('Traversed history row'))
+
+    session.abort()
+    window.history.pushState(null, '', '/expenses?from=2026-10-01')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await Promise.resolve()
+    expect(listWorkflowExpenses).toHaveBeenCalledTimes(3)
   })
 
   it('[browser] retries catalogs together with the page after catalog failure', async () => {

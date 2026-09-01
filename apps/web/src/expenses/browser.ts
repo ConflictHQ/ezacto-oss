@@ -217,6 +217,8 @@ export const createExpenseWorkflowController = (
   let mutationPending = false
   let attachmentCommand: string | null = null
   let moduleAvailable = true
+  let catalogReady = false
+  let removePopstate: (() => void) | null = null
   let activationGeneration = 0
   let catalogRequestGeneration = 0
   let listRequestGeneration = 0
@@ -297,11 +299,23 @@ export const createExpenseWorkflowController = (
     }
   }
 
-  const syncDetailActions = (): void => {
-    const usable = current() !== null && moduleAvailable && !mutationPending
-    editSubmit.disabled =
-      !usable || currentExpense === null || !expenseIsEditable(currentExpense)
-    attachmentSubmit.disabled = !usable || currentExpense === null
+  const syncDetailControls = (): void => {
+    const hasDetail = current() !== null && moduleAvailable && currentExpense !== null
+    const editable =
+      hasDetail && currentExpense !== null && expenseIsEditable(currentExpense)
+    for (const field of [...editForm.elements]) {
+      if (
+        field instanceof HTMLInputElement ||
+        field instanceof HTMLSelectElement ||
+        field instanceof HTMLTextAreaElement ||
+        field instanceof HTMLButtonElement
+      ) field.disabled = !editable || mutationPending
+    }
+    editSubmit.hidden = currentExpense !== null && !expenseIsEditable(currentExpense)
+    for (const field of [...attachmentForm.elements]) {
+      if (field instanceof HTMLInputElement) field.disabled = !hasDetail || mutationPending
+    }
+    attachmentSubmit.disabled = !hasDetail || mutationPending
   }
 
   const clearPrivatePresentation = (): void => {
@@ -318,6 +332,7 @@ export const createExpenseWorkflowController = (
     mutationPending = false
     attachmentCommand = null
     moduleAvailable = true
+    catalogReady = false
 
     createForm.reset()
     editForm.reset()
@@ -340,16 +355,7 @@ export const createExpenseWorkflowController = (
     loadMore.hidden = true
     loadMore.disabled = false
     createSubmit.disabled = true
-    editSubmit.hidden = false
-    for (const field of [...editForm.elements]) {
-      if (
-        field instanceof HTMLInputElement ||
-        field instanceof HTMLSelectElement ||
-        field instanceof HTMLTextAreaElement ||
-        field instanceof HTMLButtonElement
-      ) field.disabled = true
-    }
-    syncDetailActions()
+    syncDetailControls()
     for (const selector of [
       '[data-expense-detail-approval]',
       '[data-expense-detail-approval-fact]',
@@ -384,7 +390,7 @@ export const createExpenseWorkflowController = (
     listRetry.hidden = true
     detailRetry.hidden = true
     createSubmit.disabled = true
-    syncDetailActions()
+    syncDetailControls()
     const message = 'The expenses module is not enabled for this organization.'
     listStatus.textContent = message
     detailStatus.textContent = message
@@ -397,6 +403,8 @@ export const createExpenseWorkflowController = (
       !(error instanceof EzactoApiError) ||
       error.status !== 401
     ) return false
+    removePopstate?.()
+    removePopstate = null
     clearPrivatePresentation()
     active = null
     return expected.onSessionFailure(error)
@@ -600,16 +608,10 @@ export const createExpenseWorkflowController = (
     lockMessage.hidden = reason === null
     lockMessage.textContent = reason ?? ''
     const editable = expenseIsEditable(expense)
-    for (const field of [...editForm.elements]) {
-      if (field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement || field instanceof HTMLButtonElement) {
-        field.disabled = !editable || mutationPending
-      }
-    }
-    editSubmit.hidden = !editable
     editResult.textContent = editable && expense.approval_status === 'submitted'
       ? 'Submitted expenses remain editable until approval or another lock applies.'
       : ''
-    syncDetailActions()
+    syncDetailControls()
     detailArticle.hidden = false
     detailStatus.textContent = ''
   }
@@ -670,6 +672,7 @@ export const createExpenseWorkflowController = (
       requestGeneration !== catalogRequestGeneration
     ) return false
     catalog = { categories, projects, clients }
+    catalogReady = true
     weekStartDay = configuredWeekStart
     populateCatalogs()
     applyFilterValues()
@@ -792,7 +795,7 @@ export const createExpenseWorkflowController = (
       return
     }
     mutationPending = true
-    syncDetailActions()
+    syncDetailControls()
     editResult.textContent = 'Saving expense…'
     api.updateWorkflowExpense(currentExpense.id, payload, session.signal).then((expense) => {
       if (current() !== session) return
@@ -806,7 +809,7 @@ export const createExpenseWorkflowController = (
     }).finally(() => {
       if (current() === session && moduleAvailable) {
         mutationPending = false
-        syncDetailActions()
+        syncDetailControls()
       }
     })
   })
@@ -834,7 +837,7 @@ export const createExpenseWorkflowController = (
     const data = new FormData()
     data.set('file', file)
     mutationPending = true
-    syncDetailActions()
+    syncDetailControls()
     attachmentCommand ??= `web.expense.attachment:${crypto.randomUUID()}`
     const command = attachmentCommand
     const expenseId = currentExpense.id
@@ -855,7 +858,7 @@ export const createExpenseWorkflowController = (
     }).finally(() => {
       if (current() === session && moduleAvailable) {
         mutationPending = false
-        syncDetailActions()
+        syncDetailControls()
       }
     })
   })
@@ -899,6 +902,8 @@ export const createExpenseWorkflowController = (
 
   return {
     async activate(identity, signal, onSessionFailure) {
+      removePopstate?.()
+      removePopstate = null
       const session: ActiveSession = {
         identity,
         signal,
@@ -907,8 +912,26 @@ export const createExpenseWorkflowController = (
       }
       active = session
       clearPrivatePresentation()
+      const onPopstate = (): void => {
+        if (!listPage || current() !== session) return
+        currentFilters = filtersFromSearch(globalThis.location.search)
+        applyFilterValues()
+        if (catalogReady) void loadList()
+        else void reloadWorkflow()
+      }
+      const removeSessionPopstate = (): void => {
+        globalThis.removeEventListener('popstate', onPopstate)
+      }
+      if (listPage) {
+        globalThis.addEventListener('popstate', onPopstate)
+        removePopstate = removeSessionPopstate
+      }
       const abort = (): void => {
         if (active !== session) return
+        if (removePopstate === removeSessionPopstate) {
+          removeSessionPopstate()
+          removePopstate = null
+        }
         active = null
         clearPrivatePresentation()
       }
