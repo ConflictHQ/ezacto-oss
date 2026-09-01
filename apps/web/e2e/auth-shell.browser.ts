@@ -392,6 +392,10 @@ test('[e2e:track-week] uses one editor and submits 12-hour UI times as canonical
       })
       return
     }
+    if (url.pathname === '/api/v1/expenses') {
+      await fulfillJson(route, { error: { code: 'not_found' } }, 404)
+      return
+    }
     if (url.pathname === '/api/v1/timesheet-submissions') {
       await fulfillJson(route, { error: { code: 'not_found' } }, 404)
       return
@@ -901,6 +905,7 @@ test('[e2e:timesheet-approval] submits, rejects, corrects, resubmits, and locks 
   await page.getByLabel('Email').fill(fixtureEmail)
   await page.getByLabel('Password').fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await expect(page.locator('[data-day-label]')).toContainText('Monday, Aug 17')
   await page.getByRole('button', { name: 'Next day' }).click()
   await expect(page.locator('[data-day-label]')).toContainText('Tuesday, Aug 18')
   await page.getByRole('button', { name: 'Next day' }).click()
