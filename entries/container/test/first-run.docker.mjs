@@ -1,12 +1,19 @@
-import { createServer } from 'node:net'
+import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { createServer } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const root = new URL('../../..', import.meta.url).pathname
 const suffix = `${process.pid}-${Date.now()}`
 const image = `ezacto-container-test:${suffix}`
-const volume = `ezacto-container-test-${suffix}`
+const volume = `ezacto-container-test-source-${suffix}`
+const restoredVolume = `ezacto-container-test-restored-${suffix}`
 const firstName = `ezacto-container-first-${suffix}`
 const secondName = `ezacto-container-second-${suffix}`
+const sharedSourceName = `ezacto-container-shared-source-${suffix}`
+const attachedTargetName = `ezacto-container-attached-target-${suffix}`
 const cursorKey = Buffer.alloc(32, 0x44).toString('base64url')
 const password = 'correct horse battery staple'
 
@@ -45,9 +52,7 @@ const freePort = () =>
         reject(new Error('could not reserve a TCP port'))
         return
       }
-      server.close((error) =>
-        error ? reject(error) : resolve(address.port),
-      )
+      server.close((error) => (error ? reject(error) : resolve(address.port)))
     })
   })
 
@@ -149,7 +154,9 @@ const waitForHealth = async (origin, container) => {
   const logs = await command('docker', ['logs', container], {
     allowFailure: true,
   })
-  throw new Error(`container did not become healthy\n${logs.stdout}${logs.stderr}`)
+  throw new Error(
+    `container did not become healthy\n${logs.stdout}${logs.stderr}`,
+  )
 }
 
 const request = async (origin, path, payload, cookie) => {
@@ -164,12 +171,14 @@ const request = async (origin, path, payload, cookie) => {
   })
   const body = await response.json()
   if (!response.ok) {
-    throw new Error(`${path} returned ${response.status}: ${JSON.stringify(body)}`)
+    throw new Error(
+      `${path} returned ${response.status}: ${JSON.stringify(body)}`,
+    )
   }
   return { response, body }
 }
 
-const runContainer = async (name, appPort, smtpPort) => {
+const runContainer = async (name, appPort, smtpPort, dataVolume) => {
   await command('docker', [
     'run',
     '--detach',
@@ -180,7 +189,7 @@ const runContainer = async (name, appPort, smtpPort) => {
     '--publish',
     `127.0.0.1:${appPort}:3000`,
     '--mount',
-    `type=volume,source=${volume},target=/data`,
+    `type=volume,source=${dataVolume},target=/data`,
     '--env',
     `APP_BASE_URL=http://localhost:${appPort}`,
     '--env',
@@ -195,34 +204,69 @@ const runContainer = async (name, appPort, smtpPort) => {
   ])
 }
 
-const cleanup = async (smtp, dockerAvailable) => {
+const createVolumeReference = (name, dataVolume) =>
+  command('docker', [
+    'container',
+    'create',
+    '--name',
+    name,
+    '--mount',
+    `type=volume,source=${dataVolume},target=/data`,
+    '--entrypoint',
+    'node',
+    image,
+    '-e',
+    'process.exit(0)',
+  ])
+
+const expectFailure = async (program, args, expected) => {
+  const result = await command(program, args, { allowFailure: true })
+  if (result.code === 0 || !result.stderr.includes(expected)) {
+    throw new Error(
+      `expected command failure containing ${JSON.stringify(expected)}\n${result.stdout}${result.stderr}`,
+    )
+  }
+}
+
+const cleanup = async (smtp, dockerAvailable, temporaryRoot) => {
   if (dockerAvailable) {
     await Promise.all(
-      [firstName, secondName].map((name) =>
-        command('docker', ['rm', '--force', name], { allowFailure: true }),
+      [firstName, secondName, sharedSourceName, attachedTargetName].map(
+        (name) =>
+          command('docker', ['rm', '--force', name], { allowFailure: true }),
       ),
     )
-    await command('docker', ['volume', 'rm', '--force', volume], {
-      allowFailure: true,
-    })
+    await Promise.all(
+      [volume, restoredVolume].map((name) =>
+        command('docker', ['volume', 'rm', '--force', name], {
+          allowFailure: true,
+        }),
+      ),
+    )
     await command('docker', ['image', 'rm', '--force', image], {
       allowFailure: true,
     })
+  }
+  if (temporaryRoot !== undefined) {
+    await rm(temporaryRoot, { recursive: true, force: true })
   }
   await smtp?.close()
 }
 
 let smtp
 let dockerAvailable = false
+let temporaryRoot
 try {
   await command('docker', ['version'])
   dockerAvailable = true
   smtp = createSmtpCapture()
   const [smtpPort, appPort] = await Promise.all([smtp.listen(), freePort()])
   const origin = `http://localhost:${appPort}`
+  temporaryRoot = await mkdtemp(join(tmpdir(), 'ezacto-container-restore-'))
+  const bundle = join(temporaryRoot, 'snapshot')
   await command('docker', ['build', '--tag', image, '.'])
   await command('docker', ['volume', 'create', volume])
-  await runContainer(firstName, appPort, smtpPort)
+  await runContainer(firstName, appPort, smtpPort, volume)
   await waitForHealth(origin, firstName)
 
   await request(origin, '/auth/signup', {
@@ -237,14 +281,16 @@ try {
   const token = /ezacto_verify_[A-Za-z0-9_-]{16}_[A-Za-z0-9_-]{43}/u.exec(
     decoded,
   )?.[0]
-  if (token === undefined) throw new Error('verification token missing from SMTP message')
+  if (token === undefined)
+    throw new Error('verification token missing from SMTP message')
   await request(origin, '/auth/verify-email', { token })
   const signedIn = await request(origin, '/auth/sign-in', {
     email: 'owner@example.test',
     password,
   })
   const cookie = signedIn.response.headers.get('set-cookie')?.split(';', 1)[0]
-  if (cookie === undefined) throw new Error('sign-in did not issue a session cookie')
+  if (cookie === undefined)
+    throw new Error('sign-in did not issue a session cookie')
 
   const created = async (path, payload) =>
     (await request(origin, `/api/v1/${path}`, payload, cookie)).body.data
@@ -266,6 +312,35 @@ try {
     seconds: 1_800,
     notes: 'Docker first-run acceptance',
   })
+  const attachmentBytes = Buffer.from('Docker physical restore attachment')
+  const form = new FormData()
+  form.append(
+    'file',
+    new Blob([attachmentBytes], { type: 'text/plain' }),
+    'restore-proof.txt',
+  )
+  const attachmentResponse = await fetch(
+    `${origin}/api/v1/projects/${project.id}/attachments`,
+    {
+      method: 'POST',
+      headers: {
+        cookie,
+        origin,
+        'idempotency-key': 'docker-physical-restore-attachment',
+      },
+      body: form,
+    },
+  )
+  const attachmentBody = await attachmentResponse.json()
+  if (
+    !attachmentResponse.ok ||
+    attachmentBody.data?.content_hash !==
+      createHash('sha256').update(attachmentBytes).digest('hex')
+  ) {
+    throw new Error(
+      `attachment upload failed: ${JSON.stringify(attachmentBody)}`,
+    )
+  }
 
   await command('docker', [
     'exec',
@@ -274,10 +349,60 @@ try {
     '-e',
     "if(process.getuid()===0)process.exit(1);require('fs').accessSync('/data/db.sqlite')",
   ])
-  await command('docker', ['stop', '--time', '30', firstName])
+  await command('docker', ['stop', '--timeout', '30', firstName])
+  await createVolumeReference(sharedSourceName, volume)
+  await expectFailure(
+    process.execPath,
+    [
+      'scripts/container-physical-snapshot.mjs',
+      'backup',
+      '--container',
+      firstName,
+      '--output',
+      bundle,
+    ],
+    'source volume must be referenced only by the stopped source container',
+  )
+  await command('docker', ['rm', sharedSourceName])
+  await command(process.execPath, [
+    'scripts/container-physical-snapshot.mjs',
+    'backup',
+    '--container',
+    firstName,
+    '--output',
+    bundle,
+  ])
   await command('docker', ['rm', firstName])
+  await command('docker', ['volume', 'rm', volume])
 
-  await runContainer(secondName, appPort, smtpPort)
+  await command('docker', ['volume', 'create', restoredVolume])
+  await createVolumeReference(attachedTargetName, restoredVolume)
+  await expectFailure(
+    process.execPath,
+    [
+      'scripts/container-physical-snapshot.mjs',
+      'restore',
+      '--bundle',
+      bundle,
+      '--volume',
+      restoredVolume,
+      '--image',
+      image,
+    ],
+    'target volume must not be referenced by any container',
+  )
+  await command('docker', ['rm', attachedTargetName])
+  await command(process.execPath, [
+    'scripts/container-physical-snapshot.mjs',
+    'restore',
+    '--bundle',
+    bundle,
+    '--volume',
+    restoredVolume,
+    '--image',
+    image,
+  ])
+  await runContainer(secondName, appPort, smtpPort, restoredVolume)
   await waitForHealth(origin, secondName)
   const restored = await fetch(`${origin}/api/v1/time-entries/${entry.id}`, {
     headers: { cookie },
@@ -290,7 +415,22 @@ try {
   ) {
     throw new Error(`persisted entry mismatch: ${JSON.stringify(restoredBody)}`)
   }
-  console.log('[e2e:first-run] Docker signup, SMTP verification, tracking, and restart passed')
+  const attachment = await fetch(
+    `${origin}/api/v1/projects/${project.id}/attachments/${attachmentBody.data.id}/content`,
+    { headers: { cookie } },
+  )
+  if (
+    !attachment.ok ||
+    !Buffer.from(await attachment.arrayBuffer()).equals(attachmentBytes)
+  ) {
+    throw new Error('restored attachment bytes do not match')
+  }
+  console.log(
+    '[e2e:first-run] Docker signup, SMTP verification, and tracking passed',
+  )
+  console.log(
+    '[e2e:backup-restore] exclusive stopped-volume SQLite and attachment restore passed',
+  )
 } finally {
-  await cleanup(smtp, dockerAvailable)
+  await cleanup(smtp, dockerAvailable, temporaryRoot)
 }
