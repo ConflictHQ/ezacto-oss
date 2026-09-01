@@ -485,6 +485,56 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
+      app.get('/expenses', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            activeSection: 'Expenses',
+            view: 'expense-list',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/expenses/:expenseId', (context) => {
+        const rawExpenseId = context.req.param('expenseId')
+        const expenseId = Number(rawExpenseId)
+        if (
+          !/^[1-9][0-9]*$/u.test(rawExpenseId) ||
+          !Number.isSafeInteger(expenseId)
+        ) {
+          return context.notFound()
+        }
+        return context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            activeSection: 'Expenses',
+            view: 'expense-detail',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        )
+      })
+
       app.get('/projects/:projectId', (context) => {
         const rawProjectId = context.req.param('projectId')
         const projectId = Number(rawProjectId)

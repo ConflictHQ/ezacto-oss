@@ -20,6 +20,7 @@ import {
 } from '../components/time-entry-editor.js'
 import { createClientDirectoryController } from '../clients/browser.js'
 import { createProjectDirectoryController } from '../projects/browser.js'
+import { createExpenseWorkflowController } from '../expenses/browser.js'
 import { renderInvoiceDetail, renderInvoiceListItems } from '../invoices/browser.js'
 import {
   invoiceIdFromPathname,
@@ -708,6 +709,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const clientDetailPage = document.documentElement.dataset.appView === 'client-detail'
   const projectListPage = document.documentElement.dataset.appView === 'project-list'
   const projectDetailPage = document.documentElement.dataset.appView === 'project-detail'
+  const expenseListPage = document.documentElement.dataset.appView === 'expense-list'
+  const expenseDetailPage = document.documentElement.dataset.appView === 'expense-detail'
   const timesheetApprovalsPage =
     document.documentElement.dataset.appView === 'timesheet-approvals'
   const signedOutDocumentTitle = document.title
@@ -725,8 +728,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
               ? ' — Client detail'
               : projectListPage
                 ? ' — Projects'
-                : projectDetailPage
-                  ? ' — Project detail'
+              : projectDetailPage
+                ? ' — Project detail'
+                : expenseListPage
+                  ? ' — Expenses'
+                  : expenseDetailPage
+                    ? ' — Expense detail'
               : timesheetApprovalsPage
                 ? ' — Approvals'
                 : ' — Time',
@@ -780,6 +787,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const generatedInvoiceLink = required<HTMLAnchorElement>('[data-generated-invoice-link]')
   const clientDirectory = createClientDirectoryController(api)
   const projectDirectory = createProjectDirectoryController(api)
+  const expenseWorkflow = createExpenseWorkflowController(api)
   const invoiceList = required<HTMLElement>('[data-invoice-list]')
   const invoiceListStatus = required<HTMLElement>('[data-invoice-list-status]')
   const invoiceLoadMore = required<HTMLButtonElement>('[data-invoice-load-more]')
@@ -1775,6 +1783,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     } else if (projectListPage || projectDetailPage) {
       await Promise.all([
         projectDirectory.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (expenseListPage || expenseDetailPage) {
+      await Promise.all([
+        expenseWorkflow.activate(
           identity,
           authenticated.signal,
           (error) => handleSessionFailure(error, authenticated),

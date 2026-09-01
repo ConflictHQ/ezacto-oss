@@ -1,0 +1,717 @@
+import {
+  EzactoApiError,
+  type Attachment,
+  type Expense,
+  type ExpenseCategory,
+  type ExpenseInput,
+  type ExpensePatch,
+  type GeneralResource,
+  type Whoami,
+} from '@ezacto/client'
+import {
+  expenseCategoryLabel,
+  expenseClientLabel,
+  expenseCurrency,
+  expenseIdFromPathname,
+  expenseIsEditable,
+  expenseLockExplanation,
+  expenseMoney,
+  expenseProjectLabel,
+  expenseResourceNumber,
+  expenseResourceText,
+  expenseStatusLabel,
+  expenseValueForForm,
+  expenseValueInput,
+  expenseWeekLabel,
+  expenseWeekStart,
+  filtersFromSearch,
+  type ExpenseFilters,
+  type ExpensePage,
+  type ExpenseWorkflowApi,
+  type ExpenseWeekStartDay,
+} from './model.js'
+
+const required = <ElementType extends Element>(selector: string): ElementType => {
+  const result = document.querySelector<ElementType>(selector)
+  if (result === null) throw new Error(`expense workflow element missing: ${selector}`)
+  return result
+}
+
+const apiMessage = (error: unknown): string => {
+  if (error instanceof EzactoApiError && typeof error.body === 'object' && error.body !== null) {
+    const detail = Reflect.get(error.body, 'error')
+    if (typeof detail === 'object' && detail !== null) {
+      const fields = Reflect.get(detail, 'fields')
+      if (Array.isArray(fields)) {
+        const field = fields.find(
+          (candidate) =>
+            typeof candidate === 'object' &&
+            candidate !== null &&
+            typeof Reflect.get(candidate, 'message') === 'string',
+        )
+        if (field !== undefined) return String(Reflect.get(field, 'message'))
+      }
+      const message = Reflect.get(detail, 'message')
+      if (typeof message === 'string' && message.trim() !== '') return message
+    }
+  }
+  return error instanceof Error ? error.message : 'The request could not be completed.'
+}
+
+const collect = async <Item>(
+  load: (cursor?: string) => Promise<ExpensePage<Item>>,
+  signal: AbortSignal,
+): Promise<Item[]> => {
+  const items: Item[] = []
+  let cursor: string | undefined
+  do {
+    signal.throwIfAborted()
+    const page = await load(cursor)
+    items.push(...page.data)
+    cursor = page.page.next_cursor ?? undefined
+  } while (cursor !== undefined)
+  return items
+}
+
+const option = (value: number, text: string): HTMLOptionElement => {
+  const result = document.createElement('option')
+  result.value = String(value)
+  result.textContent = text
+  return result
+}
+
+const selectedId = (form: HTMLFormElement, name: string): number => {
+  const field = form.elements.namedItem(name)
+  const value = field instanceof HTMLSelectElement ? Number(field.value) : Number.NaN
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error(`Choose a valid ${name.replace('_id', '')}.`)
+  return value
+}
+
+const formInput = (form: HTMLFormElement, name: string): HTMLInputElement => {
+  const field = form.elements.namedItem(name)
+  if (!(field instanceof HTMLInputElement)) throw new Error(`expense input missing: ${name}`)
+  return field
+}
+
+const formSelect = (form: HTMLFormElement, name: string): HTMLSelectElement => {
+  const field = form.elements.namedItem(name)
+  if (!(field instanceof HTMLSelectElement)) throw new Error(`expense select missing: ${name}`)
+  return field
+}
+
+const formTextarea = (form: HTMLFormElement, name: string): HTMLTextAreaElement => {
+  const field = form.elements.namedItem(name)
+  if (!(field instanceof HTMLTextAreaElement)) throw new Error(`expense textarea missing: ${name}`)
+  return field
+}
+
+const textOrNull = (value: string): string | null => {
+  const normalized = value.trim()
+  return normalized === '' ? null : normalized
+}
+
+const expensePayload = (
+  form: HTMLFormElement,
+  categories: readonly ExpenseCategory[],
+): ExpenseInput => {
+  const projectId = selectedId(form, 'project_id')
+  const categoryId = selectedId(form, 'expense_category_id')
+  const category = categories.find((candidate) => candidate.id === categoryId)
+  if (category === undefined) throw new Error('Choose an available expense category.')
+  const spentDate = formInput(form, 'spent_date').value
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(spentDate)) throw new Error('Choose a date.')
+  return {
+    project_id: projectId,
+    expense_category_id: categoryId,
+    spent_date: spentDate,
+    notes: textOrNull(formTextarea(form, 'notes').value),
+    ...expenseValueInput(category, formInput(form, 'expense_value').value),
+    billable: formInput(form, 'billable').checked,
+    reimbursable: formInput(form, 'reimbursable').checked,
+  }
+}
+
+const asPatch = (input: ExpenseInput): ExpensePatch => ({ ...input })
+
+const setValuePrompt = (
+  category: ExpenseCategory | undefined,
+  label: HTMLElement,
+  control: HTMLInputElement,
+): void => {
+  const unitBased = category?.unit_price_cents !== null && category !== undefined
+  label.firstChild!.textContent = unitBased
+    ? `Units (${category.unit_name ?? 'units'})`
+    : 'Amount'
+  control.inputMode = unitBased ? 'numeric' : 'decimal'
+  control.step = unitBased ? '1' : '0.01'
+  control.min = '0'
+  control.placeholder = unitBased ? '0' : '0.00'
+}
+
+const localDate = (): string => {
+  const now = new Date()
+  const offset = now.getTimezoneOffset() * 60_000
+  return new Date(now.valueOf() - offset).toISOString().slice(0, 10)
+}
+
+interface Catalog {
+  readonly categories: readonly ExpenseCategory[]
+  readonly projects: readonly GeneralResource[]
+  readonly clients: readonly GeneralResource[]
+}
+
+interface ActiveSession {
+  readonly identity: Whoami
+  readonly signal: AbortSignal
+  readonly onSessionFailure: (error: unknown) => boolean
+}
+
+export interface ExpenseWorkflowController {
+  activate(
+    identity: Whoami,
+    signal: AbortSignal,
+    onSessionFailure: (error: unknown) => boolean,
+  ): Promise<void>
+}
+
+export const createExpenseWorkflowController = (
+  api: Partial<ExpenseWorkflowApi>,
+): ExpenseWorkflowController => {
+  const listPage = document.documentElement.dataset.appView === 'expense-list'
+  const detailPage = document.documentElement.dataset.appView === 'expense-detail'
+  const listStatus = required<HTMLElement>('[data-expense-list-status]')
+  const list = required<HTMLOListElement>('[data-expense-list]')
+  const loadMore = required<HTMLButtonElement>('[data-expense-load-more]')
+  const listRetry = required<HTMLButtonElement>('[data-expense-list-retry]')
+  const filterForm = required<HTMLFormElement>('[data-expense-filter-form]')
+  const filterReset = required<HTMLButtonElement>('[data-expense-filter-reset]')
+  const createForm = required<HTMLFormElement>('[data-expense-create-form]')
+  const createSubmit = required<HTMLButtonElement>('[data-expense-create-submit]')
+  const createResult = required<HTMLElement>('[data-expense-create-result]')
+  const createCategory = required<HTMLSelectElement>('[data-expense-create-category]')
+  const createValueLabel = required<HTMLElement>('[data-expense-create-value-label]')
+  const detailStatus = required<HTMLElement>('[data-expense-detail-status]')
+  const detailArticle = required<HTMLElement>('[data-expense-detail]')
+  const detailRetry = required<HTMLButtonElement>('[data-expense-detail-retry]')
+  const editForm = required<HTMLFormElement>('[data-expense-edit-form]')
+  const editSubmit = required<HTMLButtonElement>('[data-expense-edit-submit]')
+  const editResult = required<HTMLElement>('[data-expense-edit-result]')
+  const editCategory = required<HTMLSelectElement>('[data-expense-edit-category]')
+  const editValueLabel = required<HTMLElement>('[data-expense-edit-value-label]')
+  const lockMessage = required<HTMLElement>('[data-expense-lock-message]')
+  const attachmentForm = required<HTMLFormElement>('[data-expense-attachment-form]')
+  const attachmentSubmit = required<HTMLButtonElement>('[data-expense-attachment-submit]')
+  const attachmentStatus = required<HTMLElement>('[data-expense-attachment-status]')
+  const attachmentList = required<HTMLUListElement>('[data-expense-attachments]')
+
+  let active: ActiveSession | null = null
+  let catalog: Catalog = { categories: [], projects: [], clients: [] }
+  let currentExpense: Expense | null = null
+  let currentFilters: ExpenseFilters = filtersFromSearch(globalThis.location.search)
+  let nextCursor: string | null = null
+  let listedExpenses: Expense[] = []
+  let weekStartDay: ExpenseWeekStartDay = 'monday'
+  let listPending = false
+  let mutationPending = false
+  let attachmentCommand: string | null = null
+
+  const current = (): ActiveSession | null =>
+    active !== null && !active.signal.aborted ? active : null
+
+  const sessionFailure = (error: unknown): boolean => {
+    const session = current()
+    if (session === null || !(error instanceof EzactoApiError) || error.status !== 401) return false
+    listPending = false
+    mutationPending = false
+    attachmentCommand = null
+    createSubmit.disabled = false
+    editSubmit.disabled = false
+    attachmentSubmit.disabled = false
+    return session.onSessionFailure(error)
+  }
+
+  const fillCatalogSelect = (
+    select: HTMLSelectElement,
+    values: readonly HTMLOptionElement[],
+    emptyLabel?: string,
+  ): void => {
+    const selected = select.value
+    select.replaceChildren(
+      ...(emptyLabel === undefined
+        ? []
+        : [Object.assign(document.createElement('option'), { value: '', textContent: emptyLabel })]),
+      ...values,
+    )
+    if ([...select.options].some((candidate) => candidate.value === selected)) select.value = selected
+  }
+
+  const projectOptions = (): HTMLOptionElement[] =>
+    catalog.projects.map((project) => option(project.id, expenseProjectLabel(project.id, catalog.projects)))
+
+  const activeProjectOptions = (): HTMLOptionElement[] =>
+    catalog.projects
+      .filter((project) => project['is_active'] !== false)
+      .map((project) => option(project.id, expenseProjectLabel(project.id, catalog.projects)))
+
+  const categoryOptions = (): HTMLOptionElement[] =>
+    catalog.categories.map((category) => option(category.id, category.name))
+
+  const activeCategoryOptions = (): HTMLOptionElement[] =>
+    catalog.categories
+      .filter((category) => category.is_active)
+      .map((category) => option(category.id, category.name))
+
+  const clientOptions = (): HTMLOptionElement[] =>
+    catalog.clients.map((client) => option(client.id, expenseResourceText(client, 'name') ?? `Client #${client.id}`))
+
+  const populateCatalogs = (): void => {
+    fillCatalogSelect(formSelect(createForm, 'project_id'), activeProjectOptions())
+    fillCatalogSelect(createCategory, activeCategoryOptions())
+    fillCatalogSelect(formSelect(editForm, 'project_id'), projectOptions())
+    fillCatalogSelect(editCategory, categoryOptions())
+    fillCatalogSelect(formSelect(filterForm, 'client_id'), clientOptions(), 'All clients')
+    fillCatalogSelect(formSelect(filterForm, 'project_id'), projectOptions(), 'All projects')
+    fillCatalogSelect(formSelect(filterForm, 'expense_category_id'), categoryOptions(), 'All categories')
+    setValuePrompt(
+      catalog.categories.find((candidate) => candidate.id === Number(createCategory.value)),
+      createValueLabel,
+      formInput(createForm, 'expense_value'),
+    )
+  }
+
+  const applyFilterValues = (): void => {
+    for (const name of ['from', 'to', 'client_id', 'project_id', 'expense_category_id', 'approval_status', 'reimbursement_status']) {
+      const field = filterForm.elements.namedItem(name)
+      if (!(field instanceof HTMLInputElement) && !(field instanceof HTMLSelectElement)) continue
+      const value = currentFilters[name as keyof ExpenseFilters]
+      field.value = value === undefined ? '' : String(value)
+    }
+  }
+
+  const filtersFromForm = (): ExpenseFilters => {
+    const data = new FormData(filterForm)
+    const from = data.get('from')
+    const to = data.get('to')
+    if (typeof from === 'string' && typeof to === 'string' && from !== '' && to !== '' && from > to) {
+      throw new Error('To date cannot be before From date.')
+    }
+    const id = (name: string): number | undefined => {
+      const raw = data.get(name)
+      const value = typeof raw === 'string' ? Number(raw) : Number.NaN
+      return Number.isSafeInteger(value) && value > 0 ? value : undefined
+    }
+    const approval = data.get('approval_status')
+    const reimbursement = data.get('reimbursement_status')
+    const clientId = id('client_id')
+    const projectId = id('project_id')
+    const categoryId = id('expense_category_id')
+    return {
+      ...(typeof from === 'string' && from !== '' ? { from } : {}),
+      ...(typeof to === 'string' && to !== '' ? { to } : {}),
+      ...(clientId === undefined ? {} : { client_id: clientId }),
+      ...(projectId === undefined ? {} : { project_id: projectId }),
+      ...(categoryId === undefined ? {} : { expense_category_id: categoryId }),
+      ...(approval === 'unsubmitted' || approval === 'submitted' || approval === 'approved' ? { approval_status: approval } : {}),
+      ...(reimbursement === 'none' || reimbursement === 'pending' || reimbursement === 'approved' || reimbursement === 'paid' ? { reimbursement_status: reimbursement } : {}),
+    }
+  }
+
+  const updateFilterUrl = (): void => {
+    const search = new URLSearchParams()
+    for (const [key, value] of Object.entries(currentFilters)) search.set(key, String(value))
+    globalThis.history.replaceState(null, '', `/expenses${search.size === 0 ? '' : `?${search.toString()}`}`)
+  }
+
+  const renderExpense = (expense: Expense): HTMLLIElement => {
+    const row = document.createElement('li')
+    row.dataset.expenseId = String(expense.id)
+    row.className = 'expense-list-row'
+    const primary = document.createElement('div')
+    const link = document.createElement('a')
+    link.href = `/expenses/${expense.id}`
+    link.textContent = `${expense.spent_date} · ${expenseCategoryLabel(expense.expense_category_id, catalog.categories)}`
+    const assignment = document.createElement('p')
+    assignment.textContent = `${expenseClientLabel(expense.project_id, catalog.projects, catalog.clients)} · ${expenseProjectLabel(expense.project_id, catalog.projects)}`
+    const notes = document.createElement('p')
+    notes.className = 'expense-notes'
+    notes.dataset.empty = String(expense.notes === null || expense.notes === undefined || expense.notes.trim() === '')
+    notes.textContent = expense.notes?.trim() || 'No notes'
+    primary.append(link, assignment, notes)
+    const summary = document.createElement('div')
+    const amount = document.createElement('strong')
+    amount.textContent = expenseMoney(expense.total_cost_cents, expenseCurrency(expense.project_id, catalog.projects, catalog.clients))
+    const approval = document.createElement('span')
+    approval.className = 'expense-status-pill'
+    approval.textContent = expenseStatusLabel(expense.approval_status)
+    const reimbursement = document.createElement('span')
+    reimbursement.textContent = expense.reimbursable
+      ? `Reimbursement: ${expenseStatusLabel(expense.reimbursement_status)}`
+      : 'Not reimbursable'
+    const billing = document.createElement('span')
+    billing.textContent = expense.invoice_id == null
+      ? expense.billable ? 'Billable · not invoiced' : 'Non-billable'
+      : `Invoice #${expense.invoice_id}`
+    const locked = document.createElement('span')
+    locked.textContent = expense.is_locked ? 'Locked' : 'Editable'
+    summary.append(amount, approval, reimbursement, billing, locked)
+    row.append(primary, summary)
+    return row
+  }
+
+  const renderList = (): void => {
+    list.replaceChildren()
+    const expenses = [...listedExpenses].sort(
+      (left, right) =>
+        right.spent_date.localeCompare(left.spent_date) || right.id - left.id,
+    )
+    for (const expense of expenses) {
+      const week = expenseWeekStart(expense.spent_date, weekStartDay)
+      const previous = list.lastElementChild
+      if (previous?.getAttribute('data-expense-week') !== week) {
+        const heading = document.createElement('li')
+        heading.className = 'expense-week-heading'
+        heading.dataset.expenseWeek = week
+        heading.textContent = expenseWeekLabel(expense.spent_date, weekStartDay)
+        list.append(heading)
+      }
+      const row = renderExpense(expense)
+      row.dataset.expenseWeek = week
+      list.append(row)
+    }
+  }
+
+  const loadList = async (append = false): Promise<void> => {
+    const session = current()
+    if (session === null || api.listWorkflowExpenses === undefined || listPending) return
+    listPending = true
+    listStatus.textContent = append ? 'Loading more expenses…' : 'Loading expenses…'
+    listRetry.hidden = true
+    loadMore.disabled = true
+    try {
+      const page = await api.listWorkflowExpenses(
+        currentFilters,
+        append ? nextCursor ?? undefined : undefined,
+        session.signal,
+      )
+      if (current() !== session) return
+      listedExpenses = append ? [...listedExpenses, ...page.data] : [...page.data]
+      renderList()
+      nextCursor = page.page.next_cursor
+      loadMore.hidden = nextCursor === null
+      const expenseCount = list.querySelectorAll('[data-expense-id]').length
+      listStatus.textContent = expenseCount === 0
+        ? 'No expenses match these filters.'
+        : `${expenseCount} ${expenseCount === 1 ? 'expense' : 'expenses'} shown by week.`
+    } catch (error) {
+      if (sessionFailure(error)) return
+      listStatus.textContent = apiMessage(error)
+      listRetry.hidden = false
+    } finally {
+      listPending = false
+      loadMore.disabled = false
+    }
+  }
+
+  const renderAttachments = (expenseId: number, attachments: readonly Attachment[]): void => {
+    attachmentList.replaceChildren()
+    if (attachments.length === 0) {
+      const empty = document.createElement('li')
+      empty.className = 'expense-attachment-empty'
+      empty.textContent = 'No receipts attached.'
+      attachmentList.append(empty)
+      return
+    }
+    for (const attachment of attachments) {
+      const row = document.createElement('li')
+      const link = document.createElement('a')
+      link.href = `/api/v1/expenses/${expenseId}/attachments/${attachment.id}/content`
+      link.textContent = attachment.name
+      link.setAttribute('download', attachment.name)
+      const metadata = document.createElement('span')
+      metadata.textContent = `${new Intl.NumberFormat('en-US').format(attachment.byte_size)} bytes`
+      row.append(link, metadata)
+      attachmentList.append(row)
+    }
+  }
+
+  const renderDetail = (expense: Expense): void => {
+    currentExpense = expense
+    const category = catalog.categories.find((candidate) => candidate.id === expense.expense_category_id)
+    const project = catalog.projects.find((candidate) => candidate.id === expense.project_id)
+    if (category !== undefined && ![...editCategory.options].some((item) => item.value === String(category.id))) {
+      editCategory.append(option(category.id, category.name))
+    }
+    if (project !== undefined && ![...formSelect(editForm, 'project_id').options].some((item) => item.value === String(project.id))) {
+      formSelect(editForm, 'project_id').append(option(project.id, expenseProjectLabel(project.id, catalog.projects)))
+    }
+    formSelect(editForm, 'project_id').value = String(expense.project_id)
+    editCategory.value = String(expense.expense_category_id)
+    formInput(editForm, 'spent_date').value = expense.spent_date
+    formTextarea(editForm, 'notes').value = expense.notes ?? ''
+    formInput(editForm, 'billable').checked = expense.billable
+    formInput(editForm, 'reimbursable').checked = expense.reimbursable
+    if (category !== undefined) formInput(editForm, 'expense_value').value = expenseValueForForm(expense, category)
+    setValuePrompt(category, editValueLabel, formInput(editForm, 'expense_value'))
+    required<HTMLElement>('[data-expense-detail-approval]').textContent = expenseStatusLabel(expense.approval_status)
+    required<HTMLElement>('[data-expense-detail-approval-fact]').textContent = expenseStatusLabel(expense.approval_status)
+    required<HTMLElement>('[data-expense-detail-reimbursement]').textContent = expense.reimbursable
+      ? expenseStatusLabel(expense.reimbursement_status)
+      : 'Not reimbursable'
+    required<HTMLElement>('[data-expense-detail-invoice]').textContent = expense.invoice_id == null ? 'Not invoiced' : `Invoice #${expense.invoice_id}`
+    required<HTMLElement>('[data-expense-detail-total]').textContent = expenseMoney(
+      expense.total_cost_cents,
+      expenseCurrency(expense.project_id, catalog.projects, catalog.clients),
+    )
+    const reason = expenseLockExplanation(expense)
+    lockMessage.hidden = reason === null
+    lockMessage.textContent = reason ?? ''
+    const editable = expenseIsEditable(expense)
+    for (const field of [...editForm.elements]) {
+      if (field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement || field instanceof HTMLButtonElement) {
+        field.disabled = !editable || mutationPending
+      }
+    }
+    editSubmit.hidden = !editable
+    editResult.textContent = editable && expense.approval_status === 'submitted'
+      ? 'Submitted expenses remain editable until approval or another lock applies.'
+      : ''
+    detailArticle.hidden = false
+    detailStatus.textContent = ''
+  }
+
+  const loadDetail = async (): Promise<void> => {
+    const session = current()
+    const expenseId = expenseIdFromPathname(globalThis.location.pathname)
+    if (
+      session === null ||
+      expenseId === null ||
+      api.getWorkflowExpense === undefined ||
+      api.listWorkflowExpenseAttachments === undefined
+    ) return
+    detailStatus.textContent = 'Loading expense…'
+    detailRetry.hidden = true
+    try {
+      const [expense, attachments] = await Promise.all([
+        api.getWorkflowExpense(expenseId, session.signal),
+        api.listWorkflowExpenseAttachments(expenseId, session.signal),
+      ])
+      if (current() !== session) return
+      renderDetail(expense)
+      renderAttachments(expense.id, attachments)
+      attachmentStatus.textContent = attachments.length === 0 ? '' : `${attachments.length} receipt ${attachments.length === 1 ? 'file' : 'files'}.`
+    } catch (error) {
+      if (sessionFailure(error)) return
+      detailStatus.textContent = apiMessage(error)
+      detailArticle.hidden = true
+      detailRetry.hidden = false
+    }
+  }
+
+  const loadCatalog = async (session: ActiveSession): Promise<void> => {
+    if (
+      api.listExpenseCategories === undefined ||
+      api.listExpenseProjects === undefined ||
+      api.listExpenseClients === undefined ||
+      api.getExpenseWeekStartDay === undefined
+    ) throw new Error('Expense catalogs are unavailable.')
+    const [categories, projects, clients, configuredWeekStart] = await Promise.all([
+      collect((cursor) => api.listExpenseCategories!(cursor, session.signal), session.signal),
+      collect((cursor) => api.listExpenseProjects!(cursor, session.signal), session.signal),
+      collect((cursor) => api.listExpenseClients!(cursor, session.signal), session.signal),
+      api.getExpenseWeekStartDay(session.signal),
+    ])
+    catalog = { categories, projects, clients }
+    weekStartDay = configuredWeekStart
+    populateCatalogs()
+    applyFilterValues()
+    createSubmit.disabled =
+      categories.every((item) => !item.is_active) ||
+      projects.every((item) => item['is_active'] === false)
+  }
+
+  createCategory.addEventListener('change', () => {
+    formInput(createForm, 'expense_value').value = ''
+    setValuePrompt(
+      catalog.categories.find((candidate) => candidate.id === Number(createCategory.value)),
+      createValueLabel,
+      formInput(createForm, 'expense_value'),
+    )
+  })
+
+  editCategory.addEventListener('change', () => {
+    formInput(editForm, 'expense_value').value = ''
+    setValuePrompt(
+      catalog.categories.find((candidate) => candidate.id === Number(editCategory.value)),
+      editValueLabel,
+      formInput(editForm, 'expense_value'),
+    )
+  })
+
+  createForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const session = current()
+    if (session === null || mutationPending || api.createWorkflowExpense === undefined) return
+    let payload: ExpenseInput
+    try {
+      payload = expensePayload(createForm, catalog.categories)
+    } catch (error) {
+      createResult.textContent = apiMessage(error)
+      return
+    }
+    mutationPending = true
+    createSubmit.disabled = true
+    createResult.textContent = 'Adding expense…'
+    api.createWorkflowExpense(payload, session.signal).then((expense) => {
+      if (current() !== session) return
+      createForm.reset()
+      formInput(createForm, 'spent_date').value = localDate()
+      populateCatalogs()
+      createResult.textContent = `Expense added. Open expense #${expense.id} to attach a receipt.`
+      void loadList()
+    }).catch((error: unknown) => {
+      if (!sessionFailure(error)) createResult.textContent = apiMessage(error)
+    }).finally(() => {
+      if (current() === session) {
+        mutationPending = false
+        createSubmit.disabled = false
+      }
+    })
+  })
+
+  editForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const session = current()
+    if (
+      session === null ||
+      mutationPending ||
+      currentExpense === null ||
+      api.updateWorkflowExpense === undefined
+    ) return
+    let payload: ExpensePatch
+    try {
+      payload = asPatch(expensePayload(editForm, catalog.categories))
+    } catch (error) {
+      editResult.textContent = apiMessage(error)
+      return
+    }
+    mutationPending = true
+    editSubmit.disabled = true
+    editResult.textContent = 'Saving expense…'
+    api.updateWorkflowExpense(currentExpense.id, payload, session.signal).then((expense) => {
+      if (current() !== session) return
+      renderDetail(expense)
+      editResult.textContent = 'Expense saved.'
+    }).catch((error: unknown) => {
+      if (!sessionFailure(error)) editResult.textContent = apiMessage(error)
+    }).finally(() => {
+      if (current() === session) {
+        mutationPending = false
+        editSubmit.disabled = currentExpense === null || !expenseIsEditable(currentExpense)
+      }
+    })
+  })
+
+  attachmentForm.addEventListener('input', () => {
+    if (!mutationPending) attachmentCommand = null
+  })
+
+  attachmentForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const session = current()
+    if (
+      session === null ||
+      currentExpense === null ||
+      mutationPending ||
+      api.uploadWorkflowExpenseAttachment === undefined ||
+      api.listWorkflowExpenseAttachments === undefined
+    ) return
+    const fileControl = formInput(attachmentForm, 'file')
+    const file = fileControl.files?.[0]
+    if (file === undefined || file.size === 0) {
+      attachmentStatus.textContent = 'Choose a non-empty receipt file.'
+      return
+    }
+    const data = new FormData()
+    data.set('file', file)
+    mutationPending = true
+    attachmentSubmit.disabled = true
+    attachmentCommand ??= `web.expense.attachment:${crypto.randomUUID()}`
+    const command = attachmentCommand
+    const expenseId = currentExpense.id
+    attachmentStatus.textContent = 'Uploading receipt…'
+    api.uploadWorkflowExpenseAttachment(expenseId, command, data, session.signal).then(async () => {
+      if (current() !== session) return
+      const attachments = await api.listWorkflowExpenseAttachments!(expenseId, session.signal)
+      if (current() !== session) return
+      attachmentCommand = null
+      attachmentForm.reset()
+      renderAttachments(expenseId, attachments)
+      attachmentStatus.textContent = 'Receipt uploaded.'
+    }).catch((error: unknown) => {
+      if (!sessionFailure(error)) attachmentStatus.textContent = apiMessage(error)
+    }).finally(() => {
+      if (current() === session) {
+        mutationPending = false
+        attachmentSubmit.disabled = false
+      }
+    })
+  })
+
+  filterForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    try {
+      currentFilters = filtersFromForm()
+      updateFilterUrl()
+      void loadList()
+    } catch (error) {
+      listStatus.textContent = apiMessage(error)
+    }
+  })
+
+  filterReset.addEventListener('click', () => {
+    currentFilters = {}
+    filterForm.reset()
+    updateFilterUrl()
+    void loadList()
+  })
+
+  formSelect(filterForm, 'client_id').addEventListener('change', () => {
+    const clientId = Number(formSelect(filterForm, 'client_id').value)
+    const project = formSelect(filterForm, 'project_id')
+    const selected = project.value
+    const projects = Number.isSafeInteger(clientId) && clientId > 0
+      ? catalog.projects.filter((candidate) => expenseResourceNumber(candidate, 'client_id') === clientId)
+      : catalog.projects
+    fillCatalogSelect(
+      project,
+      projects.map((candidate) => option(candidate.id, expenseProjectLabel(candidate.id, catalog.projects))),
+      'All projects',
+    )
+    if ([...project.options].some((candidate) => candidate.value === selected)) project.value = selected
+  })
+
+  loadMore.addEventListener('click', () => void loadList(true))
+  listRetry.addEventListener('click', () => void loadList())
+  detailRetry.addEventListener('click', () => void loadDetail())
+
+  return {
+    async activate(identity, signal, onSessionFailure) {
+      active = { identity, signal, onSessionFailure }
+      createResult.textContent = ''
+      editResult.textContent = ''
+      formInput(createForm, 'spent_date').value = localDate()
+      try {
+        await loadCatalog(active)
+        if (signal.aborted) return
+        if (listPage) await loadList()
+        if (detailPage) await loadDetail()
+      } catch (error) {
+        if (sessionFailure(error)) return
+        const status = listPage ? listStatus : detailStatus
+        status.textContent = apiMessage(error)
+        if (listPage) listRetry.hidden = false
+        if (detailPage) detailRetry.hidden = false
+      }
+    },
+  }
+}
