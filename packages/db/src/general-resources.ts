@@ -74,6 +74,19 @@ const definitions: Readonly<Record<GeneralResourceKind, ResourceDefinition>> = {
     archive: false,
     filters: { clientId: 'client_id', updatedSince: 'updated_at' },
   },
+  'expense-categories': {
+    table: 'expense_categories',
+    columns: {
+      name: 'name',
+      unitName: 'unit_name',
+      unitPriceCents: 'unit_price_cents',
+      isActive: 'is_active',
+    },
+    booleans: new Set(['isActive']),
+    json: new Set(),
+    archive: true,
+    filters: { isActive: 'is_active', updatedSince: 'updated_at' },
+  },
   projects: {
     table: 'projects',
     columns: {
