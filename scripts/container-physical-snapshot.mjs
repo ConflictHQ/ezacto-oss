@@ -332,9 +332,13 @@ const volumeReferences = async (volume) => {
 
 const verifySqliteWithImage = async (root, image) => {
   const verifier = String.raw`
+const fs = require('node:fs')
 const Database = require('better-sqlite3')
-const database = new Database('/snapshot/db.sqlite', { readonly: true, fileMustExist: true })
+const path = '/tmp/ezacto-snapshot-verify.sqlite'
+fs.copyFileSync('/snapshot/db.sqlite', path, fs.constants.COPYFILE_EXCL)
+const database = new Database(path, { fileMustExist: true })
 try {
+  database.pragma('query_only = ON')
   if (database.pragma('quick_check(1)', { simple: true }) !== 'ok') throw new Error('SQLite quick_check failed')
   if (database.pragma('foreign_key_check').length !== 0) throw new Error('SQLite foreign_key_check failed')
 } finally {
