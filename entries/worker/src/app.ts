@@ -414,7 +414,55 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
-      app.get('/invoices', (context) => context.redirect('/invoices/new', 302))
+      app.get('/invoices', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            activeSection: 'Invoices',
+            view: 'invoice-list',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/invoices/:invoiceId', (context) => {
+        const rawInvoiceId = context.req.param('invoiceId')
+        const invoiceId = Number(rawInvoiceId)
+        if (
+          !/^[1-9][0-9]*$/u.test(rawInvoiceId) ||
+          !Number.isSafeInteger(invoiceId)
+        ) {
+          return context.notFound()
+        }
+        return context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            activeSection: 'Invoices',
+            view: 'invoice-detail',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        )
+      })
     },
   })
 

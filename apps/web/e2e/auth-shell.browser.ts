@@ -908,7 +908,24 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expect(success.locator('[data-generated-invoice-number]')).toHaveText(/^\d+$/u)
   await expect(success.locator('[data-generated-invoice-total]')).toContainText('$75.00')
   await expect(success.locator('[data-generated-invoice-total]')).toContainText('1 line')
-  await expect(success).toContainText('The draft is saved.')
+  await expect(success).toContainText('The draft is saved and ready to review.')
+
+  const generatedNumber = await success.locator('[data-generated-invoice-number]').innerText()
+  await success.getByRole('link', { name: 'Open draft invoice' }).click()
+  await expect(page).toHaveURL(/\/invoices\/\d+$/u)
+  const detail = page.locator('[data-invoice-document]')
+  await expect(detail).toBeVisible()
+  await expect(detail.locator('[data-invoice-detail-number]')).toHaveText(generatedNumber)
+  await expect(detail.locator('[data-invoice-detail-lines]')).toContainText(
+    'Browser Acceptance Project',
+  )
+  await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$75.00')
+
+  await page.getByRole('link', { name: 'Back to invoices' }).click()
+  await expect(page).toHaveURL(/\/invoices$/u)
+  const generatedCard = page.locator('[data-invoice-id]', { hasText: generatedNumber })
+  await expect(generatedCard).toBeVisible()
+  await expect(generatedCard).toContainText('$75.00')
 })
 
 test('[e2e:timesheet-approval] submits, rejects, corrects, resubmits, and locks a real D1 timesheet', async ({
