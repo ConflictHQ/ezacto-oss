@@ -200,9 +200,9 @@ describe("Worker D1 runtime composition", () => {
       .prepare("SELECT id FROM _ezacto_migrations ORDER BY id")
       .all<{ id: string }>();
     expect(migrations.results.at(-1)?.id).toBe(
-      "0027_timesheet_approvals",
+      "0028_timesheet_lock_policy",
     );
-    expect(migrations.results).toHaveLength(28);
+    expect(migrations.results).toHaveLength(29);
   });
 
   it("[security] keeps unverified session-like cookies fail-closed", async () => {

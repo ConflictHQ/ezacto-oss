@@ -92,6 +92,10 @@ export interface TimesheetApprovalService {
     actor: Readonly<TimesheetApprovalActor>,
     filters: Readonly<TimesheetSubmissionFilters>,
   ): CursorSource<TimesheetSubmissionRecord>
+  approvedSubmissions(
+    actor: Readonly<TimesheetApprovalActor>,
+    filters: Readonly<TimesheetSubmissionFilters>,
+  ): CursorSource<TimesheetSubmissionRecord>
   submit(
     userId: number,
     periodStart: string,
@@ -174,7 +178,9 @@ const assertAvailable = async (service: TimesheetApprovalService): Promise<void>
   }
 }
 
-const serialize = (submission: Readonly<TimesheetSubmissionRecord>) => ({
+export const serializeTimesheetSubmission = (
+  submission: Readonly<TimesheetSubmissionRecord>,
+) => ({
   id: submission.id,
   user_id: submission.userId,
   user_name: submission.userName,
@@ -200,7 +206,7 @@ const serialize = (submission: Readonly<TimesheetSubmissionRecord>) => ({
 })
 
 const serializeDetail = (submission: Readonly<TimesheetSubmissionDetailRecord>) => ({
-  ...serialize(submission),
+  ...serializeTimesheetSubmission(submission),
   entries: submission.entries.map((entry) => ({
     id: entry.id,
     spent_date: entry.spentDate,
@@ -332,7 +338,7 @@ const assertApproverProfile = (principal: Readonly<UserPrincipal>): void => {
 }
 
 const envelope = (submission: TimesheetSubmissionRecord) => ({
-  data: serialize(submission),
+  data: serializeTimesheetSubmission(submission),
   links: { self: `/api/v1/timesheet-submissions/${submission.id}` },
 })
 
@@ -352,7 +358,7 @@ export const installTimesheetApprovalRoutes = <Bindings extends object>(
           requestUrl: url,
           source: options.service.ownSubmissions(principal.userId, filters(url)),
           viewer: principal,
-          serializer: (submission) => serialize(submission),
+          serializer: (submission) => serializeTimesheetSubmission(submission),
           cursorSigningKey: options.cursorSigningKey,
         }),
         200,
@@ -401,7 +407,31 @@ export const installTimesheetApprovalRoutes = <Bindings extends object>(
           requestUrl: url,
           source: options.service.pendingSubmissions(actor(principal), filters(url)),
           viewer: principal,
-          serializer: (submission) => serialize(submission),
+          serializer: (submission) => serializeTimesheetSubmission(submission),
+          cursorSigningKey: options.cursorSigningKey,
+        }),
+        200,
+        { 'cache-control': 'no-store' },
+      )
+    } catch (error) {
+      return translate(error)
+    }
+  })
+
+  api.get('/timesheet-submissions/approved', async (context) => {
+    await assertAvailable(options.service)
+    requireApiScope(context, 'time_entries:read')
+    requireApiScope(context, 'expenses:read')
+    const principal = context.get('principal')
+    assertApproverProfile(principal)
+    const url = new URL(context.req.url)
+    try {
+      return context.json(
+        await cursorPage({
+          requestUrl: url,
+          source: options.service.approvedSubmissions(actor(principal), filters(url)),
+          viewer: principal,
+          serializer: (submission) => serializeTimesheetSubmission(submission),
           cursorSigningKey: options.cursorSigningKey,
         }),
         200,

@@ -29,6 +29,7 @@ import {
   timesheetApprovalsMigration,
   timesheetApprovalsPreflight,
 } from './migrations/0027_timesheet_approvals.js'
+import { timesheetLockPolicyMigration } from './migrations/0028_timesheet_lock_policy.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL
@@ -1382,6 +1383,7 @@ const migrations = [
     statements: timesheetApprovalsMigration,
     preflight: timesheetApprovalsPreflight,
   },
+  { id: '0028_timesheet_lock_policy', statements: timesheetLockPolicyMigration },
 ] as const
 
 const migrateContainerPlan = (

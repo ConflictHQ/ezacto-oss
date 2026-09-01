@@ -13,9 +13,15 @@ import {
   type TimeEntryOption,
   type TimeEntryPatch,
   type TimesheetRejectionInput,
+  type TimesheetLockPolicy,
+  type TimesheetLockPolicyPatch,
+  type TimesheetLockWindow,
+  type TimesheetManualLockInput,
   type TimesheetSubmission,
   type TimesheetSubmissionDetail,
   type TimesheetSubmissionInput,
+  type TimesheetUnlockInput,
+  type TimesheetWithdrawalInput,
   type Whoami,
 } from '@ezacto/client'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
@@ -57,6 +63,10 @@ export interface ShellApi {
     signal?: AbortSignal,
   ): Promise<TimesheetSubmission>
   listPendingTimesheetSubmissions?(signal?: AbortSignal): Promise<readonly TimesheetSubmission[]>
+  listApprovedTimesheetSubmissions?(
+    periodStart: string,
+    signal?: AbortSignal,
+  ): Promise<readonly TimesheetSubmission[]>
   getTimesheetSubmission?(id: number, signal?: AbortSignal): Promise<TimesheetSubmissionDetail>
   approveTimesheetSubmission?(id: number, signal?: AbortSignal): Promise<TimesheetSubmission>
   rejectTimesheetSubmission?(
@@ -64,6 +74,27 @@ export interface ShellApi {
     input: TimesheetRejectionInput,
     signal?: AbortSignal,
   ): Promise<TimesheetSubmission>
+  withdrawTimesheetSubmission?(
+    id: number,
+    input: TimesheetWithdrawalInput,
+    signal?: AbortSignal,
+  ): Promise<TimesheetSubmission>
+  getTimesheetLockPolicy?(signal?: AbortSignal): Promise<TimesheetLockPolicy>
+  updateTimesheetLockPolicy?(
+    input: TimesheetLockPolicyPatch,
+    signal?: AbortSignal,
+  ): Promise<TimesheetLockPolicy>
+  listTimesheetLocks?(signal?: AbortSignal): Promise<readonly TimesheetLockWindow[]>
+  createTimesheetManualLock?(
+    commandId: string,
+    input: TimesheetManualLockInput,
+    signal?: AbortSignal,
+  ): Promise<TimesheetLockWindow>
+  unlockTimesheetLock?(
+    id: number,
+    input: TimesheetUnlockInput,
+    signal?: AbortSignal,
+  ): Promise<TimesheetLockWindow>
   generateInvoice?(
     commandId: string,
     input: InvoiceGenerationInput,
@@ -578,6 +609,13 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     })
     return page.data.slice(0, pendingTimesheetQueueLimit)
   },
+  listApprovedTimesheetSubmissions: async (periodStart, signal) => {
+    const page = await client.listApprovedTimesheetSubmissions({
+      query: { period_start: periodStart, per_page: pendingTimesheetQueueLimit },
+      ...withSignal(signal),
+    })
+    return page.data.slice(0, pendingTimesheetQueueLimit)
+  },
   getTimesheetSubmission: async (id, signal) =>
     (await client.getTimesheetSubmission({ id, ...withSignal(signal) })).data,
   approveTimesheetSubmission: async (id, signal) =>
@@ -590,6 +628,56 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   rejectTimesheetSubmission: async (id, input, signal) =>
     (
       await client.rejectTimesheetSubmission({
+        id,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data,
+  withdrawTimesheetSubmission: async (id, input, signal) =>
+    (
+      await client.withdrawTimesheetSubmission({
+        id,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data,
+  getTimesheetLockPolicy: async (signal) =>
+    (await client.getTimesheetLockPolicy(withSignal(signal))).data,
+  updateTimesheetLockPolicy: async (input, signal) =>
+    (
+      await client.updateTimesheetLockPolicy({
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data,
+  listTimesheetLocks: async (signal) => {
+    const locks: TimesheetLockWindow[] = []
+    let cursor: string | undefined
+    do {
+      const page = await client.listTimesheetLocks({
+        query: {
+          active: true,
+          per_page: 200,
+          ...(cursor === undefined ? {} : { cursor }),
+        },
+        ...withSignal(signal),
+      })
+      locks.push(...page.data)
+      cursor = page.page.next_cursor ?? undefined
+    } while (cursor !== undefined)
+    return locks
+  },
+  createTimesheetManualLock: async (commandId, input, signal) =>
+    (
+      await client.createTimesheetManualLock({
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data,
+  unlockTimesheetLock: async (id, input, signal) =>
+    (
+      await client.unlockTimesheetLock({
         id,
         body: input,
         ...withSignal(signal),

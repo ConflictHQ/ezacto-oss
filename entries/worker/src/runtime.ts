@@ -11,12 +11,12 @@ import {
   createInvoiceGenerationService,
   createReportRepository,
   createTimesheetApprovalRepository,
+  createTimesheetLockPolicyRepository,
   createD1EmailLogStore,
   createD1PasswordAuthService,
   createD1SessionStore,
   DrizzleTrackedResourceRepository,
   migrateD1,
-  type TrackedPolicyResolver,
 } from "@ezacto/db/d1";
 import {
   createApiSessionService,
@@ -186,12 +186,6 @@ export const ensureRuntimeDatabaseReady = async (
   return migration;
 };
 
-// Approval and invoice locks are persisted and derived by the repository. The
-// current organization model defines no additional calendar/policy lock source.
-const organizationPolicy: TrackedPolicyResolver = {
-  isLocked: async () => false,
-};
-
 export const createR2AttachmentObjectStore = (
   bucket: R2Bucket,
 ): AttachmentObjectPort => ({
@@ -293,6 +287,7 @@ export const createRuntimeServices = async (
   const cursorSigningKey = parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY);
   await ensureRuntimeDatabaseReady(database);
   const drizzle = createD1Database(database);
+  const timesheetLockPolicy = createTimesheetLockPolicyRepository(drizzle);
   const sessions = createApiSessionService(createD1SessionStore(database));
   const identities = createD1IdentityStore(database);
   const access = cloudflareAccessConfig(env);
@@ -329,9 +324,10 @@ export const createRuntimeServices = async (
     invoiceGeneration: createInvoiceGenerationService(drizzle),
     trackedResources: new DrizzleTrackedResourceRepository(
       drizzle,
-      organizationPolicy,
+      timesheetLockPolicy,
     ),
     timesheetApprovals: createTimesheetApprovalRepository(drizzle),
+    timesheetLockPolicy,
     reports: createReportRepository(drizzle),
     cursorSigningKey,
     passwordAuth: createD1PasswordAuthService(database),
