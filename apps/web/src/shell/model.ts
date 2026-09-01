@@ -6,6 +6,8 @@ import {
   type GeneralResource,
   type Invoice,
   type InvoiceGenerationInput,
+  type InvoiceMessage,
+  type InvoicePayment,
   type PasswordSignInInput,
   type Session,
   type TimeEntry,
@@ -37,6 +39,10 @@ export interface ShellApi {
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
   listProjects(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listClients?(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
+  listInvoices?(cursor?: string, signal?: AbortSignal): Promise<CursorPage<Invoice>>
+  getInvoice?(id: number, signal?: AbortSignal): Promise<Invoice>
+  listInvoiceMessages?(id: number, signal?: AbortSignal): Promise<readonly InvoiceMessage[]>
+  listInvoicePayments?(id: number, signal?: AbortSignal): Promise<readonly InvoicePayment[]>
   listTasks(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listTimeEntryOptions(signal?: AbortSignal): Promise<readonly TimeEntryOption[]>
   getTimeEntrySettings(signal?: AbortSignal): Promise<TimeEntrySettings>
@@ -526,6 +532,20 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     }),
+  listInvoices: (cursor, signal) =>
+    client.listInvoices({
+      query: {
+        per_page: 50,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  getInvoice: async (id, signal) =>
+    (await client.getInvoice({ id, ...withSignal(signal) })).data,
+  listInvoiceMessages: async (id, signal) =>
+    (await client.listInvoiceMessages({ id, ...withSignal(signal) })).data,
+  listInvoicePayments: async (id, signal) =>
+    (await client.listInvoicePayments({ id, ...withSignal(signal) })).data,
   listTasks: (cursor, signal) =>
     client.listTasks({
       query: {

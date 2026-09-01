@@ -1,5 +1,6 @@
 export * from './components/slots.js'
 export * from './components/time-entry-editor.js'
+export * from './invoices/model.js'
 export * from './theme.js'
 export * from './theme-contrast.js'
 export * from './theme-preference.js'

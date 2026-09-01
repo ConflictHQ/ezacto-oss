@@ -55,7 +55,33 @@ describe('worker entry', () => {
     )
   })
 
-  it.each(['/', '/invoices/new', '/approvals'])(
+  it('[acceptance] serves invoice browse and numeric detail shells without redirects', async () => {
+    const list = await app.request('/invoices', {}, env)
+    const detail = await app.request('/invoices/42', {}, env)
+
+    expect(list.status).toBe(200)
+    expect(list.headers.get('location')).toBeNull()
+    const listHtml = await list.text()
+    expect(listHtml).toContain('data-app-view="invoice-list"')
+    expect(listHtml).toContain('data-invoice-list-page')
+    expect(listHtml).toContain('href="/invoices" aria-current="page"')
+
+    expect(detail.status).toBe(200)
+    const detailHtml = await detail.text()
+    expect(detailHtml).toContain('data-app-view="invoice-detail"')
+    expect(detailHtml).toContain('data-invoice-detail-page')
+    expect(detailHtml).toContain('data-invoice-document data-document-shell')
+    expect(detailHtml).toContain('data-ez-theme="precision"')
+  })
+
+  it.each(['/invoices/0', '/invoices/nope', '/invoices/9007199254740992'])(
+    '[security] rejects invalid invoice detail path %s',
+    async (path) => {
+      expect((await app.request(path, {}, env)).status).toBe(404)
+    },
+  )
+
+  it.each(['/', '/invoices', '/invoices/42', '/invoices/new', '/approvals'])(
     '[security] renders %s as an inert shell under an overlay when a session cookie is present',
     async (path) => {
       const res = await app.request(

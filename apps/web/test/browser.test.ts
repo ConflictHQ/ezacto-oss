@@ -4,6 +4,9 @@ import {
   EzactoApiError,
   type AuthPrincipal,
   type GeneralResource,
+  type Invoice,
+  type InvoiceMessage,
+  type InvoicePayment,
   type Session,
   type TimeEntry,
   type TimeEntryInput,
@@ -103,6 +106,106 @@ const timeEntry = (
     updated_at: timestamp,
   }
 }
+
+const invoice = (id: number, overrides: Partial<Invoice> = {}): Invoice => ({
+  id,
+  client_id: 11,
+  created_by_user_id: 1,
+  number: `INV-${id}`,
+  subject: 'August services',
+  purchase_order: 'PO-2048',
+  notes: 'Thank you for your business.\nPayment is due within 30 days.',
+  currency: 'USD',
+  issue_date: '2026-08-31',
+  due_date: '2026-09-30',
+  payment_terms: 'net_30',
+  state: 'draft',
+  version: 1,
+  close_reason: null,
+  close_write_off_cents: 0,
+  sent_at: null,
+  paid_at: null,
+  paid_date: null,
+  closed_at: null,
+  period_start: '2026-08-01',
+  period_end: '2026-08-31',
+  project_id: null,
+  retainer_id: null,
+  recurring_invoice_id: null,
+  estimate_id: null,
+  reminder_policy: null,
+  tax_rate_ppm: 100_000,
+  tax2_rate_ppm: null,
+  discount_rate_ppm: null,
+  amount_cents: 8_250,
+  due_amount_cents: 6_250,
+  tax_amount_cents: 750,
+  tax2_amount_cents: 0,
+  discount_amount_cents: 0,
+  written_off_cents: 0,
+  payment_options: [],
+  reference_token: null,
+  created_at: timestamp,
+  updated_at: timestamp,
+  line_items: [
+    {
+      id: 100 + id,
+      invoice_id: id,
+      position: 1,
+      kind: 'time',
+      description: 'Implementation',
+      quantity: 5,
+      unit_price_cents: 1_500,
+      amount_cents: 7_500,
+      taxed: true,
+      taxed2: false,
+      project_id: 1,
+      created_at: timestamp,
+      updated_at: timestamp,
+    },
+  ],
+  ...overrides,
+})
+
+const invoiceMessage = (invoiceId: number): InvoiceMessage => ({
+  id: 1,
+  invoice_id: invoiceId,
+  sent_by: 'Owner',
+  sent_by_email: 'owner@example.test',
+  sent_from: 'Owner',
+  sent_from_email: 'owner@example.test',
+  recipients: [{ name: 'Accounts payable', email: 'ap@example.test' }],
+  subject: 'Invoice available',
+  body: 'Persisted message body',
+  attach_pdf: false,
+  send_me_a_copy: false,
+  thank_you: false,
+  reminder: false,
+  send_reminder_on: null,
+  event_type: 'draft',
+  delivery_status: null,
+  provider_message_id: null,
+  created_at: timestamp,
+  updated_at: timestamp,
+})
+
+const invoicePayment = (invoiceId: number): InvoicePayment => ({
+  id: 1,
+  invoice_id: invoiceId,
+  currency: 'USD',
+  amount_cents: 2_000,
+  paid_at: '2026-08-28T12:00:00.000Z',
+  paid_date: '2026-08-28',
+  notes: 'ACH deposit',
+  recorded_by_user_id: 1,
+  provider: 'manual',
+  provider_shape: 'manual',
+  provider_account_id: null,
+  provider_transaction_id: null,
+  bank_deposit_id: null,
+  created_at: timestamp,
+  updated_at: timestamp,
+})
 
 const browserApi = (
   minimumNoteLength = 0,
@@ -243,16 +346,25 @@ const edit = (input: HTMLInputElement, value: string): void => {
 const renderBrowserShell = (
   options: {
     preserveStorage?: boolean
-    view?: 'time' | 'timesheet-approvals' | 'invoice-generation'
+    view?:
+      | 'time'
+      | 'timesheet-approvals'
+      | 'invoice-generation'
+      | 'invoice-list'
+      | 'invoice-detail'
     sessionCookiePresent?: boolean
   } = {},
 ): void => {
   const path =
     options.view === 'invoice-generation'
       ? '/invoices/new?week=2026-08-28'
-      : options.view === 'timesheet-approvals'
-        ? '/approvals?week=2026-08-28'
-        : '/?week=2026-08-28'
+      : options.view === 'invoice-list'
+        ? '/invoices?week=2026-08-28'
+        : options.view === 'invoice-detail'
+          ? '/invoices/7?week=2026-08-28'
+          : options.view === 'timesheet-approvals'
+            ? '/approvals?week=2026-08-28'
+            : '/?week=2026-08-28'
   window.history.replaceState(
     null,
     '',
@@ -986,6 +1098,113 @@ describe('invoice generation browser behavior', () => {
     timerChip.click()
     document.querySelector<HTMLButtonElement>('[data-stop-timer]')!.click()
     await vi.waitFor(() => expect(api.stopTimeEntry).toHaveBeenCalledWith(3, expect.anything()))
+  })
+})
+
+describe('invoice browse browser behavior', () => {
+  it('[acceptance] loads a cursor page and appends the next invoice page', async () => {
+    renderBrowserShell({ view: 'invoice-list' })
+    const base = browserApi()
+    const listInvoices = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: [invoice(7)],
+        page: { next_cursor: 'next-page' },
+      })
+      .mockResolvedValueOnce({
+        data: [invoice(8, { state: 'open' })],
+        page: { next_cursor: null },
+      })
+    const api: ShellApi = { ...base, listInvoices }
+
+    await mountShell(api)
+
+    const first = document.querySelector<HTMLElement>('[data-invoice-id="7"]')!
+    expect(first.textContent).toContain('Invoice INV-7')
+    expect(first.textContent).toContain('$82.50')
+    expect(first.querySelector<HTMLAnchorElement>('a')?.getAttribute('href')).toBe(
+      '/invoices/7',
+    )
+    expect(document.querySelector('[data-invoice-list-status]')?.textContent).toBe(
+      '1 invoice loaded; more are available.',
+    )
+
+    document.querySelector<HTMLButtonElement>('[data-invoice-load-more]')!.click()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-id="8"]')?.textContent).toContain(
+        'Invoice INV-8',
+      ),
+    )
+    expect(listInvoices).toHaveBeenNthCalledWith(1, undefined, expect.anything())
+    expect(listInvoices).toHaveBeenNthCalledWith(2, 'next-page', expect.anything())
+    expect(document.querySelector('[data-invoice-list-status]')?.textContent).toBe(
+      '2 invoices loaded.',
+    )
+    expect(document.querySelector<HTMLButtonElement>('[data-invoice-load-more]')?.hidden).toBe(
+      true,
+    )
+  })
+
+  it('[security] blocks a member before requesting invoice data', async () => {
+    renderBrowserShell({ view: 'invoice-list' })
+    const base = browserApi()
+    const listInvoices = vi.fn()
+    const api: ShellApi = {
+      ...base,
+      whoami: vi.fn(async () => secondIdentity),
+      listInvoices,
+    }
+
+    await mountShell(api)
+
+    expect(listInvoices).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-invoice-list-status]')?.textContent).toBe(
+      'Your profile does not have access to invoices.',
+    )
+  })
+
+  it('[acceptance] renders persisted invoice lines, notes, payments, and history', async () => {
+    renderBrowserShell({ view: 'invoice-detail' })
+    const base = browserApi()
+    const api: ShellApi = {
+      ...base,
+      getInvoice: vi.fn(async () => invoice(7)),
+      listInvoiceMessages: vi.fn(async () => [invoiceMessage(7)]),
+      listInvoicePayments: vi.fn(async () => [invoicePayment(7)]),
+    }
+
+    await mountShell(api)
+
+    const documentShell = document.querySelector<HTMLElement>('[data-invoice-document]')!
+    expect(documentShell.hidden).toBe(false)
+    expect(document.title).toBe('ezacto — Invoice INV-7')
+    expect(documentShell.textContent).toContain('August services')
+    expect(documentShell.textContent).toContain('Implementation')
+    expect(documentShell.textContent).toContain('$75.00')
+    expect(documentShell.textContent).toContain('Thank you for your business.')
+    expect(documentShell.textContent).toContain('$20.00')
+    expect(documentShell.textContent).toContain('ACH deposit')
+    expect(documentShell.textContent).toContain('Invoice available')
+    expect(documentShell.textContent).toContain('Accounts payable')
+    expect(documentShell.textContent).toContain('Persisted message body')
+    expect(documentShell.textContent).not.toMatch(/Download PDF|Send reminder/u)
+  })
+
+  it('[security] returns to sign-in when invoice browsing loses its session', async () => {
+    renderBrowserShell({ view: 'invoice-list', sessionCookiePresent: true })
+    const base = browserApi()
+    const api: ShellApi = {
+      ...base,
+      listInvoices: vi.fn(async () => {
+        throw authenticationError(401, 'authentication_required')
+      }),
+    }
+
+    await mountShell(api)
+
+    expect(document.querySelector<HTMLElement>('[data-auth-gateway]')?.hidden).toBe(false)
+    expect(document.querySelector<HTMLElement>('[data-authenticated-shell]')?.hidden).toBe(true)
+    expect(document.title).toBe('ezacto — Sign in')
   })
 })
 

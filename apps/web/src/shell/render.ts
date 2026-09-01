@@ -7,7 +7,12 @@ export interface AppShellOptions {
   readonly brand?: string
   readonly activeSection?:
     'Time' | 'Approvals' | 'Expenses' | 'Projects' | 'Clients' | 'Invoices' | 'Reports'
-  readonly view?: 'time' | 'timesheet-approvals' | 'invoice-generation'
+  readonly view?:
+    | 'time'
+    | 'timesheet-approvals'
+    | 'invoice-list'
+    | 'invoice-detail'
+    | 'invoice-generation'
   readonly signInProviders?: readonly SignInProvider[]
   /** Presentation hint only. The browser still validates the session before enabling the app. */
   readonly sessionCookiePresent?: boolean
@@ -67,7 +72,7 @@ const hrefFor = (section: (typeof sections)[number]): string =>
     : section === 'Approvals'
       ? '/approvals'
       : section === 'Invoices'
-        ? '/invoices/new'
+        ? '/invoices'
         : `/${section.toLocaleLowerCase('en-US')}`
 
 const providerSignIn = (providers: readonly SignInProvider[]): string => {
@@ -273,10 +278,67 @@ export const renderAppShell = (options: AppShellOptions): string => {
       <div class="timesheet-lock-list" data-timesheet-lock-list aria-live="polite"></div>
     </section>
   </main>
+  <main class="app-content invoice-workspace" data-invoice-list-page${view === 'invoice-list' ? '' : ' hidden'}>
+    <header class="context-row">
+      <div><p class="eyebrow">Money</p><h1>Invoices</h1></div>
+      <a class="primary-action invoice-create-link" href="/invoices/new">Generate invoice</a>
+    </header>
+    <p class="invoice-intro">Browse generated and imported invoices. Amounts are shown in each invoice's own currency.</p>
+    <p class="form-result invoice-page-status" data-invoice-list-status role="status" aria-live="polite">Loading invoices…</p>
+    <section class="invoice-list" data-invoice-list aria-label="Invoices"></section>
+    <button class="invoice-load-more" type="button" data-invoice-load-more hidden>Load more invoices</button>
+  </main>
+  <main class="app-content invoice-workspace" data-invoice-detail-page${view === 'invoice-detail' ? '' : ' hidden'}>
+    <header class="context-row">
+      <div><p class="eyebrow">Invoices</p><h1>Invoice detail</h1></div>
+      <a href="/invoices">Back to invoices</a>
+    </header>
+    <p class="form-result invoice-page-status" data-invoice-detail-status role="status" aria-live="polite">Loading invoice…</p>
+    <article class="invoice-document" data-invoice-document data-document-shell data-ez-theme="precision" hidden>
+      <header class="invoice-document-heading">
+        <div>
+          <p class="eyebrow">Invoice</p>
+          <h2 data-invoice-detail-number>—</h2>
+          <p data-invoice-detail-subject hidden></p>
+        </div>
+        <strong class="invoice-state" data-invoice-detail-state>—</strong>
+      </header>
+      <dl class="invoice-facts">
+        <div><dt>Client</dt><dd data-invoice-detail-client>—</dd></div>
+        <div><dt>Issued</dt><dd data-invoice-detail-issued>—</dd></div>
+        <div><dt>Due</dt><dd data-invoice-detail-due-date>—</dd></div>
+        <div><dt>Period</dt><dd data-invoice-detail-period>—</dd></div>
+        <div><dt>Purchase order</dt><dd data-invoice-detail-purchase-order>—</dd></div>
+      </dl>
+      <div class="invoice-line-wrap">
+        <table class="invoice-line-table">
+          <thead><tr><th scope="col">Description</th><th scope="col">Quantity</th><th scope="col">Rate</th><th scope="col">Amount</th></tr></thead>
+          <tbody data-invoice-detail-lines></tbody>
+        </table>
+      </div>
+      <dl class="invoice-totals">
+        <div><dt>Discount</dt><dd data-invoice-detail-discount>—</dd></div>
+        <div><dt>Tax</dt><dd data-invoice-detail-tax>—</dd></div>
+        <div><dt>Total</dt><dd data-invoice-detail-total>—</dd></div>
+        <div><dt>Amount due</dt><dd data-invoice-detail-due>—</dd></div>
+      </dl>
+      <section class="invoice-notes" data-invoice-detail-notes-section hidden>
+        <h3>Notes</h3><p data-invoice-detail-notes></p>
+      </section>
+      <section class="invoice-history" aria-labelledby="invoice-payment-heading">
+        <h3 id="invoice-payment-heading">Payments</h3>
+        <ul data-invoice-detail-payments></ul>
+      </section>
+      <section class="invoice-history" aria-labelledby="invoice-message-heading">
+        <h3 id="invoice-message-heading">History</h3>
+        <ul data-invoice-detail-messages></ul>
+      </section>
+    </article>
+  </main>
   <main class="app-content invoice-generation" data-invoice-generation-page${view === 'invoice-generation' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Invoices</p><h1>Generate an invoice</h1></div>
-      <a href="/">Back to time</a>
+      <a href="/invoices">Back to invoices</a>
     </header>
     <p class="invoice-intro">Choose one client, a bounded date range, and the tracked work to turn into a draft invoice.</p>
     <form class="invoice-generation-form" data-invoice-generation-form>
@@ -325,7 +387,8 @@ export const renderAppShell = (options: AppShellOptions): string => {
       <p class="eyebrow">Draft created</p>
       <h2 data-generated-invoice-number>Invoice</h2>
       <p data-generated-invoice-total></p>
-      <p>The draft is saved. Invoice editing arrives with the invoice workspace.</p>
+      <p>The draft is saved and ready to review.</p>
+      <a data-generated-invoice-link href="/invoices" hidden>Open draft invoice</a>
     </section>
   </main>
   <dialog class="command-dialog" data-command-dialog aria-labelledby="command-title">
