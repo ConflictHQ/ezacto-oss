@@ -1,5 +1,9 @@
 # Ezacto container
 
+The canonical operator walkthrough is
+[`docs/self-host-container.md`](../../docs/self-host-container.md); tested backup
+and recovery commands are in [`RESTORE.md`](../../RESTORE.md).
+
 This entry runs the same Hono application and SQLite schema as the Worker entry in
 one Node 22 process. It stores the complete organization database at
 `/data/db.sqlite` and content-addressed attachments below `/data/attachments`.
@@ -45,10 +49,11 @@ configuration, SMTP verification, SQLite integrity checks, and migrations all
 completed before the HTTP listener opened.
 
 The named volume is the durable unit. Stop the container cleanly before taking a
-filesystem-level snapshot so WAL has been checkpointed. A restorable snapshot
-must retain `/data/db.sqlite` and `/data/attachments` together, with ownership
-restored to UID/GID 1000 and no symlinks. Restore into an empty volume before
-starting Ezacto; startup reruns integrity checks and any pending migrations.
+physical snapshot so WAL has been checkpointed. `RESTORE.md` uses the repository's
+snapshot helper to retain `/data/db.sqlite` and `/data/attachments` together,
+verify every attachment hash, require an exclusive source volume, restore UID/GID
+1000, and refuse non-empty or already-attached target volumes. Startup reruns
+integrity checks and pending migrations.
 
 Treat the environment file as a secret. Do not put SMTP credentials or the cursor
 signing key directly in shell history or source control.

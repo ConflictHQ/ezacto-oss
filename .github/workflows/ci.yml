@@ -70,5 +70,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-      - name: build and exercise the first-run container
+      - name: exercise first-run and physical backup/restore
         run: npm run test:container
