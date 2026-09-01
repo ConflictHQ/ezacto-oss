@@ -5,8 +5,9 @@ export interface AppShellOptions {
   readonly environment: string
   readonly release: string
   readonly brand?: string
-  readonly activeSection?: 'Time' | 'Expenses' | 'Projects' | 'Clients' | 'Invoices' | 'Reports'
-  readonly view?: 'time' | 'invoice-generation'
+  readonly activeSection?:
+    'Time' | 'Approvals' | 'Expenses' | 'Projects' | 'Clients' | 'Invoices' | 'Reports'
+  readonly view?: 'time' | 'timesheet-approvals' | 'invoice-generation'
   readonly signInProviders?: readonly SignInProvider[]
 }
 
@@ -48,14 +49,24 @@ export const renderDocumentShell = (title: string, content: string): string =>
   `<main><h1>${escapeHtml(title)}</h1><div class="document-content">${escapeHtml(content)}</div>` +
   `</main></article>`
 
-const sections = ['Time', 'Expenses', 'Projects', 'Clients', 'Invoices', 'Reports'] as const
+const sections = [
+  'Time',
+  'Approvals',
+  'Expenses',
+  'Projects',
+  'Clients',
+  'Invoices',
+  'Reports',
+] as const
 
 const hrefFor = (section: (typeof sections)[number]): string =>
   section === 'Time'
     ? '/'
-    : section === 'Invoices'
-      ? '/invoices/new'
-      : `/${section.toLocaleLowerCase('en-US')}`
+    : section === 'Approvals'
+      ? '/approvals'
+      : section === 'Invoices'
+        ? '/invoices/new'
+        : `/${section.toLocaleLowerCase('en-US')}`
 
 const providerSignIn = (providers: readonly SignInProvider[]): string => {
   if (!providers.includes('google')) return ''
@@ -75,7 +86,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const navigation = sections
     .map(
       (section) =>
-        `<a href="${hrefFor(section)}"${section === active ? ' aria-current="page"' : ''}>${section}</a>`,
+        `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${section}</a>`,
     )
     .join('')
 
@@ -181,6 +192,15 @@ export const renderAppShell = (options: AppShellOptions): string => {
           <strong data-week-total>—</strong>
         </div>
       </header>
+      <aside class="timesheet-status" data-timesheet-status hidden aria-live="polite">
+        <div>
+          <p class="eyebrow">Timesheet approval</p>
+          <strong data-timesheet-status-label>Not submitted</strong>
+          <p data-timesheet-rejection-reason hidden></p>
+          <p class="form-result" data-timesheet-result role="status"></p>
+        </div>
+        <button class="primary-action" type="button" data-submit-timesheet data-auth-action disabled>Submit week</button>
+      </aside>
       <div class="week-grid-wrap" data-week-grid data-view="desktop">
         <table class="week-grid-table">
           <thead data-week-grid-head><tr><th>Project / task</th><th colspan="8">Loading week…</th></tr></thead>
@@ -197,6 +217,15 @@ export const renderAppShell = (options: AppShellOptions): string => {
         <div data-day-rows><p class="day-empty">Loading time entries…</p></div>
       </div>
     </section>
+  </main>
+  <main class="app-content timesheet-approvals" data-timesheet-approvals-page${view === 'timesheet-approvals' ? '' : ' hidden'}>
+    <header class="context-row">
+      <div><p class="eyebrow">Timesheets</p><h1>Approvals</h1></div>
+      <a href="/">Back to time</a>
+    </header>
+    <p class="approval-intro">Review submitted time before it becomes locked.</p>
+    <p class="form-result" data-approval-queue-result role="status" aria-live="polite"></p>
+    <section class="approval-queue" data-approval-queue aria-label="Pending timesheets"></section>
   </main>
   <main class="app-content invoice-generation" data-invoice-generation-page${view === 'invoice-generation' ? '' : ' hidden'}>
     <header class="context-row">
@@ -294,6 +323,15 @@ export const renderAppShell = (options: AppShellOptions): string => {
       <label>Task<select name="task" data-row-task required></select></label>
       <p class="form-result" data-row-result role="status"></p>
       <button class="primary-action" type="submit">Add row</button>
+    </form>
+  </dialog>
+  <dialog class="rejection-dialog" data-rejection-dialog aria-labelledby="rejection-title">
+    <form data-rejection-form novalidate>
+      <header><div><p class="eyebrow">Return timesheet</p><h2 id="rejection-title">Reason for rejection</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
+      <label for="ez-rejection-reason">What needs to change?<textarea id="ez-rejection-reason" name="reason" data-rejection-reason rows="5" maxlength="10000" required></textarea></label>
+      <p class="hint">Required. This reason is shown to the person who submitted the timesheet.</p>
+      <p class="form-result" data-rejection-result role="status" aria-live="polite"></p>
+      <button class="primary-action" type="submit" data-rejection-submit>Reject timesheet</button>
     </form>
   </dialog>
   <footer class="build-stamp">${escapeHtml(options.environment)} · ${escapeHtml(shortRelease)}</footer>

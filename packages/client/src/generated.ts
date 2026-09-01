@@ -358,6 +358,7 @@ export type TimeEntrySettings = {
   "time_entry_mode": "duration" | "start_end";
   "time_format": "decimal" | "hours_minutes";
   "clock": "12h" | "24h";
+  "week_start_day": "saturday" | "sunday" | "monday";
 };
 
 export type TimeEntrySettingsEnvelope = {
@@ -389,6 +390,106 @@ export type TimeEntryOption = {
 export type TimeEntryOptionListEnvelope = {
   "data": Array<TimeEntryOption>;
   "links": Links;
+};
+
+export type TimesheetSubmission = {
+  "id": number;
+  "user_id": number;
+  "user_name": string;
+  "period_start": string;
+  "period_end": string;
+  "status": "unsubmitted" | "submitted" | "approved";
+  "origin": "native" | "harvest_import" | "legacy_backfill";
+  "source_status": "submitted" | "approved" | null;
+  "source_observed_at": string | null;
+  "submitted_by_user_id": number | null;
+  "submitted_at": string | null;
+  "reviewed_by_user_id": number | null;
+  "reviewed_at": string | null;
+  "rejection_reason": string | null;
+  "version": number;
+  "entry_count": number;
+  "expense_count": number;
+  "total_seconds": number;
+  "billable_seconds": number;
+  "nonbillable_seconds": number;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type TimesheetSubmissionInput = {
+  "period_start": string;
+  "period_end": string;
+};
+
+export type TimesheetSubmissionEntry = {
+  "id": number;
+  "spent_date": string;
+  "project_id": number;
+  "project_name": string;
+  "task_id": number;
+  "task_name": string;
+  "seconds": number;
+  "notes": string | null;
+};
+
+export type TimesheetSubmissionExpense = {
+  "id": number;
+  "spent_date": string;
+  "project_id": number;
+  "project_name": string;
+  "expense_category_id": number;
+  "expense_category_name": string;
+  "total_cost_cents": number;
+  "currency": string;
+  "notes": string | null;
+};
+
+export type TimesheetSubmissionDetail = {
+  "id": number;
+  "user_id": number;
+  "user_name": string;
+  "period_start": string;
+  "period_end": string;
+  "status": "unsubmitted" | "submitted" | "approved";
+  "origin": "native" | "harvest_import" | "legacy_backfill";
+  "source_status": "submitted" | "approved" | null;
+  "source_observed_at": string | null;
+  "submitted_by_user_id": number | null;
+  "submitted_at": string | null;
+  "reviewed_by_user_id": number | null;
+  "reviewed_at": string | null;
+  "rejection_reason": string | null;
+  "version": number;
+  "entry_count": number;
+  "expense_count": number;
+  "total_seconds": number;
+  "billable_seconds": number;
+  "nonbillable_seconds": number;
+  "created_at": string;
+  "updated_at": string;
+  "entries": Array<TimesheetSubmissionEntry>;
+  "expenses": Array<TimesheetSubmissionExpense>;
+};
+
+export type TimesheetRejectionInput = {
+  "reason": string;
+};
+
+export type TimesheetSubmissionEnvelope = {
+  "data": TimesheetSubmission;
+  "links": Links;
+};
+
+export type TimesheetSubmissionDetailEnvelope = {
+  "data": TimesheetSubmissionDetail;
+  "links": Links;
+};
+
+export type TimesheetSubmissionPage = {
+  "data": Array<TimesheetSubmission>;
+  "links": PageLinks;
+  "page": PageMetadata;
 };
 
 export type Expense = {
@@ -1928,6 +2029,64 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<TimeEntryEnvelope>("POST", "/api/v1/time-entries/:id/restart".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listTimesheetSubmissions(args: { query?: { "cursor"?: string; "per_page"?: number; "period_start"?: string; "period_end"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimesheetSubmissionPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetSubmissionPage>("GET", "/api/v1/timesheet-submissions", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async submitTimesheet(args: { body: TimesheetSubmissionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetSubmissionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetSubmissionEnvelope>("POST", "/api/v1/timesheet-submissions", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listPendingTimesheetSubmissions(args: { query?: { "cursor"?: string; "per_page"?: number; "period_start"?: string; "period_end"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimesheetSubmissionPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetSubmissionPage>("GET", "/api/v1/timesheet-submissions/pending", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getTimesheetSubmission(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetSubmissionDetailEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetSubmissionDetailEnvelope>("GET", "/api/v1/timesheet-submissions/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async approveTimesheetSubmission(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetSubmissionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetSubmissionEnvelope>("POST", "/api/v1/timesheet-submissions/:id/approve".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async rejectTimesheetSubmission(args: { "id": number; body: TimesheetRejectionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetSubmissionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetSubmissionEnvelope>("POST", "/api/v1/timesheet-submissions/:id/reject".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });

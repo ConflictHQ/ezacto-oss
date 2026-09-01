@@ -67,7 +67,7 @@ interface HarvestExpense {
 }
 
 const timestamp = '2026-08-27T00:00:00.000Z'
-const modules = JSON.stringify({ expenses: true, invoices: true })
+const modules = JSON.stringify({ approval: true, expenses: true, invoices: true })
 const migrationsThrough0005 = [
   ['0000_org_people', orgPeopleMigration],
   ['0001_clients', clientsMigration],
@@ -147,8 +147,8 @@ const installThrough0005 = async (database: TestDatabase): Promise<void> => {
 
 const seedOrganizationPeopleProjects = async (database: TestDatabase): Promise<void> => {
   await database.run(
-    `INSERT INTO organizations (name, modules, created_at, updated_at)
-     VALUES ('Sanitized Organization', ?, ?, ?)`,
+    `INSERT INTO organizations (name, modules, week_start_day, created_at, updated_at)
+     VALUES ('Sanitized Organization', ?, 'saturday', ?, ?)`,
     modules,
     timestamp,
     timestamp,
@@ -272,6 +272,8 @@ for (const [runtime, factory] of factories) {
         'payout_ref',
         'created_at',
         'updated_at',
+        'timesheet_submission_id',
+        'source_approval_status',
       ])
       for (const forbidden of [
         'is_locked',
@@ -330,7 +332,7 @@ for (const [runtime, factory] of factories) {
       ).toEqual(before.lines)
       expect(await db.rows(`PRAGMA foreign_key_check`)).toEqual([])
       const ledger = await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id`)
-      expect(ledger.at(-1)).toEqual({ id: '0026_invoice_generation' })
+      expect(ledger.at(-1)).toEqual({ id: '0027_timesheet_approvals' })
       await db.migrateAgain()
       expect(await db.rows(`SELECT id FROM _ezacto_migrations ORDER BY id`)).toEqual(ledger)
     })
@@ -537,8 +539,8 @@ for (const [runtime, factory] of factories) {
       await db.run(
         `INSERT INTO expenses
           (harvest_id, user_id, project_id, expense_category_id, spent_date, units,
-           total_cost_cents, created_at, updated_at)
-         VALUES (990001, 1, 1, 1, '2026-08-14', 125, 8125, ?, ?)`,
+           total_cost_cents, source_approval_status, created_at, updated_at)
+         VALUES (990001, 1, 1, 1, '2026-08-14', 125, 8125, 'unsubmitted', ?, ?)`,
         timestamp,
         timestamp,
       )
@@ -610,7 +612,7 @@ for (const [runtime, factory] of factories) {
           timestamp,
           timestamp,
         ),
-      ).rejects.toThrow(/check constraint/i)
+      ).rejects.toThrow(/expense does not match its timesheet submission/i)
       expect(
         await db.rows<{ reimbursement_status: string; payout_ref: string | null }>(
           `SELECT reimbursement_status, payout_ref FROM expenses ORDER BY id`,
@@ -670,8 +672,9 @@ for (const [runtime, factory] of factories) {
         await db.run(
           `INSERT INTO expenses
             (id, harvest_id, user_id, project_id, expense_category_id, spent_date, notes,
-             units, total_cost_cents, billable, approval_status, invoice_id, created_at, updated_at)
-           VALUES (?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             units, total_cost_cents, billable, approval_status, source_approval_status,
+             invoice_id, created_at, updated_at)
+           VALUES (?, ?, 1, 1, ?, ?, ?, ?, ?, ?, 'unsubmitted', ?, ?, ?, ?)`,
           index + 1,
           source.id,
           index + 1,

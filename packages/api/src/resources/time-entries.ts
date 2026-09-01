@@ -304,6 +304,7 @@ const serializeTimeEntrySettings = (
   time_entry_mode: settings.mode,
   time_format: settings.timeFormat,
   clock: settings.clock,
+  week_start_day: settings.weekStartDay,
 })
 
 const noteSettingsBodyKeys = new Set(['required', 'minimum_length'])

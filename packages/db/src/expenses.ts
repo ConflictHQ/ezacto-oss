@@ -95,20 +95,37 @@ export const createExpense = async (
     INSERT INTO expenses (
       harvest_id, user_id, project_id, expense_category_id, spent_date, notes,
       units, total_cost_cents, billable, approval_status, invoice_id,
-      reimbursable, reimbursement_status, payout_ref, created_at, updated_at
+      reimbursable, reimbursement_status, payout_ref, created_at, updated_at,
+      timesheet_submission_id, source_approval_status
     )
     SELECT
       NULL, ${input.userId}, ${input.projectId}, category.id,
       ${input.spentDate}, ${input.notes ?? null},
       ${usesUnits ? input.units! : null},
       ${usesUnits ? sql`${input.units!} * category.unit_price_cents` : input.totalCostCents!},
-      ${(input.billable ?? true) ? 1 : 0}, 'unsubmitted',
+      ${(input.billable ?? true) ? 1 : 0}, CASE WHEN EXISTS (
+        SELECT 1 FROM timesheet_submissions submission
+        WHERE submission.user_id = ${input.userId}
+          AND ${input.spentDate} BETWEEN submission.period_start AND submission.period_end
+          AND submission.status = 'submitted'
+      ) THEN 'submitted' ELSE 'unsubmitted' END,
       NULL, ${reimbursable ? 1 : 0},
       'none', NULL,
-      ${input.createdAt}, ${input.updatedAt}
+      ${input.createdAt}, ${input.updatedAt}, (
+        SELECT submission.id FROM timesheet_submissions submission
+        WHERE submission.user_id = ${input.userId}
+          AND ${input.spentDate} BETWEEN submission.period_start AND submission.period_end
+          AND submission.status = 'submitted'
+      ), NULL
     FROM expense_categories category
     WHERE category.id = ${input.expenseCategoryId}
       AND category.is_active = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM timesheet_submissions submission
+        WHERE submission.user_id = ${input.userId}
+          AND ${input.spentDate} BETWEEN submission.period_start AND submission.period_end
+          AND submission.status = 'approved'
+      )
       AND ${usesUnits ? sql`category.unit_price_cents IS NOT NULL` : sql`category.unit_price_cents IS NULL`}
       AND ${usesUnits ? sql`${input.units!} * category.unit_price_cents BETWEEN 0 AND ${moneyUpperBound}` : sql`1`}
     RETURNING id
@@ -123,6 +140,13 @@ export const createExpense = async (
     if (!category) throw new Error(`expense category ${input.expenseCategoryId} does not exist`)
     if (!category.isActive)
       throw new Error(`expense category ${input.expenseCategoryId} is inactive`)
+    const [approvedPeriod] = await database.all<{ id: number }>(sql`
+      SELECT id FROM timesheet_submissions
+      WHERE user_id = ${input.userId}
+        AND ${input.spentDate} BETWEEN period_start AND period_end
+        AND status = 'approved' LIMIT 1
+    `)
+    if (approvedPeriod) throw new Error('approved timesheet period rejects a new expense')
     computeExpenseTotalCents(category.unitPriceCents, input)
     throw new RangeError('computed totalCostCents exceeds the supported money range')
   }

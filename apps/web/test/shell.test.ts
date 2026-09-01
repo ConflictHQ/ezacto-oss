@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  createShellApi,
+  hydratePendingTimesheetDetails,
   loadShellSnapshot,
   maximumTimeEntryNoteLength,
   navigationDestination,
@@ -16,10 +18,13 @@ import {
   type ShellApi,
 } from '../src/index.js'
 import type {
+  EzactoClient,
   GeneralResource,
   TimeEntry,
   TimeEntryInput,
   TimeEntryPatch,
+  TimesheetSubmission,
+  TimesheetSubmissionDetail,
   Whoami,
 } from '@ezacto/client'
 
@@ -110,6 +115,7 @@ const memoryApi = (
       time_entry_mode: 'duration' as const,
       time_format: 'decimal' as const,
       clock: '12h' as const,
+      week_start_day: 'monday' as const,
     })),
     listTimeEntries: vi.fn(async (query) =>
       query.is_running === true ? entries.filter((item) => item.is_running) : [...entries],
@@ -142,6 +148,48 @@ const memoryApi = (
 }
 
 describe('S-1 through S-5 application shell', () => {
+  it('[unit] requests only one bounded approval queue page', async () => {
+    const listPendingTimesheetSubmissions = vi.fn(async () => ({
+      data: [],
+      page: { next_cursor: 'ignored-because-the-view-is-bounded' },
+    }))
+    const api = createShellApi({ listPendingTimesheetSubmissions } as unknown as EzactoClient)
+
+    await api.listPendingTimesheetSubmissions!()
+
+    expect(listPendingTimesheetSubmissions).toHaveBeenCalledTimes(1)
+    expect(listPendingTimesheetSubmissions).toHaveBeenCalledWith({
+      query: { per_page: 50 },
+    })
+  })
+
+  it('[unit] bounds and concurrency-limits approval detail hydration and drops stale rows', async () => {
+    const summaries = Array.from({ length: 55 }, (_, index) => ({
+      id: index + 1,
+      status: 'submitted',
+    })) as TimesheetSubmission[]
+    let active = 0
+    let maximumActive = 0
+    const getSubmission = vi.fn(async (id: number) => {
+      active++
+      maximumActive = Math.max(maximumActive, active)
+      await Promise.resolve()
+      active--
+      return {
+        id,
+        status: id === 7 ? 'approved' : 'submitted',
+        entries: [],
+      } as unknown as TimesheetSubmissionDetail
+    })
+
+    const details = await hydratePendingTimesheetDetails(summaries, getSubmission)
+
+    expect(getSubmission).toHaveBeenCalledTimes(50)
+    expect(maximumActive).toBeLessThanOrEqual(4)
+    expect(details).toHaveLength(49)
+    expect(details.some((detail) => detail.id === 7)).toBe(false)
+  })
+
   it('[e2e:track-week] keeps the global timer in desktop and phone shell CSS', () => {
     const html = renderAppShell({
       environment: 'test',

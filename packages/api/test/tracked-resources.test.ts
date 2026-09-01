@@ -10,6 +10,7 @@ import {
   DrizzleTrackedResourceRepository,
   type PolicySubject,
 } from '../../db/src/tracked-resource-repository.js'
+import { createTimesheetApprovalRepository } from '../../db/src/timesheet-approvals.js'
 import { createApiApp } from '../src/app.js'
 import type { ApiAuthentication } from '../src/auth.js'
 import type { UserProfile } from '../src/context.js'
@@ -313,6 +314,7 @@ for (const [runtime, factory] of factories) {
           time_entry_mode: 'duration',
           time_format: 'decimal',
           clock: '12h',
+          week_start_day: 'monday',
         },
         links: { self: '/api/v1/time-entry-settings' },
       })
@@ -328,6 +330,7 @@ for (const [runtime, factory] of factories) {
         time_entry_mode: 'start_end',
         time_format: 'hours_minutes',
         clock: '24h',
+        week_start_day: 'monday',
       })
     })
 
@@ -946,8 +949,20 @@ for (const [runtime, factory] of factories) {
         ),
       )
       await test.database.run(
-        `UPDATE time_entries SET approval_status = 'approved' WHERE id = ?`,
-        stopped.id,
+        `UPDATE organizations SET modules = json_set(modules, '$.approval', json('true'))
+         WHERE id = 1`,
+      )
+      const approvals = createTimesheetApprovalRepository(test.database.orm)
+      const submission = await approvals.submit(
+        1,
+        '2026-08-28',
+        '2026-08-28',
+        '2026-08-28T09:01:00.000Z',
+      )
+      await approvals.approve(
+        { userId: 1, profile: 'administrator' },
+        submission.id,
+        '2026-08-28T09:02:00.000Z',
       )
       const lockedPatch = await test.request(
         `/api/v1/time-entries/${stopped.id}`,
@@ -969,6 +984,11 @@ for (const [runtime, factory] of factories) {
         ),
       ).toEqual([{ notes: 'before' }])
 
+      test.setBoundary({
+        instant: '2026-08-29T09:00:00.000Z',
+        date: '2026-08-29',
+        time: '09:00',
+      })
       const running = await data<{ id: number }>(
         await test.request(
           '/api/v1/time-entries',
@@ -1140,8 +1160,20 @@ for (const [runtime, factory] of factories) {
         ),
       )
       await test.database.run(
-        `UPDATE expenses SET approval_status = 'approved' WHERE id = ?`,
-        approved.id,
+        `UPDATE organizations SET modules = json_set(modules, '$.approval', json('true'))
+         WHERE id = 1`,
+      )
+      const approvals = createTimesheetApprovalRepository(test.database.orm)
+      const submission = await approvals.submit(
+        1,
+        '2026-08-28',
+        '2026-08-28',
+        '2026-08-28T09:01:00.000Z',
+      )
+      await approvals.approve(
+        { userId: 1, profile: 'administrator' },
+        submission.id,
+        '2026-08-28T09:02:00.000Z',
       )
       const locked = await test.request(
         `/api/v1/expenses/${approved.id}`,
@@ -1167,7 +1199,7 @@ for (const [runtime, factory] of factories) {
           jsonRequest('POST', {
             project_id: 1,
             expense_category_id: 1,
-            spent_date: '2026-08-28',
+            spent_date: '2026-08-29',
             total_cost_cents: 550,
           }),
         ),
@@ -1194,7 +1226,7 @@ for (const [runtime, factory] of factories) {
           jsonRequest('POST', {
             project_id: 1,
             expense_category_id: 1,
-            spent_date: '2026-08-28',
+            spent_date: '2026-08-29',
             total_cost_cents: 600,
           }),
         ),

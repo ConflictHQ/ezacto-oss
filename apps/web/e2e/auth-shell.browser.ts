@@ -168,6 +168,7 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
           time_entry_mode: 'duration',
           time_format: 'decimal',
           clock: '12h',
+          week_start_day: 'monday',
         },
         links: { self: '/api/v1/time-entry-settings' },
       })
@@ -185,6 +186,10 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
         page: { next_cursor: null },
         links: { next: null },
       })
+      return
+    }
+    if (path === '/api/v1/timesheet-submissions') {
+      await fulfillJson(route, { error: { code: 'not_found' } }, 404)
       return
     }
     await fulfillJson(route, { error: { code: 'unexpected_test_request' } }, 500)
@@ -366,6 +371,7 @@ test('[e2e:track-week] uses one editor and submits 12-hour UI times as canonical
           time_entry_mode: 'start_end',
           time_format: 'hours_minutes',
           clock: '12h',
+          week_start_day: 'monday',
         },
         links: { self: '/api/v1/time-entry-settings' },
       })
@@ -384,6 +390,14 @@ test('[e2e:track-week] uses one editor and submits 12-hour UI times as canonical
         page: { next_cursor: null },
         links: { next: null },
       })
+      return
+    }
+    if (url.pathname === '/api/v1/expenses') {
+      await fulfillJson(route, { error: { code: 'not_found' } }, 404)
+      return
+    }
+    if (url.pathname === '/api/v1/timesheet-submissions') {
+      await fulfillJson(route, { error: { code: 'not_found' } }, 404)
       return
     }
     await fulfillJson(route, { error: { code: 'unexpected_test_request' } }, 500)
@@ -872,4 +886,214 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expect(success.locator('[data-generated-invoice-total]')).toContainText('$75.00')
   await expect(success.locator('[data-generated-invoice-total]')).toContainText('1 line')
   await expect(success).toContainText('The draft is saved.')
+})
+
+test('[e2e:timesheet-approval] submits, rejects, corrects, resubmits, and locks a real D1 timesheet', async ({
+  context,
+  page,
+}) => {
+  const seeded = await context.request.post('/__ezacto_browser_fixture__/start-end', {
+    data: { action: 'approval-seed' },
+    headers: {
+      'x-ezacto-browser-fixture-control': 'start-end-round-trip',
+    },
+  })
+  expect(seeded.status()).toBe(204)
+
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto('/?week=2026-08-17')
+  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await expect(page.locator('[data-day-label]')).toContainText('Monday, Aug 17')
+  await page.getByRole('button', { name: 'Next day' }).click()
+  await expect(page.locator('[data-day-label]')).toContainText('Tuesday, Aug 18')
+  await page.getByRole('button', { name: 'Next day' }).click()
+  await expect(page.locator('[data-day-label]')).toContainText('Wednesday, Aug 19')
+
+  const status = page.locator('[data-timesheet-status]')
+  await expect(status).toBeVisible()
+  await expect(page.locator('[data-timesheet-status-label]')).toHaveText('Not submitted')
+  const submitted = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/timesheet-submissions' &&
+      response.request().method() === 'POST',
+  )
+  await page.getByRole('button', { name: 'Submit week' }).click()
+  expect((await submitted).status()).toBe(201)
+  await expect(page.locator('[data-timesheet-status-label]')).toHaveText('Submitted for approval')
+  await expect(page.locator('[data-day-rows] input[data-cell-key]')).toBeEnabled()
+
+  await page.goto('/approvals')
+  await expect(page).toHaveTitle('ezacto — Approvals')
+  const card = page.locator('[data-approval-queue] [data-submission-id]')
+  await expect(card).toContainText('Browser Owner')
+  await expect(card).toContainText('1:00')
+  await expect(card).toContainText('Browser Acceptance Project / Browser Acceptance Task')
+  await expect(card).toContainText('Wed, Aug 19')
+  await expect(card).toContainText('Ready for review')
+  await expect(card).toContainText('1 expense')
+  await expect(card).toContainText('Browser Acceptance Project / Travel')
+  await expect(card).toContainText('$12.50')
+  await expect(card).toContainText('Receipt ready for review')
+  await card.getByRole('button', { name: 'Reject' }).click()
+
+  const rejection = page.locator('[data-rejection-dialog]')
+  await expect(rejection).toBeVisible()
+  await rejection.getByRole('button', { name: 'Reject timesheet' }).click()
+  await expect(page.locator('[data-rejection-result]')).toHaveText(
+    'Enter a reason before rejecting this timesheet.',
+  )
+  await rejection.getByLabel('What needs to change?').fill('Clarify the delivery detail.')
+  const rejected = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.endsWith('/reject') &&
+      response.request().method() === 'POST',
+  )
+  await rejection.getByRole('button', { name: 'Reject timesheet' }).click()
+  expect((await rejected).ok()).toBe(true)
+  await expect(rejection).toBeHidden()
+
+  await page.goto('/?week=2026-08-17')
+  await expect(page.locator('[data-timesheet-status-label]')).toHaveText('Changes requested')
+  await expect(page.locator('[data-timesheet-rejection-reason]')).toHaveText(
+    'Needs changes: Clarify the delivery detail.',
+  )
+  await page.getByRole('button', { name: 'Next day' }).click()
+  await expect(page.locator('[data-day-label]')).toContainText('Tuesday, Aug 18')
+  await page.getByRole('button', { name: 'Next day' }).click()
+  await expect(page.locator('[data-day-label]')).toContainText('Wednesday, Aug 19')
+
+  const entryRow = page.locator('[data-day-rows] .day-row').filter({
+    has: page.locator('[data-entry-note="901"]'),
+  })
+  await entryRow.locator('.cell-note').click()
+  const editor = page.locator('[data-entry-dialog]')
+  await editor.getByLabel('Note').fill('Corrected delivery detail')
+  const corrected = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/time-entries/901' &&
+      response.request().method() === 'PATCH',
+  )
+  await editor.getByRole('button', { name: 'Save entry' }).click()
+  expect((await corrected).ok()).toBe(true)
+  await expect(editor).toBeHidden()
+  await expect(page.locator('[data-day-label]')).toContainText('Wednesday, Aug 19')
+  await expect(page.locator('[data-entry-note="901"]')).toHaveText('Corrected delivery detail')
+  const rejectedExpense = await page.evaluate(async () => {
+    const response = await fetch('/api/v1/expenses/901')
+    return { status: response.status, body: await response.json() }
+  })
+  expect(rejectedExpense.status).toBe(200)
+  expect(rejectedExpense.body).toMatchObject({
+    data: { approval_status: 'unsubmitted', is_locked: false },
+  })
+
+  const resubmitted = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/timesheet-submissions' &&
+      response.request().method() === 'POST',
+  )
+  await page.getByRole('button', { name: 'Resubmit week' }).click()
+  expect((await resubmitted).ok()).toBe(true)
+  await expect(page.locator('[data-timesheet-rejection-reason]')).toBeHidden()
+
+  await page.goto('/approvals')
+  const resubmittedCard = page.locator('[data-approval-queue] [data-submission-id]')
+  await expect(resubmittedCard).toContainText('Browser Owner')
+  const approved = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.endsWith('/approve') &&
+      response.request().method() === 'POST',
+  )
+  await resubmittedCard.getByRole('button', { name: 'Approve' }).click()
+  expect((await approved).ok()).toBe(true)
+  await expect(page.locator('[data-approval-queue]')).toContainText(
+    'No timesheets are waiting for review.',
+  )
+
+  await page.goto('/?week=2026-08-17')
+  await expect(page.locator('[data-timesheet-status-label]')).toHaveText('Approved')
+  await page.getByRole('button', { name: 'Next day' }).click()
+  await expect(page.locator('[data-day-label]')).toContainText('Tuesday, Aug 18')
+  await page.getByRole('button', { name: 'Next day' }).click()
+  const lockedCell = page.locator('[data-day-rows] input[data-cell-key]')
+  await expect(lockedCell).toBeDisabled()
+  await expect(page.locator('[data-day-rows] [data-locked-reason]')).toBeVisible()
+  await expect(page.locator('[data-entry-note="901"]')).toHaveText('Corrected delivery detail')
+  const approvedExpense = await page.evaluate(async () => {
+    const response = await fetch('/api/v1/expenses/901')
+    return { status: response.status, body: await response.json() }
+  })
+  expect(approvedExpense.status).toBe(200)
+  expect(approvedExpense.body).toMatchObject({
+    data: {
+      approval_status: 'approved',
+      is_locked: true,
+      locked_reason_code: 'approved',
+      notes: 'Receipt ready for review',
+    },
+  })
+})
+
+test('[e2e:timesheet-approval] submits and approves an expense-only week', async ({
+  context,
+  page,
+}) => {
+  const seeded = await context.request.post('/__ezacto_browser_fixture__/start-end', {
+    data: { action: 'approval-expense-only-seed' },
+    headers: {
+      'x-ezacto-browser-fixture-control': 'start-end-round-trip',
+    },
+  })
+  expect(seeded.status()).toBe(204)
+
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto('/?week=2026-08-09')
+  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await expect(page.locator('[data-timesheet-status]')).toBeVisible()
+  await expect(page.locator('[data-timesheet-status-label]')).toHaveText('Not submitted')
+  const periodTime = await page.evaluate(async () => {
+    const response = await fetch('/api/v1/time-entries?from=2026-08-09&to=2026-08-15')
+    return { status: response.status, body: await response.json() }
+  })
+  expect(periodTime.status).toBe(200)
+  expect(periodTime.body).toMatchObject({ data: [] })
+  await expect(page.getByRole('button', { name: 'Submit week' })).toBeEnabled()
+
+  const submitted = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/timesheet-submissions' &&
+      response.request().method() === 'POST',
+  )
+  await page.getByRole('button', { name: 'Submit week' }).click()
+  const submittedResponse = await submitted
+  expect(submittedResponse.status()).toBe(201)
+  expect(await submittedResponse.json()).toMatchObject({
+    data: { entry_count: 0, expense_count: 1 },
+  })
+  await page.goto('/approvals')
+  const card = page.locator('[data-approval-queue] [data-submission-id]')
+  await expect(card).toContainText('1 expense')
+  await expect(card).toContainText('Browser Acceptance Project / Travel')
+  await expect(card).toContainText('Wed, Aug 12')
+  await expect(card).toContainText('$8.75')
+  await expect(card).toContainText('Expense-only receipt')
+  const approved = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.endsWith('/approve') &&
+      response.request().method() === 'POST',
+  )
+  await card.getByRole('button', { name: 'Approve' }).click()
+  expect((await approved).ok()).toBe(true)
+  const expense = await page.evaluate(async () => {
+    const response = await fetch('/api/v1/expenses/902')
+    return { status: response.status, body: await response.json() }
+  })
+  expect(expense.status).toBe(200)
+  expect(expense.body).toMatchObject({
+    data: { approval_status: 'approved', is_locked: true, locked_reason_code: 'approved' },
+  })
 })

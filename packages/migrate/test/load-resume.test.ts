@@ -282,8 +282,8 @@ const loadD1ToCompletion = async (
       database: createD1Database(database),
       snapshotDir,
       immutableSnapshotSha256: digest,
-      maxRows: 1,
-      maxStatements: 20,
+      maxRows: 100,
+      maxStatements: 700,
     })
     if (result.complete) return result
   }

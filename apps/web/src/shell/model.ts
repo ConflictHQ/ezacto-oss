@@ -1,6 +1,8 @@
 import {
   EzactoClient,
+  EzactoApiError,
   type AuthPrincipal,
+  type Expense,
   type GeneralResource,
   type Invoice,
   type InvoiceGenerationInput,
@@ -10,6 +12,10 @@ import {
   type TimeEntryInput,
   type TimeEntryOption,
   type TimeEntryPatch,
+  type TimesheetRejectionInput,
+  type TimesheetSubmission,
+  type TimesheetSubmissionDetail,
+  type TimesheetSubmissionInput,
   type Whoami,
 } from '@ezacto/client'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
@@ -33,10 +39,31 @@ export interface ShellApi {
     readonly to?: string
     readonly is_running?: boolean
   }, signal?: AbortSignal): Promise<readonly TimeEntry[]>
+  listExpenses?(query: {
+    readonly from?: string
+    readonly to?: string
+  }, signal?: AbortSignal): Promise<readonly Expense[]>
   createTimeEntry(input: TimeEntryInput, signal?: AbortSignal): Promise<TimeEntry>
   updateTimeEntry(id: number, patch: TimeEntryPatch, signal?: AbortSignal): Promise<TimeEntry>
   deleteTimeEntry(id: number, signal?: AbortSignal): Promise<void>
   stopTimeEntry(id: number, signal?: AbortSignal): Promise<TimeEntry>
+  listTimesheetSubmissions?(
+    periodStart: string,
+    periodEnd: string,
+    signal?: AbortSignal,
+  ): Promise<readonly TimesheetSubmission[]>
+  submitTimesheet?(
+    input: TimesheetSubmissionInput,
+    signal?: AbortSignal,
+  ): Promise<TimesheetSubmission>
+  listPendingTimesheetSubmissions?(signal?: AbortSignal): Promise<readonly TimesheetSubmission[]>
+  getTimesheetSubmission?(id: number, signal?: AbortSignal): Promise<TimesheetSubmissionDetail>
+  approveTimesheetSubmission?(id: number, signal?: AbortSignal): Promise<TimesheetSubmission>
+  rejectTimesheetSubmission?(
+    id: number,
+    input: TimesheetRejectionInput,
+    signal?: AbortSignal,
+  ): Promise<TimesheetSubmission>
   generateInvoice?(
     commandId: string,
     input: InvoiceGenerationInput,
@@ -52,6 +79,33 @@ export interface QuickAddCommand {
 }
 
 export const maximumTimeEntryNoteLength = 10_000
+export const pendingTimesheetQueueLimit = 50
+export const pendingTimesheetDetailConcurrency = 4
+
+export const hydratePendingTimesheetDetails = async (
+  summaries: readonly TimesheetSubmission[],
+  getSubmission: (id: number, signal?: AbortSignal) => Promise<TimesheetSubmissionDetail>,
+  signal?: AbortSignal,
+): Promise<readonly TimesheetSubmissionDetail[]> => {
+  const bounded = summaries.slice(0, pendingTimesheetQueueLimit)
+  const details: Array<TimesheetSubmissionDetail | undefined> = new Array(bounded.length)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < bounded.length) {
+      const index = next++
+      details[index] = await getSubmission(bounded[index]!.id, signal)
+    }
+  }
+  await Promise.all(
+    Array.from(
+      { length: Math.min(pendingTimesheetDetailConcurrency, bounded.length) },
+      worker,
+    ),
+  )
+  return details.filter(
+    (detail): detail is TimesheetSubmissionDetail => detail?.status === 'submitted',
+  )
+}
 
 export const timeEntryNoteLength = (notes: string | null | undefined): number =>
   notes === null || notes === undefined ? 0 : Array.from(notes.trim()).length
@@ -75,6 +129,7 @@ export interface DisplayTimeEntry extends TimeEntry {
 
 export interface ShellSnapshot {
   readonly entries: readonly DisplayTimeEntry[]
+  readonly expenses: readonly Expense[]
   readonly running: DisplayTimeEntry | null
   readonly timeEntrySettings: TimeEntrySettings
   readonly catalog: {
@@ -248,10 +303,14 @@ export const localDate = (now = new Date()): string => {
   return `${year}-${month}-${day}`
 }
 
-export const weekRange = (within: string): { from: string; to: string } => {
+export const weekRange = (
+  within: string,
+  weekStartDay: 'saturday' | 'sunday' | 'monday' = 'monday',
+): { from: string; to: string } => {
   const date = new Date(`${within}T00:00:00.000Z`)
-  const daysSinceMonday = (date.getUTCDay() + 6) % 7
-  date.setUTCDate(date.getUTCDate() - daysSinceMonday)
+  const startIndex = weekStartDay === 'sunday' ? 0 : weekStartDay === 'monday' ? 1 : 6
+  const daysSinceStart = (date.getUTCDay() - startIndex + 7) % 7
+  date.setUTCDate(date.getUTCDate() - daysSinceStart)
   const from = date.toISOString().slice(0, 10)
   date.setUTCDate(date.getUTCDate() + 6)
   return { from, to: date.toISOString().slice(0, 10) }
@@ -298,13 +357,18 @@ export const loadShellSnapshot = async (
   now = new Date(),
   signal?: AbortSignal,
 ): Promise<ShellSnapshot> => {
-  const range = weekRange(localDate(now))
-  const [resources, entries, running, timeEntryOptions, timeEntrySettings] = await Promise.all([
+  const timeEntrySettings = await api.getTimeEntrySettings(signal)
+  const range = weekRange(localDate(now), timeEntrySettings.week_start_day)
+  const expenseRequest = api.listExpenses?.(range, signal).catch((error: unknown) => {
+    if (error instanceof EzactoApiError && error.status === 404) return []
+    throw error
+  }) ?? Promise.resolve([])
+  const [resources, entries, running, expenses, timeEntryOptions] = await Promise.all([
     loadCatalogResources(api, signal),
     api.listTimeEntries(range, signal),
     api.listTimeEntries({ is_running: true }, signal),
+    expenseRequest,
     api.listTimeEntryOptions(signal),
-    api.getTimeEntrySettings(signal),
   ])
   const displayedEntries = displayEntries(entries, resources)
   const displayedRunning = displayEntries(running, resources)
@@ -312,6 +376,7 @@ export const loadShellSnapshot = async (
     throw new Error('more than one timer is running')
   return {
     entries: displayedEntries,
+    expenses,
     running: displayedRunning[0] ?? null,
     timeEntrySettings,
     catalog: { ...resources, timeEntryOptions },
@@ -460,6 +525,23 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     } while (cursor !== undefined)
     return entries
   },
+  listExpenses: async (query, signal) => {
+    const expenses: Expense[] = []
+    let cursor: string | undefined
+    do {
+      const page = await client.listExpenses({
+        query: {
+          ...query,
+          per_page: 200,
+          ...(cursor === undefined ? {} : { cursor }),
+        },
+        ...withSignal(signal),
+      })
+      expenses.push(...page.data)
+      cursor = page.page.next_cursor ?? undefined
+    } while (cursor !== undefined)
+    return expenses
+  },
   createTimeEntry: async (input, signal) =>
     (await client.createTimeEntry({ body: input, ...withSignal(signal) })).data,
   updateTimeEntry: async (id, patch, signal) =>
@@ -469,6 +551,50 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   },
   stopTimeEntry: async (id, signal) =>
     (await client.stopTimeEntry({ id, ...withSignal(signal) })).data,
+  listTimesheetSubmissions: async (periodStart, periodEnd, signal) => {
+    const submissions: TimesheetSubmission[] = []
+    let cursor: string | undefined
+    do {
+      const page = await client.listTimesheetSubmissions({
+        query: {
+          period_start: periodStart,
+          period_end: periodEnd,
+          per_page: 200,
+          ...(cursor === undefined ? {} : { cursor }),
+        },
+        ...withSignal(signal),
+      })
+      submissions.push(...page.data)
+      cursor = page.page.next_cursor ?? undefined
+    } while (cursor !== undefined)
+    return submissions
+  },
+  submitTimesheet: async (input, signal) =>
+    (await client.submitTimesheet({ body: input, ...withSignal(signal) })).data,
+  listPendingTimesheetSubmissions: async (signal) => {
+    const page = await client.listPendingTimesheetSubmissions({
+      query: { per_page: pendingTimesheetQueueLimit },
+      ...withSignal(signal),
+    })
+    return page.data.slice(0, pendingTimesheetQueueLimit)
+  },
+  getTimesheetSubmission: async (id, signal) =>
+    (await client.getTimesheetSubmission({ id, ...withSignal(signal) })).data,
+  approveTimesheetSubmission: async (id, signal) =>
+    (
+      await client.approveTimesheetSubmission({
+        id,
+        ...withSignal(signal),
+      })
+    ).data,
+  rejectTimesheetSubmission: async (id, input, signal) =>
+    (
+      await client.rejectTimesheetSubmission({
+        id,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data,
   generateInvoice: async (commandId, input, signal) =>
     (
       await client.generateInvoice({

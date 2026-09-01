@@ -331,13 +331,20 @@ export const buildSanitizedLoadSnapshot = async (
       '"timer_started_at":null,"started_time":"3:30pm","ended_time":null,' +
       '"notes":"Sanitized running time","billable":true,"budgeted":true,' +
       '"billable_rate":175.00,"cost_rate":80.50,"external_reference":null,' +
-      `"calendar_event":null,"invoice":null,"approval_status":"approved",` +
+      `"calendar_event":null,"invoice":null,"approval_status":"unsubmitted",` +
       `"created_at":"${timestamp}","updated_at":"${timestamp}"}`,
   ])
-  await writeRows('expenses', [
+  const mileageExpense = JSON.parse(
     await goldenJson('harvest-expense.json'),
+  ) as Record<string, unknown>
+  const directExpense = JSON.parse(
     await goldenJson('harvest-expense-direct.json'),
-  ])
+  ) as Record<string, unknown>
+  // Keep this synthetic week internally consistent with its approved time
+  // entry while retaining the golden source files as immutable extraction
+  // examples.
+  mileageExpense.approval_status = 'approved'
+  await writeRows('expenses', [JSON.stringify(mileageExpense), JSON.stringify(directExpense)])
 
   const receiptBytes = await readFile(golden('harvest-receipt.pdf'))
   const sha256 = createHash('sha256').update(receiptBytes).digest('hex')

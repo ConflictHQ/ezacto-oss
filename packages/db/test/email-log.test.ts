@@ -116,6 +116,7 @@ for (const [runtime, factory] of factories) {
         { id: '0024_migration_worksheet_completions' },
         { id: '0025_time_entry_note_requirements' },
         { id: '0026_invoice_generation' },
+        { id: '0027_timesheet_approvals' },
       ])
     })
 
@@ -144,6 +145,7 @@ for (const [runtime, factory] of factories) {
         { id: '0024_migration_worksheet_completions' },
         { id: '0025_time_entry_note_requirements' },
         { id: '0026_invoice_generation' },
+        { id: '0027_timesheet_approvals' },
       ])
       expect(
         await current.rows<{ name: string }>(
