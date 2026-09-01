@@ -39,6 +39,23 @@ export {
   type TimesheetSubmissionSource,
   type TimesheetSubmissionStatus,
 } from './timesheet-approvals.js'
+export {
+  createTimesheetLockPolicyRepository,
+  DrizzleTimesheetLockPolicyRepository,
+  TimesheetLockPolicyError,
+  type TimesheetDeadline,
+  type TimesheetDeadlineDay,
+  type TimesheetLockKind,
+  type TimesheetLockListWindow,
+  type TimesheetLockPolicyActor,
+  type TimesheetLockPolicyRepository,
+  type TimesheetLockPolicySettings,
+  type TimesheetLockWindowFilters,
+  type TimesheetLockWindowRecord,
+  type TimesheetLockWindowSource,
+  type TimesheetPolicyLockResolution,
+  type UpdateTimesheetLockPolicySettings,
+} from './timesheet-lock-policy.js'
 export { createMoneyResourceRepository } from './money-resources.js'
 export {
   createInvoiceGenerationService,

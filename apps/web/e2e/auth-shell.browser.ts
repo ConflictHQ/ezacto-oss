@@ -392,7 +392,19 @@ test('[e2e:track-week] uses one editor and submits 12-hour UI times as canonical
       })
       return
     }
+    if (url.pathname === '/api/v1/expenses') {
+      await fulfillJson(route, {
+        data: [],
+        page: { next_cursor: null },
+        links: { next: null },
+      })
+      return
+    }
     if (url.pathname === '/api/v1/timesheet-submissions') {
+      await fulfillJson(route, { error: { code: 'not_found' } }, 404)
+      return
+    }
+    if (url.pathname === '/api/v1/timesheet-lock-policy') {
       await fulfillJson(route, { error: { code: 'not_found' } }, 404)
       return
     }
@@ -884,7 +896,7 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expect(success).toContainText('The draft is saved.')
 })
 
-test('[e2e:timesheet-approval] submits, rejects, corrects, resubmits, and locks a real D1 timesheet', async ({
+test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, policy-locks, and unlocks a real D1 timesheet', async ({
   context,
   page,
 }) => {
@@ -901,6 +913,7 @@ test('[e2e:timesheet-approval] submits, rejects, corrects, resubmits, and locks 
   await page.getByLabel('Email').fill(fixtureEmail)
   await page.getByLabel('Password').fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await expect(page.locator('[data-day-label]')).toContainText('Monday, Aug 17')
   await page.getByRole('button', { name: 'Next day' }).click()
   await expect(page.locator('[data-day-label]')).toContainText('Tuesday, Aug 18')
   await page.getByRole('button', { name: 'Next day' }).click()
@@ -1028,6 +1041,213 @@ test('[e2e:timesheet-approval] submits, rejects, corrects, resubmits, and locks 
       locked_reason_code: 'approved',
       notes: 'Receipt ready for review',
     },
+  })
+
+  await page.goto('/approvals')
+  const approvedCard = page
+    .locator('[data-approval-history] [data-approved-submission-id]')
+    .filter({ hasText: 'Browser Owner' })
+  await expect(approvedCard).toContainText('Sun, Aug 16 – Sat, Aug 22')
+  await approvedCard.getByRole('button', { name: 'Reopen' }).click()
+
+  const withdrawal = page.locator('[data-withdrawal-dialog]')
+  await expect(withdrawal).toBeVisible()
+  await withdrawal.getByRole('button', { name: 'Reopen timesheet' }).click()
+  await expect(page.locator('[data-withdrawal-result]')).toHaveText(
+    'Enter a reason before reopening this timesheet.',
+  )
+  await withdrawal
+    .getByLabel('Why is this period being reopened?')
+    .fill('Correct work before the monthly close.')
+  const reopened = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.endsWith('/withdraw') &&
+      response.request().method() === 'POST',
+  )
+  await withdrawal.getByRole('button', { name: 'Reopen timesheet' }).click()
+  const reopenedResponse = await reopened
+  expect(reopenedResponse.ok()).toBe(true)
+  expect(await reopenedResponse.json()).toMatchObject({
+    data: {
+      status: 'unsubmitted',
+      rejection_reason: 'Correct work before the monthly close.',
+    },
+  })
+  await expect(withdrawal).toBeHidden()
+  await expect(page.locator('[data-approval-history]')).toContainText(
+    'No approved timesheets are available to reopen.',
+  )
+  const reopenedResources = await page.evaluate(async () => {
+    const [entry, expense] = await Promise.all([
+      fetch('/api/v1/time-entries/901'),
+      fetch('/api/v1/expenses/901'),
+    ])
+    return {
+      entry: { status: entry.status, body: await entry.json() },
+      expense: { status: expense.status, body: await expense.json() },
+    }
+  })
+  expect(reopenedResources).toMatchObject({
+    entry: {
+      status: 200,
+      body: { data: { approval_status: 'unsubmitted', is_locked: false } },
+    },
+    expense: {
+      status: 200,
+      body: { data: { approval_status: 'unsubmitted', is_locked: false } },
+    },
+  })
+
+  const policyPanel = page.locator('[data-lock-policy-panel]')
+  await expect(policyPanel).toBeVisible()
+  await policyPanel.locator('[data-lock-policy-auto]').uncheck()
+  await policyPanel.locator('[data-lock-policy-day]').selectOption('friday')
+  await policyPanel.locator('[data-lock-policy-time]').fill('16:45')
+  await policyPanel.locator('[data-lock-policy-timezone]').fill('America/Costa_Rica')
+  const policySaved = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/timesheet-lock-policy' &&
+      response.request().method() === 'PATCH',
+  )
+  await policyPanel.getByRole('button', { name: 'Save policy' }).click()
+  const policyResponse = await policySaved
+  expect(policyResponse.ok()).toBe(true)
+  expect(policyResponse.request().postDataJSON()).toEqual({
+    auto_lock: false,
+    timesheet_deadline: { day: 'friday', time: '16:45' },
+    timezone: 'America/Costa_Rica',
+  })
+  expect(await policyResponse.json()).toMatchObject({
+    data: {
+      auto_lock: false,
+      timesheet_deadline: { day: 'friday', time: '16:45' },
+      timezone: 'America/Costa_Rica',
+    },
+  })
+  await expect(page.locator('[data-lock-policy-result]')).toHaveText(
+    'Automatic locking disabled. Existing lock records remain in effect.',
+  )
+
+  await policyPanel.locator('[data-manual-lock-through]').fill('2026-08-19')
+  await policyPanel
+    .locator('[data-manual-lock-reason]')
+    .fill('Monthly close verification')
+  const manualLocked = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/timesheet-locks' &&
+      response.request().method() === 'POST',
+  )
+  await policyPanel.getByRole('button', { name: 'Create lock' }).click()
+  const manualLockResponse = await manualLocked
+  expect(manualLockResponse.status()).toBe(201)
+  const manualLockBody = (await manualLockResponse.json()) as {
+    data: { id: number }
+  }
+  expect(manualLockBody).toMatchObject({
+    data: {
+      kind: 'manual',
+      period_start: null,
+      period_end: '2026-08-19',
+      reason: 'Monthly close verification',
+      active: true,
+    },
+  })
+  const manualLockCard = page.locator(
+    `[data-timesheet-lock-list] [data-lock-id="${manualLockBody.data.id}"]`,
+  )
+  await expect(manualLockCard).toContainText('Manual cutoff')
+  await expect(manualLockCard).toContainText('Monthly close verification')
+
+  await page.goto('/?week=2026-08-17')
+  await expect(page.locator('[data-day-label]')).toContainText('Monday, Aug 17')
+  await page.getByRole('button', { name: 'Next day' }).click()
+  await page.getByRole('button', { name: 'Next day' }).click()
+  await expect(page.locator('[data-day-label]')).toContainText('Wednesday, Aug 19')
+  const policyLockedRow = page.locator('[data-day-rows] .day-row').filter({
+    has: page.locator('[data-entry-note="901"]'),
+  })
+  const policyLockedCell = policyLockedRow.locator('[data-cell-state="locked"]')
+  await expect(policyLockedCell).toBeVisible()
+  await expect(policyLockedCell.locator('input')).toBeDisabled()
+  await expect(policyLockedCell.locator('input')).toHaveAttribute('title', 'Locked by policy')
+  await expect(policyLockedCell.locator('[data-locked-reason]')).toHaveText('Locked by policy')
+  await expect(policyLockedCell.locator('.cell-note')).toBeDisabled()
+
+  const refusedEdit = await page.evaluate(async () => {
+    const response = await fetch('/api/v1/time-entries/901', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ seconds: 7200 }),
+    })
+    return { status: response.status, body: await response.json() }
+  })
+  expect(refusedEdit).toMatchObject({
+    status: 422,
+    body: {
+      error: {
+        code: 'tracked_mutation_locked',
+        fields: [{ code: 'policy_locked' }],
+      },
+    },
+  })
+  const unchanged = await page.evaluate(async () => {
+    const response = await fetch('/api/v1/time-entries/901')
+    return response.json()
+  })
+  expect(unchanged).toMatchObject({ data: { seconds: 3600, is_locked: true } })
+
+  await page.goto('/approvals')
+  const activeLockCard = page.locator(
+    `[data-timesheet-lock-list] [data-lock-id="${manualLockBody.data.id}"]`,
+  )
+  await activeLockCard
+    .locator(`[data-lock-unlock-reason="${manualLockBody.data.id}"]`)
+    .fill('Correction window opened')
+  const unlocked = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/v1/timesheet-locks/${manualLockBody.data.id}/unlock` &&
+      response.request().method() === 'POST',
+  )
+  await activeLockCard.getByRole('button', { name: 'Unlock' }).click()
+  const unlockResponse = await unlocked
+  expect(unlockResponse.ok()).toBe(true)
+  expect(await unlockResponse.json()).toMatchObject({
+    data: {
+      id: manualLockBody.data.id,
+      active: false,
+      unlock_reason: 'Correction window opened',
+    },
+  })
+  await expect(page.locator('[data-lock-policy-result]')).toHaveText(
+    'Tracked work unlocked. The reason was added to the audit trail.',
+  )
+  await expect(activeLockCard).toHaveCount(0)
+
+  await page.goto('/?week=2026-08-17')
+  await expect(page.locator('[data-day-label]')).toContainText('Monday, Aug 17')
+  await page.getByRole('button', { name: 'Next day' }).click()
+  await page.getByRole('button', { name: 'Next day' }).click()
+  const unlockedRow = page.locator('[data-day-rows] .day-row').filter({
+    has: page.locator('[data-entry-note="901"]'),
+  })
+  const unlockedInput = unlockedRow.locator('input[data-cell-key]')
+  await expect(unlockedInput).toBeEnabled()
+  const edited = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/time-entries/901' &&
+      response.request().method() === 'PATCH',
+  )
+  await unlockedInput.fill('1.25')
+  await unlockedInput.press('Enter')
+  expect((await edited).ok()).toBe(true)
+  await expect(unlockedInput).toHaveValue('1.25')
+  const editedEntry = await page.evaluate(async () => {
+    const response = await fetch('/api/v1/time-entries/901')
+    return response.json()
+  })
+  expect(editedEntry).toMatchObject({
+    data: { seconds: 4500, approval_status: 'unsubmitted', is_locked: false },
   })
 })
 

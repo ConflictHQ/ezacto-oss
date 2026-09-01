@@ -93,7 +93,7 @@ describe('container runtime composition', () => {
       first.database
         .prepare('SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1')
         .get(),
-    ).toEqual({ id: '0027_timesheet_approvals' })
+    ).toEqual({ id: '0028_timesheet_lock_policy' })
 
     const signup = await request(
       '/auth/signup',

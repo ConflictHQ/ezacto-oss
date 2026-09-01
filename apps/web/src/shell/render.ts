@@ -199,7 +199,10 @@ export const renderAppShell = (options: AppShellOptions): string => {
           <p data-timesheet-rejection-reason hidden></p>
           <p class="form-result" data-timesheet-result role="status"></p>
         </div>
-        <button class="primary-action" type="button" data-submit-timesheet data-auth-action disabled>Submit week</button>
+        <div class="timesheet-status-actions">
+          <button type="button" data-withdraw-timesheet data-auth-action hidden disabled>Reopen week</button>
+          <button class="primary-action" type="button" data-submit-timesheet data-auth-action disabled>Submit week</button>
+        </div>
       </aside>
       <div class="week-grid-wrap" data-week-grid data-view="desktop">
         <table class="week-grid-table">
@@ -223,9 +226,43 @@ export const renderAppShell = (options: AppShellOptions): string => {
       <div><p class="eyebrow">Timesheets</p><h1>Approvals</h1></div>
       <a href="/">Back to time</a>
     </header>
-    <p class="approval-intro">Review submitted time before it becomes locked.</p>
-    <p class="form-result" data-approval-queue-result role="status" aria-live="polite"></p>
-    <section class="approval-queue" data-approval-queue aria-label="Pending timesheets"></section>
+    <section data-approval-review-panel>
+      <p class="approval-intro">Review submitted time before it becomes locked.</p>
+      <p class="form-result" data-approval-queue-result role="status" aria-live="polite"></p>
+      <section class="approval-queue" data-approval-queue aria-label="Pending timesheets"></section>
+      <section class="approval-queue" data-approval-history aria-label="Recently approved timesheets"></section>
+    </section>
+    <section class="timesheet-lock-policy" data-lock-policy-panel hidden aria-labelledby="lock-policy-title">
+      <header>
+        <div><p class="eyebrow">Organization policy</p><h2 id="lock-policy-title">Time and expense locks</h2></div>
+        <p>Deadline and manual locks remain in force until explicitly unlocked.</p>
+      </header>
+      <form class="lock-policy-form" data-lock-policy-form>
+        <label class="lock-policy-toggle"><input name="autoLock" type="checkbox" data-lock-policy-auto>Automatically lock completed weeks</label>
+        <label>Deadline day
+          <select name="deadlineDay" data-lock-policy-day>
+            <option value="sunday">Sunday</option><option value="monday">Monday</option>
+            <option value="tuesday">Tuesday</option><option value="wednesday">Wednesday</option>
+            <option value="thursday">Thursday</option><option value="friday">Friday</option>
+            <option value="saturday">Saturday</option>
+          </select>
+        </label>
+        <label>Deadline time<input name="deadlineTime" type="time" data-lock-policy-time required></label>
+        <label>Organization timezone<input name="timezone" type="text" data-lock-policy-timezone autocomplete="off" maxlength="128" required></label>
+        <button class="primary-action" type="submit" data-lock-policy-submit>Save policy</button>
+      </form>
+      <form class="manual-lock-form" data-manual-lock-form>
+        <div>
+          <p class="eyebrow">One-time cutoff</p>
+          <h3>Lock all tracked work through a date</h3>
+        </div>
+        <label>Locked through<input name="lockedThrough" type="date" data-manual-lock-through required></label>
+        <label>Reason<textarea name="reason" data-manual-lock-reason rows="3" maxlength="10000" required></textarea></label>
+        <button type="submit" data-manual-lock-submit>Create lock</button>
+      </form>
+      <p class="form-result" data-lock-policy-result role="status" aria-live="polite"></p>
+      <div class="timesheet-lock-list" data-timesheet-lock-list aria-live="polite"></div>
+    </section>
   </main>
   <main class="app-content invoice-generation" data-invoice-generation-page${view === 'invoice-generation' ? '' : ' hidden'}>
     <header class="context-row">
@@ -332,6 +369,15 @@ export const renderAppShell = (options: AppShellOptions): string => {
       <p class="hint">Required. This reason is shown to the person who submitted the timesheet.</p>
       <p class="form-result" data-rejection-result role="status" aria-live="polite"></p>
       <button class="primary-action" type="submit" data-rejection-submit>Reject timesheet</button>
+    </form>
+  </dialog>
+  <dialog class="rejection-dialog" data-withdrawal-dialog aria-labelledby="withdrawal-title">
+    <form data-withdrawal-form novalidate>
+      <header><div><p class="eyebrow">Explicit unlock</p><h2 id="withdrawal-title">Reopen approved timesheet</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
+      <label for="ez-withdrawal-reason">Why is this period being reopened?<textarea id="ez-withdrawal-reason" name="reason" data-withdrawal-reason rows="5" maxlength="10000" required></textarea></label>
+      <p class="hint">Required. This action and reason are written to the audit stream.</p>
+      <p class="form-result" data-withdrawal-result role="status" aria-live="polite"></p>
+      <button class="primary-action" type="submit" data-withdrawal-submit>Reopen timesheet</button>
     </form>
   </dialog>
   <footer class="build-stamp">${escapeHtml(options.environment)} · ${escapeHtml(shortRelease)}</footer>

@@ -157,6 +157,9 @@ for (const [runtime, factory] of factories) {
       expect(await harness.rows(`SELECT modules FROM organizations WHERE id = 1`)).toEqual([
         { modules: '{"approval":true,"expenses":true,"invoices":true}' },
       ])
+      expect(await harness.rows(`SELECT timezone FROM organizations WHERE id = 1`)).toEqual([
+        { timezone: 'UTC' },
+      ])
 
       expect(await harness.authenticate(token)).toEqual({
         tokenId: 1,
@@ -264,6 +267,16 @@ for (const [runtime, factory] of factories) {
           InstanceBootstrapConflictError,
         )
       }
+    })
+
+    it('[security] includes the organization timezone in exact bootstrap retries', async () => {
+      harness = await factory()
+      await harness.bootstrap()
+      await harness.run(`UPDATE organizations SET timezone = 'America/New_York' WHERE id = 1`)
+
+      await expect(harness.bootstrap()).rejects.toBeInstanceOf(
+        InstanceBootstrapConflictError,
+      )
     })
 
     it('[security] rejects unexpected identity state without adding bootstrap rows', async () => {

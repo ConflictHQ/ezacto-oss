@@ -768,6 +768,155 @@ for (const [runtime, factory] of factories) {
       ])
     })
 
+    it('[migration] preserves a withdrawn imported approval across later time and expense imports', async () => {
+      database = await factory()
+      await installFixture(database)
+      await insertSourceTimeEntry(
+        database,
+        2,
+        'withdrawn-source-time-initial',
+        '2026-08-18',
+        'approved',
+      )
+      const [imported] = await database.rows<{ id: number }>(
+        `SELECT id FROM timesheet_submissions WHERE period_start = '2026-08-17'`,
+      )
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      await approvals.withdraw(
+        actor(10, 'administrator'),
+        imported!.id,
+        'Source approval needs local correction.',
+        t2,
+      )
+
+      await database.run(
+        `INSERT INTO time_entries (
+          id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+          spent_date, seconds, seconds_without_timer, rounded_seconds, notes,
+          billable, created_at, updated_at
+        ) VALUES (20, 1, 1, 1, 1, 1, '2026-08-19', 60, 60, 60,
+          'Local correction', 1, ?, ?)`,
+        t2,
+        t2,
+      )
+      await database.run(
+        `INSERT INTO expenses (
+          id, user_id, project_id, expense_category_id, spent_date, notes,
+          total_cost_cents, billable, created_at, updated_at
+        ) VALUES (20, 1, 1, 1, '2026-08-20', 'Local correction', 100, 1, ?, ?)`,
+        t2,
+        t2,
+      )
+
+      await expect(
+        insertSourceExpense(database, 1, 101, '2026-08-19', 'approved'),
+      ).resolves.toBeUndefined()
+      await expect(
+        insertSourceTimeEntry(
+          database,
+          5,
+          'withdrawn-source-time-after-correction',
+          '2026-08-20',
+          'approved',
+        ),
+      ).resolves.toBeUndefined()
+      expect(
+        await database.rows<{ kind: string; approval_status: string }>(
+          `SELECT 'time' AS kind, approval_status FROM time_entries WHERE id = 20
+           UNION ALL SELECT 'expense', approval_status FROM expenses WHERE id = 20
+           ORDER BY kind`,
+        ),
+      ).toEqual([
+        { kind: 'expense', approval_status: 'unsubmitted' },
+        { kind: 'time', approval_status: 'unsubmitted' },
+      ])
+      await database.run(
+        `UPDATE organizations SET modules = json_set(modules, '$.approval', json('false'))
+         WHERE id = 1`,
+      )
+      await expect(
+        insertSourceTimeEntry(
+          database,
+          3,
+          'withdrawn-source-time-disabled',
+          '2026-08-20',
+          'approved',
+        ),
+      ).resolves.toBeUndefined()
+      await expect(
+        insertSourceExpense(database, 2, 102, '2026-08-21', 'approved'),
+      ).resolves.toBeUndefined()
+      expect(
+        await database.rows<{ kind: string; timesheet_submission_id: number | null }>(
+          `SELECT 'time' AS kind, timesheet_submission_id FROM time_entries WHERE id = 3
+           UNION ALL SELECT 'expense', timesheet_submission_id FROM expenses WHERE id = 2
+           ORDER BY kind`,
+        ),
+      ).toEqual([
+        { kind: 'expense', timesheet_submission_id: null },
+        { kind: 'time', timesheet_submission_id: null },
+      ])
+
+      await database.run(
+        `UPDATE organizations SET modules = json_set(modules, '$.approval', json('true'))
+         WHERE id = 1`,
+      )
+      await insertSourceTimeEntry(
+        database,
+        4,
+        'withdrawn-source-time-enabled',
+        '2026-08-22',
+        'approved',
+      )
+      await insertSourceExpense(database, 3, 103, '2026-08-23', 'approved')
+
+      expect(
+        await database.rows<{
+          status: string
+          source_status: string
+          rejection_reason: string
+          events: number
+        }>(
+          `SELECT submission.status, submission.source_status, submission.rejection_reason,
+            (SELECT count(*) FROM event_outbox event
+             WHERE event.aggregate_type = 'timesheet_submission'
+               AND event.aggregate_id = submission.id) AS events
+           FROM timesheet_submissions submission WHERE submission.id = ?`,
+          imported!.id,
+        ),
+      ).toEqual([{
+        status: 'unsubmitted',
+        source_status: 'approved',
+        rejection_reason: 'Source approval needs local correction.',
+        events: 2,
+      }])
+      expect(
+        await database.rows<{
+          kind: string
+          approval_status: string
+          timesheet_submission_id: number
+        }>(
+          `SELECT 'time' AS kind, approval_status, timesheet_submission_id
+           FROM time_entries WHERE id BETWEEN 2 AND 4
+           UNION ALL
+           SELECT 'expense', approval_status, timesheet_submission_id
+           FROM expenses WHERE id BETWEEN 1 AND 3
+           ORDER BY kind, timesheet_submission_id`,
+        ),
+      ).toEqual([
+        ...Array.from({ length: 3 }, () => ({
+          kind: 'expense',
+          approval_status: 'unsubmitted',
+          timesheet_submission_id: imported!.id,
+        })),
+        ...Array.from({ length: 3 }, () => ({
+          kind: 'time',
+          approval_status: 'unsubmitted',
+          timesheet_submission_id: imported!.id,
+        })),
+      ])
+    })
+
     it('[migration] rejects a disabled mixed-source week on the first enabled import atomically', async () => {
       database = await factory()
       await installFixture(database, false)

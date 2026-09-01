@@ -276,7 +276,7 @@ for (const [runtime, factory] of factories) {
       const db = await setup()
       expect(
         await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`),
-      ).toEqual([{ id: '0027_timesheet_approvals' }])
+      ).toEqual([{ id: '0028_timesheet_lock_policy' }])
       for (const table of ['time_entries', 'expenses']) {
         const columns = await db.rows<{
           name: string
@@ -492,9 +492,18 @@ for (const [runtime, factory] of factories) {
       const expenseSnapshot = async () =>
         db.rows<Record<string, unknown>>(`SELECT * FROM expenses WHERE id = 2`)
       const unlockExpense = async () => {
-        await db.run(
-          `UPDATE expenses SET invoice_id = NULL, approval_status = 'unsubmitted' WHERE id = 2`,
+        const [approved] = await db.rows<{ id: number }>(
+          `SELECT id FROM timesheet_submissions WHERE status = 'approved' LIMIT 1`,
         )
+        if (approved !== undefined) {
+          await createTimesheetApprovalRepository(db.orm).withdraw(
+            { userId: 1, profile: 'administrator' },
+            approved.id,
+            'Test reset',
+            timestamp,
+          )
+        }
+        await db.run(`UPDATE expenses SET invoice_id = NULL WHERE id = 2`)
         await db.run(`UPDATE clients SET is_active = 1 WHERE id = 1`)
         await db.run(`UPDATE projects SET is_active = 1 WHERE id = 1`)
       }
@@ -507,7 +516,7 @@ for (const [runtime, factory] of factories) {
         {
           reasonCode: 'approved',
           policyLocked: false,
-          lock: () => db.run(`UPDATE expenses SET approval_status = 'approved' WHERE id = 2`),
+          lock: () => approveFixtureEntry(db),
         },
         {
           reasonCode: 'policy_locked',

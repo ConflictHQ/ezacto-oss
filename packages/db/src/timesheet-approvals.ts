@@ -529,6 +529,18 @@ export class TimesheetApprovalRepository {
     )
   }
 
+  approvedSubmissions(
+    actor: Readonly<TimesheetApprovalActor>,
+    filters: Readonly<TimesheetSubmissionFilters>,
+  ): TimesheetSubmissionSource {
+    const authorization = approverPredicate(actor)
+    const conditions = listConditions(filters)
+    return this.#source(
+      ["submission.status = 'approved'", authorization.sql, ...conditions.sql],
+      [...authorization.params, ...conditions.params],
+    )
+  }
+
   #source(conditions: readonly string[], params: readonly unknown[]): TimesheetSubmissionSource {
     const where = conditions.length === 0 ? '1 = 1' : conditions.join(' AND ')
     return {
@@ -678,6 +690,52 @@ export class TimesheetApprovalRepository {
     occurredAt: string,
   ): Promise<TimesheetSubmissionRecord> {
     return this.#review(actor, submissionId, occurredAt, reason)
+  }
+
+  async withdraw(
+    actor: Readonly<TimesheetApprovalActor>,
+    submissionId: number,
+    reason: string,
+    occurredAt: string,
+  ): Promise<TimesheetSubmissionRecord> {
+    if (actor.profile !== 'administrator' && actor.profile !== 'executive_manager') {
+      throw new TimesheetApprovalError(
+        'forbidden',
+        'Only an organization policy administrator can withdraw an approval.',
+      )
+    }
+    try {
+      const result = await atomicPair(
+        this.#client,
+        {
+          sql: `UPDATE timesheet_submissions AS submission
+            SET status = 'unsubmitted', reviewed_by_user_id = ?, reviewed_at = ?,
+              rejection_reason = ?, version = version + 1, updated_at = ?
+            WHERE submission.id = ? AND submission.status = 'approved'
+            RETURNING id`,
+          params: [actor.userId, occurredAt, reason, occurredAt, submissionId],
+        },
+        { sql: `${submissionSelect} WHERE submission.id = ?`, params: [submissionId] },
+      )
+      if (result.mutationRows.length > 0 && result.readRows[0]) {
+        return record(result.readRows[0])
+      }
+    } catch (error) {
+      translateMutationFailure(error)
+    }
+
+    const existing = await first<{ status: TimesheetSubmissionStatus }>(
+      this.#client,
+      `SELECT status FROM timesheet_submissions WHERE id = ?`,
+      [submissionId],
+    )
+    if (existing === null) {
+      throw new TimesheetApprovalError('not_found', 'The timesheet submission does not exist.')
+    }
+    throw new TimesheetApprovalError(
+      'state_conflict',
+      'Only an approved timesheet can have its approval withdrawn.',
+    )
   }
 
   async #review(
