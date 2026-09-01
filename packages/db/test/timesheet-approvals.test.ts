@@ -195,6 +195,12 @@ const installFixture = async (db: TestDatabase, approval = true): Promise<void> 
     t0,
   )
   await db.run(
+    `INSERT INTO expense_categories (id, name, created_at, updated_at)
+     VALUES (1, 'Travel', ?, ?)`,
+    t0,
+    t0,
+  )
+  await db.run(
     `INSERT INTO time_entries (
       id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
       spent_date, seconds, seconds_without_timer, rounded_seconds, notes,
@@ -203,6 +209,74 @@ const installFixture = async (db: TestDatabase, approval = true): Promise<void> 
       'Initial work', 1, ?, ?)`,
     t0,
     t0,
+  )
+}
+
+const insertNativeExpense = async (
+  db: TestDatabase,
+  id: number,
+  spentDate: string,
+  totalCostCents: number,
+  notes = 'Approval expense',
+): Promise<void> => {
+  await db.run(
+    `INSERT INTO expenses (
+      id, user_id, project_id, expense_category_id, spent_date, notes,
+      total_cost_cents, billable, created_at, updated_at
+    ) VALUES (?, 1, 1, 1, ?, ?, ?, 1, ?, ?)`,
+    id,
+    spentDate,
+    notes,
+    totalCostCents,
+    t0,
+    t0,
+  )
+}
+
+const insertSourceExpense = async (
+  db: TestDatabase,
+  id: number,
+  harvestId: number,
+  spentDate: string,
+  sourceStatus: 'unsubmitted' | 'submitted' | 'approved',
+): Promise<void> => {
+  await db.run(
+    `INSERT INTO expenses (
+      id, harvest_id, user_id, project_id, expense_category_id, spent_date, notes,
+      total_cost_cents, billable, approval_status, source_approval_status,
+      created_at, updated_at
+    ) VALUES (?, ?, 1, 1, 1, ?, 'Imported expense', 1000, 1,
+      'unsubmitted', ?, ?, ?)`,
+    id,
+    harvestId,
+    spentDate,
+    sourceStatus,
+    t0,
+    t1,
+  )
+}
+
+const insertSourceTimeEntry = async (
+  db: TestDatabase,
+  id: number,
+  harvestId: string,
+  spentDate: string,
+  sourceStatus: 'unsubmitted' | 'submitted' | 'approved',
+): Promise<void> => {
+  await db.run(
+    `INSERT INTO time_entries (
+      id, harvest_id, user_id, project_id, task_id, user_assignment_id,
+      task_assignment_id, spent_date, seconds, seconds_without_timer,
+      rounded_seconds, notes, billable, approval_status, source_approval_status,
+      created_at, updated_at
+    ) VALUES (?, ?, 1, 1, 1, 1, 1, ?, 600, 600, 600, 'Imported time', 1,
+      'unsubmitted', ?, ?, ?)`,
+    id,
+    harvestId,
+    spentDate,
+    sourceStatus,
+    t0,
+    t1,
   )
 }
 
@@ -220,6 +294,7 @@ for (const [runtime, factory] of factories) {
     it('[db] submits, accepts editable pending work, approves atomically, and audits', async () => {
       database = await factory()
       await installFixture(database)
+      await insertNativeExpense(database, 1, '2026-08-25', 1_250, 'Train fare')
       const approvals = createTimesheetApprovalRepository(database.orm)
       const tracked = new DrizzleTrackedResourceRepository(database.orm, unlocked)
 
@@ -228,6 +303,7 @@ for (const [runtime, factory] of factories) {
         userId: 1,
         status: 'submitted',
         entryCount: 1,
+        expenseCount: 1,
         totalSeconds: 3600,
         rejectionReason: null,
       })
@@ -235,6 +311,35 @@ for (const [runtime, factory] of factories) {
         approvalStatus: 'submitted',
         isLocked: false,
       })
+      expect(await tracked.getExpense(1, 1)).toMatchObject({
+        notes: 'Train fare',
+        reimbursementStatus: 'none',
+        state: { approvalStatus: 'submitted', isLocked: false, invoiceId: null },
+      })
+
+      const addedExpense = await tracked.createExpense(
+        1,
+        {
+          projectId: 1,
+          expenseCategoryId: 1,
+          spentDate: '2026-08-26',
+          totalCostCents: 2_500,
+          notes: 'Hotel while pending',
+          reimbursable: true,
+        },
+        { instant: t2, date: '2026-08-26', time: '12:02' },
+      )
+      expect(addedExpense).toMatchObject({
+        approvalStatus: 'submitted',
+        timesheetSubmissionId: submitted.id,
+        reimbursementStatus: 'none',
+      })
+      await tracked.updateExpense(
+        1,
+        addedExpense.id,
+        { notes: 'Hotel receipt reviewed' },
+        { instant: t3, date: '2026-08-26', time: '12:03' },
+      )
 
       const added = await tracked.createTimeEntry(
         1,
@@ -258,7 +363,12 @@ for (const [runtime, factory] of factories) {
       expect(edited.state).toMatchObject({ approvalStatus: 'submitted', isLocked: false })
 
       const approved = await approvals.approve(actor(10, 'administrator'), submitted.id, t3)
-      expect(approved).toMatchObject({ status: 'approved', entryCount: 2, totalSeconds: 6300 })
+      expect(approved).toMatchObject({
+        status: 'approved',
+        entryCount: 2,
+        expenseCount: 2,
+        totalSeconds: 6300,
+      })
       await expect(tracked.updateTimeEntry(1, 1, { notes: 'too late' }, {
         instant: '2026-08-31T12:04:00.000Z',
         date: '2026-08-25',
@@ -270,6 +380,35 @@ for (const [runtime, factory] of factories) {
         lockedReasonCode: 'approved',
         lockedReason: 'Approved',
       })
+      expect(await tracked.getExpense(1, addedExpense.id)).toMatchObject({
+        notes: 'Hotel receipt reviewed',
+        reimbursable: true,
+        reimbursementStatus: 'none',
+        state: {
+          approvalStatus: 'approved',
+          isLocked: true,
+          lockedReasonCode: 'approved',
+          invoiceId: null,
+        },
+      })
+      await expect(
+        tracked.updateExpense(
+          1,
+          addedExpense.id,
+          { spentDate: '2026-09-01' },
+          { instant: t3, date: '2026-09-01', time: '12:03' },
+        ),
+      ).rejects.toMatchObject({ reasonCode: 'approved' })
+      await expect(tracked.deleteExpense(1, addedExpense.id)).rejects.toMatchObject({
+        reasonCode: 'approved',
+      })
+      await expect(
+        tracked.createExpense(
+          1,
+          { projectId: 1, expenseCategoryId: 1, spentDate: '2026-08-27', totalCostCents: 0 },
+          { instant: t3, date: '2026-08-27', time: '12:03' },
+        ),
+      ).rejects.toMatchObject({ reasonCode: 'approved_period' })
       await expect(
         tracked.createTimeEntry(
           1,
@@ -292,6 +431,7 @@ for (const [runtime, factory] of factories) {
     it('[db] rejects with a durable visible reason, then clears it on resubmit', async () => {
       database = await factory()
       await installFixture(database)
+      await insertNativeExpense(database, 1, '2026-08-25', 3_300, 'Client lunch')
       const approvals = createTimesheetApprovalRepository(database.orm)
       const tracked = new DrizzleTrackedResourceRepository(database.orm, unlocked)
       const submitted = await approvals.submit(1, periodStart, periodEnd, t1)
@@ -311,6 +451,10 @@ for (const [runtime, factory] of factories) {
         approvalStatus: 'unsubmitted',
         isLocked: false,
       })
+      expect((await tracked.getExpense(1, 1)).state).toMatchObject({
+        approvalStatus: 'unsubmitted',
+        isLocked: false,
+      })
       await tracked.updateTimeEntry(1, 1, { notes: 'Client outcome added.' }, {
         instant: t3,
         date: '2026-08-25',
@@ -323,7 +467,9 @@ for (const [runtime, factory] of factories) {
         rejectionReason: null,
         reviewedByUserId: null,
         version: 2,
+        expenseCount: 1,
       })
+      expect((await tracked.getExpense(1, 1)).state.approvalStatus).toBe('submitted')
       expect(
         await database.rows<{ event_type: string; reason: string | null }>(
           `SELECT event_type,
@@ -336,6 +482,170 @@ for (const [runtime, factory] of factories) {
         { event_type: 'timesheet.rejected', reason: 'Please describe the client outcome.' },
         { event_type: 'timesheet.submitted', reason: null },
       ])
+    })
+
+    it('[db] classifies an empty rejected period before resubmit without mutation', async () => {
+      database = await factory()
+      await installFixture(database)
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      const tracked = new DrizzleTrackedResourceRepository(database.orm, unlocked)
+      const submitted = await approvals.submit(1, periodStart, periodEnd, t1)
+      const rejected = await approvals.reject(
+        actor(10, 'administrator'),
+        submitted.id,
+        'Restore the missing work.',
+        t2,
+      )
+      await tracked.deleteTimeEntry(1, 1)
+
+      await expect(
+        approvals.submit(1, periodStart, periodEnd, t3),
+      ).rejects.toMatchObject({ code: 'empty_period' })
+      expect(
+        await database.rows<{
+          status: string
+          version: number
+          rejection_reason: string | null
+          events: number
+        }>(
+          `SELECT submission.status, submission.version, submission.rejection_reason,
+            (SELECT count(*) FROM event_outbox event
+             WHERE event.aggregate_type = 'timesheet_submission'
+               AND event.aggregate_id = submission.id) AS events
+           FROM timesheet_submissions submission WHERE submission.id = ?`,
+          submitted.id,
+        ),
+      ).toEqual([{
+        status: 'unsubmitted',
+        version: rejected.version,
+        rejection_reason: 'Restore the missing work.',
+        events: 2,
+      }])
+    })
+
+    it('[db] classifies a running rejected period before resubmit without mutation', async () => {
+      database = await factory()
+      await installFixture(database)
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      const tracked = new DrizzleTrackedResourceRepository(database.orm, unlocked)
+      const submitted = await approvals.submit(1, periodStart, periodEnd, t1)
+      const rejected = await approvals.reject(
+        actor(10, 'administrator'),
+        submitted.id,
+        'Stop the timer first.',
+        t2,
+      )
+      await tracked.restartTimeEntry(1, 1, {
+        instant: t3,
+        date: '2026-08-25',
+        time: '12:03',
+      })
+
+      await expect(
+        approvals.submit(1, periodStart, periodEnd, '2026-08-31T12:04:00.000Z'),
+      ).rejects.toMatchObject({ code: 'running_entry' })
+      expect(
+        await database.rows<{
+          status: string
+          version: number
+          rejection_reason: string | null
+          events: number
+          timer_started_at: string | null
+        }>(
+          `SELECT submission.status, submission.version, submission.rejection_reason,
+            (SELECT count(*) FROM event_outbox event
+             WHERE event.aggregate_type = 'timesheet_submission'
+               AND event.aggregate_id = submission.id) AS events,
+            entry.timer_started_at
+           FROM timesheet_submissions submission
+           JOIN time_entries entry ON entry.user_id = submission.user_id
+             AND entry.spent_date BETWEEN submission.period_start AND submission.period_end
+           WHERE submission.id = ?`,
+          submitted.id,
+        ),
+      ).toEqual([{
+        status: 'unsubmitted',
+        version: rejected.version,
+        rejection_reason: 'Stop the timer first.',
+        events: 2,
+        timer_started_at: t3,
+      }])
+    })
+
+    it('[db] submits and approves an expense-only period with exact reviewer detail', async () => {
+      database = await factory()
+      await installFixture(database)
+      await database.run(`DELETE FROM time_entries WHERE id = 1`)
+      await insertNativeExpense(database, 1, '2026-08-25', 0, 'Zero-cost adjustment')
+      const approvals = createTimesheetApprovalRepository(database.orm)
+
+      const submitted = await approvals.submit(1, periodStart, periodEnd, t1)
+      expect(submitted).toMatchObject({
+        status: 'submitted',
+        entryCount: 0,
+        expenseCount: 1,
+        totalSeconds: 0,
+      })
+      await expect(approvals.get(actor(10, 'administrator'), submitted.id)).resolves.toMatchObject({
+        entries: [],
+        expenses: [{
+          id: 1,
+          spentDate: '2026-08-25',
+          projectId: 1,
+          projectName: 'Approval project',
+          expenseCategoryId: 1,
+          expenseCategoryName: 'Travel',
+          totalCostCents: 0,
+          currency: 'USD',
+          notes: 'Zero-cost adjustment',
+        }],
+      })
+      await expect(
+        approvals.approve(actor(10, 'administrator'), submitted.id, t2),
+      ).resolves.toMatchObject({ status: 'approved', expenseCount: 1 })
+      expect(
+        await database.rows<{
+          approval_status: string
+          timesheet_submission_id: number | null
+        }>(`SELECT approval_status, timesheet_submission_id FROM expenses WHERE id = 1`),
+      ).toEqual([{ approval_status: 'approved', timesheet_submission_id: submitted.id }])
+    })
+
+    it('[db] keeps submitted expense create, move, and delete edits in the current aggregate', async () => {
+      database = await factory()
+      await installFixture(database)
+      await insertNativeExpense(database, 1, '2026-08-25', 1_000, 'Move me')
+      await insertNativeExpense(database, 2, '2026-08-26', 2_000, 'Delete me')
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      const tracked = new DrizzleTrackedResourceRepository(database.orm, unlocked)
+      const submitted = await approvals.submit(1, periodStart, periodEnd, t1)
+
+      const movedOut = await tracked.updateExpense(
+        1,
+        1,
+        { spentDate: '2026-08-31' },
+        { instant: t2, date: '2026-08-31', time: '12:02' },
+      )
+      expect(movedOut).toMatchObject({
+        approvalStatus: 'unsubmitted',
+        timesheetSubmissionId: null,
+      })
+      await expect(tracked.deleteExpense(1, 2)).resolves.toMatchObject({ id: 2 })
+
+      const movedBack = await tracked.updateExpense(
+        1,
+        1,
+        { spentDate: '2026-08-27', notes: 'Back in review' },
+        { instant: t3, date: '2026-08-27', time: '12:03' },
+      )
+      expect(movedBack).toMatchObject({
+        approvalStatus: 'submitted',
+        timesheetSubmissionId: submitted.id,
+      })
+      await expect(approvals.get(actor(10, 'administrator'), submitted.id)).resolves.toMatchObject({
+        expenseCount: 1,
+        expenses: [{ id: 1, spentDate: '2026-08-27', notes: 'Back in review' }],
+      })
     })
 
     it('[security] limits project managers to explicit teammates and denies other profiles', async () => {
@@ -415,6 +725,189 @@ for (const [runtime, factory] of factories) {
       ).toEqual([{ count: 0 }])
     })
 
+    it('[migration] reconciles disabled same-source imports across both resources on enable', async () => {
+      database = await factory()
+      await installFixture(database, false)
+      await insertSourceTimeEntry(database, 2, 'disabled-time-approved', '2026-08-18', 'approved')
+      await insertSourceExpense(database, 1, 101, '2026-08-19', 'approved')
+      await database.run(
+        `UPDATE organizations SET modules = json_set(modules, '$.approval', json('true')) WHERE id = 1`,
+      )
+
+      await insertSourceExpense(database, 2, 102, '2026-08-20', 'approved')
+      const submissions = await database.rows<{
+        id: number
+        status: string
+        origin: string
+        event_count: number
+      }>(
+        `SELECT submission.id, submission.status, submission.origin,
+          (SELECT count(*) FROM event_outbox event
+           WHERE event.aggregate_type = 'timesheet_submission'
+             AND event.aggregate_id = submission.id) AS event_count
+         FROM timesheet_submissions submission`,
+      )
+      expect(submissions).toEqual([{
+        id: expect.any(Number),
+        status: 'approved',
+        origin: 'harvest_import',
+        event_count: 1,
+      }])
+      const submissionId = submissions[0]!.id
+      expect(
+        await database.rows<{ approval_status: string; timesheet_submission_id: number }>(
+          `SELECT approval_status, timesheet_submission_id FROM time_entries WHERE id = 2
+           UNION ALL
+           SELECT approval_status, timesheet_submission_id FROM expenses WHERE id IN (1, 2)
+           ORDER BY timesheet_submission_id`,
+        ),
+      ).toEqual([
+        { approval_status: 'approved', timesheet_submission_id: submissionId },
+        { approval_status: 'approved', timesheet_submission_id: submissionId },
+        { approval_status: 'approved', timesheet_submission_id: submissionId },
+      ])
+    })
+
+    it('[migration] rejects a disabled mixed-source week on the first enabled import atomically', async () => {
+      database = await factory()
+      await installFixture(database, false)
+      await insertSourceTimeEntry(database, 2, 'disabled-time-approved', '2026-08-18', 'approved')
+      await insertSourceExpense(database, 1, 101, '2026-08-19', 'submitted')
+      await database.run(
+        `UPDATE organizations SET modules = json_set(modules, '$.approval', json('true')) WHERE id = 1`,
+      )
+
+      await expect(
+        insertSourceExpense(database, 2, 102, '2026-08-20', 'unsubmitted'),
+      ).rejects.toThrow(/source state is inconsistent/)
+      expect(await database.rows(`SELECT id FROM expenses WHERE id = 2`)).toEqual([])
+      expect(await database.rows(`SELECT id FROM timesheet_submissions`)).toEqual([])
+      expect(
+        await database.rows<{ approval_status: string; timesheet_submission_id: number | null }>(
+          `SELECT approval_status, timesheet_submission_id FROM time_entries WHERE id = 2
+           UNION ALL
+           SELECT approval_status, timesheet_submission_id FROM expenses WHERE id = 1`,
+        ),
+      ).toEqual([
+        { approval_status: 'unsubmitted', timesheet_submission_id: null },
+        { approval_status: 'unsubmitted', timesheet_submission_id: null },
+      ])
+      expect(
+        await database.rows<{ count: number }>(
+          `SELECT count(*) AS count FROM event_outbox
+           WHERE aggregate_type = 'timesheet_submission'`,
+        ),
+      ).toEqual([{ count: 0 }])
+    })
+
+    it('[migration] rejects normalization of a disabled imported running peer atomically', async () => {
+      database = await factory()
+      await installFixture(database, false)
+      await insertSourceTimeEntry(database, 2, 'disabled-running-approved', '2026-08-18', 'approved')
+      await database.run(
+        `UPDATE time_entries SET timer_started_at = ? WHERE id = 2`,
+        t1,
+      )
+      await database.run(
+        `UPDATE organizations SET modules = json_set(modules, '$.approval', json('true')) WHERE id = 1`,
+      )
+
+      await expect(
+        insertSourceExpense(database, 1, 101, '2026-08-19', 'approved'),
+      ).rejects.toThrow(/running time entries cannot be submitted/)
+      expect(await database.rows(`SELECT id FROM expenses WHERE id = 1`)).toEqual([])
+      expect(await database.rows(`SELECT id FROM timesheet_submissions`)).toEqual([])
+      expect(
+        await database.rows<{
+          approval_status: string
+          timesheet_submission_id: number | null
+          timer_started_at: string | null
+        }>(
+          `SELECT approval_status, timesheet_submission_id, timer_started_at
+           FROM time_entries WHERE id = 2`,
+        ),
+      ).toEqual([{
+        approval_status: 'unsubmitted',
+        timesheet_submission_id: null,
+        timer_started_at: t1,
+      }])
+      expect(
+        await database.rows<{ count: number }>(
+          `SELECT count(*) AS count FROM event_outbox
+           WHERE aggregate_type = 'timesheet_submission'`,
+        ),
+      ).toEqual([{ count: 0 }])
+    })
+
+    for (const sourceStatus of ['submitted', 'approved'] as const) {
+      it(`[migration] preserves an imported ${sourceStatus} period lock while approval is hidden`, async () => {
+        database = await factory()
+        await installFixture(database)
+        await insertSourceTimeEntry(
+          database,
+          2,
+          `locked-source-time-${sourceStatus}`,
+          '2026-08-18',
+          sourceStatus,
+        )
+        const before = await database.rows<{
+          id: number
+          status: string
+          events: number
+        }>(
+          `SELECT submission.id, submission.status,
+            (SELECT count(*) FROM event_outbox event
+             WHERE event.aggregate_type = 'timesheet_submission'
+               AND event.aggregate_id = submission.id) AS events
+           FROM timesheet_submissions submission
+           WHERE submission.period_start = '2026-08-17'`,
+        )
+        expect(before).toEqual([{ id: expect.any(Number), status: sourceStatus, events: 1 }])
+
+        await database.run(
+          `UPDATE organizations SET modules = json_set(modules, '$.approval', json('false')) WHERE id = 1`,
+        )
+        await expect(
+          insertSourceExpense(database, 1, 101, '2026-08-19', sourceStatus),
+        ).rejects.toThrow(/approved or pending timesheet period/)
+
+        expect(await database.rows(`SELECT id FROM expenses WHERE id = 1`)).toEqual([])
+        expect(
+          await database.rows<{
+            approval_status: string
+            timesheet_submission_id: number
+          }>(
+            `SELECT approval_status, timesheet_submission_id
+             FROM time_entries WHERE id = 2`,
+          ),
+        ).toEqual([{ approval_status: sourceStatus, timesheet_submission_id: before[0]!.id }])
+        expect(
+          await database.rows<{ id: number; status: string; events: number }>(
+            `SELECT submission.id, submission.status,
+              (SELECT count(*) FROM event_outbox event
+               WHERE event.aggregate_type = 'timesheet_submission'
+                 AND event.aggregate_id = submission.id) AS events
+             FROM timesheet_submissions submission
+             WHERE submission.period_start = '2026-08-17'`,
+          ),
+        ).toEqual(before)
+      })
+    }
+
+    it('[migration] permits native and Harvest unsubmitted peers without inventing an aggregate', async () => {
+      database = await factory()
+      await installFixture(database)
+      await expect(
+        insertSourceExpense(database, 1, 101, '2026-08-26', 'unsubmitted'),
+      ).resolves.toBeUndefined()
+      expect(await database.rows(`SELECT id FROM timesheet_submissions`)).toEqual([])
+      expect(
+        await database.rows<{ approval_status: string; source_approval_status: string }>(
+          `SELECT approval_status, source_approval_status FROM expenses WHERE id = 1`,
+        ),
+      ).toEqual([{ approval_status: 'unsubmitted', source_approval_status: 'unsubmitted' }])
+    })
+
     it('[concurrency] permits exactly one approve/reject winner', async () => {
       database = await factory()
       await installFixture(database)
@@ -452,6 +945,74 @@ for (const [runtime, factory] of factories) {
            FROM timesheet_submissions submission`,
         ),
       ).toEqual([{ status: 'submitted', events: 1 }])
+    })
+
+    it('[concurrency] translates a stopped time create whose target is rejected after membership read', async () => {
+      database = await factory()
+      await installFixture(database)
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      const submitted = await approvals.submit(1, periodStart, periodEnd, t1)
+      const reached = deferred()
+      const release = deferred()
+      interface ReturningBuilder {
+        returning(...fields: unknown[]): Promise<unknown[]>
+      }
+      interface InsertBuilder {
+        select(selection: unknown): ReturningBuilder
+      }
+      const mutableOrm = database.orm as unknown as {
+        insert(...args: unknown[]): InsertBuilder
+      }
+      const originalInsert = mutableOrm.insert
+      mutableOrm.insert = function (...args: unknown[]): InsertBuilder {
+        const builder = originalInsert.apply(this, args)
+        const originalSelect = builder.select
+        builder.select = function (selection: unknown): ReturningBuilder {
+          const selected = originalSelect.call(this, selection)
+          const originalReturning = selected.returning
+          selected.returning = function (...fields: unknown[]): Promise<unknown[]> {
+            const query = originalReturning.apply(this, fields)
+            return (async () => {
+              reached.resolve()
+              await release.promise
+              return query
+            })()
+          }
+          return selected
+        }
+        return builder
+      }
+      const tracked = new DrizzleTrackedResourceRepository(database.orm, unlocked)
+      const createOutcome = tracked.createTimeEntry(
+        1,
+        {
+          projectId: 1,
+          taskId: 1,
+          spentDate: '2026-08-26',
+          seconds: 300,
+          notes: 'Target rejection race',
+        },
+        { instant: t2, date: '2026-08-26', time: '12:02' },
+      ).then(
+        (value) => ({ status: 'fulfilled' as const, value }),
+        (reason: unknown) => ({ status: 'rejected' as const, reason }),
+      )
+
+      try {
+        await reached.promise
+        await approvals.reject(actor(10, 'administrator'), submitted.id, 'Return first', t2)
+        release.resolve()
+        await expect(createOutcome).resolves.toMatchObject({
+          status: 'rejected',
+          reason: { name: 'TrackedResourceConflictError', code: 'version_conflict' },
+        })
+      } finally {
+        release.resolve()
+        mutableOrm.insert = originalInsert
+      }
+      expect(
+        await database.rows(`SELECT id FROM time_entries WHERE notes = 'Target rejection race'`),
+      ).toEqual([])
     })
 
     it('[concurrency] serializes an editable pending entry against approval', async () => {
@@ -513,6 +1074,224 @@ for (const [runtime, factory] of factories) {
       )
     })
 
+    it('[concurrency] serializes expense create and edit against approval', async () => {
+      database = await factory()
+      await installFixture(database)
+      await insertNativeExpense(database, 1, '2026-08-25', 1_000, 'Before approval')
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      const tracked = new DrizzleTrackedResourceRepository(database.orm, unlocked)
+      const submitted = await approvals.submit(1, periodStart, periodEnd, t1)
+      const editOutcomes = await Promise.allSettled([
+        tracked.updateExpense(
+          1,
+          1,
+          { notes: 'Concurrent expense edit' },
+          { instant: t2, date: '2026-08-25', time: '12:02' },
+        ),
+        tracked.createExpense(
+          1,
+          {
+            projectId: 1,
+            expenseCategoryId: 1,
+            spentDate: '2026-08-26',
+            totalCostCents: 2_000,
+            notes: 'Concurrent expense create',
+          },
+          { instant: t2, date: '2026-08-26', time: '12:02' },
+        ),
+        approvals.approve(actor(10, 'administrator'), submitted.id, t2),
+      ])
+      expect(editOutcomes[2]).toMatchObject({ status: 'fulfilled' })
+      const rows = await database.rows<{
+        approval_status: string
+        timesheet_submission_id: number | null
+        notes: string | null
+      }>(
+        `SELECT approval_status, timesheet_submission_id, notes FROM expenses ORDER BY id`,
+      )
+      expect(rows.every((row) => row.approval_status === 'approved')).toBe(true)
+      expect(rows.every((row) => row.timesheet_submission_id === submitted.id)).toBe(true)
+      expect(['Before approval', 'Concurrent expense edit']).toContain(rows[0]?.notes)
+      for (const outcome of editOutcomes.slice(0, 2)) {
+        if (outcome?.status === 'rejected') {
+          expect(outcome.reason).toMatchObject({ reasonCode: expect.stringMatching(/approved/) })
+        }
+      }
+    })
+
+    it('[concurrency] translates time and expense moves racing target rejection', async () => {
+      database = await factory()
+      await installFixture(database)
+      await database.run(
+        `INSERT INTO time_entries (
+          id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+          spent_date, seconds, seconds_without_timer, rounded_seconds, notes,
+          billable, created_at, updated_at
+        ) VALUES (2, 1, 1, 1, 1, 1, '2026-09-01', 600, 600, 600,
+          'Move time into review', 1, ?, ?)`,
+        t0,
+        t0,
+      )
+      await insertNativeExpense(database, 1, '2026-09-01', 500, 'Move expense into review')
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      const submitted = await approvals.submit(1, periodStart, periodEnd, t1)
+      const reached = deferred()
+      const release = deferred()
+      let calls = 0
+      const racingPolicy: TrackedPolicyResolver = {
+        isLocked: async ({ entityType }) => {
+          if (entityType === 'time_entry' || entityType === 'expense') {
+            calls += 1
+            if (calls === 2) reached.resolve()
+            await release.promise
+          }
+          return false
+        },
+      }
+      const tracked = new DrizzleTrackedResourceRepository(database.orm, racingPolicy)
+      const moves = [
+        tracked.updateTimeEntry(
+          1,
+          2,
+          { spentDate: '2026-08-26' },
+          { instant: t2, date: '2026-08-26', time: '12:02' },
+        ),
+        tracked.updateExpense(
+          1,
+          1,
+          { spentDate: '2026-08-26' },
+          { instant: t2, date: '2026-08-26', time: '12:02' },
+        ),
+      ].map((operation) => operation.then(
+        (value) => ({ status: 'fulfilled' as const, value }),
+        (reason: unknown) => ({ status: 'rejected' as const, reason }),
+      ))
+
+      await reached.promise
+      await approvals.reject(actor(10, 'administrator'), submitted.id, 'Return for edits', t2)
+      release.resolve()
+      const outcomes = await Promise.all(moves)
+      expect(outcomes).toMatchObject([
+        { status: 'rejected', reason: { name: 'TrackedResourceConflictError', code: 'version_conflict' } },
+        { status: 'rejected', reason: { name: 'TrackedResourceConflictError', code: 'version_conflict' } },
+      ])
+      expect(
+        await database.rows<{
+          kind: string
+          spent_date: string
+          approval_status: string
+          timesheet_submission_id: number | null
+        }>(
+          `SELECT 'time' AS kind, spent_date, approval_status, timesheet_submission_id
+           FROM time_entries WHERE id = 2
+           UNION ALL
+           SELECT 'expense', spent_date, approval_status, timesheet_submission_id
+           FROM expenses WHERE id = 1`,
+        ),
+      ).toEqual([
+        { kind: 'time', spent_date: '2026-09-01', approval_status: 'unsubmitted', timesheet_submission_id: null },
+        { kind: 'expense', spent_date: '2026-09-01', approval_status: 'unsubmitted', timesheet_submission_id: null },
+      ])
+    })
+
+    it('[concurrency] translates time and expense moves racing target approval', async () => {
+      database = await factory()
+      await installFixture(database)
+      await database.run(
+        `INSERT INTO time_entries (
+          id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+          spent_date, seconds, seconds_without_timer, rounded_seconds, notes,
+          billable, created_at, updated_at
+        ) VALUES (2, 1, 1, 1, 1, 1, '2026-09-01', 600, 600, 600,
+          'Move time into review', 1, ?, ?)`,
+        t0,
+        t0,
+      )
+      await insertNativeExpense(database, 1, '2026-09-01', 500, 'Move expense into review')
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      const submitted = await approvals.submit(1, periodStart, periodEnd, t1)
+      const reached = deferred()
+      const release = deferred()
+      let calls = 0
+      const racingPolicy: TrackedPolicyResolver = {
+        isLocked: async ({ entityType }) => {
+          if (entityType === 'time_entry' || entityType === 'expense') {
+            calls += 1
+            if (calls === 2) reached.resolve()
+            await release.promise
+          }
+          return false
+        },
+      }
+      const tracked = new DrizzleTrackedResourceRepository(database.orm, racingPolicy)
+      const moves = [
+        tracked.updateTimeEntry(
+          1,
+          2,
+          { spentDate: '2026-08-26' },
+          { instant: t2, date: '2026-08-26', time: '12:02' },
+        ),
+        tracked.updateExpense(
+          1,
+          1,
+          { spentDate: '2026-08-26' },
+          { instant: t2, date: '2026-08-26', time: '12:02' },
+        ),
+      ].map((operation) => operation.then(
+        (value) => ({ status: 'fulfilled' as const, value }),
+        (reason: unknown) => ({ status: 'rejected' as const, reason }),
+      ))
+
+      await reached.promise
+      await approvals.approve(actor(10, 'administrator'), submitted.id, t2)
+      release.resolve()
+      const outcomes = await Promise.all(moves)
+      expect(outcomes).toMatchObject([
+        { status: 'rejected', reason: { name: 'TrackedResourceInputError', reasonCode: 'approved_period' } },
+        { status: 'rejected', reason: { name: 'TrackedResourceInputError', reasonCode: 'approved_period' } },
+      ])
+    })
+
+    it('[db] preserves signed imported costs across non-price edits and then locks them', async () => {
+      database = await factory()
+      await installFixture(database)
+      await database.run(
+        `INSERT INTO expenses (
+          id, harvest_id, user_id, project_id, expense_category_id, spent_date, notes,
+          total_cost_cents, billable, approval_status, source_approval_status,
+          created_at, updated_at
+        ) VALUES (1, 9001, 1, 1, 1, '2026-08-25', 'Imported adjustment',
+          -125, 1, 'unsubmitted', 'unsubmitted', ?, ?)`,
+        t0,
+        t0,
+      )
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      const tracked = new DrizzleTrackedResourceRepository(database.orm, unlocked)
+      const submitted = await approvals.submit(1, periodStart, periodEnd, t1)
+      await expect(
+        tracked.updateExpense(
+          1,
+          1,
+          { notes: 'Imported adjustment clarified', billable: false },
+          { instant: t2, date: '2026-08-25', time: '12:02' },
+        ),
+      ).resolves.toMatchObject({
+        totalCostCents: -125,
+        notes: 'Imported adjustment clarified',
+        billable: false,
+        approvalStatus: 'submitted',
+      })
+      await approvals.approve(actor(10, 'administrator'), submitted.id, t3)
+      await expect(
+        tracked.updateExpense(
+          1,
+          1,
+          { notes: 'Too late' },
+          { instant: '2026-08-31T12:04:00.000Z', date: '2026-08-25', time: '12:04' },
+        ),
+      ).rejects.toMatchObject({ reasonCode: 'approved' })
+    })
+
     it('[concurrency] never approves an empty period racing its final deletion', async () => {
       database = await factory()
       await installFixture(database)
@@ -536,6 +1315,34 @@ for (const [runtime, factory] of factories) {
         outcomes[1]?.status === 'fulfilled'
           ? { status: 'approved', entry_count: 1 }
           : { status: 'submitted', entry_count: 0 },
+      )
+    })
+
+    it('[concurrency] never approves an expense-only period racing its final deletion', async () => {
+      database = await factory()
+      await installFixture(database)
+      await database.run(`DELETE FROM time_entries WHERE id = 1`)
+      await insertNativeExpense(database, 1, '2026-08-25', 500, 'Final expense')
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      const tracked = new DrizzleTrackedResourceRepository(database.orm, unlocked)
+      const submitted = await approvals.submit(1, periodStart, periodEnd, t1)
+      const outcomes = await Promise.allSettled([
+        tracked.deleteExpense(1, 1),
+        approvals.approve(actor(10, 'administrator'), submitted.id, t2),
+      ])
+      expect(outcomes.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
+      const final = (
+        await database.rows<{ status: string; expense_count: number }>(
+          `SELECT submission.status,
+            (SELECT count(*) FROM expenses expense
+             WHERE expense.timesheet_submission_id = submission.id) AS expense_count
+           FROM timesheet_submissions submission`,
+        )
+      )[0]
+      expect(final).toEqual(
+        outcomes[1]?.status === 'fulfilled'
+          ? { status: 'approved', expense_count: 1 }
+          : { status: 'submitted', expense_count: 0 },
       )
     })
 
@@ -669,6 +1476,7 @@ for (const [runtime, factory] of factories) {
     it('[concurrency] returns one authorized detail snapshot and discloses nothing after revocation', async () => {
       database = await factory()
       await installFixture(database)
+      await insertNativeExpense(database, 1, '2026-08-25', -125, 'Private adjustment')
       await database.run(
         `INSERT INTO teammate_assignments (manager_id, user_id, created_at, updated_at)
          VALUES (2, 1, ?, ?)`,
@@ -678,6 +1486,8 @@ for (const [runtime, factory] of factories) {
       const approvals = createTimesheetApprovalRepository(database.orm)
       const tracked = new DrizzleTrackedResourceRepository(database.orm, unlocked)
       const submitted = await approvals.submit(1, periodStart, periodEnd, t1)
+
+      await database.run(`UPDATE projects SET billing_currency = 'eur' WHERE id = 1`)
 
       const [detail, edit] = await Promise.all([
         approvals.get(actor(10, 'administrator'), submitted.id),
@@ -689,6 +1499,10 @@ for (const [runtime, factory] of factories) {
         ),
       ])
       expect(detail.totalSeconds).toBe(detail.entries.reduce((sum, entry) => sum + entry.seconds, 0))
+      expect(detail).toMatchObject({
+        expenseCount: 1,
+        expenses: [{ totalCostCents: -125, currency: 'EUR', notes: 'Private adjustment' }],
+      })
       expect(['Initial work', 'Concurrent complete detail']).toContain(detail.entries[0]?.notes)
       expect(edit.notes).toBe('Concurrent complete detail')
 
@@ -710,12 +1524,18 @@ for (const [runtime, factory] of factories) {
       ])
       if (managerRace[0]?.status === 'fulfilled') {
         expect(managerRace[0].value.entries[0]?.notes).toBe('Concurrent complete detail')
+        expect(managerRace[0].value.expenses[0]?.notes).toBe('Private adjustment')
       } else {
         expect(managerRace[0]?.reason).toMatchObject({ code: 'forbidden' })
       }
       await expect(approvals.get(actor(2, 'project_manager'), submitted.id)).rejects.toMatchObject({
         code: 'forbidden',
       })
+
+      await database.run(`UPDATE projects SET billing_currency = 'invalid' WHERE id = 1`)
+      await expect(approvals.get(actor(10, 'administrator'), submitted.id)).rejects.toThrow(
+        'Timesheet submission expense currency is invalid.',
+      )
     })
   })
 }
@@ -748,6 +1568,20 @@ for (const [runtime, factory] of upgradeFactories) {
         t0,
         t1,
       )
+      await database.run(
+        `INSERT INTO expenses (
+          id, harvest_id, user_id, project_id, expense_category_id, spent_date,
+          notes, total_cost_cents, billable, approval_status, created_at, updated_at
+        ) VALUES
+          (1, 501, 1, 1, 1, '2026-08-18', 'Historic approved expense', -250,
+            1, 'approved', ?, ?),
+          (2, 502, 1, 1, 1, '2026-08-04', 'Expense-only submission', 500,
+            1, 'submitted', ?, ?)`,
+        t0,
+        t1,
+        t0,
+        t1,
+      )
 
       await database.migrateFinal()
       expect(
@@ -771,8 +1605,10 @@ for (const [runtime, factory] of upgradeFactories) {
              submission.source_observed_at, submission.submitted_by_user_id,
              submission.submitted_at, submission.reviewed_by_user_id,
              submission.reviewed_at,
-             (SELECT count(*) FROM time_entries entry
-              WHERE entry.timesheet_submission_id = submission.id) AS linked,
+             ((SELECT count(*) FROM time_entries entry
+               WHERE entry.timesheet_submission_id = submission.id)
+              + (SELECT count(*) FROM expenses expense
+                 WHERE expense.timesheet_submission_id = submission.id)) AS linked,
              event.event_type
            FROM timesheet_submissions submission
            JOIN event_outbox event ON event.aggregate_type = 'timesheet_submission'
@@ -780,6 +1616,21 @@ for (const [runtime, factory] of upgradeFactories) {
            ORDER BY submission.period_start`,
         ),
       ).toEqual([
+        {
+          id: expect.any(Number),
+          period_start: '2026-08-03',
+          period_end: '2026-08-09',
+          status: 'submitted',
+          origin: 'legacy_backfill',
+          source_status: 'submitted',
+          source_observed_at: t1,
+          submitted_by_user_id: null,
+          submitted_at: null,
+          reviewed_by_user_id: null,
+          reviewed_at: null,
+          linked: 1,
+          event_type: 'timesheet.status_imported',
+        },
         {
           id: expect.any(Number),
           period_start: '2026-08-10',
@@ -807,7 +1658,7 @@ for (const [runtime, factory] of upgradeFactories) {
           submitted_at: null,
           reviewed_by_user_id: null,
           reviewed_at: null,
-          linked: 1,
+          linked: 2,
           event_type: 'timesheet.status_imported',
         },
         {
@@ -870,6 +1721,15 @@ for (const [runtime, factory] of upgradeFactories) {
         `UPDATE time_entries SET harvest_id = 'disabled-source', approval_status = 'approved'
          WHERE id = 1`,
       )
+      await database.run(
+        `INSERT INTO expenses (
+          id, harvest_id, user_id, project_id, expense_category_id, spent_date,
+          notes, total_cost_cents, billable, approval_status, created_at, updated_at
+        ) VALUES (1, 701, 1, 1, 1, '2026-08-25', 'Disabled expense source',
+          100, 1, 'approved', ?, ?)`,
+        t0,
+        t1,
+      )
       await database.migrateFinal()
       expect(
         await database.rows<{
@@ -878,15 +1738,16 @@ for (const [runtime, factory] of upgradeFactories) {
           timesheet_submission_id: number | null
         }>(
           `SELECT approval_status, source_approval_status, timesheet_submission_id
-           FROM time_entries WHERE id = 1`,
+           FROM time_entries WHERE id = 1
+           UNION ALL
+           SELECT approval_status, source_approval_status, timesheet_submission_id
+           FROM expenses WHERE id = 1`,
         ),
-      ).toEqual([
-        {
-          approval_status: 'unsubmitted',
-          source_approval_status: 'approved',
-          timesheet_submission_id: null,
-        },
-      ])
+      ).toEqual(Array.from({ length: 2 }, () => ({
+        approval_status: 'unsubmitted',
+        source_approval_status: 'approved',
+        timesheet_submission_id: null,
+      })))
       expect(await database.rows(`SELECT * FROM timesheet_submissions`)).toEqual([])
     })
 
@@ -898,12 +1759,11 @@ for (const [runtime, factory] of upgradeFactories) {
          WHERE id = 1`,
       )
       await database.run(
-        `INSERT INTO time_entries (
-          id, harvest_id, user_id, project_id, task_id, user_assignment_id,
-          task_assignment_id, spent_date, seconds, seconds_without_timer,
-          rounded_seconds, notes, billable, approval_status, created_at, updated_at
-        ) VALUES (2, 'mixed-approved', 1, 1, 1, 1, 1, '2026-08-26',
-          600, 600, 600, 'Contradictory source', 1, 'approved', ?, ?)`,
+        `INSERT INTO expenses (
+          id, harvest_id, user_id, project_id, expense_category_id, spent_date,
+          notes, total_cost_cents, billable, approval_status, created_at, updated_at
+        ) VALUES (1, 601, 1, 1, 1, '2026-08-26',
+          'Contradictory source', 600, 1, 'approved', ?, ?)`,
         t0,
         t1,
       )

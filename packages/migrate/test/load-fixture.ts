@@ -334,10 +334,18 @@ export const buildSanitizedLoadSnapshot = async (
       `"calendar_event":null,"invoice":null,"approval_status":"unsubmitted",` +
       `"created_at":"${timestamp}","updated_at":"${timestamp}"}`,
   ])
-  await writeRows('expenses', [
+  const mileageExpense = JSON.parse(
     await goldenJson('harvest-expense.json'),
+  ) as Record<string, unknown>
+  const directExpense = JSON.parse(
     await goldenJson('harvest-expense-direct.json'),
-  ])
+  ) as Record<string, unknown>
+  // Keep this synthetic week internally consistent with its approved time
+  // entry while retaining the golden source files as immutable extraction
+  // examples. The signed direct adjustment exercises imported money fidelity.
+  mileageExpense.approval_status = 'approved'
+  directExpense.total_cost = -100
+  await writeRows('expenses', [JSON.stringify(mileageExpense), JSON.stringify(directExpense)])
 
   const receiptBytes = await readFile(golden('harvest-receipt.pdf'))
   const sha256 = createHash('sha256').update(receiptBytes).digest('hex')

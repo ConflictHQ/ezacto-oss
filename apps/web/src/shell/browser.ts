@@ -109,6 +109,9 @@ const formatSeconds = (seconds: number): string => {
   return `${hours}:${String(minutes).padStart(2, '0')}`
 }
 
+const formatMoney = (cents: number, currency: string): string =>
+  new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100)
+
 const parseDate = (value: string): Date => new Date(`${value}T00:00:00.000Z`)
 
 const shiftDate = (value: string, days: number): string => {
@@ -1123,7 +1126,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       timesheetTransitionPending ||
       status !== 'unsubmitted' ||
       snapshot === null ||
-      snapshot.entries.length === 0 ||
+      (snapshot.entries.length === 0 && snapshot.expenses.length === 0) ||
       snapshot.entries.some((entry) => entry.is_running)
   }
 
@@ -1152,7 +1155,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         period.textContent = `${dayLabel(submission.period_start, true)} – ${dayLabel(submission.period_end, true)}`
         const totals = document.createElement('p')
         totals.className = 'approval-totals'
-        totals.textContent = `${formatSeconds(submission.total_seconds)} · ${submission.entry_count} ${submission.entry_count === 1 ? 'entry' : 'entries'}`
+        const totalParts = [
+          ...(submission.entry_count === 0
+            ? []
+            : [`${formatSeconds(submission.total_seconds)} · ${submission.entry_count} ${submission.entry_count === 1 ? 'time entry' : 'time entries'}`]),
+          ...(submission.expense_count === 0
+            ? []
+            : [`${submission.expense_count} ${submission.expense_count === 1 ? 'expense' : 'expenses'}`]),
+        ]
+        totals.textContent = totalParts.join(' · ')
         const entries = document.createElement('ul')
         entries.className = 'approval-entry-list'
         entries.replaceChildren(
@@ -1173,7 +1184,27 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
             return item
           }),
         )
-        summary.append(title, period, totals, entries)
+        const expenses = document.createElement('ul')
+        expenses.className = 'approval-entry-list approval-expense-list'
+        expenses.replaceChildren(
+          ...submission.expenses.map((expense) => {
+            const item = document.createElement('li')
+            const expenseHeader = document.createElement('div')
+            expenseHeader.className = 'approval-entry-header'
+            const identity = document.createElement('strong')
+            identity.textContent = `${expense.project_name} / ${expense.expense_category_name}`
+            const amount = document.createElement('span')
+            amount.textContent = `${dayLabel(expense.spent_date, true)} · ${formatMoney(expense.total_cost_cents, expense.currency)}`
+            expenseHeader.append(identity, amount)
+            const note = document.createElement('p')
+            note.className = 'approval-entry-note'
+            note.textContent = expense.notes?.trim() || 'No note'
+            if (expense.notes === null || expense.notes.trim() === '') note.dataset.empty = 'true'
+            item.append(expenseHeader, note)
+            return item
+          }),
+        )
+        summary.append(title, period, totals, entries, expenses)
         const actions = document.createElement('div')
         actions.className = 'approval-actions'
         const approve = document.createElement('button')

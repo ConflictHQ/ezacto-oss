@@ -163,3 +163,14 @@ export const instanceBootstrapMigration = [
     BEFORE DELETE ON instance_bootstrap
     BEGIN SELECT RAISE(ABORT, 'instance bootstrap audit record cannot be deleted'); END`,
 ] as const
+
+/**
+ * 0027 keeps exact bootstrap retries valid for both an instance bootstrapped
+ * before approvals existed and a fresh instance whose approvals are enabled.
+ */
+export const approvalCompatibleInstanceBootstrapExactStateTrigger =
+  instanceBootstrapMigration[2].replace(
+    `organization.modules = '{"expenses":true,"invoices":true}'`,
+    `organization.modules IN ('{"expenses":true,"invoices":true}',
+            '{"approval":true,"expenses":true,"invoices":true}')`,
+  )

@@ -902,6 +902,7 @@ test('[e2e:timesheet-approval] submits, rejects, corrects, resubmits, and locks 
   await page.getByLabel('Password').fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await page.getByRole('button', { name: 'Next day' }).click()
+  await expect(page.locator('[data-day-label]')).toContainText('Tuesday, Aug 18')
   await page.getByRole('button', { name: 'Next day' }).click()
   await expect(page.locator('[data-day-label]')).toContainText('Wednesday, Aug 19')
 
@@ -926,6 +927,10 @@ test('[e2e:timesheet-approval] submits, rejects, corrects, resubmits, and locks 
   await expect(card).toContainText('Browser Acceptance Project / Browser Acceptance Task')
   await expect(card).toContainText('Wed, Aug 19')
   await expect(card).toContainText('Ready for review')
+  await expect(card).toContainText('1 expense')
+  await expect(card).toContainText('Browser Acceptance Project / Travel')
+  await expect(card).toContainText('$12.50')
+  await expect(card).toContainText('Receipt ready for review')
   await card.getByRole('button', { name: 'Reject' }).click()
 
   const rejection = page.locator('[data-rejection-dialog]')
@@ -950,6 +955,7 @@ test('[e2e:timesheet-approval] submits, rejects, corrects, resubmits, and locks 
     'Needs changes: Clarify the delivery detail.',
   )
   await page.getByRole('button', { name: 'Next day' }).click()
+  await expect(page.locator('[data-day-label]')).toContainText('Tuesday, Aug 18')
   await page.getByRole('button', { name: 'Next day' }).click()
   await expect(page.locator('[data-day-label]')).toContainText('Wednesday, Aug 19')
 
@@ -969,6 +975,14 @@ test('[e2e:timesheet-approval] submits, rejects, corrects, resubmits, and locks 
   await expect(editor).toBeHidden()
   await expect(page.locator('[data-day-label]')).toContainText('Wednesday, Aug 19')
   await expect(page.locator('[data-entry-note="901"]')).toHaveText('Corrected delivery detail')
+  const rejectedExpense = await page.evaluate(async () => {
+    const response = await fetch('/api/v1/expenses/901')
+    return { status: response.status, body: await response.json() }
+  })
+  expect(rejectedExpense.status).toBe(200)
+  expect(rejectedExpense.body).toMatchObject({
+    data: { approval_status: 'unsubmitted', is_locked: false },
+  })
 
   const resubmitted = page.waitForResponse(
     (response) =>
@@ -996,9 +1010,85 @@ test('[e2e:timesheet-approval] submits, rejects, corrects, resubmits, and locks 
   await page.goto('/?week=2026-08-17')
   await expect(page.locator('[data-timesheet-status-label]')).toHaveText('Approved')
   await page.getByRole('button', { name: 'Next day' }).click()
+  await expect(page.locator('[data-day-label]')).toContainText('Tuesday, Aug 18')
   await page.getByRole('button', { name: 'Next day' }).click()
   const lockedCell = page.locator('[data-day-rows] input[data-cell-key]')
   await expect(lockedCell).toBeDisabled()
   await expect(page.locator('[data-day-rows] [data-locked-reason]')).toBeVisible()
   await expect(page.locator('[data-entry-note="901"]')).toHaveText('Corrected delivery detail')
+  const approvedExpense = await page.evaluate(async () => {
+    const response = await fetch('/api/v1/expenses/901')
+    return { status: response.status, body: await response.json() }
+  })
+  expect(approvedExpense.status).toBe(200)
+  expect(approvedExpense.body).toMatchObject({
+    data: {
+      approval_status: 'approved',
+      is_locked: true,
+      locked_reason_code: 'approved',
+      notes: 'Receipt ready for review',
+    },
+  })
+})
+
+test('[e2e:timesheet-approval] submits and approves an expense-only week', async ({
+  context,
+  page,
+}) => {
+  const seeded = await context.request.post('/__ezacto_browser_fixture__/start-end', {
+    data: { action: 'approval-expense-only-seed' },
+    headers: {
+      'x-ezacto-browser-fixture-control': 'start-end-round-trip',
+    },
+  })
+  expect(seeded.status()).toBe(204)
+
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto('/?week=2026-08-09')
+  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await expect(page.locator('[data-timesheet-status]')).toBeVisible()
+  await expect(page.locator('[data-timesheet-status-label]')).toHaveText('Not submitted')
+  const periodTime = await page.evaluate(async () => {
+    const response = await fetch('/api/v1/time-entries?from=2026-08-09&to=2026-08-15')
+    return { status: response.status, body: await response.json() }
+  })
+  expect(periodTime.status).toBe(200)
+  expect(periodTime.body).toMatchObject({ data: [] })
+  await expect(page.getByRole('button', { name: 'Submit week' })).toBeEnabled()
+
+  const submitted = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/timesheet-submissions' &&
+      response.request().method() === 'POST',
+  )
+  await page.getByRole('button', { name: 'Submit week' }).click()
+  const submittedResponse = await submitted
+  expect(submittedResponse.status()).toBe(201)
+  expect(await submittedResponse.json()).toMatchObject({
+    data: { entry_count: 0, expense_count: 1 },
+  })
+  await page.goto('/approvals')
+  const card = page.locator('[data-approval-queue] [data-submission-id]')
+  await expect(card).toContainText('1 expense')
+  await expect(card).toContainText('Browser Acceptance Project / Travel')
+  await expect(card).toContainText('Wed, Aug 12')
+  await expect(card).toContainText('$8.75')
+  await expect(card).toContainText('Expense-only receipt')
+  const approved = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.endsWith('/approve') &&
+      response.request().method() === 'POST',
+  )
+  await card.getByRole('button', { name: 'Approve' }).click()
+  expect((await approved).ok()).toBe(true)
+  const expense = await page.evaluate(async () => {
+    const response = await fetch('/api/v1/expenses/902')
+    return { status: response.status, body: await response.json() }
+  })
+  expect(expense.status).toBe(200)
+  expect(expense.body).toMatchObject({
+    data: { approval_status: 'approved', is_locked: true, locked_reason_code: 'approved' },
+  })
 })

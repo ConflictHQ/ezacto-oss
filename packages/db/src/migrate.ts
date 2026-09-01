@@ -1313,7 +1313,7 @@ export const invoiceLifecycleMigration = [
     BEGIN SELECT RAISE(ABORT, 'closed invoice financials are immutable'); END`,
 ] as const
 
-type MigrationPreflightRow = { id: number; code: string }
+type MigrationPreflightRow = { id: number; code: string; resource_kind?: string }
 
 const assertInvoiceLifecyclePreflight = (rows: MigrationPreflightRow[]): void => {
   if (rows.length === 0) return
@@ -1331,11 +1331,11 @@ const assertTimesheetApprovalsPreflight = (rows: MigrationPreflightRow[]): void 
   if (rows.length === 0) return
   const shown = rows
     .slice(0, 10)
-    .map(({ id }) => id)
+    .map(({ id, resource_kind: resourceKind }) => `${resourceKind ?? 'entry'}:${id}`)
     .join(',')
   const more = rows.length > 10 ? ',…' : ''
   throw new Error(
-    `timesheet approval migration preflight failed: code=${rows[0]!.code} time_entry_ids=${shown}${more}`,
+    `timesheet approval migration preflight failed: code=${rows[0]!.code} entry_refs=${shown}${more}`,
   )
 }
 

@@ -1,3 +1,5 @@
+import { approvalCompatibleInstanceBootstrapExactStateTrigger } from './0012_instance_bootstrap.js'
+
 const canonicalTimestamp = (column: string) => `unixepoch(${column}) IS NOT NULL
       AND substr(${column}, 1, 19) = strftime('%Y-%m-%dT%H:%M:%S', ${column})
       AND CAST(substr(${column}, 12, 2) AS INTEGER) BETWEEN 0 AND 23
@@ -26,40 +28,54 @@ const harvestWeekStart = (entry = 'entry') => `date(${entry}.spent_date, '-' || 
  * preflight runs against 0026 before any DDL so either the whole upgrade lands or
  * the operator gets the exact offending entry without fabricated approval facts.
  */
-export const timesheetApprovalsPreflight = `WITH violations AS (
-  SELECT entry.id, 1 AS priority, 'non_harvest_status' AS code
-  FROM time_entries entry
+export const timesheetApprovalsPreflight = `WITH approval_items AS (
+  SELECT 'time_entry' AS resource_kind, id, user_id, spent_date, approval_status, harvest_id, timer_started_at,
+    started_time, ended_time
+  FROM time_entries
+  UNION ALL
+  SELECT 'expense', id, user_id, spent_date, approval_status, harvest_id, NULL, NULL, NULL
+  FROM expenses
+), violations AS (
+  SELECT entry.resource_kind, entry.id, 1 AS priority, 'non_harvest_status' AS code
+  FROM approval_items entry
   WHERE ${approvalModuleEnabled}
     AND entry.harvest_id IS NULL AND entry.approval_status <> 'unsubmitted'
   UNION ALL
-  SELECT entry.id, 2, 'running_source_status'
-  FROM time_entries entry
+  SELECT entry.resource_kind, entry.id, 2, 'running_source_status'
+  FROM approval_items entry
   WHERE ${approvalModuleEnabled}
     AND entry.harvest_id IS NOT NULL AND entry.approval_status <> 'unsubmitted'
     AND (entry.timer_started_at IS NOT NULL
       OR (entry.started_time IS NOT NULL AND entry.ended_time IS NULL))
   UNION ALL
-  SELECT entry.id, 3, 'mixed_source_week'
-  FROM time_entries entry
+  SELECT entry.resource_kind, entry.id, 3, 'mixed_source_week'
+  FROM approval_items entry
   WHERE ${approvalModuleEnabled} AND entry.harvest_id IS NOT NULL
     AND EXISTS (
-      SELECT 1 FROM time_entries peer
+      SELECT 1 FROM approval_items peer
       WHERE peer.user_id = entry.user_id
         AND ${harvestWeekStart('peer')} = ${harvestWeekStart('entry')}
         AND peer.approval_status <> entry.approval_status
     )
 ), selected AS (
-  SELECT code FROM violations ORDER BY priority, id LIMIT 1
+  SELECT code FROM violations ORDER BY priority, resource_kind, id LIMIT 1
 )
-SELECT id, code FROM violations
+SELECT resource_kind, id, code FROM violations
 WHERE code = (SELECT code FROM selected)
-ORDER BY id LIMIT 11`
+ORDER BY resource_kind, id LIMIT 11`
 
 /**
- * Person-period approval aggregate. Time entries retain the public three-axis
- * status while this row preserves the batch identity and latest review reason.
+ * Person-period approval aggregate. Time and expense entries retain the public
+ * three-axis status while this row preserves the batch identity and latest
+ * review reason.
  */
 export const timesheetApprovalsMigration = [
+  `CREATE TABLE _ezacto_0027_timesheet_approvals_preflight_guard (
+    value INTEGER NOT NULL CHECK (value = 0)
+  ) STRICT`,
+  `INSERT INTO _ezacto_0027_timesheet_approvals_preflight_guard (value)
+   SELECT 1 FROM (${timesheetApprovalsPreflight}) LIMIT 1`,
+  `DROP TABLE _ezacto_0027_timesheet_approvals_preflight_guard`,
   `CREATE TABLE timesheet_submissions (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
@@ -122,22 +138,37 @@ export const timesheetApprovalsMigration = [
   `ALTER TABLE time_entries ADD COLUMN source_approval_status TEXT
     CHECK (source_approval_status IS NULL
       OR source_approval_status IN ('unsubmitted','submitted','approved'))`,
+  `ALTER TABLE expenses ADD COLUMN timesheet_submission_id INTEGER
+    REFERENCES timesheet_submissions(id) ON DELETE RESTRICT`,
+  `ALTER TABLE expenses ADD COLUMN source_approval_status TEXT
+    CHECK (source_approval_status IS NULL
+      OR source_approval_status IN ('unsubmitted','submitted','approved'))`,
   `UPDATE time_entries SET source_approval_status = approval_status
     WHERE harvest_id IS NOT NULL`,
+  `UPDATE expenses SET source_approval_status = approval_status
+    WHERE harvest_id IS NOT NULL`,
   `UPDATE time_entries SET approval_status = 'unsubmitted'
+    WHERE NOT (${approvalModuleEnabled})`,
+  `UPDATE expenses SET approval_status = 'unsubmitted'
     WHERE NOT (${approvalModuleEnabled})`,
   `INSERT INTO timesheet_submissions (
       user_id, period_start, period_end, status, origin, source_status,
       source_observed_at, submitted_by_user_id, submitted_at,
       reviewed_by_user_id, reviewed_at, rejection_reason, version, created_at, updated_at
     )
+    WITH approval_items AS (
+      SELECT user_id, spent_date, approval_status, updated_at FROM time_entries
+      WHERE harvest_id IS NOT NULL
+      UNION ALL
+      SELECT user_id, spent_date, approval_status, updated_at FROM expenses
+      WHERE harvest_id IS NOT NULL
+    )
     SELECT entry.user_id, ${harvestWeekStart('entry')},
       date(${harvestWeekStart('entry')}, '+6 days'), entry.approval_status,
       'legacy_backfill', entry.approval_status, max(entry.updated_at),
       NULL, NULL, NULL, NULL, NULL, 0, max(entry.updated_at), max(entry.updated_at)
-    FROM time_entries entry
-    WHERE ${approvalModuleEnabled} AND entry.harvest_id IS NOT NULL
-      AND entry.approval_status IN ('submitted','approved')
+    FROM approval_items entry
+    WHERE ${approvalModuleEnabled} AND entry.approval_status IN ('submitted','approved')
     GROUP BY entry.user_id, ${harvestWeekStart('entry')}, entry.approval_status`,
   `UPDATE time_entries AS entry
     SET timesheet_submission_id = (
@@ -148,6 +179,15 @@ export const timesheetApprovalsMigration = [
         AND submission.source_status = entry.source_approval_status
     )
     WHERE ${approvalModuleEnabled} AND entry.source_approval_status IN ('submitted','approved')`,
+  `UPDATE expenses AS expense
+    SET timesheet_submission_id = (
+      SELECT submission.id FROM timesheet_submissions submission
+      WHERE submission.user_id = expense.user_id
+        AND expense.spent_date BETWEEN submission.period_start AND submission.period_end
+        AND submission.origin = 'legacy_backfill'
+        AND submission.source_status = expense.source_approval_status
+    )
+    WHERE ${approvalModuleEnabled} AND expense.source_approval_status IN ('submitted','approved')`,
   `WITH events AS MATERIALIZED (
       SELECT submission.*, lower(hex(randomblob(16))) AS event_id
       FROM timesheet_submissions submission WHERE submission.origin = 'legacy_backfill'
@@ -171,6 +211,8 @@ export const timesheetApprovalsMigration = [
     FROM events`,
   `CREATE INDEX time_entries_timesheet_submission_id
     ON time_entries(timesheet_submission_id) WHERE timesheet_submission_id IS NOT NULL`,
+  `CREATE INDEX expenses_timesheet_submission_id
+    ON expenses(timesheet_submission_id) WHERE timesheet_submission_id IS NOT NULL`,
 
   `CREATE TRIGGER timesheet_submissions_insert_guard
     BEFORE INSERT ON timesheet_submissions
@@ -201,11 +243,23 @@ export const timesheetApprovalsMigration = [
               AND entry.harvest_id IS NOT NULL
               AND entry.source_approval_status = NEW.source_status
               AND entry.approval_status = 'unsubmitted'
+          ) AND NOT EXISTS (
+            SELECT 1 FROM expenses expense
+            WHERE expense.user_id = NEW.user_id
+              AND expense.spent_date BETWEEN NEW.period_start AND NEW.period_end
+              AND expense.harvest_id IS NOT NULL
+              AND expense.source_approval_status = NEW.source_status
+              AND expense.approval_status = 'unsubmitted'
           ) OR EXISTS (
             SELECT 1 FROM time_entries entry
             WHERE entry.user_id = NEW.user_id
               AND entry.spent_date BETWEEN NEW.period_start AND NEW.period_end
               AND entry.source_approval_status IS NOT NEW.source_status
+          ) OR EXISTS (
+            SELECT 1 FROM expenses expense
+            WHERE expense.user_id = NEW.user_id
+              AND expense.spent_date BETWEEN NEW.period_start AND NEW.period_end
+              AND expense.source_approval_status IS NOT NEW.source_status
           )
         ) THEN RAISE(ABORT, 'Harvest timesheet source period is inconsistent')
         WHEN EXISTS (
@@ -228,7 +282,12 @@ export const timesheetApprovalsMigration = [
           WHERE entry.user_id = NEW.user_id
             AND entry.spent_date BETWEEN NEW.period_start AND NEW.period_end
             AND entry.approval_status = 'unsubmitted'
-        ) THEN RAISE(ABORT, 'timesheet period has no unsubmitted time entries')
+        ) AND NOT EXISTS (
+          SELECT 1 FROM expenses expense
+          WHERE expense.user_id = NEW.user_id
+            AND expense.spent_date BETWEEN NEW.period_start AND NEW.period_end
+            AND expense.approval_status = 'unsubmitted'
+        ) THEN RAISE(ABORT, 'timesheet period has no unsubmitted entries')
       END;
     END`,
   `CREATE TRIGGER timesheet_submissions_update_guard
@@ -265,13 +324,22 @@ export const timesheetApprovalsMigration = [
           WHERE entry.user_id = NEW.user_id
             AND entry.spent_date BETWEEN NEW.period_start AND NEW.period_end
             AND entry.approval_status = 'unsubmitted'
-        ) THEN RAISE(ABORT, 'timesheet period has no unsubmitted time entries')
+        ) AND NOT EXISTS (
+          SELECT 1 FROM expenses expense
+          WHERE expense.user_id = NEW.user_id
+            AND expense.spent_date BETWEEN NEW.period_start AND NEW.period_end
+            AND expense.approval_status = 'unsubmitted'
+        ) THEN RAISE(ABORT, 'timesheet period has no unsubmitted entries')
         WHEN OLD.status = 'submitted' AND NEW.status = 'approved' AND (
-          NOT EXISTS (
+          (NOT EXISTS (
             SELECT 1 FROM time_entries entry
             WHERE entry.timesheet_submission_id = NEW.id
               AND entry.approval_status = 'submitted'
-          )
+          ) AND NOT EXISTS (
+            SELECT 1 FROM expenses expense
+            WHERE expense.timesheet_submission_id = NEW.id
+              AND expense.approval_status = 'submitted'
+          ))
           OR EXISTS (
             SELECT 1 FROM time_entries entry
             WHERE entry.user_id = NEW.user_id
@@ -280,6 +348,13 @@ export const timesheetApprovalsMigration = [
                 OR entry.approval_status <> 'submitted'
                 OR entry.timer_started_at IS NOT NULL
                 OR (entry.started_time IS NOT NULL AND entry.ended_time IS NULL))
+          )
+          OR EXISTS (
+            SELECT 1 FROM expenses expense
+            WHERE expense.user_id = NEW.user_id
+              AND expense.spent_date BETWEEN NEW.period_start AND NEW.period_end
+              AND (expense.timesheet_submission_id IS NOT NEW.id
+                OR expense.approval_status <> 'submitted')
           )
         ) THEN RAISE(ABORT, 'timesheet period changed before approval')
       END;
@@ -298,12 +373,24 @@ export const timesheetApprovalsMigration = [
       WHERE user_id = NEW.user_id
         AND spent_date BETWEEN NEW.period_start AND NEW.period_end
         AND approval_status = 'unsubmitted';
+      UPDATE expenses
+      SET approval_status = 'submitted', timesheet_submission_id = NEW.id,
+        updated_at = NEW.updated_at
+      WHERE user_id = NEW.user_id
+        AND spent_date BETWEEN NEW.period_start AND NEW.period_end
+        AND approval_status = 'unsubmitted';
     END`,
   `CREATE TRIGGER timesheet_submissions_submit_entries_update
     AFTER UPDATE OF status ON timesheet_submissions
     WHEN OLD.status = 'unsubmitted' AND NEW.status = 'submitted'
     BEGIN
       UPDATE time_entries
+      SET approval_status = 'submitted', timesheet_submission_id = NEW.id,
+        updated_at = NEW.updated_at
+      WHERE user_id = NEW.user_id
+        AND spent_date BETWEEN NEW.period_start AND NEW.period_end
+        AND approval_status = 'unsubmitted';
+      UPDATE expenses
       SET approval_status = 'submitted', timesheet_submission_id = NEW.id,
         updated_at = NEW.updated_at
       WHERE user_id = NEW.user_id
@@ -317,12 +404,18 @@ export const timesheetApprovalsMigration = [
       UPDATE time_entries
       SET approval_status = 'approved', updated_at = NEW.updated_at
       WHERE timesheet_submission_id = NEW.id AND approval_status = 'submitted';
+      UPDATE expenses
+      SET approval_status = 'approved', updated_at = NEW.updated_at
+      WHERE timesheet_submission_id = NEW.id AND approval_status = 'submitted';
     END`,
   `CREATE TRIGGER timesheet_submissions_reject_entries
     AFTER UPDATE OF status ON timesheet_submissions
     WHEN OLD.status = 'submitted' AND NEW.status = 'unsubmitted'
     BEGIN
       UPDATE time_entries
+      SET approval_status = 'unsubmitted', updated_at = NEW.updated_at
+      WHERE timesheet_submission_id = NEW.id AND approval_status = 'submitted';
+      UPDATE expenses
       SET approval_status = 'unsubmitted', updated_at = NEW.updated_at
       WHERE timesheet_submission_id = NEW.id AND approval_status = 'submitted';
     END`,
@@ -336,6 +429,21 @@ export const timesheetApprovalsMigration = [
         AND NEW.source_approval_status IN ('submitted','approved')
         AND (NEW.timer_started_at IS NOT NULL
           OR (NEW.started_time IS NOT NULL AND NEW.ended_time IS NULL)))
+      OR (${approvalModuleEnabled} AND NEW.source_approval_status IS NOT NULL AND (
+        EXISTS (
+          SELECT 1 FROM time_entries peer
+          WHERE peer.user_id = NEW.user_id
+            AND ${harvestWeekStart('peer')} = ${harvestWeekStart('NEW')}
+            AND coalesce(peer.source_approval_status, peer.approval_status)
+              IS NOT NEW.source_approval_status
+        ) OR EXISTS (
+          SELECT 1 FROM expenses peer
+          WHERE peer.user_id = NEW.user_id
+            AND ${harvestWeekStart('peer')} = ${harvestWeekStart('NEW')}
+            AND coalesce(peer.source_approval_status, peer.approval_status)
+              IS NOT NEW.source_approval_status
+        )
+      ))
     BEGIN SELECT RAISE(ABORT, 'Harvest approval source state is inconsistent'); END`,
   `CREATE TRIGGER time_entries_source_approval_normalize_insert
     AFTER INSERT ON time_entries
@@ -361,7 +469,25 @@ export const timesheetApprovalsMigration = [
             AND submission.period_end = date(${harvestWeekStart('NEW')}, '+6 days')
             AND submission.source_status = NEW.source_approval_status
         )
-      WHERE id = NEW.id;
+      WHERE user_id = NEW.user_id
+        AND spent_date BETWEEN ${harvestWeekStart('NEW')}
+          AND date(${harvestWeekStart('NEW')}, '+6 days')
+        AND source_approval_status = NEW.source_approval_status
+        AND approval_status = 'unsubmitted';
+      UPDATE expenses
+      SET approval_status = NEW.source_approval_status,
+        timesheet_submission_id = (
+          SELECT submission.id FROM timesheet_submissions submission
+          WHERE submission.user_id = NEW.user_id
+            AND submission.period_start = ${harvestWeekStart('NEW')}
+            AND submission.period_end = date(${harvestWeekStart('NEW')}, '+6 days')
+            AND submission.source_status = NEW.source_approval_status
+        )
+      WHERE user_id = NEW.user_id
+        AND spent_date BETWEEN ${harvestWeekStart('NEW')}
+          AND date(${harvestWeekStart('NEW')}, '+6 days')
+        AND source_approval_status = NEW.source_approval_status
+        AND approval_status = 'unsubmitted';
     END`,
   `CREATE TRIGGER time_entries_source_approval_immutable
     BEFORE UPDATE OF harvest_id, source_approval_status ON time_entries
@@ -386,7 +512,8 @@ export const timesheetApprovalsMigration = [
       WHERE submission.user_id = NEW.user_id
         AND NEW.spent_date BETWEEN submission.period_start AND submission.period_end
         AND NOT (
-          submission.origin IN ('harvest_import','legacy_backfill')
+          ${approvalModuleEnabled}
+          AND submission.origin IN ('harvest_import','legacy_backfill')
           AND NEW.harvest_id IS NOT NULL
           AND NEW.source_approval_status = submission.source_status
           AND NEW.approval_status = 'unsubmitted'
@@ -433,6 +560,142 @@ export const timesheetApprovalsMigration = [
           AND NEW.approval_status = submission.status
       ))
     BEGIN SELECT RAISE(ABORT, 'time entry does not match its timesheet submission'); END`,
+  `CREATE TRIGGER time_entries_approval_delete_guard
+    BEFORE DELETE ON time_entries
+    WHEN OLD.approval_status = 'approved'
+    BEGIN SELECT RAISE(ABORT, 'approved timesheet entries cannot be deleted'); END`,
+
+  `CREATE TRIGGER expenses_source_approval_insert_guard
+    BEFORE INSERT ON expenses
+    WHEN (NEW.harvest_id IS NULL) <> (NEW.source_approval_status IS NULL)
+      OR (NEW.source_approval_status IS NOT NULL AND (
+        NEW.approval_status <> 'unsubmitted' OR NEW.timesheet_submission_id IS NOT NULL
+      ))
+      OR (${approvalModuleEnabled} AND NEW.source_approval_status IS NOT NULL AND (
+        EXISTS (
+          SELECT 1 FROM time_entries peer
+          WHERE peer.user_id = NEW.user_id
+            AND ${harvestWeekStart('peer')} = ${harvestWeekStart('NEW')}
+            AND coalesce(peer.source_approval_status, peer.approval_status)
+              IS NOT NEW.source_approval_status
+        ) OR EXISTS (
+          SELECT 1 FROM expenses peer
+          WHERE peer.user_id = NEW.user_id
+            AND ${harvestWeekStart('peer')} = ${harvestWeekStart('NEW')}
+            AND coalesce(peer.source_approval_status, peer.approval_status)
+              IS NOT NEW.source_approval_status
+        )
+      ))
+    BEGIN SELECT RAISE(ABORT, 'Harvest expense approval source state is inconsistent'); END`,
+  `CREATE TRIGGER expenses_source_approval_normalize_insert
+    AFTER INSERT ON expenses
+    WHEN ${approvalModuleEnabled}
+      AND NEW.source_approval_status IN ('submitted','approved')
+    BEGIN
+      INSERT INTO timesheet_submissions (
+        user_id, period_start, period_end, status, origin, source_status,
+        source_observed_at, submitted_by_user_id, submitted_at,
+        reviewed_by_user_id, reviewed_at, rejection_reason, version, created_at, updated_at
+      ) VALUES (
+        NEW.user_id, ${harvestWeekStart('NEW')},
+        date(${harvestWeekStart('NEW')}, '+6 days'), NEW.source_approval_status,
+        'harvest_import', NEW.source_approval_status, NEW.updated_at,
+        NULL, NULL, NULL, NULL, NULL, 0, NEW.updated_at, NEW.updated_at
+      ) ON CONFLICT(user_id, period_start, period_end) DO NOTHING;
+      UPDATE expenses
+      SET approval_status = NEW.source_approval_status,
+        timesheet_submission_id = (
+          SELECT submission.id FROM timesheet_submissions submission
+          WHERE submission.user_id = NEW.user_id
+            AND submission.period_start = ${harvestWeekStart('NEW')}
+            AND submission.period_end = date(${harvestWeekStart('NEW')}, '+6 days')
+            AND submission.source_status = NEW.source_approval_status
+        )
+      WHERE user_id = NEW.user_id
+        AND spent_date BETWEEN ${harvestWeekStart('NEW')}
+          AND date(${harvestWeekStart('NEW')}, '+6 days')
+        AND source_approval_status = NEW.source_approval_status
+        AND approval_status = 'unsubmitted';
+      UPDATE time_entries
+      SET approval_status = NEW.source_approval_status,
+        timesheet_submission_id = (
+          SELECT submission.id FROM timesheet_submissions submission
+          WHERE submission.user_id = NEW.user_id
+            AND submission.period_start = ${harvestWeekStart('NEW')}
+            AND submission.period_end = date(${harvestWeekStart('NEW')}, '+6 days')
+            AND submission.source_status = NEW.source_approval_status
+        )
+      WHERE user_id = NEW.user_id
+        AND spent_date BETWEEN ${harvestWeekStart('NEW')}
+          AND date(${harvestWeekStart('NEW')}, '+6 days')
+        AND source_approval_status = NEW.source_approval_status
+        AND approval_status = 'unsubmitted';
+    END`,
+  `CREATE TRIGGER expenses_source_approval_immutable
+    BEFORE UPDATE OF harvest_id, source_approval_status ON expenses
+    WHEN OLD.harvest_id IS NOT NEW.harvest_id
+      OR OLD.source_approval_status IS NOT NEW.source_approval_status
+    BEGIN SELECT RAISE(ABORT, 'Harvest expense approval source observation is immutable'); END`,
+  `CREATE TRIGGER expenses_submission_shape_insert
+    BEFORE INSERT ON expenses
+    WHEN (NEW.approval_status <> 'unsubmitted' AND NEW.timesheet_submission_id IS NULL)
+      OR (NEW.timesheet_submission_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM timesheet_submissions submission
+        WHERE submission.id = NEW.timesheet_submission_id
+          AND submission.user_id = NEW.user_id
+          AND NEW.spent_date BETWEEN submission.period_start AND submission.period_end
+          AND NEW.approval_status = submission.status
+      ))
+    BEGIN SELECT RAISE(ABORT, 'expense does not match its timesheet submission'); END`,
+  `CREATE TRIGGER expenses_approval_period_insert_guard
+    BEFORE INSERT ON expenses
+    WHEN EXISTS (
+      SELECT 1 FROM timesheet_submissions submission
+      WHERE submission.user_id = NEW.user_id
+        AND NEW.spent_date BETWEEN submission.period_start AND submission.period_end
+        AND NOT (
+          ${approvalModuleEnabled}
+          AND submission.origin IN ('harvest_import','legacy_backfill')
+          AND NEW.harvest_id IS NOT NULL
+          AND NEW.source_approval_status = submission.source_status
+          AND NEW.approval_status = 'unsubmitted'
+          AND NEW.timesheet_submission_id IS NULL
+        )
+        AND (submission.status = 'approved'
+          OR (submission.status = 'submitted' AND (
+            NEW.timesheet_submission_id IS NOT submission.id
+            OR NEW.approval_status <> 'submitted'
+          )))
+    )
+    BEGIN SELECT RAISE(ABORT, 'approved or pending timesheet period rejects a new expense'); END`,
+  `CREATE TRIGGER expenses_approval_period_update_guard
+    BEFORE UPDATE OF spent_date ON expenses
+    WHEN EXISTS (
+      SELECT 1 FROM timesheet_submissions submission
+      WHERE submission.user_id = NEW.user_id
+        AND NEW.spent_date BETWEEN submission.period_start AND submission.period_end
+        AND (submission.status = 'approved'
+          OR (submission.status = 'submitted' AND (
+            NEW.timesheet_submission_id IS NOT submission.id
+            OR NEW.approval_status <> 'submitted'
+          )))
+    )
+    BEGIN SELECT RAISE(ABORT, 'approved or pending timesheet period rejects an expense move'); END`,
+  `CREATE TRIGGER expenses_submission_shape_update
+    BEFORE UPDATE OF timesheet_submission_id, approval_status, user_id, spent_date ON expenses
+    WHEN (NEW.approval_status <> 'unsubmitted' AND NEW.timesheet_submission_id IS NULL)
+      OR (NEW.timesheet_submission_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM timesheet_submissions submission
+        WHERE submission.id = NEW.timesheet_submission_id
+          AND submission.user_id = NEW.user_id
+          AND NEW.spent_date BETWEEN submission.period_start AND submission.period_end
+          AND NEW.approval_status = submission.status
+      ))
+    BEGIN SELECT RAISE(ABORT, 'expense does not match its timesheet submission'); END`,
+  `CREATE TRIGGER expenses_approval_delete_guard
+    BEFORE DELETE ON expenses
+    WHEN OLD.approval_status = 'approved'
+    BEGIN SELECT RAISE(ABORT, 'approved timesheet expenses cannot be deleted'); END`,
   `CREATE TRIGGER timesheet_submissions_event_insert
     AFTER INSERT ON timesheet_submissions
     WHEN NEW.origin = 'native'
@@ -588,4 +851,6 @@ export const timesheetApprovalsMigration = [
     BEFORE DELETE ON event_outbox
     WHEN OLD.aggregate_type = 'timesheet_submission'
     BEGIN SELECT RAISE(ABORT, 'timesheet submission events are immutable'); END`,
+  `DROP TRIGGER IF EXISTS instance_bootstrap_exact_state`,
+  approvalCompatibleInstanceBootstrapExactStateTrigger,
 ] as const

@@ -109,6 +109,7 @@ export {
   type TimesheetApprovalService,
   type TimesheetSubmissionDetailRecord,
   type TimesheetSubmissionEntryRecord,
+  type TimesheetSubmissionExpenseRecord,
   type TimesheetSubmissionFilters,
   type TimesheetSubmissionRecord,
   type TimesheetSubmissionStatus,

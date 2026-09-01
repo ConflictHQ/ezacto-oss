@@ -409,6 +409,7 @@ export type TimesheetSubmission = {
   "rejection_reason": string | null;
   "version": number;
   "entry_count": number;
+  "expense_count": number;
   "total_seconds": number;
   "billable_seconds": number;
   "nonbillable_seconds": number;
@@ -432,6 +433,18 @@ export type TimesheetSubmissionEntry = {
   "notes": string | null;
 };
 
+export type TimesheetSubmissionExpense = {
+  "id": number;
+  "spent_date": string;
+  "project_id": number;
+  "project_name": string;
+  "expense_category_id": number;
+  "expense_category_name": string;
+  "total_cost_cents": number;
+  "currency": string;
+  "notes": string | null;
+};
+
 export type TimesheetSubmissionDetail = {
   "id": number;
   "user_id": number;
@@ -449,12 +462,14 @@ export type TimesheetSubmissionDetail = {
   "rejection_reason": string | null;
   "version": number;
   "entry_count": number;
+  "expense_count": number;
   "total_seconds": number;
   "billable_seconds": number;
   "nonbillable_seconds": number;
   "created_at": string;
   "updated_at": string;
   "entries": Array<TimesheetSubmissionEntry>;
+  "expenses": Array<TimesheetSubmissionExpense>;
 };
 
 export type TimesheetRejectionInput = {

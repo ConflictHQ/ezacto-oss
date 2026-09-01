@@ -86,7 +86,8 @@ interface NormalizedBootstrap {
 
 const tokenName = 'Instance owner bootstrap'
 const tokenScopes = JSON.stringify([...apiScopes].sort())
-const modules = JSON.stringify({ expenses: true, invoices: true })
+const legacyModules = JSON.stringify({ expenses: true, invoices: true })
+const approvalModules = JSON.stringify({ approval: true, expenses: true, invoices: true })
 const canonicalTimestampPattern =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/
 
@@ -167,7 +168,7 @@ const claim = (input: NormalizedBootstrap): Operation => ({
   ],
 })
 
-const operations = (input: NormalizedBootstrap): Operation[] => [
+const operations = (input: NormalizedBootstrap, modules: string): Operation[] => [
   claim(input),
   {
     query: `INSERT INTO organizations (id, name, modules, created_at, updated_at)
@@ -422,11 +423,16 @@ export const bootstrapInstanceD1 = async (
   { now = () => new Date().toISOString() }: InstanceBootstrapOptions = {},
 ): Promise<InstanceBootstrapResult> => {
   const normalized = await normalize(input, now)
+  const approvalsAvailable = await database
+    .prepare(`SELECT 1 AS available FROM sqlite_master
+      WHERE type = 'table' AND name = 'timesheet_submissions'`)
+    .first()
   try {
     await database.batch(
-      operations(normalized).map(({ query, bindings }) =>
-        database.prepare(query).bind(...bindings),
-      ),
+      operations(
+        normalized,
+        approvalsAvailable === null ? legacyModules : approvalModules,
+      ).map(({ query, bindings }) => database.prepare(query).bind(...bindings)),
     )
   } catch (error) {
     translateConflict(error)
@@ -440,8 +446,15 @@ export const bootstrapInstanceContainer = async (
   { now = () => new Date().toISOString() }: InstanceBootstrapOptions = {},
 ): Promise<InstanceBootstrapResult> => {
   const normalized = await normalize(input, now)
+  const approvalsAvailable = database
+    .prepare(`SELECT 1 AS available FROM sqlite_master
+      WHERE type = 'table' AND name = 'timesheet_submissions'`)
+    .get()
   const run = database.transaction(() => {
-    for (const { query, bindings } of operations(normalized)) {
+    for (const { query, bindings } of operations(
+      normalized,
+      approvalsAvailable === undefined ? legacyModules : approvalModules,
+    )) {
       database.prepare(query).run(...bindings)
     }
   })

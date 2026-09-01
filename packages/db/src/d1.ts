@@ -34,6 +34,7 @@ export {
   type TimesheetSubmissionFilters,
   type TimesheetSubmissionDetailRecord,
   type TimesheetSubmissionEntryRecord,
+  type TimesheetSubmissionExpenseRecord,
   type TimesheetSubmissionRecord,
   type TimesheetSubmissionSource,
   type TimesheetSubmissionStatus,

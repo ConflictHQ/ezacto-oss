@@ -1,6 +1,8 @@
 import {
   EzactoClient,
+  EzactoApiError,
   type AuthPrincipal,
+  type Expense,
   type GeneralResource,
   type Invoice,
   type InvoiceGenerationInput,
@@ -37,6 +39,10 @@ export interface ShellApi {
     readonly to?: string
     readonly is_running?: boolean
   }, signal?: AbortSignal): Promise<readonly TimeEntry[]>
+  listExpenses?(query: {
+    readonly from?: string
+    readonly to?: string
+  }, signal?: AbortSignal): Promise<readonly Expense[]>
   createTimeEntry(input: TimeEntryInput, signal?: AbortSignal): Promise<TimeEntry>
   updateTimeEntry(id: number, patch: TimeEntryPatch, signal?: AbortSignal): Promise<TimeEntry>
   deleteTimeEntry(id: number, signal?: AbortSignal): Promise<void>
@@ -123,6 +129,7 @@ export interface DisplayTimeEntry extends TimeEntry {
 
 export interface ShellSnapshot {
   readonly entries: readonly DisplayTimeEntry[]
+  readonly expenses: readonly Expense[]
   readonly running: DisplayTimeEntry | null
   readonly timeEntrySettings: TimeEntrySettings
   readonly catalog: {
@@ -352,10 +359,15 @@ export const loadShellSnapshot = async (
 ): Promise<ShellSnapshot> => {
   const timeEntrySettings = await api.getTimeEntrySettings(signal)
   const range = weekRange(localDate(now), timeEntrySettings.week_start_day)
-  const [resources, entries, running, timeEntryOptions] = await Promise.all([
+  const expenseRequest = api.listExpenses?.(range, signal).catch((error: unknown) => {
+    if (error instanceof EzactoApiError && error.status === 404) return []
+    throw error
+  }) ?? Promise.resolve([])
+  const [resources, entries, running, expenses, timeEntryOptions] = await Promise.all([
     loadCatalogResources(api, signal),
     api.listTimeEntries(range, signal),
     api.listTimeEntries({ is_running: true }, signal),
+    expenseRequest,
     api.listTimeEntryOptions(signal),
   ])
   const displayedEntries = displayEntries(entries, resources)
@@ -364,6 +376,7 @@ export const loadShellSnapshot = async (
     throw new Error('more than one timer is running')
   return {
     entries: displayedEntries,
+    expenses,
     running: displayedRunning[0] ?? null,
     timeEntrySettings,
     catalog: { ...resources, timeEntryOptions },
@@ -511,6 +524,23 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       cursor = page.page.next_cursor ?? undefined
     } while (cursor !== undefined)
     return entries
+  },
+  listExpenses: async (query, signal) => {
+    const expenses: Expense[] = []
+    let cursor: string | undefined
+    do {
+      const page = await client.listExpenses({
+        query: {
+          ...query,
+          per_page: 200,
+          ...(cursor === undefined ? {} : { cursor }),
+        },
+        ...withSignal(signal),
+      })
+      expenses.push(...page.data)
+      cursor = page.page.next_cursor ?? undefined
+    } while (cursor !== undefined)
+    return expenses
   },
   createTimeEntry: async (input, signal) =>
     (await client.createTimeEntry({ body: input, ...withSignal(signal) })).data,

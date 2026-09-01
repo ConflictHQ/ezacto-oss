@@ -101,6 +101,45 @@ describe('transform and load', () => {
         reviewed_at: null,
         event_type: 'timesheet.status_imported',
       })
+      const aggregate = db
+        .prepare(
+          `SELECT timesheet_submission_id AS id FROM time_entries
+           WHERE harvest_id = '9007199254740993'`,
+        )
+        .get() as { id: number }
+      expect(
+        db
+          .prepare(
+            `SELECT harvest_id, total_cost_cents, approval_status,
+              source_approval_status, timesheet_submission_id
+             FROM expenses WHERE harvest_id IN (152975211, 152975212)
+             ORDER BY harvest_id`,
+          )
+          .all(),
+      ).toEqual([
+        {
+          harvest_id: 152975211,
+          total_cost_cents: 8125,
+          approval_status: 'approved',
+          source_approval_status: 'approved',
+          timesheet_submission_id: aggregate.id,
+        },
+        {
+          harvest_id: 152975212,
+          total_cost_cents: -10_000,
+          approval_status: 'approved',
+          source_approval_status: 'approved',
+          timesheet_submission_id: aggregate.id,
+        },
+      ])
+      expect(
+        db
+          .prepare(
+            `SELECT count(*) AS count FROM event_outbox
+             WHERE aggregate_type = 'timesheet_submission' AND aggregate_id = ?`,
+          )
+          .get(aggregate.id),
+      ).toEqual({ count: 1 })
       expect(
         db
           .prepare(

@@ -1,8 +1,15 @@
-import type { GeneralResource, TimeEntry, TimeEntryInput, TimeEntryPatch } from '@ezacto/client'
+import {
+  EzactoApiError,
+  type GeneralResource,
+  type TimeEntry,
+  type TimeEntryInput,
+  type TimeEntryPatch,
+} from '@ezacto/client'
 import { describe, expect, it, vi } from 'vitest'
 import {
   buildWeekGrid,
   formatCellHours,
+  loadShellSnapshot,
   parseCellSeconds,
   saveWeekCellWithRetry,
   seedsFromEntries,
@@ -47,6 +54,7 @@ const entry = (id: number, overrides: Partial<DisplayTimeEntry> = {}): DisplayTi
 
 const snapshot = (entries: readonly DisplayTimeEntry[]): ShellSnapshot => ({
   entries,
+  expenses: [],
   running: entries.find((item) => item.is_running) ?? null,
   timeEntrySettings: {
     time_entry_mode: 'duration',
@@ -140,6 +148,33 @@ const apiFor = (
 }
 
 describe('timesheet week grid', () => {
+  it('[unit] keeps time tracking available when only the expenses module is hidden', async () => {
+    const timeEntries = [entry(1)]
+    const api = apiFor(timeEntries)
+    const page = (data: readonly GeneralResource[]) => ({
+      data,
+      page: { next_cursor: null },
+    })
+    api.listProjects = vi.fn(async () => page([project(1, 'Northpeak')]))
+    api.listTasks = vi.fn(async () => page([task(1, 'Development')]))
+    api.listTimeEntries = vi.fn(async (query) => query.is_running === true ? [] : timeEntries)
+    api.listExpenses = vi.fn(async () => {
+      throw new EzactoApiError(404, { error: 'not_found' }, null)
+    })
+
+    await expect(loadShellSnapshot(api, new Date('2026-08-28T12:00:00Z'))).resolves.toMatchObject({
+      entries: [{ id: 1, project_label: 'Northpeak', task_label: 'Development' }],
+      expenses: [],
+    })
+
+    api.listExpenses = vi.fn(async () => {
+      throw new EzactoApiError(503, { error: 'unavailable' }, null)
+    })
+    await expect(loadShellSnapshot(api, new Date('2026-08-28T12:00:00Z'))).rejects.toMatchObject({
+      status: 503,
+    })
+  })
+
   it('[unit] builds Monday-through-Sunday rows, totals, conflicts, and live edges', () => {
     const entries = [
       entry(1, { spent_date: '2026-08-24', seconds: 1_800 }),

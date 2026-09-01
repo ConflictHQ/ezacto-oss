@@ -32,6 +32,7 @@ export interface TimesheetSubmissionRecord {
   rejectionReason: string | null
   version: number
   entryCount: number
+  expenseCount: number
   totalSeconds: number
   billableSeconds: number
   nonbillableSeconds: number
@@ -50,8 +51,21 @@ export interface TimesheetSubmissionEntryRecord {
   notes: string | null
 }
 
+export interface TimesheetSubmissionExpenseRecord {
+  id: number
+  spentDate: string
+  projectId: number
+  projectName: string
+  expenseCategoryId: number
+  expenseCategoryName: string
+  totalCostCents: number
+  currency: string
+  notes: string | null
+}
+
 export interface TimesheetSubmissionDetailRecord extends TimesheetSubmissionRecord {
   entries: readonly TimesheetSubmissionEntryRecord[]
+  expenses: readonly TimesheetSubmissionExpenseRecord[]
 }
 
 export interface TimesheetSubmissionFilters {
@@ -177,6 +191,7 @@ const serialize = (submission: Readonly<TimesheetSubmissionRecord>) => ({
   rejection_reason: submission.rejectionReason,
   version: submission.version,
   entry_count: submission.entryCount,
+  expense_count: submission.expenseCount,
   total_seconds: submission.totalSeconds,
   billable_seconds: submission.billableSeconds,
   nonbillable_seconds: submission.nonbillableSeconds,
@@ -195,6 +210,17 @@ const serializeDetail = (submission: Readonly<TimesheetSubmissionDetailRecord>) 
     task_name: entry.taskName,
     seconds: entry.seconds,
     notes: entry.notes,
+  })),
+  expenses: submission.expenses.map((expense) => ({
+    id: expense.id,
+    spent_date: expense.spentDate,
+    project_id: expense.projectId,
+    project_name: expense.projectName,
+    expense_category_id: expense.expenseCategoryId,
+    expense_category_name: expense.expenseCategoryName,
+    total_cost_cents: expense.totalCostCents,
+    currency: expense.currency,
+    notes: expense.notes,
   })),
 })
 
@@ -317,6 +343,7 @@ export const installTimesheetApprovalRoutes = <Bindings extends object>(
   api.get('/timesheet-submissions', async (context) => {
     await assertAvailable(options.service)
     requireApiScope(context, 'time_entries:read')
+    requireApiScope(context, 'expenses:read')
     const principal = context.get('principal')
     const url = new URL(context.req.url)
     try {
@@ -339,6 +366,7 @@ export const installTimesheetApprovalRoutes = <Bindings extends object>(
   api.post('/timesheet-submissions', async (context) => {
     await assertAvailable(options.service)
     requireApiScope(context, 'time_entries:write')
+    requireApiScope(context, 'expenses:write')
     const principal = context.get('principal')
     const input = periodInput(await readObjectBody(context))
     try {
@@ -363,6 +391,7 @@ export const installTimesheetApprovalRoutes = <Bindings extends object>(
   api.get('/timesheet-submissions/pending', async (context) => {
     await assertAvailable(options.service)
     requireApiScope(context, 'time_entries:read')
+    requireApiScope(context, 'expenses:read')
     const principal = context.get('principal')
     assertApproverProfile(principal)
     const url = new URL(context.req.url)
@@ -386,6 +415,7 @@ export const installTimesheetApprovalRoutes = <Bindings extends object>(
   api.get('/timesheet-submissions/:id', async (context) => {
     await assertAvailable(options.service)
     requireApiScope(context, 'time_entries:read')
+    requireApiScope(context, 'expenses:read')
     const principal = context.get('principal')
     try {
       const submission = await options.service.get(
@@ -408,6 +438,7 @@ export const installTimesheetApprovalRoutes = <Bindings extends object>(
   api.post('/timesheet-submissions/:id/approve', async (context) => {
     await assertAvailable(options.service)
     requireApiScope(context, 'time_entries:write')
+    requireApiScope(context, 'expenses:write')
     const principal = context.get('principal')
     assertApproverProfile(principal)
     try {
@@ -425,6 +456,7 @@ export const installTimesheetApprovalRoutes = <Bindings extends object>(
   api.post('/timesheet-submissions/:id/reject', async (context) => {
     await assertAvailable(options.service)
     requireApiScope(context, 'time_entries:write')
+    requireApiScope(context, 'expenses:write')
     const principal = context.get('principal')
     assertApproverProfile(principal)
     const reason = rejectionReason(await readObjectBody(context))

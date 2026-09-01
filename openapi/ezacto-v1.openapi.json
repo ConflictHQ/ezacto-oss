@@ -13017,6 +13017,7 @@
           "rejection_reason",
           "version",
           "entry_count",
+          "expense_count",
           "total_seconds",
           "billable_seconds",
           "nonbillable_seconds",
@@ -13146,6 +13147,10 @@
             "type": "integer",
             "minimum": 0
           },
+          "expense_count": {
+            "type": "integer",
+            "minimum": 0
+          },
           "total_seconds": {
             "type": "integer",
             "minimum": 0
@@ -13239,6 +13244,64 @@
         },
         "additionalProperties": false
       },
+      "TimesheetSubmissionExpense": {
+        "type": "object",
+        "required": [
+          "id",
+          "spent_date",
+          "project_id",
+          "project_name",
+          "expense_category_id",
+          "expense_category_name",
+          "total_cost_cents",
+          "currency",
+          "notes"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "spent_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "project_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "expense_category_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "expense_category_name": {
+            "type": "string"
+          },
+          "total_cost_cents": {
+            "type": "integer",
+            "minimum": -9000000000000,
+            "maximum": 9000000000000
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "TimesheetSubmissionDetail": {
         "type": "object",
         "required": [
@@ -13258,12 +13321,14 @@
           "rejection_reason",
           "version",
           "entry_count",
+          "expense_count",
           "total_seconds",
           "billable_seconds",
           "nonbillable_seconds",
           "created_at",
           "updated_at",
-          "entries"
+          "entries",
+          "expenses"
         ],
         "properties": {
           "id": {
@@ -13388,6 +13453,10 @@
             "type": "integer",
             "minimum": 0
           },
+          "expense_count": {
+            "type": "integer",
+            "minimum": 0
+          },
           "total_seconds": {
             "type": "integer",
             "minimum": 0
@@ -13412,6 +13481,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/TimesheetSubmissionEntry"
+            }
+          },
+          "expenses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimesheetSubmissionExpense"
             }
           }
         },
@@ -13549,7 +13624,8 @@
           },
           "total_cost_cents": {
             "type": "integer",
-            "minimum": 0
+            "minimum": -9000000000000,
+            "maximum": 9000000000000
           },
           "billable": {
             "type": "boolean"

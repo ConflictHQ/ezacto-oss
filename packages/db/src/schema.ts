@@ -1556,6 +1556,13 @@ export const expenses = sqliteTable(
     })
       .notNull()
       .default('unsubmitted'),
+    timesheetSubmissionId: integer('timesheet_submission_id').references(
+      () => timesheetSubmissions.id,
+      { onDelete: 'restrict' },
+    ),
+    sourceApprovalStatus: text('source_approval_status', {
+      enum: ['unsubmitted', 'submitted', 'approved'],
+    }),
     invoiceId: integer('invoice_id').references(() => invoices.id, { onDelete: 'restrict' }),
     reimbursable: integer('reimbursable', { mode: 'boolean' }).notNull().default(false),
     reimbursementStatus: text('reimbursement_status', {
@@ -1572,6 +1579,9 @@ export const expenses = sqliteTable(
     index('expenses_project_spent_date').on(table.projectId, table.spentDate),
     index('expenses_expense_category_id').on(table.expenseCategoryId),
     index('expenses_invoice_id').on(table.invoiceId),
+    index('expenses_timesheet_submission_id')
+      .on(table.timesheetSubmissionId)
+      .where(sql`${table.timesheetSubmissionId} is not null`),
     check(
       'expenses_units_safe_integer',
       sql`${table.units} is null or ${table.units} between 0 and 9007199254740991`,

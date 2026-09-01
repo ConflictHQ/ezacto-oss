@@ -38,6 +38,7 @@ export interface TimesheetSubmissionRecord {
   rejectionReason: string | null
   version: number
   entryCount: number
+  expenseCount: number
   totalSeconds: number
   billableSeconds: number
   nonbillableSeconds: number
@@ -56,8 +57,21 @@ export interface TimesheetSubmissionEntryRecord {
   notes: string | null
 }
 
+export interface TimesheetSubmissionExpenseRecord {
+  id: number
+  spentDate: string
+  projectId: number
+  projectName: string
+  expenseCategoryId: number
+  expenseCategoryName: string
+  totalCostCents: number
+  currency: string
+  notes: string | null
+}
+
 export interface TimesheetSubmissionDetailRecord extends TimesheetSubmissionRecord {
   entries: readonly TimesheetSubmissionEntryRecord[]
+  expenses: readonly TimesheetSubmissionExpenseRecord[]
 }
 
 export interface TimesheetSubmissionFilters {
@@ -112,6 +126,7 @@ interface RawSubmissionRow {
   rejection_reason: string | null
   version: number
   entry_count: number
+  expense_count: number
   total_seconds: number
   billable_seconds: number
   nonbillable_seconds: number
@@ -119,26 +134,20 @@ interface RawSubmissionRow {
   updated_at: string
 }
 
-interface RawSubmissionEntryRow {
-  id: number
-  spent_date: string
-  project_id: number
-  project_name: string
-  task_id: number
-  task_name: string
-  seconds: number
-  notes: string | null
-}
-
 interface RawSubmissionDetailRow extends RawSubmissionRow {
-  entry_id: number | null
-  entry_spent_date: string | null
-  entry_project_id: number | null
-  entry_project_name: string | null
-  entry_task_id: number | null
-  entry_task_name: string | null
-  entry_seconds: number | null
-  entry_notes: string | null
+  item_kind: 'time' | 'expense' | null
+  item_id: number | null
+  item_spent_date: string | null
+  item_project_id: number | null
+  item_project_name: string | null
+  item_task_id: number | null
+  item_task_name: string | null
+  item_expense_category_id: number | null
+  item_expense_category_name: string | null
+  item_seconds: number | null
+  item_total_cost_cents: number | null
+  item_currency: string | null
+  item_notes: string | null
 }
 
 interface AtomicPairResult {
@@ -168,6 +177,8 @@ const submissionProjection = `submission.id,
   submission.version,
   (SELECT count(*) FROM time_entries entry
     WHERE entry.timesheet_submission_id = submission.id) AS entry_count,
+  (SELECT count(*) FROM expenses expense
+    WHERE expense.timesheet_submission_id = submission.id) AS expense_count,
   coalesce((SELECT sum(entry.seconds) FROM time_entries entry
     WHERE entry.timesheet_submission_id = submission.id), 0) AS total_seconds,
   coalesce((SELECT sum(entry.seconds) FROM time_entries entry
@@ -183,20 +194,43 @@ const submissionSelect = `SELECT ${submissionProjection}
   FROM timesheet_submissions submission
   JOIN users user ON user.id = submission.user_id`
 
-const submissionDetailSelect = `SELECT ${submissionProjection},
-  detail_entry.id AS entry_id,
-  detail_entry.spent_date AS entry_spent_date,
-  detail_entry.project_id AS entry_project_id,
-  project.name AS entry_project_name,
-  detail_entry.task_id AS entry_task_id,
-  task.name AS entry_task_name,
-  detail_entry.seconds AS entry_seconds,
-  detail_entry.notes AS entry_notes
+const submissionDetailSelect = `WITH detail_item AS (
+  SELECT 'time' AS item_kind, entry.id AS item_id, entry.timesheet_submission_id,
+    entry.spent_date AS item_spent_date, entry.project_id AS item_project_id,
+    project.name AS item_project_name, entry.task_id AS item_task_id,
+    task.name AS item_task_name, NULL AS item_expense_category_id,
+    NULL AS item_expense_category_name, entry.seconds AS item_seconds,
+    NULL AS item_total_cost_cents, NULL AS item_currency, entry.notes AS item_notes
+  FROM time_entries entry
+  JOIN projects project ON project.id = entry.project_id
+  JOIN tasks task ON task.id = entry.task_id
+  UNION ALL
+  SELECT 'expense', expense.id, expense.timesheet_submission_id,
+    expense.spent_date, expense.project_id, project.name, NULL, NULL,
+    expense.expense_category_id, category.name, NULL, expense.total_cost_cents,
+    upper(coalesce(project.billing_currency, client.currency)), expense.notes
+  FROM expenses expense
+  JOIN projects project ON project.id = expense.project_id
+  JOIN clients client ON client.id = project.client_id
+  JOIN expense_categories category ON category.id = expense.expense_category_id
+)
+SELECT ${submissionProjection},
+  detail_item.item_kind,
+  detail_item.item_id,
+  detail_item.item_spent_date,
+  detail_item.item_project_id,
+  detail_item.item_project_name,
+  detail_item.item_task_id,
+  detail_item.item_task_name,
+  detail_item.item_expense_category_id,
+  detail_item.item_expense_category_name,
+  detail_item.item_seconds,
+  detail_item.item_total_cost_cents,
+  detail_item.item_currency,
+  detail_item.item_notes
 FROM timesheet_submissions submission
 JOIN users user ON user.id = submission.user_id
-LEFT JOIN time_entries detail_entry ON detail_entry.timesheet_submission_id = submission.id
-LEFT JOIN projects project ON project.id = detail_entry.project_id
-LEFT JOIN tasks task ON task.id = detail_entry.task_id`
+LEFT JOIN detail_item ON detail_item.timesheet_submission_id = submission.id`
 
 const nativeClient = (database: ApprovalDatabase): NativeClient =>
   (database as ApprovalDatabase & { $client: NativeClient }).$client
@@ -265,22 +299,12 @@ const record = (row: RawSubmissionRow): TimesheetSubmissionRecord => ({
   rejectionReason: row.rejection_reason,
   version: row.version,
   entryCount: row.entry_count,
+  expenseCount: row.expense_count,
   totalSeconds: row.total_seconds,
   billableSeconds: row.billable_seconds,
   nonbillableSeconds: row.nonbillable_seconds,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
-})
-
-const entryRecord = (row: RawSubmissionEntryRow): TimesheetSubmissionEntryRecord => ({
-  id: row.id,
-  spentDate: row.spent_date,
-  projectId: row.project_id,
-  projectName: row.project_name,
-  taskId: row.task_id,
-  taskName: row.task_name,
-  seconds: row.seconds,
-  notes: row.notes,
 })
 
 const approverPredicate = (actor: Readonly<TimesheetApprovalActor>): {
@@ -338,10 +362,10 @@ const translateMutationFailure = (error: unknown): never => {
       'Stop running time entries before submitting this period.',
     )
   }
-  if (message.includes('no unsubmitted time entries')) {
+  if (message.includes('no unsubmitted entries')) {
     throw new TimesheetApprovalError(
       'empty_period',
-      'The requested period has no unsubmitted time entries.',
+      'The requested period has no unsubmitted time or expense entries.',
     )
   }
   if (message.includes('period changed before approval')) {
@@ -400,7 +424,7 @@ export class TimesheetApprovalRepository {
       `${submissionDetailSelect}
        WHERE ${approvalEnabledSql} AND submission.id = ?
          AND (submission.user_id = ? OR ${authorization.sql})
-       ORDER BY detail_entry.spent_date, detail_entry.id`,
+       ORDER BY detail_item.item_spent_date, detail_item.item_kind, detail_item.item_id`,
       [submissionId, actor.userId, ...authorization.params],
     )
     const row = rows[0]
@@ -421,28 +445,56 @@ export class TimesheetApprovalRepository {
     }
     const entries = rows.flatMap((detail): TimesheetSubmissionEntryRecord[] => {
       if (
-        detail.entry_id === null ||
-        detail.entry_spent_date === null ||
-        detail.entry_project_id === null ||
-        detail.entry_project_name === null ||
-        detail.entry_task_id === null ||
-        detail.entry_task_name === null ||
-        detail.entry_seconds === null
+        detail.item_kind !== 'time' ||
+        detail.item_id === null ||
+        detail.item_spent_date === null ||
+        detail.item_project_id === null ||
+        detail.item_project_name === null ||
+        detail.item_task_id === null ||
+        detail.item_task_name === null ||
+        detail.item_seconds === null
       ) return []
       return [
-        entryRecord({
-          id: detail.entry_id,
-          spent_date: detail.entry_spent_date,
-          project_id: detail.entry_project_id,
-          project_name: detail.entry_project_name,
-          task_id: detail.entry_task_id,
-          task_name: detail.entry_task_name,
-          seconds: detail.entry_seconds,
-          notes: detail.entry_notes,
-        }),
+        {
+          id: detail.item_id,
+          spentDate: detail.item_spent_date,
+          projectId: detail.item_project_id,
+          projectName: detail.item_project_name,
+          taskId: detail.item_task_id,
+          taskName: detail.item_task_name,
+          seconds: detail.item_seconds,
+          notes: detail.item_notes,
+        },
       ]
     })
-    return { ...record(row), entries }
+    const expenses = rows.flatMap((detail): TimesheetSubmissionExpenseRecord[] => {
+      if (
+        detail.item_kind !== 'expense' ||
+        detail.item_id === null ||
+        detail.item_spent_date === null ||
+        detail.item_project_id === null ||
+        detail.item_project_name === null ||
+        detail.item_expense_category_id === null ||
+        detail.item_expense_category_name === null ||
+        detail.item_total_cost_cents === null ||
+        detail.item_currency === null
+      ) return []
+      if (!/^[A-Z]{3}$/.test(detail.item_currency)) {
+        throw new Error('Timesheet submission expense currency is invalid.')
+      }
+      return [{
+        id: detail.item_id,
+        spentDate: detail.item_spent_date,
+        projectId: detail.item_project_id,
+        projectName: detail.item_project_name,
+        expenseCategoryId: detail.item_expense_category_id,
+        expenseCategoryName: detail.item_expense_category_name,
+        totalCostCents: detail.item_total_cost_cents,
+        currency: detail.item_currency,
+        notes: detail.item_notes,
+      }]
+    })
+    return { ...record(row), entries, expenses }
   }
 
   async #exact(userId: number, periodStart: string, periodEnd: string) {
@@ -538,6 +590,10 @@ export class TimesheetApprovalRepository {
                 SELECT 1 FROM time_entries entry
                 WHERE entry.user_id = ? AND entry.spent_date BETWEEN ? AND ?
                   AND entry.approval_status = 'unsubmitted'
+                UNION ALL
+                SELECT 1 FROM expenses expense
+                WHERE expense.user_id = ? AND expense.spent_date BETWEEN ? AND ?
+                  AND expense.approval_status = 'unsubmitted'
               )
             ON CONFLICT(user_id, period_start, period_end) DO UPDATE SET
               status = 'submitted', submitted_at = excluded.submitted_at,
@@ -554,6 +610,9 @@ export class TimesheetApprovalRepository {
             occurredAt,
             occurredAt,
             occurredAt,
+            userId,
+            periodStart,
+            periodEnd,
             userId,
             periodStart,
             periodEnd,
@@ -578,7 +637,7 @@ export class TimesheetApprovalRepository {
 
     await this.#assertEnabled()
     const existing = await this.#exact(userId, periodStart, periodEnd)
-    if (existing !== null) {
+    if (existing !== null && existing.status !== 'unsubmitted') {
       throw new TimesheetApprovalError(
         'state_conflict',
         `This period is already ${existing.status}.`,
@@ -600,7 +659,7 @@ export class TimesheetApprovalRepository {
     }
     throw new TimesheetApprovalError(
       'empty_period',
-      'The requested period has no unsubmitted time entries.',
+      'The requested period has no unsubmitted time or expense entries.',
     )
   }
 

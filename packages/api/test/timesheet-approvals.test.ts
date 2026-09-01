@@ -22,6 +22,22 @@ const profiles: readonly UserProfile[] = [
 ]
 
 const authentication: ApiAuthentication = {
+  tokens: {
+    authenticate: async (token) => {
+      const scopes = {
+        'time-read-only': ['time_entries:read'],
+        'expense-read-only': ['expenses:read'],
+        'time-write-only': ['time_entries:write'],
+        'expense-write-only': ['expenses:write'],
+      }[token]
+      return scopes === undefined
+        ? null
+        : { tokenId: 19, userId: 10, profile: 'administrator', scopes }
+    },
+    issue: async () => { throw new Error('not used') },
+    list: async () => [],
+    revoke: async () => null,
+  },
   sessions: {
     resolve: async (request) => {
       const profile = request.headers.get('x-test-profile') as UserProfile | null
@@ -113,6 +129,12 @@ const createHarness = async (): Promise<Harness> => {
     now,
   )
   await run(
+    `INSERT INTO expense_categories (id, name, created_at, updated_at)
+     VALUES (1, 'Travel', ?, ?)`,
+    now,
+    now,
+  )
+  await run(
     `INSERT INTO teammate_assignments (manager_id, user_id, created_at, updated_at)
      VALUES (2, 1, ?, ?)`,
     now,
@@ -125,6 +147,14 @@ const createHarness = async (): Promise<Harness> => {
       billable, created_at, updated_at
     ) VALUES (1, 1, 1, 1, 1, 1, '2026-08-25', 3600, 3600, 3600,
       'Initial work', 1, ?, ?)`,
+    now,
+    now,
+  )
+  await run(
+    `INSERT INTO expenses (
+      id, user_id, project_id, expense_category_id, spent_date, notes,
+      total_cost_cents, billable, created_at, updated_at
+    ) VALUES (1, 1, 1, 1, '2026-08-25', 'Train receipt', -125, 1, ?, ?)`,
     now,
     now,
   )
@@ -201,6 +231,20 @@ describe('timesheet approval API', () => {
             notes: 'Initial work',
           },
         ],
+        expense_count: 1,
+        expenses: [
+          {
+            id: 1,
+            spent_date: '2026-08-25',
+            project_id: 1,
+            project_name: 'Approval project',
+            expense_category_id: 1,
+            expense_category_name: 'Travel',
+            total_cost_cents: -125,
+            currency: 'USD',
+            notes: 'Train receipt',
+          },
+        ],
       },
       links: { self: `/api/v1/timesheet-submissions/${submitted.data.id}` },
     })
@@ -259,6 +303,15 @@ describe('timesheet approval API', () => {
     expect((await edit.json()) as object).toMatchObject({
       data: { approval_status: 'unsubmitted', is_locked: false },
     })
+    const expenseEdit = await harness.request('/expenses/1', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ notes: 'Receipt clarified.' }),
+    })
+    expect(expenseEdit.status).toBe(200)
+    expect((await expenseEdit.json()) as object).toMatchObject({
+      data: { approval_status: 'unsubmitted', is_locked: false },
+    })
 
     const resubmit = await harness.request('/timesheet-submissions', {
       method: 'POST',
@@ -288,6 +341,17 @@ describe('timesheet approval API', () => {
         locked_reason: 'Approved',
       },
     })
+    const expense = await harness.request('/expenses/1')
+    expect(expense.status).toBe(200)
+    expect((await expense.json()) as object).toMatchObject({
+      data: {
+        notes: 'Receipt clarified.',
+        total_cost_cents: -125,
+        approval_status: 'approved',
+        is_locked: true,
+        locked_reason_code: 'approved',
+      },
+    })
     const lockedEdit = await harness.request('/time-entries/1', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
@@ -298,6 +362,18 @@ describe('timesheet approval API', () => {
       error: {
         code: 'tracked_mutation_locked',
         fields: [{ field: 'time_entry', code: 'approved' }],
+      },
+    })
+    const lockedExpenseEdit = await harness.request('/expenses/1', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ notes: 'Cannot change this receipt.' }),
+    })
+    expect(lockedExpenseEdit.status).toBe(422)
+    expect((await lockedExpenseEdit.json()) as object).toMatchObject({
+      error: {
+        code: 'tracked_mutation_locked',
+        fields: [{ field: 'expense', code: 'approved' }],
       },
     })
   })
@@ -315,7 +391,9 @@ describe('timesheet approval API', () => {
       ['/timesheet-submissions/not-an-id/reject', { method: 'POST' }],
     ]
     for (const [path, init] of cases) {
-      const response = await harness.request(path, init, {
+      const headers = new Headers(init.headers)
+      headers.set('authorization', 'Bearer time-read-only')
+      const response = await harness.request(path, { ...init, headers }, {
         userId: 10,
         profile: 'administrator',
       })
@@ -327,6 +405,11 @@ describe('timesheet approval API', () => {
         .prepare(
           `SELECT approval_status, timesheet_submission_id FROM time_entries WHERE id = 1`,
         )
+        .first(),
+    ).toEqual({ approval_status: 'unsubmitted', timesheet_submission_id: null })
+    expect(
+      await harness.d1
+        .prepare(`SELECT approval_status, timesheet_submission_id FROM expenses WHERE id = 1`)
         .first(),
     ).toEqual({ approval_status: 'unsubmitted', timesheet_submission_id: null })
     expect(
@@ -359,6 +442,110 @@ describe('timesheet approval API', () => {
     })
   })
 
+  it('[api] submits an expense-only period and preserves a zero-cost detail', async () => {
+    await harness.d1.prepare(`DELETE FROM time_entries WHERE id = 1`).run()
+    await harness.d1
+      .prepare(`UPDATE expenses SET total_cost_cents = 0, notes = 'Zero-cost adjustment' WHERE id = 1`)
+      .run()
+    const submit = await harness.request('/timesheet-submissions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ period_start: '2026-08-24', period_end: '2026-08-30' }),
+    })
+    expect(submit.status).toBe(201)
+    const submitted = (await submit.json()) as { data: { id: number } }
+    expect(submitted).toMatchObject({
+      data: { entry_count: 0, expense_count: 1, total_seconds: 0 },
+    })
+    const detail = await harness.request(`/timesheet-submissions/${submitted.data.id}`)
+    expect(detail.status).toBe(200)
+    expect((await detail.json()) as object).toMatchObject({
+      data: {
+        entries: [],
+        expenses: [{ id: 1, total_cost_cents: 0, notes: 'Zero-cost adjustment' }],
+      },
+    })
+  })
+
+  it('[security] requires both time and expense scopes without disclosing or mutating either axis', async () => {
+    for (const token of ['time-write-only', 'expense-write-only']) {
+      const response = await harness.request('/timesheet-submissions', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ period_start: '2026-08-24', period_end: '2026-08-30' }),
+      })
+      expect(response.status, token).toBe(403)
+      expect((await response.json()) as object).toMatchObject({
+        error: { code: 'insufficient_scope' },
+      })
+    }
+    expect(
+      await harness.d1.prepare(`SELECT count(*) AS count FROM timesheet_submissions`).first(),
+    ).toEqual({ count: 0 })
+
+    const submit = await harness.request('/timesheet-submissions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ period_start: '2026-08-24', period_end: '2026-08-30' }),
+    })
+    const id = ((await submit.json()) as { data: { id: number } }).data.id
+    for (const token of ['time-read-only', 'expense-read-only']) {
+      for (const path of [
+        '/timesheet-submissions',
+        `/timesheet-submissions/${id}`,
+        '/timesheet-submissions/pending',
+      ]) {
+        const response = await harness.request(path, {
+          headers: { authorization: `Bearer ${token}` },
+        })
+        expect(response.status, `${token} ${path}`).toBe(403)
+        expect((await response.json()) as object).toMatchObject({
+          error: { code: 'insufficient_scope' },
+        })
+      }
+    }
+    for (const token of ['time-write-only', 'expense-write-only']) {
+      for (const action of ['approve', 'reject']) {
+        const response = await harness.request(`/timesheet-submissions/${id}/${action}`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${token}`,
+            ...(action === 'reject' ? { 'content-type': 'application/json' } : {}),
+          },
+          ...(action === 'reject'
+            ? { body: JSON.stringify({ reason: 'This must not be persisted.' }) }
+            : {}),
+        })
+        expect(response.status, `${token} ${action}`).toBe(403)
+        expect((await response.json()) as object).toMatchObject({
+          error: { code: 'insufficient_scope' },
+        })
+      }
+    }
+    expect(
+      await harness.d1
+        .prepare(
+          `SELECT submission.status,
+            (SELECT approval_status FROM time_entries WHERE id = 1) AS time_status,
+            (SELECT approval_status FROM expenses WHERE id = 1) AS expense_status,
+            (SELECT count(*) FROM event_outbox event
+             WHERE event.aggregate_type = 'timesheet_submission'
+               AND event.aggregate_id = submission.id) AS events
+           FROM timesheet_submissions submission WHERE submission.id = ?`,
+        )
+        .bind(id)
+        .first(),
+    ).toEqual({
+      status: 'submitted',
+      time_status: 'submitted',
+      expense_status: 'submitted',
+      events: 1,
+    })
+  })
+
   it('[api] exposes and reviews a truthful post-migration Harvest submission over real D1', async () => {
     await harness.d1
       .prepare(
@@ -370,6 +557,17 @@ describe('timesheet approval API', () => {
         ) VALUES (2, 'harvest-submitted', 1, 1, 1, 1, 1, '2026-08-18',
           1800, 1800, 1800, 'Imported review detail', 1,
           'unsubmitted', 'submitted', ?, ?)`,
+      )
+      .bind(now, now)
+      .run()
+    await harness.d1
+      .prepare(
+        `INSERT INTO expenses (
+          id, harvest_id, user_id, project_id, expense_category_id, spent_date,
+          notes, total_cost_cents, billable, approval_status, source_approval_status,
+          created_at, updated_at
+        ) VALUES (2, 901, 1, 1, 1, '2026-08-19', 'Imported expense detail',
+          -250, 1, 'unsubmitted', 'submitted', ?, ?)`,
       )
       .bind(now, now)
       .run()
@@ -389,6 +587,8 @@ describe('timesheet approval API', () => {
         submitted_at: null,
         status: 'submitted',
         entries: [{ id: 2, notes: 'Imported review detail' }],
+        expense_count: 1,
+        expenses: [{ id: 2, total_cost_cents: -250, notes: 'Imported expense detail' }],
       },
     })
     const approve = await harness.request(

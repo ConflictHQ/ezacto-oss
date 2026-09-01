@@ -183,6 +183,7 @@ const fixtureControl = async (request, response) => {
   } else if (action === 'approval-seed') {
     await database.batch([
       database.prepare('DELETE FROM time_entries WHERE id = 901'),
+      database.prepare('DELETE FROM expenses WHERE id = 901'),
       database.prepare(
         `UPDATE organizations
          SET time_entry_mode = 'duration', time_format = 'decimal', clock = '12h',
@@ -199,6 +200,43 @@ const fixtureControl = async (request, response) => {
            ) VALUES (
              901, 1, 1, 1, 1, 1, '2026-08-19', 3600, 3600, 3600, 1,
              10000, 5000, 'Ready for review', ?, ?
+           )`,
+        )
+        .bind(timestamp, timestamp),
+      database
+        .prepare(
+          `INSERT INTO expenses (
+             id, user_id, project_id, expense_category_id, spent_date, notes,
+             total_cost_cents, billable, created_at, updated_at
+           ) VALUES (
+             901, 1, 1, 1, '2026-08-19', 'Receipt ready for review',
+             1250, 1, ?, ?
+           )`,
+        )
+        .bind(timestamp, timestamp),
+    ])
+  } else if (action === 'approval-expense-only-seed') {
+    await database.batch([
+      database.prepare(
+        `DELETE FROM time_entries
+         WHERE user_id = 1 AND spent_date BETWEEN '2026-08-09' AND '2026-08-15'`,
+      ),
+      database.prepare('DELETE FROM expenses WHERE id = 902'),
+      database.prepare(
+        `UPDATE organizations
+         SET time_entry_mode = 'duration', time_format = 'decimal', clock = '12h',
+             week_start_day = 'sunday',
+             modules = json_set(modules, '$.approval', json('true'))
+         WHERE id = 1`,
+      ),
+      database
+        .prepare(
+          `INSERT INTO expenses (
+             id, user_id, project_id, expense_category_id, spent_date, notes,
+             total_cost_cents, billable, created_at, updated_at
+           ) VALUES (
+             902, 1, 1, 1, '2026-08-12', 'Expense-only receipt',
+             875, 1, ?, ?
            )`,
         )
         .bind(timestamp, timestamp),
@@ -238,6 +276,12 @@ await run(
      (2, 'Browser Secondary Task', ?, ?)`,
   timestamp,
   timestamp,
+  timestamp,
+  timestamp,
+)
+await run(
+  `INSERT INTO expense_categories (id, name, created_at, updated_at)
+   VALUES (1, 'Travel', ?, ?)`,
   timestamp,
   timestamp,
 )

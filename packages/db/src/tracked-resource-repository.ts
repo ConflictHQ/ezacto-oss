@@ -81,6 +81,22 @@ const concurrentProblem = (resource: 'time entry' | 'expense') =>
   new TrackedResourceConflictError(resource)
 const notFound = (resource: 'time entry' | 'expense') => new TrackedResourceNotFoundError(resource)
 
+const approvalPeriodWriteErrorPattern =
+  /(?:approved (?:or pending )?timesheet period|(?:time entry|expense) does not match its timesheet submission)/
+
+const isApprovalPeriodWriteError = (error: unknown): boolean => {
+  const seen = new Set<unknown>()
+  let current = error
+  let depth = 0
+  while (current instanceof Error && !seen.has(current) && depth < 8) {
+    if (approvalPeriodWriteErrorPattern.test(current.message)) return true
+    seen.add(current)
+    current = (current as Error & { cause?: unknown }).cause
+    depth += 1
+  }
+  return false
+}
+
 const translateTrackedNotFound = (error: unknown, resource: 'time entry' | 'expense'): never => {
   if (error instanceof TrackedEntityNotFoundError) throw notFound(resource)
   throw error
@@ -429,15 +445,11 @@ export class DrizzleTrackedResourceRepository {
     userId: number,
     spentDate: string,
     running: boolean,
+    resource: 'time entry' | 'expense' = 'time entry',
   ): Promise<never> {
-    if (
-      !(error instanceof Error) ||
-      !error.message.includes('approved or pending timesheet period')
-    ) {
-      throw error
-    }
+    if (!isApprovalPeriodWriteError(error)) throw error
     await this.#approvalMembership(userId, spentDate, running)
-    throw concurrentProblem('time entry')
+    throw concurrentProblem(resource)
   }
 
   async #timeRecord(entry: TimeEntry): Promise<TimeEntryRecord> {
@@ -953,10 +965,7 @@ export class DrizzleTrackedResourceRepository {
       )
     } catch (error) {
       await assertStoredTimeEntryNoteRequirement(this.#database, userId, projectId, notes)
-      if (
-        error instanceof Error &&
-        error.message.includes('approved or pending timesheet period')
-      ) {
+      if (isApprovalPeriodWriteError(error)) {
         return this.#translateApprovalPeriodWriteError(error, userId, spentDate, false)
       }
       return translateTrackedNotFound(error, 'time entry')
@@ -1059,10 +1068,7 @@ export class DrizzleTrackedResourceRepository {
         ),
       )
     } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message.includes('approved or pending timesheet period')
-      ) {
+      if (isApprovalPeriodWriteError(error)) {
         return this.#translateApprovalPeriodWriteError(error, userId, entry.spentDate, true)
       }
       return translateTrackedNotFound(error, 'time entry')
@@ -1074,6 +1080,7 @@ export class DrizzleTrackedResourceRepository {
     input: Readonly<CreateExpenseRequest>,
     boundary: TimeBoundary,
   ): Promise<ExpenseRecord> {
+    await this.#approvalMembership(userId, input.spentDate, false)
     await this.#requireProjectAssignment(userId, input.projectId)
     const [category] = await this.#database
       .select()
@@ -1112,6 +1119,15 @@ export class DrizzleTrackedResourceRepository {
         ...(input.reimbursable !== undefined ? { reimbursable: input.reimbursable } : {}),
       })
     } catch (error) {
+      if (isApprovalPeriodWriteError(error)) {
+        return this.#translateApprovalPeriodWriteError(
+          error,
+          userId,
+          input.spentDate,
+          false,
+          'expense',
+        )
+      }
       if (
         error instanceof Error &&
         /expense category|computed totalCostCents|expense creation did not/.test(error.message)
@@ -1131,6 +1147,14 @@ export class DrizzleTrackedResourceRepository {
   ): Promise<ExpenseRecord> {
     const expense = await this.#ownedExpense(userId, id)
     const projectId = input.projectId ?? expense.projectId
+    const spentDate = input.spentDate ?? expense.spentDate
+    const approval: ApprovalMembership =
+      expense.approvalStatus === 'approved' || spentDate === expense.spentDate
+        ? {
+            approvalStatus: expense.approvalStatus,
+            timesheetSubmissionId: expense.timesheetSubmissionId,
+          }
+        : await this.#approvalMembership(userId, spentDate, false)
     if (projectId !== expense.projectId) await this.#requireProjectAssignment(userId, projectId)
     const expenseCategoryId = input.expenseCategoryId ?? expense.expenseCategoryId
     const categoryChanged = expenseCategoryId !== expense.expenseCategoryId
@@ -1188,7 +1212,7 @@ export class DrizzleTrackedResourceRepository {
           AND category.unit_price_cents IS ${category.unitPriceCents}
       )`
     }
-    if (totalCostCents < 0 || totalCostCents > moneyUpperBound) {
+    if (pricingTouched && (totalCostCents < 0 || totalCostCents > moneyUpperBound)) {
       throw inputProblem('total_cost_cents', 'out_of_range', 'total_cost_cents is out of range')
     }
     const policyLocked = await this.#policy.isLocked({ entityType: 'expense', entityId: id })
@@ -1205,7 +1229,9 @@ export class DrizzleTrackedResourceRepository {
               expenseCategoryId,
               units,
               totalCostCents,
-              ...(input.spentDate !== undefined ? { spentDate: input.spentDate } : {}),
+              spentDate,
+              approvalStatus: approval.approvalStatus,
+              timesheetSubmissionId: approval.timesheetSubmissionId,
               ...(input.notes !== undefined ? { notes: input.notes } : {}),
               ...(input.billable !== undefined ? { billable: input.billable } : {}),
               ...(input.reimbursable !== undefined ? { reimbursable: input.reimbursable } : {}),
@@ -1223,6 +1249,15 @@ export class DrizzleTrackedResourceRepository {
         () => concurrentProblem('expense'),
       )
     } catch (error) {
+      if (isApprovalPeriodWriteError(error)) {
+        return this.#translateApprovalPeriodWriteError(
+          error,
+          userId,
+          spentDate,
+          false,
+          'expense',
+        )
+      }
       return translateTrackedNotFound(error, 'expense')
     }
     return this.#expenseRecord(mapReturnedExpense(updated))
