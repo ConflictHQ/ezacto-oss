@@ -20,6 +20,7 @@ import {
 } from '../components/time-entry-editor.js'
 import { createClientDirectoryController } from '../clients/browser.js'
 import { createProjectDirectoryController } from '../projects/browser.js'
+import { createReportsController } from '../reports/browser.js'
 import { createExpenseWorkflowController } from '../expenses/browser.js'
 import {
   createInvoicePaymentController,
@@ -709,6 +710,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const clientDetailPage = document.documentElement.dataset.appView === 'client-detail'
   const projectListPage = document.documentElement.dataset.appView === 'project-list'
   const projectDetailPage = document.documentElement.dataset.appView === 'project-detail'
+  const reportsPage = document.documentElement.dataset.appView === 'reports'
   const expenseListPage = document.documentElement.dataset.appView === 'expense-list'
   const expenseDetailPage = document.documentElement.dataset.appView === 'expense-detail'
   const timesheetApprovalsPage =
@@ -728,15 +730,17 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
               ? ' — Client detail'
               : projectListPage
                 ? ' — Projects'
-              : projectDetailPage
-                ? ' — Project detail'
-                : expenseListPage
-                  ? ' — Expenses'
-                  : expenseDetailPage
-                    ? ' — Expense detail'
-              : timesheetApprovalsPage
-                ? ' — Approvals'
-                : ' — Time',
+                : projectDetailPage
+                  ? ' — Project detail'
+                  : reportsPage
+                    ? ' — Reports'
+                    : expenseListPage
+                      ? ' — Expenses'
+                      : expenseDetailPage
+                        ? ' — Expense detail'
+                        : timesheetApprovalsPage
+                          ? ' — Approvals'
+                          : ' — Time',
   )
   const status = required<HTMLElement>('[data-session-status]')
   const statusMessage = required<HTMLElement>('[data-session-message]')
@@ -787,6 +791,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const generatedInvoiceLink = required<HTMLAnchorElement>('[data-generated-invoice-link]')
   const clientDirectory = createClientDirectoryController(api)
   const projectDirectory = createProjectDirectoryController(api)
+  const reports = createReportsController(api)
   const expenseWorkflow = createExpenseWorkflowController(api)
   const invoicePayments = createInvoicePaymentController(api)
   const invoiceList = required<HTMLElement>('[data-invoice-list]')
@@ -1756,6 +1761,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     } else if (projectListPage || projectDetailPage) {
       await Promise.all([
         projectDirectory.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (reportsPage) {
+      await Promise.all([
+        reports.activate(
           identity,
           authenticated.signal,
           (error) => handleSessionFailure(error, authenticated),

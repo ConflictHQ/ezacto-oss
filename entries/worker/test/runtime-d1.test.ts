@@ -95,10 +95,11 @@ beforeAll(async () => {
   );
   await run(
     `INSERT INTO projects (
-      id, client_id, name, code, hourly_rate_cents, created_at, updated_at
+      id, client_id, name, code, hourly_rate_cents, budget_by, budget_seconds,
+      created_at, updated_at
     ) VALUES
-      (1, 1, 'Runtime Project', 'RUN', 10000, ?, ?),
-      (2, 1, 'Unassigned Project', 'PRIVATE', 10000, ?, ?)`,
+      (1, 1, 'Runtime Project', 'RUN', 10000, 'project', 3600, ?, ?),
+      (2, 1, 'Unassigned Project', 'PRIVATE', 10000, 'none', NULL, ?, ?)`,
     timestamp,
     timestamp,
     timestamp,
@@ -128,10 +129,10 @@ beforeAll(async () => {
     `INSERT INTO time_entries (
       id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
       spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
-      billable_rate_cents, cost_rate_cents, created_at, updated_at
+      billable_rate_cents, cost_rate_cents, budgeted, created_at, updated_at
     ) VALUES
-      (1, 2, 1, 1, 1, 1, '2026-08-27', 600, 600, 600, 1, 10000, 5000, ?, ?),
-      (2, 2, 1, 1, 1, 1, '2026-08-28', 900, 900, 900, 1, 10000, 5000, ?, ?)`,
+      (1, 2, 1, 1, 1, 1, '2026-08-27', 600, 600, 600, 1, 10000, 5000, 1, ?, ?),
+      (2, 2, 1, 1, 1, 1, '2026-08-28', 900, 900, 900, 1, 10000, 5000, 1, ?, ?)`,
     timestamp,
     timestamp,
     timestamp,
@@ -195,6 +196,7 @@ beforeAll(async () => {
         "projects:write",
         "time_entries:read",
         "time_entries:write",
+        "reports:read",
         "expenses:read",
         "expenses:write",
       ],
@@ -277,6 +279,69 @@ describe("Worker D1 runtime composition", () => {
     };
     expect(project.data).toMatchObject({ id: 1, name: "Runtime Project" });
     expect(project.data).not.toHaveProperty("hourly_rate_cents");
+  });
+
+  it("[e2e:reports] reads exact operational reports through generated client and real D1", async () => {
+    const client = new EzactoClient({
+      baseUrl: "https://worker.test",
+      token: projectBearer,
+      fetch: workerFetch,
+    });
+    const range = { from: "2026-08-27", to: "2026-08-28" };
+
+    const [uninvoiced, rollup, budget] = await Promise.all([
+      client.getUninvoicedReport({ query: range }),
+      client.getClientRollupReport({ clientId: 1, query: range }),
+      client.getProjectBudgetReport({ projectId: 1, query: range }),
+    ]);
+
+    expect(uninvoiced.data.totals).toEqual([
+      {
+        currency: "USD",
+        rounded_seconds: 1500,
+        time_entry_count: 2,
+        unpriced_time_entry_count: 0,
+        expense_count: 1,
+        time_cents: 4167,
+        expense_cents: 100,
+        total_cents: 4267,
+      },
+    ]);
+    expect(rollup.data).toMatchObject({
+      root_client_id: 1,
+      nodes: [
+        {
+          client_id: 1,
+          depth: 0,
+          direct: {
+            rounded_seconds: 1500,
+            expense_count: 1,
+            currencies: [
+              expect.objectContaining({
+                currency: "USD",
+                uninvoiced_total_cents: 4267,
+              }),
+            ],
+          },
+          rollup: { rounded_seconds: 1500 },
+        },
+      ],
+    });
+    expect(budget.data).toMatchObject({
+      project_id: 1,
+      budget_by: "project",
+      grains: [
+        {
+          source: "project",
+          source_id: 1,
+          unit: "seconds",
+          calculation: "time",
+          budget_seconds: 3600,
+          spent_seconds: 1500,
+          remaining_seconds: 2100,
+        },
+      ],
+    });
   });
 
   it("[security] enforces the expenses module at every Worker expense route and attachment boundary", async () => {

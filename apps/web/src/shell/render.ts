@@ -2,6 +2,7 @@ import { shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
 import { themeManifest } from '../theme.js'
 import { renderClientDirectoryPages } from '../clients/render.js'
 import { renderProjectDirectoryPages } from '../projects/render.js'
+import { renderReportsPage } from '../reports/render.js'
 import { renderExpenseWorkflowPages } from '../expenses/render.js'
 import {
   renderInvoicePaymentDialogs,
@@ -24,6 +25,7 @@ export interface AppShellOptions {
     | 'client-detail'
     | 'project-list'
     | 'project-detail'
+    | 'reports'
     | 'expense-list'
     | 'expense-detail'
   readonly signInProviders?: readonly SignInProvider[]
@@ -404,6 +406,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   </main>
   ${renderClientDirectoryPages(view)}
   ${renderProjectDirectoryPages(view)}
+  ${renderReportsPage(view)}
   ${renderExpenseWorkflowPages(view)}
   ${renderInvoicePaymentDialogs()}
   <dialog class="command-dialog" data-command-dialog aria-labelledby="command-title">
