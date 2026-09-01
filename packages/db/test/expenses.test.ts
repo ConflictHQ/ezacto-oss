@@ -67,7 +67,7 @@ interface HarvestExpense {
 }
 
 const timestamp = '2026-08-27T00:00:00.000Z'
-const modules = JSON.stringify({ expenses: true, invoices: true, approval: true })
+const modules = JSON.stringify({ approval: true, expenses: true, invoices: true })
 const migrationsThrough0005 = [
   ['0000_org_people', orgPeopleMigration],
   ['0001_clients', clientsMigration],
@@ -612,7 +612,7 @@ for (const [runtime, factory] of factories) {
           timestamp,
           timestamp,
         ),
-      ).rejects.toThrow(/check constraint|expense does not match/i)
+      ).rejects.toThrow(/expense does not match its timesheet submission/i)
       expect(
         await db.rows<{ reimbursement_status: string; payout_ref: string | null }>(
           `SELECT reimbursement_status, payout_ref FROM expenses ORDER BY id`,

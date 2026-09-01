@@ -126,7 +126,7 @@ describe('transform and load', () => {
         },
         {
           harvest_id: 152975212,
-          total_cost_cents: -10_000,
+          total_cost_cents: 10_000,
           approval_status: 'approved',
           source_approval_status: 'approved',
           timesheet_submission_id: aggregate.id,
@@ -354,6 +354,26 @@ describe('transform and load', () => {
       ).toEqual({ body: 'Please review the sanitized estimate.' })
     } finally {
       afterGap.close()
+    }
+  }, 30_000)
+
+  it('[integration] preserves a signed Harvest direct-expense amount', async () => {
+    const path = join(snapshotDir, 'raw', 'expenses.jsonl')
+    const source = await readFile(path, 'utf8')
+    expect(source).toContain('"total_cost":100')
+    await writeFile(path, source.replace('"total_cost":100', '"total_cost":-100'))
+    await refreshChecksum(snapshotDir)
+
+    await runLoad({ snapshotDir, databasePath })
+    const db = new BetterSqlite3(databasePath, { readonly: true })
+    try {
+      expect(
+        db
+          .prepare(`SELECT total_cost_cents FROM expenses WHERE harvest_id = 152975212`)
+          .get(),
+      ).toEqual({ total_cost_cents: -10_000 })
+    } finally {
+      db.close()
     }
   }, 30_000)
 

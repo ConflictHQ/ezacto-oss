@@ -393,11 +393,7 @@ test('[e2e:track-week] uses one editor and submits 12-hour UI times as canonical
       return
     }
     if (url.pathname === '/api/v1/expenses') {
-      await fulfillJson(route, {
-        data: [],
-        page: { next_cursor: null },
-        links: { next: null },
-      })
+      await fulfillJson(route, { error: { code: 'not_found' } }, 404)
       return
     }
     if (url.pathname === '/api/v1/timesheet-submissions') {
