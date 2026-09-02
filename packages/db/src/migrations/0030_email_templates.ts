@@ -184,10 +184,12 @@ export const emailTemplatesMigration = [
     evidence_version INTEGER NOT NULL CHECK (
       evidence_version BETWEEN 1 AND 9007199254740991
     ),
-    source TEXT NOT NULL CHECK (source IN ('provider_api')),
+    source TEXT NOT NULL CHECK (source IN ('provider_api','deployment_config')),
     identity_kind TEXT NOT NULL CHECK (identity_kind IN ('email_address','domain')),
     verification_status TEXT NOT NULL CHECK (
-      verification_status IN ('pending','verified','failed','temporary_failure')
+      verification_status IN (
+        'pending','verified','failed','temporary_failure','operator_configured'
+      )
     ),
     dkim_status TEXT NOT NULL CHECK (
       dkim_status IN ('pending','verified','failed','not_applicable')
@@ -207,7 +209,18 @@ export const emailTemplatesMigration = [
     ),
     observed_at TEXT NOT NULL CHECK (${canonicalTimestamp('observed_at')}),
     PRIMARY KEY (sender_identity_id, evidence_version),
-    CHECK ((mail_from_domain IS NULL) = (mail_from_status = 'not_configured'))
+    CHECK ((mail_from_domain IS NULL) = (mail_from_status = 'not_configured')),
+    CHECK (
+      (source = 'provider_api' AND verification_status <> 'operator_configured')
+      OR (
+        source = 'deployment_config'
+        AND verification_status = 'operator_configured'
+        AND identity_kind = 'email_address'
+        AND dkim_status = 'not_applicable'
+        AND mail_from_domain IS NULL
+        AND mail_from_status = 'not_configured'
+      )
+    )
   ) STRICT`,
   `CREATE INDEX sender_identity_evidence_latest
     ON sender_identity_evidence(sender_identity_id, evidence_version DESC)`,
@@ -352,6 +365,21 @@ export const emailTemplatesMigration = [
       WHERE sender_identity_id = NEW.sender_identity_id
     ), 1)
     BEGIN SELECT RAISE(ABORT, 'sender identity evidence is not the next observation'); END`,
+  `CREATE TRIGGER sender_identity_evidence_provider_guard
+    BEFORE INSERT ON sender_identity_evidence
+    WHEN NOT EXISTS (
+      SELECT 1 FROM sender_identities identity
+      WHERE identity.id = NEW.sender_identity_id
+        AND (
+          (identity.provider = 'ses' AND NEW.source = 'provider_api')
+          OR (
+            identity.provider = 'smtp'
+            AND NEW.source = 'deployment_config'
+            AND lower(trim(identity.provider_identity)) = identity.email
+          )
+        )
+    )
+    BEGIN SELECT RAISE(ABORT, 'sender evidence source does not match provider binding'); END`,
   `CREATE TRIGGER sender_identity_evidence_immutable_update
     BEFORE UPDATE ON sender_identity_evidence
     BEGIN SELECT RAISE(ABORT, 'sender identity evidence is immutable'); END`,
@@ -391,27 +419,42 @@ export const emailTemplatesMigration = [
           SELECT max(latest.evidence_version) FROM sender_identity_evidence latest
           WHERE latest.sender_identity_id = NEW.id
         )
-        AND NEW.provider = 'ses'
-        AND evidence.verification_status = 'verified'
         AND (
-          (evidence.identity_kind = 'email_address'
-            AND lower(trim(NEW.provider_identity)) = NEW.email)
-          OR (evidence.identity_kind = 'domain'
-            AND lower(trim(NEW.provider_identity)) =
-              substr(NEW.email, instr(NEW.email, '@') + 1))
-        )
-        AND (
-          evidence.dkim_status = 'verified'
-          OR (
-            evidence.mail_from_status = 'verified'
-            AND evidence.mail_from_domain IS NOT NULL
+          (
+            NEW.provider = 'ses'
+            AND evidence.source = 'provider_api'
+            AND evidence.verification_status = 'verified'
             AND (
-              evidence.mail_from_domain = substr(NEW.email, instr(NEW.email, '@') + 1)
-              OR evidence.mail_from_domain LIKE
-                '%.' || substr(NEW.email, instr(NEW.email, '@') + 1)
+              (evidence.identity_kind = 'email_address'
+                AND lower(trim(NEW.provider_identity)) = NEW.email)
+              OR (evidence.identity_kind = 'domain'
+                AND lower(trim(NEW.provider_identity)) =
+                  substr(NEW.email, instr(NEW.email, '@') + 1))
             )
+            AND (
+              evidence.dkim_status = 'verified'
+              OR (
+                evidence.mail_from_status = 'verified'
+                AND evidence.mail_from_domain IS NOT NULL
+                AND (
+                  evidence.mail_from_domain = substr(NEW.email, instr(NEW.email, '@') + 1)
+                  OR evidence.mail_from_domain LIKE
+                    '%.' || substr(NEW.email, instr(NEW.email, '@') + 1)
+                )
+              )
+            )
+          )
+          OR (
+            NEW.provider = 'smtp'
+            AND evidence.source = 'deployment_config'
+            AND evidence.verification_status = 'operator_configured'
+            AND evidence.identity_kind = 'email_address'
+            AND evidence.dkim_status = 'not_applicable'
+            AND evidence.mail_from_domain IS NULL
+            AND evidence.mail_from_status = 'not_configured'
+            AND lower(trim(NEW.provider_identity)) = NEW.email
           )
         )
     )
-    BEGIN SELECT RAISE(ABORT, 'sender identity lacks verified aligned provider evidence'); END`,
+    BEGIN SELECT RAISE(ABORT, 'sender identity lacks trusted aligned provider evidence'); END`,
 ] as const

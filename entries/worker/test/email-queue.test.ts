@@ -443,6 +443,7 @@ describe('Worker email queue composition', () => {
         new AbortController().signal,
       ),
     ).resolves.toMatchObject({
+      source: 'provider_api',
       identityKind: 'domain',
       verificationStatus: 'verified',
       dkimStatus: 'pending',
@@ -492,6 +493,7 @@ describe('Worker email queue composition', () => {
         new AbortController().signal,
       ),
     ).resolves.toMatchObject({
+      source: 'provider_api',
       identityKind: 'email_address',
       verificationStatus: 'verified',
       dkimStatus: 'not_applicable',
@@ -541,6 +543,7 @@ describe('Worker email queue composition', () => {
         new AbortController().signal,
       ),
     ).resolves.toMatchObject({
+      source: 'provider_api',
       identityKind: 'domain',
       verificationStatus: 'verified',
       dkimStatus: 'verified',

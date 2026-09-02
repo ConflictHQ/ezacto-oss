@@ -14107,7 +14107,11 @@
             "minimum": 1
           },
           "source": {
-            "const": "provider_api"
+            "type": "string",
+            "enum": [
+              "provider_api",
+              "deployment_config"
+            ]
           },
           "identity_kind": {
             "type": "string",
@@ -14122,7 +14126,8 @@
               "pending",
               "verified",
               "failed",
-              "temporary_failure"
+              "temporary_failure",
+              "operator_configured"
             ]
           },
           "dkim_status": {

@@ -191,9 +191,9 @@ export type EmailTemplateVersionInput = {
 
 export type SenderIdentityEvidence = {
   "version": number;
-  "source": "provider_api";
+  "source": "provider_api" | "deployment_config";
   "identity_kind": "email_address" | "domain";
-  "verification_status": "pending" | "verified" | "failed" | "temporary_failure";
+  "verification_status": "pending" | "verified" | "failed" | "temporary_failure" | "operator_configured";
   "dkim_status": "pending" | "verified" | "failed" | "not_applicable";
   "mail_from_domain": string | null;
   "mail_from_status": "pending" | "verified" | "failed" | "not_configured";

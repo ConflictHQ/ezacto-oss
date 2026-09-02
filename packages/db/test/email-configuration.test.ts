@@ -273,6 +273,7 @@ for (const [runtime, factory] of factories) {
           id: 77,
           expectedEvidenceVersion: 0,
           evidence: {
+            source: 'provider_api',
             identityKind: 'domain',
             verificationStatus: 'pending',
             dkimStatus: 'pending',
@@ -288,6 +289,7 @@ for (const [runtime, factory] of factories) {
           id: 77,
           expectedEvidenceVersion: 0,
           evidence: {
+            source: 'provider_api',
             identityKind: 'domain',
             verificationStatus: 'failed',
             dkimStatus: 'failed',
@@ -303,6 +305,107 @@ for (const [runtime, factory] of factories) {
       expect(evidenceUpdates.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
       expect(evidenceUpdates.filter(({ status }) => status === 'rejected')).toHaveLength(1)
       expect((await harness.store.getSenderIdentity(77))?.evidence).toMatchObject({ version: 1 })
+    })
+
+    it('[security] keeps SMTP deployment attestations provider-bound and append-only', async () => {
+      harness = await factory()
+      await harness.store.createSenderIdentity({
+        id: 45,
+        email: 'billing@example.test',
+        displayName: 'SMTP Billing',
+        provider: 'smtp',
+        providerIdentity: 'billing@example.test',
+        actorUserId: 1,
+        commandId: 'smtp-sender-create',
+        occurredAt: initial,
+      })
+      await expect(harness.store.setDefaultSenderIdentity({
+        id: 45,
+        expectedVersion: 0,
+        actorUserId: 1,
+        commandId: 'smtp-default-too-soon',
+        occurredAt: later,
+      })).rejects.toMatchObject({ code: 'sender_unverified' })
+      await expect(harness.store.recordSenderEvidence({
+        id: 45,
+        expectedEvidenceVersion: 0,
+        evidence: {
+          source: 'provider_api',
+          identityKind: 'email_address',
+          verificationStatus: 'verified',
+          dkimStatus: 'verified',
+          mailFromDomain: null,
+          mailFromStatus: 'not_configured',
+          observedAt: later,
+        },
+        actorUserId: 1,
+        commandId: 'smtp-forged-provider-evidence',
+        occurredAt: later,
+      })).rejects.toMatchObject({ code: 'invalid_input' })
+
+      const attested = await harness.store.recordSenderEvidence({
+        id: 45,
+        expectedEvidenceVersion: 0,
+        evidence: {
+          source: 'deployment_config',
+          identityKind: 'email_address',
+          verificationStatus: 'operator_configured',
+          dkimStatus: 'not_applicable',
+          mailFromDomain: null,
+          mailFromStatus: 'not_configured',
+          observedAt: later,
+        },
+        actorUserId: 1,
+        commandId: 'smtp-deployment-attestation',
+        occurredAt: later,
+      })
+      expect(attested.evidence).toMatchObject({
+        version: 1,
+        source: 'deployment_config',
+        verificationStatus: 'operator_configured',
+      })
+      await expect(harness.store.setDefaultSenderIdentity({
+        id: 45,
+        expectedVersion: 0,
+        actorUserId: 1,
+        commandId: 'smtp-default-attested',
+        occurredAt: latest,
+      })).resolves.toMatchObject({ id: 45, isDefault: true })
+
+      await harness.store.createSenderIdentity({
+        id: 46,
+        email: 'ses@example.test',
+        displayName: 'SES Sender',
+        provider: 'ses',
+        providerIdentity: 'ses@example.test',
+        actorUserId: 1,
+        commandId: 'ses-cross-source-create',
+        occurredAt: initial,
+      })
+      await expect(harness.store.recordSenderEvidence({
+        id: 46,
+        expectedEvidenceVersion: 0,
+        evidence: {
+          source: 'deployment_config',
+          identityKind: 'email_address',
+          verificationStatus: 'operator_configured',
+          dkimStatus: 'not_applicable',
+          mailFromDomain: null,
+          mailFromStatus: 'not_configured',
+          observedAt: later,
+        },
+        actorUserId: 1,
+        commandId: 'ses-forged-deployment-attestation',
+        occurredAt: later,
+      })).rejects.toMatchObject({ code: 'invalid_input' })
+      await expect(harness.run(
+        `INSERT INTO sender_identity_evidence (
+          sender_identity_id, evidence_version, source, identity_kind,
+          verification_status, dkim_status, mail_from_domain, mail_from_status, observed_at
+        ) VALUES (46, 1, 'deployment_config', 'email_address',
+          'operator_configured', 'not_applicable', NULL, 'not_configured', ?)`,
+        [later],
+      )).rejects.toThrow(/source does not match provider binding/)
     })
 
     it('[concurrency] reserves and replays persisted organization test-send commands', async () => {
@@ -434,6 +537,7 @@ for (const [runtime, factory] of factories) {
         id: 43,
         expectedEvidenceVersion: 0,
         evidence: {
+          source: 'provider_api',
           identityKind: 'email_address',
           verificationStatus: 'verified',
           dkimStatus: 'not_applicable',
@@ -468,6 +572,7 @@ for (const [runtime, factory] of factories) {
         id: 43,
         expectedEvidenceVersion: 1,
         evidence: {
+          source: 'provider_api',
           identityKind: 'email_address',
           verificationStatus: 'verified',
           dkimStatus: 'not_applicable',
@@ -492,6 +597,7 @@ for (const [runtime, factory] of factories) {
         id: 43,
         expectedEvidenceVersion: 2,
         evidence: {
+          source: 'provider_api',
           identityKind: 'email_address',
           verificationStatus: 'verified',
           dkimStatus: 'not_applicable',
@@ -527,6 +633,7 @@ for (const [runtime, factory] of factories) {
         id: 44,
         expectedEvidenceVersion: 0,
         evidence: {
+          source: 'provider_api',
           identityKind: 'domain',
           verificationStatus: 'verified',
           dkimStatus: 'verified',
@@ -555,6 +662,7 @@ for (const [runtime, factory] of factories) {
         id: 42,
         expectedEvidenceVersion: 0,
         evidence: {
+          source: 'provider_api',
           identityKind: 'domain',
           verificationStatus: 'pending',
           dkimStatus: 'pending',
@@ -597,6 +705,7 @@ for (const [runtime, factory] of factories) {
         id: 42,
         expectedEvidenceVersion: 1,
         evidence: {
+          source: 'provider_api',
           identityKind: 'domain',
           verificationStatus: 'verified',
           dkimStatus: 'verified',
@@ -614,6 +723,7 @@ for (const [runtime, factory] of factories) {
           id: 42,
           expectedEvidenceVersion: 0,
           evidence: {
+            source: 'provider_api',
             identityKind: 'domain',
             verificationStatus: 'pending',
             dkimStatus: 'pending',

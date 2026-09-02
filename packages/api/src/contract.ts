@@ -1900,14 +1900,23 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     ],
     properties: {
       version: integerSchema,
-      source: { const: "provider_api" },
+      source: {
+        type: "string",
+        enum: ["provider_api", "deployment_config"],
+      },
       identity_kind: {
         type: "string",
         enum: ["email_address", "domain"],
       },
       verification_status: {
         type: "string",
-        enum: ["pending", "verified", "failed", "temporary_failure"],
+        enum: [
+          "pending",
+          "verified",
+          "failed",
+          "temporary_failure",
+          "operator_configured",
+        ],
       },
       dkim_status: {
         type: "string",

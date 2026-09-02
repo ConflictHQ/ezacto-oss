@@ -30,9 +30,11 @@ import {
   type UserPrincipal,
 } from '@ezacto/api'
 import {
+  configuredEmailSender,
   createDeploymentSenderQueuedMailer,
   createQueuedMailer,
   createSenderBoundQueuedMailer,
+  SenderIdentityUnavailableError,
   type HttpEmailProvider,
 } from '@ezacto/mailer'
 import { SmtpMailer } from '@ezacto/mailer/smtp'
@@ -157,6 +159,47 @@ export interface ContainerRuntimeOptions {
   verifyEmailProvider?: () => Promise<void>
 }
 
+/**
+ * Attests only the exact SMTP mailbox already validated from deployment
+ * configuration. This is not a DNS or provider verification claim.
+ */
+export const createSmtpSenderIdentityVerifier = (
+  from: string,
+): NonNullable<RuntimeServices['senderIdentityVerifier']> => {
+  const configured = configuredEmailSender(from)
+  return {
+    provider: 'smtp',
+    verify: async (identity) => {
+      if (identity.archivedAt !== null) {
+        throw new SenderIdentityUnavailableError('sender_identity_archived', identity.id)
+      }
+      if (identity.provider !== 'smtp') {
+        throw new SenderIdentityUnavailableError('sender_provider_mismatch', identity.id)
+      }
+      const address = identity.email.normalize('NFC').trim().toLowerCase()
+      const providerIdentity = identity.providerIdentity
+        .normalize('NFC')
+        .trim()
+        .toLowerCase()
+      if (address !== configured.email || providerIdentity !== configured.email) {
+        throw new SenderIdentityUnavailableError(
+          'sender_identity_binding_mismatch',
+          identity.id,
+        )
+      }
+      return {
+        source: 'deployment_config',
+        identityKind: 'email_address',
+        verificationStatus: 'operator_configured',
+        dkimStatus: 'not_applicable',
+        mailFromDomain: null,
+        mailFromStatus: 'not_configured',
+        observedAt: new Date().toISOString(),
+      }
+    },
+  }
+}
+
 const ensureDataDirectory = async (directory: string): Promise<void> => {
   await mkdir(directory, { recursive: true, mode: 0o700 })
   const [linkMetadata, canonical] = await Promise.all([
@@ -264,6 +307,7 @@ export const createContainerRuntime = async (
       sessions,
       emailLog,
       emailConfiguration,
+      senderIdentityVerifier: createSmtpSenderIdentityVerifier(config.smtp.from),
       outbox,
       identities: createContainerIdentityStore(database),
       oidcTransactions: createContainerOidcTransactionStore(database),
@@ -280,6 +324,7 @@ export const createContainerRuntime = async (
         emailConfiguration,
         queuedMailer,
         smtp.name,
+        config.smtp.from,
       ),
       attachments: {
         metadata: createAttachmentStore(drizzle),

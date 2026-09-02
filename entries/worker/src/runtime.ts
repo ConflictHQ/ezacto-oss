@@ -147,6 +147,7 @@ export const createSesSenderIdentityVerifier = (
             ? ('failed' as const)
             : ('pending' as const)
     return {
+      source: 'provider_api',
       identityKind:
         identityType === 'EMAIL_ADDRESS'
           ? ('email_address' as const)

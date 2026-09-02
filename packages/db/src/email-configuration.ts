@@ -16,6 +16,7 @@ export type SenderVerificationStatus =
   | 'verified'
   | 'failed'
   | 'temporary_failure'
+  | 'operator_configured'
 export type SenderDkimStatus = 'pending' | 'verified' | 'failed' | 'not_applicable'
 export type SenderMailFromStatus = 'pending' | 'verified' | 'failed' | 'not_configured'
 
@@ -32,7 +33,7 @@ export interface EmailTemplateVersionRecord {
 
 export interface SenderIdentityEvidenceRecord {
   version: number
-  source: 'provider_api'
+  source: 'provider_api' | 'deployment_config'
   identityKind: 'email_address' | 'domain'
   verificationStatus: SenderVerificationStatus
   dkimStatus: SenderDkimStatus
@@ -77,6 +78,7 @@ const emailTestSendFailureCodes = new Set<EmailTestSendFailureCode>([
   'sender_mail_from_pending',
   'sender_mail_from_failed',
   'sender_alignment_missing',
+  'sender_deployment_configuration_missing',
   'email_queue_unavailable',
 ])
 
@@ -154,7 +156,7 @@ export interface UpdateSenderIdentityInput {
 export interface RecordSenderEvidenceInput {
   id: number
   expectedEvidenceVersion: number
-  evidence: Omit<SenderIdentityEvidenceRecord, 'version' | 'source'>
+  evidence: Omit<SenderIdentityEvidenceRecord, 'version'>
   actorUserId: number
   commandId: string
   occurredAt: string
@@ -394,7 +396,7 @@ interface RawSender {
   createdAt: string
   updatedAt: string
   evidenceVersion: number | null
-  evidenceSource: 'provider_api' | null
+  evidenceSource: 'provider_api' | 'deployment_config' | null
   evidenceIdentityKind: 'email_address' | 'domain' | null
   verificationStatus: SenderVerificationStatus | null
   dkimStatus: SenderDkimStatus | null
@@ -799,6 +801,8 @@ const createStore = (database: NativeClient): EmailConfigurationStore => {
           ? rawProviderIdentity.includes('@')
             ? email(rawProviderIdentity, 'providerIdentity')
             : domain(rawProviderIdentity, 'providerIdentity')
+          : providerName === 'smtp'
+            ? email(rawProviderIdentity, 'providerIdentity')
           : rawProviderIdentity
       const inputFingerprint = await fingerprint({
         identityId,
@@ -960,6 +964,7 @@ const createStore = (database: NativeClient): EmailConfigurationStore => {
         'verified',
         'failed',
         'temporary_failure',
+        'operator_configured',
       ]
       const allowedDkim: readonly SenderDkimStatus[] = [
         'pending',
@@ -975,6 +980,8 @@ const createStore = (database: NativeClient): EmailConfigurationStore => {
       ]
       const allowedIdentityKinds = ['email_address', 'domain'] as const
       if (
+        (input.evidence.source !== 'provider_api' &&
+          input.evidence.source !== 'deployment_config') ||
         !allowedIdentityKinds.includes(input.evidence.identityKind) ||
         !allowedVerification.includes(input.evidence.verificationStatus) ||
         !allowedDkim.includes(input.evidence.dkimStatus) ||
@@ -994,9 +1001,23 @@ const createStore = (database: NativeClient): EmailConfigurationStore => {
           'MAIL FROM domain and status do not describe the same provider observation.',
         )
       }
+      if (
+        input.evidence.source === 'deployment_config'
+          ? input.evidence.verificationStatus !== 'operator_configured' ||
+            input.evidence.identityKind !== 'email_address' ||
+            input.evidence.dkimStatus !== 'not_applicable' ||
+            input.evidence.mailFromStatus !== 'not_configured' ||
+            mailFromDomain !== null
+          : input.evidence.verificationStatus === 'operator_configured'
+      ) {
+        throw new EmailConfigurationError(
+          'invalid_input',
+          'Sender evidence source and statuses are inconsistent.',
+        )
+      }
       const evidence: SenderIdentityEvidenceRecord = {
         version: expectedEvidenceVersion + 1,
-        source: 'provider_api',
+        source: input.evidence.source,
         identityKind: input.evidence.identityKind,
         verificationStatus: input.evidence.verificationStatus,
         dkimStatus: input.evidence.dkimStatus,
@@ -1018,6 +1039,19 @@ const createStore = (database: NativeClient): EmailConfigurationStore => {
       if (identity === null || identity.archivedAt !== null) {
         throw new EmailConfigurationError('not_found', 'Sender identity not found.')
       }
+      if (
+        (identity.provider === 'ses' && evidence.source !== 'provider_api') ||
+        (identity.provider === 'smtp' && evidence.source !== 'deployment_config') ||
+        (identity.provider !== 'ses' && identity.provider !== 'smtp') ||
+        (identity.provider === 'smtp' &&
+          identity.providerIdentity.normalize('NFC').trim().toLowerCase() !==
+            identity.email.normalize('NFC').trim().toLowerCase())
+      ) {
+        throw new EmailConfigurationError(
+          'invalid_input',
+          'Sender evidence source does not match the configured provider binding.',
+        )
+      }
       if ((identity.evidence?.version ?? 0) !== expectedEvidenceVersion) {
         throw new EmailConfigurationError(
           'evidence_conflict',
@@ -1038,10 +1072,11 @@ const createStore = (database: NativeClient): EmailConfigurationStore => {
             text: `INSERT INTO sender_identity_evidence (
               sender_identity_id, evidence_version, source, identity_kind, verification_status,
               dkim_status, mail_from_domain, mail_from_status, observed_at
-            ) VALUES (?, ?, 'provider_api', ?, ?, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             params: [
               identityId,
               evidence.version,
+              evidence.source,
               evidence.identityKind,
               evidence.verificationStatus,
               evidence.dkimStatus,

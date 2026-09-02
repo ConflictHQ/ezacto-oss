@@ -2112,12 +2112,20 @@ export const senderIdentityEvidence = sqliteTable(
       .notNull()
       .references(() => senderIdentities.id, { onDelete: 'restrict' }),
     evidenceVersion: integer('evidence_version').notNull(),
-    source: text('source', { enum: ['provider_api'] }).notNull(),
+    source: text('source', {
+      enum: ['provider_api', 'deployment_config'],
+    }).notNull(),
     identityKind: text('identity_kind', {
       enum: ['email_address', 'domain'],
     }).notNull(),
     verificationStatus: text('verification_status', {
-      enum: ['pending', 'verified', 'failed', 'temporary_failure'],
+      enum: [
+        'pending',
+        'verified',
+        'failed',
+        'temporary_failure',
+        'operator_configured',
+      ],
     }).notNull(),
     dkimStatus: text('dkim_status', {
       enum: ['pending', 'verified', 'failed', 'not_applicable'],

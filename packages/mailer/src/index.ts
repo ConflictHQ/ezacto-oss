@@ -243,6 +243,7 @@ export type SenderIdentityVerificationStatus =
   | 'verified'
   | 'failed'
   | 'temporary_failure'
+  | 'operator_configured'
 
 export interface ResolvedSenderIdentity {
   id: number
@@ -254,7 +255,7 @@ export interface ResolvedSenderIdentity {
   isDefault: boolean
   archivedAt: string | null
   evidence: null | {
-    source: 'provider_api'
+    source: 'provider_api' | 'deployment_config'
     identityKind: 'email_address' | 'domain'
     verificationStatus: SenderIdentityVerificationStatus
     dkimStatus: 'pending' | 'verified' | 'failed' | 'not_applicable'
@@ -284,6 +285,7 @@ export type SenderIdentityUnavailableCode =
   | 'sender_mail_from_pending'
   | 'sender_mail_from_failed'
   | 'sender_alignment_missing'
+  | 'sender_deployment_configuration_missing'
 
 export class SenderIdentityUnavailableError extends Error {
   constructor(
@@ -304,7 +306,7 @@ export class SenderIdentityUnavailableError extends Error {
       sender_identity_binding_mismatch:
         'Configure provider identity evidence that authorizes the exact From address domain.',
       sender_evidence_untrusted:
-        'Refresh this sender identity directly from the configured email provider before sending.',
+        'Refresh this sender identity from this deployment\'s configured provider before sending.',
       sender_verification_pending:
         'Wait for the email provider to verify this sender identity, then refresh its status.',
       sender_verification_temporary_failure:
@@ -321,6 +323,8 @@ export class SenderIdentityUnavailableError extends Error {
         'Correct the custom MAIL FROM DNS records, then refresh the sender identity status.',
       sender_alignment_missing:
         'Enable verified DKIM or configure a verified custom MAIL FROM domain aligned with the From domain, then refresh this sender.',
+      sender_deployment_configuration_missing:
+        'Refresh this SMTP sender to attest its exact address against the deployment SMTP_FROM configuration before sending.',
     }
     super(actions[code])
     this.name = 'SenderIdentityUnavailableError'
@@ -336,7 +340,7 @@ export interface SenderBoundQueuedMailer {
   ): Promise<EmailLogRecord>
 }
 
-const configuredSender = (value: string): EmailSender => {
+export const configuredEmailSender = (value: string): EmailSender => {
   if (typeof value !== 'string') throw new TypeError('configured sender must be a string')
   const normalized = value.normalize('NFC').trim()
   const angle = /^(.*?)<([^<>]+)>$/u.exec(normalized)
@@ -360,7 +364,7 @@ export const createDeploymentSenderQueuedMailer = (
   from: string,
   queued: QueuedMailer,
 ): SenderBoundQueuedMailer => {
-  const sender = configuredSender(from)
+  const sender = configuredEmailSender(from)
   return {
     async assertAvailable(senderIdentityId) {
       if (senderIdentityId !== undefined) {
@@ -400,15 +404,32 @@ const mailFromAligns = (mailFromDomain: string | null, fromDomain: string): bool
 }
 
 /**
- * Conservative DMARC eligibility shared by default selection and send-time enforcement.
- * SES's default amazonses.com MAIL FROM is deliberately not considered aligned.
+ * Provider-specific eligibility shared by default selection and send-time enforcement.
+ * SES requires authoritative aligned DNS evidence; SMTP requires an exact deployment
+ * configuration attestation and leaves DNS alignment explicitly operator-owned.
  */
 export const senderIdentityEligibilityFailure = (
   identity: ResolvedSenderIdentity,
 ): SenderIdentityUnavailableCode | null => {
   if (identity.archivedAt !== null) return 'sender_identity_archived'
-  if (identity.provider !== 'ses') return 'sender_provider_unsupported'
   const evidence = identity.evidence
+  if (identity.provider === 'smtp') {
+    if (evidence === null) return 'sender_deployment_configuration_missing'
+    if (
+      evidence.source !== 'deployment_config' ||
+      evidence.verificationStatus !== 'operator_configured' ||
+      evidence.identityKind !== 'email_address' ||
+      evidence.dkimStatus !== 'not_applicable' ||
+      evidence.mailFromDomain !== null ||
+      evidence.mailFromStatus !== 'not_configured'
+    ) {
+      return 'sender_evidence_untrusted'
+    }
+    const address = identity.email.normalize('NFC').trim().toLowerCase()
+    const providerIdentity = identity.providerIdentity.normalize('NFC').trim().toLowerCase()
+    return providerIdentity === address ? null : 'sender_identity_binding_mismatch'
+  }
+  if (identity.provider !== 'ses') return 'sender_provider_unsupported'
   if (evidence === null || evidence.verificationStatus === 'pending') {
     return 'sender_verification_pending'
   }
@@ -462,7 +483,13 @@ export const createSenderBoundQueuedMailer = (
   identities: SenderIdentityResolver,
   queued: QueuedMailer,
   expectedProvider?: string,
+  configuredFrom?: string,
 ): SenderBoundQueuedMailer => {
+  if (expectedProvider === 'smtp' && configuredFrom === undefined) {
+    throw new TypeError('SMTP organization mail requires a deployment configured From address')
+  }
+  const deploymentSender =
+    configuredFrom === undefined ? null : configuredEmailSender(configuredFrom)
   const resolveAvailable = async (
     senderIdentityId?: number,
   ): Promise<ResolvedSenderIdentity> => {
@@ -480,6 +507,15 @@ export const createSenderBoundQueuedMailer = (
       )
     }
     assertSenderEvidence(identity)
+    if (
+      deploymentSender !== null &&
+      identity.email.normalize('NFC').trim().toLowerCase() !== deploymentSender.email
+    ) {
+      throw new SenderIdentityUnavailableError(
+        'sender_identity_binding_mismatch',
+        identity.id,
+      )
+    }
     if (senderIdentityId === undefined && !identity.isDefault) {
       throw new SenderIdentityUnavailableError(
         'sender_identity_not_default',

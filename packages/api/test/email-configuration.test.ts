@@ -389,6 +389,7 @@ describe('email configuration API', () => {
     const verifier: SenderIdentityVerifier = {
       provider: 'ses',
       verify: vi.fn(async () => ({
+        source: 'provider_api',
         identityKind: 'domain',
         verificationStatus: 'verified',
         dkimStatus: 'verified',
@@ -411,6 +412,7 @@ describe('email configuration API', () => {
       id: 41,
       expectedEvidenceVersion: 0,
       evidence: {
+        source: 'provider_api',
         identityKind: 'domain',
         verificationStatus: 'verified',
         dkimStatus: 'verified',
@@ -425,9 +427,33 @@ describe('email configuration API', () => {
 
     const injected = await app.request(
       '/api/v1/sender-identities/41/refresh',
-      mutation({ expected_evidence_version: 1, verification_status: 'verified' }, 'inject-41'),
+      mutation({
+        expected_evidence_version: 1,
+        source: 'deployment_config',
+        verification_status: 'operator_configured',
+      }, 'inject-41'),
     )
     expect(injected.status).toBe(422)
     expect(verifier.verify).toHaveBeenCalledTimes(1)
+  })
+
+  it('[security] maps deployment binding failures before evidence persistence', async () => {
+    const configuration = service()
+    const verifier: SenderIdentityVerifier = {
+      provider: 'ses',
+      verify: vi.fn(async () => {
+        throw new SenderIdentityUnavailableError('sender_identity_binding_mismatch', 41)
+      }),
+    }
+    const { app } = harness('administrator', configuration, verifier)
+    const response = await app.request(
+      '/api/v1/sender-identities/41/refresh',
+      mutation({ expected_evidence_version: 0 }, 'refresh-binding-mismatch'),
+    )
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'sender_identity_binding_mismatch' },
+    })
+    expect(configuration.recordSenderEvidence).not.toHaveBeenCalled()
   })
 })

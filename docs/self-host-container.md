@@ -59,6 +59,15 @@ password. Optional Google login requires both `OIDC_GOOGLE_CLIENT_ID` and
 configuration backup as your reverse proxy and SMTP account; physical Ezacto
 snapshots deliberately exclude secrets.
 
+`SMTP_FROM` is also the only mailbox the container can attest for organization
+invoice mail. An administrator must create an `smtp` sender identity whose
+email and provider identity exactly match that mailbox, then refresh it before
+selecting it as the default. The resulting status is **operator configured**:
+Ezacto has matched deployment configuration, not verified DKIM, SPF, or DNS
+alignment. Those remain the SMTP operator's responsibility. Changing
+`SMTP_FROM` makes an older attestation unusable at send time until the matching
+identity is refreshed.
+
 ## 3. Start the instance
 
 Create one named volume and publish the application only on loopback for the

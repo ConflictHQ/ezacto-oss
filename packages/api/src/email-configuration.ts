@@ -29,9 +29,14 @@ export interface EmailTemplateConfigurationRecord {
 
 export interface SenderEvidenceConfigurationRecord {
   version: number
-  source: 'provider_api'
+  source: 'provider_api' | 'deployment_config'
   identityKind: 'email_address' | 'domain'
-  verificationStatus: 'pending' | 'verified' | 'failed' | 'temporary_failure'
+  verificationStatus:
+    | 'pending'
+    | 'verified'
+    | 'failed'
+    | 'temporary_failure'
+    | 'operator_configured'
   dkimStatus: 'pending' | 'verified' | 'failed' | 'not_applicable'
   mailFromDomain: string | null
   mailFromStatus: 'pending' | 'verified' | 'failed' | 'not_configured'
@@ -98,7 +103,7 @@ export interface EmailConfigurationService {
   recordSenderEvidence(input: Readonly<{
     id: number
     expectedEvidenceVersion: number
-    evidence: Omit<SenderEvidenceConfigurationRecord, 'version' | 'source'>
+    evidence: Omit<SenderEvidenceConfigurationRecord, 'version'>
     actorUserId: number
     commandId: string
     occurredAt: string
@@ -169,6 +174,7 @@ export interface EmailTestSendCommandRecord {
 }
 
 export interface ProviderSenderIdentityEvidence {
+  source: SenderEvidenceConfigurationRecord['source']
   identityKind: SenderEvidenceConfigurationRecord['identityKind']
   verificationStatus: SenderEvidenceConfigurationRecord['verificationStatus']
   dkimStatus: SenderEvidenceConfigurationRecord['dkimStatus']
@@ -893,7 +899,15 @@ export const installEmailConfigurationRoutes = <Bindings extends object>(
         message: `Provider verification is not configured for ${identity.provider}.`,
       })
     }
-    const evidence = await options.verifier.verify(identity, context.req.raw.signal)
+    let evidence: ProviderSenderIdentityEvidence
+    try {
+      evidence = await options.verifier.verify(identity, context.req.raw.signal)
+    } catch (error) {
+      if (error instanceof SenderIdentityUnavailableError) {
+        throw new ApiError({ status: 409, code: error.code, message: error.message })
+      }
+      throw error
+    }
     try {
       const updated = await options.service.recordSenderEvidence({
         id,
