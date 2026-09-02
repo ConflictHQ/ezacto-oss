@@ -8,6 +8,8 @@ import { ContainerEmailQueue } from '../src/email-queue.js'
 
 const record = (attemptCount: number, status: 'queued' | 'failed'): EmailLogRecord => ({
   id: 1,
+  from: { email: 'billing@example.test', name: 'Billing' },
+  replyTo: [],
   to: [{ email: 'owner@example.test' }],
   template: 'verify_email',
   subject: 'Verify',
@@ -63,6 +65,7 @@ describe('container in-process email queue', () => {
       schemaVersion: 1,
       deliveryId: 1,
       message: {
+        from: { email: 'billing@example.test', name: 'Billing' },
         to: [{ email: 'owner@example.test' }],
         template: 'verify_email',
         subject: 'Verify',
@@ -80,6 +83,7 @@ describe('container in-process email queue', () => {
         schemaVersion: 1,
         deliveryId: 2,
         message: {
+          from: { email: 'billing@example.test', name: 'Billing' },
           to: [{ email: 'other@example.test' }],
           template: 'verify_email',
           subject: 'Verify',
@@ -130,6 +134,7 @@ describe('container in-process email queue', () => {
       schemaVersion: 1,
       deliveryId: 1,
       message: {
+        from: { email: 'billing@example.test', name: 'Billing' },
         to: [{ email: 'owner@example.test' }],
         template: 'verify_email',
         subject: 'Verify',
@@ -178,6 +183,7 @@ describe('container in-process email queue', () => {
       schemaVersion: 1,
       deliveryId: 1,
       message: {
+        from: { email: 'billing@example.test', name: 'Billing' },
         to: [{ email: 'owner@example.test' }],
         template: 'verify_email',
         subject: 'Verify',

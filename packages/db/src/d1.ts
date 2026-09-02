@@ -69,6 +69,17 @@ export {
   type EmailLogStoreOptions,
 } from './email-log.js'
 export {
+  createD1EmailConfigurationStore,
+  EmailConfigurationError,
+  type EmailConfigurationStore,
+  type EmailTestSendClaim,
+  type EmailTestSendCommandRecord,
+  type EmailTestSendFailureCode,
+  type EmailTemplateVersionRecord,
+  type SenderIdentityEvidenceRecord,
+  type SenderIdentityRecord,
+} from './email-configuration.js'
+export {
   ACTIVITY_LOG_SUBSCRIBER_ID,
   createD1OutboxService,
   OUTBOX_DELIVERY_POLICY,

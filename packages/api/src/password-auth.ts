@@ -53,6 +53,7 @@ export interface PasswordAuthService {
 
 /** Durable queue boundary. Provider calls happen behind this interface, never in the request. */
 export interface AuthMailer {
+  assertAvailable(kind: AuthTokenKind): Promise<void>
   enqueue(delivery: AuthDelivery): Promise<void>
 }
 
@@ -66,7 +67,8 @@ export interface PasswordSessionIssuer {
 export interface PasswordAuthRouteOptions {
   service: PasswordAuthService
   sessions: PasswordSessionIssuer
-  mailer?: AuthMailer
+  /** Deployment-brand sender used for every authentication email. */
+  deploymentMailer?: AuthMailer
   clientKey(request: Request): string
 }
 
@@ -198,7 +200,8 @@ export const installPasswordAuthRoutes = <Bindings extends object>(
       'password',
     ])
     try {
-      const mailer = requireMailer(options.mailer)
+      const mailer = requireMailer(options.deploymentMailer)
+      await mailer.assertAvailable('verify_email')
       const delivery = await options.service.signup({
         organizationName: body.organization_name!,
         firstName: body.first_name!,
@@ -280,7 +283,8 @@ export const installPasswordAuthRoutes = <Bindings extends object>(
   app.post('/auth/password/forgot', async (context) => {
     const body = await exactStringBody(context, ['email'])
     try {
-      const mailer = requireMailer(options.mailer)
+      const mailer = requireMailer(options.deploymentMailer)
+      await mailer.assertAvailable('password_reset')
       const delivery = await options.service.requestPasswordReset(
         body.email!,
         options.clientKey(context.req.raw),

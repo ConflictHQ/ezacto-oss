@@ -5,6 +5,7 @@ import {
   createApiApp,
   generateOpenApiDocument,
   installAttachmentRoutes,
+  installEmailConfigurationRoutes,
   installEmailLogRoutes,
   installGeneralResourceRoutes,
   installMoneyResourceRoutes,
@@ -17,6 +18,7 @@ import {
   installTimesheetApprovalRoutes,
   installTimesheetLockPolicyRoutes,
   type ApiSessionService,
+  type EmailConfigurationService,
   type AuthMailer,
   type ApiTokenService,
   type OidcIdentityResolver,
@@ -60,6 +62,10 @@ const passwordAuth = new Proxy(
 const authMailer = new Proxy({}, { get: () => unavailable }) as AuthMailer;
 const sessions = new Proxy({}, { get: () => unavailable }) as ApiSessionService;
 const emailLog = { list: unavailable };
+const emailConfiguration = new Proxy(
+  {},
+  { get: () => unavailable },
+) as EmailConfigurationService;
 const outbox = new Proxy({}, { get: () => unavailable }) as OutboxMonitor;
 const identities = new Proxy(
   {},
@@ -84,13 +90,17 @@ const documentedApp = () =>
       installPasswordAuthRoutes(app, {
         service: passwordAuth,
         sessions: { issue: unavailable },
-        mailer: authMailer,
+        deploymentMailer: authMailer,
         clientKey: () => "contract-fixture",
       });
     },
     installApi: (api) => {
       installSessionRoutes(api, sessions);
       installEmailLogRoutes(api, emailLog);
+      installEmailConfigurationRoutes(api, {
+        service: emailConfiguration,
+        clock: () => "2026-08-28T12:00:00.000Z",
+      });
       installOutboxRoutes(api, outbox);
       installGeneralResourceRoutes(api, {
         repository: generalRepository,

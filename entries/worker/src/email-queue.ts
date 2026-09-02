@@ -5,8 +5,12 @@ import type {
   QueuedEmailJob,
 } from '@ezacto/mailer'
 import {
+  createDeploymentSenderQueuedMailer,
   createQueuedMailer,
+  createSenderBoundQueuedMailer,
   processQueuedEmail,
+  type SenderBoundQueuedMailer,
+  type SenderIdentityResolver,
 } from '@ezacto/mailer'
 import { createQueuedAuthMailer, type AuthMailer } from '@ezacto/api'
 
@@ -43,12 +47,34 @@ export const consumeCloudflareEmailBatch = async (
 
 export { createQueuedAuthMailer } from '@ezacto/api'
 
-export const createWorkerAuthMailer = (
+export const createWorkerDeploymentAuthMailer = (
   queue: Queue<QueuedEmailJob>,
   log: EmailLogStore,
+  from: string,
+  templates: {
+    getTemplate: Parameters<typeof createQueuedAuthMailer>[1]['getTemplate']
+  },
+  organizationName: () => Promise<string>,
   appOrigin: string,
 ): AuthMailer =>
   createQueuedAuthMailer(
-    createQueuedMailer(log, createCloudflareEmailQueue(queue)),
+    createDeploymentSenderQueuedMailer(
+      from,
+      createQueuedMailer(log, createCloudflareEmailQueue(queue)),
+    ),
+    templates,
+    organizationName,
     appOrigin,
+  )
+
+export const createWorkerOrganizationMailer = (
+  queue: Queue<QueuedEmailJob>,
+  log: EmailLogStore,
+  provider: string,
+  identities: SenderIdentityResolver,
+): SenderBoundQueuedMailer =>
+  createSenderBoundQueuedMailer(
+    identities,
+    createQueuedMailer(log, createCloudflareEmailQueue(queue)),
+    provider,
   )

@@ -1,6 +1,19 @@
+import {
+  senderIdentityEligibilityFailure,
+  senderIdentityUnavailableMessage,
+  type ResolvedSenderIdentity,
+  type SenderIdentityUnavailableCode,
+  type SenderIdentityVerificationStatus,
+} from '@ezacto/core'
 import { EmailProviderTerminalError } from './provider-errors.js'
 
 export { EmailProviderTerminalError } from './provider-errors.js'
+export { senderIdentityEligibilityFailure }
+export type {
+  ResolvedSenderIdentity,
+  SenderIdentityUnavailableCode,
+  SenderIdentityVerificationStatus,
+}
 export {
   SesMailer,
   type SesAccountHealth,
@@ -23,8 +36,15 @@ export interface EmailRecipient {
   name?: string
 }
 
+export interface EmailSender {
+  email: string
+  name?: string
+}
+
 /** Provider input is an HTTP message document, not an SMTP transport envelope. */
 export interface EmailMessage {
+  from: EmailSender
+  replyTo?: readonly EmailRecipient[]
   to: readonly EmailRecipient[]
   template: string
   subject: string
@@ -35,6 +55,8 @@ export interface EmailMessage {
 
 export interface EmailLogRecord {
   id: number
+  from: EmailSender | null
+  replyTo: EmailRecipient[]
   to: EmailRecipient[]
   template: string
   subject: string
@@ -148,19 +170,43 @@ const text = (value: string, field: string, maximum: number): string => {
   return normalized
 }
 
+const headerText = (value: string, field: string, maximum: number): string => {
+  const normalized = text(value, field, maximum)
+  if (/\p{Cc}/u.test(normalized)) {
+    throw new RangeError(`${field} must not contain control characters`)
+  }
+  return normalized
+}
+
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+const mailbox = (
+  value: EmailRecipient | EmailSender,
+  label: string,
+): EmailRecipient => {
+  if (typeof value !== 'object' || value === null) {
+    throw new TypeError(`${label} must be a mailbox`)
+  }
+  const email = headerText(value.email, `${label} email`, 254).toLowerCase()
+  if (!emailPattern.test(email)) throw new RangeError(`${label} email is invalid`)
+  return value.name === undefined
+    ? { email }
+    : { email, name: headerText(value.name, `${label} name`, 200) }
+}
 
 const copyMessage = (message: EmailMessage): EmailMessage => {
   if (!Array.isArray(message.to) || message.to.length < 1 || message.to.length > 100) {
     throw new RangeError('to must contain between 1 and 100 recipients')
   }
-  const recipients = message.to.map((recipient) => {
-    const email = text(recipient.email, 'recipient email', 254).toLowerCase()
-    if (!emailPattern.test(email)) throw new RangeError('recipient email is invalid')
-    return recipient.name === undefined
-      ? { email }
-      : { email, name: text(recipient.name, 'recipient name', 200) }
-  })
+  const from = mailbox(message.from, 'from')
+  const recipients = message.to.map((recipient) => mailbox(recipient, 'recipient'))
+  const replyTo =
+    message.replyTo === undefined
+      ? undefined
+      : message.replyTo.map((recipient) => mailbox(recipient, 'reply-to'))
+  if (replyTo !== undefined && (replyTo.length < 1 || replyTo.length > 10)) {
+    throw new RangeError('replyTo must contain between 1 and 10 recipients')
+  }
   const related = message.related
   if (
     related !== undefined &&
@@ -169,16 +215,18 @@ const copyMessage = (message: EmailMessage): EmailMessage => {
     throw new RangeError('related id must be a positive safe integer')
   }
   return {
+    from,
+    ...(replyTo === undefined ? {} : { replyTo }),
     to: recipients,
-    template: text(message.template, 'template', 128),
-    subject: text(message.subject, 'subject', 998),
+    template: headerText(message.template, 'template', 128),
+    subject: headerText(message.subject, 'subject', 998),
     text: text(message.text, 'text', 1_000_000),
     ...(message.html === undefined
       ? {}
       : { html: text(message.html, 'html', 2_000_000) }),
     ...(related === undefined
       ? {}
-      : { related: { type: text(related.type, 'related type', 128), id: related.id } }),
+      : { related: { type: headerText(related.type, 'related type', 128), id: related.id } }),
   }
 }
 
@@ -202,6 +250,158 @@ export const createQueuedMailer = (
     return delivery
   },
 })
+
+export interface SenderIdentityResolver {
+  resolveSenderIdentity(id?: number): Promise<ResolvedSenderIdentity | null>
+}
+
+export class SenderIdentityUnavailableError extends Error {
+  constructor(
+    readonly code: SenderIdentityUnavailableCode,
+    readonly senderIdentityId: number | null,
+  ) {
+    super(senderIdentityUnavailableMessage(code))
+    this.name = 'SenderIdentityUnavailableError'
+  }
+}
+
+export interface SenderBoundQueuedMailer {
+  assertAvailable(senderIdentityId?: number): Promise<void>
+  enqueue(
+    message: Omit<EmailMessage, 'from' | 'replyTo'> & {
+      senderIdentityId?: number
+    },
+  ): Promise<EmailLogRecord>
+}
+
+export const configuredEmailSender = (value: string): EmailSender => {
+  if (typeof value !== 'string') throw new TypeError('configured sender must be a string')
+  const normalized = value.normalize('NFC').trim()
+  const angle = /^(.*?)<([^<>]+)>$/u.exec(normalized)
+  if (angle === null) return mailbox({ email: normalized }, 'configured sender')
+  const name = angle[1]!.trim()
+  return mailbox(
+    {
+      email: angle[2]!.trim(),
+      ...(name === '' ? {} : { name }),
+    },
+    'configured sender',
+  )
+}
+
+/**
+ * Deployment-brand mail uses the operator's validated provider From value.
+ * Organization invoice mail must use createSenderBoundQueuedMailer and its
+ * provider evidence checks instead.
+ */
+export const createDeploymentSenderQueuedMailer = (
+  from: string,
+  queued: QueuedMailer,
+): SenderBoundQueuedMailer => {
+  const sender = configuredEmailSender(from)
+  return {
+    async assertAvailable(senderIdentityId) {
+      if (senderIdentityId !== undefined) {
+        throw new SenderIdentityUnavailableError(
+          'sender_identity_missing',
+          senderIdentityId,
+        )
+      }
+    },
+    enqueue(message) {
+      if (message.senderIdentityId !== undefined) {
+        throw new SenderIdentityUnavailableError(
+          'sender_identity_missing',
+          message.senderIdentityId,
+        )
+      }
+      return queued.enqueue({
+        from: sender,
+        to: message.to,
+        template: message.template,
+        subject: message.subject,
+        text: message.text,
+        ...(message.html === undefined ? {} : { html: message.html }),
+        ...(message.related === undefined ? {} : { related: message.related }),
+      })
+    },
+  }
+}
+
+const assertSenderEvidence = (identity: ResolvedSenderIdentity): void => {
+  const failure = senderIdentityEligibilityFailure(identity)
+  if (failure !== null) {
+    throw new SenderIdentityUnavailableError(failure, identity.id)
+  }
+}
+
+/** Resolves authoritative sender evidence before the durable log or queue is touched. */
+export const createSenderBoundQueuedMailer = (
+  identities: SenderIdentityResolver,
+  queued: QueuedMailer,
+  expectedProvider?: string,
+  configuredFrom?: string,
+): SenderBoundQueuedMailer => {
+  if (expectedProvider === 'smtp' && configuredFrom === undefined) {
+    throw new TypeError('SMTP organization mail requires a deployment configured From address')
+  }
+  const deploymentSender =
+    configuredFrom === undefined ? null : configuredEmailSender(configuredFrom)
+  const resolveAvailable = async (
+    senderIdentityId?: number,
+  ): Promise<ResolvedSenderIdentity> => {
+    const identity = await identities.resolveSenderIdentity(senderIdentityId)
+    if (identity === null) {
+      throw new SenderIdentityUnavailableError(
+        'sender_identity_missing',
+        senderIdentityId ?? null,
+      )
+    }
+    if (expectedProvider !== undefined && identity.provider !== expectedProvider) {
+      throw new SenderIdentityUnavailableError(
+        'sender_provider_mismatch',
+        identity.id,
+      )
+    }
+    assertSenderEvidence(identity)
+    if (
+      deploymentSender !== null &&
+      identity.email.normalize('NFC').trim().toLowerCase() !== deploymentSender.email
+    ) {
+      throw new SenderIdentityUnavailableError(
+        'sender_identity_binding_mismatch',
+        identity.id,
+      )
+    }
+    if (senderIdentityId === undefined && !identity.isDefault) {
+      throw new SenderIdentityUnavailableError(
+        'sender_identity_not_default',
+        identity.id,
+      )
+    }
+    return identity
+  }
+  return {
+    async assertAvailable(senderIdentityId) {
+      await resolveAvailable(senderIdentityId)
+    },
+    async enqueue(message) {
+      const identity = await resolveAvailable(message.senderIdentityId)
+      return queued.enqueue({
+        from: { email: identity.email, name: identity.displayName },
+        ...(identity.replyToEmail === null
+          ? {}
+          : { replyTo: [{ email: identity.replyToEmail }] }),
+        to: message.to,
+        template: message.template,
+        subject: message.subject,
+        text: message.text,
+        ...(message.html === undefined ? {} : { html: message.html }),
+        ...(message.related === undefined ? {} : { related: message.related }),
+      })
+    },
+  }
+}
 
 export type EmailQueueDisposition =
   | { action: 'ack' }

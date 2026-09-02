@@ -593,6 +593,810 @@
         ]
       }
     },
+    "/api/v1/email-template-variables": {
+      "get": {
+        "operationId": "listEmailTemplateVariables",
+        "summary": "List the closed email-template variable vocabulary",
+        "tags": [
+          "email"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailTemplateVariableCatalog"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/email-template-variables",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/email-templates": {
+      "get": {
+        "operationId": "listEmailTemplates",
+        "summary": "List active versioned email templates",
+        "tags": [
+          "email"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailTemplatePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/email-templates",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/email-templates/{kind}/versions": {
+      "get": {
+        "operationId": "listEmailTemplateVersions",
+        "summary": "List immutable versions of an email template",
+        "tags": [
+          "email"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailTemplatePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/email-templates/:kind/versions",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "createEmailTemplateVersion",
+        "summary": "Append an immutable email-template version",
+        "tags": [
+          "email"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailTemplateEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/email-templates/:kind/versions",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailTemplateVersionInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sender-identities": {
+      "get": {
+        "operationId": "listSenderIdentities",
+        "summary": "List organization sender identities and provider evidence",
+        "tags": [
+          "email"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SenderIdentityPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/sender-identities",
+        "x-ezacto-generate-client": true
+      },
+      "post": {
+        "operationId": "createSenderIdentity",
+        "summary": "Configure an unverified organization sender identity",
+        "tags": [
+          "email"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SenderIdentityEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/sender-identities",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SenderIdentityInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sender-identities/{id}": {
+      "patch": {
+        "operationId": "updateSenderIdentity",
+        "summary": "Update sender display and Reply-To configuration",
+        "tags": [
+          "email"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SenderIdentityEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/sender-identities/:id",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SenderIdentityPatch"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sender-identities/{id}/default": {
+      "post": {
+        "operationId": "setDefaultSenderIdentity",
+        "summary": "Select a fully verified default sender identity",
+        "tags": [
+          "email"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SenderIdentityEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/sender-identities/:id/default",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SenderIdentityVersionInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sender-identities/{id}/archive": {
+      "post": {
+        "operationId": "archiveSenderIdentity",
+        "summary": "Archive a non-default sender identity",
+        "tags": [
+          "email"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SenderIdentityEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/sender-identities/:id/archive",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SenderIdentityVersionInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sender-identities/{id}/refresh": {
+      "post": {
+        "operationId": "refreshSenderIdentityEvidence",
+        "summary": "Refresh authoritative sender verification evidence from its provider",
+        "tags": [
+          "email"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SenderIdentityEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/sender-identities/:id/refresh",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SenderEvidenceRefreshInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sender-identities/{id}/test-send": {
+      "post": {
+        "operationId": "testSendEmailTemplate",
+        "summary": "Queue a persisted organization-template test to the acting administrator",
+        "tags": [
+          "email"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailTestSendEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/sender-identities/:id/test-send",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailTestSendInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/activity-log": {
       "get": {
         "operationId": "listActivityLog",
@@ -12885,6 +13689,8 @@
         "type": "object",
         "required": [
           "id",
+          "from",
+          "reply_to",
           "to",
           "template",
           "subject",
@@ -12905,6 +13711,22 @@
           "id": {
             "type": "integer",
             "minimum": 1
+          },
+          "from": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EmailRecipient"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reply_to": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EmailRecipient"
+            }
           },
           "to": {
             "type": "array",
@@ -13046,6 +13868,612 @@
           },
           "links": {
             "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EmailTemplateVariable": {
+        "type": "object",
+        "required": [
+          "name",
+          "token",
+          "description",
+          "compatibility"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string",
+            "pattern": "^%[a-z0-9_]+%$"
+          },
+          "description": {
+            "type": "string"
+          },
+          "compatibility": {
+            "type": "string",
+            "enum": [
+              "harvest",
+              "native"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "EmailTemplateVariableGroup": {
+        "type": "object",
+        "required": [
+          "kind",
+          "variables"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "invoice",
+              "reminder",
+              "thank_you",
+              "auth_email_verification",
+              "auth_password_reset"
+            ]
+          },
+          "variables": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EmailTemplateVariable"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EmailTemplateVariableCatalog": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EmailTemplateVariableGroup"
+            }
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EmailTemplate": {
+        "type": "object",
+        "required": [
+          "kind",
+          "version",
+          "subject_template",
+          "text_template",
+          "html_template",
+          "unknown_variable_policy",
+          "created_by_user_id",
+          "created_at"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "invoice",
+              "reminder",
+              "thank_you",
+              "auth_email_verification",
+              "auth_password_reset"
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "subject_template": {
+            "type": "string"
+          },
+          "text_template": {
+            "type": "string"
+          },
+          "html_template": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unknown_variable_policy": {
+            "type": "string",
+            "enum": [
+              "error",
+              "literal"
+            ]
+          },
+          "created_by_user_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EmailTemplatePage": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EmailTemplate"
+            }
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EmailTemplateEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/EmailTemplate"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EmailTemplateVersionInput": {
+        "type": "object",
+        "required": [
+          "expected_version",
+          "subject_template",
+          "text_template"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "subject_template": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 998
+          },
+          "text_template": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000000
+          },
+          "html_template": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unknown_variable_policy": {
+            "type": "string",
+            "enum": [
+              "error",
+              "literal"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "SenderIdentityEvidence": {
+        "type": "object",
+        "required": [
+          "version",
+          "source",
+          "identity_kind",
+          "verification_status",
+          "dkim_status",
+          "mail_from_domain",
+          "mail_from_status",
+          "observed_at"
+        ],
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "provider_api",
+              "deployment_config"
+            ]
+          },
+          "identity_kind": {
+            "type": "string",
+            "enum": [
+              "email_address",
+              "domain"
+            ]
+          },
+          "verification_status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "verified",
+              "failed",
+              "temporary_failure",
+              "operator_configured"
+            ]
+          },
+          "dkim_status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "verified",
+              "failed",
+              "not_applicable"
+            ]
+          },
+          "mail_from_domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mail_from_status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "verified",
+              "failed",
+              "not_configured"
+            ]
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SenderIdentity": {
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "display_name",
+          "reply_to_email",
+          "provider",
+          "provider_identity",
+          "is_default",
+          "version",
+          "archived_at",
+          "evidence",
+          "created_by_user_id",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "reply_to_email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "email"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider": {
+            "type": "string"
+          },
+          "provider_identity": {
+            "type": "string"
+          },
+          "is_default": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "archived_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SenderIdentityEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_by_user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SenderIdentityPage": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SenderIdentity"
+            }
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SenderIdentityEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SenderIdentity"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SenderIdentityInput": {
+        "type": "object",
+        "required": [
+          "email",
+          "display_name",
+          "provider",
+          "provider_identity"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "reply_to_email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "email",
+                "maxLength": 254
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "provider_identity": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320
+          }
+        },
+        "additionalProperties": false
+      },
+      "SenderIdentityPatch": {
+        "type": "object",
+        "required": [
+          "expected_version"
+        ],
+        "minProperties": 2,
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "reply_to_email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "email",
+                "maxLength": 254
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "SenderIdentityVersionInput": {
+        "type": "object",
+        "required": [
+          "expected_version"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "SenderEvidenceRefreshInput": {
+        "type": "object",
+        "required": [
+          "expected_evidence_version"
+        ],
+        "properties": {
+          "expected_evidence_version": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "EmailTestSendInput": {
+        "type": "object",
+        "required": [
+          "template_kind",
+          "template_version",
+          "variables",
+          "confirmed"
+        ],
+        "properties": {
+          "template_kind": {
+            "type": "string",
+            "enum": [
+              "invoice",
+              "reminder",
+              "thank_you"
+            ]
+          },
+          "template_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "variables": {
+            "type": "object",
+            "maxProperties": 32,
+            "propertyNames": {
+              "pattern": "^[a-z][a-z0-9_]{0,63}$"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            }
+          },
+          "confirmed": {
+            "const": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "EmailTestSend": {
+        "type": "object",
+        "required": [
+          "status",
+          "delivery_id",
+          "sender_identity_id",
+          "template_kind",
+          "template_version",
+          "recipient_email"
+        ],
+        "properties": {
+          "status": {
+            "const": "queued"
+          },
+          "delivery_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sender_identity_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "template_kind": {
+            "type": "string",
+            "enum": [
+              "invoice",
+              "reminder",
+              "thank_you"
+            ]
+          },
+          "template_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "recipient_email": {
+            "type": "string",
+            "format": "email"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EmailTestSendEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/EmailTestSend"
           }
         },
         "additionalProperties": false
