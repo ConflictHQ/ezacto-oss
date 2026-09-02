@@ -39,3 +39,41 @@ export const renderInvoicePaymentDialogs = (): string => `
       <div class="invoice-payment-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button class="primary-action" type="submit" data-invoice-payment-delete-submit>Delete payment</button></div>
     </form>
   </dialog>`
+
+export const renderInvoiceComposerDialog = (): string => `
+  <dialog class="invoice-composer-dialog" data-invoice-composer-dialog aria-labelledby="invoice-composer-title">
+    <form data-invoice-composer-form novalidate>
+      <header><div><p class="eyebrow">Invoice message</p><h2 id="invoice-composer-title" data-invoice-composer-title>Mark invoice sent</h2></div><button type="button" data-dialog-close aria-label="Close invoice message composer">×</button></header>
+      <p class="hint">This records the sent status and message details. It does not deliver email or a PDF.</p>
+      <div class="invoice-composer-layout">
+        <section class="invoice-composer-fields">
+          <label for="ez-invoice-recipients">Recipients
+            <textarea id="ez-invoice-recipients" name="recipients" data-invoice-composer-recipients rows="3" maxlength="321000" autocomplete="off" required aria-describedby="invoice-recipient-hint"></textarea>
+          </label>
+          <p class="hint" id="invoice-recipient-hint">One per line: email@example.com or Name &lt;email@example.com&gt;.</p>
+          <label for="ez-invoice-message-subject">Subject
+            <input id="ez-invoice-message-subject" name="subject" data-invoice-composer-subject maxlength="100000" required>
+          </label>
+          <label for="ez-invoice-message-body">Message
+            <textarea id="ez-invoice-message-body" name="body" data-invoice-composer-body rows="8" maxlength="100000" required></textarea>
+          </label>
+          <label class="invoice-composer-check"><input name="scheduleReminder" data-invoice-composer-reminder-toggle type="checkbox"> Record a planned reminder date</label>
+          <label for="ez-invoice-reminder-date" data-invoice-composer-reminder-date-label hidden>Planned reminder date
+            <input id="ez-invoice-reminder-date" name="reminderDate" data-invoice-composer-reminder-date type="date">
+          </label>
+        </section>
+        <aside class="invoice-variable-reference" aria-labelledby="invoice-variable-title">
+          <h3 id="invoice-variable-title">Template variables</h3>
+          <p>Use these anywhere in the subject or message. They are replaced before the record is saved.</p>
+          <dl>
+            <div><dt><code>%invoice_id%</code></dt><dd>Invoice record ID</dd></div>
+            <div><dt><code>%invoice_number%</code></dt><dd>Display number</dd></div>
+            <div><dt><code>%invoice_amount%</code></dt><dd>Formatted total</dd></div>
+            <div><dt><code>%invoice_due_date%</code></dt><dd>Due date</dd></div>
+          </dl>
+        </aside>
+      </div>
+      <p class="form-result" data-invoice-composer-result role="status" aria-live="polite"></p>
+      <div class="invoice-payment-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button class="primary-action" type="submit" data-invoice-composer-submit>Mark sent</button></div>
+    </form>
+  </dialog>`

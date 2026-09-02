@@ -551,6 +551,27 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
+      app.get('/expense-categories', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            activeSection: 'Expenses',
+            view: 'expense-categories',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
       app.get('/expenses/:expenseId', (context) => {
         const rawExpenseId = context.req.param('expenseId')
         const expenseId = Number(rawExpenseId)

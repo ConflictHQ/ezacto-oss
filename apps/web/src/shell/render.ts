@@ -5,7 +5,9 @@ import { renderProjectDirectoryPages } from '../projects/render.js'
 import { renderReportsPage } from '../reports/render.js'
 import { renderExpenseWorkflowPages } from '../expenses/render.js'
 import { renderTaskAdminPage } from '../tasks/render.js'
+import { renderExpenseCategoriesPage } from '../expense-categories/render.js'
 import {
+  renderInvoiceComposerDialog,
   renderInvoicePaymentDialogs,
   renderInvoicePaymentSection,
 } from '../invoices/render.js'
@@ -30,6 +32,7 @@ export interface AppShellOptions {
     | 'reports'
     | 'expense-list'
     | 'expense-detail'
+    | 'expense-categories'
   readonly signInProviders?: readonly SignInProvider[]
   /** Presentation hint only. The browser still validates the session before enabling the app. */
   readonly sessionCookiePresent?: boolean
@@ -320,8 +323,9 @@ export const renderAppShell = (options: AppShellOptions): string => {
           <h2 data-invoice-detail-number>—</h2>
           <p data-invoice-detail-subject hidden></p>
         </div>
-        <strong class="invoice-state" data-invoice-detail-state>—</strong>
+        <div class="invoice-document-actions"><strong class="invoice-state" data-invoice-detail-state>—</strong><button type="button" data-invoice-send disabled hidden>Mark sent</button></div>
       </header>
+      <p class="invoice-reminder-line" data-invoice-reminder-line hidden></p>
       <dl class="invoice-facts">
         <div><dt>Client</dt><dd data-invoice-detail-client>—</dd></div>
         <div><dt>Issued</dt><dd data-invoice-detail-issued>—</dd></div>
@@ -412,6 +416,8 @@ export const renderAppShell = (options: AppShellOptions): string => {
   ${renderTaskAdminPage(view)}
   ${renderReportsPage(view)}
   ${renderExpenseWorkflowPages(view)}
+  ${renderExpenseCategoriesPage(view)}
+  ${renderInvoiceComposerDialog()}
   ${renderInvoicePaymentDialogs()}
   <dialog class="command-dialog" data-command-dialog aria-labelledby="command-title">
     <form data-command-form>

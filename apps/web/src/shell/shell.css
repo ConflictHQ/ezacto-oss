@@ -324,6 +324,27 @@
   color: var(--ez-muted);
   white-space: pre-wrap;
 }
+.invoice-document-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.invoice-document-actions button {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ink);
+  color: var(--ez-ground);
+}
+.invoice-reminder-line {
+  margin: 16px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-status-bg);
+  color: var(--ez-status-fg);
+}
 .invoice-facts,
 .invoice-totals {
   display: grid;
@@ -524,6 +545,58 @@
   padding: 0 16px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
+}
+.invoice-composer-dialog {
+  width: min(920px, calc(100vw - 32px));
+}
+.invoice-composer-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(230px, 0.8fr);
+  gap: 20px;
+}
+.invoice-composer-fields {
+  display: grid;
+  gap: 12px;
+}
+.invoice-composer-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.invoice-composer-check input {
+  width: auto;
+  min-height: auto;
+}
+.invoice-variable-reference {
+  align-self: start;
+  padding: 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+.invoice-variable-reference h3,
+.invoice-variable-reference p,
+.invoice-variable-reference dl {
+  margin: 0;
+}
+.invoice-variable-reference p {
+  margin-top: 6px;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.invoice-variable-reference dl {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+.invoice-variable-reference dt,
+.invoice-variable-reference dd {
+  margin: 0;
+}
+.invoice-variable-reference dd {
+  margin-top: 3px;
+  color: var(--ez-muted);
+  font-size: 12px;
 }
 .invoice-generation-form legend {
   padding-inline: 6px;
@@ -1406,6 +1479,13 @@
   }
   .invoice-document-heading {
     flex-direction: column-reverse;
+  }
+  .invoice-document-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .invoice-composer-layout {
+    grid-template-columns: 1fr;
   }
   .invoice-payment-heading,
   .invoice-payment-dialog-actions {
@@ -2430,6 +2510,82 @@ dialog textarea {
   align-items: center;
   gap: 8px;
 }
+.expense-category-workspace {
+  width: min(960px, 100%);
+  margin-inline: auto;
+}
+.expense-category-intro,
+.expense-category-status,
+.expense-category-row p {
+  color: var(--ez-muted);
+}
+.expense-category-create,
+.expense-category-directory {
+  margin-top: 22px;
+  padding: 20px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+.expense-category-create > header,
+.expense-category-directory-header,
+.expense-category-dialog header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.expense-category-create h2,
+.expense-category-directory h2,
+.expense-category-dialog h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.expense-category-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.expense-category-form label,
+.expense-category-unit-fields label {
+  display: grid;
+  gap: 6px;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.expense-category-form input,
+.expense-category-form select,
+.expense-category-form button,
+.expense-category-filter button,
+.expense-category-list-actions button,
+.expense-category-row-actions button,
+.expense-category-dialog-actions button,
+.expense-category-dialog [data-dialog-close] {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.expense-category-unit-fields {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.expense-category-form > .form-result {
+  grid-column: 1 / -1;
+}
+.expense-category-filter,
+.expense-category-list-actions,
+.expense-category-dialog-actions,
+.expense-category-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .task-admin-toolbar {
   margin: 24px 0 12px;
 }
@@ -2514,6 +2670,45 @@ dialog textarea {
 }
 .task-admin-confirm-actions {
   justify-content: flex-end;
+}
+.expense-category-filter button[aria-pressed='true'] {
+  border-color: var(--ez-live);
+  background: var(--ez-status-bg);
+}
+.expense-category-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.expense-category-row,
+.expense-category-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+}
+.expense-category-row p {
+  margin: 5px 0 0;
+  font-size: 13px;
+}
+.expense-category-list-actions {
+  margin-top: 14px;
+}
+.expense-category-dialog {
+  width: min(580px, calc(100vw - 32px));
+}
+.expense-category-dialog > form {
+  padding: 22px;
+}
+.expense-category-dialog-actions {
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
 }
 @media (max-width: 720px) {
   .auth-gateway {
@@ -2666,6 +2861,31 @@ dialog textarea {
   }
   .expense-list-row > div:last-child {
     justify-items: start;
+  }
+  .expense-category-header,
+  .expense-category-directory-header,
+  .expense-category-row,
+  .expense-category-empty,
+  .expense-category-row-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .expense-category-form,
+  .expense-category-unit-fields {
+    grid-template-columns: 1fr;
+  }
+  .expense-category-filter,
+  .expense-category-filter button,
+  .expense-category-list-actions,
+  .expense-category-list-actions button,
+  .expense-category-dialog-actions,
+  .expense-category-dialog-actions button {
+    width: 100%;
+  }
+  .expense-category-filter button,
+  .expense-category-list-actions button,
+  .expense-category-dialog-actions button {
+    flex: 1;
   }
   .project-list-row,
   .project-task-card,

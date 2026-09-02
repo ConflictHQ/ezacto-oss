@@ -1389,14 +1389,100 @@ test('[e2e:reports-ui] runs uninvoiced, client rollup, and project budget report
   await expectNoPageOverflow(page)
 })
 
-test('[e2e:expense-receipt] creates, filters, edits, and downloads a receipt through real D1 and R2', async ({
+test('[e2e:expense-categories] [e2e:expense-receipt] manages category availability, history, and receipts through real D1 and R2', async ({
   page,
 }) => {
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
-  await page.goto('/expenses')
+  await page.goto('/expense-categories')
   await page.getByLabel('Email').fill(fixtureEmail)
   await page.getByLabel('Password').fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+  const workspace = page.locator('[data-expense-categories-page]')
+  await expect(workspace).toBeVisible()
+  await expect(page).toHaveTitle('ezacto — Expense categories')
+  const createCategory = page.locator('[data-expense-category-create-form]')
+  await createCategory.getByLabel('Name', { exact: true }).fill('Browser UI Mileage')
+  await createCategory.getByLabel('Entry method').selectOption('unit')
+  await createCategory.getByLabel('Unit name').fill('km')
+  await createCategory.getByLabel('Unit price (cents)').fill('42')
+  const categoryCreated = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/expense-categories' &&
+      response.request().method() === 'POST',
+  )
+  await createCategory.getByRole('button', { name: 'Create category' }).click()
+  const categoryResponse = await categoryCreated
+  expect(categoryResponse.status()).toBe(201)
+  const categoryId = Number((await categoryResponse.json()).data.id)
+  expect(Number.isSafeInteger(categoryId)).toBe(true)
+  const categoryRow = page.locator(`[data-expense-category-id="${categoryId}"]`)
+  await expect(categoryRow).toContainText('42 cents per km')
+  await expectNoPageOverflow(page)
+
+  await page.getByRole('link', { name: 'Back to expenses' }).click()
+  const createExpense = page.locator('[data-expense-create-form]')
+  await createExpense
+    .getByLabel('Project')
+    .selectOption({ label: '[BROWSER] Browser Acceptance Project' })
+  await createExpense.getByLabel('Category').selectOption({ label: 'Browser UI Mileage' })
+  await createExpense.getByLabel('Date').fill('2026-07-15')
+  await createExpense.getByLabel('Units (km)').fill('3')
+  await createExpense.getByLabel('Notes').fill('Historical category retention')
+  const expenseCreated = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/expenses' &&
+      response.request().method() === 'POST',
+  )
+  await createExpense.getByRole('button', { name: 'Add expense' }).click()
+  const expenseResponse = await expenseCreated
+  expect(expenseResponse.status()).toBe(201)
+  const expenseId = Number((await expenseResponse.json()).data.id)
+  expect(Number.isSafeInteger(expenseId)).toBe(true)
+
+  await page.goto('/expense-categories')
+  await expect(categoryRow).toBeVisible()
+  await categoryRow.getByRole('button', { name: 'Archive' }).click()
+  const archiveDialog = page.locator('[data-expense-category-archive-dialog]')
+  await archiveDialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(archiveDialog).toBeHidden()
+  await expect(categoryRow).toContainText('Active')
+
+  await categoryRow.getByRole('button', { name: 'Archive' }).click()
+  const archived = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/expense-categories/${categoryId}` &&
+      response.request().method() === 'PATCH',
+  )
+  await archiveDialog.getByRole('button', { name: 'Archive category' }).click()
+  const archivedResponse = await archived
+  expect(archivedResponse.status()).toBe(200)
+  expect(archivedResponse.request().postDataJSON()).toEqual({ is_active: false })
+  await expect(categoryRow).toBeHidden()
+  await workspace.getByRole('button', { name: 'All', exact: true }).click()
+  await expect(categoryRow).toContainText('Archived')
+
+  await page.goto('/expenses')
+  await expect(
+    page.locator('[data-expense-create-category] option', { hasText: 'Browser UI Mileage' }),
+  ).toHaveCount(0)
+  await page.goto(`/expenses/${expenseId}`)
+  const historicalCategory = page.locator(
+    '[data-expense-edit-category] option:checked',
+  )
+  await expect(historicalCategory).toHaveText('Browser UI Mileage')
+  await expect(page.locator('[data-expense-detail-total]')).toContainText('$1.26')
+  await expect(page.locator('[data-expense-edit-form] [name="notes"]')).toHaveValue(
+    'Historical category retention',
+  )
+  await expectNoPageOverflow(page)
+  await test.step('preserves the expense receipt workflow', async () =>
+    exerciseExpenseReceipt(page),
+  )
+})
+
+const exerciseExpenseReceipt = async (page: Page): Promise<void> => {
+  await page.goto('/expenses')
 
   const create = page.locator('[data-expense-create-form]')
   await expect(create).toBeVisible()
@@ -1490,7 +1576,7 @@ test('[e2e:expense-receipt] creates, filters, edits, and downloads a receipt thr
   await expect(page.locator(`[data-expense-id="${expenseId}"]`)).toContainText(
     'Reviewed detail',
   )
-})
+}
 
 test('[e2e:invoice-cycle] generates a real draft through the authenticated wizard', async ({
   page,
@@ -1536,7 +1622,11 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
       response.request().method() === 'POST',
   )
   await wizard.getByRole('button', { name: 'Generate draft invoice' }).click()
-  expect((await generated).status()).toBe(201)
+  const generatedResponse = await generated
+  expect(generatedResponse.status()).toBe(201)
+  const generatedPayload = (await generatedResponse.json()) as {
+    data: { id: number; due_date: string }
+  }
 
   await expect(page.locator('[data-invoice-generation-result]')).toHaveText(
     'Draft invoice generated successfully.',
@@ -1558,6 +1648,55 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
     'Browser Acceptance Project',
   )
   await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$75.00')
+
+  await detail.getByRole('button', { name: 'Mark sent', exact: true }).click()
+  const composer = page.locator('[data-invoice-composer-dialog]')
+  await expect(composer).toBeVisible()
+  await expect(composer).toContainText('%invoice_number%')
+  await expect(composer).toContainText('%invoice_amount%')
+  await composer.getByLabel('Recipients').fill('Accounts Payable <ap@example.test>')
+  await composer.getByLabel('Subject').fill('Invoice %invoice_number%')
+  await composer
+    .locator('[data-invoice-composer-body]')
+    .fill('Invoice #%invoice_id% totals %invoice_amount% and is due %invoice_due_date%.')
+  await composer.getByLabel('Record a planned reminder date').check()
+  await composer.locator('[data-invoice-composer-reminder-date]').fill('2099-09-30')
+  for (const control of [
+    composer.getByLabel('Recipients'),
+    composer.getByLabel('Subject'),
+    composer.locator('[data-invoice-composer-body]'),
+    composer.getByRole('button', { name: 'Mark sent', exact: true }),
+  ]) {
+    await expectPhoneControl(control)
+  }
+  await expectNoPageOverflow(page)
+  const sent = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.match(/^\/api\/v1\/invoices\/\d+\/transitions$/u) !==
+        null && response.request().method() === 'POST',
+  )
+  await composer.getByRole('button', { name: 'Mark sent', exact: true }).click()
+  const sentResponse = await sent
+  expect(sentResponse.status()).toBe(201)
+  expect(sentResponse.request().postDataJSON()).toMatchObject({
+    command: 'send',
+    recipients: [{ name: 'Accounts Payable', email: 'ap@example.test' }],
+    subject: `Invoice ${generatedNumber}`,
+    body: `Invoice #${generatedPayload.data.id} totals $75.00 and is due ${generatedPayload.data.due_date}.`,
+    attach_pdf: false,
+    send_me_a_copy: false,
+    thank_you: false,
+    reminder: true,
+    send_reminder_on: '2099-09-30',
+  })
+  await expect(composer).toBeHidden()
+  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Open')
+  await expect(detail.locator('[data-invoice-reminder-line]')).toContainText(
+    'Sep 30, 2099',
+  )
+  await expect(detail.locator('[data-invoice-detail-messages]')).toContainText(
+    `Invoice #${generatedPayload.data.id} totals $75.00`,
+  )
 
   await page.getByRole('link', { name: 'Back to invoices' }).click()
   await expect(page).toHaveURL(/\/invoices$/u)

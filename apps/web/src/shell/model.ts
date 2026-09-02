@@ -6,6 +6,7 @@ import {
   type GeneralResource,
   type Invoice,
   type InvoiceGenerationInput,
+  type InvoiceTransitionInput,
   type PasswordSignInInput,
   type Session,
   type TimeEntry,
@@ -29,6 +30,7 @@ import type { ClientDirectoryApi } from '../clients/model.js'
 import type { ProjectDirectoryApi } from '../projects/model.js'
 import type { ReportWorkspaceApi } from '../reports/model.js'
 import type { ExpenseWorkflowApi } from '../expenses/model.js'
+import type { ExpenseCategoryDirectoryApi } from '../expense-categories/model.js'
 import type { InvoicePaymentApi } from '../invoices/model.js'
 import type { TaskAdminApi } from '../tasks/model.js'
 
@@ -42,6 +44,7 @@ export interface ShellApi
     Partial<ProjectDirectoryApi>,
     Partial<ReportWorkspaceApi>,
     Partial<ExpenseWorkflowApi>,
+    Partial<ExpenseCategoryDirectoryApi>,
     Partial<InvoicePaymentApi>,
     Partial<TaskAdminApi> {
   whoami(signal?: AbortSignal): Promise<Whoami>
@@ -111,6 +114,12 @@ export interface ShellApi
   generateInvoice?(
     commandId: string,
     input: InvoiceGenerationInput,
+    signal?: AbortSignal,
+  ): Promise<Invoice>
+  transitionInvoice?(
+    id: number,
+    commandId: string,
+    input: InvoiceTransitionInput,
     signal?: AbortSignal,
   ): Promise<Invoice>
 }
@@ -749,6 +758,27 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  listDirectoryExpenseCategories: (activeOnly, cursor, signal) =>
+    client.listExpenseCategories({
+      query: {
+        per_page: 50,
+        ...(activeOnly ? { is_active: true } : {}),
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  createDirectoryExpenseCategory: async (input, signal) =>
+    (await client.createExpenseCategory({ body: input, ...withSignal(signal) })).data,
+  updateDirectoryExpenseCategory: async (id, body, signal) =>
+    (await client.updateExpenseCategory({ id, body, ...withSignal(signal) })).data,
+  archiveDirectoryExpenseCategory: async (id, signal) =>
+    (
+      await client.updateExpenseCategory({
+        id,
+        body: { is_active: false },
+        ...withSignal(signal),
+      })
+    ).data,
   listInvoices: (cursor, signal) =>
     client.listInvoices({
       query: {
@@ -787,6 +817,15 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       await client.deleteInvoicePayment({
         id,
         paymentId,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data.invoice,
+  transitionInvoice: async (id, commandId, input, signal) =>
+    (
+      await client.transitionInvoice({
+        id,
         'Idempotency-Key': commandId,
         body: input,
         ...withSignal(signal),
