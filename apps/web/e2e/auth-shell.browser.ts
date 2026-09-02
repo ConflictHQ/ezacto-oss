@@ -1244,7 +1244,7 @@ test('[e2e:reports-ui] runs uninvoiced, client rollup, and project budget report
   await expectNoPageOverflow(page)
 })
 
-test('[e2e:expense-categories] creates unit pricing, feeds expense entry, and archives without breaking history', async ({
+test('[e2e:expense-categories] [e2e:expense-receipt] manages category availability, history, and receipts through real D1 and R2', async ({
   page,
 }) => {
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
@@ -1331,16 +1331,13 @@ test('[e2e:expense-categories] creates unit pricing, feeds expense entry, and ar
     'Historical category retention',
   )
   await expectNoPageOverflow(page)
+  await test.step('preserves the expense receipt workflow', async () =>
+    exerciseExpenseReceipt(page),
+  )
 })
 
-test('[e2e:expense-receipt] creates, filters, edits, and downloads a receipt through real D1 and R2', async ({
-  page,
-}) => {
-  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+const exerciseExpenseReceipt = async (page: Page): Promise<void> => {
   await page.goto('/expenses')
-  await page.getByLabel('Email').fill(fixtureEmail)
-  await page.getByLabel('Password').fill(fixturePassword)
-  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
   const create = page.locator('[data-expense-create-form]')
   await expect(create).toBeVisible()
@@ -1434,7 +1431,7 @@ test('[e2e:expense-receipt] creates, filters, edits, and downloads a receipt thr
   await expect(page.locator(`[data-expense-id="${expenseId}"]`)).toContainText(
     'Reviewed detail',
   )
-})
+}
 
 test('[e2e:invoice-cycle] generates a real draft through the authenticated wizard', async ({
   page,
