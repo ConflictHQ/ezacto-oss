@@ -22,11 +22,11 @@ import { createClientDirectoryController } from '../clients/browser.js'
 import { createProjectDirectoryController } from '../projects/browser.js'
 import { createReportsController } from '../reports/browser.js'
 import { createExpenseWorkflowController } from '../expenses/browser.js'
-import { renderInvoiceDetail, renderInvoiceListItems } from '../invoices/browser.js'
 import {
-  invoiceIdFromPathname,
-  invoiceProfileHasAccess,
-} from '../invoices/model.js'
+  createInvoicePaymentController,
+  renderInvoiceListItems,
+} from '../invoices/browser.js'
+import { invoiceIdentityCanRead } from '../invoices/model.js'
 import {
   buildWeekGrid,
   formatCellHours,
@@ -793,6 +793,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const projectDirectory = createProjectDirectoryController(api)
   const reports = createReportsController(api)
   const expenseWorkflow = createExpenseWorkflowController(api)
+  const invoicePayments = createInvoicePaymentController(api)
   const invoiceList = required<HTMLElement>('[data-invoice-list]')
   const invoiceListStatus = required<HTMLElement>('[data-invoice-list-status]')
   const invoiceLoadMore = required<HTMLButtonElement>('[data-invoice-load-more]')
@@ -1685,8 +1686,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     cursor?: string,
   ): Promise<void> => {
     if (!isSessionCurrent(operation) || !invoiceListPage) return
-    if (currentIdentity === null || !invoiceProfileHasAccess(currentIdentity.profile)) {
-      invoiceListStatus.textContent = 'Your profile does not have access to invoices.'
+    if (currentIdentity === null || !invoiceIdentityCanRead(currentIdentity)) {
+      invoiceListStatus.textContent =
+        currentIdentity?.authentication.kind === 'token'
+          ? 'This API token does not grant invoice read access.'
+          : 'Your profile does not have access to invoices.'
       invoiceList.replaceChildren()
       invoiceLoadMore.hidden = true
       return
@@ -1726,44 +1730,6 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
   }
 
-  const loadInvoiceDetail = async (operation: AuthOperation): Promise<void> => {
-    if (!isSessionCurrent(operation) || !invoiceDetailPage) return
-    if (currentIdentity === null || !invoiceProfileHasAccess(currentIdentity.profile)) {
-      invoiceDetailStatus.textContent = 'Your profile does not have access to invoices.'
-      invoiceDocument.hidden = true
-      return
-    }
-    const invoiceId = invoiceIdFromPathname(globalThis.location.pathname)
-    const getInvoice = api.getInvoice
-    const listMessages = api.listInvoiceMessages
-    const listPayments = api.listInvoicePayments
-    if (
-      invoiceId === null ||
-      getInvoice === undefined ||
-      listMessages === undefined ||
-      listPayments === undefined
-    ) {
-      invoiceDetailStatus.textContent = 'Invoice detail is unavailable in this build.'
-      invoiceDocument.hidden = true
-      return
-    }
-    invoiceDetailStatus.textContent = 'Loading invoice…'
-    invoiceDocument.hidden = true
-    try {
-      const [invoice, messages, payments] = await Promise.all([
-        getInvoice(invoiceId, operation.signal),
-        listMessages(invoiceId, operation.signal),
-        listPayments(invoiceId, operation.signal),
-      ])
-      if (!isSessionCurrent(operation)) return
-      renderInvoiceDetail(invoice, messages, payments)
-    } catch (error) {
-      if (handleSessionFailure(error, operation)) return
-      invoiceDetailStatus.textContent = messageFor(error)
-      invoiceDocument.hidden = true
-    }
-  }
-
   const loadAuthenticatedShell = async (
     operation: AuthOperation,
   ): Promise<void> => {
@@ -1775,7 +1741,14 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     } else if (invoiceListPage) {
       await Promise.all([loadInvoiceList(authenticated), loadWeek(authenticated)])
     } else if (invoiceDetailPage) {
-      await Promise.all([loadInvoiceDetail(authenticated), loadWeek(authenticated)])
+      await Promise.all([
+        invoicePayments.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
     } else if (clientListPage || clientDetailPage) {
       await Promise.all([
         clientDirectory.activate(

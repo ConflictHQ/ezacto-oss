@@ -1421,6 +1421,162 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expect(generatedCard).toContainText('$75.00')
 })
 
+test('[e2e:invoice-cycle] records a final payment and restores the open balance on delete', async ({
+  context,
+  page,
+}) => {
+  const seeded = await context.request.post('/__ezacto_browser_fixture__/start-end', {
+    data: { action: 'invoice-payment-seed' },
+    headers: {
+      'x-ezacto-browser-fixture-control': 'start-end-round-trip',
+    },
+  })
+  expect(seeded.status()).toBe(204)
+
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto('/invoices/new')
+  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+
+  const openedInvoice = await page.evaluate(async () => {
+    const generated = await fetch('/api/v1/invoice-generations', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': 'browser-payment-cycle-generate',
+      },
+      body: JSON.stringify({
+        client_id: 1,
+        from: '2026-08-15',
+        to: '2026-08-15',
+        project_ids: [1],
+        time_summary_type: 'project',
+        expense_summary_type: null,
+      }),
+    })
+    if (!generated.ok) throw new Error(`invoice generation failed: ${generated.status}`)
+    const generatedBody = (await generated.json()) as {
+      data: { id: number; version: number; amount_cents: number }
+    }
+    const sent = await fetch(`/api/v1/invoices/${generatedBody.data.id}/transitions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': 'browser-payment-cycle-open',
+      },
+      body: JSON.stringify({
+        command: 'send',
+        expected_version: generatedBody.data.version,
+      }),
+    })
+    if (!sent.ok) throw new Error(`invoice transition failed: ${sent.status}`)
+    const sentBody = (await sent.json()) as {
+      data: { invoice: { id: number; version: number; amount_cents: number } }
+    }
+    return sentBody.data.invoice
+  })
+  expect(openedInvoice.amount_cents).toBe(7_500)
+  await page.goto(`/invoices/${openedInvoice.id}`)
+
+  const detail = page.locator('[data-invoice-document]')
+  await expect(detail).toBeVisible()
+  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Open')
+  await expect(detail.locator('[data-invoice-detail-due]')).toHaveText('$75.00')
+  const record = detail.getByRole('button', { name: 'Record payment' })
+  await expectPhoneControl(record)
+  await record.click()
+
+  const paymentDialog = page.locator('[data-invoice-payment-dialog]')
+  await expect(paymentDialog).toBeVisible()
+  await expect(paymentDialog.getByLabel('Amount')).toHaveValue('75.00')
+  await expect(paymentDialog.getByLabel('Currency')).toHaveValue('USD')
+  await expect(paymentDialog.getByLabel('Payment timing')).toHaveValue('date')
+  await paymentDialog.getByLabel('Paid date').fill('2026-08-30')
+  await paymentDialog.getByLabel('Notes').fill('Final payment from browser acceptance')
+  await expect(paymentDialog).toContainText('No email or thank-you message will be sent.')
+  for (const control of [
+    paymentDialog.getByLabel('Amount'),
+    paymentDialog.getByLabel('Currency'),
+    paymentDialog.getByLabel('Payment timing'),
+    paymentDialog.getByLabel('Paid date'),
+    paymentDialog.getByLabel('Notes'),
+    paymentDialog.getByRole('button', { name: 'Record payment' }),
+  ]) {
+    await expectPhoneControl(control)
+  }
+  await expectNoPageOverflow(page)
+
+  const recorded = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/v1/invoices/${openedInvoice.id}/payments` &&
+      response.request().method() === 'POST',
+  )
+  await paymentDialog.getByRole('button', { name: 'Record payment' }).click()
+  const recordedResponse = await recorded
+  expect(recordedResponse.status()).toBe(201)
+  expect(recordedResponse.request().postDataJSON()).toEqual({
+    expected_version: openedInvoice.version,
+    amount_cents: 7_500,
+    currency: 'USD',
+    paid_date: '2026-08-30',
+    notes: 'Final payment from browser acceptance',
+  })
+  await expect(paymentDialog).toBeHidden()
+  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Paid')
+  await expect(detail.locator('[data-invoice-detail-due]')).toHaveText('$0.00')
+  const paymentRow = detail.locator('[data-invoice-payment-id]')
+  await expect(paymentRow).toHaveCount(1)
+  await expect(paymentRow).toContainText('$75.00')
+  await expect(paymentRow).toContainText('Method: Manual')
+  await expect(paymentRow).toContainText('Final payment from browser acceptance')
+  await expect(record).toBeDisabled()
+
+  const deleteRequests: string[] = []
+  page.on('request', (request) => {
+    if (
+      request.method() === 'DELETE' &&
+      new URL(request.url()).pathname.startsWith(
+        `/api/v1/invoices/${openedInvoice.id}/payments/`,
+      )
+    ) {
+      deleteRequests.push(request.url())
+    }
+  })
+  await paymentRow.getByRole('button', { name: 'Delete' }).click()
+  const confirmation = page.locator('[data-invoice-payment-delete-dialog]')
+  await expect(confirmation).toBeVisible()
+  await confirmation.getByRole('button', { name: 'Cancel' }).click()
+  await expect(confirmation).toBeHidden()
+  expect(deleteRequests).toEqual([])
+
+  await paymentRow.getByRole('button', { name: 'Delete' }).click()
+  await confirmation.getByRole('button', { name: 'Close delete payment dialog' }).click()
+  await expect(confirmation).toBeHidden()
+  expect(deleteRequests).toEqual([])
+
+  await paymentRow.getByRole('button', { name: 'Delete' }).click()
+  const deleted = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.startsWith(
+        `/api/v1/invoices/${openedInvoice.id}/payments/`,
+      ) &&
+      response.request().method() === 'DELETE',
+  )
+  await confirmation
+    .getByRole('button', { name: 'Delete payment', exact: true })
+    .click()
+  expect((await deleted).status()).toBe(200)
+  await expect(confirmation).toBeHidden()
+  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Open')
+  await expect(detail.locator('[data-invoice-detail-due]')).toHaveText('$75.00')
+  await expect(detail.locator('[data-invoice-detail-payments]')).toContainText(
+    'No payments recorded.',
+  )
+})
+
 test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, policy-locks, and unlocks a real D1 timesheet', async ({
   context,
   page,
