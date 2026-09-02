@@ -369,6 +369,7 @@ export const createInvoicePaymentController = (
   let editingPayment: InvoicePayment | null = null
   let deletingPayment: InvoicePayment | null = null
   let mutationPending = false
+  let refreshRequired = false
   let paymentCommandId: string | null = null
   let deleteCommandId: string | null = null
 
@@ -384,11 +385,12 @@ export const createInvoicePaymentController = (
 
   const syncPrecision = (): void => {
     const timestamp = precision.value === 'timestamp'
+    const controlsLocked = mutationPending || refreshRequired
     paidDateLabel.hidden = timestamp
-    paidDate.disabled = timestamp || mutationPending
+    paidDate.disabled = timestamp || controlsLocked
     paidDate.required = !timestamp
     paidAtLabel.hidden = !timestamp
-    paidAt.disabled = !timestamp || mutationPending
+    paidAt.disabled = !timestamp || controlsLocked
     paidAt.required = timestamp
   }
 
@@ -397,8 +399,9 @@ export const createInvoicePaymentController = (
     const canWrite =
       session !== null && invoice !== null && invoiceIdentityCanWrite(session.identity)
     const canRecord = canWrite && invoice !== null && invoiceCanRecordPayment(invoice)
+    const controlsLocked = mutationPending || refreshRequired
     record.hidden = !canWrite
-    record.disabled = mutationPending || !canRecord
+    record.disabled = controlsLocked || !canRecord
     record.title =
       canWrite && !canRecord
         ? invoice?.state === 'draft'
@@ -411,15 +414,15 @@ export const createInvoicePaymentController = (
     for (const control of paymentForm.querySelectorAll<
       HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement
     >('input, select, textarea, button')) {
-      control.disabled = mutationPending
+      control.disabled = controlsLocked
     }
     syncPrecision()
-    paymentSubmit.disabled = mutationPending
-    deleteSubmit.disabled = mutationPending
+    paymentSubmit.disabled = controlsLocked
+    deleteSubmit.disabled = controlsLocked
     for (const control of article.querySelectorAll<HTMLButtonElement>(
       '[data-invoice-payment-edit], [data-invoice-payment-delete]',
     )) {
-      control.disabled = mutationPending
+      control.disabled = controlsLocked
     }
   }
 
@@ -434,6 +437,7 @@ export const createInvoicePaymentController = (
     editingPayment = null
     deletingPayment = null
     mutationPending = false
+    refreshRequired = false
     paymentCommandId = null
     deleteCommandId = null
     closeDialogs()
@@ -524,6 +528,7 @@ export const createInvoicePaymentController = (
         onEdit: (payment) => openPaymentDialog(payment),
         onDelete: (payment) => openDeleteDialog(payment),
       })
+      refreshRequired = false
       article.hidden = false
       status.textContent = ''
       workflowStatus.textContent = options.successMessage ?? ''
@@ -554,6 +559,7 @@ export const createInvoicePaymentController = (
       session === null ||
       invoice === null ||
       mutationPending ||
+      refreshRequired ||
       !invoiceIdentityCanWrite(session.identity) ||
       (payment === null
         ? !invoiceCanRecordPayment(invoice)
@@ -592,6 +598,7 @@ export const createInvoicePaymentController = (
       session === null ||
       invoice === null ||
       mutationPending ||
+      refreshRequired ||
       !invoiceIdentityCanWrite(session.identity) ||
       !invoicePaymentCanDelete(invoice, payment)
     ) {
@@ -658,6 +665,7 @@ export const createInvoicePaymentController = (
       session === null ||
       selectedInvoice === null ||
       mutationPending ||
+      refreshRequired ||
       !invoiceIdentityCanWrite(session.identity) ||
       (selectedPayment === null ? recordPayment === undefined : updatePayment === undefined)
     ) {
@@ -723,14 +731,26 @@ export const createInvoicePaymentController = (
       .then(async (updatedInvoice) => {
         if (current() !== session) return
         invoice = updatedInvoice
+        refreshRequired = true
+        paymentCommandId = null
+        editingPayment = null
+        paymentResult.textContent = ''
+        paymentDialog.close()
+        workflowStatus.textContent =
+          selectedPayment === null
+            ? 'Payment recorded. Refreshing invoice…'
+            : 'Payment saved. Refreshing invoice…'
+        syncControls()
         const loaded = await loadDetail(session, {
           hideDocument: false,
           successMessage: selectedPayment === null ? 'Payment recorded.' : 'Payment saved.',
         })
-        if (!loaded || current() !== session) return
-        paymentCommandId = null
-        editingPayment = null
-        paymentDialog.close()
+        if (!loaded && current() === session && refreshRequired) {
+          workflowStatus.textContent =
+            selectedPayment === null
+              ? 'Payment recorded, but the updated invoice could not be refreshed. Retry invoice; the payment will not be submitted again.'
+              : 'Payment saved, but the updated invoice could not be refreshed. Retry invoice; the change will not be submitted again.'
+        }
       })
       .catch((error: unknown) => handleMutationFailure(error, session, paymentResult))
       .finally(() => {
@@ -751,6 +771,7 @@ export const createInvoicePaymentController = (
       selectedInvoice === null ||
       selectedPayment === null ||
       mutationPending ||
+      refreshRequired ||
       deletePayment === undefined ||
       !invoiceIdentityCanWrite(session.identity) ||
       !invoicePaymentCanDelete(selectedInvoice, selectedPayment)
@@ -775,14 +796,21 @@ export const createInvoicePaymentController = (
       .then(async (updatedInvoice) => {
         if (current() !== session) return
         invoice = updatedInvoice
+        refreshRequired = true
+        deleteCommandId = null
+        deletingPayment = null
+        deleteResult.textContent = ''
+        deleteDialog.close()
+        workflowStatus.textContent = 'Payment deleted. Refreshing invoice…'
+        syncControls()
         const loaded = await loadDetail(session, {
           hideDocument: false,
           successMessage: 'Payment deleted.',
         })
-        if (!loaded || current() !== session) return
-        deleteCommandId = null
-        deletingPayment = null
-        deleteDialog.close()
+        if (!loaded && current() === session && refreshRequired) {
+          workflowStatus.textContent =
+            'Payment deleted, but the updated invoice could not be refreshed. Retry invoice; the deletion will not be submitted again.'
+        }
       })
       .catch((error: unknown) => handleMutationFailure(error, session, deleteResult))
       .finally(() => {

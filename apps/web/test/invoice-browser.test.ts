@@ -281,6 +281,113 @@ describe('invoice payment controller', () => {
     )
   })
 
+  it.each(['record', 'update', 'delete'] as const)(
+    '[reliability] treats a successful %s as complete when its detail refresh fails',
+    async (operation) => {
+      renderDetail()
+      const initialPayment = payment()
+      let committed = false
+      let detailLoads = 0
+      const refreshedInvoice = invoice('REFRESHED', {
+        version: 2,
+        state: operation === 'record' ? 'paid' : 'open',
+        due_amount_cents: operation === 'record' ? 0 : operation === 'delete' ? 1_000 : 500,
+      })
+      const refreshedPayments =
+        operation === 'delete'
+          ? []
+          : [payment({ amount_cents: operation === 'record' ? 1_000 : 500 })]
+      const getInvoice = vi.fn(async () => {
+        detailLoads += 1
+        if (detailLoads === 2) throw new Error('refresh unavailable')
+        return committed ? refreshedInvoice : invoice('INITIAL')
+      })
+      const recordInvoicePayment = vi.fn(async () => {
+        committed = true
+        return refreshedInvoice
+      })
+      const updateInvoicePayment = vi.fn(async () => {
+        committed = true
+        return refreshedInvoice
+      })
+      const deleteInvoicePayment = vi.fn(async () => {
+        committed = true
+        return refreshedInvoice
+      })
+      const api: Partial<InvoicePaymentApi> = {
+        getInvoice,
+        listInvoiceMessages: vi.fn(async () => []),
+        listInvoicePayments: vi.fn(async () =>
+          committed ? refreshedPayments : operation === 'record' ? [] : [initialPayment],
+        ),
+        recordInvoicePayment,
+        updateInvoicePayment,
+        deleteInvoicePayment,
+      }
+      const controller = createInvoicePaymentController(api)
+      await controller.activate(identity(1), new AbortController().signal, () => false)
+
+      if (operation === 'record') {
+        document.querySelector<HTMLButtonElement>('[data-invoice-payment-record]')!.click()
+        submit('[data-invoice-payment-form]')
+      } else if (operation === 'update') {
+        document.querySelector<HTMLButtonElement>('[data-invoice-payment-edit="11"]')!.click()
+        submit('[data-invoice-payment-form]')
+      } else {
+        document.querySelector<HTMLButtonElement>('[data-invoice-payment-delete="11"]')!.click()
+        submit('[data-invoice-payment-delete-form]')
+      }
+
+      const mutation =
+        operation === 'record'
+          ? recordInvoicePayment
+          : operation === 'update'
+            ? updateInvoicePayment
+            : deleteInvoicePayment
+      await vi.waitFor(() =>
+        expect(document.querySelector('[data-invoice-payment-status]')?.textContent).toContain(
+          'will not be submitted again',
+        ),
+      )
+      expect(mutation).toHaveBeenCalledTimes(1)
+      expect(document.querySelector<HTMLDialogElement>('[data-invoice-payment-dialog]')?.open).toBe(
+        false,
+      )
+      expect(
+        document.querySelector<HTMLDialogElement>('[data-invoice-payment-delete-dialog]')?.open,
+      ).toBe(false)
+      expect(document.querySelector<HTMLButtonElement>('[data-invoice-payment-record]')?.disabled).toBe(
+        true,
+      )
+      for (const staleAction of document.querySelectorAll<HTMLButtonElement>(
+        '[data-invoice-payment-edit], [data-invoice-payment-delete]',
+      )) {
+        expect(staleAction.disabled).toBe(true)
+      }
+
+      document.querySelector<HTMLInputElement>('[data-invoice-payment-amount]')!.value = '9.99'
+      submit(
+        operation === 'delete'
+          ? '[data-invoice-payment-delete-form]'
+          : '[data-invoice-payment-form]',
+      )
+      await Promise.resolve()
+      expect(mutation).toHaveBeenCalledTimes(1)
+
+      document.querySelector<HTMLButtonElement>('[data-invoice-detail-retry]')!.click()
+      await vi.waitFor(() =>
+        expect(document.querySelector('[data-invoice-detail-number]')?.textContent).toBe(
+          'REFRESHED',
+        ),
+      )
+      expect(getInvoice).toHaveBeenCalledTimes(3)
+      expect(mutation).toHaveBeenCalledTimes(1)
+      expect(document.querySelector<HTMLButtonElement>('[data-invoice-detail-retry]')?.hidden).toBe(
+        true,
+      )
+    },
+  )
+
   it('[security] clears the invoice immediately when a mutation loses its session', async () => {
     renderDetail()
     const sessionFailure = vi.fn(() => true)
