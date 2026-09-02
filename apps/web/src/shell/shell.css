@@ -2490,6 +2490,121 @@ dialog textarea {
     12px/1.4 var(--ez-font-mono),
     monospace;
 }
+.expense-category-workspace {
+  width: min(960px, 100%);
+  margin-inline: auto;
+}
+.expense-category-intro,
+.expense-category-status,
+.expense-category-row p {
+  color: var(--ez-muted);
+}
+.expense-category-create,
+.expense-category-directory {
+  margin-top: 22px;
+  padding: 20px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+.expense-category-create > header,
+.expense-category-directory-header,
+.expense-category-dialog header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.expense-category-create h2,
+.expense-category-directory h2,
+.expense-category-dialog h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.expense-category-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.expense-category-form label,
+.expense-category-unit-fields label {
+  display: grid;
+  gap: 6px;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.expense-category-form input,
+.expense-category-form select,
+.expense-category-form button,
+.expense-category-filter button,
+.expense-category-list-actions button,
+.expense-category-row-actions button,
+.expense-category-dialog-actions button,
+.expense-category-dialog [data-dialog-close] {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.expense-category-unit-fields {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.expense-category-form > .form-result {
+  grid-column: 1 / -1;
+}
+.expense-category-filter,
+.expense-category-list-actions,
+.expense-category-dialog-actions,
+.expense-category-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.expense-category-filter button[aria-pressed='true'] {
+  border-color: var(--ez-live);
+  background: var(--ez-status-bg);
+}
+.expense-category-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.expense-category-row,
+.expense-category-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+}
+.expense-category-row p {
+  margin: 5px 0 0;
+  font-size: 13px;
+}
+.expense-category-list-actions {
+  margin-top: 14px;
+}
+.expense-category-dialog {
+  width: min(580px, calc(100vw - 32px));
+}
+.expense-category-dialog > form {
+  padding: 22px;
+}
+.expense-category-dialog-actions {
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+}
 @media (max-width: 720px) {
   .auth-gateway {
     min-height: 100svh;
@@ -2641,6 +2756,31 @@ dialog textarea {
   }
   .expense-list-row > div:last-child {
     justify-items: start;
+  }
+  .expense-category-header,
+  .expense-category-directory-header,
+  .expense-category-row,
+  .expense-category-empty,
+  .expense-category-row-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .expense-category-form,
+  .expense-category-unit-fields {
+    grid-template-columns: 1fr;
+  }
+  .expense-category-filter,
+  .expense-category-filter button,
+  .expense-category-list-actions,
+  .expense-category-list-actions button,
+  .expense-category-dialog-actions,
+  .expense-category-dialog-actions button {
+    width: 100%;
+  }
+  .expense-category-filter button,
+  .expense-category-list-actions button,
+  .expense-category-dialog-actions button {
+    flex: 1;
   }
   .project-list-row,
   .project-task-card,

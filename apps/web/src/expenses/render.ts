@@ -2,6 +2,7 @@ export const renderExpenseWorkflowPages = (view?: string): string => `
   <main class="app-content expense-workspace" data-expense-list-page${view === 'expense-list' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Money out</p><h1>Expenses</h1></div>
+      <a href="/expense-categories">Manage categories</a>
     </header>
     <p class="expense-intro">Record your own expenses, then narrow the list by work, category, approval, or reimbursement status.</p>
     <section class="expense-module-unavailable" data-expense-module-unavailable hidden>
