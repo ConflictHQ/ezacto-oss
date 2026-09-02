@@ -1,5 +1,6 @@
 import type { Hono } from 'hono'
 import type { ResolvedUserIdentity } from '@ezacto/core'
+import { SenderIdentityUnavailableError } from '@ezacto/mailer'
 import type { ApiContext } from './context.js'
 import {
   ApiError,
@@ -124,6 +125,13 @@ const safePrincipal = (principal: ResolvedUserIdentity) => ({
 })
 
 const translateAuthError = (error: unknown): never => {
+  if (error instanceof SenderIdentityUnavailableError) {
+    throw new ApiError({
+      status: 503,
+      code: 'sender_identity_unverified',
+      message: error.message,
+    })
+  }
   if (error instanceof Error && error.name === 'AuthRateLimitError') {
     const retryAfter =
       'retryAfterSeconds' in error &&

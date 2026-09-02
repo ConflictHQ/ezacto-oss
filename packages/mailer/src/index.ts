@@ -23,8 +23,15 @@ export interface EmailRecipient {
   name?: string
 }
 
+export interface EmailSender {
+  email: string
+  name?: string
+}
+
 /** Provider input is an HTTP message document, not an SMTP transport envelope. */
 export interface EmailMessage {
+  from: EmailSender
+  replyTo?: readonly EmailRecipient[]
   to: readonly EmailRecipient[]
   template: string
   subject: string
@@ -35,6 +42,8 @@ export interface EmailMessage {
 
 export interface EmailLogRecord {
   id: number
+  from: EmailSender | null
+  replyTo: EmailRecipient[]
   to: EmailRecipient[]
   template: string
   subject: string
@@ -148,19 +157,43 @@ const text = (value: string, field: string, maximum: number): string => {
   return normalized
 }
 
+const headerText = (value: string, field: string, maximum: number): string => {
+  const normalized = text(value, field, maximum)
+  if (/\p{Cc}/u.test(normalized)) {
+    throw new RangeError(`${field} must not contain control characters`)
+  }
+  return normalized
+}
+
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+const mailbox = (
+  value: EmailRecipient | EmailSender,
+  label: string,
+): EmailRecipient => {
+  if (typeof value !== 'object' || value === null) {
+    throw new TypeError(`${label} must be a mailbox`)
+  }
+  const email = headerText(value.email, `${label} email`, 254).toLowerCase()
+  if (!emailPattern.test(email)) throw new RangeError(`${label} email is invalid`)
+  return value.name === undefined
+    ? { email }
+    : { email, name: headerText(value.name, `${label} name`, 200) }
+}
 
 const copyMessage = (message: EmailMessage): EmailMessage => {
   if (!Array.isArray(message.to) || message.to.length < 1 || message.to.length > 100) {
     throw new RangeError('to must contain between 1 and 100 recipients')
   }
-  const recipients = message.to.map((recipient) => {
-    const email = text(recipient.email, 'recipient email', 254).toLowerCase()
-    if (!emailPattern.test(email)) throw new RangeError('recipient email is invalid')
-    return recipient.name === undefined
-      ? { email }
-      : { email, name: text(recipient.name, 'recipient name', 200) }
-  })
+  const from = mailbox(message.from, 'from')
+  const recipients = message.to.map((recipient) => mailbox(recipient, 'recipient'))
+  const replyTo =
+    message.replyTo === undefined
+      ? undefined
+      : message.replyTo.map((recipient) => mailbox(recipient, 'reply-to'))
+  if (replyTo !== undefined && (replyTo.length < 1 || replyTo.length > 10)) {
+    throw new RangeError('replyTo must contain between 1 and 10 recipients')
+  }
   const related = message.related
   if (
     related !== undefined &&
@@ -169,16 +202,18 @@ const copyMessage = (message: EmailMessage): EmailMessage => {
     throw new RangeError('related id must be a positive safe integer')
   }
   return {
+    from,
+    ...(replyTo === undefined ? {} : { replyTo }),
     to: recipients,
-    template: text(message.template, 'template', 128),
-    subject: text(message.subject, 'subject', 998),
+    template: headerText(message.template, 'template', 128),
+    subject: headerText(message.subject, 'subject', 998),
     text: text(message.text, 'text', 1_000_000),
     ...(message.html === undefined
       ? {}
       : { html: text(message.html, 'html', 2_000_000) }),
     ...(related === undefined
       ? {}
-      : { related: { type: text(related.type, 'related type', 128), id: related.id } }),
+      : { related: { type: headerText(related.type, 'related type', 128), id: related.id } }),
   }
 }
 
@@ -200,6 +235,203 @@ export const createQueuedMailer = (
       throw new EmailQueueUnavailableError()
     }
     return delivery
+  },
+})
+
+export type SenderIdentityVerificationStatus =
+  | 'pending'
+  | 'verified'
+  | 'failed'
+  | 'temporary_failure'
+
+export interface ResolvedSenderIdentity {
+  id: number
+  email: string
+  displayName: string
+  replyToEmail: string | null
+  archivedAt: string | null
+  evidence: null | {
+    source: 'provider_api'
+    verificationStatus: SenderIdentityVerificationStatus
+    dkimStatus: 'pending' | 'verified' | 'failed' | 'not_applicable'
+    mailFromStatus: 'pending' | 'verified' | 'failed' | 'not_configured'
+    observedAt: string
+  }
+}
+
+export interface SenderIdentityResolver {
+  resolveSenderIdentity(id?: number): Promise<ResolvedSenderIdentity | null>
+}
+
+export type SenderIdentityUnavailableCode =
+  | 'sender_identity_missing'
+  | 'sender_identity_archived'
+  | 'sender_evidence_untrusted'
+  | 'sender_verification_pending'
+  | 'sender_verification_temporary_failure'
+  | 'sender_verification_failed'
+  | 'sender_dkim_pending'
+  | 'sender_dkim_failed'
+  | 'sender_mail_from_pending'
+  | 'sender_mail_from_failed'
+
+export class SenderIdentityUnavailableError extends Error {
+  constructor(
+    readonly code: SenderIdentityUnavailableCode,
+    readonly senderIdentityId: number | null,
+  ) {
+    const actions: Readonly<Record<SenderIdentityUnavailableCode, string>> = {
+      sender_identity_missing:
+        'Configure and verify an organization sender identity before sending email.',
+      sender_identity_archived:
+        'Select an active organization sender identity before sending email.',
+      sender_evidence_untrusted:
+        'Refresh this sender identity directly from the configured email provider before sending.',
+      sender_verification_pending:
+        'Wait for the email provider to verify this sender identity, then refresh its status.',
+      sender_verification_temporary_failure:
+        'The email provider verification check failed temporarily. Retry the status refresh before sending.',
+      sender_verification_failed:
+        'Correct the sender identity DNS or provider configuration, then refresh its status.',
+      sender_dkim_pending:
+        'Wait for DKIM verification to finish, then refresh the sender identity status.',
+      sender_dkim_failed:
+        'Correct the DKIM DNS records, then refresh the sender identity status.',
+      sender_mail_from_pending:
+        'Wait for custom MAIL FROM verification to finish, then refresh the sender identity status.',
+      sender_mail_from_failed:
+        'Correct the custom MAIL FROM DNS records, then refresh the sender identity status.',
+    }
+    super(actions[code])
+    this.name = 'SenderIdentityUnavailableError'
+  }
+}
+
+export interface SenderBoundQueuedMailer {
+  enqueue(
+    message: Omit<EmailMessage, 'from' | 'replyTo'> & {
+      senderIdentityId?: number
+    },
+  ): Promise<EmailLogRecord>
+}
+
+const configuredSender = (value: string): EmailSender => {
+  if (typeof value !== 'string') throw new TypeError('configured sender must be a string')
+  const normalized = value.normalize('NFC').trim()
+  const angle = /^(.*?)<([^<>]+)>$/u.exec(normalized)
+  if (angle === null) return mailbox({ email: normalized }, 'configured sender')
+  const name = angle[1]!.trim()
+  return mailbox(
+    {
+      email: angle[2]!.trim(),
+      ...(name === '' ? {} : { name }),
+    },
+    'configured sender',
+  )
+}
+
+/**
+ * Bootstrap authentication mail has no organization sender yet. This adapter
+ * uses the operator's validated provider From value; organization mail must
+ * use createSenderBoundQueuedMailer and its provider evidence checks.
+ */
+export const createBootstrapSenderQueuedMailer = (
+  from: string,
+  queued: QueuedMailer,
+): SenderBoundQueuedMailer => {
+  const sender = configuredSender(from)
+  return {
+    enqueue(message) {
+      if (message.senderIdentityId !== undefined) {
+        throw new SenderIdentityUnavailableError(
+          'sender_identity_missing',
+          message.senderIdentityId,
+        )
+      }
+      return queued.enqueue({
+        from: sender,
+        to: message.to,
+        template: message.template,
+        subject: message.subject,
+        text: message.text,
+        ...(message.html === undefined ? {} : { html: message.html }),
+        ...(message.related === undefined ? {} : { related: message.related }),
+      })
+    },
+  }
+}
+
+const assertSenderEvidence = (identity: ResolvedSenderIdentity): void => {
+  const evidence = identity.evidence
+  if (evidence === null || evidence.verificationStatus === 'pending') {
+    throw new SenderIdentityUnavailableError(
+      'sender_verification_pending',
+      identity.id,
+    )
+  }
+  if (evidence.source !== 'provider_api') {
+    throw new SenderIdentityUnavailableError('sender_evidence_untrusted', identity.id)
+  }
+  if (evidence.verificationStatus !== 'verified') {
+    throw new SenderIdentityUnavailableError(
+      evidence.verificationStatus === 'temporary_failure'
+        ? 'sender_verification_temporary_failure'
+        : 'sender_verification_failed',
+      identity.id,
+    )
+  }
+  if (evidence.dkimStatus === 'pending') {
+    throw new SenderIdentityUnavailableError('sender_dkim_pending', identity.id)
+  }
+  if (evidence.dkimStatus === 'failed') {
+    throw new SenderIdentityUnavailableError('sender_dkim_failed', identity.id)
+  }
+  if (evidence.mailFromStatus === 'pending') {
+    throw new SenderIdentityUnavailableError(
+      'sender_mail_from_pending',
+      identity.id,
+    )
+  }
+  if (evidence.mailFromStatus === 'failed') {
+    throw new SenderIdentityUnavailableError(
+      'sender_mail_from_failed',
+      identity.id,
+    )
+  }
+}
+
+/** Resolves authoritative sender evidence before the durable log or queue is touched. */
+export const createSenderBoundQueuedMailer = (
+  identities: SenderIdentityResolver,
+  queued: QueuedMailer,
+): SenderBoundQueuedMailer => ({
+  async enqueue(message) {
+    const identity = await identities.resolveSenderIdentity(message.senderIdentityId)
+    if (identity === null) {
+      throw new SenderIdentityUnavailableError(
+        'sender_identity_missing',
+        message.senderIdentityId ?? null,
+      )
+    }
+    if (identity.archivedAt !== null) {
+      throw new SenderIdentityUnavailableError(
+        'sender_identity_archived',
+        identity.id,
+      )
+    }
+    assertSenderEvidence(identity)
+    return queued.enqueue({
+      from: { email: identity.email, name: identity.displayName },
+      ...(identity.replyToEmail === null
+        ? {}
+        : { replyTo: [{ email: identity.replyToEmail }] }),
+      to: message.to,
+      template: message.template,
+      subject: message.subject,
+      text: message.text,
+      ...(message.html === undefined ? {} : { html: message.html }),
+      ...(message.related === undefined ? {} : { related: message.related }),
+    })
   },
 })
 

@@ -6,6 +6,7 @@ import {
   generateOpenApiDocument,
   installAttachmentRoutes,
   installEmailLogRoutes,
+  installEmailConfigurationRoutes,
   installGeneralResourceRoutes,
   installMoneyResourceRoutes,
   installOidcRoutes,
@@ -25,6 +26,7 @@ import {
   type CloudflareAccessVerifierConfig,
   type ApiSessionService,
   type GeneralResourceRouteOptions,
+  type EmailConfigurationRouteOptions,
   type MoneyResourceRouteOptions,
   type OidcIdentityResolver,
   type OidcProviderConfig,
@@ -99,6 +101,8 @@ export interface RuntimeServices {
   /** Composite browser resolver when an optional edge identity provider is configured. */
   authenticationSessions?: ApiSessionResolver
   emailLog: EmailLogStore
+  emailConfiguration: EmailConfigurationRouteOptions['service']
+  senderIdentityVerifier?: EmailConfigurationRouteOptions['verifier']
   identities: OidcIdentityResolver
   oidcTransactions: OidcTransactionStorePort
   authMailer?: AuthMailer
@@ -137,6 +141,13 @@ export const createApp = (services?: RuntimeServices) =>
           installApi: (api) => {
             installSessionRoutes(api, services.sessions)
             installEmailLogRoutes(api, services.emailLog)
+            installEmailConfigurationRoutes(api, {
+              service: services.emailConfiguration,
+              ...(services.senderIdentityVerifier === undefined
+                ? {}
+                : { verifier: services.senderIdentityVerifier }),
+              clock: () => systemClock.now().instant,
+            })
             installGeneralResourceRoutes(api, {
               repository: services.generalResources,
               cursorSigningKey: services.cursorSigningKey,

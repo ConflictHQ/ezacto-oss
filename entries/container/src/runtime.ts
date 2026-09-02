@@ -7,6 +7,7 @@ import {
   createAttachmentStore,
   createContainerDatabase,
   createContainerEmailLogStore,
+  createContainerEmailConfigurationStore,
   createContainerIdentityStore,
   createContainerOidcTransactionStore,
   createContainerPasswordAuthService,
@@ -28,6 +29,7 @@ import {
   type UserPrincipal,
 } from '@ezacto/api'
 import {
+  createBootstrapSenderQueuedMailer,
   createQueuedMailer,
   type HttpEmailProvider,
 } from '@ezacto/mailer'
@@ -206,6 +208,7 @@ export const createContainerRuntime = async (
       createContainerSessionStore(database),
     )
     const emailLog = createContainerEmailLogStore(database)
+    const emailConfiguration = createContainerEmailConfigurationStore(database)
     const smtp =
       options.emailProvider ??
       new SmtpMailer({ url: config.smtp.url, from: config.smtp.from })
@@ -246,10 +249,21 @@ export const createContainerRuntime = async (
       passwordAuth: createContainerPasswordAuthService(database),
       sessions,
       emailLog,
+      emailConfiguration,
       identities: createContainerIdentityStore(database),
       oidcTransactions: createContainerOidcTransactionStore(database),
       authMailer: createQueuedAuthMailer(
-        createQueuedMailer(emailLog, queue),
+        createBootstrapSenderQueuedMailer(
+          config.smtp.from,
+          createQueuedMailer(emailLog, queue),
+        ),
+        emailConfiguration,
+        async () => {
+          const row = database
+            .prepare('SELECT name FROM organizations WHERE id = 1')
+            .get() as { name: string } | undefined
+          return row?.name ?? 'Ezacto'
+        },
         config.appBaseUrl,
       ),
       attachments: {

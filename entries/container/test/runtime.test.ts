@@ -93,7 +93,7 @@ describe('container runtime composition', () => {
       first.database
         .prepare('SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1')
         .get(),
-    ).toEqual({ id: '0028_timesheet_lock_policy' })
+    ).toEqual({ id: '0029_email_templates' })
 
     const signup = await request(
       '/auth/signup',
@@ -110,6 +110,11 @@ describe('container runtime composition', () => {
       await new Promise((resolve) => setTimeout(resolve, 5))
     }
     expect(captured).toHaveLength(1)
+    expect(captured[0]).toMatchObject({
+      from: { email: 'billing@example.test' },
+      template: 'auth_email_verification:v1',
+      subject: 'Verify your Container Studio email',
+    })
     const token = /ezacto_verify_[A-Za-z0-9_-]{16}_[A-Za-z0-9_-]{43}/u.exec(
       captured[0]!.text,
     )?.[0]

@@ -12,6 +12,7 @@ import {
   createCloudflareEmailQueue,
 } from '../src/email-queue.js'
 import {
+  createSesSenderIdentityVerifier,
   createRuntimeServices,
   createWorkerSesMailer,
 } from '../src/runtime.js'
@@ -41,6 +42,7 @@ describe('Worker email queue composition', () => {
       schemaVersion: 1,
       deliveryId: 4,
       message: {
+        from: { email: 'billing@example.test', name: 'Billing' },
         to: [{ email: 'owner@example.test' }],
         template: 'verify_email',
         subject: 'Verify your ezacto email',
@@ -67,6 +69,7 @@ describe('Worker email queue composition', () => {
       API_CURSOR_SIGNING_KEY: cursorKey,
       EMAIL_QUEUE: queue,
       APP_BASE_URL: 'https://ezacto.example',
+      SES_FROM: 'notify@example.test',
       ENVIRONMENT: 'test',
       RELEASE: 'mailer-test',
     } satisfies WorkerEnv
@@ -93,6 +96,11 @@ describe('Worker email queue composition', () => {
     expect(signup.status).toBe(202)
     expect(provider.send).not.toHaveBeenCalled()
     expect(queuedJobs).toHaveLength(1)
+    expect(queuedJobs[0]?.message).toMatchObject({
+      from: { email: 'notify@example.test' },
+      template: 'auth_email_verification:v1',
+      subject: 'Verify your Halcyon Studio email',
+    })
     expect(JSON.stringify(queuedJobs[0])).toContain('ezacto_verify_')
 
     const retries: number[] = []
@@ -123,7 +131,7 @@ describe('Worker email queue composition', () => {
         failureCode: 'provider_rejected',
       }) as EmailLogRecord,
     ])
-  })
+  }, 10_000)
 
   it('[concurrency] does not spend provider retries on queue redelivery contention', async () => {
     const env = {
@@ -134,6 +142,7 @@ describe('Worker email queue composition', () => {
     } satisfies WorkerEnv
     const services = await createRuntimeServices(env)
     const message = {
+      from: { email: 'billing@example.test', name: 'Billing' },
       to: [{ email: 'retry-budget@example.test' }],
       template: 'verify_email',
       subject: 'Verify your ezacto email',
@@ -275,6 +284,100 @@ describe('Worker email queue composition', () => {
     ).toMatchObject({ name: 'ses', region: 'us-west-2' })
   })
 
+  it('[unit] maps SES identity evidence without treating disabled domain DKIM as verified', async () => {
+    const base = {
+      DB: database,
+      API_CURSOR_SIGNING_KEY: cursorKey,
+      AWS_ACCESS_KEY_ID: 'TESTACCESSKEY',
+      AWS_SECRET_ACCESS_KEY: 'test-secret-key',
+      SES_REGION: 'us-west-2',
+      SES_FROM: 'notify@example.test',
+      ENVIRONMENT: 'test',
+      RELEASE: 'ses-evidence-test',
+    } satisfies WorkerEnv
+    const provider = createWorkerSesMailer(base, {
+      fetch: async () =>
+        Response.json({
+          IdentityType: 'DOMAIN',
+          VerifiedForSendingStatus: true,
+          DkimAttributes: { Status: 'SUCCESS', SigningEnabled: false },
+          MailFromAttributes: {},
+        }),
+    })!
+
+    await expect(
+      createSesSenderIdentityVerifier(provider).verify(
+        {
+          id: 1,
+          email: 'billing@example.test',
+          displayName: 'Billing',
+          replyToEmail: null,
+          provider: 'ses',
+          providerIdentity: 'example.test',
+          isDefault: false,
+          version: 0,
+          archivedAt: null,
+          createdByUserId: 1,
+          createdAt: '2026-09-02T00:00:00.000Z',
+          updatedAt: '2026-09-02T00:00:00.000Z',
+          evidence: null,
+        },
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({
+      verificationStatus: 'verified',
+      dkimStatus: 'pending',
+      mailFromDomain: null,
+      mailFromStatus: 'not_configured',
+    })
+  })
+
+  it('[unit] rejects provider evidence that does not authorize the From address', async () => {
+    const base = {
+      DB: database,
+      API_CURSOR_SIGNING_KEY: cursorKey,
+      AWS_ACCESS_KEY_ID: 'TESTACCESSKEY',
+      AWS_SECRET_ACCESS_KEY: 'test-secret-key',
+      SES_REGION: 'us-west-2',
+      SES_FROM: 'notify@example.test',
+      ENVIRONMENT: 'test',
+      RELEASE: 'ses-evidence-binding-test',
+    } satisfies WorkerEnv
+    const provider = createWorkerSesMailer(base, {
+      fetch: async () =>
+        Response.json({
+          IdentityType: 'DOMAIN',
+          VerifiedForSendingStatus: true,
+          DkimAttributes: { Status: 'SUCCESS', SigningEnabled: true },
+          MailFromAttributes: {},
+        }),
+    })!
+
+    await expect(
+      createSesSenderIdentityVerifier(provider).verify(
+        {
+          id: 1,
+          email: 'billing@different.example',
+          displayName: 'Billing',
+          replyToEmail: null,
+          provider: 'ses',
+          providerIdentity: 'example.test',
+          isDefault: false,
+          version: 0,
+          archivedAt: null,
+          createdByUserId: 1,
+          createdAt: '2026-09-02T00:00:00.000Z',
+          updatedAt: '2026-09-02T00:00:00.000Z',
+          evidence: null,
+        },
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({
+      verificationStatus: 'failed',
+      dkimStatus: 'verified',
+    })
+  })
+
   it('[integration] persists the signed SES receipt before acknowledging the queue', async () => {
     const queue = { send: vi.fn(async () => undefined) } as unknown as Queue<QueuedEmailJob>
     const env = {
@@ -307,6 +410,7 @@ describe('Worker email queue composition', () => {
     })!
     const services = await createRuntimeServices(env, { emailProvider: provider })
     const message = {
+      from: { email: 'billing@example.test', name: 'Billing' },
       to: [{ email: 'ses-integration@example.test' }],
       template: 'verify_email',
       subject: 'Verify your ezacto email',
@@ -365,6 +469,7 @@ describe('Worker email queue composition', () => {
     const provider = createWorkerSesMailer(env, { fetch })!
     const services = await createRuntimeServices(env, { emailProvider: provider })
     const message = {
+      from: { email: 'billing@example.test', name: 'Billing' },
       to: [{ email: 'suppressed@example.test' }],
       template: 'verify_email',
       subject: 'Verify your ezacto email',

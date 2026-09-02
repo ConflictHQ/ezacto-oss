@@ -10,6 +10,8 @@ const config: SesMailerConfig = {
 };
 
 const message = {
+  from: { email: "billing@example.test", name: "Billing" },
+  replyTo: [{ email: "accounts@example.test", name: "Accounts" }],
   to: [{ email: "owner@example.test", name: "Avery" }],
   template: "verify_email",
   subject: "Verify your ezacto email",
@@ -67,14 +69,14 @@ describe("SES HTTP provider", () => {
       "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20260828/us-west-2/ses/aws4_request, SignedHeaders=host;x-amz-date, Signature=c0be361bfff9faf4c0c70ebed1e86bcba232444654400f84e8cf65843f2d6800",
     );
     expect(requests[1]!.headers.get("authorization")).toBe(
-      "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20260828/us-west-2/ses/aws4_request, SignedHeaders=host;x-amz-date, Signature=3d0832932a1c5193a7f9379225772012f884b5665bebaf386c280971e007f940",
+      "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20260828/us-west-2/ses/aws4_request, SignedHeaders=host;x-amz-date, Signature=c6c6928193ffc6667aeda4adcecc10bdcfc1a3fd8ed237aeedd56c831f465a4e",
     );
     expect(
       requests.map((request) => request.headers.get("x-amz-date")),
     ).toEqual(["20260828T123456Z", "20260828T123456Z"]);
     await expect(requests[1]!.text()).resolves.toBe(
       JSON.stringify({
-        FromEmailAddress: "Ezacto <notify@example.test>",
+        FromEmailAddress: "Billing <billing@example.test>",
         Destination: { ToAddresses: ["Avery <owner@example.test>"] },
         Content: {
           Simple: {
@@ -103,6 +105,7 @@ describe("SES HTTP provider", () => {
         EmailTags: [
           { Name: "ezacto_idempotency_key", Value: "ezacto-email-7" },
         ],
+        ReplyToAddresses: ["Accounts <accounts@example.test>"],
         ConfigurationSetName: "ezacto-events",
       }),
     );

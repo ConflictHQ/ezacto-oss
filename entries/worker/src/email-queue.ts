@@ -5,6 +5,7 @@ import type {
   QueuedEmailJob,
 } from '@ezacto/mailer'
 import {
+  createBootstrapSenderQueuedMailer,
   createQueuedMailer,
   processQueuedEmail,
 } from '@ezacto/mailer'
@@ -46,9 +47,19 @@ export { createQueuedAuthMailer } from '@ezacto/api'
 export const createWorkerAuthMailer = (
   queue: Queue<QueuedEmailJob>,
   log: EmailLogStore,
+  from: string,
+  templates: {
+    getTemplate: Parameters<typeof createQueuedAuthMailer>[1]['getTemplate']
+  },
+  organizationName: () => Promise<string>,
   appOrigin: string,
 ): AuthMailer =>
   createQueuedAuthMailer(
-    createQueuedMailer(log, createCloudflareEmailQueue(queue)),
+    createBootstrapSenderQueuedMailer(
+      from,
+      createQueuedMailer(log, createCloudflareEmailQueue(queue)),
+    ),
+    templates,
+    organizationName,
     appOrigin,
   )

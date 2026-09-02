@@ -5,6 +5,7 @@ import {
   EmailQueueUnavailableError,
   InProcessEmailQueue,
   createQueuedMailer,
+  createSenderBoundQueuedMailer,
   processQueuedEmail,
   type EmailLogRecord,
   type EmailLogStore,
@@ -14,6 +15,7 @@ import {
 } from '../src/index.js'
 
 const message: EmailMessage = {
+  from: { email: 'billing@example.test', name: 'Ezacto' },
   to: [{ email: 'Owner@Example.test', name: 'Avery' }],
   template: 'verify_email',
   subject: 'Verify your ezacto email',
@@ -23,6 +25,8 @@ const message: EmailMessage = {
 
 const record = (overrides: Partial<EmailLogRecord> = {}): EmailLogRecord => ({
   id: 7,
+  from: { email: 'billing@example.test', name: 'Ezacto' },
+  replyTo: [],
   to: [{ email: 'owner@example.test', name: 'Avery' }],
   template: 'verify_email',
   subject: 'Verify your ezacto email',
@@ -73,6 +77,91 @@ const store = (): EmailLogStore => {
 const job: QueuedEmailJob = { schemaVersion: 1, deliveryId: 7, message }
 
 describe('queued mailer', () => {
+  it('[security] blocks unverified senders before the durable log or queue is touched', async () => {
+    const log = store()
+    const queue = { send: vi.fn(async () => undefined) }
+    const queued = createQueuedMailer(log, queue)
+    const identities = {
+      resolveSenderIdentity: vi.fn(async () => ({
+        id: 41,
+        email: 'billing@example.test',
+        displayName: 'Billing',
+        replyToEmail: null,
+        archivedAt: null,
+        evidence: {
+          source: 'provider_api' as const,
+          verificationStatus: 'pending' as const,
+          dkimStatus: 'pending' as const,
+          mailFromStatus: 'not_configured' as const,
+          observedAt: '2026-09-02T00:00:00.000Z',
+        },
+      })),
+    }
+
+    const attempted = createSenderBoundQueuedMailer(identities, queued).enqueue({
+      senderIdentityId: 41,
+      to: message.to,
+      template: message.template,
+      subject: message.subject,
+      text: message.text,
+    })
+    await expect(attempted).rejects.toMatchObject({
+      name: 'SenderIdentityUnavailableError',
+      code: 'sender_verification_pending',
+      senderIdentityId: 41,
+    })
+    expect(log.createQueued).not.toHaveBeenCalled()
+    expect(queue.send).not.toHaveBeenCalled()
+  })
+
+  it('[unit] binds a verified organization From and Reply-To before queueing', async () => {
+    const queued = { enqueue: vi.fn(async () => record()) }
+    const identities = {
+      resolveSenderIdentity: vi.fn(async () => ({
+        id: 42,
+        email: 'billing@example.test',
+        displayName: 'Ezacto Billing',
+        replyToEmail: 'accounts@example.test',
+        archivedAt: null,
+        evidence: {
+          source: 'provider_api' as const,
+          verificationStatus: 'verified' as const,
+          dkimStatus: 'verified' as const,
+          mailFromStatus: 'verified' as const,
+          observedAt: '2026-09-02T00:00:00.000Z',
+        },
+      })),
+    }
+
+    await createSenderBoundQueuedMailer(identities, queued).enqueue({
+      to: message.to,
+      template: message.template,
+      subject: message.subject,
+      text: message.text,
+    })
+    expect(identities.resolveSenderIdentity).toHaveBeenCalledWith(undefined)
+    expect(queued.enqueue).toHaveBeenCalledWith({
+      from: { email: 'billing@example.test', name: 'Ezacto Billing' },
+      replyTo: [{ email: 'accounts@example.test' }],
+      to: message.to,
+      template: message.template,
+      subject: message.subject,
+      text: message.text,
+    })
+  })
+
+  it('[security] rejects header control characters before the durable log is written', async () => {
+    const log = store()
+    const queue = { send: vi.fn(async () => undefined) }
+    await expect(
+      createQueuedMailer(log, queue).enqueue({
+        ...message,
+        subject: 'Invoice\r\nBcc: attacker@example.test',
+      }),
+    ).rejects.toThrow('subject must not contain control characters')
+    expect(log.createQueued).not.toHaveBeenCalled()
+  })
+
   it('[unit] exposes an HTTP message/provider seam with no SMTP transport fields', async () => {
     const log = store()
     const queue = { send: vi.fn(async () => undefined) }

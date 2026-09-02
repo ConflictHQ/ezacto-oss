@@ -68,6 +68,14 @@ export {
   createD1EmailLogStore,
   type EmailLogStoreOptions,
 } from './email-log.js'
+export {
+  createD1EmailConfigurationStore,
+  EmailConfigurationError,
+  type EmailConfigurationStore,
+  type EmailTemplateVersionRecord,
+  type SenderIdentityEvidenceRecord,
+  type SenderIdentityRecord,
+} from './email-configuration.js'
 export { createReportRepository, type ReportRepository } from './reports.js'
 export { createD1IdentityStore, type IdentityStore, type IdentityStoreOptions } from './identity.js'
 export {

@@ -1,0 +1,481 @@
+import BetterSqlite3 from 'better-sqlite3'
+import { Miniflare } from 'miniflare'
+import { afterEach, describe, expect, it } from 'vitest'
+import { inspectEmailTemplateVariables } from '@ezacto/core'
+import {
+  createContainerEmailConfigurationStore,
+  createD1EmailConfigurationStore,
+  EmailConfigurationError,
+  type EmailConfigurationStore,
+} from '../src/email-configuration.js'
+import { migrateContainer, migrateD1 } from '../src/migrate.js'
+
+const initial = '2026-09-02T04:00:00.000Z'
+const later = '2026-09-02T04:01:00.000Z'
+const latest = '2026-09-02T04:02:00.000Z'
+
+interface Harness {
+  store: EmailConfigurationStore
+  run(sql: string, bindings?: readonly unknown[]): Promise<void>
+  rows<T>(sql: string, bindings?: readonly unknown[]): Promise<T[]>
+  close(): Promise<void>
+}
+
+const containerHarness = (): Harness => {
+  const database = new BetterSqlite3(':memory:')
+  migrateContainer(database)
+  database.exec('BEGIN')
+  database.prepare(
+    `INSERT INTO organizations (id, name, modules, created_at, updated_at)
+     VALUES (1, 'North Peak Studio', '{"invoices":true}', ?, ?)`,
+  ).run(initial, initial)
+  database.prepare(
+    `INSERT INTO users (
+      id, first_name, last_name, profile, manager_grants, is_owner, created_at, updated_at
+    ) VALUES (1, 'Avery', 'Owner', 'administrator', '[]', 0, ?, ?)`,
+  ).run(initial, initial)
+  database.exec('COMMIT')
+  return {
+    store: createContainerEmailConfigurationStore(database),
+    run: async (sql, bindings = []) => {
+      database.prepare(sql).run(...bindings)
+    },
+    rows: async <T>(sql: string, bindings: readonly unknown[] = []) =>
+      database.prepare(sql).all(...bindings) as T[],
+    close: async () => {
+      database.close()
+    },
+  }
+}
+
+const d1Harness = async (): Promise<Harness> => {
+  const miniflare = new Miniflare({
+    modules: true,
+    script: 'export default { fetch() { return new Response("ok") } }',
+    d1Databases: ['DB'],
+  })
+  const database = await miniflare.getD1Database('DB')
+  await migrateD1(database)
+  await database.batch([
+    database
+      .prepare(
+        `INSERT INTO organizations (id, name, modules, created_at, updated_at)
+         VALUES (1, 'North Peak Studio', '{"invoices":true}', ?, ?)`,
+      )
+      .bind(initial, initial),
+    database
+      .prepare(
+        `INSERT INTO users (
+          id, first_name, last_name, profile, manager_grants, is_owner, created_at, updated_at
+        ) VALUES (1, 'Avery', 'Owner', 'administrator', '[]', 0, ?, ?)`,
+      )
+      .bind(initial, initial),
+  ])
+  return {
+    store: createD1EmailConfigurationStore(database),
+    run: async (sql, bindings = []) => {
+      await database.prepare(sql).bind(...bindings).run()
+    },
+    rows: async <T>(sql: string, bindings: readonly unknown[] = []) =>
+      (await database.prepare(sql).bind(...bindings).all<T>()).results,
+    close: async () => miniflare.dispose(),
+  }
+}
+
+const factories = [
+  ['container', async () => containerHarness()],
+  ['D1', d1Harness],
+] as const
+
+for (const [runtime, factory] of factories) {
+  describe(`email configuration (${runtime})`, () => {
+    let harness: Harness | undefined
+    afterEach(async () => harness?.close())
+
+    it('[unit] seeds all template types and appends immutable idempotent versions', async () => {
+      harness = await factory()
+      const templates = await harness.store.listTemplates()
+      expect(templates.map(({ kind, version }) => [kind, version])).toEqual([
+        ['auth_email_verification', 1],
+        ['auth_password_reset', 1],
+        ['invoice', 1],
+        ['reminder', 1],
+        ['thank_you', 1],
+      ])
+      for (const seeded of templates) {
+        expect([
+          ...inspectEmailTemplateVariables(seeded.kind, seeded.subjectTemplate),
+          ...inspectEmailTemplateVariables(seeded.kind, seeded.textTemplate),
+          ...(seeded.htmlTemplate === null
+            ? []
+            : inspectEmailTemplateVariables(seeded.kind, seeded.htmlTemplate)),
+        ]).toEqual([])
+      }
+
+      const input = {
+        kind: 'invoice' as const,
+        expectedVersion: 1,
+        subjectTemplate: 'Invoice #%invoice_id% from %company_name%',
+        textTemplate: 'Invoice %invoice_number% totals %invoice_amount%.',
+        htmlTemplate: '<p>Invoice %invoice_number% totals %invoice_amount%.</p>',
+        actorUserId: 1,
+        commandId: 'template-invoice-v2',
+        occurredAt: later,
+      }
+      const created = await harness.store.createTemplateVersion(input)
+      await expect(harness.store.createTemplateVersion(input)).resolves.toEqual(created)
+      expect(created).toMatchObject({ kind: 'invoice', version: 2, createdByUserId: 1 })
+      expect(await harness.store.listTemplateVersions('invoice')).toHaveLength(2)
+
+      await expect(
+        harness.store.createTemplateVersion({
+          ...input,
+          subjectTemplate: 'Changed input',
+        }),
+      ).rejects.toMatchObject({ code: 'command_id_reused' })
+      await expect(
+        harness.store.createTemplateVersion({
+          ...input,
+          commandId: 'unknown-variable',
+          expectedVersion: 2,
+          subjectTemplate: 'Invoice %invented_harvest_variable%',
+        }),
+      ).rejects.toMatchObject({ code: 'invalid_input' })
+      expect(await harness.store.listTemplateVersions('invoice')).toHaveLength(2)
+
+      await expect(
+        harness.store.createTemplateVersion({
+          kind: 'thank_you',
+          expectedVersion: 1,
+          subjectTemplate: 'Thanks for %invoice_id%',
+          textTemplate: 'Imported literal: %future_harvest_variable%',
+          unknownVariablePolicy: 'literal',
+          actorUserId: 1,
+          commandId: 'literal-import-template',
+          occurredAt: later,
+        }),
+      ).resolves.toMatchObject({
+        kind: 'thank_you',
+        version: 2,
+        unknownVariablePolicy: 'literal',
+      })
+
+      await expect(
+        harness.run(
+          `UPDATE email_template_versions SET subject_template = 'tampered'
+           WHERE template_kind = 'invoice' AND version = 1`,
+        ),
+      ).rejects.toThrow(/immutable/)
+      await expect(
+        harness.run(
+          `DELETE FROM email_template_versions
+           WHERE template_kind = 'invoice' AND version = 1`,
+        ),
+      ).rejects.toThrow(/immutable/)
+      await expect(
+        harness.run(
+          `UPDATE email_template_heads SET current_version = 1
+           WHERE template_kind = 'invoice'`,
+        ),
+      ).rejects.toThrow(/advance exactly one/)
+      await expect(
+        harness.run(
+          `UPDATE email_template_heads SET updated_at = ?
+           WHERE template_kind = 'invoice'`,
+          [latest],
+        ),
+      ).rejects.toThrow(/advance exactly one/)
+      await expect(
+        harness.run(
+          `UPDATE email_template_commands SET occurred_at = ?
+           WHERE command_id = 'template-invoice-v2'`,
+          [latest],
+        ),
+      ).rejects.toThrow(/immutable/)
+      await expect(
+        harness.run(
+          `DELETE FROM email_template_commands
+           WHERE command_id = 'template-invoice-v2'`,
+        ),
+      ).rejects.toThrow(/immutable/)
+    })
+
+    it('[concurrency] serializes version races and preserves the winner exactly', async () => {
+      harness = await factory()
+      const base = {
+        kind: 'reminder' as const,
+        expectedVersion: 1,
+        subjectTemplate: 'Reminder for %invoice_number%',
+        textTemplate: 'Due %invoice_due_date%.',
+        actorUserId: 1,
+        occurredAt: later,
+      }
+      const settled = await Promise.allSettled([
+        harness.store.createTemplateVersion({ ...base, commandId: 'reminder-race-a' }),
+        harness.store.createTemplateVersion({
+          ...base,
+          commandId: 'reminder-race-b',
+          textTemplate: 'Invoice %invoice_number% is due %invoice_due_date%.',
+        }),
+      ])
+      expect(settled.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
+      expect(settled.filter(({ status }) => status === 'rejected')).toHaveLength(1)
+      const rejected = settled.find(({ status }) => status === 'rejected')
+      expect(rejected).toMatchObject({ reason: { code: 'version_conflict' } })
+      expect(await harness.store.listTemplateVersions('reminder')).toHaveLength(2)
+
+      await harness.store.createSenderIdentity({
+        id: 77,
+        email: 'race@example.test',
+        displayName: 'Race Sender',
+        provider: 'ses',
+        providerIdentity: 'race.example.test',
+        actorUserId: 1,
+        commandId: 'sender-race-create',
+        occurredAt: initial,
+      })
+      const senderUpdates = await Promise.allSettled([
+        harness.store.updateSenderIdentity({
+          id: 77,
+          expectedVersion: 0,
+          displayName: 'Race A',
+          actorUserId: 1,
+          commandId: 'sender-race-a',
+          occurredAt: later,
+        }),
+        harness.store.updateSenderIdentity({
+          id: 77,
+          expectedVersion: 0,
+          displayName: 'Race B',
+          actorUserId: 1,
+          commandId: 'sender-race-b',
+          occurredAt: later,
+        }),
+      ])
+      expect(senderUpdates.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
+      expect(senderUpdates.filter(({ status }) => status === 'rejected')).toHaveLength(1)
+      expect(await harness.store.getSenderIdentity(77)).toMatchObject({ version: 1 })
+
+      const evidenceUpdates = await Promise.allSettled([
+        harness.store.recordSenderEvidence({
+          id: 77,
+          expectedEvidenceVersion: 0,
+          evidence: {
+            verificationStatus: 'pending',
+            dkimStatus: 'pending',
+            mailFromDomain: null,
+            mailFromStatus: 'not_configured',
+            observedAt: latest,
+          },
+          actorUserId: 1,
+          commandId: 'sender-evidence-race-a',
+          occurredAt: latest,
+        }),
+        harness.store.recordSenderEvidence({
+          id: 77,
+          expectedEvidenceVersion: 0,
+          evidence: {
+            verificationStatus: 'failed',
+            dkimStatus: 'failed',
+            mailFromDomain: null,
+            mailFromStatus: 'not_configured',
+            observedAt: latest,
+          },
+          actorUserId: 1,
+          commandId: 'sender-evidence-race-b',
+          occurredAt: latest,
+        }),
+      ])
+      expect(evidenceUpdates.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
+      expect(evidenceUpdates.filter(({ status }) => status === 'rejected')).toHaveLength(1)
+      expect((await harness.store.getSenderIdentity(77))?.evidence).toMatchObject({ version: 1 })
+    })
+
+    it('[security] keeps sender bindings immutable and requires provider evidence before defaulting', async () => {
+      harness = await factory()
+      const createInput = {
+        id: 42,
+        email: 'Billing@NorthPeak.test',
+        displayName: 'North Peak Billing',
+        replyToEmail: 'accounts@northpeak.test',
+        provider: 'ses',
+        providerIdentity: 'northpeak.test',
+        actorUserId: 1,
+        commandId: 'sender-create-42',
+        occurredAt: initial,
+      }
+      const created = await harness.store.createSenderIdentity(createInput)
+      await expect(harness.store.createSenderIdentity(createInput)).resolves.toEqual(created)
+      expect(created).toMatchObject({
+        id: 42,
+        email: 'billing@northpeak.test',
+        isDefault: false,
+        evidence: null,
+      })
+      await expect(
+        harness.store.setDefaultSenderIdentity({
+          id: 42,
+          expectedVersion: 0,
+          actorUserId: 1,
+          commandId: 'sender-default-too-soon',
+          occurredAt: later,
+        }),
+      ).rejects.toMatchObject({ code: 'sender_unverified' })
+
+      const pending = await harness.store.recordSenderEvidence({
+        id: 42,
+        expectedEvidenceVersion: 0,
+        evidence: {
+          verificationStatus: 'pending',
+          dkimStatus: 'pending',
+          mailFromDomain: 'bounce.northpeak.test',
+          mailFromStatus: 'pending',
+          observedAt: later,
+        },
+        actorUserId: 1,
+        commandId: 'sender-evidence-pending',
+        occurredAt: later,
+      })
+      expect(pending.evidence).toMatchObject({ version: 1, source: 'provider_api' })
+      await expect(
+        harness.store.replaySenderEvidence({
+          id: 42,
+          expectedEvidenceVersion: 0,
+          actorUserId: 1,
+          commandId: 'sender-evidence-pending',
+        }),
+      ).resolves.toEqual(pending)
+      await expect(
+        harness.store.replaySenderEvidence({
+          id: 42,
+          expectedEvidenceVersion: 1,
+          actorUserId: 1,
+          commandId: 'sender-evidence-pending',
+        }),
+      ).rejects.toMatchObject({ code: 'command_id_reused' })
+      await expect(
+        harness.store.setDefaultSenderIdentity({
+          id: 42,
+          expectedVersion: 0,
+          actorUserId: 1,
+          commandId: 'sender-default-still-pending',
+          occurredAt: later,
+        }),
+      ).rejects.toMatchObject({ code: 'sender_unverified' })
+
+      const verified = await harness.store.recordSenderEvidence({
+        id: 42,
+        expectedEvidenceVersion: 1,
+        evidence: {
+          verificationStatus: 'verified',
+          dkimStatus: 'verified',
+          mailFromDomain: 'bounce.northpeak.test',
+          mailFromStatus: 'verified',
+          observedAt: latest,
+        },
+        actorUserId: 1,
+        commandId: 'sender-evidence-verified',
+        occurredAt: latest,
+      })
+      expect(verified.evidence).toMatchObject({ version: 2, verificationStatus: 'verified' })
+      await expect(
+        harness.store.recordSenderEvidence({
+          id: 42,
+          expectedEvidenceVersion: 0,
+          evidence: {
+            verificationStatus: 'pending',
+            dkimStatus: 'pending',
+            mailFromDomain: 'bounce.northpeak.test',
+            mailFromStatus: 'pending',
+            observedAt: later,
+          },
+          actorUserId: 1,
+          commandId: 'sender-evidence-pending',
+          occurredAt: later,
+        }),
+      ).resolves.toEqual(pending)
+      const selected = await harness.store.setDefaultSenderIdentity({
+        id: 42,
+        expectedVersion: 0,
+        actorUserId: 1,
+        commandId: 'sender-default-verified',
+        occurredAt: latest,
+      })
+      expect(selected).toMatchObject({ isDefault: true, version: 1 })
+      await expect(harness.store.resolveSenderIdentity()).resolves.toMatchObject({ id: 42 })
+
+      await expect(
+        harness.run(`UPDATE sender_identities SET email = 'other@northpeak.test' WHERE id = 42`),
+      ).rejects.toThrow(/immutable/)
+      await expect(
+        harness.run(`UPDATE sender_identities SET display_name = 'Tampered' WHERE id = 42`),
+      ).rejects.toThrow(/version must advance/)
+      await expect(
+        harness.run(`DELETE FROM sender_identities WHERE id = 42`),
+      ).rejects.toThrow(/archived/)
+      await expect(
+        harness.run(
+          `UPDATE sender_identity_evidence SET dkim_status = 'failed'
+           WHERE sender_identity_id = 42 AND evidence_version = 2`,
+        ),
+      ).rejects.toThrow(/immutable/)
+      await expect(
+        harness.run(
+          `UPDATE sender_identity_commands SET occurred_at = ?
+           WHERE command_id = 'sender-evidence-verified'`,
+          [initial],
+        ),
+      ).rejects.toThrow(/immutable/)
+      await expect(
+        harness.run(
+          `DELETE FROM sender_identity_commands
+           WHERE command_id = 'sender-evidence-verified'`,
+        ),
+      ).rejects.toThrow(/immutable/)
+      await expect(
+        harness.store.archiveSenderIdentity({
+          id: 42,
+          expectedVersion: 1,
+          actorUserId: 1,
+          commandId: 'archive-default',
+          occurredAt: latest,
+        }),
+      ).rejects.toMatchObject({ code: 'version_conflict' })
+    })
+  })
+}
+
+describe('email configuration tenancy', () => {
+  it('[security] structurally isolates identical sender identities in separate databases', async () => {
+    const first = containerHarness()
+    const second = containerHarness()
+    try {
+      await first.store.createSenderIdentity({
+        id: 7,
+        email: 'billing@example.test',
+        displayName: 'First Tenant',
+        provider: 'ses',
+        providerIdentity: 'example.test',
+        actorUserId: 1,
+        commandId: 'tenant-first',
+        occurredAt: initial,
+      })
+      await second.store.createSenderIdentity({
+        id: 7,
+        email: 'billing@example.test',
+        displayName: 'Second Tenant',
+        provider: 'ses',
+        providerIdentity: 'example.test',
+        actorUserId: 1,
+        commandId: 'tenant-second',
+        occurredAt: initial,
+      })
+      expect((await first.store.getSenderIdentity(7))?.displayName).toBe('First Tenant')
+      expect((await second.store.getSenderIdentity(7))?.displayName).toBe('Second Tenant')
+      expect(EmailConfigurationError).toBeTypeOf('function')
+    } finally {
+      await first.close()
+      await second.close()
+    }
+  })
+})
