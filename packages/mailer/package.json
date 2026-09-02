@@ -25,6 +25,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
+    "@ezacto/core": "0.0.0",
     "aws4fetch": "^1.0.20",
     "nodemailer": "^9.1.0"
   },

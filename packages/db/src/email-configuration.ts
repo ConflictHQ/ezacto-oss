@@ -2,14 +2,12 @@ import type BetterSqlite3 from 'better-sqlite3'
 import {
   emailTemplateKinds,
   inspectEmailTemplateVariables,
+  senderIdentityEligibilityFailure,
+  senderIdentityUnavailableMessage,
   type EmailTemplateKind,
+  type SenderIdentityUnavailableCode,
   type UnknownEmailTemplateVariablePolicy,
 } from '@ezacto/core'
-import {
-  SenderIdentityUnavailableError,
-  senderIdentityEligibilityFailure,
-  type SenderIdentityUnavailableCode,
-} from '@ezacto/mailer'
 
 export type SenderVerificationStatus =
   | 'pending'
@@ -1153,7 +1151,7 @@ const createStore = (database: NativeClient): EmailConfigurationStore => {
       if (eligibilityFailure !== null) {
         throw new EmailConfigurationError(
           'sender_unverified',
-          new SenderIdentityUnavailableError(eligibilityFailure, current.id).message,
+          senderIdentityUnavailableMessage(eligibilityFailure),
         )
       }
       if (current.version !== expectedVersion) {
