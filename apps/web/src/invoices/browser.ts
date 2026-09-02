@@ -765,8 +765,8 @@ export const createInvoicePaymentController = (
     const body = composerBody.value.trim()
     try {
       recipients = invoiceRecipients(composerRecipients.value)
-      if (subject === '') throw new Error('Enter a subject before sending.')
-      if (body === '') throw new Error('Enter a message before sending.')
+      if (subject === '') throw new Error('Enter a subject before recording.')
+      if (body === '') throw new Error('Enter a message before recording.')
       sendReminderOn = composerReminderToggle.checked
         ? invoiceReminderDate(composerReminderDate.value, localDate())
         : null

@@ -64,7 +64,7 @@ export const renderInvoiceComposerDialog = (): string => `
         </section>
         <aside class="invoice-variable-reference" aria-labelledby="invoice-variable-title">
           <h3 id="invoice-variable-title">Template variables</h3>
-          <p>Use these anywhere in the subject or message. They are replaced before sending.</p>
+          <p>Use these anywhere in the subject or message. They are replaced before the record is saved.</p>
           <dl>
             <div><dt><code>%invoice_id%</code></dt><dd>Invoice record ID</dd></div>
             <div><dt><code>%invoice_number%</code></dt><dd>Display number</dd></div>

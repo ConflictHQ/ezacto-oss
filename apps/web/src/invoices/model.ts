@@ -105,7 +105,7 @@ export const invoiceRecipients = (raw: string): InvoiceRecipient[] => {
     .map((line) => line.trim())
     .filter((line) => line !== '')
   if (lines.length === 0) throw new Error('Enter at least one recipient email address.')
-  if (lines.length > 1_000) throw new Error('No more than 1,000 recipients can be sent at once.')
+  if (lines.length > 1_000) throw new Error('No more than 1,000 recipients can be recorded at once.')
   const seen = new Set<string>()
   return lines.flatMap((line) => {
     const named = /^(.*?)\s*<([^<>]+)>$/u.exec(line)
