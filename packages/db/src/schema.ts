@@ -2040,6 +2040,119 @@ export const eventOutbox = sqliteTable(
   ],
 )
 
+export const outboxDeliveryReceipts = sqliteTable(
+  'outbox_delivery_receipts',
+  {
+    subscriberId: text('subscriber_id').notNull(),
+    eventId: text('event_id')
+      .notNull()
+      .references(() => eventOutbox.id, { onDelete: 'restrict' }),
+    status: text('status', {
+      enum: ['pending', 'processing', 'delivered', 'failed'],
+    })
+      .notNull()
+      .default('pending'),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    nextAttemptAt: text('next_attempt_at'),
+    activeAttemptId: text('active_attempt_id'),
+    attemptLeaseExpiresAt: text('attempt_lease_expires_at'),
+    lastErrorCode: text('last_error_code', {
+      enum: ['subscriber_timeout', 'subscriber_rejected'],
+    }),
+    deliveredAt: text('delivered_at'),
+    failedAt: text('failed_at'),
+    ...timestamps,
+  },
+  (table) => [
+    primaryKey({ columns: [table.subscriberId, table.eventId] }),
+    index('outbox_delivery_receipts_ready').on(
+      table.subscriberId,
+      table.status,
+      table.nextAttemptAt,
+      table.updatedAt,
+      table.eventId,
+    ),
+    index('outbox_delivery_receipts_failures')
+      .on(table.status, table.failedAt, table.subscriberId, table.eventId)
+      .where(sql`${table.status} = 'failed'`),
+    check(
+      'outbox_delivery_receipts_subscriber_id_format',
+      sql`length(${table.subscriberId}) between 1 and 128
+        and ${table.subscriberId} not glob '*[^A-Za-z0-9._:-]*'`,
+    ),
+    check(
+      'outbox_delivery_receipts_attempt_count_safe',
+      sql`${table.attemptCount} between 0 and 9007199254740991`,
+    ),
+    check(
+      'outbox_delivery_receipts_active_attempt_format',
+      sql`${table.activeAttemptId} is null or (
+        length(${table.activeAttemptId}) between 1 and 128
+        and ${table.activeAttemptId} not glob '*[^A-Za-z0-9._:-]*'
+      )`,
+    ),
+    check(
+      'outbox_delivery_receipts_attempt_pair',
+      sql`(${table.activeAttemptId} is null) = (${table.attemptLeaseExpiresAt} is null)`,
+    ),
+    check(
+      'outbox_delivery_receipts_next_attempt_canonical',
+      nullableCanonicalTimestamp(table.nextAttemptAt),
+    ),
+    check(
+      'outbox_delivery_receipts_lease_canonical',
+      nullableCanonicalTimestamp(table.attemptLeaseExpiresAt),
+    ),
+    check(
+      'outbox_delivery_receipts_delivered_canonical',
+      nullableCanonicalTimestamp(table.deliveredAt),
+    ),
+    check(
+      'outbox_delivery_receipts_failed_canonical',
+      nullableCanonicalTimestamp(table.failedAt),
+    ),
+    check('outbox_delivery_receipts_created_canonical', canonicalTimestamp(table.createdAt)),
+    check('outbox_delivery_receipts_updated_canonical', canonicalTimestamp(table.updatedAt)),
+    check(
+      'outbox_delivery_receipts_timestamp_order',
+      sql`julianday(${table.updatedAt}) >= julianday(${table.createdAt})`,
+    ),
+    check(
+      'outbox_delivery_receipts_state_shape',
+      sql`(
+          ${table.status} = 'pending' and ${table.activeAttemptId} is null
+          and ${table.deliveredAt} is null and ${table.failedAt} is null
+        ) or (
+          ${table.status} = 'processing' and ${table.activeAttemptId} is not null
+          and ${table.nextAttemptAt} is null and ${table.deliveredAt} is null
+          and ${table.failedAt} is null and ${table.attemptCount} > 0
+        ) or (
+          ${table.status} = 'delivered' and ${table.activeAttemptId} is null
+          and ${table.nextAttemptAt} is null and ${table.lastErrorCode} is null
+          and ${table.deliveredAt} is not null and ${table.failedAt} is null
+        ) or (
+          ${table.status} = 'failed' and ${table.activeAttemptId} is null
+          and ${table.nextAttemptAt} is null and ${table.lastErrorCode} is not null
+          and ${table.deliveredAt} is null and ${table.failedAt} is not null
+        )`,
+    ),
+  ],
+)
+
+export const activityLog = sqliteTable(
+  'activity_log',
+  {
+    eventId: text('event_id')
+      .primaryKey()
+      .references(() => eventOutbox.id, { onDelete: 'restrict' }),
+    recordedAt: text('recorded_at').notNull(),
+  },
+  (table) => [
+    index('activity_log_recorded_event').on(table.recordedAt, table.eventId),
+    check('activity_log_recorded_at_canonical', canonicalTimestamp(table.recordedAt)),
+  ],
+)
+
 export const invoiceCommandLedger = sqliteTable(
   'invoice_command_ledger',
   {

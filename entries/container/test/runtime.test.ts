@@ -93,7 +93,38 @@ describe('container runtime composition', () => {
       first.database
         .prepare('SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1')
         .get(),
-    ).toEqual({ id: '0028_timesheet_lock_policy' })
+    ).toEqual({ id: '0029_outbox_delivery' })
+
+    await first.drainOutbox()
+    const eventAt = '2026-01-02T03:04:05.000Z'
+    first.database
+      .prepare(
+        `INSERT INTO event_outbox (
+          id, aggregate_type, aggregate_id, aggregate_sequence,
+          event_type, payload_json, occurred_at, available_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        'container-event-1',
+        'fixture',
+        92,
+        1,
+        'fixture.committed',
+        JSON.stringify({ schema_version: 1, event_type: 'fixture.committed' }),
+        eventAt,
+        eventAt,
+      )
+    await first.drainOutbox()
+    expect(
+      first.database
+        .prepare(
+          `SELECT receipt.status, activity.recorded_at AS recordedAt
+           FROM outbox_delivery_receipts receipt
+           JOIN activity_log activity ON activity.event_id = receipt.event_id
+           WHERE receipt.event_id = ?`,
+        )
+        .get('container-event-1'),
+    ).toMatchObject({ status: 'delivered', recordedAt: expect.any(String) })
 
     const signup = await request(
       '/auth/signup',

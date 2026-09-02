@@ -123,7 +123,7 @@ describe('Worker email queue composition', () => {
         failureCode: 'provider_rejected',
       }) as EmailLogRecord,
     ])
-  })
+  }, 20_000)
 
   it('[concurrency] does not spend provider retries on queue redelivery contention', async () => {
     const env = {

@@ -20,6 +20,7 @@ export {
 export * from './migrate.js'
 export * from './money-resources.js'
 export * from './operations.js'
+export * from './outbox.js'
 export * from './oidc-transactions.js'
 export * from './password-auth.js'
 export * from './rate-resolver.js'
