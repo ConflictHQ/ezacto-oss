@@ -1,5 +1,6 @@
 import { EzactoApiError, type ExpenseCategory, type Whoami } from '@ezacto/client'
 import {
+  expenseCategoryCanWrite,
   expenseCategoryFilterFromUrl,
   expenseCategoryFilterUrl,
   expenseCategoryInput,
@@ -139,7 +140,7 @@ export const createExpenseCategoryDirectoryController = (
     activeSession === null || activeSession.signal.aborted ? null : activeSession
 
   const canWrite = (session = current()): boolean =>
-    session?.identity.profile === 'administrator'
+    session !== null && expenseCategoryCanWrite(session.identity)
 
   const closeDialogs = (): void => {
     if (editDialog.open) editDialog.close()

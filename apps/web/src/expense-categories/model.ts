@@ -2,6 +2,7 @@ import type {
   ExpenseCategory,
   ExpenseCategoryInput,
   ExpenseCategoryPatch,
+  Whoami,
 } from '@ezacto/client'
 
 export type ExpenseCategoryFilter = 'active' | 'all'
@@ -41,6 +42,11 @@ export interface ExpenseCategoryFormValues {
 }
 
 const centsLimit = 9_000_000_000_000n
+
+export const expenseCategoryCanWrite = (
+  identity: Pick<Whoami, 'authentication' | 'profile'>,
+): boolean =>
+  identity.profile === 'administrator' && identity.authentication.kind === 'session'
 
 export const expenseCategoryFilterFromUrl = (url: URL): ExpenseCategoryFilter =>
   url.searchParams.get('status') === 'all' ? 'all' : 'active'

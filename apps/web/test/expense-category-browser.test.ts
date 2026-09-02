@@ -274,6 +274,37 @@ describe('Expense category browser controller', () => {
     expect(api.archiveDirectoryExpenseCategory).not.toHaveBeenCalled()
   })
 
+  it('[security] keeps an administrator API token read-only', async () => {
+    writeDocument('/expense-categories?status=all')
+    const api = baseApi()
+    await createExpenseCategoryDirectoryController(api).activate(
+      {
+        ...identity('administrator'),
+        authentication: { kind: 'token', token_id: 4, scopes: ['expenses:read'] },
+      },
+      new AbortController().signal,
+      () => false,
+    )
+
+    expect(api.listDirectoryExpenseCategories).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.any(AbortSignal),
+    )
+    expect(document.querySelector('[data-expense-category-list]')?.textContent).toContain(
+      'Travel',
+    )
+    expect(
+      [...document.querySelectorAll<HTMLElement>('[data-expense-category-write]')].every(
+        (item) => item.hidden,
+      ),
+    ).toBe(true)
+    expect(document.querySelector('[data-expense-category-list] button')).toBeNull()
+    expect(api.createDirectoryExpenseCategory).not.toHaveBeenCalled()
+    expect(api.updateDirectoryExpenseCategory).not.toHaveBeenCalled()
+    expect(api.archiveDirectoryExpenseCategory).not.toHaveBeenCalled()
+  })
+
   it('[security] rejects a late session-A page after session B handles popstate', async () => {
     writeDocument()
     const oldPage = deferred<ReturnType<typeof page>>()

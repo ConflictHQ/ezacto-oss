@@ -2,6 +2,7 @@ import type { ExpenseCategory, EzactoClient } from '@ezacto/client'
 import { describe, expect, it, vi } from 'vitest'
 import { createShellApi } from '../src/index.js'
 import {
+  expenseCategoryCanWrite,
   expenseCategoryFilterFromUrl,
   expenseCategoryFilterUrl,
   expenseCategoryInput,
@@ -22,6 +23,24 @@ const category = (overrides: Partial<ExpenseCategory> = {}): ExpenseCategory => 
 })
 
 describe('Expense category UI model', () => {
+  it('allows category writes only from an administrator session', () => {
+    expect(
+      expenseCategoryCanWrite({
+        profile: 'administrator',
+        authentication: { kind: 'session' },
+      }),
+    ).toBe(true)
+    expect(
+      expenseCategoryCanWrite({
+        profile: 'administrator',
+        authentication: { kind: 'token', token_id: 4, scopes: ['expenses:read'] },
+      }),
+    ).toBe(false)
+    expect(
+      expenseCategoryCanWrite({ profile: 'member', authentication: { kind: 'session' } }),
+    ).toBe(false)
+  })
+
   it('maps directory operations to the generated client and archives with an explicit patch', async () => {
     const response = { data: category(), links: { self: '/api/v1/expense-categories/1' } }
     const listResponse = { data: [category()], links: {}, page: { next_cursor: null } }
