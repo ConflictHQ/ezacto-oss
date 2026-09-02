@@ -2113,6 +2113,9 @@ export const senderIdentityEvidence = sqliteTable(
       .references(() => senderIdentities.id, { onDelete: 'restrict' }),
     evidenceVersion: integer('evidence_version').notNull(),
     source: text('source', { enum: ['provider_api'] }).notNull(),
+    identityKind: text('identity_kind', {
+      enum: ['email_address', 'domain'],
+    }).notNull(),
     verificationStatus: text('verification_status', {
       enum: ['pending', 'verified', 'failed', 'temporary_failure'],
     }).notNull(),

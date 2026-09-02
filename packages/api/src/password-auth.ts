@@ -67,6 +67,9 @@ export interface PasswordSessionIssuer {
 export interface PasswordAuthRouteOptions {
   service: PasswordAuthService
   sessions: PasswordSessionIssuer
+  /** Deployment sender used only while creating the first owner and organization. */
+  bootstrapMailer?: AuthMailer
+  /** Organization sender used after bootstrap; it must enforce authoritative identity evidence. */
   mailer?: AuthMailer
   clientKey(request: Request): string
 }
@@ -127,8 +130,8 @@ const safePrincipal = (principal: ResolvedUserIdentity) => ({
 const translateAuthError = (error: unknown): never => {
   if (error instanceof SenderIdentityUnavailableError) {
     throw new ApiError({
-      status: 503,
-      code: 'sender_identity_unverified',
+      status: 409,
+      code: error.code,
       message: error.message,
     })
   }
@@ -206,7 +209,7 @@ export const installPasswordAuthRoutes = <Bindings extends object>(
       'password',
     ])
     try {
-      const mailer = requireMailer(options.mailer)
+      const mailer = requireMailer(options.bootstrapMailer)
       const delivery = await options.service.signup({
         organizationName: body.organization_name!,
         firstName: body.first_name!,

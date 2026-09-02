@@ -230,8 +230,92 @@ describe('Worker email queue composition', () => {
       RELEASE: 'mailer-test',
     } satisfies WorkerEnv
     const services = await createRuntimeServices(env)
+    expect(services.bootstrapAuthMailer).toBeUndefined()
     expect(services.authMailer).toBeUndefined()
   })
+
+  it('[integration] blocks established-organization auth mail on real D1 before log, queue, or SES', async () => {
+    const isolated = new Miniflare({
+      modules: true,
+      script: 'export default { fetch() { return new Response("ok") } }',
+      d1Databases: ['DB'],
+    })
+    try {
+      const isolatedDatabase = await isolated.getD1Database('DB')
+      const jobs: QueuedEmailJob[] = []
+      const queue = {
+        send: vi.fn(async (job: QueuedEmailJob) => void jobs.push(job)),
+      } as unknown as Queue<QueuedEmailJob>
+      const env = {
+        DB: isolatedDatabase,
+        API_CURSOR_SIGNING_KEY: cursorKey,
+        EMAIL_QUEUE: queue,
+        APP_BASE_URL: 'https://ezacto.example',
+        AWS_ACCESS_KEY_ID: 'TESTACCESSKEY',
+        AWS_SECRET_ACCESS_KEY: 'test-secret-key',
+        SES_REGION: 'us-west-2',
+        SES_FROM: 'bootstrap@example.test',
+        ENVIRONMENT: 'test',
+        RELEASE: 'sender-gate-acceptance',
+      } satisfies WorkerEnv
+      const providerFetch = vi.fn(async () => Response.json({}))
+      const emailProvider = createWorkerSesMailer(env, { fetch: providerFetch })!
+      const services = await createRuntimeServices(env, { emailProvider })
+      const app = createApp(services)
+      const request = (path: string, payload: unknown) =>
+        app.request(
+          path,
+          {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'cf-connecting-ip': '198.51.100.31',
+            },
+            body: JSON.stringify(payload),
+          },
+          env,
+        )
+
+      const signup = await request('/auth/signup', {
+        organization_name: 'Bound Sender Studio',
+        first_name: 'Avery',
+        last_name: 'Ng',
+        email: 'owner@example.test',
+        password,
+      })
+      expect(signup.status).toBe(202)
+      expect(jobs).toHaveLength(1)
+      const token = /ezacto_verify_[A-Za-z0-9_-]{16}_[A-Za-z0-9_-]{43}/u.exec(
+        jobs[0]!.message.text,
+      )?.[0]
+      expect(token).toBeTruthy()
+      expect((await request('/auth/verify-email', { token })).status).toBe(200)
+
+      await services.emailConfiguration.createSenderIdentity({
+        id: 41,
+        email: 'billing@example.test',
+        displayName: 'Bound Sender Billing',
+        provider: 'ses',
+        providerIdentity: 'example.test',
+        actorUserId: 1,
+        commandId: 'worker-unverified-sender',
+        occurredAt: '2026-09-02T06:00:00.000Z',
+      })
+      const logCountBeforeReset = (await services.emailLog.list()).length
+      const blocked = await request('/auth/password/forgot', {
+        email: 'owner@example.test',
+      })
+      expect(blocked.status).toBe(409)
+      expect(await blocked.json()).toMatchObject({
+        error: { code: 'sender_verification_pending' },
+      })
+      expect(jobs).toHaveLength(1)
+      expect(await services.emailLog.list()).toHaveLength(logCountBeforeReset)
+      expect(providerFetch).not.toHaveBeenCalled()
+    } finally {
+      await isolated.dispose()
+    }
+  }, 20_000)
 
   it('[unit] binds SES only from a complete validated static runtime contract', () => {
     const base = {
@@ -325,6 +409,7 @@ describe('Worker email queue composition', () => {
         new AbortController().signal,
       ),
     ).resolves.toMatchObject({
+      identityKind: 'domain',
       verificationStatus: 'verified',
       dkimStatus: 'pending',
       mailFromDomain: null,
@@ -332,7 +417,56 @@ describe('Worker email queue composition', () => {
     })
   })
 
-  it('[unit] rejects provider evidence that does not authorize the From address', async () => {
+  it('[unit] records disabled email-address DKIM without inventing alignment', async () => {
+    const env = {
+      DB: database,
+      API_CURSOR_SIGNING_KEY: cursorKey,
+      AWS_ACCESS_KEY_ID: 'TESTACCESSKEY',
+      AWS_SECRET_ACCESS_KEY: 'test-secret-key',
+      SES_REGION: 'us-west-2',
+      SES_FROM: 'notify@example.test',
+      ENVIRONMENT: 'test',
+      RELEASE: 'ses-email-evidence-test',
+    } satisfies WorkerEnv
+    const provider = createWorkerSesMailer(env, {
+      fetch: async () =>
+        Response.json({
+          IdentityType: 'EMAIL_ADDRESS',
+          VerifiedForSendingStatus: true,
+          DkimAttributes: { Status: 'SUCCESS', SigningEnabled: false },
+          MailFromAttributes: {},
+        }),
+    })!
+
+    await expect(
+      createSesSenderIdentityVerifier(provider).verify(
+        {
+          id: 1,
+          email: 'billing@example.test',
+          displayName: 'Billing',
+          replyToEmail: null,
+          provider: 'ses',
+          providerIdentity: 'billing@example.test',
+          isDefault: false,
+          version: 0,
+          archivedAt: null,
+          createdByUserId: 1,
+          createdAt: '2026-09-02T00:00:00.000Z',
+          updatedAt: '2026-09-02T00:00:00.000Z',
+          evidence: null,
+        },
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({
+      identityKind: 'email_address',
+      verificationStatus: 'verified',
+      dkimStatus: 'not_applicable',
+      mailFromDomain: null,
+      mailFromStatus: 'not_configured',
+    })
+  })
+
+  it('[unit] preserves provider identity kind for later exact From authorization', async () => {
     const base = {
       DB: database,
       API_CURSOR_SIGNING_KEY: cursorKey,
@@ -373,7 +507,8 @@ describe('Worker email queue composition', () => {
         new AbortController().signal,
       ),
     ).resolves.toMatchObject({
-      verificationStatus: 'failed',
+      identityKind: 'domain',
+      verificationStatus: 'verified',
       dkimStatus: 'verified',
     })
   })

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { SenderIdentityUnavailableError } from '@ezacto/mailer'
 import {
   createApiApp,
   installPasswordAuthRoutes,
@@ -21,7 +22,8 @@ const principal = {
 }
 
 const createHarness = () => {
-  const deliveries: AuthDelivery[] = []
+  const bootstrapDeliveries: AuthDelivery[] = []
+  const organizationDeliveries: AuthDelivery[] = []
   const service: PasswordAuthService = {
     signup: vi.fn(async () => verification),
     verifyEmail: vi.fn(async (token) => {
@@ -76,13 +78,18 @@ const createHarness = () => {
       installPasswordAuthRoutes(app, {
         service,
         sessions,
-        mailer: { enqueue: async (delivery) => void deliveries.push(delivery) },
+        bootstrapMailer: {
+          enqueue: async (delivery) => void bootstrapDeliveries.push(delivery),
+        },
+        mailer: {
+          enqueue: async (delivery) => void organizationDeliveries.push(delivery),
+        },
         clientKey: (request) =>
           request.headers.get('cf-connecting-ip') ?? 'test-client',
       })
     },
   })
-  return { app, service, sessions, deliveries }
+  return { app, service, sessions, bootstrapDeliveries, organizationDeliveries }
 }
 
 const post = (
@@ -101,7 +108,7 @@ const post = (
 
 describe('password authentication routes', () => {
   it('[api] queues verification without returning bearer material', async () => {
-    const { app, service, deliveries } = createHarness()
+    const { app, service, bootstrapDeliveries, organizationDeliveries } = createHarness()
     const response = await post(app, '/auth/signup', {
       organization_name: 'Halcyon Studio',
       first_name: 'Avery',
@@ -113,14 +120,15 @@ describe('password authentication routes', () => {
     const wire = await response.text()
     expect(wire).not.toContain(verification.token)
     expect(JSON.parse(wire)).toEqual({ data: { status: 'verification_sent' } })
-    expect(deliveries).toEqual([verification])
+    expect(bootstrapDeliveries).toEqual([verification])
+    expect(organizationDeliveries).toEqual([])
     expect(service.signup).toHaveBeenCalledWith(
       expect.objectContaining({ clientKey: '198.51.100.8' }),
     )
   })
 
   it('[api] returns the same reset-request response for known and unknown addresses', async () => {
-    const { app, deliveries } = createHarness()
+    const { app, bootstrapDeliveries, organizationDeliveries } = createHarness()
     const known = await post(app, '/auth/password/forgot', {
       email: 'owner@example.test',
     })
@@ -130,8 +138,38 @@ describe('password authentication routes', () => {
     expect(known.status).toBe(202)
     expect(unknown.status).toBe(202)
     expect(await known.json()).toEqual(await unknown.json())
-    expect(deliveries).toHaveLength(1)
-    expect(deliveries[0]?.kind).toBe('password_reset')
+    expect(organizationDeliveries).toHaveLength(1)
+    expect(organizationDeliveries[0]?.kind).toBe('password_reset')
+    expect(bootstrapDeliveries).toEqual([])
+  })
+
+  it('[api] maps an organization sender gate without falling back to bootstrap delivery', async () => {
+    const { service } = createHarness()
+    const bootstrapMailer = { enqueue: vi.fn(async () => undefined) }
+    const app = createApiApp({
+      installApp(app) {
+        installPasswordAuthRoutes(app, {
+          service,
+          sessions: { issue: async () => ({ setCookie: 'unused' }) },
+          bootstrapMailer,
+          mailer: {
+            enqueue: vi.fn(async () => {
+              throw new SenderIdentityUnavailableError('sender_alignment_missing', 41)
+            }),
+          },
+          clientKey: () => 'test-client',
+        })
+      },
+    })
+
+    const response = await post(app, '/auth/password/forgot', {
+      email: 'owner@example.test',
+    })
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'sender_alignment_missing' },
+    })
+    expect(bootstrapMailer.enqueue).not.toHaveBeenCalled()
   })
 
   it('[api] maps authenticated, unverified, and invalid sign-in outcomes', async () => {

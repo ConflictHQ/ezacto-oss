@@ -125,6 +125,29 @@ describe('container runtime composition', () => {
         await request('/auth/verify-email', body({ token }))
       ).status,
     ).toBe(200)
+    await first.services.emailConfiguration.createSenderIdentity({
+      id: 41,
+      email: 'billing@example.test',
+      displayName: 'Container Billing',
+      provider: 'smtp',
+      providerIdentity: 'billing@example.test',
+      actorUserId: 1,
+      commandId: 'container-unverified-sender',
+      occurredAt: '2026-09-02T06:00:00.000Z',
+    })
+    const logCountBeforeReset = (await first.services.emailLog.list()).length
+    const blockedReset = await request(
+      '/auth/password/forgot',
+      body({ email: 'owner@example.test' }),
+    )
+    expect(blockedReset.status).toBe(409)
+    expect(await blockedReset.json()).toMatchObject({
+      error: { code: 'sender_provider_unsupported' },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(captured).toHaveLength(1)
+    expect(await first.services.emailLog.list()).toHaveLength(logCountBeforeReset)
+
     const signedIn = await request(
       '/auth/sign-in',
       body({
@@ -255,7 +278,7 @@ describe('container runtime composition', () => {
         },
       },
     })
-    await runtime.services.authMailer!.enqueue({
+    await runtime.services.bootstrapAuthMailer!.enqueue({
       kind: 'verify_email',
       to: 'owner@example.test',
       token: `ezacto_verify_${'a'.repeat(16)}_${'b'.repeat(43)}`,

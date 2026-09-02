@@ -249,11 +249,16 @@ export interface ResolvedSenderIdentity {
   email: string
   displayName: string
   replyToEmail: string | null
+  provider: string
+  providerIdentity: string
+  isDefault: boolean
   archivedAt: string | null
   evidence: null | {
     source: 'provider_api'
+    identityKind: 'email_address' | 'domain'
     verificationStatus: SenderIdentityVerificationStatus
     dkimStatus: 'pending' | 'verified' | 'failed' | 'not_applicable'
+    mailFromDomain: string | null
     mailFromStatus: 'pending' | 'verified' | 'failed' | 'not_configured'
     observedAt: string
   }
@@ -266,6 +271,10 @@ export interface SenderIdentityResolver {
 export type SenderIdentityUnavailableCode =
   | 'sender_identity_missing'
   | 'sender_identity_archived'
+  | 'sender_identity_not_default'
+  | 'sender_provider_mismatch'
+  | 'sender_provider_unsupported'
+  | 'sender_identity_binding_mismatch'
   | 'sender_evidence_untrusted'
   | 'sender_verification_pending'
   | 'sender_verification_temporary_failure'
@@ -274,6 +283,7 @@ export type SenderIdentityUnavailableCode =
   | 'sender_dkim_failed'
   | 'sender_mail_from_pending'
   | 'sender_mail_from_failed'
+  | 'sender_alignment_missing'
 
 export class SenderIdentityUnavailableError extends Error {
   constructor(
@@ -285,6 +295,14 @@ export class SenderIdentityUnavailableError extends Error {
         'Configure and verify an organization sender identity before sending email.',
       sender_identity_archived:
         'Select an active organization sender identity before sending email.',
+      sender_identity_not_default:
+        'Select this verified sender identity as the organization default before sending email.',
+      sender_provider_mismatch:
+        'Select a sender identity verified by this deployment\'s configured email provider.',
+      sender_provider_unsupported:
+        'Configure this sender with a provider that supports authoritative identity verification.',
+      sender_identity_binding_mismatch:
+        'Configure provider identity evidence that authorizes the exact From address domain.',
       sender_evidence_untrusted:
         'Refresh this sender identity directly from the configured email provider before sending.',
       sender_verification_pending:
@@ -301,6 +319,8 @@ export class SenderIdentityUnavailableError extends Error {
         'Wait for custom MAIL FROM verification to finish, then refresh the sender identity status.',
       sender_mail_from_failed:
         'Correct the custom MAIL FROM DNS records, then refresh the sender identity status.',
+      sender_alignment_missing:
+        'Enable verified DKIM or configure a verified custom MAIL FROM domain aligned with the From domain, then refresh this sender.',
     }
     super(actions[code])
     this.name = 'SenderIdentityUnavailableError'
@@ -308,6 +328,7 @@ export class SenderIdentityUnavailableError extends Error {
 }
 
 export interface SenderBoundQueuedMailer {
+  assertAvailable(senderIdentityId?: number): Promise<void>
   enqueue(
     message: Omit<EmailMessage, 'from' | 'replyTo'> & {
       senderIdentityId?: number
@@ -341,6 +362,14 @@ export const createBootstrapSenderQueuedMailer = (
 ): SenderBoundQueuedMailer => {
   const sender = configuredSender(from)
   return {
+    async assertAvailable(senderIdentityId) {
+      if (senderIdentityId !== undefined) {
+        throw new SenderIdentityUnavailableError(
+          'sender_identity_missing',
+          senderIdentityId,
+        )
+      }
+    },
     enqueue(message) {
       if (message.senderIdentityId !== undefined) {
         throw new SenderIdentityUnavailableError(
@@ -361,42 +390,70 @@ export const createBootstrapSenderQueuedMailer = (
   }
 }
 
-const assertSenderEvidence = (identity: ResolvedSenderIdentity): void => {
+const senderDomain = (email: string): string =>
+  email.slice(email.lastIndexOf('@') + 1).normalize('NFC').trim().toLowerCase()
+
+const mailFromAligns = (mailFromDomain: string | null, fromDomain: string): boolean => {
+  if (mailFromDomain === null) return false
+  const normalized = mailFromDomain.normalize('NFC').trim().toLowerCase()
+  return normalized === fromDomain || normalized.endsWith(`.${fromDomain}`)
+}
+
+/**
+ * Conservative DMARC eligibility shared by default selection and send-time enforcement.
+ * SES's default amazonses.com MAIL FROM is deliberately not considered aligned.
+ */
+export const senderIdentityEligibilityFailure = (
+  identity: ResolvedSenderIdentity,
+): SenderIdentityUnavailableCode | null => {
+  if (identity.archivedAt !== null) return 'sender_identity_archived'
+  if (identity.provider !== 'ses') return 'sender_provider_unsupported'
   const evidence = identity.evidence
   if (evidence === null || evidence.verificationStatus === 'pending') {
-    throw new SenderIdentityUnavailableError(
-      'sender_verification_pending',
-      identity.id,
-    )
+    return 'sender_verification_pending'
   }
   if (evidence.source !== 'provider_api') {
-    throw new SenderIdentityUnavailableError('sender_evidence_untrusted', identity.id)
+    return 'sender_evidence_untrusted'
   }
   if (evidence.verificationStatus !== 'verified') {
-    throw new SenderIdentityUnavailableError(
-      evidence.verificationStatus === 'temporary_failure'
-        ? 'sender_verification_temporary_failure'
-        : 'sender_verification_failed',
-      identity.id,
-    )
+    return evidence.verificationStatus === 'temporary_failure'
+      ? 'sender_verification_temporary_failure'
+      : 'sender_verification_failed'
   }
+
+  const fromDomain = senderDomain(identity.email)
+  const providerIdentity = identity.providerIdentity.normalize('NFC').trim().toLowerCase()
+  const providerAuthorizesFrom =
+    evidence.identityKind === 'email_address'
+      ? providerIdentity === identity.email.normalize('NFC').trim().toLowerCase()
+      : evidence.identityKind === 'domain' && providerIdentity === fromDomain
+  if (!providerAuthorizesFrom) return 'sender_identity_binding_mismatch'
+
+  const dkimAligned = evidence.dkimStatus === 'verified'
+  const mailFromAligned =
+    evidence.mailFromStatus === 'verified' &&
+    mailFromAligns(evidence.mailFromDomain, fromDomain)
+  if (dkimAligned || mailFromAligned) return null
+
   if (evidence.dkimStatus === 'pending') {
-    throw new SenderIdentityUnavailableError('sender_dkim_pending', identity.id)
+    return 'sender_dkim_pending'
   }
   if (evidence.dkimStatus === 'failed') {
-    throw new SenderIdentityUnavailableError('sender_dkim_failed', identity.id)
+    return 'sender_dkim_failed'
   }
   if (evidence.mailFromStatus === 'pending') {
-    throw new SenderIdentityUnavailableError(
-      'sender_mail_from_pending',
-      identity.id,
-    )
+    return 'sender_mail_from_pending'
   }
   if (evidence.mailFromStatus === 'failed') {
-    throw new SenderIdentityUnavailableError(
-      'sender_mail_from_failed',
-      identity.id,
-    )
+    return 'sender_mail_from_failed'
+  }
+  return 'sender_alignment_missing'
+}
+
+const assertSenderEvidence = (identity: ResolvedSenderIdentity): void => {
+  const failure = senderIdentityEligibilityFailure(identity)
+  if (failure !== null) {
+    throw new SenderIdentityUnavailableError(failure, identity.id)
   }
 }
 
@@ -404,36 +461,54 @@ const assertSenderEvidence = (identity: ResolvedSenderIdentity): void => {
 export const createSenderBoundQueuedMailer = (
   identities: SenderIdentityResolver,
   queued: QueuedMailer,
-): SenderBoundQueuedMailer => ({
-  async enqueue(message) {
-    const identity = await identities.resolveSenderIdentity(message.senderIdentityId)
+  expectedProvider?: string,
+): SenderBoundQueuedMailer => {
+  const resolveAvailable = async (
+    senderIdentityId?: number,
+  ): Promise<ResolvedSenderIdentity> => {
+    const identity = await identities.resolveSenderIdentity(senderIdentityId)
     if (identity === null) {
       throw new SenderIdentityUnavailableError(
         'sender_identity_missing',
-        message.senderIdentityId ?? null,
+        senderIdentityId ?? null,
       )
     }
-    if (identity.archivedAt !== null) {
+    if (expectedProvider !== undefined && identity.provider !== expectedProvider) {
       throw new SenderIdentityUnavailableError(
-        'sender_identity_archived',
+        'sender_provider_mismatch',
         identity.id,
       )
     }
     assertSenderEvidence(identity)
-    return queued.enqueue({
-      from: { email: identity.email, name: identity.displayName },
-      ...(identity.replyToEmail === null
-        ? {}
-        : { replyTo: [{ email: identity.replyToEmail }] }),
-      to: message.to,
-      template: message.template,
-      subject: message.subject,
-      text: message.text,
-      ...(message.html === undefined ? {} : { html: message.html }),
-      ...(message.related === undefined ? {} : { related: message.related }),
-    })
-  },
-})
+    if (senderIdentityId === undefined && !identity.isDefault) {
+      throw new SenderIdentityUnavailableError(
+        'sender_identity_not_default',
+        identity.id,
+      )
+    }
+    return identity
+  }
+  return {
+    async assertAvailable(senderIdentityId) {
+      await resolveAvailable(senderIdentityId)
+    },
+    async enqueue(message) {
+      const identity = await resolveAvailable(message.senderIdentityId)
+      return queued.enqueue({
+        from: { email: identity.email, name: identity.displayName },
+        ...(identity.replyToEmail === null
+          ? {}
+          : { replyTo: [{ email: identity.replyToEmail }] }),
+        to: message.to,
+        template: message.template,
+        subject: message.subject,
+        text: message.text,
+        ...(message.html === undefined ? {} : { html: message.html }),
+        ...(message.related === undefined ? {} : { related: message.related }),
+      })
+    },
+  }
+}
 
 export type EmailQueueDisposition =
   | { action: 'ack' }

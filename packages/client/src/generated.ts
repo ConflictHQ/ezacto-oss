@@ -192,6 +192,7 @@ export type EmailTemplateVersionInput = {
 export type SenderIdentityEvidence = {
   "version": number;
   "source": "provider_api";
+  "identity_kind": "email_address" | "domain";
   "verification_status": "pending" | "verified" | "failed" | "temporary_failure";
   "dkim_status": "pending" | "verified" | "failed" | "not_applicable";
   "mail_from_domain": string | null;

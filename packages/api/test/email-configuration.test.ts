@@ -42,6 +42,7 @@ const sender = (
 const verifiedEvidence = {
   version: 1,
   source: 'provider_api' as const,
+  identityKind: 'domain' as const,
   verificationStatus: 'verified' as const,
   dkimStatus: 'verified' as const,
   mailFromDomain: 'mail.example.test',
@@ -231,6 +232,7 @@ describe('email configuration API', () => {
     const verifier: SenderIdentityVerifier = {
       provider: 'ses',
       verify: vi.fn(async () => ({
+        identityKind: 'domain',
         verificationStatus: 'verified',
         dkimStatus: 'verified',
         mailFromDomain: 'mail.example.test',
@@ -252,6 +254,7 @@ describe('email configuration API', () => {
       id: 41,
       expectedEvidenceVersion: 0,
       evidence: {
+        identityKind: 'domain',
         verificationStatus: 'verified',
         dkimStatus: 'verified',
         mailFromDomain: 'mail.example.test',

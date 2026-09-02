@@ -28,6 +28,9 @@ describe('Worker password authentication composition', () => {
     })
     app = createApp({
       ...services,
+      bootstrapAuthMailer: {
+        enqueue: async (delivery) => void deliveries.push(delivery),
+      },
       authMailer: {
         enqueue: async (delivery) => void deliveries.push(delivery),
       },

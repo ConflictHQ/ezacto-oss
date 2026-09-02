@@ -105,6 +105,8 @@ export interface RuntimeServices {
   senderIdentityVerifier?: EmailConfigurationRouteOptions['verifier']
   identities: OidcIdentityResolver
   oidcTransactions: OidcTransactionStorePort
+  /** First-owner delivery only; never use for established organization mail. */
+  bootstrapAuthMailer?: AuthMailer
   authMailer?: AuthMailer
   attachments?: AttachmentRouteOptions
 }
@@ -192,6 +194,9 @@ export const createApp = (services?: RuntimeServices) =>
         installPasswordAuthRoutes(app, {
           service: services.passwordAuth,
           sessions: services.sessions,
+          ...(services.bootstrapAuthMailer === undefined
+            ? {}
+            : { bootstrapMailer: services.bootstrapAuthMailer }),
           ...(services.authMailer === undefined
             ? {}
             : { mailer: services.authMailer }),

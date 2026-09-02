@@ -87,11 +87,16 @@ describe('queued mailer', () => {
         email: 'billing@example.test',
         displayName: 'Billing',
         replyToEmail: null,
+        provider: 'ses',
+        providerIdentity: 'example.test',
+        isDefault: false,
         archivedAt: null,
         evidence: {
           source: 'provider_api' as const,
+          identityKind: 'domain' as const,
           verificationStatus: 'pending' as const,
           dkimStatus: 'pending' as const,
+          mailFromDomain: null,
           mailFromStatus: 'not_configured' as const,
           observedAt: '2026-09-02T00:00:00.000Z',
         },
@@ -122,11 +127,16 @@ describe('queued mailer', () => {
         email: 'billing@example.test',
         displayName: 'Ezacto Billing',
         replyToEmail: 'accounts@example.test',
+        provider: 'ses',
+        providerIdentity: 'example.test',
+        isDefault: true,
         archivedAt: null,
         evidence: {
           source: 'provider_api' as const,
+          identityKind: 'domain' as const,
           verificationStatus: 'verified' as const,
           dkimStatus: 'verified' as const,
+          mailFromDomain: 'bounce.example.test',
           mailFromStatus: 'verified' as const,
           observedAt: '2026-09-02T00:00:00.000Z',
         },
@@ -148,6 +158,49 @@ describe('queued mailer', () => {
       subject: message.subject,
       text: message.text,
     })
+  })
+
+  it('[security] rejects SES email-address evidence without aligned DKIM or MAIL FROM before all I/O', async () => {
+    const log = store()
+    const queue = { send: vi.fn(async () => undefined) }
+    const provider: HttpEmailProvider = {
+      name: 'ses',
+      send: vi.fn(async () => ({ messageId: 'must-not-send' })),
+    }
+    const identities = {
+      resolveSenderIdentity: vi.fn(async () => ({
+        id: 43,
+        email: 'billing@example.test',
+        displayName: 'Billing',
+        replyToEmail: null,
+        provider: 'ses',
+        providerIdentity: 'billing@example.test',
+        isDefault: false,
+        archivedAt: null,
+        evidence: {
+          source: 'provider_api' as const,
+          identityKind: 'email_address' as const,
+          verificationStatus: 'verified' as const,
+          dkimStatus: 'not_applicable' as const,
+          mailFromDomain: null,
+          mailFromStatus: 'not_configured' as const,
+          observedAt: '2026-09-02T00:00:00.000Z',
+        },
+      })),
+    }
+
+    await expect(
+      createSenderBoundQueuedMailer(identities, createQueuedMailer(log, queue)).enqueue({
+        senderIdentityId: 43,
+        to: message.to,
+        template: message.template,
+        subject: message.subject,
+        text: message.text,
+      }),
+    ).rejects.toMatchObject({ code: 'sender_alignment_missing' })
+    expect(log.createQueued).not.toHaveBeenCalled()
+    expect(queue.send).not.toHaveBeenCalled()
+    expect(provider.send).not.toHaveBeenCalled()
   })
 
   it('[security] rejects header control characters before the durable log is written', async () => {

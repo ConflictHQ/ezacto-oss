@@ -87,6 +87,7 @@ const documentedApp = () =>
       installPasswordAuthRoutes(app, {
         service: passwordAuth,
         sessions: { issue: unavailable },
+        bootstrapMailer: authMailer,
         mailer: authMailer,
         clientKey: () => "contract-fixture",
       });

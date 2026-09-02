@@ -31,6 +31,7 @@ import {
 import {
   createBootstrapSenderQueuedMailer,
   createQueuedMailer,
+  createSenderBoundQueuedMailer,
   type HttpEmailProvider,
 } from '@ezacto/mailer'
 import { SmtpMailer } from '@ezacto/mailer/smtp'
@@ -217,6 +218,13 @@ export const createContainerRuntime = async (
       (smtp instanceof SmtpMailer ? () => smtp.verify() : undefined)
     if (verify !== undefined) await verify()
     queue = new ContainerEmailQueue(emailLog, smtp)
+    const queuedMailer = createQueuedMailer(emailLog, queue)
+    const organizationName = async () => {
+      const row = database
+        .prepare('SELECT name FROM organizations WHERE id = 1')
+        .get() as { name: string } | undefined
+      return row?.name ?? 'Ezacto'
+    }
     const objects = await createDiskAttachmentObjectStore(
       config.attachmentDirectory,
     )
@@ -252,18 +260,19 @@ export const createContainerRuntime = async (
       emailConfiguration,
       identities: createContainerIdentityStore(database),
       oidcTransactions: createContainerOidcTransactionStore(database),
-      authMailer: createQueuedAuthMailer(
+      bootstrapAuthMailer: createQueuedAuthMailer(
         createBootstrapSenderQueuedMailer(
           config.smtp.from,
-          createQueuedMailer(emailLog, queue),
+          queuedMailer,
         ),
         emailConfiguration,
-        async () => {
-          const row = database
-            .prepare('SELECT name FROM organizations WHERE id = 1')
-            .get() as { name: string } | undefined
-          return row?.name ?? 'Ezacto'
-        },
+        organizationName,
+        config.appBaseUrl,
+      ),
+      authMailer: createQueuedAuthMailer(
+        createSenderBoundQueuedMailer(emailConfiguration, queuedMailer, smtp.name),
+        emailConfiguration,
+        organizationName,
         config.appBaseUrl,
       ),
       attachments: {

@@ -123,7 +123,16 @@ export const emailTemplatesMigration = [
       AND email = lower(trim(email))
       AND instr(email, ' ') = 0
       AND instr(email, '@') > 1
+      AND instr(substr(email, instr(email, '@') + 1), '@') = 0
       AND instr(substr(email, instr(email, '@') + 1), '.') > 1
+      AND substr(email, instr(email, '@') + 1) NOT GLOB '*[^a-z0-9.-]*'
+      AND substr(email, instr(email, '@') + 1) NOT LIKE '.%'
+      AND substr(email, instr(email, '@') + 1) NOT LIKE '%.'
+      AND substr(email, instr(email, '@') + 1) NOT LIKE '%..%'
+      AND substr(email, instr(email, '@') + 1) NOT LIKE '-%'
+      AND substr(email, instr(email, '@') + 1) NOT LIKE '%-'
+      AND substr(email, instr(email, '@') + 1) NOT LIKE '%.-%'
+      AND substr(email, instr(email, '@') + 1) NOT LIKE '%-.%'
     ),
     display_name TEXT NOT NULL CHECK (length(trim(display_name)) BETWEEN 1 AND 200),
     reply_to_email TEXT COLLATE NOCASE CHECK (
@@ -132,7 +141,17 @@ export const emailTemplatesMigration = [
         AND reply_to_email = lower(trim(reply_to_email))
         AND instr(reply_to_email, ' ') = 0
         AND instr(reply_to_email, '@') > 1
+        AND instr(substr(reply_to_email, instr(reply_to_email, '@') + 1), '@') = 0
         AND instr(substr(reply_to_email, instr(reply_to_email, '@') + 1), '.') > 1
+        AND substr(reply_to_email, instr(reply_to_email, '@') + 1)
+          NOT GLOB '*[^a-z0-9.-]*'
+        AND substr(reply_to_email, instr(reply_to_email, '@') + 1) NOT LIKE '.%'
+        AND substr(reply_to_email, instr(reply_to_email, '@') + 1) NOT LIKE '%.'
+        AND substr(reply_to_email, instr(reply_to_email, '@') + 1) NOT LIKE '%..%'
+        AND substr(reply_to_email, instr(reply_to_email, '@') + 1) NOT LIKE '-%'
+        AND substr(reply_to_email, instr(reply_to_email, '@') + 1) NOT LIKE '%-'
+        AND substr(reply_to_email, instr(reply_to_email, '@') + 1) NOT LIKE '%.-%'
+        AND substr(reply_to_email, instr(reply_to_email, '@') + 1) NOT LIKE '%-.%'
       )
     ),
     provider TEXT NOT NULL CHECK (
@@ -166,6 +185,7 @@ export const emailTemplatesMigration = [
       evidence_version BETWEEN 1 AND 9007199254740991
     ),
     source TEXT NOT NULL CHECK (source IN ('provider_api')),
+    identity_kind TEXT NOT NULL CHECK (identity_kind IN ('email_address','domain')),
     verification_status TEXT NOT NULL CHECK (
       verification_status IN ('pending','verified','failed','temporary_failure')
     ),
@@ -173,7 +193,14 @@ export const emailTemplatesMigration = [
       dkim_status IN ('pending','verified','failed','not_applicable')
     ),
     mail_from_domain TEXT CHECK (
-      mail_from_domain IS NULL OR length(trim(mail_from_domain)) BETWEEN 1 AND 253
+      mail_from_domain IS NULL OR (
+        length(mail_from_domain) BETWEEN 1 AND 253
+        AND mail_from_domain = lower(trim(mail_from_domain))
+        AND mail_from_domain NOT GLOB '*[^a-z0-9.-]*'
+        AND mail_from_domain NOT LIKE '.%'
+        AND mail_from_domain NOT LIKE '%.'
+        AND mail_from_domain NOT LIKE '%..%'
+      )
     ),
     mail_from_status TEXT NOT NULL CHECK (
       mail_from_status IN ('pending','verified','failed','not_configured')
@@ -315,9 +342,27 @@ export const emailTemplatesMigration = [
           SELECT max(latest.evidence_version) FROM sender_identity_evidence latest
           WHERE latest.sender_identity_id = NEW.id
         )
+        AND NEW.provider = 'ses'
         AND evidence.verification_status = 'verified'
-        AND evidence.dkim_status IN ('verified','not_applicable')
-        AND evidence.mail_from_status IN ('verified','not_configured')
+        AND (
+          (evidence.identity_kind = 'email_address'
+            AND lower(trim(NEW.provider_identity)) = NEW.email)
+          OR (evidence.identity_kind = 'domain'
+            AND lower(trim(NEW.provider_identity)) =
+              substr(NEW.email, instr(NEW.email, '@') + 1))
+        )
+        AND (
+          evidence.dkim_status = 'verified'
+          OR (
+            evidence.mail_from_status = 'verified'
+            AND evidence.mail_from_domain IS NOT NULL
+            AND (
+              evidence.mail_from_domain = substr(NEW.email, instr(NEW.email, '@') + 1)
+              OR evidence.mail_from_domain LIKE
+                '%.' || substr(NEW.email, instr(NEW.email, '@') + 1)
+            )
+          )
+        )
     )
-    BEGIN SELECT RAISE(ABORT, 'sender identity lacks verified provider evidence'); END`,
+    BEGIN SELECT RAISE(ABORT, 'sender identity lacks verified aligned provider evidence'); END`,
 ] as const

@@ -22,6 +22,7 @@ export interface EmailTemplateConfigurationRecord {
 export interface SenderEvidenceConfigurationRecord {
   version: number
   source: 'provider_api'
+  identityKind: 'email_address' | 'domain'
   verificationStatus: 'pending' | 'verified' | 'failed' | 'temporary_failure'
   dkimStatus: 'pending' | 'verified' | 'failed' | 'not_applicable'
   mailFromDomain: string | null
@@ -112,6 +113,7 @@ export interface EmailConfigurationService {
 }
 
 export interface ProviderSenderIdentityEvidence {
+  identityKind: SenderEvidenceConfigurationRecord['identityKind']
   verificationStatus: SenderEvidenceConfigurationRecord['verificationStatus']
   dkimStatus: SenderEvidenceConfigurationRecord['dkimStatus']
   mailFromDomain: string | null
@@ -300,6 +302,7 @@ const senderData = (record: SenderIdentityConfigurationRecord) => ({
       : {
           version: record.evidence.version,
           source: record.evidence.source,
+          identity_kind: record.evidence.identityKind,
           verification_status: record.evidence.verificationStatus,
           dkim_status: record.evidence.dkimStatus,
           mail_from_domain: record.evidence.mailFromDomain,

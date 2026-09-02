@@ -1838,6 +1838,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     required: [
       "version",
       "source",
+      "identity_kind",
       "verification_status",
       "dkim_status",
       "mail_from_domain",
@@ -1847,6 +1848,10 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: {
       version: integerSchema,
       source: { const: "provider_api" },
+      identity_kind: {
+        type: "string",
+        enum: ["email_address", "domain"],
+      },
       verification_status: {
         type: "string",
         enum: ["pending", "verified", "failed", "temporary_failure"],

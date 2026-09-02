@@ -261,6 +261,7 @@ for (const [runtime, factory] of factories) {
           id: 77,
           expectedEvidenceVersion: 0,
           evidence: {
+            identityKind: 'domain',
             verificationStatus: 'pending',
             dkimStatus: 'pending',
             mailFromDomain: null,
@@ -275,6 +276,7 @@ for (const [runtime, factory] of factories) {
           id: 77,
           expectedEvidenceVersion: 0,
           evidence: {
+            identityKind: 'domain',
             verificationStatus: 'failed',
             dkimStatus: 'failed',
             mailFromDomain: null,
@@ -322,10 +324,142 @@ for (const [runtime, factory] of factories) {
         }),
       ).rejects.toMatchObject({ code: 'sender_unverified' })
 
+      await harness.store.createSenderIdentity({
+        id: 43,
+        email: 'receipts@northpeak.test',
+        displayName: 'North Peak Receipts',
+        provider: 'ses',
+        providerIdentity: 'receipts@northpeak.test',
+        actorUserId: 1,
+        commandId: 'sender-create-43',
+        occurredAt: initial,
+      })
+      await harness.store.recordSenderEvidence({
+        id: 43,
+        expectedEvidenceVersion: 0,
+        evidence: {
+          identityKind: 'email_address',
+          verificationStatus: 'verified',
+          dkimStatus: 'not_applicable',
+          mailFromDomain: null,
+          mailFromStatus: 'not_configured',
+          observedAt: later,
+        },
+        actorUserId: 1,
+        commandId: 'sender-evidence-email-address-unaligned',
+        occurredAt: later,
+      })
+      await expect(
+        harness.store.setDefaultSenderIdentity({
+          id: 43,
+          expectedVersion: 0,
+          actorUserId: 1,
+          commandId: 'sender-default-email-address-unaligned',
+          occurredAt: later,
+        }),
+      ).rejects.toMatchObject({
+        code: 'sender_unverified',
+        message: expect.stringMatching(/DKIM|MAIL FROM/),
+      })
+      await expect(
+        harness.run(
+          `UPDATE sender_identities SET is_default = 1, version = 1, updated_at = ?
+           WHERE id = 43`,
+          [later],
+        ),
+      ).rejects.toThrow(/aligned provider evidence/)
+      await harness.store.recordSenderEvidence({
+        id: 43,
+        expectedEvidenceVersion: 1,
+        evidence: {
+          identityKind: 'email_address',
+          verificationStatus: 'verified',
+          dkimStatus: 'not_applicable',
+          mailFromDomain: 'bounce.unrelated.test',
+          mailFromStatus: 'verified',
+          observedAt: latest,
+        },
+        actorUserId: 1,
+        commandId: 'sender-evidence-email-address-unaligned-mail-from',
+        occurredAt: latest,
+      })
+      await expect(
+        harness.store.setDefaultSenderIdentity({
+          id: 43,
+          expectedVersion: 0,
+          actorUserId: 1,
+          commandId: 'sender-default-email-address-wrong-mail-from',
+          occurredAt: latest,
+        }),
+      ).rejects.toMatchObject({ code: 'sender_unverified' })
+      await harness.store.recordSenderEvidence({
+        id: 43,
+        expectedEvidenceVersion: 2,
+        evidence: {
+          identityKind: 'email_address',
+          verificationStatus: 'verified',
+          dkimStatus: 'not_applicable',
+          mailFromDomain: 'bounce.northpeak.test',
+          mailFromStatus: 'verified',
+          observedAt: latest,
+        },
+        actorUserId: 1,
+        commandId: 'sender-evidence-email-address-aligned-mail-from',
+        occurredAt: latest,
+      })
+      await expect(
+        harness.store.setDefaultSenderIdentity({
+          id: 43,
+          expectedVersion: 0,
+          actorUserId: 1,
+          commandId: 'sender-default-email-address-aligned-mail-from',
+          occurredAt: latest,
+        }),
+      ).resolves.toMatchObject({ id: 43, isDefault: true, version: 1 })
+
+      await harness.store.createSenderIdentity({
+        id: 44,
+        email: 'notices@northpeak.test',
+        displayName: 'North Peak Notices',
+        provider: 'ses',
+        providerIdentity: 'unrelated.test',
+        actorUserId: 1,
+        commandId: 'sender-create-44',
+        occurredAt: initial,
+      })
+      await harness.store.recordSenderEvidence({
+        id: 44,
+        expectedEvidenceVersion: 0,
+        evidence: {
+          identityKind: 'domain',
+          verificationStatus: 'verified',
+          dkimStatus: 'verified',
+          mailFromDomain: null,
+          mailFromStatus: 'not_configured',
+          observedAt: latest,
+        },
+        actorUserId: 1,
+        commandId: 'sender-evidence-domain-binding-mismatch',
+        occurredAt: latest,
+      })
+      await expect(
+        harness.store.setDefaultSenderIdentity({
+          id: 44,
+          expectedVersion: 0,
+          actorUserId: 1,
+          commandId: 'sender-default-domain-binding-mismatch',
+          occurredAt: latest,
+        }),
+      ).rejects.toMatchObject({
+        code: 'sender_unverified',
+        message: expect.stringMatching(/exact From address domain/),
+      })
+
       const pending = await harness.store.recordSenderEvidence({
         id: 42,
         expectedEvidenceVersion: 0,
         evidence: {
+          identityKind: 'domain',
           verificationStatus: 'pending',
           dkimStatus: 'pending',
           mailFromDomain: 'bounce.northpeak.test',
@@ -367,6 +501,7 @@ for (const [runtime, factory] of factories) {
         id: 42,
         expectedEvidenceVersion: 1,
         evidence: {
+          identityKind: 'domain',
           verificationStatus: 'verified',
           dkimStatus: 'verified',
           mailFromDomain: 'bounce.northpeak.test',
@@ -383,6 +518,7 @@ for (const [runtime, factory] of factories) {
           id: 42,
           expectedEvidenceVersion: 0,
           evidence: {
+            identityKind: 'domain',
             verificationStatus: 'pending',
             dkimStatus: 'pending',
             mailFromDomain: 'bounce.northpeak.test',

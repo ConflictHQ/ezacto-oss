@@ -5,6 +5,10 @@ import {
   type EmailTemplateKind,
   type UnknownEmailTemplateVariablePolicy,
 } from '@ezacto/core'
+import {
+  SenderIdentityUnavailableError,
+  senderIdentityEligibilityFailure,
+} from '@ezacto/mailer'
 
 export type SenderVerificationStatus =
   | 'pending'
@@ -28,6 +32,7 @@ export interface EmailTemplateVersionRecord {
 export interface SenderIdentityEvidenceRecord {
   version: number
   source: 'provider_api'
+  identityKind: 'email_address' | 'domain'
   verificationStatus: SenderVerificationStatus
   dkimStatus: SenderDkimStatus
   mailFromDomain: string | null
@@ -241,10 +246,16 @@ const bounded = (
 }
 
 const emailPattern = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/u
+const domainPattern = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u
 
 const email = (value: string, field: string): string => {
   const normalized = bounded(value, field, 254).toLowerCase()
-  if (!emailPattern.test(normalized)) {
+  const separator = normalized.lastIndexOf('@')
+  if (
+    !emailPattern.test(normalized) ||
+    separator !== normalized.indexOf('@') ||
+    !domainPattern.test(normalized.slice(separator + 1))
+  ) {
     throw new EmailConfigurationError('invalid_input', `${field} is invalid.`)
   }
   return normalized
@@ -252,6 +263,14 @@ const email = (value: string, field: string): string => {
 
 const optionalEmail = (value: string | null | undefined, field: string): string | null =>
   value === undefined || value === null ? null : email(value, field)
+
+const domain = (value: string, field: string): string => {
+  const normalized = bounded(value, field, 253).toLowerCase()
+  if (!domainPattern.test(normalized)) {
+    throw new EmailConfigurationError('invalid_input', `${field} is invalid.`)
+  }
+  return normalized
+}
 
 const provider = (value: string): string => {
   const normalized = bounded(value, 'provider', 64).toLowerCase()
@@ -290,6 +309,7 @@ interface RawSender {
   updatedAt: string
   evidenceVersion: number | null
   evidenceSource: 'provider_api' | null
+  evidenceIdentityKind: 'email_address' | 'domain' | null
   verificationStatus: SenderVerificationStatus | null
   dkimStatus: SenderDkimStatus | null
   mailFromDomain: string | null
@@ -305,6 +325,7 @@ const senderSelect = `SELECT identity.id, identity.email,
   identity.created_by_user_id AS createdByUserId,
   identity.created_at AS createdAt, identity.updated_at AS updatedAt,
   evidence.evidence_version AS evidenceVersion, evidence.source AS evidenceSource,
+  evidence.identity_kind AS evidenceIdentityKind,
   evidence.verification_status AS verificationStatus,
   evidence.dkim_status AS dkimStatus, evidence.mail_from_domain AS mailFromDomain,
   evidence.mail_from_status AS mailFromStatus,
@@ -333,6 +354,7 @@ const senderRecord = (row: RawSender): SenderIdentityRecord => ({
   evidence:
     row.evidenceVersion === null ||
     row.evidenceSource === null ||
+    row.evidenceIdentityKind === null ||
     row.verificationStatus === null ||
     row.dkimStatus === null ||
     row.mailFromStatus === null ||
@@ -341,6 +363,7 @@ const senderRecord = (row: RawSender): SenderIdentityRecord => ({
       : {
           version: row.evidenceVersion,
           source: row.evidenceSource,
+          identityKind: row.evidenceIdentityKind,
           verificationStatus: row.verificationStatus,
           dkimStatus: row.dkimStatus,
           mailFromDomain: row.mailFromDomain,
@@ -375,12 +398,6 @@ const parsedResult = <T>(row: RawCommand): T => {
 }
 
 const jsonResult = (data: unknown): string => JSON.stringify({ schema_version: 1, data })
-
-const verifiedEvidence = (evidence: SenderIdentityEvidenceRecord | null): boolean =>
-  evidence !== null &&
-  evidence.verificationStatus === 'verified' &&
-  (evidence.dkimStatus === 'verified' || evidence.dkimStatus === 'not_applicable') &&
-  (evidence.mailFromStatus === 'verified' || evidence.mailFromStatus === 'not_configured')
 
 const createStore = (database: NativeClient): EmailConfigurationStore => {
   const readSender = async (id: number): Promise<SenderIdentityRecord | null> => {
@@ -653,7 +670,13 @@ const createStore = (database: NativeClient): EmailConfigurationStore => {
       const displayName = bounded(input.displayName, 'displayName', 200)
       const replyToEmail = optionalEmail(input.replyToEmail, 'replyToEmail')
       const providerName = provider(input.provider)
-      const providerIdentity = bounded(input.providerIdentity, 'providerIdentity', 320)
+      const rawProviderIdentity = bounded(input.providerIdentity, 'providerIdentity', 320)
+      const providerIdentity =
+        providerName === 'ses'
+          ? rawProviderIdentity.includes('@')
+            ? email(rawProviderIdentity, 'providerIdentity')
+            : domain(rawProviderIdentity, 'providerIdentity')
+          : rawProviderIdentity
       const inputFingerprint = await fingerprint({
         identityId,
         address,
@@ -827,7 +850,9 @@ const createStore = (database: NativeClient): EmailConfigurationStore => {
         'failed',
         'not_configured',
       ]
+      const allowedIdentityKinds = ['email_address', 'domain'] as const
       if (
+        !allowedIdentityKinds.includes(input.evidence.identityKind) ||
         !allowedVerification.includes(input.evidence.verificationStatus) ||
         !allowedDkim.includes(input.evidence.dkimStatus) ||
         !allowedMailFrom.includes(input.evidence.mailFromStatus)
@@ -837,7 +862,7 @@ const createStore = (database: NativeClient): EmailConfigurationStore => {
       const mailFromDomain =
         input.evidence.mailFromDomain === null
           ? null
-          : bounded(input.evidence.mailFromDomain, 'mailFromDomain', 253).toLowerCase()
+          : domain(input.evidence.mailFromDomain, 'mailFromDomain')
       if (
         (input.evidence.mailFromStatus === 'not_configured') !== (mailFromDomain === null)
       ) {
@@ -849,6 +874,7 @@ const createStore = (database: NativeClient): EmailConfigurationStore => {
       const evidence: SenderIdentityEvidenceRecord = {
         version: expectedEvidenceVersion + 1,
         source: 'provider_api',
+        identityKind: input.evidence.identityKind,
         verificationStatus: input.evidence.verificationStatus,
         dkimStatus: input.evidence.dkimStatus,
         mailFromDomain,
@@ -887,12 +913,13 @@ const createStore = (database: NativeClient): EmailConfigurationStore => {
         [
           {
             text: `INSERT INTO sender_identity_evidence (
-              sender_identity_id, evidence_version, source, verification_status,
+              sender_identity_id, evidence_version, source, identity_kind, verification_status,
               dkim_status, mail_from_domain, mail_from_status, observed_at
-            ) VALUES (?, ?, 'provider_api', ?, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, 'provider_api', ?, ?, ?, ?, ?, ?)`,
             params: [
               identityId,
               evidence.version,
+              evidence.identityKind,
               evidence.verificationStatus,
               evidence.dkimStatus,
               evidence.mailFromDomain,
@@ -964,10 +991,11 @@ const createStore = (database: NativeClient): EmailConfigurationStore => {
       if (current === null || current.archivedAt !== null) {
         throw new EmailConfigurationError('not_found', 'Sender identity not found.')
       }
-      if (!verifiedEvidence(current.evidence)) {
+      const eligibilityFailure = senderIdentityEligibilityFailure(current)
+      if (eligibilityFailure !== null) {
         throw new EmailConfigurationError(
           'sender_unverified',
-          'Provider verification, DKIM, and configured MAIL FROM checks must pass before selecting this sender.',
+          new SenderIdentityUnavailableError(eligibilityFailure, current.id).message,
         )
       }
       if (current.version !== expectedVersion) {
@@ -1092,7 +1120,8 @@ const createStore = (database: NativeClient): EmailConfigurationStore => {
       const row = await first<RawSender>(
         database,
         id === undefined
-          ? `${senderSelect} WHERE identity.is_default = 1 AND identity.archived_at IS NULL`
+          ? `${senderSelect} WHERE identity.archived_at IS NULL
+             ORDER BY identity.is_default DESC, identity.id LIMIT 1`
           : `${senderSelect} WHERE identity.id = ? AND identity.archived_at IS NULL`,
         id === undefined ? [] : [positiveId(id, 'sender identity id')],
       )
