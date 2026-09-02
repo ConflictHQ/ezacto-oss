@@ -4,6 +4,7 @@ import { renderClientDirectoryPages } from '../clients/render.js'
 import { renderProjectDirectoryPages } from '../projects/render.js'
 import { renderReportsPage } from '../reports/render.js'
 import { renderExpenseWorkflowPages } from '../expenses/render.js'
+import { renderExpenseCategoriesPage } from '../expense-categories/render.js'
 
 export interface AppShellOptions {
   readonly environment: string
@@ -24,6 +25,7 @@ export interface AppShellOptions {
     | 'reports'
     | 'expense-list'
     | 'expense-detail'
+    | 'expense-categories'
   readonly signInProviders?: readonly SignInProvider[]
   /** Presentation hint only. The browser still validates the session before enabling the app. */
   readonly sessionCookiePresent?: boolean
@@ -406,6 +408,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   ${renderProjectDirectoryPages(view)}
   ${renderReportsPage(view)}
   ${renderExpenseWorkflowPages(view)}
+  ${renderExpenseCategoriesPage(view)}
   <dialog class="command-dialog" data-command-dialog aria-labelledby="command-title">
     <form data-command-form>
       <header><div><p class="eyebrow">Command bar</p><h2 id="command-title">Go or log time</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>

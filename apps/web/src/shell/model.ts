@@ -31,6 +31,7 @@ import type { ClientDirectoryApi } from '../clients/model.js'
 import type { ProjectDirectoryApi } from '../projects/model.js'
 import type { ReportWorkspaceApi } from '../reports/model.js'
 import type { ExpenseWorkflowApi } from '../expenses/model.js'
+import type { ExpenseCategoryDirectoryApi } from '../expense-categories/model.js'
 
 interface CursorPage<T> {
   readonly data: readonly T[]
@@ -41,7 +42,8 @@ export interface ShellApi
   extends Partial<ClientDirectoryApi>,
     Partial<ProjectDirectoryApi>,
     Partial<ReportWorkspaceApi>,
-    Partial<ExpenseWorkflowApi> {
+    Partial<ExpenseWorkflowApi>,
+    Partial<ExpenseCategoryDirectoryApi> {
   whoami(signal?: AbortSignal): Promise<Whoami>
   signIn(credentials: PasswordSignInInput, signal?: AbortSignal): Promise<AuthPrincipal>
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
@@ -730,6 +732,27 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         expenseId,
         'Idempotency-Key': commandId,
         body,
+        ...withSignal(signal),
+      })
+    ).data,
+  listDirectoryExpenseCategories: (activeOnly, cursor, signal) =>
+    client.listExpenseCategories({
+      query: {
+        per_page: 50,
+        ...(activeOnly ? { is_active: true } : {}),
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  createDirectoryExpenseCategory: async (input, signal) =>
+    (await client.createExpenseCategory({ body: input, ...withSignal(signal) })).data,
+  updateDirectoryExpenseCategory: async (id, body, signal) =>
+    (await client.updateExpenseCategory({ id, body, ...withSignal(signal) })).data,
+  archiveDirectoryExpenseCategory: async (id, signal) =>
+    (
+      await client.updateExpenseCategory({
+        id,
+        body: { is_active: false },
         ...withSignal(signal),
       })
     ).data,

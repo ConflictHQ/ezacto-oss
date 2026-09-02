@@ -1244,6 +1244,95 @@ test('[e2e:reports-ui] runs uninvoiced, client rollup, and project budget report
   await expectNoPageOverflow(page)
 })
 
+test('[e2e:expense-categories] creates unit pricing, feeds expense entry, and archives without breaking history', async ({
+  page,
+}) => {
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto('/expense-categories')
+  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+  const workspace = page.locator('[data-expense-categories-page]')
+  await expect(workspace).toBeVisible()
+  await expect(page).toHaveTitle('ezacto — Expense categories')
+  const createCategory = page.locator('[data-expense-category-create-form]')
+  await createCategory.getByLabel('Name', { exact: true }).fill('Browser UI Mileage')
+  await createCategory.getByLabel('Entry method').selectOption('unit')
+  await createCategory.getByLabel('Unit name').fill('km')
+  await createCategory.getByLabel('Unit price (cents)').fill('42')
+  const categoryCreated = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/expense-categories' &&
+      response.request().method() === 'POST',
+  )
+  await createCategory.getByRole('button', { name: 'Create category' }).click()
+  const categoryResponse = await categoryCreated
+  expect(categoryResponse.status()).toBe(201)
+  const categoryId = Number((await categoryResponse.json()).data.id)
+  expect(Number.isSafeInteger(categoryId)).toBe(true)
+  const categoryRow = page.locator(`[data-expense-category-id="${categoryId}"]`)
+  await expect(categoryRow).toContainText('42 cents per km')
+  await expectNoPageOverflow(page)
+
+  await page.getByRole('link', { name: 'Back to expenses' }).click()
+  const createExpense = page.locator('[data-expense-create-form]')
+  await createExpense
+    .getByLabel('Project')
+    .selectOption({ label: '[BROWSER] Browser Acceptance Project' })
+  await createExpense.getByLabel('Category').selectOption({ label: 'Browser UI Mileage' })
+  await createExpense.getByLabel('Date').fill('2026-07-15')
+  await createExpense.getByLabel('Units (km)').fill('3')
+  await createExpense.getByLabel('Notes').fill('Historical category retention')
+  const expenseCreated = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/expenses' &&
+      response.request().method() === 'POST',
+  )
+  await createExpense.getByRole('button', { name: 'Add expense' }).click()
+  const expenseResponse = await expenseCreated
+  expect(expenseResponse.status()).toBe(201)
+  const expenseId = Number((await expenseResponse.json()).data.id)
+  expect(Number.isSafeInteger(expenseId)).toBe(true)
+
+  await page.goto('/expense-categories')
+  await expect(categoryRow).toBeVisible()
+  await categoryRow.getByRole('button', { name: 'Archive' }).click()
+  const archiveDialog = page.locator('[data-expense-category-archive-dialog]')
+  await archiveDialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(archiveDialog).toBeHidden()
+  await expect(categoryRow).toContainText('Active')
+
+  await categoryRow.getByRole('button', { name: 'Archive' }).click()
+  const archived = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/expense-categories/${categoryId}` &&
+      response.request().method() === 'PATCH',
+  )
+  await archiveDialog.getByRole('button', { name: 'Archive category' }).click()
+  const archivedResponse = await archived
+  expect(archivedResponse.status()).toBe(200)
+  expect(archivedResponse.request().postDataJSON()).toEqual({ is_active: false })
+  await expect(categoryRow).toBeHidden()
+  await workspace.getByRole('button', { name: 'All', exact: true }).click()
+  await expect(categoryRow).toContainText('Archived')
+
+  await page.goto('/expenses')
+  await expect(
+    page.locator('[data-expense-create-category] option', { hasText: 'Browser UI Mileage' }),
+  ).toHaveCount(0)
+  await page.goto(`/expenses/${expenseId}`)
+  const historicalCategory = page.locator(
+    '[data-expense-edit-category] option:checked',
+  )
+  await expect(historicalCategory).toHaveText('Browser UI Mileage')
+  await expect(page.locator('[data-expense-detail-total]')).toContainText('$1.26')
+  await expect(page.locator('[data-expense-edit-form] [name="notes"]')).toHaveValue(
+    'Historical category retention',
+  )
+  await expectNoPageOverflow(page)
+})
+
 test('[e2e:expense-receipt] creates, filters, edits, and downloads a receipt through real D1 and R2', async ({
   page,
 }) => {
