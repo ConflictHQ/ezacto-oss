@@ -4,6 +4,7 @@ import { renderClientDirectoryPages } from '../clients/render.js'
 import { renderProjectDirectoryPages } from '../projects/render.js'
 import { renderReportsPage } from '../reports/render.js'
 import { renderExpenseWorkflowPages } from '../expenses/render.js'
+import { renderTaskAdminPage } from '../tasks/render.js'
 import { renderExpenseCategoriesPage } from '../expense-categories/render.js'
 import {
   renderInvoiceComposerDialog,
@@ -16,7 +17,7 @@ export interface AppShellOptions {
   readonly release: string
   readonly brand?: string
   readonly activeSection?:
-    'Time' | 'Approvals' | 'Expenses' | 'Projects' | 'Clients' | 'Invoices' | 'Reports'
+    'Time' | 'Approvals' | 'Expenses' | 'Projects' | 'Tasks' | 'Clients' | 'Invoices' | 'Reports'
   readonly view?:
     | 'time'
     | 'timesheet-approvals'
@@ -27,6 +28,7 @@ export interface AppShellOptions {
     | 'client-detail'
     | 'project-list'
     | 'project-detail'
+    | 'task-list'
     | 'reports'
     | 'expense-list'
     | 'expense-detail'
@@ -79,6 +81,7 @@ const sections = [
   'Approvals',
   'Expenses',
   'Projects',
+  'Tasks',
   'Clients',
   'Invoices',
   'Reports',
@@ -410,6 +413,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   </main>
   ${renderClientDirectoryPages(view)}
   ${renderProjectDirectoryPages(view)}
+  ${renderTaskAdminPage(view)}
   ${renderReportsPage(view)}
   ${renderExpenseWorkflowPages(view)}
   ${renderExpenseCategoriesPage(view)}

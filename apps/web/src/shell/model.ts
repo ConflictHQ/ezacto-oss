@@ -32,6 +32,7 @@ import type { ReportWorkspaceApi } from '../reports/model.js'
 import type { ExpenseWorkflowApi } from '../expenses/model.js'
 import type { ExpenseCategoryDirectoryApi } from '../expense-categories/model.js'
 import type { InvoicePaymentApi } from '../invoices/model.js'
+import type { TaskAdminApi } from '../tasks/model.js'
 
 interface CursorPage<T> {
   readonly data: readonly T[]
@@ -44,7 +45,8 @@ export interface ShellApi
     Partial<ReportWorkspaceApi>,
     Partial<ExpenseWorkflowApi>,
     Partial<ExpenseCategoryDirectoryApi>,
-    Partial<InvoicePaymentApi> {
+    Partial<InvoicePaymentApi>,
+    Partial<TaskAdminApi> {
   whoami(signal?: AbortSignal): Promise<Whoami>
   signIn(credentials: PasswordSignInInput, signal?: AbortSignal): Promise<AuthPrincipal>
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
@@ -194,6 +196,7 @@ const navigation = new Map([
   ['time', '/'],
   ['expenses', '/expenses'],
   ['projects', '/projects'],
+  ['tasks', '/tasks'],
   ['clients', '/clients'],
   ['invoices', '/invoices'],
   ['reports', '/reports'],
@@ -660,6 +663,22 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     }),
+  listAdminTasks: (filter, cursor, signal) =>
+    client.listTasks({
+      query: {
+        per_page: 50,
+        ...(filter === 'active' ? { is_active: true } : {}),
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  createAdminTask: async (input, signal) =>
+    (await client.createTask({ body: input, ...withSignal(signal) })).data,
+  updateAdminTask: async (id, input, signal) =>
+    (await client.updateTask({ id, body: input, ...withSignal(signal) })).data,
+  archiveAdminTask: async (id, signal) => {
+    await client.deleteTask({ id, ...withSignal(signal) })
+  },
   listProjectTaskAssignments: (projectId, cursor, signal) =>
     client.listTaskAssignments({
       query: {

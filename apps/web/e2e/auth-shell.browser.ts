@@ -1164,6 +1164,151 @@ test('[e2e:project-directory] creates selectable work, edits assignments, upload
   await expect(archivedRow).toContainText('Archived')
 })
 
+test('[e2e:task-admin] creates, edits, applies a default to a new project, and archives through real D1', async ({
+  context,
+  page,
+}) => {
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  const archiveRequests: string[] = []
+  page.on('request', (request) => {
+    if (
+      request.method() === 'DELETE' &&
+      new URL(request.url()).pathname.startsWith('/api/v1/tasks/')
+    ) {
+      archiveRequests.push(request.url())
+    }
+  })
+  await page.goto('/tasks')
+  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+  await expect(page.locator('[data-task-list]')).toContainText(
+    'Browser Acceptance Task',
+  )
+  await expectPhoneControl(page.getByRole('button', { name: 'Add task' }))
+  await expectPhoneControl(page.getByRole('button', { name: 'Active', exact: true }))
+  await expectNoPageOverflow(page)
+
+  await page.getByRole('button', { name: 'Add task' }).click()
+  const formDialog = page.locator('[data-task-form-dialog]')
+  await formDialog.getByLabel('Name').fill('Browser Default Task')
+  await formDialog.getByLabel('Default hourly rate').fill('123.45')
+  await formDialog.getByLabel('Automatically add to new projects').check()
+  const created = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/tasks' &&
+      response.request().method() === 'POST',
+  )
+  await formDialog.getByRole('button', { name: 'Add task' }).click()
+  const createdResponse = await created
+  expect(createdResponse.status()).toBe(201)
+  const createdTask = (await createdResponse.json()).data as { id: number }
+  await expect(formDialog).toBeHidden()
+
+  let row = page.locator('[data-task-list] [data-task-id]').filter({
+    hasText: 'Browser Default Task',
+  })
+  await expect(row).toContainText('$123.45/hour')
+  await expect(row).toContainText('Added to new projects')
+  await row.getByRole('button', { name: 'Edit', exact: true }).click()
+  await formDialog.getByLabel('Name').fill('Browser Default Task Updated')
+  await formDialog.getByLabel('Default hourly rate').fill('150.05')
+  await formDialog.getByLabel('Billable by default').uncheck()
+  const updated = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/tasks/${createdTask.id}` &&
+      response.request().method() === 'PATCH',
+  )
+  await formDialog.getByRole('button', { name: 'Save task' }).click()
+  expect((await updated).status()).toBe(200)
+  row = page.locator('[data-task-list] [data-task-id]').filter({
+    hasText: 'Browser Default Task Updated',
+  })
+  await expect(row).toContainText('$150.05/hour')
+  await expect(row).toContainText('Non-billable by default')
+
+  const projectAssignment = await page.evaluate(async (taskId) => {
+    const projectResponse = await fetch('/api/v1/projects', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        client_id: 1,
+        name: `Task admin default project ${taskId}`,
+        code: `TASK-${taskId}`,
+        billing_method: 'time_materials',
+        bill_by: 'tasks',
+      }),
+    })
+    const project = (await projectResponse.json()).data as { id: number }
+    const assignmentsResponse = await fetch(
+      `/api/v1/task-assignments?project_id=${project.id}&task_id=${taskId}&per_page=200`,
+    )
+    const assignments = (await assignmentsResponse.json()).data
+    const cleanupResponse = await fetch(`/api/v1/projects/${project.id}`, {
+      method: 'DELETE',
+    })
+    return {
+      projectStatus: projectResponse.status,
+      assignmentStatus: assignmentsResponse.status,
+      cleanupStatus: cleanupResponse.status,
+      assignments,
+    }
+  }, createdTask.id)
+  expect(projectAssignment).toEqual({
+    projectStatus: 201,
+    assignmentStatus: 200,
+    cleanupStatus: 204,
+    assignments: [
+      expect.objectContaining({
+        task_id: createdTask.id,
+        billable: false,
+        hourly_rate_cents: 15_005,
+        is_active: true,
+      }),
+    ],
+  })
+
+  await row.getByRole('button', { name: 'Archive' }).click()
+  const archiveDialog = page.locator('[data-task-archive-dialog]')
+  await archiveDialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(archiveDialog).toBeHidden()
+  expect(archiveRequests).toEqual([])
+
+  await row.getByRole('button', { name: 'Archive' }).click()
+  await archiveDialog.getByRole('button', { name: 'Close' }).click()
+  await expect(archiveDialog).toBeHidden()
+  expect(archiveRequests).toEqual([])
+
+  await row.getByRole('button', { name: 'Archive' }).click()
+  const archived = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/tasks/${createdTask.id}` &&
+      response.request().method() === 'DELETE',
+  )
+  await archiveDialog.getByRole('button', { name: 'Archive task' }).click()
+  expect((await archived).status()).toBe(204)
+  await expect(archiveDialog).toBeHidden()
+  await expect(row).toHaveCount(0)
+  expect(archiveRequests).toHaveLength(1)
+
+  await page.getByRole('button', { name: 'All', exact: true }).click()
+  const archivedRow = page.locator('[data-task-list] [data-task-id]').filter({
+    hasText: 'Browser Default Task Updated',
+  })
+  await expect(archivedRow).toContainText('Archived')
+  await expect(archivedRow).toContainText('Edit or reactivate')
+  await expectNoPageOverflow(page)
+
+  const cleaned = await context.request.post('/__ezacto_browser_fixture__/start-end', {
+    data: { action: 'task-admin-cleanup' },
+    headers: {
+      'x-ezacto-browser-fixture-control': 'start-end-round-trip',
+    },
+  })
+  expect(cleaned.status()).toBe(204)
+})
+
 test('[e2e:reports-ui] runs uninvoiced, client rollup, and project budget reports through real D1', async ({
   page,
 }) => {
