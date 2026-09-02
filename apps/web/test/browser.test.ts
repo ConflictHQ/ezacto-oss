@@ -9,6 +9,7 @@ import {
   type InvoicePayment,
   type InvoicePaymentInput,
   type InvoicePaymentUpdateInput,
+  type InvoiceTransitionInput,
   type Session,
   type TimeEntry,
   type TimeEntryInput,
@@ -1225,6 +1226,170 @@ describe('invoice browse browser behavior', () => {
     expect(documentShell.textContent).not.toMatch(/Download PDF|Send reminder/u)
   })
 
+  it('[e2e:invoice-cycle] sends a draft through the composer and shows its scheduled reminder', async () => {
+    renderBrowserShell({ view: 'invoice-detail' })
+    const base = browserApi()
+    let currentInvoice = invoice(7, { due_date: '2099-09-30' })
+    let messages: InvoiceMessage[] = []
+    let attempts = 0
+    const transitionInvoice = vi.fn(
+      async (_id: number, _commandId: string, input: InvoiceTransitionInput) => {
+        attempts += 1
+        if (attempts === 1) throw new Error('network unavailable')
+        currentInvoice = {
+          ...currentInvoice,
+          state: 'open',
+          version: 2,
+          sent_at: timestamp,
+        }
+        messages = [
+          {
+            ...invoiceMessage(7),
+            event_type: 'send',
+            recipients: input.recipients ?? [],
+            subject: input.subject ?? null,
+            body: input.body ?? null,
+            attach_pdf: input.attach_pdf ?? false,
+            send_me_a_copy: input.send_me_a_copy ?? false,
+            reminder: input.reminder ?? false,
+            send_reminder_on: input.send_reminder_on ?? null,
+          },
+        ]
+        return currentInvoice
+      },
+    )
+    const api: ShellApi = {
+      ...base,
+      getInvoice: vi.fn(async () => currentInvoice),
+      listInvoiceMessages: vi.fn(async () => messages),
+      listInvoicePayments: vi.fn(async () => []),
+      transitionInvoice,
+    }
+
+    await mountShell(api)
+    const send = document.querySelector<HTMLButtonElement>('[data-invoice-send]')!
+    const dialog = document.querySelector<HTMLDialogElement>('[data-invoice-composer-dialog]')!
+    const form = document.querySelector<HTMLFormElement>('[data-invoice-composer-form]')!
+    expect(send.hidden).toBe(false)
+    expect(send.textContent).toBe('Send invoice')
+
+    send.click()
+    expect(dialog.open).toBe(true)
+    expect(dialog.textContent).toContain('%invoice_number%')
+    dialog.querySelector<HTMLButtonElement>('[data-dialog-close]:not([aria-label])')!.click()
+    expect(dialog.open).toBe(false)
+    expect(transitionInvoice).not.toHaveBeenCalled()
+    send.click()
+    dialog.querySelector<HTMLButtonElement>('[data-dialog-close][aria-label]')!.click()
+    expect(dialog.open).toBe(false)
+    expect(transitionInvoice).not.toHaveBeenCalled()
+
+    send.click()
+    const recipients = document.querySelector<HTMLTextAreaElement>(
+      '[data-invoice-composer-recipients]',
+    )!
+    const subject = document.querySelector<HTMLInputElement>('[data-invoice-composer-subject]')!
+    const body = document.querySelector<HTMLTextAreaElement>('[data-invoice-composer-body]')!
+    recipients.value = 'Accounts Payable <ap@example.test>\nap@example.test'
+    recipients.dispatchEvent(new Event('input', { bubbles: true }))
+    subject.value = 'Invoice %invoice_number%'
+    body.value = 'Invoice #%invoice_id% totals %invoice_amount% and is due %invoice_due_date%.'
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-composer-result]')?.textContent).toBe(
+        'network unavailable',
+      ),
+    )
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(dialog.open).toBe(false))
+
+    expect(transitionInvoice).toHaveBeenCalledTimes(2)
+    expect(transitionInvoice.mock.calls[0]?.[1]).toBe(transitionInvoice.mock.calls[1]?.[1])
+    expect(transitionInvoice.mock.calls[1]?.[2]).toEqual({
+      command: 'send',
+      expected_version: 1,
+      recipients: [{ name: 'Accounts Payable', email: 'ap@example.test' }],
+      subject: 'Invoice INV-7',
+      body: 'Invoice #7 totals $82.50 and is due 2099-09-30.',
+      attach_pdf: true,
+      send_me_a_copy: false,
+      thank_you: false,
+      reminder: true,
+      send_reminder_on: '2099-09-30',
+    })
+    expect(document.querySelector('[data-invoice-detail-state]')?.textContent).toBe('Open')
+    expect(document.querySelector('[data-invoice-reminder-line]')?.textContent).toContain(
+      'Sep 30, 2099',
+    )
+    expect(document.querySelector('[data-invoice-detail-messages]')?.textContent).toContain(
+      'Invoice #7 totals $82.50',
+    )
+    expect(send.textContent).toBe('Send again')
+  })
+
+  it('[reliability] never reissues a committed send when its detail refresh fails', async () => {
+    renderBrowserShell({ view: 'invoice-detail' })
+    const base = browserApi()
+    let currentInvoice = invoice(7, { due_date: '2099-09-30' })
+    let messages: InvoiceMessage[] = []
+    let failNextRefresh = false
+    const getInvoice = vi.fn(async () => {
+      if (failNextRefresh) {
+        failNextRefresh = false
+        throw new Error('refresh offline')
+      }
+      return currentInvoice
+    })
+    const transitionInvoice = vi.fn(
+      async (_id: number, _commandId: string, input: InvoiceTransitionInput) => {
+        currentInvoice = { ...currentInvoice, state: 'open', version: 2, sent_at: timestamp }
+        messages = [
+          {
+            ...invoiceMessage(7),
+            event_type: 'send',
+            recipients: input.recipients ?? [],
+            send_reminder_on: input.send_reminder_on ?? null,
+          },
+        ]
+        failNextRefresh = true
+        return currentInvoice
+      },
+    )
+    const api: ShellApi = {
+      ...base,
+      getInvoice,
+      listInvoiceMessages: vi.fn(async () => messages),
+      listInvoicePayments: vi.fn(async () => []),
+      transitionInvoice,
+    }
+
+    await mountShell(api)
+    document.querySelector<HTMLButtonElement>('[data-invoice-send]')!.click()
+    const dialog = document.querySelector<HTMLDialogElement>('[data-invoice-composer-dialog]')!
+    const form = document.querySelector<HTMLFormElement>('[data-invoice-composer-form]')!
+    const recipients = document.querySelector<HTMLTextAreaElement>(
+      '[data-invoice-composer-recipients]',
+    )!
+    recipients.value = 'ap@example.test'
+    recipients.dispatchEvent(new Event('input', { bubbles: true }))
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    const retry = document.querySelector<HTMLButtonElement>('[data-invoice-detail-retry]')!
+    await vi.waitFor(() => expect(retry.hidden).toBe(false))
+    expect(dialog.open).toBe(false)
+    expect(document.querySelector('[data-invoice-detail-status]')?.textContent).toBe(
+      'refresh offline',
+    )
+    expect(document.querySelector<HTMLButtonElement>('[data-invoice-send]')?.disabled).toBe(true)
+    expect(transitionInvoice).toHaveBeenCalledTimes(1)
+
+    retry.click()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-detail-state]')?.textContent).toBe('Open'),
+    )
+    expect(transitionInvoice).toHaveBeenCalledTimes(1)
+  })
+
   it('[e2e:invoice-cycle] retries, records, edits, and deletes an exact manual payment', async () => {
     renderBrowserShell({ view: 'invoice-detail' })
     const base = browserApi()
@@ -1454,6 +1619,7 @@ describe('invoice browse browser behavior', () => {
     )
     expect(document.querySelector('[data-invoice-payment-edit]')).toBeNull()
     expect(document.querySelector('[data-invoice-payment-delete]')).toBeNull()
+    expect(document.querySelector<HTMLButtonElement>('[data-invoice-send]')?.hidden).toBe(true)
     expect(recordInvoicePayment).not.toHaveBeenCalled()
   })
 

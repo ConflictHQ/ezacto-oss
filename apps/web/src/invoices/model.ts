@@ -4,6 +4,8 @@ import type {
   InvoicePayment,
   InvoicePaymentInput,
   InvoicePaymentUpdateInput,
+  InvoiceRecipient,
+  InvoiceTransitionInput,
   VersionedRowDeleteInput,
   Whoami,
 } from '@ezacto/client'
@@ -30,6 +32,12 @@ export interface InvoicePaymentApi {
     paymentId: number,
     commandId: string,
     input: VersionedRowDeleteInput,
+    signal?: AbortSignal,
+  ): Promise<Invoice>
+  transitionInvoice(
+    id: number,
+    commandId: string,
+    input: InvoiceTransitionInput,
     signal?: AbortSignal,
   ): Promise<Invoice>
 }
@@ -84,6 +92,92 @@ export const invoicePaymentDate = (
 
 export const invoiceCanRecordPayment = (invoice: Readonly<Invoice>): boolean =>
   invoice.state === 'open' && invoice.due_amount_cents > 0
+
+export const invoiceCanSend = (invoice: Readonly<Invoice>): boolean =>
+  invoice.state === 'draft' || invoice.state === 'open'
+
+const recipientEmailPattern = /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/u
+
+export const invoiceRecipients = (raw: string): InvoiceRecipient[] => {
+  const lines = raw
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+  if (lines.length === 0) throw new Error('Enter at least one recipient email address.')
+  if (lines.length > 1_000) throw new Error('No more than 1,000 recipients can be sent at once.')
+  const seen = new Set<string>()
+  return lines.flatMap((line) => {
+    const named = /^(.*?)\s*<([^<>]+)>$/u.exec(line)
+    const name = named === null ? '' : named[1]!.trim()
+    const email = (named === null ? line : named[2]!).trim()
+    if (
+      name.length > 1_000 ||
+      email.length > 320 ||
+      !recipientEmailPattern.test(email)
+    ) {
+      throw new Error(`Enter a valid recipient as email@example.com or Name <email@example.com>.`)
+    }
+    const key = email.toLocaleLowerCase('en-US')
+    if (seen.has(key)) return []
+    seen.add(key)
+    return [{ name, email }]
+  })
+}
+
+export const invoiceTemplateVariableNames = [
+  '%invoice_id%',
+  '%invoice_number%',
+  '%invoice_amount%',
+  '%invoice_due_date%',
+] as const
+
+export const interpolateInvoiceTemplate = (
+  template: string,
+  invoice: Readonly<Invoice>,
+): string => {
+  const variables: Record<(typeof invoiceTemplateVariableNames)[number], string> = {
+    '%invoice_id%': String(invoice.id),
+    '%invoice_number%': invoice.number,
+    '%invoice_amount%': new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: invoice.currency,
+    }).format(invoice.amount_cents / 100),
+    '%invoice_due_date%': invoice.due_date,
+  }
+  return template.replace(
+    /%(?:invoice_id|invoice_number|invoice_amount|invoice_due_date)%/gu,
+    (variable) => variables[variable as keyof typeof variables],
+  )
+}
+
+export const invoiceReminderDate = (raw: string, today: string): string | null => {
+  if (raw === '') return null
+  const date = new Date(`${raw}T00:00:00.000Z`)
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/u.test(raw) ||
+    !Number.isFinite(date.valueOf()) ||
+    date.toISOString().slice(0, 10) !== raw
+  ) {
+    throw new Error('Choose a valid reminder date.')
+  }
+  if (raw < today) throw new Error('The reminder date cannot be in the past.')
+  return raw
+}
+
+export const invoiceScheduledReminder = (
+  invoice: Readonly<Invoice>,
+  messages: readonly InvoiceMessage[],
+): string | null => {
+  if (invoice.state !== 'open') return null
+  return (
+    [...messages]
+      .reverse()
+      .find(
+        (message) =>
+          message.event_type === 'send' && message.send_reminder_on !== null,
+      )?.send_reminder_on ?? null
+  )
+}
 
 export const invoicePaymentCanUpdate = (
   invoice: Readonly<Invoice>,
