@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { SenderIdentityUnavailableError } from '@ezacto/mailer'
 import {
   createApiApp,
   installEmailConfigurationRoutes,
@@ -52,6 +53,8 @@ const verifiedEvidence = {
 
 const service = (): EmailConfigurationService => ({
   listTemplates: vi.fn(async () => [template]),
+  getTemplate: vi.fn(async () => template),
+  getVerifiedUserEmail: vi.fn(async () => 'admin@example.test'),
   listTemplateVersions: vi.fn(async () => [template]),
   createTemplateVersion: vi.fn(async (input) => ({
     ...template,
@@ -97,12 +100,55 @@ const service = (): EmailConfigurationService => ({
     version: 1,
     archivedAt: now,
   })),
+  beginTestSend: vi.fn(async (input) => ({
+    claimed: true,
+    record: {
+      commandId: input.commandId,
+      senderIdentityId: input.senderIdentityId,
+      templateKind: input.templateKind,
+      templateVersion: input.templateVersion,
+      actorUserId: input.actorUserId,
+      inputFingerprint: `sha256:${'0'.repeat(64)}`,
+      status: 'pending' as const,
+      deliveryId: null,
+      failureCode: null,
+      createdAt: input.occurredAt,
+      updatedAt: input.occurredAt,
+    },
+  })),
+  completeTestSend: vi.fn(async (input) => ({
+    commandId: input.commandId,
+    senderIdentityId: 41,
+    templateKind: 'invoice' as const,
+    templateVersion: 1,
+    actorUserId: input.actorUserId,
+    inputFingerprint: `sha256:${'0'.repeat(64)}`,
+    status: 'completed' as const,
+    deliveryId: input.deliveryId,
+    failureCode: null,
+    createdAt: now,
+    updatedAt: input.occurredAt,
+  })),
+  failTestSend: vi.fn(async (input) => ({
+    commandId: input.commandId,
+    senderIdentityId: 41,
+    templateKind: 'invoice' as const,
+    templateVersion: 1,
+    actorUserId: input.actorUserId,
+    inputFingerprint: `sha256:${'0'.repeat(64)}`,
+    status: 'failed' as const,
+    deliveryId: null,
+    failureCode: input.failureCode,
+    createdAt: now,
+    updatedAt: input.occurredAt,
+  })),
 })
 
 const harness = (
   profile: 'administrator' | 'member',
   configuration = service(),
   verifier?: SenderIdentityVerifier,
+  organizationMailer?: Parameters<typeof installEmailConfigurationRoutes>[1]['organizationMailer'],
 ) => {
   const app = createApiApp({
     authentication: {
@@ -131,6 +177,7 @@ const harness = (
       installEmailConfigurationRoutes(api, {
         service: configuration,
         ...(verifier === undefined ? {} : { verifier }),
+        ...(organizationMailer === undefined ? {} : { organizationMailer }),
         clock: () => now,
       })
     },
@@ -185,6 +232,14 @@ describe('email configuration API', () => {
     const member = harness('member')
     expect((await member.app.request('/api/v1/email-templates')).status).toBe(403)
     expect((await member.app.request('/api/v1/sender-identities')).status).toBe(403)
+    expect(
+      (
+        await member.app.request(
+          '/api/v1/sender-identities/41/test-send',
+          mutation({}, 'member-test-send'),
+        )
+      ).status,
+    ).toBe(403)
 
     const admin = harness('administrator')
     const tokenResponse = await admin.app.request('/api/v1/email-templates', {
@@ -192,6 +247,108 @@ describe('email configuration API', () => {
     })
     expect(tokenResponse.status).toBe(403)
     expect(await tokenResponse.json()).toMatchObject({ error: { code: 'session_required' } })
+  })
+
+  it('[api] blocks an unverified organization sender before command, log, or queue work', async () => {
+    const configuration = service()
+    const organizationMailer = {
+      assertAvailable: vi.fn(async () => {
+        throw new SenderIdentityUnavailableError('sender_verification_pending', 41)
+      }),
+      enqueue: vi.fn(),
+    }
+    const { app } = harness(
+      'administrator',
+      configuration,
+      undefined,
+      organizationMailer,
+    )
+    const response = await app.request(
+      '/api/v1/sender-identities/41/test-send',
+      mutation(
+        {
+          template_kind: 'invoice',
+          template_version: 1,
+          variables: {
+            company_name: 'Example Studio',
+            invoice_id: '41',
+            invoice_due_date: '2026-09-30',
+          },
+          confirmed: true,
+        },
+        'blocked-test-send',
+      ),
+    )
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'sender_verification_pending' },
+    })
+    expect(configuration.beginTestSend).not.toHaveBeenCalled()
+    expect(organizationMailer.enqueue).not.toHaveBeenCalled()
+  })
+
+  it('[api] renders a persisted template to the current admin and replays idempotently', async () => {
+    const configuration = service()
+    const completed = {
+      commandId: 'successful-test-send',
+      senderIdentityId: 41,
+      templateKind: 'invoice' as const,
+      templateVersion: 1,
+      actorUserId: 7,
+      inputFingerprint: `sha256:${'0'.repeat(64)}`,
+      status: 'completed' as const,
+      deliveryId: 91,
+      failureCode: null,
+      createdAt: now,
+      updatedAt: now,
+    }
+    vi.mocked(configuration.beginTestSend)
+      .mockResolvedValueOnce({
+        claimed: true,
+        record: { ...completed, status: 'pending', deliveryId: null },
+      })
+      .mockResolvedValueOnce({ claimed: false, record: completed })
+    vi.mocked(configuration.completeTestSend).mockResolvedValue(completed)
+    const organizationMailer = {
+      assertAvailable: vi.fn(async () => undefined),
+      enqueue: vi.fn(async () => ({ id: 91 }) as never),
+    }
+    const { app } = harness(
+      'administrator',
+      configuration,
+      undefined,
+      organizationMailer,
+    )
+    const request = () =>
+      app.request(
+        '/api/v1/sender-identities/41/test-send',
+        mutation(
+          {
+            template_kind: 'invoice',
+            template_version: 1,
+            variables: {
+              company_name: 'Example Studio',
+              invoice_id: '41',
+              invoice_due_date: '2026-09-30',
+            },
+            confirmed: true,
+          },
+          'successful-test-send',
+        ),
+      )
+    const first = await request()
+    const replay = await request()
+    expect(first.status).toBe(202)
+    expect(replay.status).toBe(202)
+    expect(await first.json()).toEqual(await replay.json())
+    expect(organizationMailer.enqueue).toHaveBeenCalledTimes(1)
+    expect(organizationMailer.enqueue).toHaveBeenCalledWith({
+      senderIdentityId: 41,
+      to: [{ email: 'admin@example.test' }],
+      template: 'invoice:v1:test',
+      subject: 'Invoice 41 from Example Studio',
+      text: 'Invoice 41 is due 2026-09-30.',
+    })
   })
 
   it('[api] appends an immutable template version with explicit concurrency and idempotency', async () => {

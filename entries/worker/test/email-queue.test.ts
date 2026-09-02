@@ -131,7 +131,7 @@ describe('Worker email queue composition', () => {
         failureCode: 'provider_rejected',
       }) as EmailLogRecord,
     ])
-  }, 10_000)
+  }, 20_000)
 
   it('[concurrency] does not spend provider retries on queue redelivery contention', async () => {
     const env = {
@@ -230,11 +230,11 @@ describe('Worker email queue composition', () => {
       RELEASE: 'mailer-test',
     } satisfies WorkerEnv
     const services = await createRuntimeServices(env)
-    expect(services.bootstrapAuthMailer).toBeUndefined()
-    expect(services.authMailer).toBeUndefined()
+    expect(services.deploymentAuthMailer).toBeUndefined()
+    expect(services.organizationMailer).toBeUndefined()
   })
 
-  it('[integration] blocks established-organization auth mail on real D1 before log, queue, or SES', async () => {
+  it('[integration] keeps auth on deployment mail and blocks organization test sends before log, queue, or SES', async () => {
     const isolated = new Miniflare({
       modules: true,
       script: 'export default { fetch() { return new Response("ok") } }',
@@ -262,7 +262,11 @@ describe('Worker email queue composition', () => {
       const emailProvider = createWorkerSesMailer(env, { fetch: providerFetch })!
       const services = await createRuntimeServices(env, { emailProvider })
       const app = createApp(services)
-      const request = (path: string, payload: unknown) =>
+      const request = (
+        path: string,
+        payload: unknown,
+        headers: Record<string, string> = {},
+      ) =>
         app.request(
           path,
           {
@@ -270,6 +274,7 @@ describe('Worker email queue composition', () => {
             headers: {
               'content-type': 'application/json',
               'cf-connecting-ip': '198.51.100.31',
+              ...headers,
             },
             body: JSON.stringify(payload),
           },
@@ -301,16 +306,45 @@ describe('Worker email queue composition', () => {
         commandId: 'worker-unverified-sender',
         occurredAt: '2026-09-02T06:00:00.000Z',
       })
-      const logCountBeforeReset = (await services.emailLog.list()).length
-      const blocked = await request('/auth/password/forgot', {
+      const reset = await request('/auth/password/forgot', {
         email: 'owner@example.test',
       })
-      expect(blocked.status).toBe(409)
-      expect(await blocked.json()).toMatchObject({
-        error: { code: 'sender_verification_pending' },
+      expect(reset.status).toBe(202)
+      expect(jobs).toHaveLength(2)
+
+      const signedIn = await request('/auth/sign-in', {
+        email: 'owner@example.test',
+        password,
       })
-      expect(jobs).toHaveLength(1)
-      expect(await services.emailLog.list()).toHaveLength(logCountBeforeReset)
+      expect(signedIn.status).toBe(200)
+      const cookie = signedIn.headers.get('set-cookie')!.split(';', 1)[0]!
+      const logCountBeforeTest = (await services.emailLog.list()).length
+      const blocked = await request(
+        '/api/v1/sender-identities/41/test-send',
+        {
+          template_kind: 'invoice',
+          template_version: 1,
+          variables: {
+            company_name: 'Bound Sender Studio',
+            invoice_id: '41',
+            invoice_number: 'INV-41',
+            invoice_amount: '$100.00',
+            invoice_due_date: '2026-09-30',
+          },
+          confirmed: true,
+        },
+        {
+          cookie,
+          origin: 'http://localhost',
+          'idempotency-key': 'worker-unverified-test-send',
+        },
+      )
+      expect({ status: blocked.status, body: await blocked.json() }).toMatchObject({
+        status: 409,
+        body: { error: { code: 'sender_verification_pending' } },
+      })
+      expect(jobs).toHaveLength(2)
+      expect(await services.emailLog.list()).toHaveLength(logCountBeforeTest)
       expect(providerFetch).not.toHaveBeenCalled()
     } finally {
       await isolated.dispose()

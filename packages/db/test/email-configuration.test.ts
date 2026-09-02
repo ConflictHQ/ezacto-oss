@@ -34,6 +34,11 @@ const containerHarness = (): Harness => {
       id, first_name, last_name, profile, manager_grants, is_owner, created_at, updated_at
     ) VALUES (1, 'Avery', 'Owner', 'administrator', '[]', 0, ?, ?)`,
   ).run(initial, initial)
+  database.prepare(
+    `INSERT INTO user_emails (
+      id, user_id, address, verified_at, is_primary, created_at, updated_at
+    ) VALUES (1, 1, 'owner@example.test', ?, 1, ?, ?)`,
+  ).run(initial, initial, initial)
   database.exec('COMMIT')
   return {
     store: createContainerEmailConfigurationStore(database),
@@ -70,6 +75,13 @@ const d1Harness = async (): Promise<Harness> => {
         ) VALUES (1, 'Avery', 'Owner', 'administrator', '[]', 0, ?, ?)`,
       )
       .bind(initial, initial),
+    database
+      .prepare(
+        `INSERT INTO user_emails (
+          id, user_id, address, verified_at, is_primary, created_at, updated_at
+        ) VALUES (1, 1, 'owner@example.test', ?, 1, ?, ?)`,
+      )
+      .bind(initial, initial, initial),
   ])
   return {
     store: createD1EmailConfigurationStore(database),
@@ -291,6 +303,90 @@ for (const [runtime, factory] of factories) {
       expect(evidenceUpdates.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
       expect(evidenceUpdates.filter(({ status }) => status === 'rejected')).toHaveLength(1)
       expect((await harness.store.getSenderIdentity(77))?.evidence).toMatchObject({ version: 1 })
+    })
+
+    it('[concurrency] reserves and replays persisted organization test-send commands', async () => {
+      harness = await factory()
+      await expect(harness.store.getVerifiedUserEmail(1)).resolves.toBe(
+        'owner@example.test',
+      )
+      await harness.store.createSenderIdentity({
+        id: 51,
+        email: 'billing@example.test',
+        displayName: 'Billing',
+        provider: 'ses',
+        providerIdentity: 'example.test',
+        actorUserId: 1,
+        commandId: 'test-send-sender',
+        occurredAt: initial,
+      })
+      const input = {
+        senderIdentityId: 51,
+        templateKind: 'invoice' as const,
+        templateVersion: 1,
+        recipientEmail: 'owner@example.test',
+        variables: {
+          company_name: 'North Peak Studio',
+          invoice_id: '51',
+          invoice_number: 'INV-51',
+          invoice_amount: '$100.00',
+          invoice_due_date: '2026-09-30',
+        },
+        actorUserId: 1,
+        commandId: 'test-send-51',
+        occurredAt: later,
+      }
+      const claims = await Promise.all([
+        harness.store.beginTestSend(input),
+        harness.store.beginTestSend(input),
+      ])
+      expect(claims.filter(({ claimed }) => claimed)).toHaveLength(1)
+      expect(claims.map(({ record }) => record.status)).toEqual([
+        'pending',
+        'pending',
+      ])
+      await expect(
+        harness.store.beginTestSend({
+          ...input,
+          variables: { ...input.variables, invoice_id: 'different' },
+        }),
+      ).rejects.toMatchObject({ code: 'command_id_reused' })
+
+      await harness.run(
+        `INSERT INTO email_log (
+          id, to_json, template, subject, from_json, created_at, updated_at
+        ) VALUES (91, ?, 'invoice:v1:test', 'Test invoice', ?, ?, ?)`,
+        [
+          JSON.stringify([{ email: 'owner@example.test' }]),
+          JSON.stringify({ email: 'billing@example.test', name: 'Billing' }),
+          latest,
+          latest,
+        ],
+      )
+      const completed = await harness.store.completeTestSend({
+        commandId: input.commandId,
+        actorUserId: 1,
+        deliveryId: 91,
+        occurredAt: latest,
+      })
+      expect(completed).toMatchObject({ status: 'completed', deliveryId: 91 })
+      await expect(harness.store.beginTestSend(input)).resolves.toMatchObject({
+        claimed: false,
+        record: { status: 'completed', deliveryId: 91 },
+      })
+      await expect(
+        harness.run(
+          `UPDATE email_test_send_commands SET status = 'failed', delivery_id = NULL,
+            failure_code = 'email_queue_unavailable', updated_at = ?
+           WHERE command_id = 'test-send-51'`,
+          [latest],
+        ),
+      ).rejects.toThrow(/transition is invalid/)
+      await expect(
+        harness.run(
+          `DELETE FROM email_test_send_commands WHERE command_id = 'test-send-51'`,
+        ),
+      ).rejects.toThrow(/immutable/)
     })
 
     it('[security] keeps sender bindings immutable and requires provider evidence before defaulting', async () => {

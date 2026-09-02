@@ -8,6 +8,7 @@ import {
 import {
   SenderIdentityUnavailableError,
   senderIdentityEligibilityFailure,
+  type SenderIdentityUnavailableCode,
 } from '@ezacto/mailer'
 
 export type SenderVerificationStatus =
@@ -54,6 +55,48 @@ export interface SenderIdentityRecord {
   createdAt: string
   updatedAt: string
   evidence: SenderIdentityEvidenceRecord | null
+}
+
+export type EmailTestSendFailureCode =
+  | SenderIdentityUnavailableCode
+  | 'email_queue_unavailable'
+
+const emailTestSendFailureCodes = new Set<EmailTestSendFailureCode>([
+  'sender_identity_missing',
+  'sender_identity_archived',
+  'sender_identity_not_default',
+  'sender_provider_mismatch',
+  'sender_provider_unsupported',
+  'sender_identity_binding_mismatch',
+  'sender_evidence_untrusted',
+  'sender_verification_pending',
+  'sender_verification_temporary_failure',
+  'sender_verification_failed',
+  'sender_dkim_pending',
+  'sender_dkim_failed',
+  'sender_mail_from_pending',
+  'sender_mail_from_failed',
+  'sender_alignment_missing',
+  'email_queue_unavailable',
+])
+
+export interface EmailTestSendCommandRecord {
+  commandId: string
+  senderIdentityId: number
+  templateKind: 'invoice' | 'reminder' | 'thank_you'
+  templateVersion: number
+  actorUserId: number
+  inputFingerprint: string
+  status: 'pending' | 'completed' | 'failed'
+  deliveryId: number | null
+  failureCode: EmailTestSendFailureCode | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface EmailTestSendClaim {
+  record: EmailTestSendCommandRecord
+  claimed: boolean
 }
 
 export type EmailConfigurationErrorCode =
@@ -120,6 +163,7 @@ export interface RecordSenderEvidenceInput {
 export interface EmailConfigurationStore {
   listTemplates(): Promise<readonly EmailTemplateVersionRecord[]>
   getTemplate(kind: EmailTemplateKind, version?: number): Promise<EmailTemplateVersionRecord | null>
+  getVerifiedUserEmail(userId: number): Promise<string | null>
   listTemplateVersions(kind: EmailTemplateKind): Promise<readonly EmailTemplateVersionRecord[]>
   createTemplateVersion(input: Readonly<CreateTemplateVersionInput>): Promise<EmailTemplateVersionRecord>
   listSenderIdentities(): Promise<readonly SenderIdentityRecord[]>
@@ -147,6 +191,28 @@ export interface EmailConfigurationStore {
     commandId: string
     occurredAt: string
   }>): Promise<SenderIdentityRecord>
+  beginTestSend(input: Readonly<{
+    senderIdentityId: number
+    templateKind: 'invoice' | 'reminder' | 'thank_you'
+    templateVersion: number
+    recipientEmail: string
+    variables: Readonly<Record<string, string>>
+    actorUserId: number
+    commandId: string
+    occurredAt: string
+  }>): Promise<EmailTestSendClaim>
+  completeTestSend(input: Readonly<{
+    commandId: string
+    actorUserId: number
+    deliveryId: number
+    occurredAt: string
+  }>): Promise<EmailTestSendCommandRecord>
+  failTestSend(input: Readonly<{
+    commandId: string
+    actorUserId: number
+    failureCode: EmailTestSendFailureCode
+    occurredAt: string
+  }>): Promise<EmailTestSendCommandRecord>
   resolveSenderIdentity(id?: number): Promise<SenderIdentityRecord | null>
 }
 
@@ -287,6 +353,26 @@ const fingerprint = async (input: unknown): Promise<string> => {
   return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('')}`
 }
 
+const canonicalTestVariables = (
+  values: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> => {
+  if (typeof values !== 'object' || values === null || Array.isArray(values)) {
+    throw new EmailConfigurationError('invalid_input', 'variables must be an object.')
+  }
+  const entries = Object.entries(values)
+  if (entries.length > 32) {
+    throw new EmailConfigurationError('invalid_input', 'variables has too many entries.')
+  }
+  const result: Record<string, string> = {}
+  for (const [name, value] of entries.sort(([left], [right]) => left.localeCompare(right))) {
+    if (!/^[a-z][a-z0-9_]{0,63}$/u.test(name) || typeof value !== 'string') {
+      throw new EmailConfigurationError('invalid_input', 'variables contains invalid input.')
+    }
+    result[name] = bounded(value, `variables.${name}`, 2_000, false, true)
+  }
+  return result
+}
+
 const templateSelect = `SELECT version.template_kind AS kind, version.version,
   version.subject_template AS subjectTemplate, version.text_template AS textTemplate,
   version.html_template AS htmlTemplate,
@@ -383,6 +469,20 @@ interface RawCommand {
   resultJson: string | Record<string, unknown>
 }
 
+interface RawTestSendCommand {
+  commandId: string
+  senderIdentityId: number
+  templateKind: 'invoice' | 'reminder' | 'thank_you'
+  templateVersion: number
+  actorUserId: number
+  inputFingerprint: string
+  status: 'pending' | 'completed' | 'failed'
+  deliveryId: number | null
+  failureCode: EmailTestSendFailureCode | null
+  createdAt: string
+  updatedAt: string
+}
+
 const parsedResult = <T>(row: RawCommand): T => {
   const result = typeof row.resultJson === 'string' ? JSON.parse(row.resultJson) : row.resultJson
   if (
@@ -411,6 +511,18 @@ const createStore = (database: NativeClient): EmailConfigurationStore => {
       `SELECT command_kind AS commandKind, sender_identity_id AS senderIdentityId,
         actor_user_id AS actorUserId, input_fingerprint AS inputFingerprint,
         result_json AS resultJson FROM sender_identity_commands WHERE command_id = ?`,
+      [id],
+    )
+
+  const readTestSendCommand = (id: string): Promise<EmailTestSendCommandRecord | null> =>
+    first<RawTestSendCommand>(
+      database,
+      `SELECT command_id AS commandId, sender_identity_id AS senderIdentityId,
+        template_kind AS templateKind, template_version AS templateVersion,
+        actor_user_id AS actorUserId, input_fingerprint AS inputFingerprint,
+        status, delivery_id AS deliveryId, failure_code AS failureCode,
+        created_at AS createdAt, updated_at AS updatedAt
+       FROM email_test_send_commands WHERE command_id = ?`,
       [id],
     )
 
@@ -482,6 +594,17 @@ const createStore = (database: NativeClient): EmailConfigurationStore => {
           AND head.current_version = version.version
          ORDER BY version.template_kind`,
       )
+    },
+
+    async getVerifiedUserEmail(userId) {
+      const row = await first<{ address: string }>(
+        database,
+        `SELECT address FROM user_emails
+         WHERE user_id = ? AND verified_at IS NOT NULL AND invalidated_at IS NULL
+         ORDER BY is_primary DESC, id LIMIT 1`,
+        [positiveId(userId, 'userId')],
+      )
+      return row?.address ?? null
     },
 
     async getTemplate(kind, requestedVersion) {
@@ -1114,6 +1237,135 @@ const createStore = (database: NativeClient): EmailConfigurationStore => {
         'version_conflict',
         'The sender identity changed before this update.',
       )
+    },
+
+    async beginTestSend(input) {
+      const senderIdentityId = positiveId(input.senderIdentityId, 'senderIdentityId')
+      const actorUserId = positiveId(input.actorUserId, 'actorUserId')
+      const templateVersion = version(input.templateVersion, 'templateVersion')
+      const id = commandId(input.commandId)
+      const at = timestamp(input.occurredAt, 'occurredAt')
+      if (!(['invoice', 'reminder', 'thank_you'] as const).includes(input.templateKind)) {
+        throw new EmailConfigurationError(
+          'invalid_input',
+          'Only organization message templates can be test-sent.',
+        )
+      }
+      const recipientEmail = email(input.recipientEmail, 'recipientEmail')
+      const variables = canonicalTestVariables(input.variables)
+      const inputFingerprint = await fingerprint({
+        senderIdentityId,
+        templateKind: input.templateKind,
+        templateVersion,
+        recipientEmail,
+        variables,
+      })
+      const replay = (record: EmailTestSendCommandRecord): EmailTestSendCommandRecord => {
+        if (
+          record.senderIdentityId !== senderIdentityId ||
+          record.templateKind !== input.templateKind ||
+          record.templateVersion !== templateVersion ||
+          record.actorUserId !== actorUserId ||
+          record.inputFingerprint !== inputFingerprint
+        ) {
+          throw new EmailConfigurationError(
+            'command_id_reused',
+            'The Idempotency-Key was already used with different test-send input.',
+          )
+        }
+        return record
+      }
+      const prior = await readTestSendCommand(id)
+      if (prior !== null) return { record: replay(prior), claimed: false }
+      try {
+        await atomic(database, [
+          {
+            text: `INSERT INTO email_test_send_commands (
+              command_id, sender_identity_id, template_kind, template_version,
+              actor_user_id, input_fingerprint, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+            params: [
+              id,
+              senderIdentityId,
+              input.templateKind,
+              templateVersion,
+              actorUserId,
+              inputFingerprint,
+              at,
+              at,
+            ],
+          },
+        ])
+      } catch (error) {
+        const raced = await readTestSendCommand(id)
+        if (raced !== null) return { record: replay(raced), claimed: false }
+        throw error
+      }
+      const created = await readTestSendCommand(id)
+      if (created === null) throw new Error('email test-send command did not begin')
+      return { record: replay(created), claimed: true }
+    },
+
+    async completeTestSend(input) {
+      const id = commandId(input.commandId)
+      const actorUserId = positiveId(input.actorUserId, 'actorUserId')
+      const deliveryId = positiveId(input.deliveryId, 'deliveryId')
+      const at = timestamp(input.occurredAt, 'occurredAt')
+      const prior = await readTestSendCommand(id)
+      if (prior === null || prior.actorUserId !== actorUserId) {
+        throw new EmailConfigurationError('command_id_reused', 'Test-send command was not reserved.')
+      }
+      if (prior.status === 'completed' && prior.deliveryId === deliveryId) return prior
+      if (prior.status !== 'pending') {
+        throw new EmailConfigurationError('command_id_reused', 'Test-send command is already complete.')
+      }
+      await atomic(database, [
+        {
+          text: `UPDATE email_test_send_commands
+            SET status = 'completed', delivery_id = ?, updated_at = ?
+            WHERE command_id = ? AND actor_user_id = ? AND status = 'pending'`,
+          params: [deliveryId, at, id, actorUserId],
+        },
+        { text: `INSERT INTO _email_configuration_assertions (ok) VALUES (changes())` },
+        { text: `DELETE FROM _email_configuration_assertions` },
+      ])
+      const completed = await readTestSendCommand(id)
+      if (completed === null || completed.status !== 'completed') {
+        throw new Error('email test-send command did not complete')
+      }
+      return completed
+    },
+
+    async failTestSend(input) {
+      const id = commandId(input.commandId)
+      const actorUserId = positiveId(input.actorUserId, 'actorUserId')
+      const at = timestamp(input.occurredAt, 'occurredAt')
+      if (!emailTestSendFailureCodes.has(input.failureCode)) {
+        throw new EmailConfigurationError('invalid_input', 'Test-send failure code is invalid.')
+      }
+      const prior = await readTestSendCommand(id)
+      if (prior === null || prior.actorUserId !== actorUserId) {
+        throw new EmailConfigurationError('command_id_reused', 'Test-send command was not reserved.')
+      }
+      if (prior.status === 'failed' && prior.failureCode === input.failureCode) return prior
+      if (prior.status !== 'pending') {
+        throw new EmailConfigurationError('command_id_reused', 'Test-send command is already complete.')
+      }
+      await atomic(database, [
+        {
+          text: `UPDATE email_test_send_commands
+            SET status = 'failed', failure_code = ?, updated_at = ?
+            WHERE command_id = ? AND actor_user_id = ? AND status = 'pending'`,
+          params: [input.failureCode, at, id, actorUserId],
+        },
+        { text: `INSERT INTO _email_configuration_assertions (ok) VALUES (changes())` },
+        { text: `DELETE FROM _email_configuration_assertions` },
+      ])
+      const failed = await readTestSendCommand(id)
+      if (failed === null || failed.status !== 'failed') {
+        throw new Error('email test-send command did not fail')
+      }
+      return failed
     },
 
     async resolveSenderIdentity(id) {

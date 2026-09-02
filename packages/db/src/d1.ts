@@ -72,10 +72,28 @@ export {
   createD1EmailConfigurationStore,
   EmailConfigurationError,
   type EmailConfigurationStore,
+  type EmailTestSendClaim,
+  type EmailTestSendCommandRecord,
+  type EmailTestSendFailureCode,
   type EmailTemplateVersionRecord,
   type SenderIdentityEvidenceRecord,
   type SenderIdentityRecord,
 } from './email-configuration.js'
+export {
+  ACTIVITY_LOG_SUBSCRIBER_ID,
+  createD1OutboxService,
+  OUTBOX_DELIVERY_POLICY,
+  type ActivityLogRecord,
+  type OutboxDeliveryFailureCode,
+  type OutboxDeliveryRecord,
+  type OutboxDeliveryStatus,
+  type OutboxDrainSummary,
+  type OutboxEventRecord,
+  type OutboxService,
+  type OutboxServiceOptions,
+  type OutboxSubscriber,
+  type OutboxSubscriberContext,
+} from './outbox.js'
 export { createReportRepository, type ReportRepository } from './reports.js'
 export { createD1IdentityStore, type IdentityStore, type IdentityStoreOptions } from './identity.js'
 export {

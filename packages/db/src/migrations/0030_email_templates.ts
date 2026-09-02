@@ -232,6 +232,40 @@ export const emailTemplatesMigration = [
       AND json_extract(result_json, '$.schema_version') = 1
     )
   ) STRICT`,
+  `CREATE TABLE email_test_send_commands (
+    command_id TEXT PRIMARY KEY CHECK (
+      length(command_id) BETWEEN 1 AND 128
+      AND command_id NOT GLOB '*[^A-Za-z0-9._:-]*'
+    ),
+    sender_identity_id INTEGER NOT NULL REFERENCES sender_identities(id) ON DELETE RESTRICT,
+    template_kind TEXT NOT NULL CHECK (
+      template_kind IN ('invoice','reminder','thank_you')
+    ),
+    template_version INTEGER NOT NULL CHECK (
+      template_version BETWEEN 1 AND 9007199254740991
+    ),
+    actor_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    input_fingerprint TEXT NOT NULL CHECK (
+      length(input_fingerprint) = 71
+      AND substr(input_fingerprint, 1, 7) = 'sha256:'
+      AND substr(input_fingerprint, 8) NOT GLOB '*[^0-9a-f]*'
+    ),
+    status TEXT NOT NULL CHECK (status IN ('pending','completed','failed')),
+    delivery_id INTEGER REFERENCES email_log(id) ON DELETE RESTRICT,
+    failure_code TEXT CHECK (
+      failure_code IS NULL OR length(failure_code) BETWEEN 1 AND 128
+    ),
+    created_at TEXT NOT NULL CHECK (${canonicalTimestamp('created_at')}),
+    updated_at TEXT NOT NULL CHECK (${canonicalTimestamp('updated_at')}),
+    FOREIGN KEY (template_kind, template_version)
+      REFERENCES email_template_versions(template_kind, version) ON DELETE RESTRICT,
+    CHECK (julianday(updated_at) >= julianday(created_at)),
+    CHECK (
+      (status = 'pending' AND delivery_id IS NULL AND failure_code IS NULL)
+      OR (status = 'completed' AND delivery_id IS NOT NULL AND failure_code IS NULL)
+      OR (status = 'failed' AND delivery_id IS NULL AND failure_code IS NOT NULL)
+    )
+  ) STRICT`,
   `CREATE TABLE _email_configuration_assertions (
     ok INTEGER NOT NULL CHECK (ok = 1)
   ) STRICT`,
@@ -330,6 +364,21 @@ export const emailTemplatesMigration = [
   `CREATE TRIGGER sender_identity_commands_immutable_delete
     BEFORE DELETE ON sender_identity_commands
     BEGIN SELECT RAISE(ABORT, 'sender identity command receipts are immutable'); END`,
+  `CREATE TRIGGER email_test_send_commands_transition_guard
+    BEFORE UPDATE ON email_test_send_commands
+    WHEN OLD.status <> 'pending'
+      OR NEW.command_id IS NOT OLD.command_id
+      OR NEW.sender_identity_id IS NOT OLD.sender_identity_id
+      OR NEW.template_kind IS NOT OLD.template_kind
+      OR NEW.template_version IS NOT OLD.template_version
+      OR NEW.actor_user_id IS NOT OLD.actor_user_id
+      OR NEW.input_fingerprint IS NOT OLD.input_fingerprint
+      OR NEW.created_at IS NOT OLD.created_at
+      OR NEW.status NOT IN ('completed','failed')
+    BEGIN SELECT RAISE(ABORT, 'email test-send command transition is invalid'); END`,
+  `CREATE TRIGGER email_test_send_commands_immutable_delete
+    BEFORE DELETE ON email_test_send_commands
+    BEGIN SELECT RAISE(ABORT, 'email test-send command receipts are immutable'); END`,
   `CREATE TRIGGER sender_identity_default_verification_insert_guard
     BEFORE INSERT ON sender_identities WHEN NEW.is_default = 1
     BEGIN SELECT RAISE(ABORT, 'an unverified sender identity cannot be default'); END`,

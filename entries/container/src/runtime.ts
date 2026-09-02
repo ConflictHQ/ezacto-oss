@@ -10,6 +10,7 @@ import {
   createContainerEmailConfigurationStore,
   createContainerIdentityStore,
   createContainerOidcTransactionStore,
+  createContainerOutboxService,
   createContainerPasswordAuthService,
   createContainerSessionStore,
   createGeneralResourceRepository,
@@ -29,7 +30,7 @@ import {
   type UserPrincipal,
 } from '@ezacto/api'
 import {
-  createBootstrapSenderQueuedMailer,
+  createDeploymentSenderQueuedMailer,
   createQueuedMailer,
   createSenderBoundQueuedMailer,
   type HttpEmailProvider,
@@ -39,6 +40,7 @@ import type { RuntimeServices } from '../../worker/src/app.js'
 import type { ContainerConfig } from './config.js'
 import { createDiskAttachmentObjectStore } from './disk-attachments.js'
 import { ContainerEmailQueue } from './email-queue.js'
+import { ContainerOutboxScheduler } from './outbox-scheduler.js'
 
 const exists = (
   database: BetterSqlite3.Database,
@@ -146,6 +148,7 @@ export const prepareContainerDatabase = (
 export interface ContainerRuntime {
   database: BetterSqlite3.Database
   services: RuntimeServices
+  drainOutbox(): ReturnType<RuntimeServices['outbox']['drain']>
   close(timeoutMs?: number): Promise<void>
 }
 
@@ -199,6 +202,7 @@ export const createContainerRuntime = async (
   await assertDatabasePath(config.databasePath)
   const database = new BetterSqlite3(config.databasePath, { timeout: 5_000 })
   let queue: ContainerEmailQueue | undefined
+  let outboxScheduler: ContainerOutboxScheduler | undefined
   try {
     prepareContainerDatabase(database)
     await chmod(config.databasePath, 0o600)
@@ -210,6 +214,7 @@ export const createContainerRuntime = async (
     )
     const emailLog = createContainerEmailLogStore(database)
     const emailConfiguration = createContainerEmailConfigurationStore(database)
+    const outbox = createContainerOutboxService(database)
     const smtp =
       options.emailProvider ??
       new SmtpMailer({ url: config.smtp.url, from: config.smtp.from })
@@ -225,6 +230,7 @@ export const createContainerRuntime = async (
         .get() as { name: string } | undefined
       return row?.name ?? 'Ezacto'
     }
+    outboxScheduler = new ContainerOutboxScheduler(outbox)
     const objects = await createDiskAttachmentObjectStore(
       config.attachmentDirectory,
     )
@@ -258,10 +264,11 @@ export const createContainerRuntime = async (
       sessions,
       emailLog,
       emailConfiguration,
+      outbox,
       identities: createContainerIdentityStore(database),
       oidcTransactions: createContainerOidcTransactionStore(database),
-      bootstrapAuthMailer: createQueuedAuthMailer(
-        createBootstrapSenderQueuedMailer(
+      deploymentAuthMailer: createQueuedAuthMailer(
+        createDeploymentSenderQueuedMailer(
           config.smtp.from,
           queuedMailer,
         ),
@@ -269,11 +276,10 @@ export const createContainerRuntime = async (
         organizationName,
         config.appBaseUrl,
       ),
-      authMailer: createQueuedAuthMailer(
-        createSenderBoundQueuedMailer(emailConfiguration, queuedMailer, smtp.name),
+      organizationMailer: createSenderBoundQueuedMailer(
         emailConfiguration,
-        organizationName,
-        config.appBaseUrl,
+        queuedMailer,
+        smtp.name,
       ),
       attachments: {
         metadata: createAttachmentStore(drizzle),
@@ -282,15 +288,18 @@ export const createContainerRuntime = async (
           createContainerAttachmentOwnerAuthorizer(database),
       },
     }
+    outboxScheduler.start()
 
     let closed = false
     return {
       database,
       services,
+      drainOutbox: () => outboxScheduler!.drain(),
       async close(timeoutMs) {
         if (closed) return
         closed = true
         try {
+          await outboxScheduler!.close(timeoutMs)
           await queue!.close(timeoutMs)
           database.pragma('wal_checkpoint(TRUNCATE)')
         } finally {
@@ -299,6 +308,7 @@ export const createContainerRuntime = async (
       },
     }
   } catch (error) {
+    await outboxScheduler?.close().catch(() => undefined)
     await queue?.close().catch(() => undefined)
     if (database.open) database.close()
     throw error

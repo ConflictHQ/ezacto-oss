@@ -93,7 +93,38 @@ describe('container runtime composition', () => {
       first.database
         .prepare('SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1')
         .get(),
-    ).toEqual({ id: '0029_email_templates' })
+    ).toEqual({ id: '0030_email_templates' })
+
+    await first.drainOutbox()
+    const eventAt = '2026-01-02T03:04:05.000Z'
+    first.database
+      .prepare(
+        `INSERT INTO event_outbox (
+          id, aggregate_type, aggregate_id, aggregate_sequence,
+          event_type, payload_json, occurred_at, available_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        'container-event-1',
+        'fixture',
+        92,
+        1,
+        'fixture.committed',
+        JSON.stringify({ schema_version: 1, event_type: 'fixture.committed' }),
+        eventAt,
+        eventAt,
+      )
+    await first.drainOutbox()
+    expect(
+      first.database
+        .prepare(
+          `SELECT receipt.status, activity.recorded_at AS recordedAt
+           FROM outbox_delivery_receipts receipt
+           JOIN activity_log activity ON activity.event_id = receipt.event_id
+           WHERE receipt.event_id = ?`,
+        )
+        .get('container-event-1'),
+    ).toMatchObject({ status: 'delivered', recordedAt: expect.any(String) })
 
     const signup = await request(
       '/auth/signup',
@@ -135,18 +166,13 @@ describe('container runtime composition', () => {
       commandId: 'container-unverified-sender',
       occurredAt: '2026-09-02T06:00:00.000Z',
     })
-    const logCountBeforeReset = (await first.services.emailLog.list()).length
-    const blockedReset = await request(
+    const reset = await request(
       '/auth/password/forgot',
       body({ email: 'owner@example.test' }),
     )
-    expect(blockedReset.status).toBe(409)
-    expect(await blockedReset.json()).toMatchObject({
-      error: { code: 'sender_provider_unsupported' },
-    })
+    expect(reset.status).toBe(202)
     await new Promise((resolve) => setTimeout(resolve, 10))
-    expect(captured).toHaveLength(1)
-    expect(await first.services.emailLog.list()).toHaveLength(logCountBeforeReset)
+    expect(captured).toHaveLength(2)
 
     const signedIn = await request(
       '/auth/sign-in',
@@ -163,6 +189,33 @@ describe('container runtime composition', () => {
       headers.set('cookie', cookie)
       return { ...request, headers }
     }
+
+    const logCountBeforeTest = (await first.services.emailLog.list()).length
+    const testSendRequest = authenticated({
+      template_kind: 'invoice',
+      template_version: 1,
+      variables: {
+        company_name: 'Container Studio',
+        invoice_id: '41',
+        invoice_number: 'INV-41',
+        invoice_amount: '$100.00',
+        invoice_due_date: '2026-09-30',
+      },
+      confirmed: true,
+    })
+    const testHeaders = new Headers(testSendRequest.headers)
+    testHeaders.set('idempotency-key', 'container-unverified-test-send')
+    const blockedTest = await request('/api/v1/sender-identities/41/test-send', {
+      ...testSendRequest,
+      headers: testHeaders,
+    })
+    expect(blockedTest.status).toBe(409)
+    expect(await blockedTest.json()).toMatchObject({
+      error: { code: 'sender_provider_unsupported' },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(captured).toHaveLength(2)
+    expect(await first.services.emailLog.list()).toHaveLength(logCountBeforeTest)
 
     const client = await data<{ id: number }>(
       await request('/api/v1/clients', authenticated({ name: 'Client' })),
@@ -278,7 +331,7 @@ describe('container runtime composition', () => {
         },
       },
     })
-    await runtime.services.bootstrapAuthMailer!.enqueue({
+    await runtime.services.deploymentAuthMailer!.enqueue({
       kind: 'verify_email',
       to: 'owner@example.test',
       token: `ezacto_verify_${'a'.repeat(16)}_${'b'.repeat(43)}`,

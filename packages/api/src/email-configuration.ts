@@ -1,9 +1,17 @@
 import type { Context, Hono } from 'hono'
 import {
   emailTemplateKinds,
+  interpolateEmailTemplate,
   variablesForEmailTemplate,
+  EmailTemplateVariableError,
   type EmailTemplateKind,
 } from '@ezacto/core'
+import {
+  EmailQueueUnavailableError,
+  SenderIdentityUnavailableError,
+  type SenderBoundQueuedMailer,
+  type SenderIdentityUnavailableCode,
+} from '@ezacto/mailer'
 import { requireSessionPrincipal } from './auth.js'
 import type { ApiContext, UserPrincipal } from './context.js'
 import { ApiError, readJsonBody, validationError, type FieldError } from './errors.js'
@@ -48,6 +56,11 @@ export interface SenderIdentityConfigurationRecord {
 
 export interface EmailConfigurationService {
   listTemplates(): Promise<readonly EmailTemplateConfigurationRecord[]>
+  getTemplate(
+    kind: EmailTemplateKind,
+    version?: number,
+  ): Promise<EmailTemplateConfigurationRecord | null>
+  getVerifiedUserEmail(userId: number): Promise<string | null>
   listTemplateVersions(kind: EmailTemplateKind): Promise<readonly EmailTemplateConfigurationRecord[]>
   createTemplateVersion(input: Readonly<{
     kind: EmailTemplateKind
@@ -110,6 +123,49 @@ export interface EmailConfigurationService {
     commandId: string
     occurredAt: string
   }>): Promise<SenderIdentityConfigurationRecord>
+  beginTestSend(input: Readonly<{
+    senderIdentityId: number
+    templateKind: 'invoice' | 'reminder' | 'thank_you'
+    templateVersion: number
+    recipientEmail: string
+    variables: Readonly<Record<string, string>>
+    actorUserId: number
+    commandId: string
+    occurredAt: string
+  }>): Promise<{
+    claimed: boolean
+    record: EmailTestSendCommandRecord
+  }>
+  completeTestSend(input: Readonly<{
+    commandId: string
+    actorUserId: number
+    deliveryId: number
+    occurredAt: string
+  }>): Promise<EmailTestSendCommandRecord>
+  failTestSend(input: Readonly<{
+    commandId: string
+    actorUserId: number
+    failureCode: EmailTestSendFailureCode
+    occurredAt: string
+  }>): Promise<EmailTestSendCommandRecord>
+}
+
+export type EmailTestSendFailureCode =
+  | SenderIdentityUnavailableCode
+  | 'email_queue_unavailable'
+
+export interface EmailTestSendCommandRecord {
+  commandId: string
+  senderIdentityId: number
+  templateKind: 'invoice' | 'reminder' | 'thank_you'
+  templateVersion: number
+  actorUserId: number
+  inputFingerprint: string
+  status: 'pending' | 'completed' | 'failed'
+  deliveryId: number | null
+  failureCode: EmailTestSendFailureCode | null
+  createdAt: string
+  updatedAt: string
 }
 
 export interface ProviderSenderIdentityEvidence {
@@ -132,6 +188,7 @@ export interface SenderIdentityVerifier {
 export interface EmailConfigurationRouteOptions {
   service: EmailConfigurationService
   verifier?: SenderIdentityVerifier
+  organizationMailer?: SenderBoundQueuedMailer
   clock(): string
 }
 
@@ -314,6 +371,33 @@ const senderData = (record: SenderIdentityConfigurationRecord) => ({
   updated_at: record.updatedAt,
 })
 
+const testSendFailure = (
+  code: EmailTestSendFailureCode,
+  senderIdentityId: number,
+): never => {
+  if (code === 'email_queue_unavailable') {
+    throw new ApiError({
+      status: 503,
+      code,
+      message: 'The email queue did not accept the test message.',
+    })
+  }
+  const error = new SenderIdentityUnavailableError(code, senderIdentityId)
+  throw new ApiError({ status: 409, code: error.code, message: error.message })
+}
+
+const testSendData = (
+  record: EmailTestSendCommandRecord,
+  recipientEmail: string,
+) => ({
+  status: 'queued' as const,
+  delivery_id: record.deliveryId,
+  sender_identity_id: record.senderIdentityId,
+  template_kind: record.templateKind,
+  template_version: record.templateVersion,
+  recipient_email: recipientEmail,
+})
+
 export const installEmailConfigurationRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   options: EmailConfigurationRouteOptions,
@@ -489,6 +573,223 @@ export const installEmailConfigurationRoutes = <Bindings extends object>(
       return context.json({ data: senderData(created) }, 201, { 'cache-control': 'no-store' })
     } catch (error) {
       translate(error)
+    }
+  })
+
+  api.post('/sender-identities/:id/test-send', async (context) => {
+    const principal = requireAdministrator(context)
+    const commandId = idempotencyKey(context)
+    const senderIdentityId = resourceId(context.req.param('id'))
+    const body = await objectBody(context)
+    const errors = unknownFields(
+      body,
+      new Set(['template_kind', 'template_version', 'variables', 'confirmed']),
+    )
+    const rawKind = stringField(body, 'template_kind', errors, {
+      required: true,
+      maximum: 32,
+    })
+    const templateKind =
+      rawKind === 'invoice' || rawKind === 'reminder' || rawKind === 'thank_you'
+        ? rawKind
+        : undefined
+    if (rawKind !== undefined && templateKind === undefined) {
+      errors.push({
+        field: 'template_kind',
+        code: 'invalid_enum',
+        message: 'template_kind must be invoice, reminder, or thank_you',
+      })
+    }
+    const templateVersion = integerField(body, 'template_version', errors)
+    if (templateVersion === 0) {
+      errors.push({
+        field: 'template_version',
+        code: 'invalid_integer',
+        message: 'template_version must be a positive integer',
+      })
+    }
+    if (body.confirmed !== true) {
+      errors.push({
+        field: 'confirmed',
+        code: 'confirmation_required',
+        message: 'confirmed must be true to queue a test email',
+      })
+    }
+    const rawVariables = body.variables
+    const variables: Record<string, string> = {}
+    if (
+      typeof rawVariables !== 'object' ||
+      rawVariables === null ||
+      Array.isArray(rawVariables)
+    ) {
+      errors.push({
+        field: 'variables',
+        code: 'invalid_object',
+        message: 'variables must be an object',
+      })
+    } else if (templateKind !== undefined) {
+      const allowed = new Set(
+        variablesForEmailTemplate(templateKind).map((variable) => variable.name),
+      )
+      const entries = Object.entries(rawVariables)
+      if (entries.length > 32) {
+        errors.push({
+          field: 'variables',
+          code: 'too_many',
+          message: 'variables must contain at most 32 entries',
+        })
+      }
+      for (const [name, value] of entries) {
+        if (!allowed.has(name)) {
+          errors.push({
+            field: `variables.${name}`,
+            code: 'unknown',
+            message: `${name} is not available to ${templateKind} templates`,
+          })
+        } else if (
+          typeof value !== 'string' ||
+          value.trim().length === 0 ||
+          [...value].length > 2_000 ||
+          value.includes('\u0000')
+        ) {
+          errors.push({
+            field: `variables.${name}`,
+            code: 'invalid_string',
+            message: `${name} must be a non-empty string of at most 2000 characters`,
+          })
+        } else {
+          variables[name] = value
+        }
+      }
+    }
+    if (errors.length > 0) throw validationError(errors)
+
+    const [template, recipientEmail] = await Promise.all([
+      options.service.getTemplate(templateKind!, templateVersion!),
+      options.service.getVerifiedUserEmail(principal.userId),
+    ])
+    if (template === null) {
+      throw new ApiError({
+        status: 404,
+        code: 'not_found',
+        message: 'The requested persisted email-template version does not exist.',
+      })
+    }
+    if (recipientEmail === null) {
+      throw new ApiError({
+        status: 409,
+        code: 'verified_admin_email_required',
+        message: 'Verify an email address for the acting administrator before sending a test.',
+      })
+    }
+    let subject: string
+    let text: string
+    let html: string | undefined
+    try {
+      subject = interpolateEmailTemplate(template.kind, template.subjectTemplate, variables, {
+        unknownVariable: template.unknownVariablePolicy,
+      })
+      text = interpolateEmailTemplate(template.kind, template.textTemplate, variables, {
+        unknownVariable: template.unknownVariablePolicy,
+      })
+      html =
+        template.htmlTemplate === null
+          ? undefined
+          : interpolateEmailTemplate(template.kind, template.htmlTemplate, variables, {
+              unknownVariable: template.unknownVariablePolicy,
+              output: 'html',
+            })
+    } catch (error) {
+      if (error instanceof EmailTemplateVariableError) {
+        throw validationError([
+          {
+            field: `variables.${error.variable}`,
+            code: error.code,
+            message: error.message,
+          },
+        ])
+      }
+      throw error
+    }
+    const mailer = options.organizationMailer
+    if (mailer === undefined) {
+      throw new ApiError({
+        status: 503,
+        code: 'organization_mailer_unavailable',
+        message: 'Organization email delivery is not configured for this deployment.',
+      })
+    }
+    try {
+      await mailer.assertAvailable(senderIdentityId)
+    } catch (error) {
+      if (error instanceof SenderIdentityUnavailableError) {
+        throw new ApiError({ status: 409, code: error.code, message: error.message })
+      }
+      throw error
+    }
+    const claim = await options.service.beginTestSend({
+        senderIdentityId,
+        templateKind: templateKind!,
+        templateVersion: templateVersion!,
+        recipientEmail,
+        variables,
+        actorUserId: principal.userId,
+        commandId,
+        occurredAt: options.clock(),
+      }).catch((error: unknown) => translate(error))
+    if (!claim.claimed) {
+      if (claim.record.status === 'completed') {
+        return context.json(
+          { data: testSendData(claim.record, recipientEmail) },
+          202,
+          { 'cache-control': 'no-store' },
+        )
+      }
+      if (claim.record.status === 'failed') {
+        testSendFailure(claim.record.failureCode!, senderIdentityId)
+      }
+      throw new ApiError({
+        status: 409,
+        code: 'test_send_in_progress',
+        message: 'This test-send command is already in progress.',
+      })
+    }
+
+    try {
+      const delivery = await mailer.enqueue({
+        senderIdentityId,
+        to: [{ email: recipientEmail }],
+        template: `${template.kind}:v${template.version}:test`,
+        subject,
+        text,
+        ...(html === undefined ? {} : { html }),
+      })
+      const completed = await options.service.completeTestSend({
+        commandId,
+        actorUserId: principal.userId,
+        deliveryId: delivery.id,
+        occurredAt: options.clock(),
+      })
+      return context.json(
+        { data: testSendData(completed, recipientEmail) },
+        202,
+        { 'cache-control': 'no-store' },
+      )
+    } catch (error) {
+      const failureCode =
+        error instanceof SenderIdentityUnavailableError
+          ? error.code
+          : error instanceof EmailQueueUnavailableError
+            ? 'email_queue_unavailable'
+            : null
+      if (failureCode === null) throw error
+      await options.service.failTestSend({
+        commandId,
+        actorUserId: principal.userId,
+        failureCode,
+        occurredAt: options.clock(),
+      })
+      testSendFailure(failureCode, senderIdentityId)
     }
   })
 

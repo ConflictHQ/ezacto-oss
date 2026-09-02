@@ -95,11 +95,20 @@ export {
   installEmailConfigurationRoutes,
   type EmailConfigurationRouteOptions,
   type EmailConfigurationService,
+  type EmailTestSendCommandRecord,
+  type EmailTestSendFailureCode,
   type EmailTemplateConfigurationRecord,
   type ProviderSenderIdentityEvidence,
   type SenderIdentityConfigurationRecord,
   type SenderIdentityVerifier,
 } from './email-configuration.js'
+export {
+  installOutboxRoutes,
+  type ActivityLogResource,
+  type OutboxDeliveryResource,
+  type OutboxDeliveryStatus,
+  type OutboxMonitor,
+} from './outbox.js'
 export {
   installPasswordAuthRoutes,
   type AuthDelivery,

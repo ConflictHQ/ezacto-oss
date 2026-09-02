@@ -46,6 +46,21 @@ export const createQueuedAuthMailer = (
     throw new TypeError('APP_ORIGIN must use HTTPS outside localhost')
   }
   return {
+    assertAvailable: async (kind) => {
+      await mailer.assertAvailable()
+      const template = await templates.getTemplate(
+        kind === 'verify_email'
+          ? 'auth_email_verification'
+          : 'auth_password_reset',
+      )
+      const expectedKind =
+        kind === 'verify_email'
+          ? 'auth_email_verification'
+          : 'auth_password_reset'
+      if (template === null || template.kind !== expectedKind) {
+        throw new Error(`active ${expectedKind} email template is unavailable`)
+      }
+    },
     enqueue: async (delivery) => {
       const kind = authKind(delivery)
       const [template, companyName] = await Promise.all([

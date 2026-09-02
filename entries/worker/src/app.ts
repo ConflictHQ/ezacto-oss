@@ -10,6 +10,7 @@ import {
   installGeneralResourceRoutes,
   installMoneyResourceRoutes,
   installOidcRoutes,
+  installOutboxRoutes,
   installPasswordAuthRoutes,
   installReportRoutes,
   installSessionRoutes,
@@ -44,9 +45,14 @@ import {
   type InstanceBootstrapResult,
   type InstanceOwnerPasswordInput,
   type InstanceOwnerPasswordResult,
+  type OutboxService,
 } from '@ezacto/db/d1'
 import { renderAppShell, webAssets, type SignInProvider } from '@ezacto/web'
-import type { EmailLogStore, QueuedEmailJob } from '@ezacto/mailer'
+import type {
+  EmailLogStore,
+  QueuedEmailJob,
+  SenderBoundQueuedMailer,
+} from '@ezacto/mailer'
 
 /** Worker bindings stay entry-owned; the shared API package is runtime-agnostic. */
 export type Env = {
@@ -103,11 +109,12 @@ export interface RuntimeServices {
   emailLog: EmailLogStore
   emailConfiguration: EmailConfigurationRouteOptions['service']
   senderIdentityVerifier?: EmailConfigurationRouteOptions['verifier']
+  organizationMailer?: SenderBoundQueuedMailer
+  outbox: OutboxService
   identities: OidcIdentityResolver
   oidcTransactions: OidcTransactionStorePort
-  /** First-owner delivery only; never use for established organization mail. */
-  bootstrapAuthMailer?: AuthMailer
-  authMailer?: AuthMailer
+  /** Deployment-brand sender for all authentication mail. */
+  deploymentAuthMailer?: AuthMailer
   attachments?: AttachmentRouteOptions
 }
 
@@ -148,8 +155,12 @@ export const createApp = (services?: RuntimeServices) =>
               ...(services.senderIdentityVerifier === undefined
                 ? {}
                 : { verifier: services.senderIdentityVerifier }),
+              ...(services.organizationMailer === undefined
+                ? {}
+                : { organizationMailer: services.organizationMailer }),
               clock: () => systemClock.now().instant,
             })
+            installOutboxRoutes(api, services.outbox)
             installGeneralResourceRoutes(api, {
               repository: services.generalResources,
               cursorSigningKey: services.cursorSigningKey,
@@ -194,12 +205,9 @@ export const createApp = (services?: RuntimeServices) =>
         installPasswordAuthRoutes(app, {
           service: services.passwordAuth,
           sessions: services.sessions,
-          ...(services.bootstrapAuthMailer === undefined
+          ...(services.deploymentAuthMailer === undefined
             ? {}
-            : { bootstrapMailer: services.bootstrapAuthMailer }),
-          ...(services.authMailer === undefined
-            ? {}
-            : { mailer: services.authMailer }),
+            : { deploymentMailer: services.deploymentAuthMailer }),
           clientKey: (request) =>
             request.headers.get('cf-connecting-ip') ?? 'unknown-client',
         })
@@ -504,6 +512,27 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
+      app.get('/tasks', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            activeSection: 'Tasks',
+            view: 'task-list',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
       app.get('/reports', (context) =>
         context.html(
           renderAppShell({
@@ -532,6 +561,27 @@ export const createApp = (services?: RuntimeServices) =>
             release: context.env.RELEASE,
             activeSection: 'Expenses',
             view: 'expense-list',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/expense-categories', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            activeSection: 'Expenses',
+            view: 'expense-categories',
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),

@@ -247,6 +247,77 @@ export type SenderEvidenceRefreshInput = {
   "expected_evidence_version": number;
 };
 
+export type EmailTestSendInput = {
+  "template_kind": "invoice" | "reminder" | "thank_you";
+  "template_version": number;
+  "variables": {
+  [key: string]: string;
+};
+  "confirmed": true;
+};
+
+export type EmailTestSend = {
+  "status": "queued";
+  "delivery_id": number;
+  "sender_identity_id": number;
+  "template_kind": "invoice" | "reminder" | "thank_you";
+  "template_version": number;
+  "recipient_email": string;
+};
+
+export type EmailTestSendEnvelope = {
+  "data": EmailTestSend;
+};
+
+export type OutboxAggregate = {
+  "type": string;
+  "id": number;
+  "sequence": number;
+};
+
+export type ActivityLog = {
+  "event_id": string;
+  "event_type": string;
+  "aggregate": OutboxAggregate;
+  "payload": {
+  [key: string]: unknown;
+};
+  "occurred_at": string;
+  "available_at": string;
+  "recorded_at": string;
+};
+
+export type ActivityLogPage = {
+  "data": Array<ActivityLog>;
+  "links": Links;
+};
+
+export type OutboxDelivery = {
+  "subscriber_id": string;
+  "event_id": string;
+  "event_type": string;
+  "aggregate": OutboxAggregate;
+  "status": "pending" | "processing" | "delivered" | "failed";
+  "attempt_count": number;
+  "next_attempt_at": string | null;
+  "last_error_code": "subscriber_timeout" | "subscriber_rejected" | null;
+  "delivered_at": string | null;
+  "failed_at": string | null;
+  "occurred_at": string;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type OutboxDeliveryPage = {
+  "data": Array<OutboxDelivery>;
+  "links": Links;
+};
+
+export type OutboxDeliveryEnvelope = {
+  "data": OutboxDelivery;
+  "links": Links;
+};
+
 export type Links = {
   "self": string;
 };
@@ -1727,6 +1798,45 @@ export class EzactoClient {
     if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
     return this.request<SenderIdentityEnvelope>("POST", "/api/v1/sender-identities/:id/refresh".replace(":id", encodeURIComponent(String(args["id"]))), {
       body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async testSendEmailTemplate(args: { "id": number; "Idempotency-Key": string; body: EmailTestSendInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<EmailTestSendEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<EmailTestSendEnvelope>("POST", "/api/v1/sender-identities/:id/test-send".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listActivityLog(args: { query?: { "per_page"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ActivityLogPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ActivityLogPage>("GET", "/api/v1/activity-log", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listOutboxDeliveries(args: { query?: { "status"?: "pending" | "processing" | "delivered" | "failed"; "per_page"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<OutboxDeliveryPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<OutboxDeliveryPage>("GET", "/api/v1/outbox-deliveries", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async retryOutboxDelivery(args: { "subscriberId": string; "eventId": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<OutboxDeliveryEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<OutboxDeliveryEnvelope>("POST", "/api/v1/outbox-deliveries/:subscriberId/:eventId/retry".replace(":subscriberId", encodeURIComponent(String(args["subscriberId"]))).replace(":eventId", encodeURIComponent(String(args["eventId"]))), {
       signal: args.signal,
       headers,
     });

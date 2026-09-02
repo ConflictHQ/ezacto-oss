@@ -6,6 +6,7 @@ import {
   createD1Database,
   createD1IdentityStore,
   createD1OidcTransactionStore,
+  createD1OutboxService,
   createGeneralResourceRepository,
   createMoneyResourceRepository,
   createInvoiceGenerationService,
@@ -39,8 +40,8 @@ import {
 import type { RuntimeServices } from "./app.js";
 import { cloudflareAccessConfig, type WorkerEnv } from "./app.js";
 import {
-  createWorkerAuthMailer,
-  createWorkerOrganizationAuthMailer,
+  createWorkerDeploymentAuthMailer,
+  createWorkerOrganizationMailer,
 } from "./email-queue.js";
 
 const cursorSecretPattern = /^[A-Za-z0-9_-]+$/;
@@ -372,14 +373,15 @@ export const createRuntimeServices = async (
     if (row === null) throw new Error('organization is unavailable');
     return row.name;
   };
-  const emailQueueReady =
+  const emailTransportReady =
     env.EMAIL_QUEUE !== undefined &&
-    env.APP_BASE_URL !== undefined &&
     emailProvider !== null;
-  const bootstrapAuthMailer =
+  const emailQueueReady =
+    emailTransportReady && env.APP_BASE_URL !== undefined;
+  const deploymentAuthMailer =
     !emailQueueReady || env.SES_FROM === undefined
       ? undefined
-      : createWorkerAuthMailer(
+      : createWorkerDeploymentAuthMailer(
           env.EMAIL_QUEUE!,
           emailLog,
           env.SES_FROM,
@@ -387,17 +389,14 @@ export const createRuntimeServices = async (
           organizationName,
           env.APP_BASE_URL!,
         );
-  const authMailer =
-    !emailQueueReady
+  const organizationMailer =
+    !emailTransportReady
       ? undefined
-      : createWorkerOrganizationAuthMailer(
+      : createWorkerOrganizationMailer(
           env.EMAIL_QUEUE!,
           emailLog,
           emailProvider.name,
           emailConfiguration,
-          emailConfiguration,
-          organizationName,
-          env.APP_BASE_URL!,
         );
   return {
     bootstrap: (input) => bootstrapInstanceD1(database, input),
@@ -432,10 +431,11 @@ export const createRuntimeServices = async (
     ...(emailProvider instanceof SesMailer
       ? { senderIdentityVerifier: createSesSenderIdentityVerifier(emailProvider) }
       : {}),
+    outbox: createD1OutboxService(database),
     identities,
     oidcTransactions: createD1OidcTransactionStore(database),
-    ...(bootstrapAuthMailer === undefined ? {} : { bootstrapAuthMailer }),
-    ...(authMailer === undefined ? {} : { authMailer }),
+    ...(deploymentAuthMailer === undefined ? {} : { deploymentAuthMailer }),
+    ...(organizationMailer === undefined ? {} : { organizationMailer }),
     ...(env.ATTACHMENTS === undefined
       ? {}
       : {

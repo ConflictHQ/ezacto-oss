@@ -4,6 +4,8 @@ import { renderClientDirectoryPages } from '../clients/render.js'
 import { renderProjectDirectoryPages } from '../projects/render.js'
 import { renderReportsPage } from '../reports/render.js'
 import { renderExpenseWorkflowPages } from '../expenses/render.js'
+import { renderTaskAdminPage } from '../tasks/render.js'
+import { renderExpenseCategoriesPage } from '../expense-categories/render.js'
 import {
   renderInvoiceComposerDialog,
   renderInvoicePaymentDialogs,
@@ -15,7 +17,7 @@ export interface AppShellOptions {
   readonly release: string
   readonly brand?: string
   readonly activeSection?:
-    'Time' | 'Approvals' | 'Expenses' | 'Projects' | 'Clients' | 'Invoices' | 'Reports'
+    'Time' | 'Approvals' | 'Expenses' | 'Projects' | 'Tasks' | 'Clients' | 'Invoices' | 'Reports'
   readonly view?:
     | 'time'
     | 'timesheet-approvals'
@@ -26,9 +28,11 @@ export interface AppShellOptions {
     | 'client-detail'
     | 'project-list'
     | 'project-detail'
+    | 'task-list'
     | 'reports'
     | 'expense-list'
     | 'expense-detail'
+    | 'expense-categories'
   readonly signInProviders?: readonly SignInProvider[]
   /** Presentation hint only. The browser still validates the session before enabling the app. */
   readonly sessionCookiePresent?: boolean
@@ -77,6 +81,7 @@ const sections = [
   'Approvals',
   'Expenses',
   'Projects',
+  'Tasks',
   'Clients',
   'Invoices',
   'Reports',
@@ -408,8 +413,10 @@ export const renderAppShell = (options: AppShellOptions): string => {
   </main>
   ${renderClientDirectoryPages(view)}
   ${renderProjectDirectoryPages(view)}
+  ${renderTaskAdminPage(view)}
   ${renderReportsPage(view)}
   ${renderExpenseWorkflowPages(view)}
+  ${renderExpenseCategoriesPage(view)}
   ${renderInvoiceComposerDialog()}
   ${renderInvoicePaymentDialogs()}
   <dialog class="command-dialog" data-command-dialog aria-labelledby="command-title">

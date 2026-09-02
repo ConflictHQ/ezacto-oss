@@ -10,6 +10,7 @@ import {
   installGeneralResourceRoutes,
   installMoneyResourceRoutes,
   installOidcRoutes,
+  installOutboxRoutes,
   installPasswordAuthRoutes,
   installReportRoutes,
   installSessionRoutes,
@@ -22,6 +23,7 @@ import {
   type ApiTokenService,
   type OidcIdentityResolver,
   type OidcTransactionStorePort,
+  type OutboxMonitor,
   type PasswordAuthService,
   type MoneyResourceRouteOptions,
   type ReportReader,
@@ -64,6 +66,7 @@ const emailConfiguration = new Proxy(
   {},
   { get: () => unavailable },
 ) as EmailConfigurationService;
+const outbox = new Proxy({}, { get: () => unavailable }) as OutboxMonitor;
 const identities = new Proxy(
   {},
   { get: () => unavailable },
@@ -87,8 +90,7 @@ const documentedApp = () =>
       installPasswordAuthRoutes(app, {
         service: passwordAuth,
         sessions: { issue: unavailable },
-        bootstrapMailer: authMailer,
-        mailer: authMailer,
+        deploymentMailer: authMailer,
         clientKey: () => "contract-fixture",
       });
     },
@@ -99,6 +101,7 @@ const documentedApp = () =>
         service: emailConfiguration,
         clock: () => "2026-08-28T12:00:00.000Z",
       });
+      installOutboxRoutes(api, outbox);
       installGeneralResourceRoutes(api, {
         repository: generalRepository,
         cursorSigningKey: new Uint8Array(32),

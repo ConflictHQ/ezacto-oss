@@ -352,11 +352,11 @@ const configuredSender = (value: string): EmailSender => {
 }
 
 /**
- * Bootstrap authentication mail has no organization sender yet. This adapter
- * uses the operator's validated provider From value; organization mail must
- * use createSenderBoundQueuedMailer and its provider evidence checks.
+ * Deployment-brand mail uses the operator's validated provider From value.
+ * Organization invoice mail must use createSenderBoundQueuedMailer and its
+ * provider evidence checks instead.
  */
-export const createBootstrapSenderQueuedMailer = (
+export const createDeploymentSenderQueuedMailer = (
   from: string,
   queued: QueuedMailer,
 ): SenderBoundQueuedMailer => {

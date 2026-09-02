@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest'
-import { SenderIdentityUnavailableError } from '@ezacto/mailer'
 import {
   createApiApp,
   installPasswordAuthRoutes,
@@ -22,8 +21,7 @@ const principal = {
 }
 
 const createHarness = () => {
-  const bootstrapDeliveries: AuthDelivery[] = []
-  const organizationDeliveries: AuthDelivery[] = []
+  const deploymentDeliveries: AuthDelivery[] = []
   const service: PasswordAuthService = {
     signup: vi.fn(async () => verification),
     verifyEmail: vi.fn(async (token) => {
@@ -78,18 +76,16 @@ const createHarness = () => {
       installPasswordAuthRoutes(app, {
         service,
         sessions,
-        bootstrapMailer: {
-          enqueue: async (delivery) => void bootstrapDeliveries.push(delivery),
-        },
-        mailer: {
-          enqueue: async (delivery) => void organizationDeliveries.push(delivery),
+        deploymentMailer: {
+          assertAvailable: async () => undefined,
+          enqueue: async (delivery) => void deploymentDeliveries.push(delivery),
         },
         clientKey: (request) =>
           request.headers.get('cf-connecting-ip') ?? 'test-client',
       })
     },
   })
-  return { app, service, sessions, bootstrapDeliveries, organizationDeliveries }
+  return { app, service, sessions, deploymentDeliveries }
 }
 
 const post = (
@@ -108,7 +104,7 @@ const post = (
 
 describe('password authentication routes', () => {
   it('[api] queues verification without returning bearer material', async () => {
-    const { app, service, bootstrapDeliveries, organizationDeliveries } = createHarness()
+    const { app, service, deploymentDeliveries } = createHarness()
     const response = await post(app, '/auth/signup', {
       organization_name: 'Halcyon Studio',
       first_name: 'Avery',
@@ -120,15 +116,14 @@ describe('password authentication routes', () => {
     const wire = await response.text()
     expect(wire).not.toContain(verification.token)
     expect(JSON.parse(wire)).toEqual({ data: { status: 'verification_sent' } })
-    expect(bootstrapDeliveries).toEqual([verification])
-    expect(organizationDeliveries).toEqual([])
+    expect(deploymentDeliveries).toEqual([verification])
     expect(service.signup).toHaveBeenCalledWith(
       expect.objectContaining({ clientKey: '198.51.100.8' }),
     )
   })
 
   it('[api] returns the same reset-request response for known and unknown addresses', async () => {
-    const { app, bootstrapDeliveries, organizationDeliveries } = createHarness()
+    const { app, deploymentDeliveries } = createHarness()
     const known = await post(app, '/auth/password/forgot', {
       email: 'owner@example.test',
     })
@@ -138,38 +133,64 @@ describe('password authentication routes', () => {
     expect(known.status).toBe(202)
     expect(unknown.status).toBe(202)
     expect(await known.json()).toEqual(await unknown.json())
-    expect(organizationDeliveries).toHaveLength(1)
-    expect(organizationDeliveries[0]?.kind).toBe('password_reset')
-    expect(bootstrapDeliveries).toEqual([])
+    expect(deploymentDeliveries).toHaveLength(1)
+    expect(deploymentDeliveries[0]?.kind).toBe('password_reset')
   })
 
-  it('[api] maps an organization sender gate without falling back to bootstrap delivery', async () => {
-    const { service } = createHarness()
-    const bootstrapMailer = { enqueue: vi.fn(async () => undefined) }
-    const app = createApiApp({
-      installApp(app) {
-        installPasswordAuthRoutes(app, {
-          service,
-          sessions: { issue: async () => ({ setCookie: 'unused' }) },
-          bootstrapMailer,
-          mailer: {
-            enqueue: vi.fn(async () => {
-              throw new SenderIdentityUnavailableError('sender_alignment_missing', 41)
-            }),
-          },
-          clientKey: () => 'test-client',
-        })
-      },
-    })
+  it('[security] preflights deployment mail before lookup with known/unknown failure parity', async () => {
+    const responses: Response[] = []
+    for (const email of ['owner@example.test', 'nobody@example.test']) {
+      const { service } = createHarness()
+      const app = createApiApp({
+        installApp(app) {
+          installPasswordAuthRoutes(app, {
+            service,
+            sessions: { issue: async () => ({ setCookie: 'unused' }) },
+            deploymentMailer: {
+              assertAvailable: vi.fn(async () => {
+                throw new Error('deployment provider unavailable')
+              }),
+              enqueue: vi.fn(async () => undefined),
+            },
+            clientKey: () => 'test-client',
+          })
+        },
+      })
+      responses.push(await post(app, '/auth/password/forgot', { email }))
+      expect(service.requestPasswordReset).not.toHaveBeenCalled()
+    }
+    expect(responses.map((response) => response.status)).toEqual([500, 500])
+    expect(
+      await Promise.all(responses.map(async (response) => response.json())),
+    ).toEqual([
+      expect.objectContaining({ error: expect.objectContaining({ code: 'internal_error' }) }),
+      expect.objectContaining({ error: expect.objectContaining({ code: 'internal_error' }) }),
+    ])
+  })
 
-    const response = await post(app, '/auth/password/forgot', {
-      email: 'owner@example.test',
-    })
-    expect(response.status).toBe(409)
-    expect(await response.json()).toMatchObject({
-      error: { code: 'sender_alignment_missing' },
-    })
-    expect(bootstrapMailer.enqueue).not.toHaveBeenCalled()
+  it('[security] rejects known and unknown reset requests identically when deployment mail is absent', async () => {
+    const responses: Response[] = []
+    for (const email of ['owner@example.test', 'nobody@example.test']) {
+      const { service } = createHarness()
+      const app = createApiApp({
+        installApp(app) {
+          installPasswordAuthRoutes(app, {
+            service,
+            sessions: { issue: async () => ({ setCookie: 'unused' }) },
+            clientKey: () => 'test-client',
+          })
+        },
+      })
+      responses.push(await post(app, '/auth/password/forgot', { email }))
+      expect(service.requestPasswordReset).not.toHaveBeenCalled()
+    }
+    expect(responses.map((response) => response.status)).toEqual([503, 503])
+    expect(
+      await Promise.all(responses.map(async (response) => response.json())),
+    ).toEqual([
+      expect.objectContaining({ error: expect.objectContaining({ code: 'internal_error' }) }),
+      expect.objectContaining({ error: expect.objectContaining({ code: 'internal_error' }) }),
+    ])
   })
 
   it('[api] maps authenticated, unverified, and invalid sign-in outcomes', async () => {
