@@ -1,6 +1,8 @@
 import type { Invoice, InvoiceMessage, InvoicePayment, Whoami } from '@ezacto/client'
 import { describe, expect, it } from 'vitest'
 import {
+  interpolateInvoiceTemplate,
+  invoiceCanMarkSent,
   invoiceCanRecordPayment,
   invoiceIdFromPathname,
   invoiceIdentityCanRead,
@@ -17,6 +19,9 @@ import {
   invoicePaymentTiming,
   invoicePeriod,
   invoiceProfileHasAccess,
+  invoiceRecipients,
+  invoiceReminderDate,
+  invoicePlannedReminder,
   invoiceStateLabel,
 } from '../src/invoices/model.js'
 
@@ -173,5 +178,49 @@ describe('invoice workspace model', () => {
     ).toBe(false)
     expect(invoicePaymentCanDelete(open, payment({ recorded_by_user_id: null }))).toBe(false)
     expect(invoicePaymentCanDelete(invoice({ state: 'closed' }), payment())).toBe(false)
+  })
+
+  it('[unit] parses and deduplicates bounded invoice recipients', () => {
+    expect(
+      invoiceRecipients('billing@example.test\nAlex Kim <alex@example.test>\nBILLING@example.test'),
+    ).toEqual([
+      { name: '', email: 'billing@example.test' },
+      { name: 'Alex Kim', email: 'alex@example.test' },
+    ])
+    expect(() => invoiceRecipients('')).toThrow('at least one recipient')
+    expect(() => invoiceRecipients('not-an-email')).toThrow('valid recipient')
+    expect(() => invoiceRecipients('Alex <broken@example>')).toThrow('valid recipient')
+  })
+
+  it('[unit] resolves only supported invoice template variables before sending', () => {
+    const selected = invoice({
+      id: 42,
+      number: 'INV-0042',
+      currency: 'USD',
+      amount_cents: 12_345,
+      due_date: '2026-09-30',
+    })
+    expect(
+      interpolateInvoiceTemplate(
+        '%invoice_number% (#%invoice_id%) is %invoice_amount%, due %invoice_due_date%. %unknown%',
+        selected,
+      ),
+    ).toBe('INV-0042 (#42) is $123.45, due 2026-09-30. %unknown%')
+  })
+
+  it('[unit] validates reminder dates and derives the persisted open-invoice schedule', () => {
+    expect(() => invoiceReminderDate('', '2026-09-02')).toThrow('reminder date')
+    expect(invoiceReminderDate('2026-09-02', '2026-09-02')).toBe('2026-09-02')
+    expect(() => invoiceReminderDate('2026-09-01', '2026-09-02')).toThrow('past')
+    expect(() => invoiceReminderDate('2026-02-30', '2026-09-02')).toThrow('valid')
+    const messages = [
+      { event_type: 'send', send_reminder_on: '2026-09-10' },
+      { event_type: 'send', send_reminder_on: '2026-09-12' },
+    ] as InvoiceMessage[]
+    expect(invoicePlannedReminder(invoice({ state: 'open' }), messages)).toBe('2026-09-12')
+    expect(invoicePlannedReminder(invoice({ state: 'paid' }), messages)).toBeNull()
+    expect(invoiceCanMarkSent(invoice({ state: 'draft' }))).toBe(true)
+    expect(invoiceCanMarkSent(invoice({ state: 'open' }))).toBe(true)
+    expect(invoiceCanMarkSent(invoice({ state: 'paid' }))).toBe(false)
   })
 })

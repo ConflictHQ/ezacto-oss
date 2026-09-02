@@ -1477,7 +1477,11 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
       response.request().method() === 'POST',
   )
   await wizard.getByRole('button', { name: 'Generate draft invoice' }).click()
-  expect((await generated).status()).toBe(201)
+  const generatedResponse = await generated
+  expect(generatedResponse.status()).toBe(201)
+  const generatedPayload = (await generatedResponse.json()) as {
+    data: { id: number; due_date: string }
+  }
 
   await expect(page.locator('[data-invoice-generation-result]')).toHaveText(
     'Draft invoice generated successfully.',
@@ -1499,6 +1503,55 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
     'Browser Acceptance Project',
   )
   await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$75.00')
+
+  await detail.getByRole('button', { name: 'Mark sent', exact: true }).click()
+  const composer = page.locator('[data-invoice-composer-dialog]')
+  await expect(composer).toBeVisible()
+  await expect(composer).toContainText('%invoice_number%')
+  await expect(composer).toContainText('%invoice_amount%')
+  await composer.getByLabel('Recipients').fill('Accounts Payable <ap@example.test>')
+  await composer.getByLabel('Subject').fill('Invoice %invoice_number%')
+  await composer
+    .locator('[data-invoice-composer-body]')
+    .fill('Invoice #%invoice_id% totals %invoice_amount% and is due %invoice_due_date%.')
+  await composer.getByLabel('Record a planned reminder date').check()
+  await composer.locator('[data-invoice-composer-reminder-date]').fill('2099-09-30')
+  for (const control of [
+    composer.getByLabel('Recipients'),
+    composer.getByLabel('Subject'),
+    composer.locator('[data-invoice-composer-body]'),
+    composer.getByRole('button', { name: 'Mark sent', exact: true }),
+  ]) {
+    await expectPhoneControl(control)
+  }
+  await expectNoPageOverflow(page)
+  const sent = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.match(/^\/api\/v1\/invoices\/\d+\/transitions$/u) !==
+        null && response.request().method() === 'POST',
+  )
+  await composer.getByRole('button', { name: 'Mark sent', exact: true }).click()
+  const sentResponse = await sent
+  expect(sentResponse.status()).toBe(201)
+  expect(sentResponse.request().postDataJSON()).toMatchObject({
+    command: 'send',
+    recipients: [{ name: 'Accounts Payable', email: 'ap@example.test' }],
+    subject: `Invoice ${generatedNumber}`,
+    body: `Invoice #${generatedPayload.data.id} totals $75.00 and is due ${generatedPayload.data.due_date}.`,
+    attach_pdf: false,
+    send_me_a_copy: false,
+    thank_you: false,
+    reminder: true,
+    send_reminder_on: '2099-09-30',
+  })
+  await expect(composer).toBeHidden()
+  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Open')
+  await expect(detail.locator('[data-invoice-reminder-line]')).toContainText(
+    'Sep 30, 2099',
+  )
+  await expect(detail.locator('[data-invoice-detail-messages]')).toContainText(
+    `Invoice #${generatedPayload.data.id} totals $75.00`,
+  )
 
   await page.getByRole('link', { name: 'Back to invoices' }).click()
   await expect(page).toHaveURL(/\/invoices$/u)

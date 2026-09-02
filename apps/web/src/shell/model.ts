@@ -6,6 +6,7 @@ import {
   type GeneralResource,
   type Invoice,
   type InvoiceGenerationInput,
+  type InvoiceTransitionInput,
   type PasswordSignInInput,
   type Session,
   type TimeEntry,
@@ -111,6 +112,12 @@ export interface ShellApi
   generateInvoice?(
     commandId: string,
     input: InvoiceGenerationInput,
+    signal?: AbortSignal,
+  ): Promise<Invoice>
+  transitionInvoice?(
+    id: number,
+    commandId: string,
+    input: InvoiceTransitionInput,
     signal?: AbortSignal,
   ): Promise<Invoice>
 }
@@ -791,6 +798,15 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       await client.deleteInvoicePayment({
         id,
         paymentId,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data.invoice,
+  transitionInvoice: async (id, commandId, input, signal) =>
+    (
+      await client.transitionInvoice({
+        id,
         'Idempotency-Key': commandId,
         body: input,
         ...withSignal(signal),
