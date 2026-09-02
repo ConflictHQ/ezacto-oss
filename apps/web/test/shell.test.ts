@@ -326,6 +326,7 @@ describe('S-1 through S-5 application shell', () => {
 
   it('[unit] resolves K-bar navigation and computes a live timer counter', () => {
     expect(navigationDestination('go reports')).toBe('/reports')
+    expect(navigationDestination('go tasks')).toBe('/tasks')
     expect(navigationDestination('GO time')).toBe('/')
     expect(navigationDestination('log 2h northpeak devops')).toBeNull()
     const running = entry({ project_id: 1, task_id: 1 }, 1)
