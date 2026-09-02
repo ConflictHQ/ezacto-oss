@@ -292,7 +292,7 @@ const rateOperations = (): ApiContractOperation[] =>
         requestSchema: "UserRateInput",
         requestRequired: true,
         sessionOnly: true,
-        parameters: identifiers,
+        parameters: [...identifiers, idempotency],
       },
       {
         method: "get",
@@ -1066,7 +1066,7 @@ const teamOperations: ApiContractOperation[] = [
     method: "post",
     path: "/api/v1/team/people/:id/notifications",
     operationId: "updateTeamPersonNotifications",
-    summary: "Update a person's notification preferences",
+    summary: "Persist inactive notification preferences; delivery is unavailable",
     tag: "team",
     responseStatus: 200,
     responseSchema: "TeamCommandReceiptEnvelope",
@@ -2020,8 +2020,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   UserRateInput: {
     type: "object",
-    required: ["amount_cents"],
+    required: ["expected_version", "amount_cents"],
     properties: {
+      expected_version: { type: "integer", minimum: 0 },
       amount_cents: { type: "integer", minimum: 0 },
       start_date: nullable(dateSchema),
     },
@@ -2101,13 +2102,25 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: { email: booleanSchema, desktop: booleanSchema, slack: booleanSchema },
     additionalProperties: false,
   },
+  TeamInactiveNotificationChannels: {
+    type: "object",
+    required: ["email", "desktop", "slack"],
+    properties: {
+      email: { type: "boolean", enum: [false] },
+      desktop: { type: "boolean", enum: [false] },
+      slack: { type: "boolean", enum: [false] },
+    },
+    additionalProperties: false,
+  },
   TeamNotificationPreference: {
     type: "object",
     required: [
+      "delivery_active",
       "daily_reminder_enabled", "reminder_time", "reminder_days", "channels",
       "include_in_team_reminders", "weekly_digest", "notify_project_deleted", "updated_at",
     ],
     properties: {
+      delivery_active: { type: "boolean", enum: [false] },
       daily_reminder_enabled: booleanSchema,
       reminder_time: nullable({ type: "string", pattern: "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" }),
       reminder_days: {
@@ -2233,17 +2246,17 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     ],
     properties: {
       expected_version: { type: "integer", minimum: 0 },
-      daily_reminder_enabled: booleanSchema,
+      daily_reminder_enabled: { type: "boolean", enum: [false] },
       reminder_time: nullable({ type: "string", pattern: "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" }),
       reminder_days: {
         type: "array",
         uniqueItems: true,
         items: { type: "string", enum: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] },
       },
-      channels: reference("TeamNotificationChannels"),
-      include_in_team_reminders: booleanSchema,
-      weekly_digest: booleanSchema,
-      notify_project_deleted: booleanSchema,
+      channels: reference("TeamInactiveNotificationChannels"),
+      include_in_team_reminders: { type: "boolean", enum: [false] },
+      weekly_digest: { type: "boolean", enum: [false] },
+      notify_project_deleted: { type: "boolean", enum: [false] },
     },
     additionalProperties: false,
   },

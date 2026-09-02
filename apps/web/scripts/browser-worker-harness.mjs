@@ -122,6 +122,145 @@ const run = async (statement, ...bindings) => {
   await database.prepare(statement).bind(...bindings).run()
 }
 
+const rows = async (statement, ...bindings) =>
+  (await database.prepare(statement).bind(...bindings).all()).results
+
+const teamRateState = async () => ({
+  organization: await rows('SELECT modules FROM organizations WHERE id = 1'),
+  user: await rows(
+    `SELECT version, team_write_token, updated_at FROM users WHERE id = 1`,
+  ),
+  preferences: await rows(
+    `SELECT * FROM notification_preferences WHERE user_id = 1`,
+  ),
+  assignments: await rows(
+    `SELECT id, project_id, user_id, is_active, is_project_manager,
+       use_default_rates, hourly_rate_cents, budget_seconds,
+       time_entry_notes_minimum_length, created_at, updated_at
+     FROM user_assignments WHERE user_id = 1 ORDER BY id`,
+  ),
+  billableRates: await rows(
+    `SELECT * FROM user_billable_rates WHERE user_id = 1 ORDER BY id`,
+  ),
+  costRates: await rows(
+    `SELECT * FROM user_cost_rates WHERE user_id = 1 ORDER BY id`,
+  ),
+  receipts: await rows(
+    `SELECT * FROM team_command_ledger WHERE target_user_id = 1
+     ORDER BY command_kind, command_id`,
+  ),
+})
+
+const rateDeleteTrigger = (table) => `CREATE TRIGGER ${table}_append_only_delete
+  BEFORE DELETE ON ${table}
+  BEGIN SELECT RAISE(ABORT, 'rates are append-only'); END`
+const receiptDeleteTrigger = `CREATE TRIGGER team_command_ledger_reject_delete
+  BEFORE DELETE ON team_command_ledger
+  BEGIN SELECT RAISE(ABORT, 'team command receipts are append-only'); END`
+
+const clearTeamRateRows = async () => {
+  for (const table of ['user_billable_rates', 'user_cost_rates']) {
+    await run(`DROP TRIGGER ${table}_append_only_delete`)
+    try {
+      await run(`DELETE FROM ${table} WHERE user_id = 1`)
+    } finally {
+      await run(rateDeleteTrigger(table))
+    }
+  }
+  await run('DROP TRIGGER team_command_ledger_reject_delete')
+  try {
+    await run('DELETE FROM team_command_ledger WHERE target_user_id = 1')
+  } finally {
+    await run(receiptDeleteTrigger)
+  }
+}
+
+const insertRows = async (table, values) => {
+  for (const value of values) {
+    const columns = Object.keys(value)
+    await database
+      .prepare(
+        `INSERT INTO ${table} (${columns.join(', ')})
+         VALUES (${columns.map(() => '?').join(', ')})`,
+      )
+      .bind(...columns.map((column) => value[column]))
+      .run()
+  }
+}
+
+const restoreRows = async (table, conflictColumn, values) => {
+  for (const value of values) {
+    const columns = Object.keys(value)
+    const mutable = columns.filter((column) => column !== conflictColumn)
+    await database
+      .prepare(
+        `INSERT INTO ${table} (${columns.join(', ')})
+         VALUES (${columns.map(() => '?').join(', ')})
+         ON CONFLICT(${conflictColumn}) DO UPDATE SET
+           ${mutable.map((column) => `${column} = excluded.${column}`).join(', ')}`,
+      )
+      .bind(...columns.map((column) => value[column]))
+      .run()
+  }
+}
+
+const insertRateRows = async (table, values) => {
+  for (const value of values) {
+    const insertable = Object.fromEntries(
+      Object.entries(value).filter(([column]) => column !== 'end_date'),
+    )
+    await insertRows(table, [insertable])
+  }
+}
+
+let activeTeamRateBaseline = null
+let restoredTeamRateBaseline = null
+
+const restoreTeamRateState = async () => {
+  if (activeTeamRateBaseline === null) throw new Error('team rate fixture was not seeded')
+  const baseline = activeTeamRateBaseline
+  await clearTeamRateRows()
+  await insertRateRows('user_billable_rates', baseline.billableRates)
+  await insertRateRows('user_cost_rates', baseline.costRates)
+  await insertRows('team_command_ledger', baseline.receipts)
+
+  const assignmentIds = baseline.assignments.map(({ id }) => Number(id))
+  await run(
+    assignmentIds.length === 0
+      ? 'DELETE FROM user_assignments WHERE user_id = 1'
+      : `DELETE FROM user_assignments WHERE user_id = 1
+         AND id NOT IN (${assignmentIds.join(', ')})`,
+  )
+  await restoreRows('user_assignments', 'id', baseline.assignments)
+  const preference = baseline.preferences[0]
+  if (preference !== undefined) {
+    await restoreRows('notification_preferences', 'user_id', [preference])
+  } else {
+    await run('DELETE FROM notification_preferences WHERE user_id = 1')
+  }
+  const user = baseline.user[0]
+  const organization = baseline.organization[0]
+  if (user === undefined || organization === undefined) {
+    throw new Error('team rate baseline is incomplete')
+  }
+  await database.batch([
+    database
+      .prepare(
+        `UPDATE users SET version = ?, team_write_token = ?, updated_at = ? WHERE id = 1`,
+      )
+      .bind(user.version, user.team_write_token, user.updated_at),
+    database
+      .prepare('UPDATE organizations SET modules = ? WHERE id = 1')
+      .bind(organization.modules),
+  ])
+  const restored = await teamRateState()
+  if (JSON.stringify(restored) !== JSON.stringify(baseline)) {
+    throw new Error('team rate fixture did not restore its exact baseline')
+  }
+  restoredTeamRateBaseline = baseline
+  activeTeamRateBaseline = null
+}
+
 const fixtureControl = async (request, response) => {
   if (
     request.method !== 'POST' ||
@@ -259,6 +398,12 @@ const fixtureControl = async (request, response) => {
         .bind(timestamp, timestamp),
     ])
   } else if (action === 'team-rate-seed') {
+    if (activeTeamRateBaseline !== null) {
+      throw new Error('team rate fixture already has an active baseline')
+    }
+    activeTeamRateBaseline = await teamRateState()
+    restoredTeamRateBaseline = null
+    await clearTeamRateRows()
     await database.batch([
       database.prepare(
         `UPDATE organizations
@@ -266,7 +411,15 @@ const fixtureControl = async (request, response) => {
          WHERE id = 1`,
       ),
       database.prepare(
-        `UPDATE users SET version = 0, updated_at = ? WHERE id = 1`,
+        `UPDATE users SET version = 0, team_write_token = NULL, updated_at = ? WHERE id = 1`,
+      ).bind(timestamp),
+      database.prepare(
+        `UPDATE notification_preferences SET
+           daily_reminder_enabled = 0, reminder_time = NULL, reminder_days = '[]',
+           email_enabled = 0, desktop_enabled = 0, slack_enabled = 0,
+           include_in_team_reminders = 0, weekly_digest = 0,
+           notify_project_deleted = 0, updated_at = ?
+         WHERE user_id = 1`,
       ).bind(timestamp),
       database.prepare(
         `INSERT INTO user_billable_rates (
@@ -274,6 +427,16 @@ const fixtureControl = async (request, response) => {
          ) VALUES (950, 1, 10000, '2026-08-01', NULL, ?, ?)`,
       ).bind(timestamp, timestamp),
     ])
+  } else if (action === 'team-rate-reset') {
+    await restoreTeamRateState()
+  } else if (action === 'team-rate-assert-clean') {
+    if (restoredTeamRateBaseline === null) {
+      throw new Error('team rate fixture has no restored baseline')
+    }
+    const current = await teamRateState()
+    if (JSON.stringify(current) !== JSON.stringify(restoredTeamRateBaseline)) {
+      throw new Error('team rate fixture baseline changed after restoration')
+    }
   } else if (action === 'task-admin-cleanup') {
     await database.batch([
       database.prepare(

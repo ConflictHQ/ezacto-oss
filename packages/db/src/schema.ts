@@ -617,11 +617,11 @@ export const notificationPreferences = sqliteTable(
     slackEnabled: integer('slack_enabled', { mode: 'boolean' }).notNull().default(false),
     includeInTeamReminders: integer('include_in_team_reminders', { mode: 'boolean' })
       .notNull()
-      .default(true),
-    weeklyDigest: integer('weekly_digest', { mode: 'boolean' }).notNull().default(true),
+      .default(false),
+    weeklyDigest: integer('weekly_digest', { mode: 'boolean' }).notNull().default(false),
     notifyProjectDeleted: integer('notify_project_deleted', { mode: 'boolean' })
       .notNull()
-      .default(true),
+      .default(false),
     ...timestamps,
   },
   (table) => [

@@ -78,6 +78,7 @@ const translate = (error: unknown): never => {
 }
 
 const snakeNotification = (value: Readonly<TeamPersonRecord['notifications']>) => ({
+  delivery_active: value.deliveryActive,
   daily_reminder_enabled: value.dailyReminderEnabled,
   reminder_time: value.reminderTime,
   reminder_days: [...value.reminderDays],
@@ -645,6 +646,16 @@ export const installTeamRoutes = <Bindings extends object>(
     }
     if ([daily, include, weekly, deleted].some((value) => value === undefined)) {
       errors.push({ field: 'body', code: 'required', message: 'All notification preference fields are required.' })
+    }
+    if (
+      daily === true || include === true || weekly === true || deleted === true ||
+      channel?.email === true || channel?.desktop === true || channel?.slack === true
+    ) {
+      errors.push({
+        field: 'notifications',
+        code: 'delivery_unavailable',
+        message: 'Notification delivery is not active in this release; preferences must remain off.',
+      })
     }
     if (errors.length > 0) throw validationError(errors)
     const patch: TeamNotificationPatch = {

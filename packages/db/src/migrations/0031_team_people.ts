@@ -81,9 +81,9 @@ export const teamPeopleMigration = [
     email_enabled INTEGER NOT NULL DEFAULT 0 CHECK (email_enabled IN (0,1)),
     desktop_enabled INTEGER NOT NULL DEFAULT 0 CHECK (desktop_enabled IN (0,1)),
     slack_enabled INTEGER NOT NULL DEFAULT 0 CHECK (slack_enabled IN (0,1)),
-    include_in_team_reminders INTEGER NOT NULL DEFAULT 1 CHECK (include_in_team_reminders IN (0,1)),
-    weekly_digest INTEGER NOT NULL DEFAULT 1 CHECK (weekly_digest IN (0,1)),
-    notify_project_deleted INTEGER NOT NULL DEFAULT 1 CHECK (notify_project_deleted IN (0,1)),
+    include_in_team_reminders INTEGER NOT NULL DEFAULT 0 CHECK (include_in_team_reminders IN (0,1)),
+    weekly_digest INTEGER NOT NULL DEFAULT 0 CHECK (weekly_digest IN (0,1)),
+    notify_project_deleted INTEGER NOT NULL DEFAULT 0 CHECK (notify_project_deleted IN (0,1)),
     created_at TEXT NOT NULL CHECK (${canonicalTimestamp('created_at')}),
     updated_at TEXT NOT NULL CHECK (${canonicalTimestamp('updated_at')}),
     CHECK (daily_reminder_enabled = 0 OR (

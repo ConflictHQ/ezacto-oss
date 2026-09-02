@@ -98,6 +98,7 @@ const documentedApp = () =>
         repository: generalRepository,
         cursorSigningKey: new Uint8Array(32),
         isExpensesModuleEnabled: async () => true,
+        teamRepository: team,
       });
       installTrackedResourceRoutes(api, {
         repository: trackedRepository,
@@ -282,5 +283,49 @@ describe("OpenAPI contract", () => {
       expect.arrayContaining(["expenses"]),
       expect.arrayContaining(["time", "expenses"]),
     ]);
+  });
+
+  it("[contract] documents safe legacy rate commands and inactive notification delivery", () => {
+    const document = generateOpenApiDocument() as {
+      paths: Record<
+        string,
+        Record<string, { parameters?: Array<{ name: string }> }>
+      >;
+      components: {
+        schemas: Record<
+          string,
+          {
+            required?: string[];
+            properties?: Record<string, { enum?: unknown[]; $ref?: string }>;
+          }
+        >;
+      };
+    };
+    for (const path of [
+      "/api/v1/users/{userId}/billable-rates",
+      "/api/v1/users/{userId}/cost-rates",
+    ]) {
+      expect(document.paths[path]?.post?.parameters).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "Idempotency-Key" }),
+        ]),
+      );
+    }
+    expect(document.components.schemas.UserRateInput?.required).toEqual(
+      expect.arrayContaining(["expected_version", "amount_cents"]),
+    );
+    const notifications = document.components.schemas.TeamNotificationInput;
+    expect(notifications?.properties?.daily_reminder_enabled?.enum).toEqual([
+      false,
+    ]);
+    expect(notifications?.properties?.channels?.$ref).toBe(
+      "#/components/schemas/TeamInactiveNotificationChannels",
+    );
+    for (const property of ["email", "desktop", "slack"]) {
+      expect(
+        document.components.schemas.TeamInactiveNotificationChannels
+          ?.properties?.[property]?.enum,
+      ).toEqual([false]);
+    }
   });
 });

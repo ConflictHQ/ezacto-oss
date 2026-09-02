@@ -150,6 +150,7 @@ export const createApp = (services?: RuntimeServices) =>
               cursorSigningKey: services.cursorSigningKey,
               isExpensesModuleEnabled: services.isExpensesModuleEnabled,
               isTeamModuleEnabled: services.isTeamModuleEnabled,
+              teamRepository: services.team,
             })
             installTeamRoutes(api, {
               repository: services.team,

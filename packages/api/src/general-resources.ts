@@ -2,12 +2,15 @@ import {
   canViewMoneyField,
   GeneralResourceError,
   maximumTimeEntryNoteLength,
+  TeamError,
   type GeneralMutationInput,
   type GeneralResourceFilters,
   type GeneralResourceKind,
   type GeneralResourceRecord,
   type GeneralResourceRepository,
   type GeneralValue,
+  type TeamRepository,
+  type TeamViewer,
   type UserRateKind,
   type UserRateRecord,
 } from "@ezacto/core";
@@ -28,6 +31,7 @@ export interface GeneralResourceRouteOptions {
   clock?: () => string;
   isExpensesModuleEnabled(): Promise<boolean>;
   isTeamModuleEnabled?(): Promise<boolean>;
+  teamRepository: TeamRepository;
 }
 
 type FieldType =
@@ -787,6 +791,52 @@ const requireRateWrite = <Bindings extends object>(
   return principal;
 };
 
+const teamViewer = (principal: Readonly<UserPrincipal>): TeamViewer => ({
+  userId: principal.userId,
+  profile: principal.profile,
+  managerGrants: principal.managerGrants,
+});
+
+const ensureTeamTarget = async (
+  options: Readonly<Required<GeneralResourceRouteOptions>>,
+  principal: Readonly<UserPrincipal>,
+  userId: number,
+): Promise<void> => {
+  if ((await options.teamRepository.get(teamViewer(principal), userId)) !== null)
+    return;
+  throw new ApiError({
+    status: 404,
+    code: "not_found",
+    message: "The user does not exist or is outside the acting user scope.",
+  });
+};
+
+const rateCommandId = <Bindings extends object>(
+  context: Context<ApiContext<Bindings>>,
+): string => {
+  const value = context.req.header("idempotency-key");
+  if (value !== undefined && /^[A-Za-z0-9._:-]{1,128}$/.test(value)) return value;
+  throw validationError([
+    {
+      field: "Idempotency-Key",
+      code: "invalid",
+      message: "Idempotency-Key must use 1-128 safe identifier characters",
+    },
+  ]);
+};
+
+const translateTeam = (error: unknown): never => {
+  if (!(error instanceof TeamError)) throw error;
+  if (error.code === "not_found")
+    throw new ApiError({ status: 404, code: "not_found", message: error.message });
+  if (error.code === "forbidden") return profileForbidden();
+  if (error.code === "state_conflict" || error.code === "command_id_reused")
+    throw new ApiError({ status: 409, code: error.code, message: error.message });
+  throw validationError([
+    { field: "body", code: error.code, message: error.message },
+  ]);
+};
+
 const envelope = (
   kind: GeneralResourceKind,
   record: GeneralResourceRecord,
@@ -816,8 +866,9 @@ const installResource = <Bindings extends object>(
             serializeGeneral(kind, record, principal),
           source: {
             highWatermark: () =>
-              options.repository.highWatermark(kind, filters),
-            list: (window) => options.repository.list(kind, filters, window),
+              options.repository.highWatermark(kind, filters, teamViewer(principal)),
+            list: (window) =>
+              options.repository.list(kind, filters, window, teamViewer(principal)),
           },
         }),
       );
@@ -835,6 +886,7 @@ const installResource = <Bindings extends object>(
         kind,
         input,
         options.clock(),
+        teamViewer(principal),
       );
       return context.json(envelope(kind, record, principal), 201);
     } catch (error) {
@@ -851,6 +903,7 @@ const installResource = <Bindings extends object>(
           await options.repository.get(
             kind,
             resourceId(context.req.param("id")),
+            teamViewer(principal),
           ),
           principal,
         ),
@@ -870,6 +923,7 @@ const installResource = <Bindings extends object>(
         resourceId(context.req.param("id")),
         input,
         options.clock(),
+        teamViewer(principal),
       );
       return context.json(envelope(kind, record, principal));
     } catch (error) {
@@ -877,13 +931,14 @@ const installResource = <Bindings extends object>(
     }
   });
   api.delete(`/${kind}/:id`, async (context) => {
-    requireResourceWrite(context, kind);
+    const principal = requireResourceWrite(context, kind);
     await requireResourceModule(kind, options);
     try {
       await options.repository.remove(
         kind,
         resourceId(context.req.param("id")),
         options.clock(),
+        teamViewer(principal),
       );
       return context.body(null, 204);
     } catch (error) {
@@ -904,6 +959,7 @@ const installRates = <Bindings extends object>(
       throw new ApiError({ status: 403, code: "module_disabled", message: "The Team module is not enabled for this organization." });
     }
     const userId = resourceId(context.req.param("userId"));
+    await ensureTeamTarget(options, principal, userId);
     const url = new URL(context.req.url);
     const allowed = new Set(["per_page", "cursor"]);
     for (const key of url.searchParams.keys())
@@ -932,14 +988,18 @@ const installRates = <Bindings extends object>(
     }
   });
   api.post(`/users/:userId/${segment}`, async (context) => {
-    requireRateWrite(context, kind);
+    const principal = requireRateWrite(context, kind);
     if (!(await options.isTeamModuleEnabled())) {
       throw new ApiError({ status: 403, code: "module_disabled", message: "The Team module is not enabled for this organization." });
     }
     const body = await objectBody(context);
     const errors: FieldError[] = [];
     for (const field of Object.keys(body))
-      if (field !== "amount_cents" && field !== "start_date")
+      if (
+        field !== "expected_version" &&
+        field !== "amount_cents" &&
+        field !== "start_date"
+      )
         errors.push({
           field,
           code: "unknown",
@@ -948,6 +1008,12 @@ const installRates = <Bindings extends object>(
     const amountCents = parseField(
       "amount_cents",
       body.amount_cents,
+      nonnegativeInt,
+      errors,
+    ) as number | undefined;
+    const expectedVersion = parseField(
+      "expected_version",
+      body.expected_version,
       nonnegativeInt,
       errors,
     ) as number | undefined;
@@ -960,19 +1026,53 @@ const installRates = <Bindings extends object>(
             { type: "nullable-date" },
             errors,
           ) as string | null | undefined);
+    const occurredAt = options.clock();
+    if (
+      typeof startDate === "string" &&
+      startDate > occurredAt.slice(0, 10)
+    )
+      errors.push({
+        field: "start_date",
+        code: "invalid_date",
+        message: "start_date cannot be in the future",
+      });
     if (amountCents === undefined && body.amount_cents === undefined)
       errors.push({
         field: "amount_cents",
         code: "required",
         message: "amount_cents is required",
       });
+    if (expectedVersion === undefined && body.expected_version === undefined)
+      errors.push({
+        field: "expected_version",
+        code: "required",
+        message: "expected_version is required",
+      });
     if (errors.length > 0) throw validationError(errors);
+    const idempotencyKey = rateCommandId(context);
+    const userId = resourceId(context.req.param("userId"));
+    await ensureTeamTarget(options, principal, userId);
     try {
-      const record = await options.repository.appendRate(
-        resourceId(context.req.param("userId")),
+      const receipt = await options.teamRepository.appendRate(
+        {
+          commandId: idempotencyKey,
+          commandKind:
+            kind === "billable"
+              ? "person.billable_rate.append"
+              : "person.cost_rate.append",
+          targetUserId: userId,
+          actorUserId: principal.userId,
+          expectedVersion: expectedVersion!,
+          occurredAt,
+        },
+        { kind, amountCents: amountCents!, startDate: startDate ?? null },
+      );
+      if (receipt.resourceId === null)
+        throw new Error("The rate command did not return its created rate.");
+      const record = await options.repository.getRate(
+        userId,
         kind,
-        { amountCents: amountCents!, startDate: startDate ?? null },
-        options.clock(),
+        receipt.resourceId,
       );
       return context.json(
         {
@@ -984,17 +1084,20 @@ const installRates = <Bindings extends object>(
         201,
       );
     } catch (error) {
+      if (error instanceof TeamError) return translateTeam(error);
       return translate(error);
     }
   });
   api.get(`/users/:userId/${segment}/:id`, async (context) => {
-    requireRateRead(context, kind);
+    const principal = requireRateRead(context, kind);
     if (!(await options.isTeamModuleEnabled())) {
       throw new ApiError({ status: 403, code: "module_disabled", message: "The Team module is not enabled for this organization." });
     }
     try {
+      const userId = resourceId(context.req.param("userId"));
+      await ensureTeamTarget(options, principal, userId);
       const record = await options.repository.getRate(
-        resourceId(context.req.param("userId")),
+        userId,
         kind,
         resourceId(context.req.param("id")),
       );

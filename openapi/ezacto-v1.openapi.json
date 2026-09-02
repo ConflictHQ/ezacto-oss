@@ -4668,6 +4668,14 @@
               "type": "integer",
               "minimum": 1
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -5192,6 +5200,14 @@
             "schema": {
               "type": "integer",
               "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -12770,7 +12786,7 @@
     "/api/v1/team/people/{id}/notifications": {
       "post": {
         "operationId": "updateTeamPersonNotifications",
-        "summary": "Update a person's notification preferences",
+        "summary": "Persist inactive notification preferences; delivery is unavailable",
         "tags": [
           "team"
         ],
@@ -14390,9 +14406,14 @@
       "UserRateInput": {
         "type": "object",
         "required": [
+          "expected_version",
           "amount_cents"
         ],
         "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0
+          },
           "amount_cents": {
             "type": "integer",
             "minimum": 0
@@ -14716,9 +14737,39 @@
         },
         "additionalProperties": false
       },
+      "TeamInactiveNotificationChannels": {
+        "type": "object",
+        "required": [
+          "email",
+          "desktop",
+          "slack"
+        ],
+        "properties": {
+          "email": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "desktop": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "slack": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "TeamNotificationPreference": {
         "type": "object",
         "required": [
+          "delivery_active",
           "daily_reminder_enabled",
           "reminder_time",
           "reminder_days",
@@ -14729,6 +14780,12 @@
           "updated_at"
         ],
         "properties": {
+          "delivery_active": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
           "daily_reminder_enabled": {
             "type": "boolean"
           },
@@ -15169,7 +15226,10 @@
             "minimum": 0
           },
           "daily_reminder_enabled": {
-            "type": "boolean"
+            "type": "boolean",
+            "enum": [
+              false
+            ]
           },
           "reminder_time": {
             "anyOf": [
@@ -15199,16 +15259,25 @@
             }
           },
           "channels": {
-            "$ref": "#/components/schemas/TeamNotificationChannels"
+            "$ref": "#/components/schemas/TeamInactiveNotificationChannels"
           },
           "include_in_team_reminders": {
-            "type": "boolean"
+            "type": "boolean",
+            "enum": [
+              false
+            ]
           },
           "weekly_digest": {
-            "type": "boolean"
+            "type": "boolean",
+            "enum": [
+              false
+            ]
           },
           "notify_project_deleted": {
-            "type": "boolean"
+            "type": "boolean",
+            "enum": [
+              false
+            ]
           }
         },
         "additionalProperties": false

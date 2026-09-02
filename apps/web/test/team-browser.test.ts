@@ -71,11 +71,12 @@ const person = (overrides: Partial<TeamPerson> = {}): TeamPerson => ({
   ],
   cost_rates: [],
   notifications: {
+    delivery_active: false,
     daily_reminder_enabled: false,
     reminder_time: null,
     reminder_days: [],
-    channels: { email: true, desktop: false, slack: false },
-    include_in_team_reminders: true,
+    channels: { email: false, desktop: false, slack: false },
+    include_in_team_reminders: false,
     weekly_digest: false,
     notify_project_deleted: false,
     updated_at: timestamp,
@@ -245,7 +246,7 @@ describe('Team browser controller', () => {
     })
   })
 
-  it('requires an explicit opt-out before replacing an imported Slack preference', async () => {
+  it('renders notification delivery as inactive and never saves delivery promises', async () => {
     writeDocument('team-person')
     const updateTeamPersonNotifications = vi.fn<
       TeamDirectoryApi['updateTeamPersonNotifications']
@@ -267,14 +268,14 @@ describe('Team browser controller', () => {
     const form = document.querySelector<HTMLFormElement>('[data-team-notifications-form]')!
     submit(form)
     expect(updateTeamPersonNotifications).not.toHaveBeenCalled()
-    expect(document.querySelector('[data-team-notifications-result]')?.textContent).toContain(
-      'Turn off the imported Slack preference',
+    expect(document.querySelector('[data-team-notification-status]')?.textContent).toContain(
+      'delivery is not active',
     )
-
-    document.querySelector<HTMLInputElement>('[name="channel_slack"]')!.click()
+    expect(
+      [...form.querySelectorAll<HTMLInputElement>('input')].every((input) => input.disabled),
+    ).toBe(true)
     submit(form)
-    await vi.waitFor(() => expect(updateTeamPersonNotifications).toHaveBeenCalledTimes(1))
-    expect(updateTeamPersonNotifications.mock.calls[0]![2].channels.slack).toBe(false)
+    expect(updateTeamPersonNotifications).not.toHaveBeenCalled()
   })
 
   it('[e2e:rate-change] retries one idempotent command and displays the server-closed prior period', async () => {

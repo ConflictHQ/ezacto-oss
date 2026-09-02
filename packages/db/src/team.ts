@@ -19,6 +19,7 @@ import type BetterSqlite3 from 'better-sqlite3'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
+import { teamPersonAccessPredicate } from './team-access.js'
 
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
 type NativeClient = BetterSqlite3.Database | D1Database
@@ -153,32 +154,11 @@ const fingerprint = async (value: unknown): Promise<string> => {
   return `sha256:${hexadecimal(new Uint8Array(await crypto.subtle.digest('SHA-256', encoded)))}`
 }
 
-const allowedTarget = (viewer: Readonly<TeamViewer>): { sql: string; bindings: unknown[] } =>
-  viewer.profile === 'project_manager'
-    ? {
-        sql: `(user.id = ? OR EXISTS (
-          SELECT 1 FROM teammate_assignments teammate
-          WHERE teammate.manager_id = ? AND teammate.user_id = user.id
-        ) OR EXISTS (
-          SELECT 1
-          FROM user_assignments managed_assignment
-          JOIN user_assignments manager_assignment
-            ON manager_assignment.project_id = managed_assignment.project_id
-           AND manager_assignment.user_id = ?
-           AND manager_assignment.is_active = 1
-           AND manager_assignment.is_project_manager = 1
-          WHERE managed_assignment.user_id = user.id
-            AND managed_assignment.is_active = 1
-        ))`,
-        bindings: [viewer.userId, viewer.userId, viewer.userId],
-      }
-    : { sql: '1', bindings: [] }
-
 const filterSql = (
   viewer: Readonly<TeamViewer>,
   filter: Readonly<TeamListFilter>,
 ): { sql: string; bindings: unknown[] } => {
-  const target = allowedTarget(viewer)
+  const target = teamPersonAccessPredicate(viewer)
   return {
     sql: `${target.sql}${filter.isActive === undefined ? '' : ' AND user.is_active = ?'}`,
     bindings: [
@@ -226,6 +206,7 @@ const assignment = (row: AssignmentRow): TeamProjectAssignment => ({
 })
 
 const notification = (row: NotificationRow): TeamNotificationPreference => ({
+  deliveryActive: false,
   dailyReminderEnabled: row.dailyReminderEnabled === 1,
   reminderTime: row.reminderTime,
   reminderDays: JSON.parse(row.reminderDays) as ReminderDay[],
@@ -274,7 +255,7 @@ const getPerson = async (
   viewer: Readonly<TeamViewer>,
   userId: number,
 ): Promise<TeamPersonRecord | null> => {
-  const target = allowedTarget(viewer)
+  const target = teamPersonAccessPredicate(viewer)
   const user = await first<UserRow>(
     client,
     `SELECT ${userColumns} FROM users user WHERE user.id = ? AND ${target.sql}`,

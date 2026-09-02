@@ -89,6 +89,7 @@ export interface TeamRateRecord {
 }
 
 export interface TeamNotificationPreference {
+  deliveryActive: false
   dailyReminderEnabled: boolean
   reminderTime: string | null
   reminderDays: readonly ReminderDay[]

@@ -305,6 +305,7 @@ export type UserRate = {
 };
 
 export type UserRateInput = {
+  "expected_version": number;
   "amount_cents": number;
   "start_date"?: string | null;
 };
@@ -379,7 +380,14 @@ export type TeamNotificationChannels = {
   "slack": boolean;
 };
 
+export type TeamInactiveNotificationChannels = {
+  "email": false;
+  "desktop": false;
+  "slack": false;
+};
+
 export type TeamNotificationPreference = {
+  "delivery_active": false;
   "daily_reminder_enabled": boolean;
   "reminder_time": string | null;
   "reminder_days": Array<"monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday">;
@@ -469,13 +477,13 @@ export type TeamAssignmentReplaceInput = {
 
 export type TeamNotificationInput = {
   "expected_version": number;
-  "daily_reminder_enabled": boolean;
+  "daily_reminder_enabled": false;
   "reminder_time": string | null;
   "reminder_days": Array<"monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday">;
-  "channels": TeamNotificationChannels;
-  "include_in_team_reminders": boolean;
-  "weekly_digest": boolean;
-  "notify_project_deleted": boolean;
+  "channels": TeamInactiveNotificationChannels;
+  "include_in_team_reminders": false;
+  "weekly_digest": false;
+  "notify_project_deleted": false;
 };
 
 export type TeamRateInput = {
@@ -2283,9 +2291,9 @@ export class EzactoClient {
     });
   }
 
-  async appendBillableRate(args: { "userId": number; body: UserRateInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<UserRateEnvelope> {
+  async appendBillableRate(args: { "userId": number; "Idempotency-Key": string; body: UserRateInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<UserRateEnvelope> {
     const headers = new Headers(args.headers);
-
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
     return this.request<UserRateEnvelope>("POST", "/api/v1/users/:userId/billable-rates".replace(":userId", encodeURIComponent(String(args["userId"]))), {
       body: args.body,
       signal: args.signal,
@@ -2312,9 +2320,9 @@ export class EzactoClient {
     });
   }
 
-  async appendCostRate(args: { "userId": number; body: UserRateInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<UserRateEnvelope> {
+  async appendCostRate(args: { "userId": number; "Idempotency-Key": string; body: UserRateInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<UserRateEnvelope> {
     const headers = new Headers(args.headers);
-
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
     return this.request<UserRateEnvelope>("POST", "/api/v1/users/:userId/cost-rates".replace(":userId", encodeURIComponent(String(args["userId"]))), {
       body: args.body,
       signal: args.signal,

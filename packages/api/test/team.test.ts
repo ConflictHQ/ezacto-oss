@@ -321,8 +321,12 @@ for (const [runtime, factory] of factories) {
       expect(peopleBody.data.departments).toEqual([{ id: 1, name: "Product" }]);
       expect(peopleBody.data.project_assignments).toHaveLength(1);
       expect(peopleBody.data.notifications).toMatchObject({
+        delivery_active: false,
         daily_reminder_enabled: false,
         channels: { email: false, desktop: false, slack: false },
+        include_in_team_reminders: false,
+        weekly_digest: false,
+        notify_project_deleted: false,
       });
 
       const manager = await harness.request("/team/people/4", {
@@ -410,13 +414,13 @@ for (const [runtime, factory] of factories) {
         method: "POST",
         body: {
           expected_version: 2,
-          daily_reminder_enabled: true,
-          reminder_time: "09:15",
-          reminder_days: ["monday", "wednesday", "friday"],
-          channels: { email: true, desktop: false, slack: false },
-          include_in_team_reminders: true,
+          daily_reminder_enabled: false,
+          reminder_time: null,
+          reminder_days: [],
+          channels: { email: false, desktop: false, slack: false },
+          include_in_team_reminders: false,
           weekly_digest: false,
-          notify_project_deleted: true,
+          notify_project_deleted: false,
         },
         idempotencyKey: "team.notifications.change",
       });
@@ -439,7 +443,7 @@ for (const [runtime, factory] of factories) {
         version: 3,
         roles: [{ id: 2, name: "Engineer" }],
         departments: [{ id: 2, name: "Operations" }],
-        notifications: { reminder_time: "09:15" },
+        notifications: { delivery_active: false, reminder_time: null },
       });
       expect(data.data.project_assignments).toEqual(
         expect.arrayContaining([
@@ -555,6 +559,43 @@ for (const [runtime, factory] of factories) {
         idempotencyKey: "team.notifications.slack",
       });
       expect(slack.status).toBe(422);
+
+      const unavailableDelivery = await harness.request("/team/people/4/notifications", {
+        method: "POST",
+        body: {
+          expected_version: 0,
+          daily_reminder_enabled: false,
+          reminder_time: null,
+          reminder_days: [],
+          channels: { email: true, desktop: false, slack: false },
+          include_in_team_reminders: false,
+          weekly_digest: false,
+          notify_project_deleted: false,
+        },
+        idempotencyKey: "team.notifications.delivery-unavailable",
+      });
+      expect(unavailableDelivery.status).toBe(422);
+      expect(await unavailableDelivery.json()).toMatchObject({
+        error: {
+          fields: expect.arrayContaining([
+            expect.objectContaining({ code: "delivery_unavailable" }),
+          ]),
+        },
+      });
+      const unchanged = await harness.request("/team/people/4");
+      expect(await unchanged.json()).toMatchObject({
+        data: {
+          version: 0,
+          notifications: {
+            delivery_active: false,
+            daily_reminder_enabled: false,
+            channels: { email: false, desktop: false, slack: false },
+            include_in_team_reminders: false,
+            weekly_digest: false,
+            notify_project_deleted: false,
+          },
+        },
+      });
 
       const token = await harness.request("/team/people/4", {
         method: "PATCH",

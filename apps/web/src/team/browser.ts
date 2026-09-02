@@ -597,7 +597,7 @@ export const createTeamDirectoryController = (
     }
   }
 
-  const renderNotifications = (active: ActiveSession, value: TeamPerson): void => {
+  const renderNotifications = (value: TeamPerson): void => {
     const preferences = value.notifications
     formInput(notificationsForm, 'daily_reminder_enabled').checked =
       preferences.daily_reminder_enabled
@@ -613,10 +613,10 @@ export const createTeamDirectoryController = (
     formInput(notificationsForm, 'channel_desktop').checked = preferences.channels.desktop
     const slack = formInput(notificationsForm, 'channel_slack')
     slack.checked = preferences.channels.slack
-    slack.disabled = !preferences.channels.slack || !active.capabilities.canManagePeople
+    slack.disabled = true
     slackStatus.textContent = preferences.channels.slack
-      ? 'A Slack preference was imported, but delivery is unavailable. Turn it off before saving other notification changes.'
-      : 'Slack delivery is unavailable because no connector is configured.'
+      ? 'An inactive Slack preference was imported. Slack remains unavailable because no connector is configured.'
+      : 'Slack is unavailable because no connector is configured.'
     formInput(notificationsForm, 'include_in_team_reminders').checked =
       preferences.include_in_team_reminders
     formInput(notificationsForm, 'weekly_digest').checked = preferences.weekly_digest
@@ -624,12 +624,12 @@ export const createTeamDirectoryController = (
       preferences.notify_project_deleted
     for (const control of notificationsForm.elements) {
       if (control instanceof HTMLInputElement && control !== slack) {
-        control.disabled = !active.capabilities.canManagePeople || mutationPending
+        control.disabled = true
       }
     }
     const submit = required<HTMLButtonElement>('[data-team-notifications-submit]')
-    submit.hidden = !active.capabilities.canManagePeople
-    submit.disabled = mutationPending || !active.capabilities.canManagePeople
+    submit.hidden = true
+    submit.disabled = true
   }
 
   const syncInfoControls = (active: ActiveSession, value: TeamPerson): void => {
@@ -670,7 +670,7 @@ export const createTeamDirectoryController = (
     renderRates(active, value)
     renderProjects(active, value)
     renderProfiles(active, value)
-    renderNotifications(active, value)
+    renderNotifications(value)
     editor.hidden = false
     personStatus.textContent = `${value.is_active ? 'Active' : 'Inactive'} · version ${value.version}`
   }
@@ -988,61 +988,8 @@ export const createTeamDirectoryController = (
   notificationsForm.addEventListener('input', () => resetCommand('notifications'))
   notificationsForm.addEventListener('submit', (event) => {
     event.preventDefault()
-    const active = currentSession()
-    const current = person
-    if (
-      active === null ||
-      current === null ||
-      !active.capabilities.canManagePeople ||
-      api.updateTeamPersonNotifications === undefined
-    ) {
-      return
-    }
-    const daily = formInput(notificationsForm, 'daily_reminder_enabled').checked
-    const time = formInput(notificationsForm, 'reminder_time').value || null
-    const days = [
-      ...notificationsForm.querySelectorAll<HTMLInputElement>('[name="reminder_days"]:checked'),
-    ].map(({ value }) => value as TeamNotificationInput['reminder_days'][number])
-    const channels = {
-      email: formInput(notificationsForm, 'channel_email').checked,
-      desktop: formInput(notificationsForm, 'channel_desktop').checked,
-      slack: false,
-    }
-    if (slack.checked) {
-      notificationsResult.textContent =
-        'Turn off the imported Slack preference before saving; Slack delivery is unavailable.'
-      return
-    }
-    if (daily && (time === null || days.length === 0 || (!channels.email && !channels.desktop))) {
-      notificationsResult.textContent =
-        'Daily reminders require a time, at least one day, and an available channel.'
-      return
-    }
-    const input: TeamNotificationInput = {
-      expected_version: current.version,
-      daily_reminder_enabled: daily,
-      reminder_time: time,
-      reminder_days: days,
-      channels,
-      include_in_team_reminders: formInput(
-        notificationsForm,
-        'include_in_team_reminders',
-      ).checked,
-      weekly_digest: formInput(notificationsForm, 'weekly_digest').checked,
-      notify_project_deleted: formInput(
-        notificationsForm,
-        'notify_project_deleted',
-      ).checked,
-    }
-    void mutate(
-      active,
-      'notifications',
-      notificationsResult,
-      'Saving notifications…',
-      'Notifications saved.',
-      (id) =>
-        api.updateTeamPersonNotifications!(current.id, id, input, active.signal),
-    )
+    notificationsResult.textContent =
+      'Notification delivery is not active in this release.'
   })
 
   for (const button of document.querySelectorAll<HTMLButtonElement>('[data-team-add-rate]')) {
