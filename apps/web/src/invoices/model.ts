@@ -150,8 +150,8 @@ export const interpolateInvoiceTemplate = (
   )
 }
 
-export const invoiceReminderDate = (raw: string, today: string): string | null => {
-  if (raw === '') return null
+export const invoiceReminderDate = (raw: string, today: string): string => {
+  if (raw === '') throw new Error('Choose a reminder date.')
   const date = new Date(`${raw}T00:00:00.000Z`)
   if (
     !/^\d{4}-\d{2}-\d{2}$/u.test(raw) ||

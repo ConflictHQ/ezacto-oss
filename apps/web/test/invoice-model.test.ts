@@ -209,7 +209,7 @@ describe('invoice workspace model', () => {
   })
 
   it('[unit] validates reminder dates and derives the persisted open-invoice schedule', () => {
-    expect(invoiceReminderDate('', '2026-09-02')).toBeNull()
+    expect(() => invoiceReminderDate('', '2026-09-02')).toThrow('reminder date')
     expect(invoiceReminderDate('2026-09-02', '2026-09-02')).toBe('2026-09-02')
     expect(() => invoiceReminderDate('2026-09-01', '2026-09-02')).toThrow('past')
     expect(() => invoiceReminderDate('2026-02-30', '2026-09-02')).toThrow('valid')

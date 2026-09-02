@@ -721,6 +721,9 @@ export const createInvoicePaymentController = (
         : 'The invoice changed elsewhere and the latest values could not be loaded. Retry the invoice.'
       if (editingPayment === null && paymentDialog.open) paymentDialog.close()
       if (deletingPayment === null && deleteDialog.open) deleteDialog.close()
+      if (composerDialog.open && (invoice === null || !invoiceCanSend(invoice))) {
+        composerDialog.close()
+      }
       return
     }
     result.textContent = apiMessage(error)
