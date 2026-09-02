@@ -5,9 +5,12 @@ import {
   type InvoicePayment,
   type InvoicePaymentInput,
   type InvoicePaymentUpdateInput,
+  type InvoiceTransitionInput,
   type Whoami,
 } from '@ezacto/client'
 import {
+  interpolateInvoiceTemplate,
+  invoiceCanMarkSent,
   invoiceCanRecordPayment,
   invoiceIdFromPathname,
   invoiceIdentityCanRead,
@@ -21,6 +24,9 @@ import {
   invoicePaymentProviderLabel,
   invoicePaymentTiming,
   invoicePeriod,
+  invoiceRecipients,
+  invoiceReminderDate,
+  invoicePlannedReminder,
   invoiceStateLabel,
   type InvoicePaymentApi,
 } from './model.js'
@@ -134,6 +140,14 @@ export const renderInvoiceDetail = (
   const subject = required<HTMLElement>('[data-invoice-detail-subject]')
   subject.textContent = invoice.subject?.trim() ?? ''
   subject.hidden = subject.textContent === ''
+
+  const reminder = invoicePlannedReminder(invoice, messages)
+  const reminderLine = required<HTMLElement>('[data-invoice-reminder-line]')
+  reminderLine.textContent =
+    reminder === null
+      ? ''
+      : `Planned payment reminder date: ${dateLabel(reminder)}. Delivery is not scheduled yet.`
+  reminderLine.hidden = reminder === null
 
   const lines = required<HTMLTableSectionElement>('[data-invoice-detail-lines]')
   if (invoice.line_items.length === 0) {
@@ -360,6 +374,18 @@ export const createInvoicePaymentController = (
   const deleteSummary = required<HTMLElement>('[data-invoice-payment-delete-summary]')
   const deleteResult = required<HTMLElement>('[data-invoice-payment-delete-result]')
   const deleteSubmit = required<HTMLButtonElement>('[data-invoice-payment-delete-submit]')
+  const send = required<HTMLButtonElement>('[data-invoice-send]')
+  const composerDialog = required<HTMLDialogElement>('[data-invoice-composer-dialog]')
+  const composerForm = required<HTMLFormElement>('[data-invoice-composer-form]')
+  const composerTitle = required<HTMLElement>('[data-invoice-composer-title]')
+  const composerRecipients = required<HTMLTextAreaElement>('[data-invoice-composer-recipients]')
+  const composerSubject = required<HTMLInputElement>('[data-invoice-composer-subject]')
+  const composerBody = required<HTMLTextAreaElement>('[data-invoice-composer-body]')
+  const composerReminderToggle = required<HTMLInputElement>('[data-invoice-composer-reminder-toggle]')
+  const composerReminderDateLabel = required<HTMLElement>('[data-invoice-composer-reminder-date-label]')
+  const composerReminderDate = required<HTMLInputElement>('[data-invoice-composer-reminder-date]')
+  const composerResult = required<HTMLElement>('[data-invoice-composer-result]')
+  const composerSubmit = required<HTMLButtonElement>('[data-invoice-composer-submit]')
 
   let activationGeneration = 0
   let requestGeneration = 0
@@ -372,6 +398,7 @@ export const createInvoicePaymentController = (
   let refreshRequired = false
   let paymentCommandId: string | null = null
   let deleteCommandId: string | null = null
+  let invoiceCommandId: string | null = null
 
   const current = (): ActiveSession | null =>
     active !== null &&
@@ -394,6 +421,13 @@ export const createInvoicePaymentController = (
     paidAt.required = timestamp
   }
 
+  const syncReminder = (): void => {
+    const scheduled = composerReminderToggle.checked
+    composerReminderDateLabel.hidden = !scheduled
+    composerReminderDate.disabled = !scheduled || mutationPending || refreshRequired
+    composerReminderDate.required = scheduled
+  }
+
   const syncControls = (): void => {
     const session = current()
     const canWrite =
@@ -410,6 +444,10 @@ export const createInvoicePaymentController = (
             ? 'Payments cannot be recorded on a closed invoice.'
             : 'This invoice has no remaining amount due.'
         : ''
+    const canSend = canWrite && invoice !== null && invoiceCanMarkSent(invoice)
+    send.hidden = !canSend
+    send.disabled = controlsLocked || !canSend
+    send.textContent = invoice?.state === 'open' ? 'Record another sent message' : 'Mark sent'
     readonlyNotice.hidden = session === null || canWrite
     for (const control of paymentForm.querySelectorAll<
       HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement
@@ -424,11 +462,18 @@ export const createInvoicePaymentController = (
     )) {
       control.disabled = controlsLocked
     }
+    for (const control of composerForm.querySelectorAll<
+      HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement
+    >('input, textarea, button')) {
+      control.disabled = controlsLocked
+    }
+    syncReminder()
   }
 
   const closeDialogs = (): void => {
     if (paymentDialog.open) paymentDialog.close()
     if (deleteDialog.open) deleteDialog.close()
+    if (composerDialog.open) composerDialog.close()
   }
 
   const clearPrivatePresentation = (): void => {
@@ -440,11 +485,14 @@ export const createInvoicePaymentController = (
     refreshRequired = false
     paymentCommandId = null
     deleteCommandId = null
+    invoiceCommandId = null
     closeDialogs()
     paymentForm.reset()
     deleteForm.reset()
+    composerForm.reset()
     paymentResult.textContent = ''
     deleteResult.textContent = ''
+    composerResult.textContent = ''
     workflowStatus.textContent = ''
     status.textContent = 'Loading invoice…'
     retry.hidden = true
@@ -475,6 +523,9 @@ export const createInvoicePaymentController = (
     required<HTMLElement>('[data-invoice-detail-lines]').replaceChildren()
     required<HTMLElement>('[data-invoice-detail-payments]').replaceChildren()
     required<HTMLElement>('[data-invoice-detail-messages]').replaceChildren()
+    const reminderLine = required<HTMLElement>('[data-invoice-reminder-line]')
+    reminderLine.textContent = ''
+    reminderLine.hidden = true
     syncControls()
   }
 
@@ -613,6 +664,35 @@ export const createInvoicePaymentController = (
     deleteSubmit.focus()
   }
 
+  const openComposer = (): void => {
+    const session = current()
+    if (
+      session === null ||
+      invoice === null ||
+      mutationPending ||
+      refreshRequired ||
+      !invoiceIdentityCanWrite(session.identity) ||
+      !invoiceCanMarkSent(invoice)
+    ) {
+      return
+    }
+    invoiceCommandId = null
+    composerForm.reset()
+    composerTitle.textContent =
+      invoice.state === 'open' ? 'Record another sent message' : 'Mark invoice sent'
+    composerSubmit.textContent = invoice.state === 'open' ? 'Record message' : 'Mark sent'
+    composerSubject.value = 'Invoice %invoice_number%'
+    composerBody.value =
+      'Hello,\n\nPlease find invoice %invoice_number% for %invoice_amount%. Payment is due %invoice_due_date%.\n\nThank you.'
+    const today = localDate()
+    composerReminderToggle.checked = invoice.due_date >= today
+    composerReminderDate.value = invoice.due_date >= today ? invoice.due_date : ''
+    composerResult.textContent = ''
+    syncControls()
+    composerDialog.showModal()
+    composerRecipients.focus()
+  }
+
   const conflictCodes = new Set([
     'invoice_version_conflict',
     'trigger_row_conflict',
@@ -634,6 +714,7 @@ export const createInvoicePaymentController = (
     if (code !== null && conflictCodes.has(code)) {
       paymentCommandId = null
       deleteCommandId = null
+      invoiceCommandId = null
       const loaded = await loadDetail(session, { hideDocument: false })
       if (current() !== session) return
       result.textContent = loaded
@@ -641,6 +722,9 @@ export const createInvoicePaymentController = (
         : 'The invoice changed elsewhere and the latest values could not be loaded. Retry the invoice.'
       if (editingPayment === null && paymentDialog.open) paymentDialog.close()
       if (deletingPayment === null && deleteDialog.open) deleteDialog.close()
+      if (composerDialog.open && (invoice === null || !invoiceCanMarkSent(invoice))) {
+        composerDialog.close()
+      }
       return
     }
     result.textContent = apiMessage(error)
@@ -649,6 +733,98 @@ export const createInvoicePaymentController = (
   precision.addEventListener('change', () => {
     if (!mutationPending) paymentCommandId = null
     syncPrecision()
+  })
+  send.addEventListener('click', openComposer)
+  composerReminderToggle.addEventListener('change', () => {
+    if (!mutationPending) invoiceCommandId = null
+    syncReminder()
+  })
+  composerForm.addEventListener('input', () => {
+    if (!mutationPending) invoiceCommandId = null
+    composerResult.textContent = ''
+  })
+  composerForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const session = current()
+    const selectedInvoice = invoice
+    const transitionInvoice = api.transitionInvoice
+    if (
+      session === null ||
+      selectedInvoice === null ||
+      transitionInvoice === undefined ||
+      mutationPending ||
+      refreshRequired ||
+      !invoiceIdentityCanWrite(session.identity) ||
+      !invoiceCanMarkSent(selectedInvoice)
+    ) {
+      return
+    }
+    let recipients: ReturnType<typeof invoiceRecipients>
+    let sendReminderOn: string | null
+    const subject = composerSubject.value.trim()
+    const body = composerBody.value.trim()
+    try {
+      recipients = invoiceRecipients(composerRecipients.value)
+      if (subject === '') throw new Error('Enter a subject before recording.')
+      if (body === '') throw new Error('Enter a message before recording.')
+      sendReminderOn = composerReminderToggle.checked
+        ? invoiceReminderDate(composerReminderDate.value, localDate())
+        : null
+    } catch (error) {
+      composerResult.textContent = apiMessage(error)
+      return
+    }
+    const input: InvoiceTransitionInput = {
+      command: 'send',
+      expected_version: selectedInvoice.version,
+      recipients,
+      subject: interpolateInvoiceTemplate(subject, selectedInvoice),
+      body: interpolateInvoiceTemplate(body, selectedInvoice),
+      attach_pdf: false,
+      send_me_a_copy: false,
+      thank_you: false,
+      reminder: sendReminderOn !== null,
+      send_reminder_on: sendReminderOn,
+    }
+    invoiceCommandId ??= `web.invoice.send:${globalThis.crypto.randomUUID()}`
+    const activeCommand = invoiceCommandId
+    mutationPending = true
+    composerResult.textContent = 'Recording sent status…'
+    syncControls()
+    void transitionInvoice(
+      selectedInvoice.id,
+      activeCommand,
+      input,
+      session.signal,
+    )
+      .then(async (updatedInvoice) => {
+        if (current() !== session) return
+        invoiceCommandId = null
+        invoice = updatedInvoice
+        mutationPending = false
+        refreshRequired = true
+        composerDialog.close()
+        workflowStatus.textContent = 'Invoice marked sent. Refreshing its history…'
+        syncControls()
+        await loadDetail(session, {
+          hideDocument: false,
+          successMessage:
+            sendReminderOn === null
+              ? 'Invoice marked sent. No email was delivered.'
+              : `Invoice marked sent. Planned reminder date saved for ${dateLabel(sendReminderOn)}; delivery is not scheduled.`,
+        })
+      })
+      .catch(async (error: unknown) => {
+        if (current() !== session) return
+        mutationPending = false
+        await handleMutationFailure(error, session, composerResult)
+      })
+      .finally(() => {
+        if (current() === session) {
+          mutationPending = false
+          syncControls()
+        }
+      })
   })
   paymentForm.addEventListener('input', () => {
     if (!mutationPending) paymentCommandId = null
