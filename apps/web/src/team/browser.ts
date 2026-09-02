@@ -158,6 +158,7 @@ export const createTeamDirectoryController = (
   personPageElement.hidden = !personPage
 
   let session: ActiveSession | null = null
+  let removeSessionAbortListener: (() => void) | null = null
   let people: readonly TeamPersonSummary[] = []
   let person: TeamPerson | null = null
   let catalog: TeamCatalog = { roles: [], departments: [], projects: [] }
@@ -240,22 +241,38 @@ export const createTeamDirectoryController = (
     mutationPending = false
     selectedRateKind = null
     commandIds.clear()
+    infoForm.reset()
+    projectsForm.reset()
+    permissionsForm.reset()
+    notificationsForm.reset()
+    rateForm.reset()
+    deactivateForm.reset()
     list.replaceChildren()
+    list.removeAttribute('aria-busy')
     summary.replaceChildren()
     summary.hidden = true
     editor.hidden = true
+    editor.removeAttribute('aria-busy')
     roles.replaceChildren()
     departments.replaceChildren()
     projects.replaceChildren()
     profiles.replaceChildren()
     billableRates.replaceChildren()
     costRates.replaceChildren()
+    billableSection.hidden = true
+    costSection.hidden = true
+    required<HTMLElement>('[data-team-rates-redacted]').hidden = true
     search.value = ''
     listRetry.hidden = true
     personRetry.hidden = true
     listStatus.textContent = 'Loading team…'
     personStatus.textContent = 'Loading person…'
     personName.textContent = 'Person'
+    statusDescription.textContent = ''
+    statusAction.textContent = ''
+    statusAction.hidden = true
+    ownerProfileNote.hidden = true
+    slackStatus.textContent = 'Slack is unavailable because no connector is configured.'
     infoResult.textContent = ''
     projectsResult.textContent = ''
     permissionsResult.textContent = ''
@@ -1127,7 +1144,11 @@ export const createTeamDirectoryController = (
 
   return {
     async activate(identity, signal, onSessionFailure) {
+      removeSessionAbortListener?.()
+      removeSessionAbortListener = null
+      session = null
       clearPrivatePresentation()
+      if (signal.aborted) return
       const active: ActiveSession = {
         identity,
         capabilities: teamCapabilities(identity),
@@ -1135,6 +1156,18 @@ export const createTeamDirectoryController = (
         onSessionFailure,
       }
       session = active
+      const abort = (): void => {
+        if (session !== active) return
+        removeAbortListener()
+        if (removeSessionAbortListener === removeAbortListener) {
+          removeSessionAbortListener = null
+        }
+        session = null
+        clearPrivatePresentation()
+      }
+      const removeAbortListener = (): void => signal.removeEventListener('abort', abort)
+      removeSessionAbortListener = removeAbortListener
+      signal.addEventListener('abort', abort, { once: true })
       if (listPage) {
         if (api.getTeamWeekStartDay !== undefined) {
           try {

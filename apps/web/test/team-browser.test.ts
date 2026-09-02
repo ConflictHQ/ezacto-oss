@@ -136,6 +136,9 @@ const submit = (form: HTMLFormElement): void => {
   form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
 }
 
+const formInputValue = (form: HTMLFormElement, name: string): string =>
+  (form.elements.namedItem(name) as HTMLInputElement).value
+
 beforeEach(() => {
   vi.useRealTimers()
 })
@@ -215,6 +218,99 @@ describe('Team browser controller', () => {
     expect(document.querySelector('[data-team-owner-profile-note]')?.textContent).toContain(
       'always an administrator',
     )
+  })
+
+  it('clears private person state on auth abort and ignores a late reload', async () => {
+    writeDocument('team-person')
+    let resolveLate: ((value: TeamPerson) => void) | null = null
+    let lateRequestReturned = false
+    const late = new Promise<TeamPerson>((resolve) => {
+      resolveLate = resolve
+    })
+    const loaded = person({
+      telephone: '555-0100',
+      employee_id: 'PRIVATE-42',
+      project_assignments: [
+        {
+          id: 10,
+          project_id: 3,
+          project_name: 'Launch',
+          project_code: 'LCH',
+          client_id: 4,
+          client_name: 'North Peak',
+          is_active: true,
+          is_project_manager: true,
+          use_default_rates: true,
+          budget_seconds: null,
+          updated_at: timestamp,
+        },
+      ],
+      cost_rates: [
+        {
+          id: 2,
+          user_id: 1,
+          amount_cents: 7_500,
+          start_date: '2026-01-01',
+          end_date: null,
+          created_at: timestamp,
+          updated_at: timestamp,
+        },
+      ],
+    })
+    const getTeamPerson = vi.fn(async () => {
+      if (getTeamPerson.mock.calls.length === 1) return loaded
+      const value = await late
+      lateRequestReturned = true
+      return value
+    })
+    const auth = new AbortController()
+    const controller = createTeamDirectoryController({
+      getTeamPerson,
+      getTeamCatalog: vi.fn(async () => catalog),
+    })
+
+    await controller.activate(identity(), auth.signal, () => false)
+
+    expect(document.querySelector('[data-team-person-name]')?.textContent).toBe('Avery Owner')
+    expect(document.querySelector('[data-team-projects]')?.textContent).toContain('Launch')
+    expect(document.querySelector('[data-team-billable-rates]')?.textContent).toContain(
+      '100.00/hour',
+    )
+    expect(document.querySelector('[data-team-cost-rates]')?.textContent).toContain('75.00/hour')
+    const info = document.querySelector<HTMLFormElement>('[data-team-info-form]')!
+    expect(formInputValue(info, 'email')).toBe('avery@example.test')
+    expect(formInputValue(info, 'telephone')).toBe('555-0100')
+
+    document.querySelector<HTMLButtonElement>('[data-team-add-rate="billable"]')!.click()
+    const rate = document.querySelector<HTMLFormElement>('[data-team-rate-form]')!
+    ;(rate.elements.namedItem('amount') as HTMLInputElement).value = '999.99'
+    document.querySelector<HTMLButtonElement>('[data-team-person-retry]')!.click()
+    await vi.waitFor(() => expect(getTeamPerson).toHaveBeenCalledTimes(2))
+
+    auth.abort()
+
+    const editor = document.querySelector<HTMLElement>('[data-team-person-editor]')!
+    expect(editor.hidden).toBe(true)
+    expect(editor.hasAttribute('aria-busy')).toBe(false)
+    expect(document.querySelector('[data-team-person-name]')?.textContent).toBe('Person')
+    expect(formInputValue(info, 'first_name')).toBe('')
+    expect(formInputValue(info, 'last_name')).toBe('')
+    expect(formInputValue(info, 'email')).toBe('')
+    expect(formInputValue(info, 'telephone')).toBe('')
+    expect(formInputValue(info, 'employee_id')).toBe('')
+    expect(document.querySelector('[data-team-projects]')?.textContent).toBe('')
+    expect(document.querySelector('[data-team-profiles]')?.textContent).toBe('')
+    expect(document.querySelector('[data-team-billable-rates]')?.textContent).toBe('')
+    expect(document.querySelector('[data-team-cost-rates]')?.textContent).toBe('')
+    expect((rate.elements.namedItem('amount') as HTMLInputElement).value).toBe('')
+    expect(document.querySelector<HTMLDialogElement>('[data-team-rate-dialog]')?.open).toBe(false)
+
+    resolveLate!(person({ first_name: 'Late', last_name: 'Secret' }))
+    await vi.waitFor(() => expect(lateRequestReturned).toBe(true))
+    await Promise.resolve()
+    expect(editor.hidden).toBe(true)
+    expect(document.querySelector('[data-team-person-name]')?.textContent).toBe('Person')
+    expect(document.body.textContent).not.toContain('Late Secret')
   })
 
   it('captures every information edit before pending-state rerendering', async () => {
