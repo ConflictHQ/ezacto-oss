@@ -2,7 +2,7 @@ import type { Invoice, InvoiceMessage, InvoicePayment, Whoami } from '@ezacto/cl
 import { describe, expect, it } from 'vitest'
 import {
   interpolateInvoiceTemplate,
-  invoiceCanSend,
+  invoiceCanMarkSent,
   invoiceCanRecordPayment,
   invoiceIdFromPathname,
   invoiceIdentityCanRead,
@@ -21,7 +21,7 @@ import {
   invoiceProfileHasAccess,
   invoiceRecipients,
   invoiceReminderDate,
-  invoiceScheduledReminder,
+  invoicePlannedReminder,
   invoiceStateLabel,
 } from '../src/invoices/model.js'
 
@@ -217,10 +217,10 @@ describe('invoice workspace model', () => {
       { event_type: 'send', send_reminder_on: '2026-09-10' },
       { event_type: 'send', send_reminder_on: '2026-09-12' },
     ] as InvoiceMessage[]
-    expect(invoiceScheduledReminder(invoice({ state: 'open' }), messages)).toBe('2026-09-12')
-    expect(invoiceScheduledReminder(invoice({ state: 'paid' }), messages)).toBeNull()
-    expect(invoiceCanSend(invoice({ state: 'draft' }))).toBe(true)
-    expect(invoiceCanSend(invoice({ state: 'open' }))).toBe(true)
-    expect(invoiceCanSend(invoice({ state: 'paid' }))).toBe(false)
+    expect(invoicePlannedReminder(invoice({ state: 'open' }), messages)).toBe('2026-09-12')
+    expect(invoicePlannedReminder(invoice({ state: 'paid' }), messages)).toBeNull()
+    expect(invoiceCanMarkSent(invoice({ state: 'draft' }))).toBe(true)
+    expect(invoiceCanMarkSent(invoice({ state: 'open' }))).toBe(true)
+    expect(invoiceCanMarkSent(invoice({ state: 'paid' }))).toBe(false)
   })
 })

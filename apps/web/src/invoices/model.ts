@@ -83,6 +83,7 @@ export const invoiceMessageLabel = (
   const event = message.event_type?.trim()
   if (event === undefined || event === null || event === '')
     return 'Invoice activity'
+  if (event === 'send') return 'marked sent'
   return event.replaceAll('_', ' ').replaceAll('-', ' ')
 }
 
@@ -93,7 +94,7 @@ export const invoicePaymentDate = (
 export const invoiceCanRecordPayment = (invoice: Readonly<Invoice>): boolean =>
   invoice.state === 'open' && invoice.due_amount_cents > 0
 
-export const invoiceCanSend = (invoice: Readonly<Invoice>): boolean =>
+export const invoiceCanMarkSent = (invoice: Readonly<Invoice>): boolean =>
   invoice.state === 'draft' || invoice.state === 'open'
 
 const recipientEmailPattern = /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/u
@@ -164,7 +165,7 @@ export const invoiceReminderDate = (raw: string, today: string): string => {
   return raw
 }
 
-export const invoiceScheduledReminder = (
+export const invoicePlannedReminder = (
   invoice: Readonly<Invoice>,
   messages: readonly InvoiceMessage[],
 ): string | null => {

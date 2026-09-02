@@ -10,7 +10,7 @@ import {
 } from '@ezacto/client'
 import {
   interpolateInvoiceTemplate,
-  invoiceCanSend,
+  invoiceCanMarkSent,
   invoiceCanRecordPayment,
   invoiceIdFromPathname,
   invoiceIdentityCanRead,
@@ -26,7 +26,7 @@ import {
   invoicePeriod,
   invoiceRecipients,
   invoiceReminderDate,
-  invoiceScheduledReminder,
+  invoicePlannedReminder,
   invoiceStateLabel,
   type InvoicePaymentApi,
 } from './model.js'
@@ -141,9 +141,12 @@ export const renderInvoiceDetail = (
   subject.textContent = invoice.subject?.trim() ?? ''
   subject.hidden = subject.textContent === ''
 
-  const reminder = invoiceScheduledReminder(invoice, messages)
+  const reminder = invoicePlannedReminder(invoice, messages)
   const reminderLine = required<HTMLElement>('[data-invoice-reminder-line]')
-  reminderLine.textContent = reminder === null ? '' : `Payment reminder scheduled for ${dateLabel(reminder)}.`
+  reminderLine.textContent =
+    reminder === null
+      ? ''
+      : `Planned payment reminder date: ${dateLabel(reminder)}. Delivery is not scheduled yet.`
   reminderLine.hidden = reminder === null
 
   const lines = required<HTMLTableSectionElement>('[data-invoice-detail-lines]')
@@ -378,8 +381,6 @@ export const createInvoicePaymentController = (
   const composerRecipients = required<HTMLTextAreaElement>('[data-invoice-composer-recipients]')
   const composerSubject = required<HTMLInputElement>('[data-invoice-composer-subject]')
   const composerBody = required<HTMLTextAreaElement>('[data-invoice-composer-body]')
-  const composerAttachPdf = required<HTMLInputElement>('[data-invoice-composer-attach-pdf]')
-  const composerSendCopy = required<HTMLInputElement>('[data-invoice-composer-send-copy]')
   const composerReminderToggle = required<HTMLInputElement>('[data-invoice-composer-reminder-toggle]')
   const composerReminderDateLabel = required<HTMLElement>('[data-invoice-composer-reminder-date-label]')
   const composerReminderDate = required<HTMLInputElement>('[data-invoice-composer-reminder-date]')
@@ -443,10 +444,10 @@ export const createInvoicePaymentController = (
             ? 'Payments cannot be recorded on a closed invoice.'
             : 'This invoice has no remaining amount due.'
         : ''
-    const canSend = canWrite && invoice !== null && invoiceCanSend(invoice)
+    const canSend = canWrite && invoice !== null && invoiceCanMarkSent(invoice)
     send.hidden = !canSend
     send.disabled = controlsLocked || !canSend
-    send.textContent = invoice?.state === 'open' ? 'Send again' : 'Send invoice'
+    send.textContent = invoice?.state === 'open' ? 'Record another sent message' : 'Mark sent'
     readonlyNotice.hidden = session === null || canWrite
     for (const control of paymentForm.querySelectorAll<
       HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement
@@ -671,18 +672,18 @@ export const createInvoicePaymentController = (
       mutationPending ||
       refreshRequired ||
       !invoiceIdentityCanWrite(session.identity) ||
-      !invoiceCanSend(invoice)
+      !invoiceCanMarkSent(invoice)
     ) {
       return
     }
     invoiceCommandId = null
     composerForm.reset()
-    composerTitle.textContent = invoice.state === 'open' ? 'Send invoice again' : 'Send invoice'
-    composerSubmit.textContent = invoice.state === 'open' ? 'Send again' : 'Send invoice'
+    composerTitle.textContent =
+      invoice.state === 'open' ? 'Record another sent message' : 'Mark invoice sent'
+    composerSubmit.textContent = invoice.state === 'open' ? 'Record message' : 'Mark sent'
     composerSubject.value = 'Invoice %invoice_number%'
     composerBody.value =
       'Hello,\n\nPlease find invoice %invoice_number% for %invoice_amount%. Payment is due %invoice_due_date%.\n\nThank you.'
-    composerAttachPdf.checked = true
     const today = localDate()
     composerReminderToggle.checked = invoice.due_date >= today
     composerReminderDate.value = invoice.due_date >= today ? invoice.due_date : ''
@@ -721,7 +722,7 @@ export const createInvoicePaymentController = (
         : 'The invoice changed elsewhere and the latest values could not be loaded. Retry the invoice.'
       if (editingPayment === null && paymentDialog.open) paymentDialog.close()
       if (deletingPayment === null && deleteDialog.open) deleteDialog.close()
-      if (composerDialog.open && (invoice === null || !invoiceCanSend(invoice))) {
+      if (composerDialog.open && (invoice === null || !invoiceCanMarkSent(invoice))) {
         composerDialog.close()
       }
       return
@@ -754,7 +755,7 @@ export const createInvoicePaymentController = (
       mutationPending ||
       refreshRequired ||
       !invoiceIdentityCanWrite(session.identity) ||
-      !invoiceCanSend(selectedInvoice)
+      !invoiceCanMarkSent(selectedInvoice)
     ) {
       return
     }
@@ -779,8 +780,8 @@ export const createInvoicePaymentController = (
       recipients,
       subject: interpolateInvoiceTemplate(subject, selectedInvoice),
       body: interpolateInvoiceTemplate(body, selectedInvoice),
-      attach_pdf: composerAttachPdf.checked,
-      send_me_a_copy: composerSendCopy.checked,
+      attach_pdf: false,
+      send_me_a_copy: false,
       thank_you: false,
       reminder: sendReminderOn !== null,
       send_reminder_on: sendReminderOn,
@@ -788,7 +789,7 @@ export const createInvoicePaymentController = (
     invoiceCommandId ??= `web.invoice.send:${globalThis.crypto.randomUUID()}`
     const activeCommand = invoiceCommandId
     mutationPending = true
-    composerResult.textContent = 'Sending invoice…'
+    composerResult.textContent = 'Recording sent status…'
     syncControls()
     void transitionInvoice(
       selectedInvoice.id,
@@ -803,14 +804,14 @@ export const createInvoicePaymentController = (
         mutationPending = false
         refreshRequired = true
         composerDialog.close()
-        workflowStatus.textContent = 'Invoice sent. Refreshing its delivery history…'
+        workflowStatus.textContent = 'Invoice marked sent. Refreshing its history…'
         syncControls()
         await loadDetail(session, {
           hideDocument: false,
           successMessage:
             sendReminderOn === null
-              ? 'Invoice sent.'
-              : `Invoice sent. Payment reminder scheduled for ${dateLabel(sendReminderOn)}.`,
+              ? 'Invoice marked sent. No email was delivered.'
+              : `Invoice marked sent. Planned reminder date saved for ${dateLabel(sendReminderOn)}; delivery is not scheduled.`,
         })
       })
       .catch(async (error: unknown) => {

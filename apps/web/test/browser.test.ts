@@ -1271,7 +1271,7 @@ describe('invoice browse browser behavior', () => {
     const dialog = document.querySelector<HTMLDialogElement>('[data-invoice-composer-dialog]')!
     const form = document.querySelector<HTMLFormElement>('[data-invoice-composer-form]')!
     expect(send.hidden).toBe(false)
-    expect(send.textContent).toBe('Send invoice')
+    expect(send.textContent).toBe('Mark sent')
 
     send.click()
     expect(dialog.open).toBe(true)
@@ -1311,7 +1311,7 @@ describe('invoice browse browser behavior', () => {
       recipients: [{ name: 'Accounts Payable', email: 'ap@example.test' }],
       subject: 'Invoice INV-7',
       body: 'Invoice #7 totals $82.50 and is due 2099-09-30.',
-      attach_pdf: true,
+      attach_pdf: false,
       send_me_a_copy: false,
       thank_you: false,
       reminder: true,
@@ -1324,7 +1324,7 @@ describe('invoice browse browser behavior', () => {
     expect(document.querySelector('[data-invoice-detail-messages]')?.textContent).toContain(
       'Invoice #7 totals $82.50',
     )
-    expect(send.textContent).toBe('Send again')
+    expect(send.textContent).toBe('Record another sent message')
   })
 
   it('[reliability] never reissues a committed send when its detail refresh fails', async () => {

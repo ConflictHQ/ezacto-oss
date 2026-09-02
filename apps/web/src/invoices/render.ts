@@ -43,7 +43,8 @@ export const renderInvoicePaymentDialogs = (): string => `
 export const renderInvoiceComposerDialog = (): string => `
   <dialog class="invoice-composer-dialog" data-invoice-composer-dialog aria-labelledby="invoice-composer-title">
     <form data-invoice-composer-form novalidate>
-      <header><div><p class="eyebrow">Invoice message</p><h2 id="invoice-composer-title" data-invoice-composer-title>Send invoice</h2></div><button type="button" data-dialog-close aria-label="Close invoice message composer">×</button></header>
+      <header><div><p class="eyebrow">Invoice message</p><h2 id="invoice-composer-title" data-invoice-composer-title>Mark invoice sent</h2></div><button type="button" data-dialog-close aria-label="Close invoice message composer">×</button></header>
+      <p class="hint">This records the sent status and message details. It does not deliver email or a PDF.</p>
       <div class="invoice-composer-layout">
         <section class="invoice-composer-fields">
           <label for="ez-invoice-recipients">Recipients
@@ -56,10 +57,8 @@ export const renderInvoiceComposerDialog = (): string => `
           <label for="ez-invoice-message-body">Message
             <textarea id="ez-invoice-message-body" name="body" data-invoice-composer-body rows="8" maxlength="100000" required></textarea>
           </label>
-          <label class="invoice-composer-check"><input name="attachPdf" data-invoice-composer-attach-pdf type="checkbox" checked> Attach invoice PDF</label>
-          <label class="invoice-composer-check"><input name="sendCopy" data-invoice-composer-send-copy type="checkbox"> Send me a copy</label>
-          <label class="invoice-composer-check"><input name="scheduleReminder" data-invoice-composer-reminder-toggle type="checkbox"> Schedule a payment reminder</label>
-          <label for="ez-invoice-reminder-date" data-invoice-composer-reminder-date-label hidden>Reminder date
+          <label class="invoice-composer-check"><input name="scheduleReminder" data-invoice-composer-reminder-toggle type="checkbox"> Record a planned reminder date</label>
+          <label for="ez-invoice-reminder-date" data-invoice-composer-reminder-date-label hidden>Planned reminder date
             <input id="ez-invoice-reminder-date" name="reminderDate" data-invoice-composer-reminder-date type="date">
           </label>
         </section>
@@ -75,6 +74,6 @@ export const renderInvoiceComposerDialog = (): string => `
         </aside>
       </div>
       <p class="form-result" data-invoice-composer-result role="status" aria-live="polite"></p>
-      <div class="invoice-payment-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button class="primary-action" type="submit" data-invoice-composer-submit>Send invoice</button></div>
+      <div class="invoice-payment-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button class="primary-action" type="submit" data-invoice-composer-submit>Mark sent</button></div>
     </form>
   </dialog>`

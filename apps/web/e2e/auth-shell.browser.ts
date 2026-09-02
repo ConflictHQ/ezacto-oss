@@ -1418,7 +1418,7 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   )
   await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$75.00')
 
-  await detail.getByRole('button', { name: 'Send invoice', exact: true }).click()
+  await detail.getByRole('button', { name: 'Mark sent', exact: true }).click()
   const composer = page.locator('[data-invoice-composer-dialog]')
   await expect(composer).toBeVisible()
   await expect(composer).toContainText('%invoice_number%')
@@ -1428,13 +1428,13 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await composer
     .locator('[data-invoice-composer-body]')
     .fill('Invoice #%invoice_id% totals %invoice_amount% and is due %invoice_due_date%.')
-  await composer.getByLabel('Schedule a payment reminder').check()
-  await composer.getByLabel('Reminder date').fill('2099-09-30')
+  await composer.getByLabel('Record a planned reminder date').check()
+  await composer.locator('[data-invoice-composer-reminder-date]').fill('2099-09-30')
   for (const control of [
     composer.getByLabel('Recipients'),
     composer.getByLabel('Subject'),
     composer.locator('[data-invoice-composer-body]'),
-    composer.getByRole('button', { name: 'Send invoice', exact: true }),
+    composer.getByRole('button', { name: 'Mark sent', exact: true }),
   ]) {
     await expectPhoneControl(control)
   }
@@ -1444,7 +1444,7 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
       new URL(response.url()).pathname.match(/^\/api\/v1\/invoices\/\d+\/transitions$/u) !==
         null && response.request().method() === 'POST',
   )
-  await composer.getByRole('button', { name: 'Send invoice', exact: true }).click()
+  await composer.getByRole('button', { name: 'Mark sent', exact: true }).click()
   const sentResponse = await sent
   expect(sentResponse.status()).toBe(201)
   expect(sentResponse.request().postDataJSON()).toMatchObject({
@@ -1452,7 +1452,7 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
     recipients: [{ name: 'Accounts Payable', email: 'ap@example.test' }],
     subject: `Invoice ${generatedNumber}`,
     body: `Invoice #${generatedPayload.data.id} totals $75.00 and is due ${generatedPayload.data.due_date}.`,
-    attach_pdf: true,
+    attach_pdf: false,
     send_me_a_copy: false,
     thank_you: false,
     reminder: true,
