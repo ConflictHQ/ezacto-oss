@@ -258,6 +258,25 @@ const fixtureControl = async (request, response) => {
         )
         .bind(timestamp, timestamp),
     ])
+  } else if (action === 'task-admin-cleanup') {
+    await database.batch([
+      database.prepare(
+        `DELETE FROM task_assignments
+         WHERE task_id IN (SELECT id FROM tasks WHERE name = 'Browser Default Task Updated')
+            OR project_id IN (SELECT id FROM projects WHERE name LIKE 'Task admin default project %')`,
+      ),
+      database.prepare(
+        `DELETE FROM user_assignments
+         WHERE project_id IN (SELECT id FROM projects WHERE name LIKE 'Task admin default project %')`,
+      ),
+      database.prepare(
+        `DELETE FROM projects WHERE name LIKE 'Task admin default project %'`,
+      ),
+      database.prepare(
+        `DELETE FROM tasks WHERE name = 'Browser Default Task Updated'`,
+      ),
+      database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+    ])
   } else {
     response.statusCode = 400
     response.end()

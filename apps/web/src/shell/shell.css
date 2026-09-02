@@ -2410,6 +2410,111 @@ dialog textarea {
     12px/1.4 var(--ez-font-mono),
     monospace;
 }
+.task-admin-workspace {
+  width: min(960px, 100%);
+  margin-inline: auto;
+}
+.task-admin-intro,
+.task-admin-status {
+  color: var(--ez-muted);
+}
+.task-admin-status {
+  min-height: 20px;
+}
+.task-admin-toolbar,
+.task-admin-toolbar fieldset,
+.task-admin-card,
+.task-admin-card-actions,
+.task-admin-confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.task-admin-toolbar {
+  margin: 24px 0 12px;
+}
+.task-admin-toolbar fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.task-admin-toolbar button,
+.task-admin-card button,
+.task-admin-confirm-actions button,
+.task-admin-workspace [data-task-create],
+.task-admin-workspace [data-task-load-more],
+.task-admin-workspace [data-task-list-retry] {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.task-admin-toolbar button[aria-pressed='true'] {
+  border-color: var(--ez-data);
+  background: var(--ez-status-bg);
+  color: var(--ez-status-fg);
+}
+.task-admin-list {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+.task-admin-card {
+  justify-content: space-between;
+  padding: 16px 18px;
+  border: 1px solid var(--ez-border);
+  border-inline-start: 3px solid var(--ez-data);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+.task-admin-card p {
+  margin: 5px 0 0;
+  color: var(--ez-muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.task-admin-empty {
+  padding: 28px 18px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  color: var(--ez-muted);
+  text-align: center;
+}
+.task-admin-form-body {
+  display: grid;
+  gap: 14px;
+}
+.task-admin-form-body > label:not(.task-admin-check) {
+  display: grid;
+  gap: 6px;
+}
+.task-admin-form-body input:not([type='checkbox']) {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.task-admin-check {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  gap: 10px;
+}
+.task-admin-check input {
+  width: 20px;
+  height: 20px;
+}
+.task-admin-confirm-actions {
+  justify-content: flex-end;
+}
 @media (max-width: 720px) {
   .auth-gateway {
     min-height: 100svh;
@@ -2572,6 +2677,20 @@ dialog textarea {
   .project-attachments form {
     align-items: stretch;
     flex-direction: column;
+  }
+  .task-admin-header {
+    align-items: flex-start;
+  }
+  .task-admin-card,
+  .task-admin-card-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .task-admin-card-actions button,
+  .task-admin-workspace [data-task-create],
+  .task-admin-workspace [data-task-load-more],
+  .task-admin-workspace [data-task-list-retry] {
+    width: 100%;
   }
   .current-identity {
     align-items: stretch;

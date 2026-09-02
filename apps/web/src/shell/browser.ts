@@ -22,6 +22,7 @@ import { createClientDirectoryController } from '../clients/browser.js'
 import { createProjectDirectoryController } from '../projects/browser.js'
 import { createReportsController } from '../reports/browser.js'
 import { createExpenseWorkflowController } from '../expenses/browser.js'
+import { createTaskAdminController } from '../tasks/browser.js'
 import {
   createInvoicePaymentController,
   renderInvoiceListItems,
@@ -710,6 +711,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const clientDetailPage = document.documentElement.dataset.appView === 'client-detail'
   const projectListPage = document.documentElement.dataset.appView === 'project-list'
   const projectDetailPage = document.documentElement.dataset.appView === 'project-detail'
+  const taskListPage = document.documentElement.dataset.appView === 'task-list'
   const reportsPage = document.documentElement.dataset.appView === 'reports'
   const expenseListPage = document.documentElement.dataset.appView === 'expense-list'
   const expenseDetailPage = document.documentElement.dataset.appView === 'expense-detail'
@@ -732,6 +734,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
                 ? ' — Projects'
                 : projectDetailPage
                   ? ' — Project detail'
+                  : taskListPage
+                    ? ' — Tasks'
                   : reportsPage
                     ? ' — Reports'
                     : expenseListPage
@@ -791,6 +795,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const generatedInvoiceLink = required<HTMLAnchorElement>('[data-generated-invoice-link]')
   const clientDirectory = createClientDirectoryController(api)
   const projectDirectory = createProjectDirectoryController(api)
+  const taskAdmin = createTaskAdminController(api)
   const reports = createReportsController(api)
   const expenseWorkflow = createExpenseWorkflowController(api)
   const invoicePayments = createInvoicePaymentController(api)
@@ -1761,6 +1766,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     } else if (projectListPage || projectDetailPage) {
       await Promise.all([
         projectDirectory.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (taskListPage) {
+      await Promise.all([
+        taskAdmin.activate(
           identity,
           authenticated.signal,
           (error) => handleSessionFailure(error, authenticated),
