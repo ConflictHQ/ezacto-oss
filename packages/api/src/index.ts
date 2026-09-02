@@ -88,6 +88,13 @@ export {
   type EmailLogReader,
 } from './email-log.js'
 export {
+  installOutboxRoutes,
+  type ActivityLogResource,
+  type OutboxDeliveryResource,
+  type OutboxDeliveryStatus,
+  type OutboxMonitor,
+} from './outbox.js'
+export {
   installPasswordAuthRoutes,
   type AuthDelivery,
   type AuthMailer,

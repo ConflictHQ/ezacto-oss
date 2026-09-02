@@ -243,7 +243,7 @@ for (const [runtime, factory] of factories) {
       database = await factory()
       const db = database
       const before = await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id`)
-      expect(before.at(-1)).toEqual({ id: '0028_timesheet_lock_policy' })
+      expect(before.at(-1)).toEqual({ id: '0029_outbox_delivery' })
       await db.migrateAgain()
       expect(await db.rows(`SELECT id FROM _ezacto_migrations ORDER BY id`)).toEqual(before)
 
@@ -629,7 +629,7 @@ for (const [runtime, factory] of factories) {
       expect(await db.rows(`SELECT id, number FROM invoices`)).toEqual(before)
       expect(
         await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`),
-      ).toEqual([{ id: '0028_timesheet_lock_policy' }])
+      ).toEqual([{ id: '0029_outbox_delivery' }])
       await db.migrateAgain()
       expect(await db.rows(`SELECT id, number FROM invoices`)).toEqual(before)
       expect(await db.rows(`PRAGMA foreign_key_check`)).toEqual([])

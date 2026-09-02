@@ -68,6 +68,21 @@ export {
   createD1EmailLogStore,
   type EmailLogStoreOptions,
 } from './email-log.js'
+export {
+  ACTIVITY_LOG_SUBSCRIBER_ID,
+  createD1OutboxService,
+  OUTBOX_DELIVERY_POLICY,
+  type ActivityLogRecord,
+  type OutboxDeliveryFailureCode,
+  type OutboxDeliveryRecord,
+  type OutboxDeliveryStatus,
+  type OutboxDrainSummary,
+  type OutboxEventRecord,
+  type OutboxService,
+  type OutboxServiceOptions,
+  type OutboxSubscriber,
+  type OutboxSubscriberContext,
+} from './outbox.js'
 export { createReportRepository, type ReportRepository } from './reports.js'
 export { createD1IdentityStore, type IdentityStore, type IdentityStoreOptions } from './identity.js'
 export {

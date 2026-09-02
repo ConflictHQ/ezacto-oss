@@ -142,6 +142,55 @@ export type EmailLogPage = {
   "links": Links;
 };
 
+export type OutboxAggregate = {
+  "type": string;
+  "id": number;
+  "sequence": number;
+};
+
+export type ActivityLog = {
+  "event_id": string;
+  "event_type": string;
+  "aggregate": OutboxAggregate;
+  "payload": {
+  [key: string]: unknown;
+};
+  "occurred_at": string;
+  "available_at": string;
+  "recorded_at": string;
+};
+
+export type ActivityLogPage = {
+  "data": Array<ActivityLog>;
+  "links": Links;
+};
+
+export type OutboxDelivery = {
+  "subscriber_id": string;
+  "event_id": string;
+  "event_type": string;
+  "aggregate": OutboxAggregate;
+  "status": "pending" | "processing" | "delivered" | "failed";
+  "attempt_count": number;
+  "next_attempt_at": string | null;
+  "last_error_code": "subscriber_timeout" | "subscriber_rejected" | null;
+  "delivered_at": string | null;
+  "failed_at": string | null;
+  "occurred_at": string;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type OutboxDeliveryPage = {
+  "data": Array<OutboxDelivery>;
+  "links": Links;
+};
+
+export type OutboxDeliveryEnvelope = {
+  "data": OutboxDelivery;
+  "links": Links;
+};
+
 export type Links = {
   "self": string;
 };
@@ -1526,6 +1575,35 @@ export class EzactoClient {
 
     return this.request<EmailLogPage>("GET", "/api/v1/email-log", {
       query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listActivityLog(args: { query?: { "per_page"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ActivityLogPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ActivityLogPage>("GET", "/api/v1/activity-log", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listOutboxDeliveries(args: { query?: { "status"?: "pending" | "processing" | "delivered" | "failed"; "per_page"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<OutboxDeliveryPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<OutboxDeliveryPage>("GET", "/api/v1/outbox-deliveries", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async retryOutboxDelivery(args: { "subscriberId": string; "eventId": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<OutboxDeliveryEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<OutboxDeliveryEnvelope>("POST", "/api/v1/outbox-deliveries/:subscriberId/:eventId/retry".replace(":subscriberId", encodeURIComponent(String(args["subscriberId"]))).replace(":eventId", encodeURIComponent(String(args["eventId"]))), {
       signal: args.signal,
       headers,
     });

@@ -9,6 +9,7 @@ import {
   installGeneralResourceRoutes,
   installMoneyResourceRoutes,
   installOidcRoutes,
+  installOutboxRoutes,
   installPasswordAuthRoutes,
   installReportRoutes,
   installSessionRoutes,
@@ -42,6 +43,7 @@ import {
   type InstanceBootstrapResult,
   type InstanceOwnerPasswordInput,
   type InstanceOwnerPasswordResult,
+  type OutboxService,
 } from '@ezacto/db/d1'
 import { renderAppShell, webAssets, type SignInProvider } from '@ezacto/web'
 import type { EmailLogStore, QueuedEmailJob } from '@ezacto/mailer'
@@ -99,6 +101,7 @@ export interface RuntimeServices {
   /** Composite browser resolver when an optional edge identity provider is configured. */
   authenticationSessions?: ApiSessionResolver
   emailLog: EmailLogStore
+  outbox: OutboxService
   identities: OidcIdentityResolver
   oidcTransactions: OidcTransactionStorePort
   authMailer?: AuthMailer
@@ -137,6 +140,7 @@ export const createApp = (services?: RuntimeServices) =>
           installApi: (api) => {
             installSessionRoutes(api, services.sessions)
             installEmailLogRoutes(api, services.emailLog)
+            installOutboxRoutes(api, services.outbox)
             installGeneralResourceRoutes(api, {
               repository: services.generalResources,
               cursorSigningKey: services.cursorSigningKey,

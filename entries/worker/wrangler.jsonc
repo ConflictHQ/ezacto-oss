@@ -24,6 +24,7 @@
     "prod": {
       "name": "ezacto",
       "routes": [{ "pattern": "app.example.com", "custom_domain": true }],
+      "triggers": { "crons": ["* * * * *"] },
       "vars": {
         "ENVIRONMENT": "prod",
         "RELEASE": "unknown",
@@ -69,6 +70,7 @@
     "dev": {
       "name": "ezacto-dev",
       "routes": [{ "pattern": "ezacto.io", "custom_domain": true }],
+      "triggers": { "crons": ["* * * * *"] },
       "vars": {
         "ENVIRONMENT": "dev",
         "RELEASE": "unknown",
