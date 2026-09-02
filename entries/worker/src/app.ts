@@ -6,6 +6,7 @@ import {
   generateOpenApiDocument,
   installAttachmentRoutes,
   installEmailLogRoutes,
+  installEmailConfigurationRoutes,
   installGeneralResourceRoutes,
   installMoneyResourceRoutes,
   installOidcRoutes,
@@ -26,6 +27,7 @@ import {
   type CloudflareAccessVerifierConfig,
   type ApiSessionService,
   type GeneralResourceRouteOptions,
+  type EmailConfigurationRouteOptions,
   type MoneyResourceRouteOptions,
   type OidcIdentityResolver,
   type OidcProviderConfig,
@@ -46,7 +48,11 @@ import {
   type OutboxService,
 } from '@ezacto/db/d1'
 import { renderAppShell, webAssets, type SignInProvider } from '@ezacto/web'
-import type { EmailLogStore, QueuedEmailJob } from '@ezacto/mailer'
+import type {
+  EmailLogStore,
+  QueuedEmailJob,
+  SenderBoundQueuedMailer,
+} from '@ezacto/mailer'
 
 /** Worker bindings stay entry-owned; the shared API package is runtime-agnostic. */
 export type Env = {
@@ -101,10 +107,14 @@ export interface RuntimeServices {
   /** Composite browser resolver when an optional edge identity provider is configured. */
   authenticationSessions?: ApiSessionResolver
   emailLog: EmailLogStore
+  emailConfiguration: EmailConfigurationRouteOptions['service']
+  senderIdentityVerifier?: EmailConfigurationRouteOptions['verifier']
+  organizationMailer?: SenderBoundQueuedMailer
   outbox: OutboxService
   identities: OidcIdentityResolver
   oidcTransactions: OidcTransactionStorePort
-  authMailer?: AuthMailer
+  /** Deployment-brand sender for all authentication mail. */
+  deploymentAuthMailer?: AuthMailer
   attachments?: AttachmentRouteOptions
 }
 
@@ -140,6 +150,16 @@ export const createApp = (services?: RuntimeServices) =>
           installApi: (api) => {
             installSessionRoutes(api, services.sessions)
             installEmailLogRoutes(api, services.emailLog)
+            installEmailConfigurationRoutes(api, {
+              service: services.emailConfiguration,
+              ...(services.senderIdentityVerifier === undefined
+                ? {}
+                : { verifier: services.senderIdentityVerifier }),
+              ...(services.organizationMailer === undefined
+                ? {}
+                : { organizationMailer: services.organizationMailer }),
+              clock: () => systemClock.now().instant,
+            })
             installOutboxRoutes(api, services.outbox)
             installGeneralResourceRoutes(api, {
               repository: services.generalResources,
@@ -185,9 +205,9 @@ export const createApp = (services?: RuntimeServices) =>
         installPasswordAuthRoutes(app, {
           service: services.passwordAuth,
           sessions: services.sessions,
-          ...(services.authMailer === undefined
+          ...(services.deploymentAuthMailer === undefined
             ? {}
-            : { mailer: services.authMailer }),
+            : { deploymentMailer: services.deploymentAuthMailer }),
           clientKey: (request) =>
             request.headers.get('cf-connecting-ip') ?? 'unknown-client',
         })

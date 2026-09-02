@@ -37,13 +37,13 @@
   },
   "dependencies": {
     "@ezacto/core": "0.0.0",
-    "@ezacto/mailer": "0.0.0",
     "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260826.1",
     "@eslint/js": "^10.0.1",
+    "@ezacto/mailer": "0.0.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.0",
     "eslint": "^10.9.1",

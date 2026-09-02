@@ -93,6 +93,7 @@ describe('SMTP mailer', () => {
     await mailer.verify()
     const receipt = await mailer.send(
       {
+        from: { email: 'billing@example.test', name: 'Ezacto Billing' },
         to: [{ email: 'owner@example.test', name: 'Owner' }],
         template: 'verify_email',
         subject: 'Verify account',
@@ -109,7 +110,9 @@ describe('SMTP mailer', () => {
       latencyMs: 7,
     })
     expect(capture.messages).toHaveLength(1)
-    expect(capture.messages[0]).toContain('From: Ezacto <billing@example.test>')
+    expect(capture.messages[0]).toContain(
+      'From: Ezacto Billing <billing@example.test>',
+    )
     expect(capture.messages[0]).toContain('To: Owner <owner@example.test>')
     expect(capture.messages[0]).toContain(
       'Message-ID: <ezacto-email-1@ezacto.invalid>',
@@ -129,6 +132,7 @@ describe('SMTP mailer', () => {
     await expect(
       mailer.send(
         {
+          from: { email: 'billing@example.test' },
           to: [{ email: 'owner@example.test' }],
           template: 'verify_email',
           subject: 'Verify account',

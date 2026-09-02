@@ -167,8 +167,11 @@ export class SmtpMailer implements HttpEmailProvider {
     let info: SMTPTransport.SentMessageInfo
     try {
       info = await transport.sendMail({
-        from: this.from,
+        from: recipient(message.from),
         to: message.to.map(recipient),
+        ...(message.replyTo === undefined
+          ? {}
+          : { replyTo: message.replyTo.map(recipient) }),
         subject: message.subject,
         text: message.text,
         ...(message.html === undefined ? {} : { html: message.html }),

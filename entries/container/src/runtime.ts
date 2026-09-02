@@ -7,6 +7,7 @@ import {
   createAttachmentStore,
   createContainerDatabase,
   createContainerEmailLogStore,
+  createContainerEmailConfigurationStore,
   createContainerIdentityStore,
   createContainerOidcTransactionStore,
   createContainerOutboxService,
@@ -29,7 +30,11 @@ import {
   type UserPrincipal,
 } from '@ezacto/api'
 import {
+  configuredEmailSender,
+  createDeploymentSenderQueuedMailer,
   createQueuedMailer,
+  createSenderBoundQueuedMailer,
+  SenderIdentityUnavailableError,
   type HttpEmailProvider,
 } from '@ezacto/mailer'
 import { SmtpMailer } from '@ezacto/mailer/smtp'
@@ -154,6 +159,47 @@ export interface ContainerRuntimeOptions {
   verifyEmailProvider?: () => Promise<void>
 }
 
+/**
+ * Attests only the exact SMTP mailbox already validated from deployment
+ * configuration. This is not a DNS or provider verification claim.
+ */
+export const createSmtpSenderIdentityVerifier = (
+  from: string,
+): NonNullable<RuntimeServices['senderIdentityVerifier']> => {
+  const configured = configuredEmailSender(from)
+  return {
+    provider: 'smtp',
+    verify: async (identity) => {
+      if (identity.archivedAt !== null) {
+        throw new SenderIdentityUnavailableError('sender_identity_archived', identity.id)
+      }
+      if (identity.provider !== 'smtp') {
+        throw new SenderIdentityUnavailableError('sender_provider_mismatch', identity.id)
+      }
+      const address = identity.email.normalize('NFC').trim().toLowerCase()
+      const providerIdentity = identity.providerIdentity
+        .normalize('NFC')
+        .trim()
+        .toLowerCase()
+      if (address !== configured.email || providerIdentity !== configured.email) {
+        throw new SenderIdentityUnavailableError(
+          'sender_identity_binding_mismatch',
+          identity.id,
+        )
+      }
+      return {
+        source: 'deployment_config',
+        identityKind: 'email_address',
+        verificationStatus: 'operator_configured',
+        dkimStatus: 'not_applicable',
+        mailFromDomain: null,
+        mailFromStatus: 'not_configured',
+        observedAt: new Date().toISOString(),
+      }
+    },
+  }
+}
+
 const ensureDataDirectory = async (directory: string): Promise<void> => {
   await mkdir(directory, { recursive: true, mode: 0o700 })
   const [linkMetadata, canonical] = await Promise.all([
@@ -210,6 +256,7 @@ export const createContainerRuntime = async (
       createContainerSessionStore(database),
     )
     const emailLog = createContainerEmailLogStore(database)
+    const emailConfiguration = createContainerEmailConfigurationStore(database)
     const outbox = createContainerOutboxService(database)
     const smtp =
       options.emailProvider ??
@@ -219,6 +266,13 @@ export const createContainerRuntime = async (
       (smtp instanceof SmtpMailer ? () => smtp.verify() : undefined)
     if (verify !== undefined) await verify()
     queue = new ContainerEmailQueue(emailLog, smtp)
+    const queuedMailer = createQueuedMailer(emailLog, queue)
+    const organizationName = async () => {
+      const row = database
+        .prepare('SELECT name FROM organizations WHERE id = 1')
+        .get() as { name: string } | undefined
+      return row?.name ?? 'Ezacto'
+    }
     outboxScheduler = new ContainerOutboxScheduler(outbox)
     const objects = await createDiskAttachmentObjectStore(
       config.attachmentDirectory,
@@ -252,12 +306,25 @@ export const createContainerRuntime = async (
       passwordAuth: createContainerPasswordAuthService(database),
       sessions,
       emailLog,
+      emailConfiguration,
+      senderIdentityVerifier: createSmtpSenderIdentityVerifier(config.smtp.from),
       outbox,
       identities: createContainerIdentityStore(database),
       oidcTransactions: createContainerOidcTransactionStore(database),
-      authMailer: createQueuedAuthMailer(
-        createQueuedMailer(emailLog, queue),
+      deploymentAuthMailer: createQueuedAuthMailer(
+        createDeploymentSenderQueuedMailer(
+          config.smtp.from,
+          queuedMailer,
+        ),
+        emailConfiguration,
+        organizationName,
         config.appBaseUrl,
+      ),
+      organizationMailer: createSenderBoundQueuedMailer(
+        emailConfiguration,
+        queuedMailer,
+        smtp.name,
+        config.smtp.from,
       ),
       attachments: {
         metadata: createAttachmentStore(drizzle),

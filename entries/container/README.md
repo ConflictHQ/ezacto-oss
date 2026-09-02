@@ -37,6 +37,13 @@ verifies DNS, TCP/TLS, and authentication before listening. Signup and password
 reset therefore fail closed instead of claiming that an unsendable message was
 queued.
 
+Organization sender identities use a narrower deployment attestation. Only an
+active `smtp` identity whose email and provider identity exactly equal the
+normalized `SMTP_FROM` mailbox can be refreshed and selected; the API reports
+that evidence as `operator_configured`. This does not claim that Ezacto checked
+DKIM, SPF, or DNS alignment. Changing `SMTP_FROM` invalidates the old binding at
+send time and requires a matching identity refresh.
+
 Optional settings are `HOST` (default `0.0.0.0`), `PORT` (default `3000`),
 `ENVIRONMENT`, `RELEASE`, and the Google OIDC variables used by the Worker entry.
 The image runs as UID/GID 1000; bind mounts must be owned by that identity and the
