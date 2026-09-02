@@ -258,6 +258,112 @@ const fixtureControl = async (request, response) => {
         )
         .bind(timestamp, timestamp),
     ])
+  } else if (action === 'project-directory-cleanup') {
+    await database.batch([
+      database
+        .prepare(
+          `UPDATE task_assignments
+           SET is_active = 0, updated_at = ?
+           WHERE project_id IN (
+             SELECT id FROM projects WHERE name = 'Browser UI Project'
+           )`,
+        )
+        .bind(timestamp),
+      database
+        .prepare(
+          `UPDATE user_assignments
+           SET is_active = 0, updated_at = ?
+           WHERE project_id IN (
+             SELECT id FROM projects WHERE name = 'Browser UI Project'
+           )`,
+        )
+        .bind(timestamp),
+      database
+        .prepare(
+          `UPDATE projects
+           SET is_active = 0, updated_at = ?
+           WHERE name = 'Browser UI Project'`,
+        )
+        .bind(timestamp),
+      database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+    ])
+    const remaining = await database
+      .prepare(
+        `SELECT count(*) AS count
+         FROM projects
+         WHERE name = 'Browser UI Project' AND is_active = 1`,
+      )
+      .first()
+    if (remaining?.count !== 0) {
+      throw new Error('project directory fixture cleanup left active work behind')
+    }
+  } else if (action === 'invoice-generation-seed') {
+    await database.batch([
+      database.prepare(
+        `DELETE FROM time_entries
+         WHERE invoice_id IS NULL
+           AND (
+             id IN (1, 2)
+             OR notes IN (
+               'Browser invoice generation fixture 1',
+               'Browser invoice generation fixture 2'
+             )
+           )`,
+      ),
+      database
+        .prepare(
+          `INSERT INTO time_entries (
+             id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+             spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+             billable_rate_cents, cost_rate_cents, budgeted, notes, created_at, updated_at
+           ) VALUES (
+             (SELECT coalesce(max(id), 0) + 1 FROM time_entries),
+             1, 1, 1, 1, 1, ?, 1800, 1800, 1800, 1, 10000, 5000,
+             1, 'Browser invoice generation fixture 1', ?, ?
+           )`,
+        )
+        .bind(spentDate, timestamp, timestamp),
+      database
+        .prepare(
+          `INSERT INTO time_entries (
+             id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+             spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+             billable_rate_cents, cost_rate_cents, budgeted, notes, created_at, updated_at
+           ) VALUES (
+             (SELECT coalesce(max(id), 0) + 1 FROM time_entries),
+             1, 1, 1, 1, 1, ?, 900, 900, 900, 1, 10000, 5000,
+             1, 'Browser invoice generation fixture 2', ?, ?
+           )`,
+        )
+        .bind(spentDate, timestamp, timestamp),
+      database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+    ])
+    const seeded = await database
+      .prepare(
+        `SELECT count(*) AS count, sum(rounded_seconds) AS seconds
+         FROM time_entries
+         WHERE invoice_id IS NULL
+           AND notes IN (
+             'Browser invoice generation fixture 1',
+             'Browser invoice generation fixture 2'
+           )`,
+      )
+      .first()
+    if (seeded?.count !== 2 || seeded.seconds !== 2700) {
+      throw new Error('invoice generation fixture did not own one exact work set')
+    }
+  } else if (action === 'invoice-generation-cleanup') {
+    await database.batch([
+      database.prepare(
+        `DELETE FROM time_entries
+         WHERE invoice_id IS NULL
+           AND notes IN (
+             'Browser invoice generation fixture 1',
+             'Browser invoice generation fixture 2'
+           )`,
+      ),
+      database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+    ])
   } else if (action === 'task-admin-cleanup') {
     await database.batch([
       database.prepare(

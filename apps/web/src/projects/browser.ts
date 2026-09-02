@@ -283,6 +283,20 @@ export const createProjectDirectoryController = (
   const currentSession = (): ActiveSession | null =>
     session === null || session.signal.aborted ? null : session
 
+  const syncMutationActions = (): void => {
+    const writesEnabled = currentSession()?.capabilities.canWrite === true
+    for (const button of document.querySelectorAll<HTMLButtonElement>(
+      '[data-project-mutation-action]',
+    )) {
+      button.disabled = !writesEnabled || mutationPending
+    }
+  }
+
+  const setMutationPending = (pending: boolean): void => {
+    mutationPending = pending
+    syncMutationActions()
+  }
+
   const handleFailure = (error: unknown): boolean => {
     const active = currentSession()
     return active !== null && active.onSessionFailure(error)
@@ -295,7 +309,7 @@ export const createProjectDirectoryController = (
   }
 
   const resetMutationState = (): void => {
-    mutationPending = false
+    setMutationPending(false)
     editingProjectId = null
     editingAssignmentId = null
     archivingAssignmentId = null
@@ -338,7 +352,10 @@ export const createProjectDirectoryController = (
   const enableWrites = (enabled: boolean): void => {
     for (const element of document.querySelectorAll<HTMLElement>('[data-project-write]')) {
       element.hidden = !enabled
-      if (element instanceof HTMLButtonElement) element.disabled = !enabled
+      if (element instanceof HTMLButtonElement) {
+        element.disabled = !enabled ||
+          (mutationPending && element.hasAttribute('data-project-mutation-action'))
+      }
     }
   }
 
@@ -521,12 +538,16 @@ export const createProjectDirectoryController = (
           const actions = document.createElement('div')
           const edit = document.createElement('button')
           edit.type = 'button'
+          edit.dataset.projectMutationAction = ''
+          edit.disabled = mutationPending
           edit.textContent = assignment['is_active'] === false ? 'Edit or reactivate' : 'Edit'
           edit.addEventListener('click', () => openAssignmentForm(assignment))
           actions.append(edit)
           if (assignment['is_active'] !== false) {
             const archive = document.createElement('button')
             archive.type = 'button'
+            archive.dataset.projectMutationAction = ''
+            archive.disabled = mutationPending
             archive.textContent = 'Archive'
             archive.addEventListener('click', () => {
               archivingAssignmentId = assignment.id
@@ -710,7 +731,7 @@ export const createProjectDirectoryController = (
 
   const openProjectForm = (project: GeneralResource | null): void => {
     const active = currentSession()
-    if (active === null || !active.capabilities.canWrite) return
+    if (active === null || !active.capabilities.canWrite || mutationPending) return
     editingProjectId = project?.id ?? null
     projectFormTitle.textContent = project === null ? 'Add project' : 'Edit project'
     projectFormSubmit.textContent = project === null ? 'Add project' : 'Save project'
@@ -781,7 +802,12 @@ export const createProjectDirectoryController = (
 
   const openAssignmentForm = (assignment: GeneralResource | null): void => {
     const active = currentSession()
-    if (active === null || !active.capabilities.canWrite || currentProject === null) return
+    if (
+      active === null ||
+      !active.capabilities.canWrite ||
+      currentProject === null ||
+      mutationPending
+    ) return
     editingAssignmentId = assignment?.id ?? null
     assignmentFormBody.replaceChildren()
     assignmentFormTitle.textContent = assignment === null ? 'Assign task' : 'Edit task assignment'
@@ -985,7 +1011,7 @@ export const createProjectDirectoryController = (
       projectFormResult.textContent = messageFor(error)
       return
     }
-    mutationPending = true
+    setMutationPending(true)
     projectFormSubmit.disabled = true
     projectFormResult.textContent = create ? 'Adding project…' : 'Saving project…'
     const request = create
@@ -1010,7 +1036,7 @@ export const createProjectDirectoryController = (
       })
       .finally(() => {
         if (currentSession() === active) {
-          mutationPending = false
+          setMutationPending(false)
           projectFormSubmit.disabled = false
         }
       })
@@ -1032,7 +1058,7 @@ export const createProjectDirectoryController = (
       assignmentFormResult.textContent = messageFor(error)
       return
     }
-    mutationPending = true
+    setMutationPending(true)
     assignmentFormSubmit.disabled = true
     assignmentFormResult.textContent = create ? 'Assigning task…' : 'Saving assignment…'
     const request = create
@@ -1051,7 +1077,7 @@ export const createProjectDirectoryController = (
       })
       .finally(() => {
         if (currentSession() === active) {
-          mutationPending = false
+          setMutationPending(false)
           assignmentFormSubmit.disabled = false
         }
       })
@@ -1071,7 +1097,7 @@ export const createProjectDirectoryController = (
       mutationPending ||
       api.archiveDirectoryProject === undefined
     ) return
-    mutationPending = true
+    setMutationPending(true)
     required<HTMLButtonElement>('[data-project-archive-confirm]').disabled = true
     archiveResult.textContent = 'Archiving project…'
     void api.archiveDirectoryProject(currentProject.id, active.signal)
@@ -1083,7 +1109,7 @@ export const createProjectDirectoryController = (
       })
       .finally(() => {
         if (currentSession() === active) {
-          mutationPending = false
+          setMutationPending(false)
           required<HTMLButtonElement>('[data-project-archive-confirm]').disabled = false
         }
       })
@@ -1104,7 +1130,7 @@ export const createProjectDirectoryController = (
       mutationPending ||
       api.archiveProjectTaskAssignment === undefined
     ) return
-    mutationPending = true
+    setMutationPending(true)
     required<HTMLButtonElement>('[data-task-assignment-archive-confirm]').disabled = true
     assignmentArchiveResult.textContent = 'Archiving task assignment…'
     void api.archiveProjectTaskAssignment(archivingAssignmentId, active.signal)
@@ -1120,7 +1146,7 @@ export const createProjectDirectoryController = (
       })
       .finally(() => {
         if (currentSession() === active) {
-          mutationPending = false
+          setMutationPending(false)
           required<HTMLButtonElement>('[data-task-assignment-archive-confirm]').disabled = false
         }
       })
@@ -1147,7 +1173,7 @@ export const createProjectDirectoryController = (
     const body = new FormData()
     body.set('file', file.files[0])
     attachmentCommandId ??= `web.project-attachment:${crypto.randomUUID()}`
-    mutationPending = true
+    setMutationPending(true)
     attachmentSubmit.disabled = true
     attachmentStatus.textContent = 'Uploading file…'
     void api.uploadDirectoryProjectAttachment(
@@ -1168,7 +1194,7 @@ export const createProjectDirectoryController = (
       })
       .finally(() => {
         if (currentSession() === active) {
-          mutationPending = false
+          setMutationPending(false)
           attachmentSubmit.disabled = false
         }
       })
