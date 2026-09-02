@@ -769,7 +769,7 @@ for (const [runtime, factory] of factories) {
         { id: 2, profile: 'member', is_owner: 0 },
       ])
       await expect(db.run(`UPDATE users SET profile = 'member' WHERE id = 1`)).rejects.toThrow(
-        /check constraint/i,
+        /check constraint|retain an active administrator/i,
       )
       await expect(db.run(`UPDATE users SET is_owner = 1 WHERE id = 2`)).rejects.toThrow(/derived/)
       await db.run(`UPDATE organization_owner SET user_id = 2, updated_at = ? WHERE id = 1`, now)
@@ -875,6 +875,7 @@ for (const [runtime, factory] of factories) {
         { id: '0027_timesheet_approvals' },
         { id: '0028_timesheet_lock_policy' },
         { id: '0029_outbox_delivery' },
+        { id: '0031_team_people' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -884,6 +885,11 @@ for (const [runtime, factory] of factories) {
       expect(await db.rows<{ name: string }>(`SELECT name FROM organizations`)).toEqual([
         { name: 'Existing Halcyon Studio' },
       ])
+      expect(
+        await db.rows<{ team_enabled: number }>(
+          `SELECT json_extract(modules, '$.team') AS team_enabled FROM organizations`,
+        ),
+      ).toEqual([{ team_enabled: 1 }])
       expect(
         await db.rows<{ id: number; first_name: string }>(
           `SELECT id, first_name FROM users WHERE id = 42`,
@@ -925,6 +931,7 @@ for (const [runtime, factory] of factories) {
         { id: '0027_timesheet_approvals' },
         { id: '0028_timesheet_lock_policy' },
         { id: '0029_outbox_delivery' },
+        { id: '0031_team_people' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -993,6 +1000,7 @@ for (const [runtime, factory] of factories) {
         { id: '0027_timesheet_approvals' },
         { id: '0028_timesheet_lock_policy' },
         { id: '0029_outbox_delivery' },
+        { id: '0031_team_people' },
       ])
       expect(
         await db.rows<{ name: string }>(
@@ -1037,6 +1045,7 @@ for (const [runtime, factory] of factories) {
         { id: '0027_timesheet_approvals' },
         { id: '0028_timesheet_lock_policy' },
         { id: '0029_outbox_delivery' },
+        { id: '0031_team_people' },
       ])
     })
   })
@@ -1158,8 +1167,12 @@ describe('package contents', () => {
         'dist/migrations/0028_timesheet_lock_policy.d.ts',
         'dist/migrations/0029_outbox_delivery.js',
         'dist/migrations/0029_outbox_delivery.d.ts',
+        'dist/migrations/0031_team_people.js',
+        'dist/migrations/0031_team_people.d.ts',
         'dist/outbox.js',
         'dist/outbox.d.ts',
+        'dist/team.js',
+        'dist/team.d.ts',
         'dist/timesheet-approvals.js',
         'dist/timesheet-approvals.d.ts',
         'dist/timesheet-lock-policy.js',
@@ -1183,7 +1196,7 @@ describe('package contents', () => {
         'dist/tracked-state.d.ts',
       ]),
     )
-  }, 20_000)
+  }, 30_000)
 })
 
 describe('Drizzle adapters', () => {

@@ -302,7 +302,10 @@ const recordFromRow = (
 ): GeneralResourceRecord => {
   const output: Record<string, GeneralValue> = {}
   for (const [column, raw] of Object.entries(row)) {
-    if (column === 'statement_key') continue
+    if (
+      column === 'statement_key' ||
+      (definition.table === 'users' && (column === 'version' || column === 'team_write_token'))
+    ) continue
     const field = camelForColumn(definition, column)
     if (definition.booleans.has(field)) output[field] = raw === 1
     else if (definition.json.has(field))
@@ -336,7 +339,9 @@ const translate = (error: unknown): never => {
     lower.includes('sqlite_constraint_trigger') ||
     lower.includes('must be appended') ||
     lower.includes('must be a valid date') ||
-    lower.includes('derived')
+    lower.includes('derived') ||
+    lower.includes('retain an active administrator') ||
+    lower.includes('owner cannot be deactivated')
   ) {
     throw new GeneralResourceError('invalid_input', message)
   }
@@ -590,6 +595,13 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
               params: [now, now],
             },
             {
+              text: `UPDATE users
+                SET version = version + 1, team_write_token = NULL, updated_at = ?
+                WHERE is_active = 1 AND has_access_to_all_future_projects = 1
+                RETURNING id`,
+              params: [now],
+            },
+            {
               text: `WITH new_project(id) AS MATERIALIZED (
                 SELECT max(id) FROM projects
               )
@@ -605,6 +617,30 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
           )
         }
         const atomicRows = await runAtomic(database, statements)
+        rows = atomicRows[0] ?? []
+      } else if (kind === 'user-assignments') {
+        const columnNames = [
+          ...entries.map(([field]) => definition.columns[field]!),
+          'created_at',
+          'updated_at',
+        ]
+        const atomicRows = await runAtomic(database, [
+          {
+            text: `INSERT INTO ${definition.table} (${columnNames.join(', ')})
+              VALUES (${columnNames.map(() => '?').join(', ')}) RETURNING *`,
+            params: [
+              ...entries.map(([field, value]) => storedValue(definition, field, value)),
+              now,
+              now,
+            ],
+          },
+          {
+            text: `UPDATE users
+              SET version = version + 1, team_write_token = NULL, updated_at = ?
+              WHERE id = ? RETURNING id`,
+            params: [now, Number(effectiveInput.userId)],
+          },
+        ])
         rows = atomicRows[0] ?? []
       } else {
         rows = await database.all<Record<string, unknown>>(
@@ -654,12 +690,19 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
           sql`${identifier(definition.columns[field]!)} = ${storedValue(definition, field, value)}`,
       )
     assignments.push(sql`updated_at = ${now}`)
+    if (kind === 'users') {
+      assignments.push(sql`version = version + 1`)
+      assignments.push(sql`team_write_token = NULL`)
+    }
     try {
       let rows: Record<string, unknown>[]
-      if (
-        (kind === 'roles' && roleUserIds !== undefined) ||
-        (kind === 'users' && emailAddress !== undefined)
-      ) {
+      if (kind === 'user-assignments') {
+        const current = await database.all<{ user_id: number }>(
+          sql`SELECT user_id FROM user_assignments WHERE id = ${id} LIMIT 1`,
+        )
+        if (current.length === 0)
+          throw new GeneralResourceError('not_found', 'The resource does not exist.')
+        const nextUserId = Number(input.userId ?? current[0]!.user_id)
         const statements: AtomicStatement[] = [
           {
             text: `UPDATE ${definition.table} SET ${[
@@ -672,8 +715,45 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
               id,
             ],
           },
+          {
+            text: `UPDATE users
+              SET version = version + 1, team_write_token = NULL, updated_at = ?
+              WHERE id IN (?, ?) RETURNING id`,
+            params: [now, current[0]!.user_id, nextUserId],
+          },
+        ]
+        const atomicRows = await runAtomic(database, statements)
+        rows = atomicRows[0] ?? []
+      } else if (
+        (kind === 'roles' && roleUserIds !== undefined) ||
+        (kind === 'users' && emailAddress !== undefined)
+      ) {
+        const statements: AtomicStatement[] = [
+          {
+            text: `UPDATE ${definition.table} SET ${[
+              ...storedEntries.map(([field]) => `${definition.columns[field]} = ?`),
+              ...(kind === 'users'
+                ? ['version = version + 1', 'team_write_token = NULL']
+                : []),
+              'updated_at = ?',
+            ].join(', ')} WHERE id = ? RETURNING *`,
+            params: [
+              ...storedEntries.map(([field, value]) => storedValue(definition, field, value)),
+              now,
+              id,
+            ],
+          },
         ]
         if (kind === 'roles' && roleUserIds !== undefined) {
+          statements.push({
+            text: `UPDATE users
+              SET version = version + 1, team_write_token = NULL, updated_at = ?
+              WHERE id IN (
+                SELECT user_id FROM user_roles WHERE role_id = ?
+                UNION SELECT CAST(value AS INTEGER) FROM json_each(?)
+              ) RETURNING id`,
+            params: [now, id, JSON.stringify(roleUserIds)],
+          })
           statements.push({
             text: 'DELETE FROM user_roles WHERE role_id = ? RETURNING user_id',
             params: [id],
@@ -728,9 +808,50 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
   async remove(kind, id, now) {
     const definition = definitions[kind]
     try {
+      if (kind === 'user-assignments') {
+        const current = await database.all<{ user_id: number }>(
+          sql`SELECT user_id FROM user_assignments WHERE id = ${id} LIMIT 1`,
+        )
+        if (current.length === 0)
+          throw new GeneralResourceError('not_found', 'The resource does not exist.')
+        await runAtomic(database, [
+          {
+            text: `UPDATE user_assignments
+              SET is_active = 0, updated_at = ? WHERE id = ? RETURNING id`,
+            params: [now, id],
+          },
+          {
+            text: `UPDATE users
+              SET version = version + 1, team_write_token = NULL, updated_at = ?
+              WHERE id = ? RETURNING id`,
+            params: [now, current[0]!.user_id],
+          },
+        ])
+        return
+      }
+      if (kind === 'roles') {
+        const atomicRows = await runAtomic(database, [
+          {
+            text: `UPDATE users
+              SET version = version + 1, team_write_token = NULL, updated_at = ?
+              WHERE id IN (SELECT user_id FROM user_roles WHERE role_id = ?)
+              RETURNING id`,
+            params: [now, id],
+          },
+          {
+            text: 'DELETE FROM roles WHERE id = ? RETURNING id',
+            params: [id],
+          },
+        ])
+        if ((atomicRows[1] ?? []).length === 0)
+          throw new GeneralResourceError('not_found', 'The resource does not exist.')
+        return
+      }
       const rows = definition.archive
         ? await database.all(
-            sql`UPDATE ${identifier(definition.table)} SET is_active = 0, updated_at = ${now} WHERE id = ${id} RETURNING id`,
+            kind === 'users'
+              ? sql`UPDATE ${identifier(definition.table)} SET is_active = 0, version = version + 1, team_write_token = NULL, updated_at = ${now} WHERE id = ${id} RETURNING id`
+              : sql`UPDATE ${identifier(definition.table)} SET is_active = 0, updated_at = ${now} WHERE id = ${id} RETURNING id`,
           )
         : await database.all(
             sql`DELETE FROM ${identifier(definition.table)} WHERE id = ${id} RETURNING id`,
@@ -786,9 +907,19 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
   async appendRate(userId, kind, input, now) {
     const table = kind === 'billable' ? 'user_billable_rates' : 'user_cost_rates'
     try {
-      const rows = await database.all<Record<string, unknown>>(
-        sql`INSERT INTO ${identifier(table)} (user_id, amount_cents, start_date, end_date, created_at, updated_at) VALUES (${userId}, ${input.amountCents}, ${input.startDate}, NULL, ${now}, ${now}) RETURNING *`,
-      )
+      const [rows = []] = await runAtomic(database, [
+        {
+          text: `INSERT INTO ${table}
+            (user_id, amount_cents, start_date, end_date, created_at, updated_at)
+            VALUES (?, ?, ?, NULL, ?, ?) RETURNING *`,
+          params: [userId, input.amountCents, input.startDate, now, now],
+        },
+        {
+          text: `UPDATE users SET version = version + 1, team_write_token = NULL, updated_at = ?
+            WHERE id = ? RETURNING id`,
+          params: [now, userId],
+        },
+      ])
       return rateFromRow(rows[0]!)
     } catch (error) {
       return translate(error)

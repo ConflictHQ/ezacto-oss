@@ -251,6 +251,7 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
   await expect(page).toHaveTitle('ezacto — Time')
   await expect(identity).toContainText('User #7')
   await expect(identity).toContainText('administrator')
+  await expect(page.locator('[data-team-nav]:not([hidden])')).toHaveCount(0)
   await expectPhoneControl(signOut)
   await expectNoPageOverflow(page)
   await expect.poll(() => [...protectedRequests]).toEqual(
@@ -513,6 +514,57 @@ test('[e2e:track-week] persists start/end editor changes through the real worker
     const reset = await fixtureControl('reset')
     expect(reset.status()).toBe(204)
   }
+})
+
+test('[e2e:rate-change] adds a dated rate through the real worker and shows the closed prior period', async ({
+  context,
+  page,
+}) => {
+  const seeded = await context.request.post(
+    '/__ezacto_browser_fixture__/start-end',
+    {
+      data: { action: 'team-rate-seed' },
+      headers: {
+        'x-ezacto-browser-fixture-control': 'start-end-round-trip',
+      },
+    },
+  )
+  expect(seeded.status()).toBe(204)
+
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto('/team/1')
+  const signIn = page.locator('[data-sign-in-form]')
+  await signIn.getByLabel('Email').fill(fixtureEmail)
+  await signIn.getByLabel('Password').fill(fixturePassword)
+  await signIn.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+  await expect(page.getByRole('heading', { name: 'Browser Owner' })).toBeVisible()
+  await expect(page.locator('[data-team-nav]:not([hidden])')).toHaveCount(2)
+  await page.getByRole('tab', { name: 'Rates' }).click()
+  const billable = page.locator('[data-team-billable-section]')
+  await expect(billable).toContainText('2026-08-01 – Ongoing')
+  await expectPhoneControl(
+    billable.getByRole('button', { name: 'Add rate', exact: true }),
+  )
+  await billable.getByRole('button', { name: 'Add rate', exact: true }).click()
+
+  const dialog = page.locator('[data-team-rate-dialog]')
+  await expect(dialog).toBeVisible()
+  await dialog.getByLabel('Hourly amount').fill('125.01')
+  await dialog.getByLabel('Effective date').fill('2026-08-30')
+  const changed = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/team/people/1/rates' &&
+      response.request().method() === 'POST',
+  )
+  await dialog.getByRole('button', { name: 'Add billable rate' }).click()
+  expect((await changed).status()).toBe(201)
+
+  await expect(dialog).toBeHidden()
+  await expect(billable).toContainText('2026-08-01 – 2026-08-29')
+  await expect(billable).toContainText('2026-08-30 – Ongoing')
+  await expect(billable).toContainText('125.01/hour')
+  await expectNoPageOverflow(page)
 })
 
 test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', async ({

@@ -182,6 +182,8 @@ export const users = sqliteTable(
     avatarUrl: text('avatar_url'),
     samlExempt: integer('saml_exempt', { mode: 'boolean' }).notNull().default(false),
     timeEntryNotesMinimumLength: integer('time_entry_notes_minimum_length'),
+    version: integer('version').notNull().default(0),
+    teamWriteToken: text('team_write_token'),
     ...timestamps,
   },
   (table) => [
@@ -205,6 +207,7 @@ export const users = sqliteTable(
       'users_owner_is_administrator',
       sql`${table.isOwner} = 0 or ${table.profile} = 'administrator'`,
     ),
+    check('users_version_nonnegative', sql`${table.version} between 0 and 9007199254740991`),
   ],
 )
 
@@ -595,6 +598,75 @@ export const teammateAssignments = sqliteTable(
   (table) => [
     primaryKey({ columns: [table.managerId, table.userId] }),
     check('teammate_assignments_not_self', sql`${table.managerId} <> ${table.userId}`),
+  ],
+)
+
+export const notificationPreferences = sqliteTable(
+  'notification_preferences',
+  {
+    userId: integer('user_id')
+      .primaryKey()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    dailyReminderEnabled: integer('daily_reminder_enabled', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    reminderTime: text('reminder_time'),
+    reminderDays: text('reminder_days', { mode: 'json' }).$type<string[]>().notNull(),
+    emailEnabled: integer('email_enabled', { mode: 'boolean' }).notNull().default(false),
+    desktopEnabled: integer('desktop_enabled', { mode: 'boolean' }).notNull().default(false),
+    slackEnabled: integer('slack_enabled', { mode: 'boolean' }).notNull().default(false),
+    includeInTeamReminders: integer('include_in_team_reminders', { mode: 'boolean' })
+      .notNull()
+      .default(true),
+    weeklyDigest: integer('weekly_digest', { mode: 'boolean' }).notNull().default(true),
+    notifyProjectDeleted: integer('notify_project_deleted', { mode: 'boolean' })
+      .notNull()
+      .default(true),
+    ...timestamps,
+  },
+  (table) => [
+    check('notification_preferences_days_json', sql`json_valid(${table.reminderDays})`),
+    check(
+      'notification_preferences_daily_shape',
+      sql`${table.dailyReminderEnabled} = 0 or (
+        ${table.reminderTime} is not null and json_array_length(${table.reminderDays}) > 0
+        and (${table.emailEnabled} = 1 or ${table.desktopEnabled} = 1 or ${table.slackEnabled} = 1)
+      )`,
+    ),
+  ],
+)
+
+export const teamCommandLedger = sqliteTable(
+  'team_command_ledger',
+  {
+    targetUserId: integer('target_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    commandKind: text('command_kind', {
+      enum: [
+        'person.update',
+        'person.assignments.replace',
+        'person.notifications.update',
+        'person.billable_rate.append',
+        'person.cost_rate.append',
+      ],
+    }).notNull(),
+    commandId: text('command_id').notNull(),
+    inputFingerprint: text('input_fingerprint').notNull(),
+    actorUserId: integer('actor_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    resultJson: text('result_json').notNull(),
+    occurredAt: text('occurred_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.commandKind, table.commandId] }),
+    index('team_command_ledger_target').on(
+      table.targetUserId,
+      table.occurredAt,
+      table.commandKind,
+      table.commandId,
+    ),
   ],
 )
 

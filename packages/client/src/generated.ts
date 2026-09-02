@@ -320,6 +320,183 @@ export type UserRatePage = {
   "page": PageMetadata;
 };
 
+export type TeamStatus = {
+  "enabled": boolean;
+};
+
+export type TeamStatusEnvelope = {
+  "data": TeamStatus;
+  "links": Links;
+};
+
+export type TeamNamedRelation = {
+  "id": number;
+  "name": string;
+};
+
+export type TeamPersonSummary = {
+  "id": number;
+  "first_name": string;
+  "last_name": string;
+  "email": string | null;
+  "avatar_url": string | null;
+  "profile": "member" | "project_manager" | "people_admin" | "accounting" | "executive_manager" | "administrator";
+  "is_owner": boolean;
+  "is_contractor": boolean;
+  "is_active": boolean;
+  "weekly_capacity": number;
+  "total_seconds": number;
+  "billable_seconds": number;
+  "nonbillable_seconds": number;
+  "utilization_ppm": number | null;
+  "running": boolean;
+};
+
+export type TeamPersonSummaryPage = {
+  "data": Array<TeamPersonSummary>;
+  "links": PageLinks;
+  "page": PageMetadata;
+};
+
+export type TeamProjectAssignment = {
+  "id": number;
+  "project_id": number;
+  "project_name": string;
+  "project_code": string;
+  "client_id": number;
+  "client_name": string;
+  "is_active": boolean;
+  "is_project_manager": boolean;
+  "use_default_rates": boolean;
+  "hourly_rate_cents"?: number | null;
+  "budget_seconds": number | null;
+  "updated_at": string;
+};
+
+export type TeamNotificationChannels = {
+  "email": boolean;
+  "desktop": boolean;
+  "slack": boolean;
+};
+
+export type TeamNotificationPreference = {
+  "daily_reminder_enabled": boolean;
+  "reminder_time": string | null;
+  "reminder_days": Array<"monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday">;
+  "channels": TeamNotificationChannels;
+  "include_in_team_reminders": boolean;
+  "weekly_digest": boolean;
+  "notify_project_deleted": boolean;
+  "updated_at": string;
+};
+
+export type TeamPerson = {
+  "id": number;
+  "first_name": string;
+  "last_name": string;
+  "email": string | null;
+  "telephone": string | null;
+  "employee_id": string | null;
+  "timezone": string;
+  "is_contractor": boolean;
+  "is_active": boolean;
+  "has_access_to_all_future_projects": boolean;
+  "weekly_capacity": number;
+  "profile": "member" | "project_manager" | "people_admin" | "accounting" | "executive_manager" | "administrator";
+  "is_owner": boolean;
+  "avatar_url": string | null;
+  "version": number;
+  "created_at": string;
+  "updated_at": string;
+  "roles": Array<TeamNamedRelation>;
+  "departments": Array<TeamNamedRelation>;
+  "project_assignments": Array<TeamProjectAssignment>;
+  "billable_rates"?: Array<UserRate>;
+  "cost_rates"?: Array<UserRate>;
+  "notifications": TeamNotificationPreference;
+};
+
+export type TeamPersonEnvelope = {
+  "data": TeamPerson;
+  "links": Links;
+};
+
+export type TeamCatalogProject = {
+  "id": number;
+  "name": string;
+  "code": string;
+  "client_id": number;
+  "client_name": string;
+  "is_active": boolean;
+};
+
+export type TeamCatalog = {
+  "roles": Array<TeamNamedRelation>;
+  "departments": Array<TeamNamedRelation>;
+  "projects": Array<TeamCatalogProject>;
+};
+
+export type TeamCatalogEnvelope = {
+  "data": TeamCatalog;
+  "links": Links;
+};
+
+export type TeamPersonPatch = {
+  "expected_version": number;
+  "first_name"?: string;
+  "last_name"?: string;
+  "telephone"?: string | null;
+  "employee_id"?: string | null;
+  "timezone"?: string;
+  "is_contractor"?: boolean;
+  "is_active"?: boolean;
+  "has_access_to_all_future_projects"?: boolean;
+  "weekly_capacity"?: number;
+  "profile"?: "member" | "project_manager" | "people_admin" | "accounting" | "executive_manager" | "administrator";
+  "role_ids"?: Array<number>;
+  "department_ids"?: Array<number>;
+};
+
+export type TeamAssignmentInput = {
+  "project_id": number;
+  "is_project_manager": boolean;
+};
+
+export type TeamAssignmentReplaceInput = {
+  "expected_version": number;
+  "assignments": Array<TeamAssignmentInput>;
+};
+
+export type TeamNotificationInput = {
+  "expected_version": number;
+  "daily_reminder_enabled": boolean;
+  "reminder_time": string | null;
+  "reminder_days": Array<"monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday">;
+  "channels": TeamNotificationChannels;
+  "include_in_team_reminders": boolean;
+  "weekly_digest": boolean;
+  "notify_project_deleted": boolean;
+};
+
+export type TeamRateInput = {
+  "expected_version": number;
+  "kind": "billable" | "cost";
+  "amount_cents": number;
+  "start_date": string | null;
+};
+
+export type TeamCommandReceipt = {
+  "target_user_id": number;
+  "version": number;
+  "resource_id": number | null;
+  "occurred_at": string;
+};
+
+export type TeamCommandReceiptEnvelope = {
+  "data": TeamCommandReceipt;
+  "links": Links;
+};
+
 export type ApiToken = {
   "id": number;
   "name": string;
@@ -2962,6 +3139,83 @@ export class EzactoClient {
 
     return this.request<ProjectBudgetReportEnvelope>("GET", "/api/v1/reports/project-budget/:projectId".replace(":projectId", encodeURIComponent(String(args["projectId"]))), {
       query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getTeamStatus(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TeamStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TeamStatusEnvelope>("GET", "/api/v1/team/status", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listTeamPeople(args: { query: { "cursor"?: string; "per_page"?: number; "from": string; "to": string; "is_active"?: boolean }; signal?: AbortSignal; headers?: HeadersInit }): Promise<TeamPersonSummaryPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TeamPersonSummaryPage>("GET", "/api/v1/team/people", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getTeamPerson(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<TeamPersonEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TeamPersonEnvelope>("GET", "/api/v1/team/people/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getTeamCatalog(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TeamCatalogEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TeamCatalogEnvelope>("GET", "/api/v1/team/catalog", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateTeamPerson(args: { "id": number; "Idempotency-Key": string; body: TeamPersonPatch; signal?: AbortSignal; headers?: HeadersInit }): Promise<TeamCommandReceiptEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<TeamCommandReceiptEnvelope>("PATCH", "/api/v1/team/people/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async replaceTeamPersonProjectAssignments(args: { "id": number; "Idempotency-Key": string; body: TeamAssignmentReplaceInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TeamCommandReceiptEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<TeamCommandReceiptEnvelope>("POST", "/api/v1/team/people/:id/project-assignments/replace".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateTeamPersonNotifications(args: { "id": number; "Idempotency-Key": string; body: TeamNotificationInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TeamCommandReceiptEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<TeamCommandReceiptEnvelope>("POST", "/api/v1/team/people/:id/notifications".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async appendTeamPersonRate(args: { "id": number; "Idempotency-Key": string; body: TeamRateInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TeamCommandReceiptEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<TeamCommandReceiptEnvelope>("POST", "/api/v1/team/people/:id/rates".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });

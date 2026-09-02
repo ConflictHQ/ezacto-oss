@@ -119,6 +119,7 @@ for (const [runtime, factory] of factories) {
         { id: '0027_timesheet_approvals' },
         { id: '0028_timesheet_lock_policy' },
         { id: '0029_outbox_delivery' },
+        { id: '0031_team_people' },
       ])
     })
 
@@ -150,6 +151,7 @@ for (const [runtime, factory] of factories) {
         { id: '0027_timesheet_approvals' },
         { id: '0028_timesheet_lock_policy' },
         { id: '0029_outbox_delivery' },
+        { id: '0031_team_people' },
       ])
       expect(
         await current.rows<{ name: string }>(

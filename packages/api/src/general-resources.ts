@@ -27,6 +27,7 @@ export interface GeneralResourceRouteOptions {
   cursorSigningKey: Uint8Array;
   clock?: () => string;
   isExpensesModuleEnabled(): Promise<boolean>;
+  isTeamModuleEnabled?(): Promise<boolean>;
 }
 
 type FieldType =
@@ -624,13 +625,23 @@ const requireResourceModule = async (
   kind: GeneralResourceKind,
   options: Required<GeneralResourceRouteOptions>,
 ): Promise<void> => {
-  if (kind !== "expense-categories" || (await options.isExpensesModuleEnabled())) {
+  if (kind === "expense-categories" && !(await options.isExpensesModuleEnabled())) {
+    throw new ApiError({
+      status: 403,
+      code: "module_disabled",
+      message: "The expenses module is not enabled for this organization.",
+    });
+  }
+  if (
+    !new Set<GeneralResourceKind>(["users", "roles", "user-assignments"]).has(kind) ||
+    (await options.isTeamModuleEnabled())
+  ) {
     return;
   }
   throw new ApiError({
     status: 403,
     code: "module_disabled",
-    message: "The expenses module is not enabled for this organization.",
+    message: "The Team module is not enabled for this organization.",
   });
 };
 
@@ -889,6 +900,9 @@ const installRates = <Bindings extends object>(
   const segment = `${kind}-rates`;
   api.get(`/users/:userId/${segment}`, async (context) => {
     const principal = requireRateRead(context, kind);
+    if (!(await options.isTeamModuleEnabled())) {
+      throw new ApiError({ status: 403, code: "module_disabled", message: "The Team module is not enabled for this organization." });
+    }
     const userId = resourceId(context.req.param("userId"));
     const url = new URL(context.req.url);
     const allowed = new Set(["per_page", "cursor"]);
@@ -919,6 +933,9 @@ const installRates = <Bindings extends object>(
   });
   api.post(`/users/:userId/${segment}`, async (context) => {
     requireRateWrite(context, kind);
+    if (!(await options.isTeamModuleEnabled())) {
+      throw new ApiError({ status: 403, code: "module_disabled", message: "The Team module is not enabled for this organization." });
+    }
     const body = await objectBody(context);
     const errors: FieldError[] = [];
     for (const field of Object.keys(body))
@@ -972,6 +989,9 @@ const installRates = <Bindings extends object>(
   });
   api.get(`/users/:userId/${segment}/:id`, async (context) => {
     requireRateRead(context, kind);
+    if (!(await options.isTeamModuleEnabled())) {
+      throw new ApiError({ status: 403, code: "module_disabled", message: "The Team module is not enabled for this organization." });
+    }
     try {
       const record = await options.repository.getRate(
         resourceId(context.req.param("userId")),
@@ -1010,6 +1030,7 @@ export const installGeneralResourceRoutes = <Bindings extends object>(
   const options: Required<GeneralResourceRouteOptions> = {
     ...supplied,
     clock: supplied.clock ?? (() => new Date().toISOString()),
+    isTeamModuleEnabled: supplied.isTeamModuleEnabled ?? (async () => true),
   };
   for (const kind of Object.keys(routeDefinitions) as GeneralResourceKind[])
     installResource(api, kind, options);

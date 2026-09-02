@@ -12311,6 +12311,629 @@
           }
         ]
       }
+    },
+    "/api/v1/team/status": {
+      "get": {
+        "operationId": "getTeamStatus",
+        "summary": "Get Team module availability for navigation",
+        "tags": [
+          "team"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamStatusEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/team/status",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/team/people": {
+      "get": {
+        "operationId": "listTeamPeople",
+        "summary": "List Team people with authoritative utilization",
+        "tags": [
+          "team"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamPersonSummaryPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/team/people",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "is_active",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/team/people/{id}": {
+      "get": {
+        "operationId": "getTeamPerson",
+        "summary": "Get a Team person editor record",
+        "tags": [
+          "team"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamPersonEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/team/people/:id",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "updateTeamPerson",
+        "summary": "Update a Team person with optimistic concurrency",
+        "tags": [
+          "team"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamCommandReceiptEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/team/people/:id",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamPersonPatch"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/team/catalog": {
+      "get": {
+        "operationId": "getTeamCatalog",
+        "summary": "Get roles, departments, and assignable projects",
+        "tags": [
+          "team"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamCatalogEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/team/catalog",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/team/people/{id}/project-assignments/replace": {
+      "post": {
+        "operationId": "replaceTeamPersonProjectAssignments",
+        "summary": "Replace a person's active project assignments",
+        "tags": [
+          "team"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamCommandReceiptEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/team/people/:id/project-assignments/replace",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamAssignmentReplaceInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/team/people/{id}/notifications": {
+      "post": {
+        "operationId": "updateTeamPersonNotifications",
+        "summary": "Update a person's notification preferences",
+        "tags": [
+          "team"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamCommandReceiptEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/team/people/:id/notifications",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamNotificationInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/team/people/{id}/rates": {
+      "post": {
+        "operationId": "appendTeamPersonRate",
+        "summary": "Append an effective-dated person rate",
+        "tags": [
+          "team"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamCommandReceiptEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/team/people/:id/rates",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamRateInput"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -13823,6 +14446,858 @@
           },
           "page": {
             "$ref": "#/components/schemas/PageMetadata"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeamStatus": {
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeamStatusEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TeamStatus"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeamNamedRelation": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeamPersonSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "first_name",
+          "last_name",
+          "email",
+          "avatar_url",
+          "profile",
+          "is_owner",
+          "is_contractor",
+          "is_active",
+          "weekly_capacity",
+          "total_seconds",
+          "billable_seconds",
+          "nonbillable_seconds",
+          "utilization_ppm",
+          "running"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "first_name": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "profile": {
+            "type": "string",
+            "enum": [
+              "member",
+              "project_manager",
+              "people_admin",
+              "accounting",
+              "executive_manager",
+              "administrator"
+            ]
+          },
+          "is_owner": {
+            "type": "boolean"
+          },
+          "is_contractor": {
+            "type": "boolean"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "weekly_capacity": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "billable_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "nonbillable_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "utilization_ppm": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "running": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeamPersonSummaryPage": {
+        "type": "object",
+        "required": [
+          "data",
+          "links",
+          "page"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamPersonSummary"
+            }
+          },
+          "links": {
+            "$ref": "#/components/schemas/PageLinks"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageMetadata"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeamProjectAssignment": {
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "project_name",
+          "project_code",
+          "client_id",
+          "client_name",
+          "is_active",
+          "is_project_manager",
+          "use_default_rates",
+          "budget_seconds",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "project_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "project_code": {
+            "type": "string"
+          },
+          "client_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "client_name": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "is_project_manager": {
+            "type": "boolean"
+          },
+          "use_default_rates": {
+            "type": "boolean"
+          },
+          "hourly_rate_cents": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "budget_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeamNotificationChannels": {
+        "type": "object",
+        "required": [
+          "email",
+          "desktop",
+          "slack"
+        ],
+        "properties": {
+          "email": {
+            "type": "boolean"
+          },
+          "desktop": {
+            "type": "boolean"
+          },
+          "slack": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeamNotificationPreference": {
+        "type": "object",
+        "required": [
+          "daily_reminder_enabled",
+          "reminder_time",
+          "reminder_days",
+          "channels",
+          "include_in_team_reminders",
+          "weekly_digest",
+          "notify_project_deleted",
+          "updated_at"
+        ],
+        "properties": {
+          "daily_reminder_enabled": {
+            "type": "boolean"
+          },
+          "reminder_time": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reminder_days": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "monday",
+                "tuesday",
+                "wednesday",
+                "thursday",
+                "friday",
+                "saturday",
+                "sunday"
+              ]
+            }
+          },
+          "channels": {
+            "$ref": "#/components/schemas/TeamNotificationChannels"
+          },
+          "include_in_team_reminders": {
+            "type": "boolean"
+          },
+          "weekly_digest": {
+            "type": "boolean"
+          },
+          "notify_project_deleted": {
+            "type": "boolean"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeamPerson": {
+        "type": "object",
+        "required": [
+          "id",
+          "first_name",
+          "last_name",
+          "email",
+          "telephone",
+          "employee_id",
+          "timezone",
+          "is_contractor",
+          "is_active",
+          "has_access_to_all_future_projects",
+          "weekly_capacity",
+          "profile",
+          "is_owner",
+          "avatar_url",
+          "version",
+          "created_at",
+          "updated_at",
+          "roles",
+          "departments",
+          "project_assignments",
+          "notifications"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "first_name": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "telephone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "employee_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "is_contractor": {
+            "type": "boolean"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "has_access_to_all_future_projects": {
+            "type": "boolean"
+          },
+          "weekly_capacity": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "profile": {
+            "type": "string",
+            "enum": [
+              "member",
+              "project_manager",
+              "people_admin",
+              "accounting",
+              "executive_manager",
+              "administrator"
+            ]
+          },
+          "is_owner": {
+            "type": "boolean"
+          },
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamNamedRelation"
+            }
+          },
+          "departments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamNamedRelation"
+            }
+          },
+          "project_assignments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamProjectAssignment"
+            }
+          },
+          "billable_rates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserRate"
+            }
+          },
+          "cost_rates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserRate"
+            }
+          },
+          "notifications": {
+            "$ref": "#/components/schemas/TeamNotificationPreference"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeamPersonEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TeamPerson"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeamCatalogProject": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "code",
+          "client_id",
+          "client_name",
+          "is_active"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "client_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "client_name": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeamCatalog": {
+        "type": "object",
+        "required": [
+          "roles",
+          "departments",
+          "projects"
+        ],
+        "properties": {
+          "roles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamNamedRelation"
+            }
+          },
+          "departments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamNamedRelation"
+            }
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamCatalogProject"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeamCatalogEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TeamCatalog"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeamPersonPatch": {
+        "type": "object",
+        "required": [
+          "expected_version"
+        ],
+        "minProperties": 2,
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "first_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "last_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "telephone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "employee_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timezone": {
+            "type": "string",
+            "minLength": 1
+          },
+          "is_contractor": {
+            "type": "boolean"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "has_access_to_all_future_projects": {
+            "type": "boolean"
+          },
+          "weekly_capacity": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "profile": {
+            "type": "string",
+            "enum": [
+              "member",
+              "project_manager",
+              "people_admin",
+              "accounting",
+              "executive_manager",
+              "administrator"
+            ]
+          },
+          "role_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "department_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeamAssignmentInput": {
+        "type": "object",
+        "required": [
+          "project_id",
+          "is_project_manager"
+        ],
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "is_project_manager": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeamAssignmentReplaceInput": {
+        "type": "object",
+        "required": [
+          "expected_version",
+          "assignments"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "assignments": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/TeamAssignmentInput"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeamNotificationInput": {
+        "type": "object",
+        "required": [
+          "expected_version",
+          "daily_reminder_enabled",
+          "reminder_time",
+          "reminder_days",
+          "channels",
+          "include_in_team_reminders",
+          "weekly_digest",
+          "notify_project_deleted"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "daily_reminder_enabled": {
+            "type": "boolean"
+          },
+          "reminder_time": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reminder_days": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "monday",
+                "tuesday",
+                "wednesday",
+                "thursday",
+                "friday",
+                "saturday",
+                "sunday"
+              ]
+            }
+          },
+          "channels": {
+            "$ref": "#/components/schemas/TeamNotificationChannels"
+          },
+          "include_in_team_reminders": {
+            "type": "boolean"
+          },
+          "weekly_digest": {
+            "type": "boolean"
+          },
+          "notify_project_deleted": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeamRateInput": {
+        "type": "object",
+        "required": [
+          "expected_version",
+          "kind",
+          "amount_cents",
+          "start_date"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "billable",
+              "cost"
+            ]
+          },
+          "amount_cents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "start_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeamCommandReceipt": {
+        "type": "object",
+        "required": [
+          "target_user_id",
+          "version",
+          "resource_id",
+          "occurred_at"
+        ],
+        "properties": {
+          "target_user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "resource_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeamCommandReceiptEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TeamCommandReceipt"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
           }
         },
         "additionalProperties": false

@@ -1,4 +1,4 @@
-import type { GeneralResourceRepository } from "@ezacto/core";
+import type { GeneralResourceRepository, TeamRepository } from "@ezacto/core";
 import { describe, expect, it } from "vitest";
 import {
   apiContractOperations,
@@ -14,6 +14,7 @@ import {
   installReportRoutes,
   installSessionRoutes,
   installTrackedResourceRoutes,
+  installTeamRoutes,
   installTimesheetApprovalRoutes,
   installTimesheetLockPolicyRoutes,
   type ApiSessionService,
@@ -52,6 +53,7 @@ const moneyResources = new Proxy(
   { get: () => unavailable },
 ) as MoneyResourceRouteOptions["service"];
 const reports = new Proxy({}, { get: () => unavailable }) as ReportReader;
+const team = new Proxy({}, { get: () => unavailable }) as TeamRepository;
 const tokens = new Proxy({}, { get: () => unavailable }) as ApiTokenService;
 const passwordAuth = new Proxy(
   {},
@@ -125,6 +127,11 @@ const documentedApp = () =>
       });
       installAttachmentRoutes(api);
       installReportRoutes(api, reports);
+      installTeamRoutes(api, {
+        repository: team,
+        cursorSigningKey: new Uint8Array(32),
+        isTeamModuleEnabled: async () => true,
+      });
     },
   });
 

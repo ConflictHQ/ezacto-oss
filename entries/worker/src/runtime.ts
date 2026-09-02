@@ -13,6 +13,7 @@ import {
   createReportRepository,
   createTimesheetApprovalRepository,
   createTimesheetLockPolicyRepository,
+  createTeamRepository,
   createD1EmailLogStore,
   createD1PasswordAuthService,
   createD1SessionStore,
@@ -326,6 +327,7 @@ export const createRuntimeServices = async (
       enrollInstanceOwnerPasswordD1(database, input),
     tokens: createApiTokenStore(drizzle),
     generalResources: createGeneralResourceRepository(drizzle),
+    team: createTeamRepository(drizzle),
     moneyResources: createMoneyResourceRepository(drizzle),
     invoiceGeneration: createInvoiceGenerationService(drizzle),
     trackedResources: new DrizzleTrackedResourceRepository(
@@ -336,6 +338,15 @@ export const createRuntimeServices = async (
       const row = await database
         .prepare(
           `SELECT COALESCE(json_extract(modules, '$.expenses'), 0) AS enabled
+           FROM organizations WHERE id = 1`,
+        )
+        .first<{ enabled: number | boolean }>();
+      return row?.enabled === 1 || row?.enabled === true;
+    },
+    isTeamModuleEnabled: async () => {
+      const row = await database
+        .prepare(
+          `SELECT COALESCE(json_extract(modules, '$.team'), 0) AS enabled
            FROM organizations WHERE id = 1`,
         )
         .first<{ enabled: number | boolean }>();

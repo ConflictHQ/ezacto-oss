@@ -258,6 +258,22 @@ const fixtureControl = async (request, response) => {
         )
         .bind(timestamp, timestamp),
     ])
+  } else if (action === 'team-rate-seed') {
+    await database.batch([
+      database.prepare(
+        `UPDATE organizations
+         SET modules = json_set(modules, '$.team', json('true'))
+         WHERE id = 1`,
+      ),
+      database.prepare(
+        `UPDATE users SET version = 0, updated_at = ? WHERE id = 1`,
+      ).bind(timestamp),
+      database.prepare(
+        `INSERT INTO user_billable_rates (
+           id, user_id, amount_cents, start_date, end_date, created_at, updated_at
+         ) VALUES (950, 1, 10000, '2026-08-01', NULL, ?, ?)`,
+      ).bind(timestamp, timestamp),
+    ])
   } else if (action === 'task-admin-cleanup') {
     await database.batch([
       database.prepare(
