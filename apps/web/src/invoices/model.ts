@@ -1,5 +1,8 @@
 import type {
   Invoice,
+  InvoiceLine,
+  InvoiceLineInput,
+  InvoiceLineUpdateInput,
   InvoiceMessage,
   InvoicePayment,
   InvoicePaymentInput,
@@ -30,6 +33,26 @@ export interface InvoicePaymentApi {
   deleteInvoicePayment(
     id: number,
     paymentId: number,
+    commandId: string,
+    input: VersionedRowDeleteInput,
+    signal?: AbortSignal,
+  ): Promise<Invoice>
+  createInvoiceLine(
+    id: number,
+    commandId: string,
+    input: InvoiceLineInput,
+    signal?: AbortSignal,
+  ): Promise<Invoice>
+  updateInvoiceLine(
+    id: number,
+    lineId: number,
+    commandId: string,
+    input: InvoiceLineUpdateInput,
+    signal?: AbortSignal,
+  ): Promise<Invoice>
+  deleteInvoiceLine(
+    id: number,
+    lineId: number,
     commandId: string,
     input: VersionedRowDeleteInput,
     signal?: AbortSignal,
@@ -96,6 +119,100 @@ export const invoiceCanRecordPayment = (invoice: Readonly<Invoice>): boolean =>
 
 export const invoiceCanMarkSent = (invoice: Readonly<Invoice>): boolean =>
   invoice.state === 'draft' || invoice.state === 'open'
+
+export const invoiceCanEditLines = (invoice: Readonly<Invoice>): boolean =>
+  invoice.state !== 'closed'
+
+const signedMoneyPattern = /^(-?)(?:0|[1-9][0-9]*)(?:\.([0-9]{1,2}))?$/u
+const decimalPattern = /^(-?)([0-9]+)(?:\.([0-9]+))?(?:e([+-]?[0-9]+))?$/iu
+const invoiceCentsLimit = 9_000_000_000_000n
+
+interface DecimalRatio {
+  readonly numerator: bigint
+  readonly denominator: bigint
+}
+
+const decimalRatio = (value: string): DecimalRatio => {
+  const match = decimalPattern.exec(value)
+  if (match === null) throw new Error('Quantity must be a plain decimal number.')
+  const fraction = match[3] ?? ''
+  const exponent = Number(match[4] ?? '0')
+  if (!Number.isSafeInteger(exponent)) {
+    throw new Error('Quantity is outside the supported range.')
+  }
+  let numerator = BigInt(`${match[2]}${fraction}`)
+  if (match[1] === '-') numerator = -numerator
+  const scale = fraction.length - exponent
+  if (scale < 0) return { numerator: numerator * 10n ** BigInt(-scale), denominator: 1n }
+  return { numerator, denominator: 10n ** BigInt(scale) }
+}
+
+const sameRatio = (left: DecimalRatio, right: DecimalRatio): boolean =>
+  left.numerator * right.denominator === right.numerator * left.denominator
+
+export interface InvoiceLineValues {
+  readonly quantity: number
+  readonly unitPriceCents: number
+  readonly amountCents: number
+}
+
+export const invoiceLineUnitPriceCents = (raw: string): number => {
+  const value = raw.trim()
+  const match = signedMoneyPattern.exec(value)
+  if (match === null) {
+    throw new Error('Rate must be a decimal amount with no more than two decimal places.')
+  }
+  const negative = match[1] === '-'
+  const unsigned = negative ? value.slice(1) : value
+  const [whole, fraction = ''] = unsigned.split('.')
+  let cents = BigInt(whole!) * 100n + BigInt(fraction.padEnd(2, '0'))
+  if (negative) cents = -cents
+  if (cents < -invoiceCentsLimit || cents > invoiceCentsLimit) {
+    throw new Error('Rate is too large.')
+  }
+  return Number(cents)
+}
+
+export const invoiceLineValues = (
+  rawQuantity: string,
+  rawUnitPrice: string,
+): InvoiceLineValues => {
+  const quantityText = rawQuantity.trim()
+  if (
+    quantityText.length === 0 ||
+    quantityText.length > 1_000 ||
+    !/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/u.test(quantityText)
+  ) {
+    throw new Error('Quantity must be a plain decimal number.')
+  }
+  const quantity = Number(quantityText)
+  if (
+    !Number.isFinite(quantity) ||
+    !sameRatio(decimalRatio(quantityText), decimalRatio(quantity.toString()))
+  ) {
+    throw new Error('Quantity cannot be represented without changing its decimal value.')
+  }
+  const unitPriceCents = invoiceLineUnitPriceCents(rawUnitPrice)
+  const ratio = decimalRatio(quantityText)
+  const product = ratio.numerator * BigInt(unitPriceCents)
+  const magnitude = product < 0n ? -product : product
+  let rounded = magnitude / ratio.denominator
+  if ((magnitude % ratio.denominator) * 2n >= ratio.denominator) rounded += 1n
+  if (product < 0n) rounded = -rounded
+  if (rounded < -invoiceCentsLimit || rounded > invoiceCentsLimit) {
+    throw new Error('Quantity and rate produce an amount that is too large.')
+  }
+  return { quantity, unitPriceCents, amountCents: Number(rounded) }
+}
+
+export const invoiceLineUnitPriceForForm = (cents: number): string => {
+  const value = BigInt(cents)
+  const magnitude = value < 0n ? -value : value
+  return `${value < 0n ? '-' : ''}${magnitude / 100n}.${String(magnitude % 100n).padStart(2, '0')}`
+}
+
+export const invoiceLineQuantityForForm = (line: Readonly<InvoiceLine>): string =>
+  line.quantity.toString()
 
 const recipientEmailPattern = /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/u
 

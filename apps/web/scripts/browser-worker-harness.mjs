@@ -258,6 +258,22 @@ const fixtureControl = async (request, response) => {
         )
         .bind(timestamp, timestamp),
     ])
+  } else if (action === 'invoice-line-seed') {
+    await database.batch([
+      database.prepare('DELETE FROM time_entries WHERE id = 904'),
+      database
+        .prepare(
+          `INSERT INTO time_entries (
+             id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+             spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+             billable_rate_cents, cost_rate_cents, notes, created_at, updated_at
+           ) VALUES (
+             904, 1, 1, 1, 1, 1, '2026-08-14', 2700, 2700, 2700, 1,
+             10000, 5000, 'Invoice line acceptance', ?, ?
+           )`,
+        )
+        .bind(timestamp, timestamp),
+    ])
   } else if (action === 'task-admin-cleanup') {
     await database.batch([
       database.prepare(

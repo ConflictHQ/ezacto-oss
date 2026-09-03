@@ -3,11 +3,16 @@ import { describe, expect, it } from 'vitest'
 import {
   interpolateInvoiceTemplate,
   invoiceCanMarkSent,
+  invoiceCanEditLines,
   invoiceCanRecordPayment,
   invoiceIdFromPathname,
   invoiceIdentityCanRead,
   invoiceIdentityCanWrite,
   invoiceMessageLabel,
+  invoiceLineQuantityForForm,
+  invoiceLineUnitPriceCents,
+  invoiceLineUnitPriceForForm,
+  invoiceLineValues,
   invoicePaymentAmountCents,
   invoicePaymentAmountForForm,
   invoicePaymentCanDelete,
@@ -140,6 +145,35 @@ describe('invoice workspace model', () => {
     }
   })
 
+  it('[unit] converts line quantity and signed rate into exact half-away cents', () => {
+    expect(invoiceLineValues('0.1', '1.05')).toEqual({
+      quantity: 0.1,
+      unitPriceCents: 105,
+      amountCents: 11,
+    })
+    expect(invoiceLineValues('-1.5', '1.01')).toEqual({
+      quantity: -1.5,
+      unitPriceCents: 101,
+      amountCents: -152,
+    })
+    expect(invoiceLineValues('1.5', '-1.01').amountCents).toBe(-152)
+    expect(invoiceLineUnitPriceCents('-90000000000.00')).toBe(-9_000_000_000_000)
+    expect(invoiceLineUnitPriceForForm(-1)).toBe('-0.01')
+    expect(
+      invoiceLineQuantityForForm({ quantity: 0.125 } as Invoice['line_items'][number]),
+    ).toBe('0.125')
+  })
+
+  it('[unit] rejects line decimals that JSON would silently change', () => {
+    for (const invalid of ['', '01', '.5', '1e2', '9007199254740991.1']) {
+      expect(() => invoiceLineValues(invalid, '1.00'), invalid).toThrow()
+    }
+    for (const invalid of ['', '01.00', '1.001', '1e2', '90000000000.01']) {
+      expect(() => invoiceLineUnitPriceCents(invalid), invalid).toThrow()
+    }
+    expect(() => invoiceLineValues('2', '90000000000.00')).toThrow('too large')
+  })
+
   it('[unit] represents exactly one canonical paid date or local instant', () => {
     expect(invoicePaymentTiming('date', '2026-08-31')).toEqual({
       paid_date: '2026-08-31',
@@ -222,5 +256,9 @@ describe('invoice workspace model', () => {
     expect(invoiceCanMarkSent(invoice({ state: 'draft' }))).toBe(true)
     expect(invoiceCanMarkSent(invoice({ state: 'open' }))).toBe(true)
     expect(invoiceCanMarkSent(invoice({ state: 'paid' }))).toBe(false)
+    expect(invoiceCanEditLines(invoice({ state: 'draft' }))).toBe(true)
+    expect(invoiceCanEditLines(invoice({ state: 'open' }))).toBe(true)
+    expect(invoiceCanEditLines(invoice({ state: 'paid' }))).toBe(true)
+    expect(invoiceCanEditLines(invoice({ state: 'closed' }))).toBe(false)
   })
 })

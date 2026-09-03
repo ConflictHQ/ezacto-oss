@@ -1,6 +1,9 @@
 import {
   EzactoApiError,
   type Invoice,
+  type InvoiceLine,
+  type InvoiceLineInput,
+  type InvoiceLineUpdateInput,
   type InvoiceMessage,
   type InvoicePayment,
   type InvoicePaymentInput,
@@ -10,11 +13,15 @@ import {
 } from '@ezacto/client'
 import {
   interpolateInvoiceTemplate,
+  invoiceCanEditLines,
   invoiceCanMarkSent,
   invoiceCanRecordPayment,
   invoiceIdFromPathname,
   invoiceIdentityCanRead,
   invoiceIdentityCanWrite,
+  invoiceLineQuantityForForm,
+  invoiceLineUnitPriceForForm,
+  invoiceLineValues,
   invoiceMessageLabel,
   invoicePaymentAmountCents,
   invoicePaymentAmountForForm,
@@ -124,8 +131,10 @@ export const renderInvoiceDetail = (
   payments: readonly InvoicePayment[],
   actions?: {
     readonly canWrite: boolean
-    readonly onEdit: (payment: InvoicePayment) => void
-    readonly onDelete: (payment: InvoicePayment) => void
+    readonly onEditPayment: (payment: InvoicePayment) => void
+    readonly onDeletePayment: (payment: InvoicePayment) => void
+    readonly onEditLine: (line: InvoiceLine) => void
+    readonly onDeleteLine: (line: InvoiceLine) => void
   },
 ): void => {
   required<HTMLElement>('[data-invoice-detail-number]').textContent = invoice.number
@@ -153,7 +162,7 @@ export const renderInvoiceDetail = (
   if (invoice.line_items.length === 0) {
     const row = document.createElement('tr')
     const cell = document.createElement('td')
-    cell.colSpan = 4
+    cell.colSpan = 5
     cell.className = 'invoice-line-empty'
     cell.textContent = 'This invoice has no line items.'
     row.append(cell)
@@ -162,18 +171,50 @@ export const renderInvoiceDetail = (
     lines.replaceChildren(
       ...invoice.line_items.map((line) => {
         const row = document.createElement('tr')
+        row.dataset.invoiceLineId = String(line.id)
         const description = document.createElement('th')
         description.scope = 'row'
-        description.textContent = line.description?.trim() || line.kind
+        const kind = document.createElement('strong')
+        kind.textContent = line.kind
+        description.append(kind)
+        if (line.description?.trim()) {
+          const detail = document.createElement('span')
+          detail.textContent = line.description.trim()
+          description.append(detail)
+        }
+        const taxes = [line.taxed ? 'Tax 1' : null, line.taxed2 ? 'Tax 2' : null]
+          .filter((label): label is string => label !== null)
+          .join(' · ')
+        if (taxes !== '') {
+          const tax = document.createElement('small')
+          tax.textContent = taxes
+          description.append(tax)
+        }
         const quantity = document.createElement('td')
-        quantity.textContent = new Intl.NumberFormat('en-US', {
-          maximumFractionDigits: 4,
-        }).format(line.quantity)
+        quantity.dataset.label = 'Quantity'
+        quantity.textContent = invoiceLineQuantityForForm(line)
         const rate = document.createElement('td')
+        rate.dataset.label = 'Rate'
         rate.textContent = money(line.unit_price_cents, invoice.currency)
         const amount = document.createElement('td')
+        amount.dataset.label = 'Amount'
         amount.textContent = money(line.amount_cents, invoice.currency)
-        row.append(description, quantity, rate, amount)
+        const controls = document.createElement('td')
+        controls.className = 'invoice-line-actions'
+        if (actions?.canWrite === true && invoiceCanEditLines(invoice)) {
+          const edit = document.createElement('button')
+          edit.type = 'button'
+          edit.dataset.invoiceLineEdit = String(line.id)
+          edit.textContent = 'Edit'
+          edit.addEventListener('click', () => actions.onEditLine(line))
+          const remove = document.createElement('button')
+          remove.type = 'button'
+          remove.dataset.invoiceLineDelete = String(line.id)
+          remove.textContent = 'Delete'
+          remove.addEventListener('click', () => actions.onDeleteLine(line))
+          controls.append(edit, remove)
+        }
+        row.append(description, quantity, rate, amount, controls)
         return row
       }),
     )
@@ -234,7 +275,7 @@ export const renderInvoiceDetail = (
               edit.type = 'button'
               edit.dataset.invoicePaymentEdit = String(payment.id)
               edit.textContent = 'Edit'
-              edit.addEventListener('click', () => actions.onEdit(payment))
+              edit.addEventListener('click', () => actions.onEditPayment(payment))
               controls.append(edit)
             }
             if (invoicePaymentCanDelete(invoice, payment)) {
@@ -242,7 +283,7 @@ export const renderInvoiceDetail = (
               remove.type = 'button'
               remove.dataset.invoicePaymentDelete = String(payment.id)
               remove.textContent = 'Delete'
-              remove.addEventListener('click', () => actions.onDelete(payment))
+              remove.addEventListener('click', () => actions.onDeletePayment(payment))
               controls.append(remove)
             }
             if (controls.childElementCount > 0) item.append(controls)
@@ -386,6 +427,27 @@ export const createInvoicePaymentController = (
   const composerReminderDate = required<HTMLInputElement>('[data-invoice-composer-reminder-date]')
   const composerResult = required<HTMLElement>('[data-invoice-composer-result]')
   const composerSubmit = required<HTMLButtonElement>('[data-invoice-composer-submit]')
+  const addLine = required<HTMLButtonElement>('[data-invoice-line-add]')
+  const lineReadonlyNotice = required<HTMLElement>('[data-invoice-line-readonly]')
+  const lineWorkflowStatus = required<HTMLElement>('[data-invoice-line-status]')
+  const lineDialog = required<HTMLDialogElement>('[data-invoice-line-dialog]')
+  const lineForm = required<HTMLFormElement>('[data-invoice-line-form]')
+  const lineTitle = required<HTMLElement>('[data-invoice-line-dialog-title]')
+  const lineKind = required<HTMLInputElement>('[data-invoice-line-kind]')
+  const lineDescription = required<HTMLTextAreaElement>('[data-invoice-line-description]')
+  const lineQuantity = required<HTMLInputElement>('[data-invoice-line-quantity]')
+  const lineRate = required<HTMLInputElement>('[data-invoice-line-rate]')
+  const lineRateLabel = required<HTMLElement>('[data-invoice-line-rate-label]')
+  const lineTaxed = required<HTMLInputElement>('[data-invoice-line-taxed]')
+  const lineTaxed2 = required<HTMLInputElement>('[data-invoice-line-taxed2]')
+  const linePreview = required<HTMLElement>('[data-invoice-line-preview]')
+  const lineResult = required<HTMLElement>('[data-invoice-line-result]')
+  const lineSubmit = required<HTMLButtonElement>('[data-invoice-line-submit]')
+  const lineDeleteDialog = required<HTMLDialogElement>('[data-invoice-line-delete-dialog]')
+  const lineDeleteForm = required<HTMLFormElement>('[data-invoice-line-delete-form]')
+  const lineDeleteSummary = required<HTMLElement>('[data-invoice-line-delete-summary]')
+  const lineDeleteResult = required<HTMLElement>('[data-invoice-line-delete-result]')
+  const lineDeleteSubmit = required<HTMLButtonElement>('[data-invoice-line-delete-submit]')
 
   let activationGeneration = 0
   let requestGeneration = 0
@@ -394,11 +456,15 @@ export const createInvoicePaymentController = (
   let payments: readonly InvoicePayment[] = []
   let editingPayment: InvoicePayment | null = null
   let deletingPayment: InvoicePayment | null = null
+  let editingLine: InvoiceLine | null = null
+  let deletingLine: InvoiceLine | null = null
   let mutationPending = false
   let refreshRequired = false
   let paymentCommandId: string | null = null
   let deleteCommandId: string | null = null
   let invoiceCommandId: string | null = null
+  let lineCommandId: string | null = null
+  let lineDeleteCommandId: string | null = null
 
   const current = (): ActiveSession | null =>
     active !== null &&
@@ -409,6 +475,24 @@ export const createInvoicePaymentController = (
 
   const commandId = (kind: 'record' | 'update' | 'delete'): string =>
     `web.invoice.payment.${kind}:${globalThis.crypto.randomUUID()}`
+
+  const lineMutationCommandId = (kind: 'create' | 'update' | 'delete'): string =>
+    `web.invoice.line.${kind}:${globalThis.crypto.randomUUID()}`
+
+  const syncLinePreview = (): void => {
+    if (invoice === null) {
+      linePreview.textContent = '—'
+      return
+    }
+    try {
+      linePreview.textContent = money(
+        invoiceLineValues(lineQuantity.value, lineRate.value).amountCents,
+        invoice.currency,
+      )
+    } catch {
+      linePreview.textContent = '—'
+    }
+  }
 
   const syncPrecision = (): void => {
     const timestamp = precision.value === 'timestamp'
@@ -449,6 +533,12 @@ export const createInvoicePaymentController = (
     send.disabled = controlsLocked || !canSend
     send.textContent = invoice?.state === 'open' ? 'Record another sent message' : 'Mark sent'
     readonlyNotice.hidden = session === null || canWrite
+    const canEditLines = canWrite && invoice !== null && invoiceCanEditLines(invoice)
+    addLine.hidden = !canWrite
+    addLine.disabled = controlsLocked || !canEditLines
+    addLine.title =
+      canWrite && !canEditLines ? 'Line items cannot be changed on a closed invoice.' : ''
+    lineReadonlyNotice.hidden = session === null || canWrite
     for (const control of paymentForm.querySelectorAll<
       HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement
     >('input, select, textarea, button')) {
@@ -458,7 +548,7 @@ export const createInvoicePaymentController = (
     paymentSubmit.disabled = controlsLocked
     deleteSubmit.disabled = controlsLocked
     for (const control of article.querySelectorAll<HTMLButtonElement>(
-      '[data-invoice-payment-edit], [data-invoice-payment-delete]',
+      '[data-invoice-payment-edit], [data-invoice-payment-delete], [data-invoice-line-edit], [data-invoice-line-delete]',
     )) {
       control.disabled = controlsLocked
     }
@@ -467,6 +557,13 @@ export const createInvoicePaymentController = (
     >('input, textarea, button')) {
       control.disabled = controlsLocked
     }
+    for (const control of lineForm.querySelectorAll<
+      HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement
+    >('input, textarea, button')) {
+      control.disabled = controlsLocked
+    }
+    lineSubmit.disabled = controlsLocked
+    lineDeleteSubmit.disabled = controlsLocked
     syncReminder()
   }
 
@@ -474,6 +571,8 @@ export const createInvoicePaymentController = (
     if (paymentDialog.open) paymentDialog.close()
     if (deleteDialog.open) deleteDialog.close()
     if (composerDialog.open) composerDialog.close()
+    if (lineDialog.open) lineDialog.close()
+    if (lineDeleteDialog.open) lineDeleteDialog.close()
   }
 
   const clearPrivatePresentation = (): void => {
@@ -481,18 +580,28 @@ export const createInvoicePaymentController = (
     payments = []
     editingPayment = null
     deletingPayment = null
+    editingLine = null
+    deletingLine = null
     mutationPending = false
     refreshRequired = false
     paymentCommandId = null
     deleteCommandId = null
     invoiceCommandId = null
+    lineCommandId = null
+    lineDeleteCommandId = null
     closeDialogs()
     paymentForm.reset()
     deleteForm.reset()
     composerForm.reset()
+    lineForm.reset()
+    lineDeleteForm.reset()
     paymentResult.textContent = ''
     deleteResult.textContent = ''
     composerResult.textContent = ''
+    lineResult.textContent = ''
+    lineDeleteResult.textContent = ''
+    lineWorkflowStatus.textContent = ''
+    linePreview.textContent = '—'
     workflowStatus.textContent = ''
     status.textContent = 'Loading invoice…'
     retry.hidden = true
@@ -566,6 +675,8 @@ export const createInvoicePaymentController = (
       payments = loadedPayments
       const editedId = editingPayment?.id
       const deletedId = deletingPayment?.id
+      const editedLineId = editingLine?.id
+      const deletedLineId = deletingLine?.id
       editingPayment =
         editedId === undefined || editedId === null
           ? null
@@ -574,15 +685,26 @@ export const createInvoicePaymentController = (
         deletedId === undefined || deletedId === null
           ? null
           : (payments.find((payment) => payment.id === deletedId) ?? null)
+      editingLine =
+        editedLineId === undefined || editedLineId === null
+          ? null
+          : (loadedInvoice.line_items.find((line) => line.id === editedLineId) ?? null)
+      deletingLine =
+        deletedLineId === undefined || deletedLineId === null
+          ? null
+          : (loadedInvoice.line_items.find((line) => line.id === deletedLineId) ?? null)
       renderInvoiceDetail(loadedInvoice, messages, loadedPayments, {
         canWrite: invoiceIdentityCanWrite(session.identity),
-        onEdit: (payment) => openPaymentDialog(payment),
-        onDelete: (payment) => openDeleteDialog(payment),
+        onEditPayment: (payment) => openPaymentDialog(payment),
+        onDeletePayment: (payment) => openDeleteDialog(payment),
+        onEditLine: (line) => openLineDialog(line),
+        onDeleteLine: (line) => openLineDeleteDialog(line),
       })
       refreshRequired = false
       article.hidden = false
       status.textContent = ''
       workflowStatus.textContent = options.successMessage ?? ''
+      lineWorkflowStatus.textContent = ''
       syncControls()
       return true
     } catch (error) {
@@ -664,6 +786,58 @@ export const createInvoicePaymentController = (
     deleteSubmit.focus()
   }
 
+  const openLineDialog = (line: InvoiceLine | null): void => {
+    const session = current()
+    if (
+      session === null ||
+      invoice === null ||
+      mutationPending ||
+      refreshRequired ||
+      !invoiceIdentityCanWrite(session.identity) ||
+      !invoiceCanEditLines(invoice)
+    ) {
+      return
+    }
+    editingLine = line
+    lineCommandId = null
+    lineForm.reset()
+    lineTitle.textContent = line === null ? 'Add line item' : 'Edit line item'
+    lineSubmit.textContent = line === null ? 'Add line' : 'Save line'
+    lineKind.value = line?.kind ?? 'Service'
+    lineDescription.value = line?.description ?? ''
+    lineQuantity.value = line === null ? '1' : invoiceLineQuantityForForm(line)
+    lineRate.value = line === null ? '0.00' : invoiceLineUnitPriceForForm(line.unit_price_cents)
+    lineTaxed.checked = line?.taxed ?? false
+    lineTaxed2.checked = line?.taxed2 ?? false
+    lineRateLabel.textContent = `Rate (${invoice.currency})`
+    lineResult.textContent = ''
+    syncLinePreview()
+    syncControls()
+    lineDialog.showModal()
+    lineKind.focus()
+  }
+
+  const openLineDeleteDialog = (line: InvoiceLine): void => {
+    const session = current()
+    if (
+      session === null ||
+      invoice === null ||
+      mutationPending ||
+      refreshRequired ||
+      !invoiceIdentityCanWrite(session.identity) ||
+      !invoiceCanEditLines(invoice)
+    ) {
+      return
+    }
+    deletingLine = line
+    lineDeleteCommandId = null
+    lineDeleteResult.textContent = ''
+    lineDeleteSummary.textContent = `${line.description?.trim() || line.kind} (${money(line.amount_cents, invoice.currency)})`
+    syncControls()
+    lineDeleteDialog.showModal()
+    lineDeleteSubmit.focus()
+  }
+
   const openComposer = (): void => {
     const session = current()
     if (
@@ -715,13 +889,29 @@ export const createInvoicePaymentController = (
       paymentCommandId = null
       deleteCommandId = null
       invoiceCommandId = null
+      lineCommandId = null
+      lineDeleteCommandId = null
       const loaded = await loadDetail(session, { hideDocument: false })
       if (current() !== session) return
       result.textContent = loaded
-        ? 'The invoice or payment changed elsewhere. Latest values are loaded; review and try again.'
+        ? 'The invoice, line, or payment changed elsewhere. Latest values are loaded; review and try again.'
         : 'The invoice changed elsewhere and the latest values could not be loaded. Retry the invoice.'
       if (editingPayment === null && paymentDialog.open) paymentDialog.close()
       if (deletingPayment === null && deleteDialog.open) deleteDialog.close()
+      if (editingLine === null && lineDialog.open) lineDialog.close()
+      if (deletingLine === null && lineDeleteDialog.open) lineDeleteDialog.close()
+      if (
+        lineDialog.open &&
+        (invoice === null || !invoiceCanEditLines(invoice))
+      ) {
+        lineDialog.close()
+      }
+      if (
+        lineDeleteDialog.open &&
+        (invoice === null || !invoiceCanEditLines(invoice))
+      ) {
+        lineDeleteDialog.close()
+      }
       if (composerDialog.open && (invoice === null || !invoiceCanMarkSent(invoice))) {
         composerDialog.close()
       }
@@ -824,6 +1014,186 @@ export const createInvoicePaymentController = (
           mutationPending = false
           syncControls()
         }
+      })
+  })
+  addLine.addEventListener('click', () => openLineDialog(null))
+  lineForm.addEventListener('input', () => {
+    if (!mutationPending) lineCommandId = null
+    lineResult.textContent = ''
+    syncLinePreview()
+  })
+  lineForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const session = current()
+    const selectedInvoice = invoice
+    const selectedLine = editingLine
+    const createLine = api.createInvoiceLine
+    const updateLine = api.updateInvoiceLine
+    if (
+      session === null ||
+      selectedInvoice === null ||
+      mutationPending ||
+      refreshRequired ||
+      !invoiceIdentityCanWrite(session.identity) ||
+      !invoiceCanEditLines(selectedInvoice) ||
+      (selectedLine === null ? createLine === undefined : updateLine === undefined)
+    ) {
+      return
+    }
+    const kind = lineKind.value.trim()
+    const description = lineDescription.value.trim()
+    let values: ReturnType<typeof invoiceLineValues>
+    let position: number
+    try {
+      if (kind === '') throw new Error('Enter an item type.')
+      if (kind.length > 255) throw new Error('Item type cannot exceed 255 characters.')
+      if (description.length > 100_000) {
+        throw new Error('Description cannot exceed 100,000 characters.')
+      }
+      values = invoiceLineValues(lineQuantity.value, lineRate.value)
+      position =
+        selectedLine?.position ??
+        selectedInvoice.line_items.reduce(
+          (next, line) => Math.max(next, line.position + 1),
+          0,
+        )
+      if (!Number.isSafeInteger(position)) throw new Error('No more lines can be added.')
+    } catch (error) {
+      lineResult.textContent = apiMessage(error)
+      return
+    }
+    const common = {
+      expected_version: selectedInvoice.version,
+      position,
+      kind,
+      description: description === '' ? null : description,
+      quantity: values.quantity,
+      unit_price_cents: values.unitPriceCents,
+      taxed: lineTaxed.checked,
+      taxed2: lineTaxed2.checked,
+    }
+    const input: InvoiceLineInput | InvoiceLineUpdateInput =
+      selectedLine === null
+        ? common
+        : {
+            ...common,
+            expected_updated_at: selectedLine.updated_at,
+            project_id: selectedLine.project_id,
+          }
+    const kindOfMutation = selectedLine === null ? 'create' : 'update'
+    lineCommandId ??= lineMutationCommandId(kindOfMutation)
+    const activeCommand = lineCommandId
+    mutationPending = true
+    lineResult.textContent = selectedLine === null ? 'Adding line…' : 'Saving line…'
+    syncControls()
+    const request =
+      selectedLine === null
+        ? createLine!(
+            selectedInvoice.id,
+            activeCommand,
+            input as InvoiceLineInput,
+            session.signal,
+          )
+        : updateLine!(
+            selectedInvoice.id,
+            selectedLine.id,
+            activeCommand,
+            input as InvoiceLineUpdateInput,
+            session.signal,
+          )
+    void request
+      .then(async (updatedInvoice) => {
+        if (current() !== session) return
+        invoice = updatedInvoice
+        refreshRequired = true
+        lineCommandId = null
+        editingLine = null
+        lineResult.textContent = ''
+        lineDialog.close()
+        lineWorkflowStatus.textContent =
+          selectedLine === null
+            ? 'Line added. Refreshing invoice…'
+            : 'Line saved. Refreshing invoice…'
+        syncControls()
+        const loaded = await loadDetail(session, {
+          hideDocument: false,
+        })
+        if (loaded && current() === session) {
+          lineWorkflowStatus.textContent = selectedLine === null ? 'Line added.' : 'Line saved.'
+        }
+        if (!loaded && current() === session && refreshRequired) {
+          lineWorkflowStatus.textContent =
+            selectedLine === null
+              ? 'Line added, but the updated invoice could not be refreshed. Retry invoice; the line will not be submitted again.'
+              : 'Line saved, but the updated invoice could not be refreshed. Retry invoice; the change will not be submitted again.'
+        }
+      })
+      .catch((error: unknown) => handleMutationFailure(error, session, lineResult))
+      .finally(() => {
+        if (current() !== session) return
+        mutationPending = false
+        syncControls()
+      })
+  })
+  lineDeleteForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const session = current()
+    const selectedInvoice = invoice
+    const selectedLine = deletingLine
+    const deleteLine = api.deleteInvoiceLine
+    if (
+      session === null ||
+      selectedInvoice === null ||
+      selectedLine === null ||
+      mutationPending ||
+      refreshRequired ||
+      deleteLine === undefined ||
+      !invoiceIdentityCanWrite(session.identity) ||
+      !invoiceCanEditLines(selectedInvoice)
+    ) {
+      return
+    }
+    lineDeleteCommandId ??= lineMutationCommandId('delete')
+    const activeCommand = lineDeleteCommandId
+    mutationPending = true
+    lineDeleteResult.textContent = 'Deleting line…'
+    syncControls()
+    void deleteLine(
+      selectedInvoice.id,
+      selectedLine.id,
+      activeCommand,
+      {
+        expected_version: selectedInvoice.version,
+        expected_updated_at: selectedLine.updated_at,
+      },
+      session.signal,
+    )
+      .then(async (updatedInvoice) => {
+        if (current() !== session) return
+        invoice = updatedInvoice
+        refreshRequired = true
+        lineDeleteCommandId = null
+        deletingLine = null
+        lineDeleteResult.textContent = ''
+        lineDeleteDialog.close()
+        lineWorkflowStatus.textContent = 'Line deleted. Refreshing invoice…'
+        syncControls()
+        const loaded = await loadDetail(session, {
+          hideDocument: false,
+        })
+        if (loaded && current() === session) lineWorkflowStatus.textContent = 'Line deleted.'
+        if (!loaded && current() === session && refreshRequired) {
+          lineWorkflowStatus.textContent =
+            'Line deleted, but the updated invoice could not be refreshed. Retry invoice; the deletion will not be submitted again.'
+        }
+      })
+      .catch((error: unknown) =>
+        handleMutationFailure(error, session, lineDeleteResult),
+      )
+      .finally(() => {
+        if (current() !== session) return
+        mutationPending = false
+        syncControls()
       })
   })
   paymentForm.addEventListener('input', () => {
@@ -1007,6 +1377,18 @@ export const createInvoicePaymentController = (
     deletingPayment = null
     deleteCommandId = null
     deleteResult.textContent = ''
+  })
+  lineDialog.addEventListener('close', () => {
+    if (mutationPending) return
+    editingLine = null
+    lineCommandId = null
+    lineResult.textContent = ''
+  })
+  lineDeleteDialog.addEventListener('close', () => {
+    if (mutationPending) return
+    deletingLine = null
+    lineDeleteCommandId = null
+    lineDeleteResult.textContent = ''
   })
   record.addEventListener('click', () => openPaymentDialog(null))
   retry.addEventListener('click', () => {

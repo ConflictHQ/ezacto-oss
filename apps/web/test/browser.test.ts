@@ -1620,6 +1620,12 @@ describe('invoice browse browser behavior', () => {
     expect(document.querySelector('[data-invoice-payment-edit]')).toBeNull()
     expect(document.querySelector('[data-invoice-payment-delete]')).toBeNull()
     expect(document.querySelector<HTMLButtonElement>('[data-invoice-send]')?.hidden).toBe(true)
+    expect(document.querySelector<HTMLButtonElement>('[data-invoice-line-add]')?.hidden).toBe(true)
+    expect(document.querySelector('[data-invoice-line-edit]')).toBeNull()
+    expect(document.querySelector('[data-invoice-line-delete]')).toBeNull()
+    expect(document.querySelector('[data-invoice-line-readonly]')?.textContent).toContain(
+      'read-only',
+    )
     expect(recordInvoicePayment).not.toHaveBeenCalled()
   })
 

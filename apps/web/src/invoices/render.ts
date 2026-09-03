@@ -9,6 +9,16 @@ export const renderInvoicePaymentSection = (): string => `
         <ul data-invoice-detail-payments></ul>
       </section>`
 
+export const renderInvoiceLineEditor = (): string => `
+      <section class="invoice-line-editor" aria-labelledby="invoice-line-heading">
+        <header class="invoice-line-heading">
+          <div><h3 id="invoice-line-heading">Line items</h3><p>Free-form work, products, credits, and adjustments on this invoice.</p></div>
+          <button type="button" data-invoice-line-add data-auth-action disabled>Add line</button>
+        </header>
+        <p class="hint" data-invoice-line-readonly hidden>You have read-only invoice access. Line changes require the invoices:write scope.</p>
+        <p class="form-result" data-invoice-line-status role="status" aria-live="polite"></p>
+      </section>`
+
 export const renderInvoicePaymentDialogs = (): string => `
   <dialog class="invoice-payment-dialog" data-invoice-payment-dialog aria-labelledby="invoice-payment-dialog-title">
     <form data-invoice-payment-form novalidate>
@@ -37,6 +47,44 @@ export const renderInvoicePaymentDialogs = (): string => `
       <p>This removes <strong data-invoice-payment-delete-summary></strong> and recalculates the invoice balance and state.</p>
       <p class="form-result" data-invoice-payment-delete-result role="status" aria-live="polite"></p>
       <div class="invoice-payment-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button class="primary-action" type="submit" data-invoice-payment-delete-submit>Delete payment</button></div>
+    </form>
+  </dialog>`
+
+export const renderInvoiceLineDialogs = (): string => `
+  <dialog class="invoice-line-dialog" data-invoice-line-dialog aria-labelledby="invoice-line-dialog-title">
+    <form data-invoice-line-form novalidate>
+      <header><div><p class="eyebrow">Invoice line</p><h2 id="invoice-line-dialog-title" data-invoice-line-dialog-title>Add line item</h2></div><button type="button" data-dialog-close aria-label="Close invoice line dialog">×</button></header>
+      <label for="ez-invoice-line-kind">Item type
+        <input id="ez-invoice-line-kind" name="kind" data-invoice-line-kind maxlength="255" autocomplete="off" required>
+      </label>
+      <label for="ez-invoice-line-description">Description
+        <textarea id="ez-invoice-line-description" name="description" data-invoice-line-description rows="4" maxlength="100000"></textarea>
+      </label>
+      <div class="invoice-line-number-fields">
+        <label for="ez-invoice-line-quantity">Quantity
+          <input id="ez-invoice-line-quantity" name="quantity" data-invoice-line-quantity inputmode="decimal" autocomplete="off" maxlength="1000" required>
+        </label>
+        <label for="ez-invoice-line-rate"><span data-invoice-line-rate-label>Rate</span>
+          <input id="ez-invoice-line-rate" name="rate" data-invoice-line-rate inputmode="decimal" autocomplete="off" required>
+        </label>
+      </div>
+      <fieldset class="invoice-line-tax-fields">
+        <legend>Taxes</legend>
+        <label><input name="taxed" data-invoice-line-taxed type="checkbox"> Apply tax 1</label>
+        <label><input name="taxed2" data-invoice-line-taxed2 type="checkbox"> Apply tax 2</label>
+      </fieldset>
+      <p class="invoice-line-preview">Line amount <strong data-invoice-line-preview>—</strong></p>
+      <p class="hint">The amount is calculated in exact cents and the invoice total, balance, and payment state are reconciled together.</p>
+      <p class="form-result" data-invoice-line-result role="status" aria-live="polite"></p>
+      <div class="invoice-payment-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button class="primary-action" type="submit" data-invoice-line-submit>Add line</button></div>
+    </form>
+  </dialog>
+  <dialog class="invoice-line-dialog" data-invoice-line-delete-dialog aria-labelledby="invoice-line-delete-title">
+    <form data-invoice-line-delete-form>
+      <header><div><p class="eyebrow">Invoice line</p><h2 id="invoice-line-delete-title">Delete line item?</h2></div><button type="button" data-dialog-close aria-label="Close delete line dialog">×</button></header>
+      <p>This removes <strong data-invoice-line-delete-summary></strong> and recalculates the invoice total, balance, and payment state.</p>
+      <p class="form-result" data-invoice-line-delete-result role="status" aria-live="polite"></p>
+      <div class="invoice-payment-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button class="primary-action" type="submit" data-invoice-line-delete-submit>Delete line</button></div>
     </form>
   </dialog>`
 
