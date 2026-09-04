@@ -1506,6 +1506,8 @@ export type ClientRollupNode = {
   "name": string;
   "parent_client_id": number | null;
   "depth": number;
+  "node_budget_cents"?: number | null;
+  "budget_burn_cents"?: number;
   "direct": ClientRollupMetrics;
   "rollup": ClientRollupMetrics;
 };
@@ -1547,6 +1549,17 @@ export type ProjectBudgetReport = {
 
 export type ProjectBudgetReportEnvelope = {
   "data": ProjectBudgetReport;
+  "links": Links;
+};
+
+export type ClientHierarchyNode = {
+  "ancestor_id": number;
+  "descendant_id": number;
+  "depth": number;
+};
+
+export type ClientHierarchyListEnvelope = {
+  "data": Array<ClientHierarchyNode>;
   "links": Links;
 };
 
@@ -3195,6 +3208,24 @@ export class EzactoClient {
 
     return this.request<ProjectBudgetReportEnvelope>("GET", "/api/v1/reports/project-budget/:projectId".replace(":projectId", encodeURIComponent(String(args["projectId"]))), {
       query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listClientAncestors(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<ClientHierarchyListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ClientHierarchyListEnvelope>("GET", "/api/v1/clients/:id/ancestors".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listClientDescendants(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<ClientHierarchyListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ClientHierarchyListEnvelope>("GET", "/api/v1/clients/:id/descendants".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });
