@@ -120,6 +120,13 @@ export const readContainerConfig = (
     4_096,
   )
   const bootstrapToken = optional(environment, 'EZACTO_BOOTSTRAP_TOKEN', 512)
+  const brandName = optional(environment, 'BRAND_NAME', 200)
+  const brandTagline = optional(environment, 'BRAND_TAGLINE', 500)
+  const brandDescription = optional(environment, 'BRAND_DESCRIPTION', 1_000)
+  const brandFavicon = optional(environment, 'BRAND_FAVICON', 2_048)
+  const brandWordmarkLight = optional(environment, 'BRAND_WORDMARK_LIGHT', 2_048)
+  const brandWordmarkDark = optional(environment, 'BRAND_WORDMARK_DARK', 2_048)
+  const brandEmailSenderName = optional(environment, 'BRAND_EMAIL_SENDER_NAME', 200)
   const appEnv: AppEnv = {
     ENVIRONMENT: optional(environment, 'ENVIRONMENT', 64) ?? 'container',
     RELEASE: optional(environment, 'RELEASE', 128) ?? 'container',
@@ -133,6 +140,13 @@ export const readContainerConfig = (
     ...(bootstrapToken === undefined
       ? {}
       : { EZACTO_BOOTSTRAP_TOKEN: bootstrapToken }),
+    ...(brandName === undefined ? {} : { BRAND_NAME: brandName }),
+    ...(brandTagline === undefined ? {} : { BRAND_TAGLINE: brandTagline }),
+    ...(brandDescription === undefined ? {} : { BRAND_DESCRIPTION: brandDescription }),
+    ...(brandFavicon === undefined ? {} : { BRAND_FAVICON: brandFavicon }),
+    ...(brandWordmarkLight === undefined ? {} : { BRAND_WORDMARK_LIGHT: brandWordmarkLight }),
+    ...(brandWordmarkDark === undefined ? {} : { BRAND_WORDMARK_DARK: brandWordmarkDark }),
+    ...(brandEmailSenderName === undefined ? {} : { BRAND_EMAIL_SENDER_NAME: brandEmailSenderName }),
   }
   return {
     host: optional(environment, 'HOST', 255) ?? '0.0.0.0',
