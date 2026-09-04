@@ -429,7 +429,7 @@ export const exportTimeEntries = async (
 
   const header = csvRow([
     'id', 'user_id', 'project_id', 'task_id', 'spent_date',
-    'seconds', 'billable', 'is_billed', 'notes',
+    'seconds', 'billable', 'billed', 'notes',
   ])
   const rows = entries.map((entry) =>
     csvRow([
@@ -440,7 +440,7 @@ export const exportTimeEntries = async (
       entry.spent_date,
       String(entry.seconds),
       String(entry.billable),
-      String(entry.is_billed),
+      String(entry.invoice_id != null),
       entry.notes ?? '',
     ]),
   )
@@ -473,7 +473,7 @@ export const exportExpenses = async (
 
   const header = csvRow([
     'id', 'user_id', 'project_id', 'expense_category_id', 'spent_date',
-    'total_cost_cents', 'billable', 'is_billed', 'notes',
+    'total_cost_cents', 'billable', 'billed', 'notes',
   ])
   const rows = expenses.map((expense) =>
     csvRow([
@@ -484,7 +484,7 @@ export const exportExpenses = async (
       expense.spent_date,
       String(expense.total_cost_cents),
       String(expense.billable),
-      String(expense.is_billed),
+      String(expense.invoice_id != null),
       expense.notes ?? '',
     ]),
   )

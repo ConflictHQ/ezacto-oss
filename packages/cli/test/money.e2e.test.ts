@@ -90,12 +90,12 @@ describe('ez money commands against the native API', () => {
       ) VALUES (1, 1, 1, 1, '${now}', '${now}');
       INSERT INTO time_entries (
         id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
-        spent_date, seconds, rounded_seconds, billable, is_billed,
-        approval_status, minimum_note_length, created_at, updated_at
+        spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+        approval_status, created_at, updated_at
       ) VALUES (
         1, 1, 1, 1, 1, 1,
-        '${spentDate}', 7200, 7200, 1, 0,
-        'approved', 0, '${now}', '${now}'
+        '${spentDate}', 7200, 0, 7200, 1,
+        'approved', '${now}', '${now}'
       );
     `)
     const database = createContainerDatabase(sqlite)
