@@ -78,6 +78,61 @@ const store = (): EmailLogStore => {
 const job: QueuedEmailJob = { schemaVersion: 1, deliveryId: 7, message }
 
 describe('queued mailer', () => {
+  it('[unit] reuses a persisted delivery id and fences stale sender versions before queue I/O', async () => {
+    const log = store()
+    const queue = { send: vi.fn(async () => undefined) }
+    const identity: ResolvedSenderIdentity = {
+      id: 44,
+      version: 3,
+      email: 'billing@example.test',
+      displayName: 'Billing',
+      replyToEmail: 'reply@example.test',
+      provider: 'ses',
+      providerIdentity: 'example.test',
+      isDefault: true,
+      archivedAt: null,
+      evidence: {
+        version: 5,
+        source: 'provider_api',
+        identityKind: 'domain',
+        verificationStatus: 'verified',
+        dkimStatus: 'verified',
+        mailFromDomain: null,
+        mailFromStatus: 'not_configured',
+        observedAt: '2026-09-02T12:00:00.000Z',
+      },
+    }
+    const mailer = createSenderBoundQueuedMailer(
+      { resolveSenderIdentity: vi.fn(async () => identity) },
+      createQueuedMailer(log, queue),
+      'ses',
+    )
+    const binding = {
+      senderIdentityId: 44,
+      senderIdentityVersion: 3,
+      senderEvidenceVersion: 5,
+      from: { email: 'billing@example.test', name: 'Billing' },
+      replyTo: [{ email: 'reply@example.test' }],
+    }
+    const persisted = {
+      to: [{ email: 'client@example.test' }],
+      template: 'invoice:1',
+      subject: 'Invoice INV-1',
+      text: 'Invoice total $12.34',
+      related: { type: 'invoice_message', id: 100 },
+    }
+    await mailer.enqueuePersisted!(700, binding, persisted)
+    await mailer.enqueuePersisted!(700, binding, persisted)
+    expect(log.createQueued).not.toHaveBeenCalled()
+    expect(queue.send).toHaveBeenNthCalledWith(1, expect.objectContaining({ deliveryId: 700 }))
+    expect(queue.send).toHaveBeenNthCalledWith(2, expect.objectContaining({ deliveryId: 700 }))
+
+    await expect(
+      mailer.enqueuePersisted!(700, { ...binding, senderIdentityVersion: 2 }, persisted),
+    ).rejects.toMatchObject({ code: 'sender_identity_binding_mismatch' })
+    expect(queue.send).toHaveBeenCalledTimes(2)
+  })
+
   it('[security] blocks unverified senders before the durable log or queue is touched', async () => {
     const log = store()
     const queue = { send: vi.fn(async () => undefined) }

@@ -100,6 +100,35 @@ export interface InvoiceResource {
   line_items: InvoiceLineResource[]
 }
 
+export interface InvoiceDeliveryContext {
+  invoiceId: number
+  number: string
+  subject: string | null
+  currency: string
+  amountCents: number
+  issueDate: string
+  dueDate: string
+  organizationName: string
+  clientName: string
+}
+
+export interface InvoiceDeliveryJob {
+  deliveryId: number
+  senderIdentityId: number
+  senderIdentityVersion: number
+  senderEvidenceVersion: number
+  fromName: string
+  fromEmail: string
+  replyToEmail: string | null
+  recipientName: string
+  recipientEmail: string
+  templateVersion: number
+  subject: string
+  textBody: string
+  htmlBody: string | null
+  invoiceMessageId: number
+}
+
 export interface EstimateLineResource {
   id: number
   estimate_id: number
@@ -785,6 +814,44 @@ export class MoneyResourceRepository {
   async getInvoice(id: number): Promise<InvoiceResource | null> {
     assertPositiveId(id, 'invoice id')
     return readConsistentInvoice(this.database, id)
+  }
+
+  async getInvoiceDeliveryContext(id: number): Promise<InvoiceDeliveryContext | null> {
+    assertPositiveId(id, 'invoice id')
+    return first(this.database, {
+      text: `SELECT invoice.id AS "invoiceId", invoice.number, invoice.subject,
+          invoice.currency, invoice.amount_cents AS "amountCents",
+          invoice.issue_date AS "issueDate", invoice.due_date AS "dueDate",
+          organization.name AS "organizationName", client.name AS "clientName"
+        FROM invoices invoice
+        JOIN clients client ON client.id = invoice.client_id
+        JOIN organizations organization ON organization.id = 1
+        WHERE invoice.id = ?`,
+      params: [id],
+    })
+  }
+
+  async listInvoiceDeliveryJobs(eventId: string): Promise<InvoiceDeliveryJob[]> {
+    if (typeof eventId !== 'string' || eventId.length < 1 || eventId.length > 255) {
+      throw new RangeError('event id must be a bounded string')
+    }
+    return all(this.database, {
+      text: `SELECT recipient.delivery_id AS "deliveryId",
+          intent.sender_identity_id AS "senderIdentityId",
+          intent.sender_identity_version AS "senderIdentityVersion",
+          intent.sender_evidence_version AS "senderEvidenceVersion",
+          intent.from_name AS "fromName", intent.from_email AS "fromEmail",
+          intent.reply_to_email AS "replyToEmail",
+          recipient.name AS "recipientName", recipient.email AS "recipientEmail",
+          intent.template_version AS "templateVersion", intent.subject,
+          intent.text_body AS "textBody", intent.html_body AS "htmlBody",
+          intent.invoice_message_id AS "invoiceMessageId"
+        FROM invoice_email_intents intent
+        JOIN invoice_email_recipients recipient
+          ON recipient.invoice_message_id = intent.invoice_message_id
+        WHERE intent.event_id = ? ORDER BY recipient.recipient_index`,
+      params: [eventId],
+    })
   }
 
   async listEstimates(window: MoneyWindow): Promise<EstimateResource[]> {
