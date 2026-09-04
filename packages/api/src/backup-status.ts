@@ -1,6 +1,7 @@
 import type { Hono } from 'hono'
-import { requireApiScope } from './auth.js'
+import { requireSessionPrincipal } from './auth.js'
 import type { ApiContext } from './context.js'
+import { ApiError } from './errors.js'
 
 export interface BackupStatusRecord {
   id: number
@@ -16,6 +17,19 @@ export interface BackupStatusRecord {
 
 export interface BackupStatusReader {
   latestRuns(limit: number): Promise<BackupStatusRecord[]>
+}
+
+const requireAdministratorSession = <Bindings extends object>(
+  context: Parameters<typeof requireSessionPrincipal<Bindings>>[0],
+): void => {
+  const principal = requireSessionPrincipal(context)
+  if (principal.profile !== 'administrator') {
+    throw new ApiError({
+      status: 403,
+      code: 'profile_forbidden',
+      message: 'Only administrators can view backup status.',
+    })
+  }
 }
 
 const serializeRun = (run: BackupStatusRecord) => ({
@@ -35,7 +49,7 @@ export const installBackupStatusRoutes = <Bindings extends object>(
   reader: BackupStatusReader,
 ): void => {
   api.get('/backup/status', async (context) => {
-    requireApiScope(context, 'settings:read')
+    requireAdministratorSession(context)
     const runs = await reader.latestRuns(20)
     const lastCompleted = runs.find((r) => r.status === 'completed') ?? null
     const lastFailed = runs.find((r) => r.status === 'failed') ?? null
