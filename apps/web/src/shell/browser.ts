@@ -721,6 +721,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     document.documentElement.dataset.appView === 'expense-categories'
   const timesheetApprovalsPage =
     document.documentElement.dataset.appView === 'timesheet-approvals'
+  const brandName = document.documentElement.dataset.brand ?? 'ezacto'
   const signedOutDocumentTitle = document.title
   const authenticatedDocumentTitle = signedOutDocumentTitle.replace(
     / — Sign in$/u,
@@ -1632,7 +1633,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     setSessionStatus('Loading your week…', 'loading')
     try {
       if (!(await refresh(operation))) return
-      setSessionStatus('Connected. Changes save directly to ezacto.', 'ready')
+      setSessionStatus(`Connected. Changes save directly to ${brandName}.`, 'ready')
     } catch (error) {
       if (handleSessionFailure(error, operation)) return
       renderWeekLoadFailure()
@@ -2812,7 +2813,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     void refresh(operation)
       .then((loaded) => {
         if (!loaded || !isSessionCurrent(operation)) return
-        setSessionStatus('Connected. Changes save directly to ezacto.', 'ready')
+        setSessionStatus(`Connected. Changes save directly to ${brandName}.`, 'ready')
       })
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return
