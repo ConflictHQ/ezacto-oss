@@ -41,6 +41,7 @@ import {
   timerStatus,
   type TimeCommandResult,
 } from './time.js'
+import { createBackup, restoreBackup, verifyBackup } from './backup.js'
 
 const USAGE = `ez <command> [options]
 
@@ -55,7 +56,9 @@ Commands:
   uninvoiced   Show uninvoiced amounts for a date range
   invoice      Generate, send, or list invoices
   report       Run a report definition (uninvoiced, client-rollup, project-budget)
-  export       Export time entries or expenses as CSV
+  export       Export time entries or expenses as CSV (or --verify a backup bundle)
+  backup       Create a full backup bundle from a local database
+  restore      Restore a backup bundle into a fresh database
 
 Options:
   --org <name>              Organization config name (default: active or "default")
@@ -73,6 +76,10 @@ Options:
   --csv                     Emit CSV instead of human-readable output
   --time-summary <type>     Time summary type for invoice generate
   --expense-summary <type>  Expense summary type for invoice generate
+  --database <path>         SQLite database path (or set EZACTO_DATA_DIR)
+  --output <path>           Output directory for ez backup (default: current directory)
+  --attachments <path>      Attachment directory for backup/restore
+  --verify                  Verify checksums for ez export --verify
   --json                    Emit machine-readable JSON
   --help                    Show this help
 `
@@ -330,6 +337,10 @@ export const runCli = async (
       csv: { type: 'boolean', default: false },
       'time-summary': { type: 'string' },
       'expense-summary': { type: 'string' },
+      database: { type: 'string' },
+      output: { type: 'string' },
+      attachments: { type: 'string' },
+      verify: { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
     },
@@ -612,6 +623,112 @@ export const runCli = async (
   }
   if (moneyOptions) {
     throw new Error('--from/--to/--client/--project/--csv/--time-summary/--expense-summary are valid only with money commands')
+  }
+
+  const resolveDatabase = (): string => {
+    if (values.database !== undefined) return values.database
+    const dataDir = runtime.environment.EZACTO_DATA_DIR
+    if (dataDir !== undefined) return `${dataDir}/db.sqlite`
+    throw new Error('provide --database or set EZACTO_DATA_DIR')
+  }
+
+  const resolveAttachments = (): string | undefined => {
+    if (values.attachments !== undefined) return values.attachments
+    const dataDir = runtime.environment.EZACTO_DATA_DIR
+    if (dataDir !== undefined) return `${dataDir}/attachments`
+    return undefined
+  }
+
+  if (command === 'backup') {
+    if (commandArguments.length !== 0) throw new Error('ez backup accepts no positional arguments')
+    if (values.verify) throw new Error('--verify is valid only with ez export')
+    const databasePath = resolveDatabase()
+    const attachmentDirectory = resolveAttachments()
+    const outputDirectory = values.output ?? process.cwd()
+    const result = await createBackup({
+      databasePath,
+      attachmentDirectory,
+      outputDirectory,
+    })
+    const tableCount = result.manifest.tables.length
+    const totalRows = result.manifest.tables.reduce((sum, table) => sum + table.row_count, 0)
+    const attachmentCount = result.manifest.attachments.length
+    runtime.stdout(
+      values.json
+        ? json({
+            bundle: result.bundleDirectory,
+            manifest: result.manifestPath,
+            tables: tableCount,
+            rows: totalRows,
+            attachments: attachmentCount,
+            database_sha256: result.manifest.database_sha256,
+          })
+        : [
+            `backup created: ${result.bundleDirectory}`,
+            `tables: ${tableCount}, rows: ${totalRows}, attachments: ${attachmentCount}`,
+            `database sha256: ${result.manifest.database_sha256}`,
+          ].join('\n'),
+    )
+    return 0
+  }
+
+  if (command === 'restore') {
+    if (commandArguments.length !== 1) {
+      throw new Error('usage: ez restore <bundle-path> --database <target.sqlite>')
+    }
+    if (values.verify) throw new Error('--verify is valid only with ez export')
+    const bundleDirectory = commandArguments[0]!
+    const targetDatabasePath = resolveDatabase()
+    const targetAttachmentDirectory = resolveAttachments()
+    const result = await restoreBackup({
+      bundleDirectory,
+      targetDatabasePath,
+      targetAttachmentDirectory,
+    })
+    runtime.stdout(
+      values.json
+        ? json({
+            restored: true,
+            tables: result.tablesRestored,
+            rows: result.totalRows,
+            attachments: result.attachmentsRestored,
+          })
+        : [
+            `restore complete: ${targetDatabasePath}`,
+            `tables: ${result.tablesRestored}, rows: ${result.totalRows}, attachments: ${result.attachmentsRestored}`,
+          ].join('\n'),
+    )
+    return 0
+  }
+
+  if (command === 'export') {
+    if (values.verify) {
+      if (commandArguments.length !== 1) {
+        throw new Error('usage: ez export --verify <bundle-path>')
+      }
+      const bundleDirectory = commandArguments[0]!
+      const result = await verifyBackup(bundleDirectory)
+      if (values.json) {
+        runtime.stdout(json(result))
+      } else {
+        const tableOk = result.tableChecksums.filter((table) => table.valid).length
+        const tableTotal = result.tableChecksums.length
+        const attachmentOk = result.attachmentChecksums.filter((a) => a.valid).length
+        const attachmentTotal = result.attachmentChecksums.length
+        const lines = [
+          `verification: ${result.valid ? 'PASSED' : 'FAILED'}`,
+          `database checksum: ${result.databaseChecksumValid ? 'ok' : 'MISMATCH'}`,
+          `table checksums: ${tableOk}/${tableTotal} ok`,
+          `attachment checksums: ${attachmentOk}/${attachmentTotal} ok`,
+        ]
+        if (result.errors.length > 0) {
+          lines.push('', 'errors:')
+          for (const error of result.errors) lines.push(`  - ${error}`)
+        }
+        runtime.stdout(lines.join('\n'))
+      }
+      return result.valid ? 0 : 1
+    }
   }
   if (commandArguments.length !== 0) throw new Error(`${command} accepts no positional arguments`)
   if (command === 'whoami') return whoami(options, runtime)
