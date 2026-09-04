@@ -409,7 +409,7 @@ export const createClientDirectoryController = (
 
   const renderDetail = (): void => {
     if (currentClient === null) return
-    document.title = `ezacto — ${clientDisplayName(currentClient)}`
+    document.title = `${document.documentElement.dataset.brand ?? 'ezacto'} — ${clientDisplayName(currentClient)}`
     setText('[data-client-detail-name]', clientDisplayName(currentClient))
     setText('[data-client-detail-active]', clientIsActive(currentClient) ? 'Active' : 'Archived')
     setText('[data-client-detail-currency]', clientText(currentClient, 'currency') ?? '—')
