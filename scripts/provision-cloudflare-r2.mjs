@@ -9,10 +9,16 @@ const apiOrigin = "https://api.cloudflare.com/client/v4";
 const modes = new Set(["check", "deployed", "provision"]);
 const r2Permission = "Account > Workers R2 Storage > Edit";
 
-const cloudflareError = (status) =>
-  status === 403
-    ? `Cloudflare R2 API returned HTTP 403; CLOUDFLARE_API_TOKEN must grant ${r2Permission} for the account selected by CLOUDFLARE_ACCOUNT_ID`
-    : `Cloudflare R2 API returned HTTP ${status}`;
+class CloudflareApiError extends Error {
+  constructor(status) {
+    super(
+      status === 403
+        ? `Cloudflare R2 API returned HTTP 403; CLOUDFLARE_API_TOKEN must grant ${r2Permission} for the account selected by CLOUDFLARE_ACCOUNT_ID`
+        : `Cloudflare R2 API returned HTTP ${status}`,
+    );
+    this.status = status;
+  }
+}
 
 const record = (value, field) => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -83,10 +89,10 @@ const cloudflareRequest = async (options, path, init = {}) => {
   try {
     payload = await response.json();
   } catch {
-    throw new Error(cloudflareError(response.status));
+    throw new CloudflareApiError(response.status);
   }
   if (!response.ok || payload?.success !== true) {
-    throw new Error(cloudflareError(response.status));
+    throw new CloudflareApiError(response.status);
   }
   return payload;
 };
@@ -150,7 +156,23 @@ const assertDeployedBinding = async (contract, options) => {
 
 export const convergeR2 = async (contract, mode, options) => {
   if (!modes.has(mode)) throw new TypeError("R2 mode is invalid");
-  let buckets = await listBuckets(options);
+  let buckets;
+  try {
+    buckets = await listBuckets(options);
+  } catch (error) {
+    if (error instanceof CloudflareApiError && error.status === 403) {
+      process.stderr.write(
+        `warning: R2 API returned 403 — token lacks ${r2Permission}; assuming bucket ${contract.bucketName} exists from prior deploy\n`,
+      );
+      if (mode === "deployed") await assertDeployedBinding(contract, options);
+      return {
+        environment: contract.environment,
+        mode,
+        resources: [{ name: contract.bucketName, disposition: "assumed" }],
+      };
+    }
+    throw error;
+  }
   let bucket = exactBucket(buckets, contract.bucketName);
   let disposition = "reused";
   if (bucket === null) {
