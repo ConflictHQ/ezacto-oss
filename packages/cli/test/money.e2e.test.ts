@@ -153,6 +153,7 @@ describe('ez money commands against the native API', () => {
           repository: general,
           cursorSigningKey: new Uint8Array(32).fill(7),
           clock: () => instant,
+          isExpensesModuleEnabled: async () => true,
         })
         installTrackedResourceRoutes(api, {
           repository: tracked,
@@ -164,6 +165,7 @@ describe('ez money commands against the native API', () => {
               time: instant.slice(11, 16),
             }),
           },
+          isExpensesModuleEnabled: async () => true,
         })
         installReportRoutes(api, reports)
       },
