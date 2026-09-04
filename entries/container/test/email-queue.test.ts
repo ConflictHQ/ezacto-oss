@@ -52,7 +52,15 @@ describe('container in-process email queue', () => {
         return record(attempts, 'failed')
       },
       markQueueFailed: async () => record(attempts, 'failed'),
+      markBounced: async () => record(attempts, 'bounced'),
+      markComplained: async () => record(attempts, 'complained'),
+      getByProviderMessageId: async () => null,
+      countByStatus: async () => ({ queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0 }),
       list: async () => [],
+      markBounced: async (id: number) => record(id, 'bounced'),
+      markComplained: async (id: number) => record(id, 'complained'),
+      getByProviderMessageId: async () => null,
+      countByStatus: async () => ({ queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0 }),
     }
     const provider: HttpEmailProvider = {
       name: 'smtp',
@@ -117,7 +125,15 @@ describe('container in-process email queue', () => {
         return record(attempts, 'failed')
       },
       markQueueFailed: async () => record(attempts, 'failed'),
+      markBounced: async () => record(attempts, 'bounced'),
+      markComplained: async () => record(attempts, 'complained'),
+      getByProviderMessageId: async () => null,
+      countByStatus: async () => ({ queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0 }),
       list: async () => [],
+      markBounced: async (id: number) => record(id, 'bounced'),
+      markComplained: async (id: number) => record(id, 'complained'),
+      getByProviderMessageId: async () => null,
+      countByStatus: async () => ({ queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0 }),
     }
     const provider: HttpEmailProvider = {
       name: 'smtp',
@@ -168,6 +184,10 @@ describe('container in-process email queue', () => {
       markSent: async () => record(1, 'queued'),
       markProviderFailed: async () => record(1, 'failed'),
       markQueueFailed: async () => record(1, 'failed'),
+      markBounced: async () => record(1, 'bounced'),
+      markComplained: async () => record(1, 'complained'),
+      getByProviderMessageId: async () => null,
+      countByStatus: async () => ({ queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0 }),
       list: async () => [],
     }
     const provider: HttpEmailProvider = {
