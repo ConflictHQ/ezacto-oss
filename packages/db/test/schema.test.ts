@@ -872,13 +872,10 @@ for (const [runtime, factory] of factories) {
         { id: '0024_migration_worksheet_completions' },
         { id: '0025_time_entry_note_requirements' },
         { id: '0026_invoice_generation' },
-<<<<<<< HEAD
-=======
         { id: '0027_timesheet_approvals' },
         { id: '0028_timesheet_lock_policy' },
         { id: '0029_outbox_delivery' },
         { id: '0030_email_templates' },
->>>>>>> origin/main
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -926,13 +923,10 @@ for (const [runtime, factory] of factories) {
         { id: '0024_migration_worksheet_completions' },
         { id: '0025_time_entry_note_requirements' },
         { id: '0026_invoice_generation' },
-<<<<<<< HEAD
-=======
         { id: '0027_timesheet_approvals' },
         { id: '0028_timesheet_lock_policy' },
         { id: '0029_outbox_delivery' },
         { id: '0030_email_templates' },
->>>>>>> origin/main
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -998,13 +992,10 @@ for (const [runtime, factory] of factories) {
         { id: '0024_migration_worksheet_completions' },
         { id: '0025_time_entry_note_requirements' },
         { id: '0026_invoice_generation' },
-<<<<<<< HEAD
-=======
         { id: '0027_timesheet_approvals' },
         { id: '0028_timesheet_lock_policy' },
         { id: '0029_outbox_delivery' },
         { id: '0030_email_templates' },
->>>>>>> origin/main
       ])
       expect(
         await db.rows<{ name: string }>(
@@ -1046,13 +1037,10 @@ for (const [runtime, factory] of factories) {
         { id: '0024_migration_worksheet_completions' },
         { id: '0025_time_entry_note_requirements' },
         { id: '0026_invoice_generation' },
-<<<<<<< HEAD
-=======
         { id: '0027_timesheet_approvals' },
         { id: '0028_timesheet_lock_policy' },
         { id: '0029_outbox_delivery' },
         { id: '0030_email_templates' },
->>>>>>> origin/main
       ])
     })
   })
@@ -1168,8 +1156,6 @@ describe('package contents', () => {
         'dist/migrations/0025_time_entry_note_requirements.d.ts',
         'dist/migrations/0026_invoice_generation.js',
         'dist/migrations/0026_invoice_generation.d.ts',
-<<<<<<< HEAD
-=======
         'dist/migrations/0027_timesheet_approvals.js',
         'dist/migrations/0027_timesheet_approvals.d.ts',
         'dist/migrations/0028_timesheet_lock_policy.js',
@@ -1186,7 +1172,6 @@ describe('package contents', () => {
         'dist/timesheet-approvals.d.ts',
         'dist/timesheet-lock-policy.js',
         'dist/timesheet-lock-policy.d.ts',
->>>>>>> origin/main
         'dist/invoice-generation.js',
         'dist/invoice-generation.d.ts',
         'dist/attachments.js',
