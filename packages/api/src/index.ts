@@ -151,6 +151,17 @@ export {
   type UpdateTimesheetLockPolicySettings,
 } from './timesheet-lock-policy.js'
 export {
+  assertValidGitHubProviderConfig,
+  GITHUB_PROVIDER_KEY,
+  installGitHubRoutes,
+  type GitHubIdentityResolver,
+  type GitHubProviderConfig,
+  type GitHubRouteOptions,
+  type GitHubSessionIssuer,
+  type GitHubTransaction,
+  type GitHubTransactionStorePort,
+} from './github.js'
+export {
   assertValidOidcProviderConfig,
   installOidcRoutes,
   OIDC_STATE_COOKIE_NAME,
