@@ -235,7 +235,7 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
     'browser-cookie-e2e',
   )
 
-  const email = page.getByLabel('Email')
+  const email = page.locator('[data-sign-in-form]').getByLabel('Email')
   const password = page.getByLabel('Password')
   const signIn = page.getByRole('button', { name: 'Sign in', exact: true })
   const authGateway = page.locator('[data-auth-gateway]')
@@ -494,7 +494,7 @@ test('[e2e:track-week] persists start/end editor changes through the real worker
     await page.setViewportSize({ width: 1280, height: 800 })
     await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
     await page.goto('/?week=2026-08-29')
-    await page.getByLabel('Email').fill(fixtureEmail)
+    await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
     await page.getByLabel('Password').fill(fixturePassword)
     await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
@@ -619,7 +619,7 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
     localDate: '2026-08-30',
     timeZone: 'America/Costa_Rica',
   })
-  const email = page.getByLabel('Email')
+  const email = page.locator('[data-sign-in-form]').getByLabel('Email')
   const password = page.getByLabel('Password')
   const signIn = page.getByRole('button', { name: 'Sign in', exact: true })
   const authGateway = page.locator('[data-auth-gateway]')
@@ -897,7 +897,7 @@ test('[e2e:client-directory] persists hierarchy, bill-to, contacts, projects, an
   await page.setViewportSize({ width: 1280, height: 900 })
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/clients')
-  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
   await page.getByLabel('Password').fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
@@ -1071,7 +1071,7 @@ test('[e2e:project-directory] creates selectable work, edits assignments, upload
   })
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/projects')
-  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
   await page.getByLabel('Password').fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
@@ -1245,7 +1245,7 @@ test('[e2e:task-admin] creates, edits, applies a default to a new project, and a
     }
   })
   await page.goto('/tasks')
-  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
   await page.getByLabel('Password').fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
@@ -1382,7 +1382,7 @@ test('[e2e:reports-ui] runs uninvoiced, client rollup, and project budget report
   await page.goto(
     '/reports?report=uninvoiced&from=2026-08-01&to=2026-08-30',
   )
-  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
   await page.getByLabel('Password').fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
@@ -1460,7 +1460,7 @@ test('[e2e:expense-categories] [e2e:expense-receipt] manages category availabili
 }) => {
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/expense-categories')
-  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
   await page.getByLabel('Password').fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
@@ -1656,7 +1656,7 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
 
   await expect(page).toHaveTitle('ezacto — Sign in')
   await expect(page.locator('[data-invoice-generation-page]')).toBeHidden()
-  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
   await page.getByLabel('Password').fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
@@ -1851,8 +1851,8 @@ test('[e2e:invoice-lines] adds, edits, and deletes exact lines through the real 
 
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/invoices/new')
-  await page.getByLabel('Email').fill(fixtureEmail)
-  await page.getByLabel('Password').fill(fixturePassword)
+  await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
+  await page.locator('[data-sign-in-form]').getByLabel('Password').fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
 
@@ -2123,7 +2123,7 @@ test('[e2e:invoice-cycle] records a final payment and restores the open balance 
 
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/invoices/new')
-  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
   await page.getByLabel('Password').fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
@@ -2279,7 +2279,7 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
 
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/?week=2026-08-17')
-  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
   await page.getByLabel('Password').fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect(page.locator('[data-day-label]')).toContainText('Monday, Aug 17')
@@ -2634,7 +2634,7 @@ test('[e2e:timesheet-approval] submits and approves an expense-only week', async
 
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/?week=2026-08-09')
-  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
   await page.getByLabel('Password').fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect(page.locator('[data-timesheet-status]')).toBeVisible()

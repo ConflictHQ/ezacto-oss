@@ -1676,6 +1676,7 @@
   .invoice-document-actions {
     width: 100%;
     justify-content: space-between;
+    flex-wrap: wrap;
   }
   .invoice-composer-layout {
     grid-template-columns: 1fr;

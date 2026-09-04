@@ -127,6 +127,8 @@ export interface OutboxServiceOptions {
   now?: () => string
   createAttemptId?: () => string
   subscribers?: readonly OutboxSubscriber[]
+  /** Appended to the built-in activity subscriber without replacing it. */
+  additionalSubscribers?: readonly OutboxSubscriber[]
   maxAttempts?: number
   retryDelaySeconds?: readonly number[]
   handlerTimeoutMs?: number
@@ -527,7 +529,11 @@ const createService = (
     handlerTimeoutMs,
     attemptLeaseSeconds,
   )
-  const subscribers = options.subscribers ?? [createActivitySubscriber(database)]
+  const subscribers =
+    options.subscribers ?? [
+      createActivitySubscriber(database),
+      ...(options.additionalSubscribers ?? []),
+    ]
   if (subscribers.length < 1 || subscribers.length > 100) {
     throw new RangeError('outbox subscriber registry must contain between 1 and 100 entries')
   }

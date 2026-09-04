@@ -1,6 +1,7 @@
 import BetterSqlite3 from "better-sqlite3";
 import { Miniflare } from "miniflare";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { SenderIdentityUnavailableError, type SenderBoundQueuedMailer } from "@ezacto/mailer";
 import {
   createContainerDatabase,
   createD1Database,
@@ -55,6 +56,31 @@ const firstTime = "2026-08-28T09:00:00.000Z";
 const secondTime = "2026-08-28T09:01:00.000Z";
 const thirdTime = "2026-08-28T09:02:00.000Z";
 const fourthTime = "2026-08-28T09:03:00.000Z";
+
+const senderIdentity = {
+  id: 91,
+  email: "billing@example.com",
+  displayName: "Ezacto Billing",
+  replyToEmail: null,
+  provider: "ses",
+  providerIdentity: "example.com",
+  isDefault: true,
+  version: 0,
+  archivedAt: null,
+  createdByUserId: 1,
+  createdAt: seedTime,
+  updatedAt: seedTime,
+  evidence: {
+    version: 1,
+    source: "provider_api" as const,
+    identityKind: "domain" as const,
+    verificationStatus: "verified" as const,
+    dkimStatus: "verified" as const,
+    mailFromDomain: null,
+    mailFromStatus: "not_configured" as const,
+    observedAt: seedTime,
+  },
+};
 
 const containerDatabase = (): TestDatabase => {
   const sqlite = new BetterSqlite3(":memory:");
@@ -464,6 +490,7 @@ const harness = async (
   factory: () => Promise<TestDatabase>,
   onGenerate?: (input: InvoiceGenerationCommand) => void,
   interleave?: "invoice" | "estimate",
+  deliveryMailer?: SenderBoundQueuedMailer,
 ): Promise<Harness> => {
   const database = await factory();
   await seed(database);
@@ -497,6 +524,27 @@ const harness = async (
                   if (invoice === null)
                     throw new Error("fixture invoice missing");
                   return invoice;
+                },
+              },
+            }),
+        ...(deliveryMailer === undefined
+          ? {}
+          : {
+              invoiceDelivery: {
+                mailer: deliveryMailer,
+                configuration: {
+                  getTemplate: async () => ({
+                    kind: "invoice" as const,
+                    version: 1,
+                    subjectTemplate: "Invoice %invoice_number%",
+                    textTemplate: "Hello %client_name%, amount %invoice_amount%.",
+                    htmlTemplate: null,
+                    unknownVariablePolicy: "error" as const,
+                    createdByUserId: 1,
+                    createdAt: seedTime,
+                  }),
+                  getSenderIdentity: async () => senderIdentity,
+                  listSenderIdentities: async () => [senderIdentity],
                 },
               },
             }),
@@ -551,6 +599,26 @@ const stableTestId = async (
   return Number.parseInt(digest.slice(0, 13), 16) + 1;
 };
 
+const seedInvoiceDeliveryConfiguration = async (database: TestDatabase): Promise<void> => {
+  await database.run(
+    `INSERT INTO sender_identities
+       (id, email, display_name, provider, provider_identity, is_default, version,
+        created_by_user_id, created_at, updated_at)
+     VALUES (91, 'billing@example.com', 'Ezacto Billing', 'ses', 'example.com', 0, 0,
+       1, ?, ?)`,
+    seedTime,
+    seedTime,
+  );
+  await database.run(
+    `INSERT INTO sender_identity_evidence
+       (sender_identity_id, evidence_version, source, identity_kind, verification_status,
+        dkim_status, mail_from_domain, mail_from_status, observed_at)
+     VALUES (91, 1, 'provider_api', 'domain', 'verified', 'verified', NULL,
+       'not_configured', ?)`,
+    seedTime,
+  );
+};
+
 for (const [runtime, factory] of factories) {
   const slowRuntimeTimeout = runtime === "D1" ? 20_000 : undefined;
 
@@ -562,10 +630,74 @@ for (const [runtime, factory] of factories) {
     const setup = async (
       onGenerate?: (input: InvoiceGenerationCommand) => void,
       interleave?: "invoice" | "estimate",
+      deliveryMailer?: SenderBoundQueuedMailer,
     ): Promise<Harness> => {
-      active = await harness(factory, onGenerate, interleave);
+      active = await harness(factory, onGenerate, interleave, deliveryMailer);
       return active;
     };
+
+    it("[api] rejects absent confirmation and unavailable senders before durable or external I/O", async () => {
+      const unavailable = {
+        assertAvailable: vi.fn(async () => {
+          throw new SenderIdentityUnavailableError("sender_verification_pending", 91);
+        }),
+        enqueue: vi.fn(),
+      } satisfies SenderBoundQueuedMailer;
+      const test = await setup(undefined, undefined, unavailable);
+      await seedInvoiceDeliveryConfiguration(test.database);
+
+      const unconfirmed = await test.request(
+        "/api/v1/invoices/1/deliveries",
+        jsonRequest("POST", {
+          expected_version: 0,
+          recipients: [{ name: "Client", email: "client@example.net" }],
+          confirmed: false,
+        }, "invoice-delivery-unconfirmed"),
+      );
+      expect(unconfirmed.status).toBe(422);
+      expect(unavailable.assertAvailable).not.toHaveBeenCalled();
+
+      const blocked = await test.request(
+        "/api/v1/invoices/1/deliveries",
+        jsonRequest("POST", {
+          expected_version: 0,
+          recipients: [{ name: "Client", email: "client@example.net" }],
+          confirmed: true,
+        }, "invoice-delivery-unverified"),
+      );
+      expect(blocked.status).toBe(409);
+      expect(unavailable.enqueue).not.toHaveBeenCalled();
+      expect(await test.database.rows(`SELECT count(*) AS count FROM invoice_messages`)).toEqual([
+        { count: 0 },
+      ]);
+      expect(await test.database.rows(`SELECT count(*) AS count FROM email_log`)).toEqual([
+        { count: 0 },
+      ]);
+    }, slowRuntimeTimeout);
+
+    it("[api] accepts a confirmed send without awaiting or invoking the provider", async () => {
+      const mailer = {
+        assertAvailable: vi.fn(async () => undefined),
+        enqueue: vi.fn(),
+      } satisfies SenderBoundQueuedMailer;
+      const test = await setup(undefined, undefined, mailer);
+      await seedInvoiceDeliveryConfiguration(test.database);
+      const response = await test.request(
+        "/api/v1/invoices/1/deliveries",
+        jsonRequest("POST", {
+          expected_version: 0,
+          recipients: [{ name: "Client", email: "CLIENT@example.net" }],
+          confirmed: true,
+        }, "invoice-delivery-confirmed"),
+      );
+      expect(response.status).toBe(202);
+      expect(mailer.assertAvailable).toHaveBeenCalledWith(91);
+      expect(mailer.enqueue).not.toHaveBeenCalled();
+      expect(await test.database.rows(
+        `SELECT recipient.email, log.status FROM invoice_email_recipients recipient
+         JOIN email_log log ON log.id = recipient.delivery_id`,
+      )).toEqual([{ email: "client@example.net", status: "queued" }]);
+    }, slowRuntimeTimeout);
 
     it("[db] returns a self-consistent invoice header/line snapshot", async () => {
       const test = await setup(undefined, "invoice");
