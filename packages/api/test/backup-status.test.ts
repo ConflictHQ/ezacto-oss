@@ -77,8 +77,8 @@ describe('backup status API', () => {
     })
 
     expect(response.status).toBe(200)
-    const body = await response.json()
-    expect(body.data.last_completed).toMatchObject({
+    const body = (await response.json()) as Record<string, unknown>
+    expect((body as any).data.last_completed).toMatchObject({
       id: 1,
       status: 'completed',
       trigger: 'nightly',
@@ -86,7 +86,7 @@ describe('backup status API', () => {
       table_count: 55,
       total_rows: 1420,
     })
-    expect(body.data.has_failure).toBe(false)
+    expect((body as any).data.has_failure).toBe(false)
   })
 
   it('[api] failed nightly visible in backup status', async () => {
@@ -96,19 +96,19 @@ describe('backup status API', () => {
     })
 
     expect(response.status).toBe(200)
-    const body = await response.json()
-    expect(body.data.has_failure).toBe(true)
-    expect(body.data.last_failed).toMatchObject({
+    const body = (await response.json()) as Record<string, unknown>
+    expect((body as any).data.has_failure).toBe(true)
+    expect((body as any).data.last_failed).toMatchObject({
       id: 2,
       status: 'failed',
       trigger: 'nightly',
       error_message: 'D1 connection lost',
     })
-    expect(body.data.last_completed).toMatchObject({
+    expect((body as any).data.last_completed).toMatchObject({
       id: 1,
       status: 'completed',
     })
-    expect(body.data.recent_runs).toHaveLength(2)
+    expect((body as any).data.recent_runs).toHaveLength(2)
   })
 
   it('rejects non-administrator sessions', async () => {
@@ -132,10 +132,10 @@ describe('backup status API', () => {
     })
 
     expect(response.status).toBe(200)
-    const body = await response.json()
-    expect(body.data.last_completed).toBeNull()
-    expect(body.data.last_failed).toBeNull()
-    expect(body.data.recent_runs).toHaveLength(0)
-    expect(body.data.has_failure).toBe(false)
+    const body = (await response.json()) as Record<string, unknown>
+    expect((body as any).data.last_completed).toBeNull()
+    expect((body as any).data.last_failed).toBeNull()
+    expect((body as any).data.recent_runs).toHaveLength(0)
+    expect((body as any).data.has_failure).toBe(false)
   })
 })
