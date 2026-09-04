@@ -9,7 +9,6 @@ import {
   type RecurringFixedLinesConfigV1,
 } from './recurring-invoices.js'
 import { assertStaticRecurringAttachmentPolicy } from './attachments.js'
-import type { StaticRecurringAttachmentPolicyV1 } from './attachments.js'
 
 type ContainerDatabase = BetterSQLite3Database<typeof schema> & {
   $client: BetterSqlite3.Database
