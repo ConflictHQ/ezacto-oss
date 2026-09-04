@@ -1,4 +1,11 @@
-import { expect, test, type Locator, type Page, type Route } from '@playwright/test'
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Locator,
+  type Page,
+  type Route,
+} from '@playwright/test'
 
 const timestamp = '2026-08-28T12:00:00.000Z'
 const fixtureEmail = process.env.EZACTO_BROWSER_FIXTURE_EMAIL
@@ -17,6 +24,32 @@ if (
 
 test.beforeEach(async ({ page }) => {
   await page.clock.setFixedTime(fixtureInstant)
+})
+
+type BrowserFixtureAction =
+  | 'invoice-generation-cleanup'
+  | 'invoice-generation-seed'
+  | 'project-directory-cleanup'
+
+const controlBrowserFixture = (
+  request: APIRequestContext,
+  action: BrowserFixtureAction,
+) =>
+  request.post('/__ezacto_browser_fixture__/start-end', {
+    data: { action },
+    headers: { 'x-ezacto-browser-fixture-control': 'start-end-round-trip' },
+  })
+
+test.afterEach(async ({ request }, testInfo) => {
+  const action = testInfo.title.includes('[e2e:project-directory]')
+    ? 'project-directory-cleanup'
+    : testInfo.title ===
+        '[e2e:invoice-cycle] generates a real draft through the authenticated wizard'
+      ? 'invoice-generation-cleanup'
+      : null
+  if (action === null) return
+  const cleaned = await controlBrowserFixture(request, action)
+  expect(cleaned.status()).toBe(204)
 })
 
 const fulfillJson = (route: Route, body: unknown, status = 200) =>
@@ -1074,7 +1107,28 @@ test('[e2e:client-directory] persists hierarchy, bill-to, contacts, projects, an
 
 test('[e2e:project-directory] creates selectable work, edits assignments, uploads, and archives through real D1', async ({
   page,
+  request,
 }) => {
+  const prepared = await controlBrowserFixture(request, 'project-directory-cleanup')
+  expect(prepared.status()).toBe(204)
+
+  let blockNextAttachmentRefresh = false
+  let markAttachmentRefreshStarted = (): void => undefined
+  const attachmentRefreshStarted = new Promise<void>((resolve) => {
+    markAttachmentRefreshStarted = resolve
+  })
+  let releaseAttachmentRefresh = (): void => undefined
+  const attachmentRefreshRelease = new Promise<void>((resolve) => {
+    releaseAttachmentRefresh = resolve
+  })
+  await page.route('**/api/v1/projects/*/attachments*', async (route) => {
+    if (blockNextAttachmentRefresh && route.request().method() === 'GET') {
+      blockNextAttachmentRefresh = false
+      markAttachmentRefreshStarted()
+      await attachmentRefreshRelease
+    }
+    await route.continue()
+  })
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/projects')
   await page.getByLabel('Email').fill(fixtureEmail)
@@ -1083,6 +1137,9 @@ test('[e2e:project-directory] creates selectable work, edits assignments, upload
 
   await expect(page.locator('[data-project-list]')).toContainText(
     'Browser Acceptance Project',
+  )
+  await expect(page.locator('[data-project-list]')).not.toContainText(
+    'Browser UI Project',
   )
   await expectPhoneControl(page.getByRole('button', { name: 'Add project' }))
   await expectPhoneControl(page.getByRole('button', { name: 'Active', exact: true }))
@@ -1188,12 +1245,21 @@ test('[e2e:project-directory] creates selectable work, edits assignments, upload
       new URL(response.url()).pathname === `/api/v1/projects/${projectId}` &&
       response.request().method() === 'PATCH',
   )
+  blockNextAttachmentRefresh = true
   await projectDialog.getByRole('button', { name: 'Save project' }).click()
   expect((await updatedProject).status()).toBe(200)
+  await attachmentRefreshStarted
+  const editAssignment = taskCard.getByRole('button', { name: 'Edit', exact: true })
+  try {
+    await expect(editAssignment).toBeDisabled()
+  } finally {
+    releaseAttachmentRefresh()
+  }
+  await expect(editAssignment).toBeEnabled()
   await expect(page.locator('[data-project-facts]')).toContainText('Updated browser detail')
   await expect(page.locator('[data-project-facts]')).toContainText('2026-12-31')
 
-  await taskCard.getByRole('button', { name: 'Edit', exact: true }).click()
+  await editAssignment.click()
   await assignmentDialog.getByLabel('Hours budget').fill('8.5')
   const updatedAssignment = page.waitForResponse(
     (response) =>
@@ -1219,7 +1285,7 @@ test('[e2e:project-directory] creates selectable work, edits assignments, upload
   await expect(page).toHaveURL(/\/projects$/u)
   await page.getByRole('button', { name: 'All', exact: true }).click()
   const archivedRow = page.locator('[data-project-list] li').filter({
-    hasText: 'Browser UI Project',
+    has: page.locator(`a[href="/projects/${projectId}"]`),
   })
   await expect(archivedRow).toContainText('Archived')
 })
@@ -1640,7 +1706,11 @@ const exerciseExpenseReceipt = async (page: Page): Promise<void> => {
 
 test('[e2e:invoice-cycle] generates a real draft through the authenticated wizard', async ({
   page,
+  request,
 }) => {
+  const seeded = await controlBrowserFixture(request, 'invoice-generation-seed')
+  expect(seeded.status()).toBe(204)
+
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/invoices/new')
 
@@ -1658,11 +1728,24 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expect(wizard.getByLabel('Client')).toHaveValue('1')
   await expect(wizard.getByLabel('From')).toHaveValue('2026-08-01')
   await expect(wizard.getByLabel('To')).toHaveValue('2026-08-30')
-  await expect(wizard.getByRole('checkbox')).toHaveCount(2)
+  const primaryProject = wizard.getByRole('checkbox', {
+    name: 'Browser Acceptance Project',
+    exact: true,
+  })
+  const secondaryProject = wizard.getByRole('checkbox', {
+    name: 'Browser Secondary Project',
+    exact: true,
+  })
+  await expect(primaryProject).toHaveCount(1)
+  await expect(primaryProject).toHaveValue('1')
+  await expect(secondaryProject).toHaveCount(1)
+  await expect(secondaryProject).toHaveValue('2')
   await expectPhoneControl(
-    wizard.getByRole('checkbox', { name: 'Browser Acceptance Project' }).locator('..'),
+    primaryProject.locator('..'),
   )
-  await wizard.getByRole('checkbox', { name: 'Browser Secondary Project' }).uncheck()
+  for (const projectChoice of await wizard.locator('input[name="project"]').all()) {
+    await projectChoice.setChecked((await projectChoice.inputValue()) === '1')
+  }
   await wizard.getByLabel('Expenses').selectOption('')
   for (const control of [
     wizard.getByLabel('Client'),
@@ -1684,6 +1767,10 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await wizard.getByRole('button', { name: 'Generate draft invoice' }).click()
   const generatedResponse = await generated
   expect(generatedResponse.status()).toBe(201)
+  expect(generatedResponse.request().postDataJSON()).toMatchObject({
+    client_id: 1,
+    project_ids: [1],
+  })
   const generatedPayload = (await generatedResponse.json()) as {
     data: { id: number; due_date: string }
   }
@@ -1760,7 +1847,9 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
 
   await page.getByRole('link', { name: 'Back to invoices' }).click()
   await expect(page).toHaveURL(/\/invoices$/u)
-  const generatedCard = page.locator('[data-invoice-id]', { hasText: generatedNumber })
+  const generatedCard = page.locator(
+    `[data-invoice-id="${generatedPayload.data.id}"]`,
+  )
   await expect(generatedCard).toBeVisible()
   await expect(generatedCard).toContainText('$75.00')
 })
