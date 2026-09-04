@@ -1,6 +1,8 @@
 import {
+  type Attachment,
   EzactoApiError,
   type Invoice,
+  type InvoiceEmailDeliveryInput,
   type InvoiceLine,
   type InvoiceLineInput,
   type InvoiceLineUpdateInput,
@@ -416,6 +418,7 @@ export const createInvoicePaymentController = (
   const deleteResult = required<HTMLElement>('[data-invoice-payment-delete-result]')
   const deleteSubmit = required<HTMLButtonElement>('[data-invoice-payment-delete-submit]')
   const send = required<HTMLButtonElement>('[data-invoice-send]')
+  const deliver = required<HTMLButtonElement>('[data-invoice-deliver]')
   const composerDialog = required<HTMLDialogElement>('[data-invoice-composer-dialog]')
   const composerForm = required<HTMLFormElement>('[data-invoice-composer-form]')
   const composerTitle = required<HTMLElement>('[data-invoice-composer-title]')
@@ -427,6 +430,12 @@ export const createInvoicePaymentController = (
   const composerReminderDate = required<HTMLInputElement>('[data-invoice-composer-reminder-date]')
   const composerResult = required<HTMLElement>('[data-invoice-composer-result]')
   const composerSubmit = required<HTMLButtonElement>('[data-invoice-composer-submit]')
+  const deliveryDialog = required<HTMLDialogElement>('[data-invoice-delivery-dialog]')
+  const deliveryForm = required<HTMLFormElement>('[data-invoice-delivery-form]')
+  const deliveryRecipients = required<HTMLTextAreaElement>('[data-invoice-delivery-recipients]')
+  const deliveryConfirm = required<HTMLInputElement>('[data-invoice-delivery-confirm]')
+  const deliveryResult = required<HTMLElement>('[data-invoice-delivery-result]')
+  const deliverySubmit = required<HTMLButtonElement>('[data-invoice-delivery-submit]')
   const addLine = required<HTMLButtonElement>('[data-invoice-line-add]')
   const lineReadonlyNotice = required<HTMLElement>('[data-invoice-line-readonly]')
   const lineWorkflowStatus = required<HTMLElement>('[data-invoice-line-status]')
@@ -448,12 +457,19 @@ export const createInvoicePaymentController = (
   const lineDeleteSummary = required<HTMLElement>('[data-invoice-line-delete-summary]')
   const lineDeleteResult = required<HTMLElement>('[data-invoice-line-delete-result]')
   const lineDeleteSubmit = required<HTMLButtonElement>('[data-invoice-line-delete-submit]')
+  const attachmentForm = required<HTMLFormElement>('[data-invoice-attachment-form]')
+  const attachmentSubmit = required<HTMLButtonElement>('[data-invoice-attachment-submit]')
+  const attachmentStatus = required<HTMLElement>('[data-invoice-attachment-status]')
+  const attachmentList = required<HTMLUListElement>('[data-invoice-attachments]')
+  const attachmentReadonly = required<HTMLElement>('[data-invoice-attachment-readonly]')
 
   let activationGeneration = 0
   let requestGeneration = 0
   let active: ActiveSession | null = null
   let invoice: Invoice | null = null
   let payments: readonly InvoicePayment[] = []
+  let attachments: readonly Attachment[] = []
+  let attachmentCommandId: string | null = null
   let editingPayment: InvoicePayment | null = null
   let deletingPayment: InvoicePayment | null = null
   let editingLine: InvoiceLine | null = null
@@ -463,6 +479,7 @@ export const createInvoicePaymentController = (
   let paymentCommandId: string | null = null
   let deleteCommandId: string | null = null
   let invoiceCommandId: string | null = null
+  let deliveryCommandId: string | null = null
   let lineCommandId: string | null = null
   let lineDeleteCommandId: string | null = null
 
@@ -532,6 +549,8 @@ export const createInvoicePaymentController = (
     send.hidden = !canSend
     send.disabled = controlsLocked || !canSend
     send.textContent = invoice?.state === 'open' ? 'Record another sent message' : 'Mark sent'
+    deliver.hidden = !canSend
+    deliver.disabled = controlsLocked || !canSend
     readonlyNotice.hidden = session === null || canWrite
     const canEditLines = canWrite && invoice !== null && invoiceCanEditLines(invoice)
     addLine.hidden = !canWrite
@@ -557,11 +576,17 @@ export const createInvoicePaymentController = (
     >('input, textarea, button')) {
       control.disabled = controlsLocked
     }
+    for (const control of deliveryForm.querySelectorAll<
+      HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement
+    >('input, textarea, button')) {
+      control.disabled = controlsLocked
+    }
     for (const control of lineForm.querySelectorAll<
       HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement
     >('input, textarea, button')) {
       control.disabled = controlsLocked
     }
+    deliverySubmit.disabled = controlsLocked
     lineSubmit.disabled = controlsLocked
     lineDeleteSubmit.disabled = controlsLocked
     syncReminder()
@@ -571,13 +596,66 @@ export const createInvoicePaymentController = (
     if (paymentDialog.open) paymentDialog.close()
     if (deleteDialog.open) deleteDialog.close()
     if (composerDialog.open) composerDialog.close()
+    if (deliveryDialog.open) deliveryDialog.close()
     if (lineDialog.open) lineDialog.close()
     if (lineDeleteDialog.open) lineDeleteDialog.close()
+  }
+
+  const renderAttachments = (): void => {
+    if (attachments.length === 0) {
+      const empty = document.createElement('li')
+      empty.className = 'invoice-attachment-empty'
+      empty.textContent = 'No files are attached to this invoice.'
+      attachmentList.replaceChildren(empty)
+      return
+    }
+    attachmentList.replaceChildren(
+      ...attachments.map((attachment) => {
+        const item = document.createElement('li')
+        const link = document.createElement('a')
+        link.href = `/api/v1/invoices/${invoice!.id}/attachments/${attachment.id}/content`
+        link.textContent = attachment.name
+        link.download = attachment.name
+        link.dataset.invoiceAttachmentLink = ''
+        const size = document.createElement('span')
+        size.textContent = new Intl.NumberFormat('en-US', {
+          style: 'unit',
+          unit: 'byte',
+          unitDisplay: 'narrow',
+          notation: attachment.byte_size >= 1_000_000 ? 'compact' : 'standard',
+          maximumFractionDigits: 1,
+        }).format(attachment.byte_size)
+        item.append(link, size)
+        return item
+      }),
+    )
+  }
+
+  const loadAttachments = async (session: ActiveSession, invoiceId: number): Promise<void> => {
+    if (api.listInvoiceAttachments === undefined) {
+      attachmentStatus.textContent = 'Attachment storage is unavailable in this build.'
+      return
+    }
+    try {
+      attachments = await api.listInvoiceAttachments(invoiceId, session.signal)
+      if (current() !== session) return
+      attachmentStatus.textContent =
+        `${attachments.length} ${attachments.length === 1 ? 'file' : 'files'} attached.`
+      renderAttachments()
+    } catch (error) {
+      if (current() !== session) return
+      if (session.onSessionFailure(error)) return
+      attachments = []
+      renderAttachments()
+      attachmentStatus.textContent = apiMessage(error)
+    }
   }
 
   const clearPrivatePresentation = (): void => {
     invoice = null
     payments = []
+    attachments = []
+    attachmentCommandId = null
     editingPayment = null
     deletingPayment = null
     editingLine = null
@@ -587,22 +665,29 @@ export const createInvoicePaymentController = (
     paymentCommandId = null
     deleteCommandId = null
     invoiceCommandId = null
+    deliveryCommandId = null
     lineCommandId = null
     lineDeleteCommandId = null
     closeDialogs()
     paymentForm.reset()
     deleteForm.reset()
     composerForm.reset()
+    deliveryForm.reset()
     lineForm.reset()
     lineDeleteForm.reset()
+    attachmentForm.reset()
     paymentResult.textContent = ''
     deleteResult.textContent = ''
     composerResult.textContent = ''
+    deliveryResult.textContent = ''
     lineResult.textContent = ''
     lineDeleteResult.textContent = ''
     lineWorkflowStatus.textContent = ''
     linePreview.textContent = '—'
     workflowStatus.textContent = ''
+    attachmentStatus.textContent = ''
+    attachmentList.replaceChildren()
+    attachmentForm.hidden = true
     status.textContent = 'Loading invoice…'
     retry.hidden = true
     article.hidden = true
@@ -705,6 +790,11 @@ export const createInvoicePaymentController = (
       status.textContent = ''
       workflowStatus.textContent = options.successMessage ?? ''
       lineWorkflowStatus.textContent = ''
+      const canWrite = invoiceIdentityCanWrite(session.identity)
+      attachmentForm.hidden = !canWrite || api.uploadInvoiceAttachment === undefined
+      attachmentReadonly.hidden = canWrite || api.uploadInvoiceAttachment === undefined
+      attachmentSubmit.disabled = false
+      void loadAttachments(session, invoiceId!)
       syncControls()
       return true
     } catch (error) {
@@ -867,6 +957,20 @@ export const createInvoicePaymentController = (
     composerRecipients.focus()
   }
 
+  const openDelivery = (): void => {
+    const session = current()
+    if (
+      session === null || invoice === null || mutationPending || refreshRequired ||
+      !invoiceIdentityCanWrite(session.identity) || !invoiceCanMarkSent(invoice)
+    ) return
+    deliveryCommandId = null
+    deliveryForm.reset()
+    deliveryResult.textContent = ''
+    syncControls()
+    deliveryDialog.showModal()
+    deliveryRecipients.focus()
+  }
+
   const conflictCodes = new Set([
     'invoice_version_conflict',
     'trigger_row_conflict',
@@ -889,6 +993,7 @@ export const createInvoicePaymentController = (
       paymentCommandId = null
       deleteCommandId = null
       invoiceCommandId = null
+      deliveryCommandId = null
       lineCommandId = null
       lineDeleteCommandId = null
       const loaded = await loadDetail(session, { hideDocument: false })
@@ -915,6 +1020,9 @@ export const createInvoicePaymentController = (
       if (composerDialog.open && (invoice === null || !invoiceCanMarkSent(invoice))) {
         composerDialog.close()
       }
+      if (deliveryDialog.open && (invoice === null || !invoiceCanMarkSent(invoice))) {
+        deliveryDialog.close()
+      }
       return
     }
     result.textContent = apiMessage(error)
@@ -925,6 +1033,72 @@ export const createInvoicePaymentController = (
     syncPrecision()
   })
   send.addEventListener('click', openComposer)
+  deliver.addEventListener('click', openDelivery)
+  deliveryForm.addEventListener('input', () => {
+    if (!mutationPending) deliveryCommandId = null
+    deliveryResult.textContent = ''
+  })
+  deliveryForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const session = current()
+    const selectedInvoice = invoice
+    const deliverInvoiceEmail = api.deliverInvoiceEmail
+    if (
+      session === null || selectedInvoice === null || deliverInvoiceEmail === undefined ||
+      mutationPending || refreshRequired || !invoiceIdentityCanWrite(session.identity) ||
+      !invoiceCanMarkSent(selectedInvoice)
+    ) return
+    let recipients: ReturnType<typeof invoiceRecipients>
+    try {
+      recipients = invoiceRecipients(deliveryRecipients.value)
+      if (!deliveryConfirm.checked) {
+        throw new Error('Confirm the recipients before sending this invoice email.')
+      }
+    } catch (error) {
+      deliveryResult.textContent = apiMessage(error)
+      return
+    }
+    const input: InvoiceEmailDeliveryInput = {
+      expected_version: selectedInvoice.version,
+      recipients,
+      confirmed: true,
+    }
+    deliveryCommandId ??= `web.invoice.delivery:${globalThis.crypto.randomUUID()}`
+    const activeCommand = deliveryCommandId
+    mutationPending = true
+    deliveryResult.textContent = 'Confirming and queueing invoice email…'
+    syncControls()
+    void deliverInvoiceEmail(selectedInvoice.id, activeCommand, input, session.signal)
+      .then(async (updatedInvoice) => {
+        if (current() !== session) return
+        deliveryCommandId = null
+        invoice = updatedInvoice
+        mutationPending = false
+        refreshRequired = true
+        deliveryDialog.close()
+        workflowStatus.textContent = 'Invoice email queued. Refreshing its history…'
+        syncControls()
+        const loaded = await loadDetail(session, {
+          hideDocument: false,
+          successMessage: 'Invoice email queued for the confirmed recipients.',
+        })
+        if (!loaded && current() === session && refreshRequired) {
+          workflowStatus.textContent =
+            'Invoice email was queued, but the updated invoice could not be refreshed. Retry invoice; the email will not be submitted again.'
+        }
+      })
+      .catch(async (error: unknown) => {
+        if (current() !== session) return
+        mutationPending = false
+        await handleMutationFailure(error, session, deliveryResult)
+      })
+      .finally(() => {
+        if (current() === session) {
+          mutationPending = false
+          syncControls()
+        }
+      })
+  })
   composerReminderToggle.addEventListener('change', () => {
     if (!mutationPending) invoiceCommandId = null
     syncReminder()
@@ -1391,6 +1565,50 @@ export const createInvoicePaymentController = (
     lineDeleteResult.textContent = ''
   })
   record.addEventListener('click', () => openPaymentDialog(null))
+  attachmentForm.addEventListener('input', () => {
+    if (!mutationPending) attachmentCommandId = null
+  })
+  attachmentForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const session = current()
+    if (
+      session === null ||
+      !invoiceIdentityCanWrite(session.identity) ||
+      invoice === null ||
+      mutationPending ||
+      api.uploadInvoiceAttachment === undefined
+    ) return
+    const fileInput = attachmentForm.querySelector<HTMLInputElement>('input[name="file"]')
+    if (fileInput?.files?.[0] === undefined) {
+      attachmentStatus.textContent = 'Choose one file to upload.'
+      return
+    }
+    const body = new FormData()
+    body.set('file', fileInput.files[0])
+    attachmentCommandId ??= `web.invoice-attachment:${crypto.randomUUID()}`
+    mutationPending = true
+    attachmentSubmit.disabled = true
+    attachmentStatus.textContent = 'Uploading file…'
+    const invoiceId = invoice.id
+    void api.uploadInvoiceAttachment(invoiceId, attachmentCommandId, body, session.signal)
+      .then(async () => {
+        if (current() !== session) return
+        attachmentCommandId = null
+        attachmentForm.reset()
+        await loadAttachments(session, invoiceId)
+      })
+      .catch((error: unknown) => {
+        if (current() !== session) return
+        if (session.onSessionFailure(error)) return
+        attachmentStatus.textContent = apiMessage(error)
+      })
+      .finally(() => {
+        if (current() === session) {
+          mutationPending = false
+          attachmentSubmit.disabled = false
+        }
+      })
+  })
   retry.addEventListener('click', () => {
     const session = current()
     if (session !== null) void loadDetail(session, { hideDocument: invoice === null })

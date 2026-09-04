@@ -93,7 +93,7 @@ describe('container runtime composition', () => {
       first.database
         .prepare('SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1')
         .get(),
-    ).toEqual({ id: '0030_email_templates' })
+    ).toEqual({ id: '0032_invoice_email_delivery' })
 
     await first.drainOutbox()
     const eventAt = '2026-01-02T03:04:05.000Z'
@@ -316,6 +316,35 @@ describe('container runtime composition', () => {
     const client = await data<{ id: number }>(
       await request('/api/v1/clients', authenticated({ name: 'Client' })),
     )
+    const invoiceAt = '2026-09-02T07:00:00.000Z'
+    first.database.prepare(
+      `INSERT INTO invoices (id, client_id, number, currency, issue_date, due_date,
+         state, amount_cents, due_amount_cents, created_at, updated_at)
+       VALUES (801, ?, 'CONTAINER-801', 'USD', '2026-09-01', '2026-09-30',
+         'draft', 2500, 2500, ?, ?)`,
+    ).run(client.id, invoiceAt, invoiceAt)
+    const deliveryRequest = authenticated({
+      expected_version: 0,
+      recipients: [{ name: 'Client', email: 'client@example.net' }],
+      confirmed: true,
+    })
+    const deliveryHeaders = new Headers(deliveryRequest.headers)
+    deliveryHeaders.set('idempotency-key', 'container-invoice-delivery')
+    const delivered = await request('/api/v1/invoices/801/deliveries', {
+      ...deliveryRequest,
+      headers: deliveryHeaders,
+    })
+    expect(delivered.status).toBe(202)
+    expect(captured).toHaveLength(3)
+    await first.drainOutbox()
+    for (let attempt = 0; captured.length < 4 && attempt < 100; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    expect(captured[3]).toMatchObject({
+      from: { email: 'billing@example.test', name: 'Container Billing' },
+      to: [{ email: 'client@example.net', name: 'Client' }],
+      template: 'invoice:1',
+    })
     const task = await data<{ id: number }>(
       await request('/api/v1/tasks', authenticated({ name: 'Development' })),
     )

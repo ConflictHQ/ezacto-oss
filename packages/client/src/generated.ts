@@ -1181,6 +1181,14 @@ export type InvoiceTransitionInput = {
   "send_reminder_on"?: string | null;
 };
 
+export type InvoiceEmailDeliveryInput = {
+  "expected_version": number;
+  "recipients": Array<InvoiceRecipient>;
+  "sender_identity_id"?: number;
+  "template_version"?: number;
+  "confirmed": true;
+};
+
 export type InvoicePayment = {
   "id": number;
   "invoice_id": number;
@@ -2841,6 +2849,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
     if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
     return this.request<InvoiceCommandEnvelope>("POST", "/api/v1/invoices/:id/transitions".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async deliverInvoiceEmail(args: { "id": number; "Idempotency-Key": string; body: InvoiceEmailDeliveryInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceCommandEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<InvoiceCommandEnvelope>("POST", "/api/v1/invoices/:id/deliveries".replace(":id", encodeURIComponent(String(args["id"]))), {
       body: args.body,
       signal: args.signal,
       headers,

@@ -153,6 +153,24 @@ export interface ExecuteInvoiceLifecycleCommand {
     reminder: boolean
     sendReminderOn: string | null
   }>
+  /** Present only for an explicitly confirmed, externally delivered invoice email. */
+  delivery?: Readonly<{
+    templateVersion: number
+    senderIdentityId: number
+    senderIdentityVersion: number
+    senderEvidenceVersion: number
+    fromName: string
+    fromEmail: string
+    replyToEmail: string | null
+    subject: string
+    textBody: string
+    htmlBody: string | null
+    recipients: readonly Readonly<{
+      deliveryId: number
+      name: string
+      email: string
+    }>[]
+  }>
   authorize: InvoiceCommandAuthorization
 }
 
@@ -517,6 +535,48 @@ const validateInput = (input: ExecuteInvoiceLifecycleCommand): number | null => 
     ]) {
       if (typeof value !== 'boolean') invalidInput('message flags must be booleans')
     }
+  }
+  if (input.delivery !== undefined) {
+    const delivery = input.delivery
+    if (
+      input.command !== 'send' || input.actor.type !== 'user' || input.actor.id === null ||
+      input.message === undefined || input.message.attachPdf
+    ) {
+      invalidInput('delivery requires a send message without a claimed PDF attachment')
+    }
+    for (const [field, value] of [
+      ['templateVersion', delivery.templateVersion],
+      ['senderIdentityId', delivery.senderIdentityId],
+      ['senderEvidenceVersion', delivery.senderEvidenceVersion],
+    ] as const) assertPositiveSafeInteger(value, `delivery.${field}`)
+    if (!Number.isSafeInteger(delivery.senderIdentityVersion) || delivery.senderIdentityVersion < 0) {
+      invalidInput('delivery.senderIdentityVersion must be a non-negative safe integer')
+    }
+    if (
+      delivery.fromName.length < 1 || delivery.fromName.length > 200 ||
+      delivery.fromEmail.length < 3 || delivery.fromEmail.length > 254 ||
+      delivery.subject.trim().length < 1 || delivery.subject.length > 998 ||
+      delivery.textBody.trim().length < 1 || delivery.textBody.length > 1_000_000 ||
+      (delivery.htmlBody !== null &&
+        (delivery.htmlBody.trim().length < 1 || delivery.htmlBody.length > 2_000_000)) ||
+      (delivery.replyToEmail !== null &&
+        (delivery.replyToEmail.length < 3 || delivery.replyToEmail.length > 254))
+    ) invalidInput('delivery contains invalid bounded message fields')
+    if (
+      !Array.isArray(delivery.recipients) || delivery.recipients.length < 1 ||
+      delivery.recipients.length > 1_000 ||
+      new Set(delivery.recipients.map(({ deliveryId }) => deliveryId)).size !==
+        delivery.recipients.length ||
+      new Set(delivery.recipients.map(({ email }) => email)).size !==
+        delivery.recipients.length
+    ) invalidInput('delivery recipients must be a non-empty unique bounded array')
+    delivery.recipients.forEach((recipient) => {
+      assertPositiveSafeInteger(recipient.deliveryId, 'delivery recipient id')
+      if (
+        recipient.name.length > 200 || recipient.email.length < 3 ||
+        recipient.email.length > 254 || recipient.email !== recipient.email.trim().toLowerCase()
+      ) invalidInput('delivery recipient is invalid')
+    })
   }
   if (typeof input.authorize !== 'function') invalidInput('authorize must be a function')
   if (input.actor.type === 'system') {
@@ -1367,6 +1427,131 @@ const mutationStatements = (
       )
     })
   }
+  if (input.delivery !== undefined) {
+    const delivery = input.delivery
+    statements.push({
+      text: `INSERT INTO invoice_email_intents (
+          invoice_message_id, event_id, template_kind, template_version,
+          sender_identity_id, sender_identity_version, sender_evidence_version,
+          from_name, from_email, reply_to_email, subject, text_body, html_body,
+          confirmed_by_user_id, confirmed_at
+        )
+        SELECT message.id, ?, 'invoice', ?, identity.id, identity.version, evidence.evidence_version,
+          ?, ?, ?, ?, ?, ?, ?, ?
+        FROM invoice_messages message
+        JOIN sender_identities identity ON identity.id = ?
+        JOIN sender_identity_evidence evidence
+          ON evidence.sender_identity_id = identity.id AND evidence.evidence_version = ?
+        JOIN email_template_versions template
+          ON template.template_kind = 'invoice' AND template.version = ?
+        WHERE message.id = ? AND message.invoice_id = ? AND message.event_type = 'send'
+          AND identity.version = ? AND identity.archived_at IS NULL
+          AND (
+            (
+              identity.provider = 'smtp'
+              AND evidence.source = 'deployment_config'
+              AND evidence.verification_status = 'operator_configured'
+              AND evidence.identity_kind = 'email_address'
+              AND evidence.dkim_status = 'not_applicable'
+              AND evidence.mail_from_domain IS NULL
+              AND evidence.mail_from_status = 'not_configured'
+              AND lower(trim(identity.provider_identity)) = identity.email
+            )
+            OR (
+              identity.provider = 'ses'
+              AND evidence.source = 'provider_api'
+              AND evidence.verification_status = 'verified'
+              AND (
+                (
+                  evidence.identity_kind = 'email_address'
+                  AND lower(trim(identity.provider_identity)) = identity.email
+                )
+                OR (
+                  evidence.identity_kind = 'domain'
+                  AND lower(trim(identity.provider_identity)) =
+                    substr(identity.email, instr(identity.email, '@') + 1)
+                )
+              )
+              AND (
+                evidence.dkim_status = 'verified'
+                OR (
+                  evidence.mail_from_status = 'verified'
+                  AND (
+                    evidence.mail_from_domain =
+                      substr(identity.email, instr(identity.email, '@') + 1)
+                    OR evidence.mail_from_domain LIKE
+                      '%.' || substr(identity.email, instr(identity.email, '@') + 1)
+                  )
+                )
+              )
+            )
+          )`,
+      params: [
+        input.eventId,
+        delivery.templateVersion,
+        delivery.fromName,
+        delivery.fromEmail,
+        delivery.replyToEmail,
+        delivery.subject,
+        delivery.textBody,
+        delivery.htmlBody,
+        input.actor.id,
+        input.occurredAt,
+        delivery.senderIdentityId,
+        delivery.senderEvidenceVersion,
+        delivery.templateVersion,
+        input.messageId,
+        input.invoiceId,
+        delivery.senderIdentityVersion,
+      ],
+    })
+    delivery.recipients.forEach((recipient, recipientIndex) => {
+      const toJson = JSON.stringify([
+        recipient.name === ''
+          ? { email: recipient.email }
+          : { email: recipient.email, name: recipient.name },
+      ])
+      statements.push(
+        {
+          text: `INSERT INTO email_log (
+              id, from_json, reply_to_json, to_json, template, subject,
+              related_type, related_id, created_at, updated_at
+            )
+            SELECT ?, ?, ?, ?, ?, ?, 'invoice_message', ?, ?, ?
+            WHERE EXISTS (
+              SELECT 1 FROM invoice_email_intents WHERE invoice_message_id = ?
+            )`,
+          params: [
+            recipient.deliveryId,
+            JSON.stringify({ email: delivery.fromEmail, name: delivery.fromName }),
+            delivery.replyToEmail === null
+              ? null
+              : JSON.stringify([{ email: delivery.replyToEmail }]),
+            toJson,
+            `invoice:${delivery.templateVersion}`,
+            delivery.subject,
+            input.messageId,
+            input.occurredAt,
+            input.occurredAt,
+            input.messageId,
+          ],
+        },
+        {
+          text: `INSERT INTO invoice_email_recipients (
+              invoice_message_id, recipient_index, delivery_id, name, email, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)`,
+          params: [
+            input.messageId,
+            recipientIndex,
+            recipient.deliveryId,
+            recipient.name,
+            recipient.email,
+            input.occurredAt,
+          ],
+        },
+      )
+    })
+  }
   statements.push(completionStatement(input, events.length))
   return statements
 }
@@ -1414,6 +1599,17 @@ export const executeInvoiceLifecycleCommand = async (
           },
         }),
     ...(expectedVersion === null ? {} : { expected_version: expectedVersion }),
+    ...(input.delivery === undefined
+      ? {}
+      : {
+          delivery: {
+            template_version: input.delivery.templateVersion,
+            sender_identity_id: input.delivery.senderIdentityId,
+            sender_identity_version: input.delivery.senderIdentityVersion,
+            sender_evidence_version: input.delivery.senderEvidenceVersion,
+            recipients: input.delivery.recipients.map(({ name, email }) => ({ name, email })),
+          },
+        }),
   })
 
   const existing = await readLedger(database, input.invoiceId, input.commandId)
