@@ -347,7 +347,7 @@ describe('GitHub OAuth2 browser authentication', () => {
     expect(identities.resolveProvider).toHaveBeenCalledWith(
       expect.objectContaining({ firstName: 'Mononymous' }),
     )
-    const call = identities.resolveProvider.mock.calls[0]![0]
+    const call = (identities.resolveProvider.mock.calls as unknown[][])[0]![0]
     expect(call).not.toHaveProperty('lastName')
   })
 
@@ -360,7 +360,7 @@ describe('GitHub OAuth2 browser authentication', () => {
       `https://ezacto.io/auth/github/callback?code=test-github-code&state=${encodeURIComponent(pending.state)}`,
       { headers: { cookie: pending.cookie } },
     )
-    const call = identities.resolveProvider.mock.calls[0]![0]
+    const call = (identities.resolveProvider.mock.calls as unknown[][])[0]![0]
     expect(call).not.toHaveProperty('firstName')
     expect(call).not.toHaveProperty('lastName')
   })
