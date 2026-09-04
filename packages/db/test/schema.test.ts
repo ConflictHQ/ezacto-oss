@@ -876,6 +876,7 @@ for (const [runtime, factory] of factories) {
         { id: '0028_timesheet_lock_policy' },
         { id: '0029_outbox_delivery' },
         { id: '0030_email_templates' },
+        { id: '0031_client_budgets' },
         { id: '0032_invoice_email_delivery' },
       ])
       expect(
@@ -928,6 +929,7 @@ for (const [runtime, factory] of factories) {
         { id: '0028_timesheet_lock_policy' },
         { id: '0029_outbox_delivery' },
         { id: '0030_email_templates' },
+        { id: '0031_client_budgets' },
         { id: '0032_invoice_email_delivery' },
       ])
       expect(
@@ -998,6 +1000,7 @@ for (const [runtime, factory] of factories) {
         { id: '0028_timesheet_lock_policy' },
         { id: '0029_outbox_delivery' },
         { id: '0030_email_templates' },
+        { id: '0031_client_budgets' },
         { id: '0032_invoice_email_delivery' },
       ])
       expect(
@@ -1044,6 +1047,7 @@ for (const [runtime, factory] of factories) {
         { id: '0028_timesheet_lock_policy' },
         { id: '0029_outbox_delivery' },
         { id: '0030_email_templates' },
+        { id: '0031_client_budgets' },
         { id: '0032_invoice_email_delivery' },
       ])
     })
@@ -1166,6 +1170,8 @@ describe('package contents', () => {
         'dist/migrations/0028_timesheet_lock_policy.d.ts',
         'dist/migrations/0030_email_templates.js',
         'dist/migrations/0030_email_templates.d.ts',
+        'dist/migrations/0031_client_budgets.js',
+        'dist/migrations/0031_client_budgets.d.ts',
         'dist/migrations/0032_invoice_email_delivery.js',
         'dist/migrations/0032_invoice_email_delivery.d.ts',
         'dist/email-configuration.js',

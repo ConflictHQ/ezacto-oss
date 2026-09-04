@@ -638,6 +638,7 @@ for (const [runtime, factory] of factories) {
         '0028_timesheet_lock_policy',
         '0029_outbox_delivery',
         '0030_email_templates',
+        '0031_client_budgets',
         '0032_invoice_email_delivery',
       ])
       expect(

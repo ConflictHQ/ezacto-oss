@@ -288,14 +288,17 @@ for (const [runtime, factory] of factories) {
       expect(rootUsd).toBeDefined();
       expect(rootEur).toBeDefined();
 
-      // USD rollup: Root direct (time 10000*3600/3600=10000, expense 2500) + Leaf (time 8000*900/3600=2000, expense 1500)
-      // = cost: 4000 + 5000*900/3600=1250 => cost_cents for root proj = 4000, leaf proj = 1250
+      // USD rollup: cost_rate uses org currency (USD) for all projects regardless of billing currency
+      // Root proj cost = 4000*3600/3600=4000, Child proj cost = 6000*1800/3600=3000 (org currency),
+      // Leaf proj cost = 5000*900/3600=1250 => USD cost_cents = 4000+3000+1250 = 8250
+      // Expenses use billing currency: Root 2500 (USD) + Leaf 1500 (USD) = 4000
       expect(rootUsd!.expense_cents).toBe(4000); // 2500 + 1500
-      expect(rootUsd!.cost_cents).toBe(5250); // 4000 + 1250
+      expect(rootUsd!.cost_cents).toBe(8250); // 4000 + 3000 + 1250
 
-      // EUR rollup: Child (time 15000*1800/3600=7500, expense 3000, cost 6000*1800/3600=3000)
+      // EUR rollup: only expenses (cost goes to org currency USD)
+      // Child expense 3000 (EUR), cost_cents = 0 (cost tracked in org currency)
       expect(rootEur!.expense_cents).toBe(3000);
-      expect(rootEur!.cost_cents).toBe(3000);
+      expect(rootEur!.cost_cents).toBe(0);
 
       // Child rollup should include Child direct + Leaf rolled up
       const childRollupCurrencies = nodes[1]!.rollup.currencies;
@@ -304,9 +307,10 @@ for (const [runtime, factory] of factories) {
       expect(childEur).toBeDefined();
       expect(childUsd).toBeDefined();
 
-      // Child direct is EUR only
-      expect(nodes[1]!.direct.currencies).toHaveLength(1);
+      // Child direct has EUR (expenses, uninvoiced) and USD (cost tracked in org currency)
+      expect(nodes[1]!.direct.currencies).toHaveLength(2);
       expect(nodes[1]!.direct.currencies[0]!.currency).toBe("EUR");
+      expect(nodes[1]!.direct.currencies[1]!.currency).toBe("USD");
 
       // Child rollup has EUR from Child + USD from Leaf
       expect(childUsd!.expense_cents).toBe(1500);
@@ -432,10 +436,10 @@ for (const [runtime, factory] of factories) {
       expect(leaf.node_budget_cents).toBeNull();
 
       // budget_burn = sum of (cost_cents + expense_cents) across ALL currencies in rollup
-      // Root rollup currencies:
-      //   USD: cost_cents = 4000 (root proj) + 1250 (leaf proj) = 5250, expense_cents = 2500 + 1500 = 4000
-      //   EUR: cost_cents = 3000 (child proj), expense_cents = 3000
-      // Root burn = (5250 + 4000) + (3000 + 3000) = 15250
+      // Root rollup currencies (cost uses org currency USD for all projects):
+      //   USD: cost_cents = 4000+3000+1250 = 8250, expense_cents = 2500+1500 = 4000
+      //   EUR: cost_cents = 0, expense_cents = 3000
+      // Root burn = (8250 + 4000) + (0 + 3000) = 15250
       const expectedRootBurn = root.rollup.currencies.reduce(
         (sum, c) => sum + c.cost_cents + c.expense_cents,
         0,
@@ -443,10 +447,10 @@ for (const [runtime, factory] of factories) {
       expect(root.budget_burn_cents).toBe(expectedRootBurn);
       expect(root.budget_burn_cents).toBeGreaterThan(0);
 
-      // Child rollup:
-      //   EUR: cost=3000, expense=3000
-      //   USD: cost=1250, expense=1500
-      // Child burn = (3000+3000) + (1250+1500) = 8750
+      // Child rollup (cost uses org currency USD):
+      //   EUR: cost=0, expense=3000
+      //   USD: cost=3000+1250=4250, expense=1500
+      // Child burn = (0+3000) + (4250+1500) = 8750
       const expectedChildBurn = child.rollup.currencies.reduce(
         (sum, c) => sum + c.cost_cents + c.expense_cents,
         0,
