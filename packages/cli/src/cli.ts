@@ -20,6 +20,20 @@ import {
   type OrganizationConfig,
 } from './config.js'
 import {
+  exportExpenses,
+  exportTimeEntries,
+  generateInvoice,
+  listInvoices,
+  resolveClientId,
+  resolveProjectId,
+  resolveProjectIds,
+  runReport,
+  sendInvoice,
+  uninvoiced,
+  validReportDefinitions,
+  type MoneyCommandResult,
+} from './money.js'
+import {
   logTime,
   showWeek,
   startTimer,
@@ -31,25 +45,36 @@ import {
 const USAGE = `ez <command> [options]
 
 Commands:
-  login    Validate and store an API token for an organization
-  whoami   Show the user and scopes of the stored credential
-  config   Show the active organization config with the token redacted
-  logout   Remove the stored credential for an organization
-  log      Log a duration: ez log 2h northpeak devops -m "note"
-  timer    Start, stop, or inspect the one running timer
-  week     Show the Monday–Sunday time grid
+  login        Validate and store an API token for an organization
+  whoami       Show the user and scopes of the stored credential
+  config       Show the active organization config with the token redacted
+  logout       Remove the stored credential for an organization
+  log          Log a duration: ez log 2h northpeak devops -m "note"
+  timer        Start, stop, or inspect the one running timer
+  week         Show the Monday–Sunday time grid
+  uninvoiced   Show uninvoiced amounts for a date range
+  invoice      Generate, send, or list invoices
+  report       Run a report definition (uninvoiced, client-rollup, project-budget)
+  export       Export time entries or expenses as CSV
 
 Options:
-  --org <name>        Organization config name (default: active or "default")
-  --base-url <url>    ezacto API origin for login (default: https://ezacto.io)
-  --token <token>     API token to store; prefer --token-stdin or EZACTO_TOKEN
-  --token-stdin       Read the API token from stdin
-  --config <path>     Override the config file (or set EZACTO_CONFIG)
-  --message, -m <text> Notes for ez log or ez timer start
-  --date <yyyy-mm-dd> Spent date for ez log or ez timer start (default: today)
-  --week <yyyy-mm-dd> A date in the week to show (default: today)
-  --json              Emit machine-readable JSON
-  --help              Show this help
+  --org <name>              Organization config name (default: active or "default")
+  --base-url <url>          ezacto API origin for login (default: https://ezacto.io)
+  --token <token>           API token to store; prefer --token-stdin or EZACTO_TOKEN
+  --token-stdin             Read the API token from stdin
+  --config <path>           Override the config file (or set EZACTO_CONFIG)
+  --message, -m <text>      Notes for ez log or ez timer start
+  --date <yyyy-mm-dd>       Spent date for ez log or ez timer start (default: today)
+  --week <yyyy-mm-dd>       A date in the week to show (default: today)
+  --from <yyyy-mm-dd>       Start date for reports and exports
+  --to <yyyy-mm-dd>         End date for reports and exports
+  --client <name-or-id>     Client filter for reports and invoices
+  --project <name-or-id>    Project filter (repeatable for invoice generate)
+  --csv                     Emit CSV instead of human-readable output
+  --time-summary <type>     Time summary type for invoice generate
+  --expense-summary <type>  Expense summary type for invoice generate
+  --json                    Emit machine-readable JSON
+  --help                    Show this help
 `
 
 export interface CliRuntime {
@@ -109,6 +134,22 @@ const printTimeResult = (
   runtime: CliRuntime,
 ): number => {
   runtime.stdout(machineReadable ? json(result.json) : result.human)
+  return 0
+}
+
+const printMoneyResult = (
+  result: MoneyCommandResult,
+  machineReadable: boolean,
+  csvMode: boolean,
+  runtime: CliRuntime,
+): number => {
+  if (machineReadable) {
+    runtime.stdout(json(result.json))
+  } else if (csvMode && result.csv !== undefined) {
+    runtime.stdout(result.csv)
+  } else {
+    runtime.stdout(result.human)
+  }
   return 0
 }
 
@@ -282,6 +323,13 @@ export const runCli = async (
       message: { type: 'string', short: 'm' },
       date: { type: 'string' },
       week: { type: 'string' },
+      from: { type: 'string' },
+      to: { type: 'string' },
+      client: { type: 'string' },
+      project: { type: 'string', multiple: true },
+      csv: { type: 'boolean', default: false },
+      'time-summary': { type: 'string' },
+      'expense-summary': { type: 'string' },
       json: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
     },
@@ -382,8 +430,188 @@ export const runCli = async (
       runtime,
     )
   }
+  // --- money options guard for time commands ---------------------------------
+
+  const moneyOptions =
+    values.from !== undefined ||
+    values.to !== undefined ||
+    values.client !== undefined ||
+    (values.project !== undefined && values.project.length > 0) ||
+    values.csv ||
+    values['time-summary'] !== undefined ||
+    values['expense-summary'] !== undefined
+
+  // --- money / report commands -----------------------------------------------
+
+  const requireRange = (): { from: string; to: string } => {
+    if (values.from === undefined || values.to === undefined) {
+      throw new Error('--from and --to are required')
+    }
+    return { from: values.from, to: values.to }
+  }
+
+  if (command === 'uninvoiced') {
+    if (commandArguments.length !== 0) throw new Error('ez uninvoiced accepts no positional arguments')
+    if (values.message !== undefined || values.date !== undefined || values.week !== undefined) {
+      throw new Error('time options are not valid with ez uninvoiced')
+    }
+    const range = requireRange()
+    const selected = await selectedClient(configPath, values.org)
+    const clientId = values.client !== undefined
+      ? await resolveClientId(selected.client, values.client)
+      : undefined
+    const projectId = values.project !== undefined && values.project.length > 0
+      ? await resolveProjectId(selected.client, values.project[0]!)
+      : undefined
+    return printMoneyResult(
+      await uninvoiced(selected.client, {
+        ...range,
+        ...(clientId === undefined ? {} : { clientId }),
+        ...(projectId === undefined ? {} : { projectId }),
+      }),
+      values.json,
+      values.csv,
+      runtime,
+    )
+  }
+
+  if (command === 'invoice') {
+    if (values.message !== undefined || values.date !== undefined || values.week !== undefined) {
+      throw new Error('time options are not valid with ez invoice')
+    }
+    const action = commandArguments[0]
+
+    if (action === 'generate') {
+      if (commandArguments.length !== 1) throw new Error('ez invoice generate accepts no additional positional arguments')
+      const range = requireRange()
+      if (values.client === undefined) throw new Error('ez invoice generate requires --client')
+      if (values.project === undefined || values.project.length === 0) {
+        throw new Error('ez invoice generate requires at least one --project')
+      }
+      const selected = await selectedClient(configPath, values.org)
+      const clientId = await resolveClientId(selected.client, values.client)
+      const projectIds = await resolveProjectIds(selected.client, values.project)
+      return printMoneyResult(
+        await generateInvoice(selected.client, {
+          clientId,
+          ...range,
+          projectIds,
+          ...(values['time-summary'] === undefined ? {} : { timeSummaryType: values['time-summary'] }),
+          ...(values['expense-summary'] === undefined ? {} : { expenseSummaryType: values['expense-summary'] }),
+        }),
+        values.json,
+        values.csv,
+        runtime,
+      )
+    }
+
+    if (action === 'send') {
+      if (commandArguments.length !== 2) throw new Error('usage: ez invoice send <id>')
+      const invoiceId = Number(commandArguments[1])
+      if (!Number.isSafeInteger(invoiceId) || invoiceId < 1) {
+        throw new Error(`invalid invoice id: ${commandArguments[1]}`)
+      }
+      const selected = await selectedClient(configPath, values.org)
+      return printMoneyResult(
+        await sendInvoice(selected.client, { invoiceId }),
+        values.json,
+        values.csv,
+        runtime,
+      )
+    }
+
+    if (action === 'list' || action === undefined) {
+      if (action !== undefined && commandArguments.length !== 1) {
+        throw new Error('ez invoice list accepts no additional positional arguments')
+      }
+      if (action === undefined && commandArguments.length !== 0) {
+        throw new Error('usage: ez invoice <generate|send|list>')
+      }
+      const selected = await selectedClient(configPath, values.org)
+      return printMoneyResult(
+        await listInvoices(selected.client),
+        values.json,
+        values.csv,
+        runtime,
+      )
+    }
+
+    throw new Error('usage: ez invoice <generate|send|list>')
+  }
+
+  if (command === 'report') {
+    if (values.message !== undefined || values.date !== undefined || values.week !== undefined) {
+      throw new Error('time options are not valid with ez report')
+    }
+    const action = commandArguments[0]
+    if (action !== 'run') {
+      throw new Error(`usage: ez report run <${validReportDefinitions().join('|')}>`)
+    }
+    const definition = commandArguments[1]
+    if (definition === undefined) {
+      throw new Error(`usage: ez report run <${validReportDefinitions().join('|')}>`)
+    }
+    if (commandArguments.length > 2) {
+      throw new Error('ez report run accepts no additional positional arguments')
+    }
+    const range = requireRange()
+    const selected = await selectedClient(configPath, values.org)
+    const clientId = values.client !== undefined
+      ? await resolveClientId(selected.client, values.client)
+      : undefined
+    const projectId = values.project !== undefined && values.project.length > 0
+      ? await resolveProjectId(selected.client, values.project[0]!)
+      : undefined
+    return printMoneyResult(
+      await runReport(selected.client, {
+        definition,
+        ...range,
+        ...(clientId === undefined ? {} : { clientId }),
+        ...(projectId === undefined ? {} : { projectId }),
+      }),
+      values.json,
+      values.csv,
+      runtime,
+    )
+  }
+
+  if (command === 'export') {
+    if (values.message !== undefined || values.date !== undefined || values.week !== undefined) {
+      throw new Error('time options are not valid with ez export')
+    }
+    const kind = commandArguments[0]
+    if (kind !== 'time' && kind !== 'expenses') {
+      throw new Error('usage: ez export <time|expenses> --from date --to date')
+    }
+    if (commandArguments.length !== 1) {
+      throw new Error('ez export accepts no additional positional arguments after the kind')
+    }
+    const range = requireRange()
+    const selected = await selectedClient(configPath, values.org)
+    const clientId = values.client !== undefined
+      ? await resolveClientId(selected.client, values.client)
+      : undefined
+    const projectId = values.project !== undefined && values.project.length > 0
+      ? await resolveProjectId(selected.client, values.project[0]!)
+      : undefined
+    const exportInput = {
+      ...range,
+      ...(clientId === undefined ? {} : { clientId }),
+      ...(projectId === undefined ? {} : { projectId }),
+    }
+    const result = kind === 'time'
+      ? await exportTimeEntries(selected.client, exportInput)
+      : await exportExpenses(selected.client, exportInput)
+    return printMoneyResult(result, values.json, values.csv, runtime)
+  }
+
+  // --- non-money commands (meta/auth) ----------------------------------------
+
   if (values.message !== undefined || values.date !== undefined || values.week !== undefined) {
     throw new Error('message/date/week options are valid only with time commands')
+  }
+  if (moneyOptions) {
+    throw new Error('--from/--to/--client/--project/--csv/--time-summary/--expense-summary are valid only with money commands')
   }
   if (commandArguments.length !== 0) throw new Error(`${command} accepts no positional arguments`)
   if (command === 'whoami') return whoami(options, runtime)
