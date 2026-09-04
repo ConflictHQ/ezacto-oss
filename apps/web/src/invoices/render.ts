@@ -88,6 +88,20 @@ export const renderInvoiceLineDialogs = (): string => `
     </form>
   </dialog>`
 
+export const renderInvoiceAttachmentSection = (): string => `
+      <section class="invoice-history invoice-attachment-section" aria-labelledby="invoice-attachment-heading">
+        <header class="invoice-payment-heading">
+          <div><h3 id="invoice-attachment-heading">Attachments</h3><p>Files attached to this invoice.</p></div>
+        </header>
+        <form class="invoice-attachment-form" data-invoice-attachment-form hidden>
+          <input type="file" name="file" aria-label="Choose file">
+          <button type="submit" data-invoice-attachment-submit data-auth-action disabled>Upload</button>
+        </form>
+        <p class="hint" data-invoice-attachment-readonly hidden>You have read-only invoice access. Uploading requires the invoices:write scope.</p>
+        <p class="form-result" data-invoice-attachment-status role="status" aria-live="polite"></p>
+        <ul data-invoice-attachments></ul>
+      </section>`
+
 export const renderInvoiceComposerDialog = (): string => `
   <dialog class="invoice-composer-dialog" data-invoice-composer-dialog aria-labelledby="invoice-composer-title">
     <form data-invoice-composer-form novalidate>

@@ -1736,6 +1736,49 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   )
   await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$75.00')
 
+  const invoiceId = generatedPayload.data.id
+  const attachmentSection = page.locator('[data-invoice-attachment-form]')
+  await expect(attachmentSection).toBeVisible()
+  const attachUpload = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/v1/invoices/${invoiceId}/attachments` &&
+      response.request().method() === 'POST',
+  )
+  await page
+    .getByLabel('Choose file')
+    .setInputFiles({
+      name: 'browser-invoice.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('invoice attachment content'),
+    })
+  await page.getByRole('button', { name: 'Upload' }).click()
+  expect((await attachUpload).status()).toBe(201)
+  const invoiceAttachment = page.getByRole('link', { name: 'browser-invoice.txt' })
+  await expect(invoiceAttachment).toBeVisible()
+  const invoiceAttachmentHref = await invoiceAttachment.getAttribute('href')
+  expect(invoiceAttachmentHref).not.toBeNull()
+  expect(
+    await page.evaluate(async (href) => (await fetch(href)).text(), invoiceAttachmentHref!),
+  ).toBe('invoice attachment content')
+
+  const attachUpload2 = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/v1/invoices/${invoiceId}/attachments` &&
+      response.request().method() === 'POST',
+  )
+  await page
+    .getByLabel('Choose file')
+    .setInputFiles({
+      name: 'browser-invoice-2.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('second attachment content'),
+    })
+  await page.getByRole('button', { name: 'Upload' }).click()
+  expect((await attachUpload2).status()).toBe(201)
+  await expect(page.locator('[data-invoice-attachment-status]')).toContainText('2 files attached')
+
   await detail.getByRole('button', { name: 'Mark sent', exact: true }).click()
   const composer = page.locator('[data-invoice-composer-dialog]')
   await expect(composer).toBeVisible()
