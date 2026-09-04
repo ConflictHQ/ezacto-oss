@@ -54,6 +54,8 @@ export interface ClientRollupNodeRecord {
   name: string
   parentClientId: number | null
   depth: number
+  nodeBudgetCents: number | null
+  budgetBurnCents: number
   direct: ClientRollupMetricsRecord
   rollup: ClientRollupMetricsRecord
 }
@@ -280,6 +282,7 @@ interface ClientNodeRow {
   name: string
   parentClientId: number | null
   depth: number
+  budgetCents: number | null
 }
 
 interface RollupTimeRow {
@@ -424,18 +427,18 @@ const clientRollupReport = async (
   assertId(rootClientId, 'client id')
   assertRange(range)
   const nodes = await database.all<ClientNodeRow>(sql`
-    WITH RECURSIVE subtree(id, name, parent_client_id, depth, visited) AS (
-      SELECT id, name, parent_client_id, 0, printf(',%d,', id)
+    WITH RECURSIVE subtree(id, name, parent_client_id, budget_cents, depth, visited) AS (
+      SELECT id, name, parent_client_id, budget_cents, 0, printf(',%d,', id)
       FROM clients WHERE id = ${rootClientId}
       UNION ALL
-      SELECT child.id, child.name, child.parent_client_id, subtree.depth + 1,
-        subtree.visited || child.id || ','
+      SELECT child.id, child.name, child.parent_client_id, child.budget_cents,
+        subtree.depth + 1, subtree.visited || child.id || ','
       FROM subtree
       JOIN clients child ON child.parent_client_id = subtree.id
       WHERE instr(subtree.visited, printf(',%d,', child.id)) = 0
     )
     SELECT id AS "clientId", name AS "name", parent_client_id AS "parentClientId",
-      depth AS "depth"
+      budget_cents AS "budgetCents", depth AS "depth"
     FROM subtree ORDER BY depth, id
   `)
   if (nodes.length === 0) return null
@@ -586,12 +589,26 @@ const clientRollupReport = async (
     }
   }
 
+  const budgetBurn = (metrics: MutableMetrics): number => {
+    let burn = 0
+    for (const currency of metrics.currencyMap.values()) {
+      burn = checkedAdd(burn, currency.costCents, 'budget burn')
+      burn = checkedAdd(burn, currency.expenseCents, 'budget burn')
+    }
+    return burn
+  }
+
   return {
     rootClientId,
     from: range.from,
     to: range.to,
     nodes: nodes.map((node) => ({
-      ...node,
+      clientId: node.clientId,
+      name: node.name,
+      parentClientId: node.parentClientId,
+      depth: node.depth,
+      nodeBudgetCents: node.budgetCents,
+      budgetBurnCents: budgetBurn(rollup.get(node.clientId)!),
       direct: finalizedMetrics(direct.get(node.clientId)!),
       rollup: finalizedMetrics(rollup.get(node.clientId)!),
     })),

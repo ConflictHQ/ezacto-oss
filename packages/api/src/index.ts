@@ -1,5 +1,10 @@
 export { createApiApp } from './app.js'
 export {
+  installClientTreeRoutes,
+  type ClientHierarchyNode,
+  type ClientTreeReader,
+} from './client-tree.js'
+export {
   assertValidCloudflareAccessConfig,
   CLOUDFLARE_ACCESS_JWT_HEADER,
   createCloudflareAccessSessionResolver,

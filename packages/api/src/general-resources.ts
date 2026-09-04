@@ -110,6 +110,7 @@ const routeDefinitions: Readonly<
       default_tax_pct: nullableNonnegativeNumber,
       default_tax2_pct: nullableNonnegativeNumber,
       default_discount_pct: nullableNonnegativeNumber,
+      budget_cents: { type: "nullable-nonnegative-int", maximum: 9_000_000_000_000 },
     },
     required: new Set(["name"]),
     filters: {

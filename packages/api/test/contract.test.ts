@@ -5,6 +5,7 @@ import {
   createApiApp,
   generateOpenApiDocument,
   installAttachmentRoutes,
+  installClientTreeRoutes,
   installEmailConfigurationRoutes,
   installEmailLogRoutes,
   installGeneralResourceRoutes,
@@ -18,6 +19,7 @@ import {
   installTimesheetApprovalRoutes,
   installTimesheetLockPolicyRoutes,
   type ApiSessionService,
+  type ClientTreeReader,
   type EmailConfigurationService,
   type AuthMailer,
   type ApiTokenService,
@@ -54,6 +56,7 @@ const moneyResources = new Proxy(
   { get: () => unavailable },
 ) as MoneyResourceRouteOptions["service"];
 const reports = new Proxy({}, { get: () => unavailable }) as ReportReader;
+const treeReader = new Proxy({}, { get: () => unavailable }) as ClientTreeReader;
 const tokens = new Proxy({}, { get: () => unavailable }) as ApiTokenService;
 const passwordAuth = new Proxy(
   {},
@@ -135,6 +138,7 @@ const documentedApp = () =>
       });
       installAttachmentRoutes(api);
       installReportRoutes(api, reports);
+      installClientTreeRoutes(api, treeReader);
     },
   });
 
