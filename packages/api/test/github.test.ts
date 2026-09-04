@@ -139,7 +139,7 @@ const fakeGitHub = (): FakeGitHub => {
 const harness = (github: FakeGitHub) => {
   const transactions = new MemoryTransactions()
   const identities = {
-    resolveProvider: vi.fn(async (_input: unknown) => ({
+    resolveProvider: vi.fn(async () => ({
       status: 'active' as const,
       matchedBy: 'verified_email' as const,
       userId: 7,
