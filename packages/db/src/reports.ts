@@ -528,7 +528,7 @@ const clientRollupReport = async (
     else {
       addCurrencyMetric(
         metrics,
-        organizationCurrency,
+        row.currency,
         'costCents',
         trackedAmountCents(row.roundedSeconds, row.costRateCents),
       )
