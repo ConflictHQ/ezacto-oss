@@ -1491,7 +1491,6 @@ export const createInvoicePaymentController = (
         attachmentCommandId = null
         attachmentForm.reset()
         await loadAttachments(session, invoiceId)
-        if (current() === session) attachmentStatus.textContent = 'File attached.'
       })
       .catch((error: unknown) => {
         if (current() !== session) return
