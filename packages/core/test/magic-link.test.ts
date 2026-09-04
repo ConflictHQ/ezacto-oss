@@ -3,7 +3,6 @@ import {
   createMagicLinkToken,
   verifyMagicLinkToken,
   MAGIC_LINK_TTL_MS,
-  type MagicLinkPayload,
 } from '../src/magic-link.js'
 
 const signingKey = crypto.getRandomValues(new Uint8Array(32))
