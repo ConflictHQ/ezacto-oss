@@ -877,6 +877,7 @@ for (const [runtime, factory] of factories) {
         { id: '0029_outbox_delivery' },
         { id: '0030_email_templates' },
         { id: '0031_team_people' },
+        { id: '0032_invoice_email_delivery' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -934,6 +935,7 @@ for (const [runtime, factory] of factories) {
         { id: '0029_outbox_delivery' },
         { id: '0030_email_templates' },
         { id: '0031_team_people' },
+        { id: '0032_invoice_email_delivery' },
       ])
       expect(
         await db.rows<{ applied_at: string }>(
@@ -1004,6 +1006,7 @@ for (const [runtime, factory] of factories) {
         { id: '0029_outbox_delivery' },
         { id: '0030_email_templates' },
         { id: '0031_team_people' },
+        { id: '0032_invoice_email_delivery' },
       ])
       expect(
         await db.rows<{ name: string }>(
@@ -1050,6 +1053,7 @@ for (const [runtime, factory] of factories) {
         { id: '0029_outbox_delivery' },
         { id: '0030_email_templates' },
         { id: '0031_team_people' },
+        { id: '0032_invoice_email_delivery' },
       ])
     })
   })
@@ -1171,6 +1175,8 @@ describe('package contents', () => {
         'dist/migrations/0028_timesheet_lock_policy.d.ts',
         'dist/migrations/0030_email_templates.js',
         'dist/migrations/0030_email_templates.d.ts',
+        'dist/migrations/0032_invoice_email_delivery.js',
+        'dist/migrations/0032_invoice_email_delivery.d.ts',
         'dist/email-configuration.js',
         'dist/email-configuration.d.ts',
         'dist/migrations/0029_outbox_delivery.js',

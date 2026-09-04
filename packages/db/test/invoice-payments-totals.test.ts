@@ -430,6 +430,7 @@ for (const [runtime, factory] of factories) {
         `SELECT id, applied_at FROM _ezacto_migrations ORDER BY id`,
       )
       expect(ledger.at(-1)?.id).toBe('0031_team_people')
+      expect(ledger.at(-1)?.id).toBe('0032_invoice_email_delivery')
       await db.migrateAgain()
       expect(
         await db.rows<{ id: string; applied_at: string }>(

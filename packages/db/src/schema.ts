@@ -2403,6 +2403,83 @@ export const eventOutbox = sqliteTable(
   ],
 )
 
+export const invoiceEmailIntents = sqliteTable(
+  'invoice_email_intents',
+  {
+    invoiceMessageId: integer('invoice_message_id')
+      .primaryKey()
+      .references(() => invoiceMessages.id, { onDelete: 'restrict' }),
+    eventId: text('event_id')
+      .notNull()
+      .unique()
+      .references(() => eventOutbox.id, { onDelete: 'restrict' }),
+    templateKind: text('template_kind', { enum: ['invoice'] }).notNull(),
+    templateVersion: integer('template_version').notNull(),
+    senderIdentityId: integer('sender_identity_id')
+      .notNull()
+      .references(() => senderIdentities.id, { onDelete: 'restrict' }),
+    senderIdentityVersion: integer('sender_identity_version').notNull(),
+    senderEvidenceVersion: integer('sender_evidence_version').notNull(),
+    fromName: text('from_name').notNull(),
+    fromEmail: text('from_email').notNull(),
+    replyToEmail: text('reply_to_email'),
+    subject: text('subject').notNull(),
+    textBody: text('text_body').notNull(),
+    htmlBody: text('html_body'),
+    confirmedByUserId: integer('confirmed_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    confirmedAt: text('confirmed_at').notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.templateKind, table.templateVersion],
+      foreignColumns: [emailTemplateVersions.templateKind, emailTemplateVersions.version],
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.senderIdentityId, table.senderEvidenceVersion],
+      foreignColumns: [
+        senderIdentityEvidence.senderIdentityId,
+        senderIdentityEvidence.evidenceVersion,
+      ],
+    }).onDelete('restrict'),
+    check('invoice_email_intents_confirmed_at_canonical', canonicalTimestamp(table.confirmedAt)),
+  ],
+)
+
+export const invoiceEmailRecipients = sqliteTable(
+  'invoice_email_recipients',
+  {
+    invoiceMessageId: integer('invoice_message_id')
+      .notNull()
+      .references(() => invoiceEmailIntents.invoiceMessageId, { onDelete: 'restrict' }),
+    recipientIndex: integer('recipient_index').notNull(),
+    deliveryId: integer('delivery_id')
+      .notNull()
+      .unique()
+      .references(() => emailLog.id, { onDelete: 'restrict' }),
+    name: text('name').notNull(),
+    email: text('email').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.invoiceMessageId, table.recipientIndex] }),
+    uniqueIndex('invoice_email_recipients_message_email_unique').on(
+      table.invoiceMessageId,
+      table.email,
+    ),
+    index('invoice_email_recipients_message').on(
+      table.invoiceMessageId,
+      table.recipientIndex,
+    ),
+    check(
+      'invoice_email_recipients_index_safe',
+      sql`${table.recipientIndex} between 0 and 999`,
+    ),
+    check('invoice_email_recipients_created_at_canonical', canonicalTimestamp(table.createdAt)),
+  ],
+)
+
 export const outboxDeliveryReceipts = sqliteTable(
   'outbox_delivery_receipts',
   {

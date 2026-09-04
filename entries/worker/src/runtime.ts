@@ -25,6 +25,7 @@ import {
   createApiSessionService,
   createCloudflareAccessSessionResolver,
   createCloudflareAccessVerifier,
+  createInvoiceEmailOutboxSubscriber,
 } from "@ezacto/api";
 import type {
   AttachmentObjectPort,
@@ -400,6 +401,12 @@ export const createRuntimeServices = async (
           emailProvider.name,
           emailConfiguration,
         );
+  const moneyResources = createMoneyResourceRepository(drizzle);
+  const outbox = createD1OutboxService(database, {
+    additionalSubscribers: [
+      createInvoiceEmailOutboxSubscriber(moneyResources, organizationMailer),
+    ],
+  });
   return {
     bootstrap: (input) => bootstrapInstanceD1(database, input),
     enrollOwnerPassword: (input) =>
@@ -408,6 +415,7 @@ export const createRuntimeServices = async (
     generalResources: createGeneralResourceRepository(drizzle),
     team: createTeamRepository(drizzle),
     moneyResources: createMoneyResourceRepository(drizzle),
+    moneyResources,
     invoiceGeneration: createInvoiceGenerationService(drizzle),
     trackedResources: new DrizzleTrackedResourceRepository(
       drizzle,
@@ -443,7 +451,7 @@ export const createRuntimeServices = async (
     ...(emailProvider instanceof SesMailer
       ? { senderIdentityVerifier: createSesSenderIdentityVerifier(emailProvider) }
       : {}),
-    outbox: createD1OutboxService(database),
+    outbox,
     identities,
     oidcTransactions: createD1OidcTransactionStore(database),
     ...(deploymentAuthMailer === undefined ? {} : { deploymentAuthMailer }),

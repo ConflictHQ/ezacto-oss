@@ -9,7 +9,9 @@ import { renderTaskAdminPage } from '../tasks/render.js'
 import { renderTeamPages } from '../team/render.js'
 import { renderExpenseCategoriesPage } from '../expense-categories/render.js'
 import {
+  renderInvoiceAttachmentSection,
   renderInvoiceComposerDialog,
+  renderInvoiceDeliveryDialog,
   renderInvoicePaymentDialogs,
   renderInvoicePaymentSection,
   renderInvoiceLineDialogs,
@@ -349,7 +351,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
           <h2 data-invoice-detail-number>—</h2>
           <p data-invoice-detail-subject hidden></p>
         </div>
-        <div class="invoice-document-actions"><strong class="invoice-state" data-invoice-detail-state>—</strong><button type="button" data-invoice-send disabled hidden>Mark sent</button></div>
+        <div class="invoice-document-actions"><strong class="invoice-state" data-invoice-detail-state>—</strong><button type="button" data-invoice-deliver disabled hidden>Send invoice</button><button type="button" data-invoice-send disabled hidden>Mark sent</button></div>
       </header>
       <p class="invoice-reminder-line" data-invoice-reminder-line hidden></p>
       <dl class="invoice-facts">
@@ -376,6 +378,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
         <h3>Notes</h3><p data-invoice-detail-notes></p>
       </section>
       ${renderInvoicePaymentSection()}
+      ${renderInvoiceAttachmentSection()}
       <section class="invoice-history" aria-labelledby="invoice-message-heading">
         <h3 id="invoice-message-heading">History</h3>
         <ul data-invoice-detail-messages></ul>
@@ -446,6 +449,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
   ${renderExpenseWorkflowPages(view)}
   ${renderExpenseCategoriesPage(view)}
   ${renderInvoiceComposerDialog()}
+  ${renderInvoiceDeliveryDialog()}
   ${renderInvoiceLineDialogs()}
   ${renderInvoicePaymentDialogs()}
   <dialog class="command-dialog" data-command-dialog aria-labelledby="command-title">

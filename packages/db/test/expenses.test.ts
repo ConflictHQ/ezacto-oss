@@ -333,6 +333,7 @@ for (const [runtime, factory] of factories) {
       expect(await db.rows(`PRAGMA foreign_key_check`)).toEqual([])
       const ledger = await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id`)
       expect(ledger.at(-1)).toEqual({ id: '0031_team_people' })
+      expect(ledger.at(-1)).toEqual({ id: '0032_invoice_email_delivery' })
       await db.migrateAgain()
       expect(await db.rows(`SELECT id FROM _ezacto_migrations ORDER BY id`)).toEqual(ledger)
     })

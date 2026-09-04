@@ -1055,6 +1055,7 @@ for (const [runtime, factory] of factories) {
         '0029_outbox_delivery',
         '0030_email_templates',
         '0031_team_people',
+        '0032_invoice_email_delivery',
       ])
       expect(firstLedger.slice(0, 2).map(({ applied_at: appliedAt }) => appliedAt)).toEqual([
         originalAppliedAt,
@@ -1147,6 +1148,7 @@ for (const [runtime, factory] of factories) {
         { id: '0029_outbox_delivery' },
         { id: '0030_email_templates' },
         { id: '0031_team_people' },
+        { id: '0032_invoice_email_delivery' },
       ])
       expect(
         await db.rows<{ name: string }>(
