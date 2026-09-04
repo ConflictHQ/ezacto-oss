@@ -10,6 +10,12 @@ import { runLoad } from './load.js'
 import { reconciliationExitCode, runReconcile } from './reconcile.js'
 import { runSync, syncExitCode } from './sync.js'
 import { runVerify } from './verify.js'
+import {
+  applyRecurringInvoiceWorksheet,
+  applyRetainerWorksheet,
+  generateRecurringInvoiceWorksheet,
+  generateRetainerWorksheet,
+} from './worksheets.js'
 
 const USAGE = `ezacto-migrate <command> [options]
 
@@ -23,11 +29,14 @@ Commands:
   verify   Check snapshot counts/FKs and capture report checksums per currency
   load     Transform a verified snapshot into an ezacto SQLite database
   reconcile Compare Harvest checksums, snapshot rows, and the loaded database
+  finish-retainers Generate or apply the missing Harvest retainer-balance worksheet
+  finish-recurring-invoices Generate or apply the missing recurring-invoice worksheet
 
 Options:
   --account-id <id>    Harvest account id to use (skips auto-pick/prompt)
   --snapshot-dir <dir> Snapshot directory to write manifest.json into (default: ./snapshot)
   --database <path>    SQLite database path for load/reconcile (required)
+  --input <path>       Completed worksheet JSON to apply (finish-* only)
   --organization-currency <code>  ISO currency when Company/client data is ambiguous
   --organization-address <text>   Organization address (Company API omits it)
   --force              Re-stamp a snapshot dir that holds a different account
@@ -111,6 +120,7 @@ const main = async (): Promise<number> => {
       'snapshot-dir': { type: 'string' },
       'request-timeout': { type: 'string' },
       database: { type: 'string' },
+      input: { type: 'string' },
       'organization-currency': { type: 'string' },
       'organization-address': { type: 'string' },
       force: { type: 'boolean' },
@@ -124,7 +134,9 @@ const main = async (): Promise<number> => {
     command !== 'verify' &&
     command !== 'sync' &&
     command !== 'load' &&
-    command !== 'reconcile'
+    command !== 'reconcile' &&
+    command !== 'finish-retainers' &&
+    command !== 'finish-recurring-invoices'
   ) {
     process.stdout.write(USAGE)
     return 1
@@ -159,6 +171,28 @@ const main = async (): Promise<number> => {
         `${result.jsonPath}; ${result.markdownPath}`,
     )
     return reconciliationExitCode(result.report)
+  }
+
+  if (command === 'finish-retainers' || command === 'finish-recurring-invoices') {
+    if (!values.database) throw new Error(`--database is required for ${command}`)
+    const options = { snapshotDir, databasePath: values.database }
+    if (values.input === undefined) {
+      const worksheet =
+        command === 'finish-retainers'
+          ? await generateRetainerWorksheet(options)
+          : await generateRecurringInvoiceWorksheet(options)
+      process.stdout.write(`${JSON.stringify(worksheet, null, 2)}\n`)
+      return 0
+    }
+    const result =
+      command === 'finish-retainers'
+        ? await applyRetainerWorksheet({ ...options, inputPath: values.input })
+        : await applyRecurringInvoiceWorksheet({ ...options, inputPath: values.input })
+    console.log(
+      `finished: ${result.completed} completed, ${result.replayed} replayed, ` +
+        `${result.pending} pending; snapshot ${result.snapshotSha256}`,
+    )
+    return result.pending === 0 ? 0 : 1
   }
 
   const devVarsPath = loadDevVars()

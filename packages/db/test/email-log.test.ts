@@ -23,6 +23,8 @@ interface Harness {
 
 const now = '2026-08-28T20:00:00.000Z'
 const message: EmailMessage = {
+  from: { email: 'billing@example.test', name: 'Billing' },
+  replyTo: [{ email: 'accounts@example.test' }],
   to: [{ email: 'owner@example.test', name: 'Avery' }],
   template: 'verify_email',
   subject: 'Verify your ezacto email',
@@ -113,6 +115,13 @@ for (const [runtime, factory] of factories) {
         { id: '0021_estimate_commands' },
         { id: '0022_resource_create_commands' },
         { id: '0023_migration_import_authority' },
+        { id: '0024_migration_worksheet_completions' },
+        { id: '0025_time_entry_note_requirements' },
+        { id: '0026_invoice_generation' },
+        { id: '0027_timesheet_approvals' },
+        { id: '0028_timesheet_lock_policy' },
+        { id: '0029_outbox_delivery' },
+        { id: '0030_email_templates' },
       ])
     })
 
@@ -138,6 +147,13 @@ for (const [runtime, factory] of factories) {
         { id: '0021_estimate_commands' },
         { id: '0022_resource_create_commands' },
         { id: '0023_migration_import_authority' },
+        { id: '0024_migration_worksheet_completions' },
+        { id: '0025_time_entry_note_requirements' },
+        { id: '0026_invoice_generation' },
+        { id: '0027_timesheet_approvals' },
+        { id: '0028_timesheet_lock_policy' },
+        { id: '0029_outbox_delivery' },
+        { id: '0030_email_templates' },
       ])
       expect(
         await current.rows<{ name: string }>(
@@ -158,6 +174,8 @@ for (const [runtime, factory] of factories) {
         id: 1,
         status: 'queued',
         attemptCount: 0,
+        from: { email: 'billing@example.test', name: 'Billing' },
+        replyTo: [{ email: 'accounts@example.test' }],
         to: [{ email: 'owner@example.test', name: 'Avery' }],
       })
       await expect(
@@ -360,8 +378,9 @@ for (const [runtime, factory] of factories) {
       await expect(
         current.run(
           `INSERT OR REPLACE INTO email_log (
-             id, to_json, template, subject, created_at, updated_at
-           ) VALUES (1, ?, 'attacker', 'attacker', ?, ?)`,
+             id, from_json, to_json, template, subject, created_at, updated_at
+           ) VALUES (1, ?, ?, 'attacker', 'attacker', ?, ?)`,
+          JSON.stringify({ email: 'attacker@example.test' }),
           JSON.stringify([{ email: 'attacker@example.test' }]),
           now,
           now,
@@ -370,6 +389,12 @@ for (const [runtime, factory] of factories) {
       await expect(
         current.run(`UPDATE email_log SET subject = 'changed' WHERE id = 1`),
       ).rejects.toThrow(/metadata is immutable/i)
+      await expect(
+        current.run(
+          `UPDATE email_log SET from_json = ? WHERE id = 1`,
+          JSON.stringify({ email: 'attacker@example.test' }),
+        ),
+      ).rejects.toThrow(/sender metadata is immutable/i)
     })
 
     it('[security] rejects missing, duplicate, and wrong-typed recipient fields', async () => {
@@ -385,14 +410,37 @@ for (const [runtime, factory] of factories) {
         await expect(
           current.run(
             `INSERT INTO email_log (
-               to_json, template, subject, created_at, updated_at
-             ) VALUES (?, 'verify_email', 'Verify', ?, ?)`,
+               from_json, to_json, template, subject, created_at, updated_at
+             ) VALUES (?, ?, 'verify_email', 'Verify', ?, ?)`,
+            JSON.stringify({ email: 'billing@example.test' }),
             recipients,
             now,
             now,
           ),
         ).rejects.toThrow(/recipients are invalid/i)
       }
+      await expect(
+        current.run(
+          `INSERT INTO email_log (
+             to_json, template, subject, created_at, updated_at
+           ) VALUES (?, 'verify_email', 'Verify', ?, ?)`,
+          JSON.stringify([{ email: 'owner@example.test' }]),
+          now,
+          now,
+        ),
+      ).rejects.toThrow(/sender metadata is invalid/i)
+      await expect(
+        current.run(
+          `INSERT INTO email_log (
+             from_json, reply_to_json, to_json, template, subject, created_at, updated_at
+           ) VALUES (?, ?, ?, 'verify_email', 'Verify', ?, ?)`,
+          JSON.stringify({ email: 'billing@example.test' }),
+          JSON.stringify([{ name: 'missing address' }]),
+          JSON.stringify([{ email: 'owner@example.test' }]),
+          now,
+          now,
+        ),
+      ).rejects.toThrow(/sender metadata is invalid/i)
     })
   })
 }

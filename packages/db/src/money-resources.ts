@@ -444,9 +444,18 @@ type RawInvoiceLine = Omit<InvoiceLineResource, 'taxed' | 'taxed2'> & {
   taxed2: number | boolean
 }
 
-const invoiceLinesSelect = `SELECT id, invoice_id, position, kind, description, quantity,
+const invoiceLineSelect = `SELECT id, invoice_id, position, kind, description, quantity,
   unit_price_cents, amount_cents, taxed, taxed2, project_id, created_at, updated_at
-  FROM invoice_line_items WHERE invoice_id = ? ORDER BY position, id`
+  FROM invoice_line_items`
+
+const invoiceLinesSelect = `${invoiceLineSelect} WHERE invoice_id = ? ORDER BY position, id`
+
+const invoiceWindow = `id > ? AND id <= ? ORDER BY id LIMIT ?`
+
+const invoicePageLinesSelect = `${invoiceLineSelect}
+  WHERE invoice_id IN (
+    SELECT id FROM invoices WHERE ${invoiceWindow}
+  ) ORDER BY invoice_id, position, id`
 
 const hydrateInvoiceLines = (lines: RawInvoiceLine[]): InvoiceLineResource[] =>
   lines.map((line) => ({ ...line, taxed: Boolean(line.taxed), taxed2: Boolean(line.taxed2) }))
@@ -457,6 +466,16 @@ const hydrateInvoice = (row: RawInvoice, lineItems: InvoiceLineResource[]): Invo
   payment_options: parseJson<string[]>(row.payment_options, []),
   line_items: lineItems,
 })
+
+const hydrateInvoicePage = (rows: RawInvoice[], rawLines: RawInvoiceLine[]): InvoiceResource[] => {
+  const linesByInvoice = new Map<number, InvoiceLineResource[]>()
+  for (const line of hydrateInvoiceLines(rawLines)) {
+    const lines = linesByInvoice.get(line.invoice_id)
+    if (lines === undefined) linesByInvoice.set(line.invoice_id, [line])
+    else lines.push(line)
+  }
+  return rows.map((row) => hydrateInvoice(row, linesByInvoice.get(row.id) ?? []))
+}
 
 const estimateSelect = `SELECT id, client_id, created_by_user_id, number,
   purchase_order, subject, notes, currency, state, version, issue_date, sent_at,
@@ -507,6 +526,34 @@ const readConsistentInvoice = async (
     if (row === undefined) return null
     const lines = client.prepare(invoiceLinesSelect).all(invoiceId) as RawInvoiceLine[]
     return hydrateInvoice(row, hydrateInvoiceLines(lines))
+  })()
+}
+
+const readConsistentInvoicePage = async (
+  database: MoneyResourceDatabase,
+  window: MoneyWindow,
+): Promise<InvoiceResource[]> => {
+  const params = [window.afterId ?? 0, window.throughId, window.take]
+  const client = database.$client
+  if (isD1Client(client)) {
+    const [headers, lines] = await client.batch([
+      client.prepare(`${invoiceSelect} WHERE ${invoiceWindow}`).bind(...params),
+      client.prepare(invoicePageLinesSelect).bind(...params),
+    ])
+    if (headers === undefined || lines === undefined) {
+      throw new Error('D1 invoice page snapshot batch returned incomplete results')
+    }
+    return hydrateInvoicePage(
+      headers.results as unknown as RawInvoice[],
+      lines.results as unknown as RawInvoiceLine[],
+    )
+  }
+  return client.transaction(() => {
+    const headers = client
+      .prepare(`${invoiceSelect} WHERE ${invoiceWindow}`)
+      .all(...params) as RawInvoice[]
+    const lines = client.prepare(invoicePageLinesSelect).all(...params) as RawInvoiceLine[]
+    return hydrateInvoicePage(headers, lines)
   })()
 }
 
@@ -732,12 +779,7 @@ export class MoneyResourceRepository {
   }
 
   async listInvoices(window: MoneyWindow): Promise<InvoiceResource[]> {
-    const rows = await all<{ id: number }>(this.database, {
-      text: `SELECT id FROM invoices WHERE id > ? AND id <= ? ORDER BY id LIMIT ?`,
-      params: [window.afterId ?? 0, window.throughId, window.take],
-    })
-    const values = await Promise.all(rows.map(({ id }) => readConsistentInvoice(this.database, id)))
-    return values.filter((value): value is InvoiceResource => value !== null)
+    return readConsistentInvoicePage(this.database, window)
   }
 
   async getInvoice(id: number): Promise<InvoiceResource | null> {

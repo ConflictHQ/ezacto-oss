@@ -2,6 +2,7 @@ import {
   TrackedResourceAssignmentError,
   TrackedResourceConflictError,
   TrackedResourceInputError,
+  TrackedMutationLockedError,
   TrackedResourceNotFoundError,
   type ApprovalStatus,
   type TrackedState,
@@ -22,6 +23,11 @@ import {
   type TimeBoundary,
   type TimeEntry,
 } from './time-entries.js'
+import {
+  assertStoredTimeEntryNoteRequirement,
+  currentTimeEntryNotePolicyAllows,
+  resolveStoredTimeEntryNoteRequirement,
+} from './time-entry-note-requirements.js'
 import { resolveEntryRates } from './rate-resolver.js'
 import {
   clients,
@@ -32,6 +38,7 @@ import {
   taskAssignments,
   tasks,
   timeEntries,
+  timesheetSubmissions,
   userAssignments,
 } from './schema.js'
 import {
@@ -75,7 +82,49 @@ const concurrentProblem = (resource: 'time entry' | 'expense') =>
   new TrackedResourceConflictError(resource)
 const notFound = (resource: 'time entry' | 'expense') => new TrackedResourceNotFoundError(resource)
 
+const approvalPeriodWriteErrorPattern =
+  /(?:approved (?:or pending )?timesheet period|(?:time entry|expense) does not match its timesheet submission)/
+
+const isApprovalPeriodWriteError = (error: unknown): boolean => {
+  const seen = new Set<unknown>()
+  let current = error
+  let depth = 0
+  while (current instanceof Error && !seen.has(current) && depth < 8) {
+    if (approvalPeriodWriteErrorPattern.test(current.message)) return true
+    seen.add(current)
+    current = (current as Error & { cause?: unknown }).cause
+    depth += 1
+  }
+  return false
+}
+
+const policyLockWriteErrorPattern = new RegExp(
+  '^(?:D1_ERROR: )?(?:time entry date is locked by timesheet policy|' +
+    'expense date is locked by timesheet policy)' +
+    '(?:: SQLITE_CONSTRAINT(?: \\(extended: SQLITE_CONSTRAINT_TRIGGER\\))?)?$',
+)
+
+const isPolicyLockWriteError = (error: unknown): boolean => {
+  const seen = new Set<unknown>()
+  let current = error
+  let depth = 0
+  while (current instanceof Error && !seen.has(current) && depth < 8) {
+    if (policyLockWriteErrorPattern.test(current.message)) return true
+    seen.add(current)
+    current = (current as Error & { cause?: unknown }).cause
+    depth += 1
+  }
+  return false
+}
+
+const throwIfPolicyLockWriteError = (error: unknown): void => {
+  if (isPolicyLockWriteError(error)) {
+    throw new TrackedMutationLockedError('policy_locked')
+  }
+}
+
 const translateTrackedNotFound = (error: unknown, resource: 'time entry' | 'expense'): never => {
+  throwIfPolicyLockWriteError(error)
   if (error instanceof TrackedEntityNotFoundError) throw notFound(resource)
   throw error
 }
@@ -83,11 +132,14 @@ const translateTrackedNotFound = (error: unknown, resource: 'time entry' | 'expe
 export type TrackedResourceDatabase = Parameters<typeof getTrackedState>[0]
 
 export type PolicySubject =
-  | { entityType: 'time_entry' | 'expense'; entityId: number }
+  | { entityType: 'time_entry'; entityId: number }
+  | { entityType: 'expense'; entityId: number }
   | { entityType: 'running_time_entry_replacement'; userId: number }
+  | { entityType: 'tracked_date'; spentDate: string }
 
 export interface TrackedPolicyResolver {
   isLocked(subject: Readonly<PolicySubject>): Promise<boolean>
+  lockedDates?(spentDates: readonly string[]): Promise<ReadonlyMap<string, boolean>>
 }
 
 export interface TrackedResourceClock {
@@ -96,6 +148,7 @@ export interface TrackedResourceClock {
 
 export interface TimeEntryRecord extends TimeEntry {
   state: TrackedState
+  noteMinimumLength: number
 }
 
 export interface ExpenseRecord extends Expense {
@@ -133,6 +186,23 @@ export interface ExpenseFilters {
   reimbursable?: boolean
   reimbursementStatus?: ReimbursementStatus
   updatedSince?: string
+}
+
+export interface OrganizationTimeEntryNoteSettings {
+  required: boolean
+  minimumLength: number
+}
+
+export interface OrganizationTimeEntrySettings {
+  mode: 'duration' | 'start_end'
+  timeFormat: 'decimal' | 'hours_minutes'
+  clock: '12h' | '24h'
+  weekStartDay: 'saturday' | 'sunday' | 'monday'
+}
+
+export interface UpdateOrganizationTimeEntryNoteSettings {
+  required?: boolean
+  minimumLength?: number
 }
 
 export interface CreateTimeEntryRequest {
@@ -189,9 +259,14 @@ interface AssignmentResolution {
   billable: boolean
 }
 
+interface ApprovalMembership {
+  approvalStatus: ApprovalStatus
+  timesheetSubmissionId: number | null
+}
+
 type TimeSettings = Pick<
   typeof organizations.$inferSelect,
-  'timeEntryMode' | 'timeRounding' | 'timeEntryNotesRequired'
+  'timeEntryMode' | 'timeFormat' | 'clock' | 'timeRounding' | 'weekStartDay'
 >
 
 const moneyUpperBound = 9_000_000_000_000
@@ -215,15 +290,6 @@ const mapReturnedExpense = (row: Record<string, unknown>): Expense =>
 const isRunning = (entry: TimeEntry): boolean =>
   entry.timerStartedAt !== null || (entry.startedTime !== null && entry.endedTime === null)
 
-const requireNotes = (settings: TimeSettings, notes: string | null | undefined): void => {
-  if (
-    settings.timeEntryNotesRequired &&
-    (notes === null || notes === undefined || notes.trim() === '')
-  ) {
-    throw inputProblem('notes', 'required', 'notes are required by organization policy')
-  }
-}
-
 export class DrizzleTrackedResourceRepository {
   readonly #database: TrackedResourceDatabase
   readonly #policy: TrackedPolicyResolver
@@ -241,6 +307,51 @@ export class DrizzleTrackedResourceRepository {
       .limit(1)
     if (!settings) throw new Error('organization must exist before serving tracked resources')
     return settings
+  }
+
+  async timeEntrySettings(): Promise<OrganizationTimeEntrySettings> {
+    const settings = await this.#timeSettings()
+    return {
+      mode: settings.timeEntryMode,
+      timeFormat: settings.timeFormat,
+      clock: settings.clock,
+      weekStartDay: settings.weekStartDay,
+    }
+  }
+
+  async timeEntryNoteSettings(): Promise<OrganizationTimeEntryNoteSettings> {
+    const [organization] = await this.#database
+      .select()
+      .from(organizations)
+      .where(eq(organizations.id, 1))
+      .limit(1)
+    if (!organization) throw new Error('organization must exist before serving tracked resources')
+    return {
+      required: organization.timeEntryNotesRequired,
+      minimumLength: organization.timeEntryNotesMinimumLength,
+    }
+  }
+
+  async updateTimeEntryNoteSettings(
+    input: Readonly<UpdateOrganizationTimeEntryNoteSettings>,
+    updatedAt: string,
+  ): Promise<OrganizationTimeEntryNoteSettings> {
+    const [organization] = await this.#database
+      .update(organizations)
+      .set({
+        ...(input.required !== undefined ? { timeEntryNotesRequired: input.required } : {}),
+        ...(input.minimumLength !== undefined
+          ? { timeEntryNotesMinimumLength: input.minimumLength }
+          : {}),
+        updatedAt,
+      })
+      .where(eq(organizations.id, 1))
+      .returning()
+    if (!organization) throw new Error('organization must exist before serving tracked resources')
+    return {
+      required: organization.timeEntryNotesRequired,
+      minimumLength: organization.timeEntryNotesMinimumLength,
+    }
   }
 
   async #resolveTimeAssignment(
@@ -323,27 +434,83 @@ export class DrizzleTrackedResourceRepository {
     return expense
   }
 
-  async #timeRecord(entry: TimeEntry): Promise<TimeEntryRecord> {
-    const policyLocked = await this.#policy.isLocked({
-      entityType: 'time_entry',
-      entityId: entry.id,
+  async #approvalMembership(
+    userId: number,
+    spentDate: string,
+    running: boolean,
+  ): Promise<ApprovalMembership> {
+    const [submission] = await this.#database
+      .select()
+      .from(timesheetSubmissions)
+      .where(
+        and(
+          eq(timesheetSubmissions.userId, userId),
+          lte(timesheetSubmissions.periodStart, spentDate),
+          gte(timesheetSubmissions.periodEnd, spentDate),
+        ),
+      )
+      .limit(1)
+    if (submission?.status === 'approved') {
+      throw inputProblem(
+        'spent_date',
+        'approved_period',
+        'The selected timesheet period is approved and locked.',
+      )
+    }
+    if (submission?.status === 'submitted') {
+      if (running) {
+        throw inputProblem(
+          'time_entry',
+          'submitted_period_running',
+          'A running timer cannot be started inside a submitted timesheet period.',
+        )
+      }
+      return { approvalStatus: 'submitted', timesheetSubmissionId: submission.id }
+    }
+    return { approvalStatus: 'unsubmitted', timesheetSubmissionId: null }
+  }
+
+  async #translateApprovalPeriodWriteError(
+    error: unknown,
+    userId: number,
+    spentDate: string,
+    running: boolean,
+    resource: 'time entry' | 'expense' = 'time entry',
+  ): Promise<never> {
+    throwIfPolicyLockWriteError(error)
+    if (!isApprovalPeriodWriteError(error)) throw error
+    await this.#approvalMembership(userId, spentDate, running)
+    throw concurrentProblem(resource)
+  }
+
+  async #assertPolicyDateUnlocked(spentDate: string): Promise<void> {
+    if (await this.#policy.isLocked({ entityType: 'tracked_date', spentDate })) {
+      throw new TrackedMutationLockedError('policy_locked')
+    }
+  }
+
+  async #timeRecord(entry: TimeEntry, preparedPolicyLocked?: boolean): Promise<TimeEntryRecord> {
+    const policyLocked = preparedPolicyLocked ?? await this.#policy.isLocked({
+      entityType: 'time_entry', entityId: entry.id,
     })
     try {
-      const state = await getTrackedState(this.#database, {
-        entityType: 'time_entry',
-        entityId: entry.id,
-        policyLocked,
-      })
-      return { ...entry, state }
+      const [state, noteRequirement] = await Promise.all([
+        getTrackedState(this.#database, {
+          entityType: 'time_entry',
+          entityId: entry.id,
+          policyLocked,
+        }),
+        resolveStoredTimeEntryNoteRequirement(this.#database, entry.userId, entry.projectId),
+      ])
+      return { ...entry, state, noteMinimumLength: noteRequirement?.minimumLength ?? 0 }
     } catch (error) {
       return translateTrackedNotFound(error, 'time entry')
     }
   }
 
-  async #expenseRecord(expense: Expense): Promise<ExpenseRecord> {
-    const policyLocked = await this.#policy.isLocked({
-      entityType: 'expense',
-      entityId: expense.id,
+  async #expenseRecord(expense: Expense, preparedPolicyLocked?: boolean): Promise<ExpenseRecord> {
+    const policyLocked = preparedPolicyLocked ?? await this.#policy.isLocked({
+      entityType: 'expense', entityId: expense.id,
     })
     try {
       const state = await getTrackedState(this.#database, {
@@ -441,6 +608,43 @@ export class DrizzleTrackedResourceRepository {
     return conditions
   }
 
+  async timeEntryOptions(
+    userId: number,
+  ): Promise<readonly { projectId: number; taskId: number; noteMinimumLength: number }[]> {
+    const rows = await this.#database
+      .select()
+      .from(userAssignments)
+      .innerJoin(projects, eq(projects.id, userAssignments.projectId))
+      .innerJoin(clients, eq(clients.id, projects.clientId))
+      .innerJoin(taskAssignments, eq(taskAssignments.projectId, projects.id))
+      .innerJoin(tasks, eq(tasks.id, taskAssignments.taskId))
+      .where(
+        and(
+          eq(userAssignments.userId, userId),
+          eq(userAssignments.isActive, true),
+          eq(projects.isActive, true),
+          eq(clients.isActive, true),
+          eq(taskAssignments.isActive, true),
+          eq(tasks.isActive, true),
+        ),
+      )
+      .orderBy(asc(userAssignments.projectId), asc(taskAssignments.taskId))
+    return Promise.all(
+      rows.map(async (row) => ({
+        projectId: row.user_assignments.projectId,
+        taskId: row.task_assignments.taskId,
+        noteMinimumLength:
+          (
+            await resolveStoredTimeEntryNoteRequirement(
+              this.#database,
+              userId,
+              row.user_assignments.projectId,
+            )
+          )?.minimumLength ?? 0,
+      })),
+    )
+  }
+
   timeEntries(
     userId: number,
     filters: Readonly<TimeEntryFilters>,
@@ -469,7 +673,8 @@ export class DrizzleTrackedResourceRepository {
           )
           .orderBy(asc(timeEntries.id))
           .limit(take)
-        return Promise.all(rows.map((row) => this.#timeRecord(row)))
+        const byDate = await this.#policy.lockedDates?.(rows.map(({ spentDate }) => spentDate))
+        return Promise.all(rows.map((row) => this.#timeRecord(row, byDate?.get(row.spentDate))))
       },
     }
   }
@@ -499,7 +704,8 @@ export class DrizzleTrackedResourceRepository {
           )
           .orderBy(asc(expenses.id))
           .limit(take)
-        return Promise.all(rows.map((row) => this.#expenseRecord(row)))
+        const byDate = await this.#policy.lockedDates?.(rows.map(({ spentDate }) => spentDate))
+        return Promise.all(rows.map((row) => this.#expenseRecord(row, byDate?.get(row.spentDate))))
       },
     }
   }
@@ -518,7 +724,6 @@ export class DrizzleTrackedResourceRepository {
     boundary: TimeBoundary,
   ): Promise<TimeEntryRecord> {
     const settings = await this.#timeSettings()
-    requireNotes(settings, input.notes)
     const assignment = await this.#resolveTimeAssignment(userId, input.projectId, input.taskId)
     const base = {
       userId,
@@ -548,22 +753,40 @@ export class DrizzleTrackedResourceRepository {
             'a running timer must use the current organization-local date',
           )
         }
+        await this.#assertPolicyDateUnlocked(boundary.date)
         const runningEntryPolicyLocked = await this.#policy.isLocked({
           entityType: 'running_time_entry_replacement',
           userId,
         })
-        created = await startTimeEntry(this.#database, base, boundary, runningEntryPolicyLocked)
+        const approval = await this.#approvalMembership(userId, boundary.date, true)
+        try {
+          created = await startTimeEntry(
+            this.#database,
+            { ...base, ...approval },
+            boundary,
+            runningEntryPolicyLocked,
+          )
+        } catch (error) {
+          return this.#translateApprovalPeriodWriteError(error, userId, boundary.date, true)
+        }
       } else {
         if (input.spentDate === undefined) {
           throw inputProblem('spent_date', 'required', 'spent_date is required for a stopped entry')
         }
-        created = await createStoppedTimeEntry(this.#database, {
-          ...base,
-          spentDate: input.spentDate,
-          seconds: input.seconds,
-          createdAt: boundary.instant,
-          updatedAt: boundary.instant,
-        })
+        await this.#assertPolicyDateUnlocked(input.spentDate)
+        const approval = await this.#approvalMembership(userId, input.spentDate, false)
+        try {
+          created = await createStoppedTimeEntry(this.#database, {
+            ...base,
+            ...approval,
+            spentDate: input.spentDate,
+            seconds: input.seconds,
+            createdAt: boundary.instant,
+            updatedAt: boundary.instant,
+          })
+        } catch (error) {
+          return this.#translateApprovalPeriodWriteError(error, userId, input.spentDate, false)
+        }
       }
     } else {
       if (input.seconds !== undefined) {
@@ -588,11 +811,22 @@ export class DrizzleTrackedResourceRepository {
             'a running timer must use the current organization-local start time',
           )
         }
+        await this.#assertPolicyDateUnlocked(boundary.date)
         const runningEntryPolicyLocked = await this.#policy.isLocked({
           entityType: 'running_time_entry_replacement',
           userId,
         })
-        created = await startTimeEntry(this.#database, base, boundary, runningEntryPolicyLocked)
+        const approval = await this.#approvalMembership(userId, boundary.date, true)
+        try {
+          created = await startTimeEntry(
+            this.#database,
+            { ...base, ...approval },
+            boundary,
+            runningEntryPolicyLocked,
+          )
+        } catch (error) {
+          return this.#translateApprovalPeriodWriteError(error, userId, boundary.date, true)
+        }
       } else {
         if (input.spentDate === undefined || input.startedTime === undefined) {
           throw inputProblem(
@@ -601,14 +835,21 @@ export class DrizzleTrackedResourceRepository {
             'spent_date and started_time are required with ended_time',
           )
         }
-        created = await createStoppedTimeEntry(this.#database, {
-          ...base,
-          spentDate: input.spentDate,
-          startedTime: input.startedTime,
-          endedTime: input.endedTime,
-          createdAt: boundary.instant,
-          updatedAt: boundary.instant,
-        })
+        await this.#assertPolicyDateUnlocked(input.spentDate)
+        const approval = await this.#approvalMembership(userId, input.spentDate, false)
+        try {
+          created = await createStoppedTimeEntry(this.#database, {
+            ...base,
+            ...approval,
+            spentDate: input.spentDate,
+            startedTime: input.startedTime,
+            endedTime: input.endedTime,
+            createdAt: boundary.instant,
+            updatedAt: boundary.instant,
+          })
+        } catch (error) {
+          return this.#translateApprovalPeriodWriteError(error, userId, input.spentDate, false)
+        }
       }
     }
     return this.#timeRecord(created)
@@ -622,7 +863,6 @@ export class DrizzleTrackedResourceRepository {
   ): Promise<TimeEntryRecord> {
     const entry = await this.#ownedTimeEntry(userId, id)
     const settings = await this.#timeSettings()
-    if (input.notes !== undefined) requireNotes(settings, input.notes)
     const timingOrAssignmentChange =
       input.projectId !== undefined ||
       input.taskId !== undefined ||
@@ -641,6 +881,14 @@ export class DrizzleTrackedResourceRepository {
     const projectId = input.projectId ?? entry.projectId
     const taskId = input.taskId ?? entry.taskId
     const spentDate = input.spentDate ?? entry.spentDate
+    if (spentDate !== entry.spentDate) await this.#assertPolicyDateUnlocked(spentDate)
+    const approval: ApprovalMembership =
+      entry.approvalStatus === 'approved' || spentDate === entry.spentDate
+        ? {
+            approvalStatus: entry.approvalStatus,
+            timesheetSubmissionId: entry.timesheetSubmissionId,
+          }
+        : await this.#approvalMembership(userId, spentDate, false)
     const assignmentChanged = projectId !== entry.projectId || taskId !== entry.taskId
     const dateChanged = spentDate !== entry.spentDate
     const assignment = assignmentChanged
@@ -650,6 +898,8 @@ export class DrizzleTrackedResourceRepository {
           taskAssignmentId: entry.taskAssignmentId,
           billable: entry.billable,
         }
+    const notes = input.notes !== undefined ? input.notes : entry.notes
+    await assertStoredTimeEntryNoteRequirement(this.#database, userId, projectId, notes)
 
     let seconds = entry.seconds
     let secondsWithoutTimer = entry.secondsWithoutTimer
@@ -734,6 +984,8 @@ export class DrizzleTrackedResourceRepository {
               billable: assignment.billable,
               billableRateCents: rates.billableRateCents,
               costRateCents: rates.costRateCents,
+              approvalStatus: approval.approvalStatus,
+              timesheetSubmissionId: approval.timesheetSubmissionId,
               ...(input.notes !== undefined ? { notes: input.notes } : {}),
               ...(input.budgeted !== undefined ? { budgeted: input.budgeted } : {}),
               ...(input.externalRef !== undefined ? { externalRef: input.externalRef } : {}),
@@ -747,12 +999,18 @@ export class DrizzleTrackedResourceRepository {
                 eq(timeEntries.userId, userId),
                 eq(timeEntries.updatedAt, entry.updatedAt),
                 mutationPredicate,
+                currentTimeEntryNotePolicyAllows(userId, projectId, notes),
               ),
             )
             .returning(),
         () => concurrentProblem('time entry'),
       )
     } catch (error) {
+      throwIfPolicyLockWriteError(error)
+      await assertStoredTimeEntryNoteRequirement(this.#database, userId, projectId, notes)
+      if (isApprovalPeriodWriteError(error)) {
+        return this.#translateApprovalPeriodWriteError(error, userId, spentDate, false)
+      }
       return translateTrackedNotFound(error, 'time entry')
     }
     return this.#timeRecord(mapReturnedTimeEntry(updated))
@@ -760,6 +1018,11 @@ export class DrizzleTrackedResourceRepository {
 
   async deleteTimeEntry(userId: number, id: number): Promise<TimeEntryRecord> {
     const entry = await this.#ownedTimeEntry(userId, id)
+    const noteRequirement = await resolveStoredTimeEntryNoteRequirement(
+      this.#database,
+      entry.userId,
+      entry.projectId,
+    )
     const policyLocked = await this.#policy.isLocked({ entityType: 'time_entry', entityId: id })
     let deleted: Record<string, unknown>
     try {
@@ -793,6 +1056,7 @@ export class DrizzleTrackedResourceRepository {
         lockedReasonCode: null,
         lockedReason: null,
       },
+      noteMinimumLength: noteRequirement?.minimumLength ?? 0,
     }
   }
 
@@ -822,6 +1086,16 @@ export class DrizzleTrackedResourceRepository {
     if (isRunning(entry)) {
       throw inputProblem('time_entry', 'already_running', 'time entry is already running')
     }
+    if (entry.approvalStatus === 'submitted') {
+      throw inputProblem(
+        'time_entry',
+        'submitted_period_running',
+        'A running timer cannot be started inside a submitted timesheet period.',
+      )
+    }
+    if (entry.approvalStatus === 'unsubmitted') {
+      await this.#approvalMembership(userId, entry.spentDate, true)
+    }
     const [policyLocked, runningEntryPolicyLocked] = await Promise.all([
       this.#policy.isLocked({ entityType: 'time_entry', entityId: id }),
       this.#policy.isLocked({ entityType: 'running_time_entry_replacement', userId }),
@@ -837,6 +1111,10 @@ export class DrizzleTrackedResourceRepository {
         ),
       )
     } catch (error) {
+      throwIfPolicyLockWriteError(error)
+      if (isApprovalPeriodWriteError(error)) {
+        return this.#translateApprovalPeriodWriteError(error, userId, entry.spentDate, true)
+      }
       return translateTrackedNotFound(error, 'time entry')
     }
   }
@@ -846,6 +1124,8 @@ export class DrizzleTrackedResourceRepository {
     input: Readonly<CreateExpenseRequest>,
     boundary: TimeBoundary,
   ): Promise<ExpenseRecord> {
+    await this.#assertPolicyDateUnlocked(input.spentDate)
+    await this.#approvalMembership(userId, input.spentDate, false)
     await this.#requireProjectAssignment(userId, input.projectId)
     const [category] = await this.#database
       .select()
@@ -884,6 +1164,16 @@ export class DrizzleTrackedResourceRepository {
         ...(input.reimbursable !== undefined ? { reimbursable: input.reimbursable } : {}),
       })
     } catch (error) {
+      throwIfPolicyLockWriteError(error)
+      if (isApprovalPeriodWriteError(error)) {
+        return this.#translateApprovalPeriodWriteError(
+          error,
+          userId,
+          input.spentDate,
+          false,
+          'expense',
+        )
+      }
       if (
         error instanceof Error &&
         /expense category|computed totalCostCents|expense creation did not/.test(error.message)
@@ -903,6 +1193,15 @@ export class DrizzleTrackedResourceRepository {
   ): Promise<ExpenseRecord> {
     const expense = await this.#ownedExpense(userId, id)
     const projectId = input.projectId ?? expense.projectId
+    const spentDate = input.spentDate ?? expense.spentDate
+    if (spentDate !== expense.spentDate) await this.#assertPolicyDateUnlocked(spentDate)
+    const approval: ApprovalMembership =
+      expense.approvalStatus === 'approved' || spentDate === expense.spentDate
+        ? {
+            approvalStatus: expense.approvalStatus,
+            timesheetSubmissionId: expense.timesheetSubmissionId,
+          }
+        : await this.#approvalMembership(userId, spentDate, false)
     if (projectId !== expense.projectId) await this.#requireProjectAssignment(userId, projectId)
     const expenseCategoryId = input.expenseCategoryId ?? expense.expenseCategoryId
     const categoryChanged = expenseCategoryId !== expense.expenseCategoryId
@@ -960,7 +1259,7 @@ export class DrizzleTrackedResourceRepository {
           AND category.unit_price_cents IS ${category.unitPriceCents}
       )`
     }
-    if (totalCostCents < 0 || totalCostCents > moneyUpperBound) {
+    if (pricingTouched && (totalCostCents < 0 || totalCostCents > moneyUpperBound)) {
       throw inputProblem('total_cost_cents', 'out_of_range', 'total_cost_cents is out of range')
     }
     const policyLocked = await this.#policy.isLocked({ entityType: 'expense', entityId: id })
@@ -977,7 +1276,9 @@ export class DrizzleTrackedResourceRepository {
               expenseCategoryId,
               units,
               totalCostCents,
-              ...(input.spentDate !== undefined ? { spentDate: input.spentDate } : {}),
+              spentDate,
+              approvalStatus: approval.approvalStatus,
+              timesheetSubmissionId: approval.timesheetSubmissionId,
               ...(input.notes !== undefined ? { notes: input.notes } : {}),
               ...(input.billable !== undefined ? { billable: input.billable } : {}),
               ...(input.reimbursable !== undefined ? { reimbursable: input.reimbursable } : {}),
@@ -995,6 +1296,15 @@ export class DrizzleTrackedResourceRepository {
         () => concurrentProblem('expense'),
       )
     } catch (error) {
+      if (isApprovalPeriodWriteError(error)) {
+        return this.#translateApprovalPeriodWriteError(
+          error,
+          userId,
+          spentDate,
+          false,
+          'expense',
+        )
+      }
       return translateTrackedNotFound(error, 'expense')
     }
     return this.#expenseRecord(mapReturnedExpense(updated))

@@ -11,6 +11,7 @@ export interface TrackedResourceRouteOptions {
   repository: TrackedResourceRepository
   clock: TrackedResourceClock
   cursorSigningKey: Uint8Array
+  isExpensesModuleEnabled(): Promise<boolean>
 }
 
 /** Narrow composition seam for the application entry point to install later. */
@@ -37,11 +38,15 @@ export type {
   CreateTimeEntryRequest,
   ExpenseFilters,
   ExpenseRecord,
+  OrganizationTimeEntrySettings,
+  OrganizationTimeEntryNoteSettings,
   ResourceTimeBoundary,
   TimeEntryFilters,
+  TimeEntryOption,
   TimeEntryRecord,
   TrackedResourceClock,
   TrackedResourceRepository,
   UpdateExpenseRequest,
+  UpdateOrganizationTimeEntryNoteSettings,
   UpdateTimeEntryRequest,
 } from './tracked-repository.js'

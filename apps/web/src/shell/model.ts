@@ -1,35 +1,127 @@
 import {
   EzactoClient,
+  EzactoApiError,
   type AuthPrincipal,
+  type Expense,
   type GeneralResource,
+  type Invoice,
+  type InvoiceGenerationInput,
+  type InvoiceTransitionInput,
   type PasswordSignInInput,
   type Session,
   type TimeEntry,
   type TimeEntryInput,
+  type TimeEntryOption,
   type TimeEntryPatch,
+  type TimesheetRejectionInput,
+  type TimesheetLockPolicy,
+  type TimesheetLockPolicyPatch,
+  type TimesheetLockWindow,
+  type TimesheetManualLockInput,
+  type TimesheetSubmission,
+  type TimesheetSubmissionDetail,
+  type TimesheetSubmissionInput,
+  type TimesheetUnlockInput,
+  type TimesheetWithdrawalInput,
   type Whoami,
 } from '@ezacto/client'
+import type { TimeEntrySettings } from '../components/time-entry-editor.js'
+import type { ClientDirectoryApi } from '../clients/model.js'
+import type { ProjectDirectoryApi } from '../projects/model.js'
+import type { ReportWorkspaceApi } from '../reports/model.js'
+import type { ExpenseWorkflowApi } from '../expenses/model.js'
+import type { ExpenseCategoryDirectoryApi } from '../expense-categories/model.js'
+import type { InvoicePaymentApi } from '../invoices/model.js'
+import type { TaskAdminApi } from '../tasks/model.js'
 
 interface CursorPage<T> {
   readonly data: readonly T[]
   readonly page: { readonly next_cursor: string | null }
 }
 
-export interface ShellApi {
+export interface ShellApi
+  extends Partial<ClientDirectoryApi>,
+    Partial<ProjectDirectoryApi>,
+    Partial<ReportWorkspaceApi>,
+    Partial<ExpenseWorkflowApi>,
+    Partial<ExpenseCategoryDirectoryApi>,
+    Partial<InvoicePaymentApi>,
+    Partial<TaskAdminApi> {
   whoami(signal?: AbortSignal): Promise<Whoami>
   signIn(credentials: PasswordSignInInput, signal?: AbortSignal): Promise<AuthPrincipal>
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
   listProjects(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
+  listClients?(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
+  listInvoices?(cursor?: string, signal?: AbortSignal): Promise<CursorPage<Invoice>>
   listTasks(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
+  listTimeEntryOptions(signal?: AbortSignal): Promise<readonly TimeEntryOption[]>
+  getTimeEntrySettings(signal?: AbortSignal): Promise<TimeEntrySettings>
   listTimeEntries(query: {
     readonly from?: string
     readonly to?: string
     readonly is_running?: boolean
   }, signal?: AbortSignal): Promise<readonly TimeEntry[]>
+  listExpenses?(query: {
+    readonly from?: string
+    readonly to?: string
+  }, signal?: AbortSignal): Promise<readonly Expense[]>
   createTimeEntry(input: TimeEntryInput, signal?: AbortSignal): Promise<TimeEntry>
   updateTimeEntry(id: number, patch: TimeEntryPatch, signal?: AbortSignal): Promise<TimeEntry>
   deleteTimeEntry(id: number, signal?: AbortSignal): Promise<void>
   stopTimeEntry(id: number, signal?: AbortSignal): Promise<TimeEntry>
+  listTimesheetSubmissions?(
+    periodStart: string,
+    periodEnd: string,
+    signal?: AbortSignal,
+  ): Promise<readonly TimesheetSubmission[]>
+  submitTimesheet?(
+    input: TimesheetSubmissionInput,
+    signal?: AbortSignal,
+  ): Promise<TimesheetSubmission>
+  listPendingTimesheetSubmissions?(signal?: AbortSignal): Promise<readonly TimesheetSubmission[]>
+  listApprovedTimesheetSubmissions?(
+    periodStart: string,
+    signal?: AbortSignal,
+  ): Promise<readonly TimesheetSubmission[]>
+  getTimesheetSubmission?(id: number, signal?: AbortSignal): Promise<TimesheetSubmissionDetail>
+  approveTimesheetSubmission?(id: number, signal?: AbortSignal): Promise<TimesheetSubmission>
+  rejectTimesheetSubmission?(
+    id: number,
+    input: TimesheetRejectionInput,
+    signal?: AbortSignal,
+  ): Promise<TimesheetSubmission>
+  withdrawTimesheetSubmission?(
+    id: number,
+    input: TimesheetWithdrawalInput,
+    signal?: AbortSignal,
+  ): Promise<TimesheetSubmission>
+  getTimesheetLockPolicy?(signal?: AbortSignal): Promise<TimesheetLockPolicy>
+  updateTimesheetLockPolicy?(
+    input: TimesheetLockPolicyPatch,
+    signal?: AbortSignal,
+  ): Promise<TimesheetLockPolicy>
+  listTimesheetLocks?(signal?: AbortSignal): Promise<readonly TimesheetLockWindow[]>
+  createTimesheetManualLock?(
+    commandId: string,
+    input: TimesheetManualLockInput,
+    signal?: AbortSignal,
+  ): Promise<TimesheetLockWindow>
+  unlockTimesheetLock?(
+    id: number,
+    input: TimesheetUnlockInput,
+    signal?: AbortSignal,
+  ): Promise<TimesheetLockWindow>
+  generateInvoice?(
+    commandId: string,
+    input: InvoiceGenerationInput,
+    signal?: AbortSignal,
+  ): Promise<Invoice>
+  transitionInvoice?(
+    id: number,
+    commandId: string,
+    input: InvoiceTransitionInput,
+    signal?: AbortSignal,
+  ): Promise<Invoice>
 }
 
 export interface QuickAddCommand {
@@ -39,6 +131,50 @@ export interface QuickAddCommand {
   readonly notes?: string
 }
 
+export const maximumTimeEntryNoteLength = 10_000
+export const pendingTimesheetQueueLimit = 50
+export const pendingTimesheetDetailConcurrency = 4
+
+export const hydratePendingTimesheetDetails = async (
+  summaries: readonly TimesheetSubmission[],
+  getSubmission: (id: number, signal?: AbortSignal) => Promise<TimesheetSubmissionDetail>,
+  signal?: AbortSignal,
+): Promise<readonly TimesheetSubmissionDetail[]> => {
+  const bounded = summaries.slice(0, pendingTimesheetQueueLimit)
+  const details: Array<TimesheetSubmissionDetail | undefined> = new Array(bounded.length)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < bounded.length) {
+      const index = next++
+      details[index] = await getSubmission(bounded[index]!.id, signal)
+    }
+  }
+  await Promise.all(
+    Array.from(
+      { length: Math.min(pendingTimesheetDetailConcurrency, bounded.length) },
+      worker,
+    ),
+  )
+  return details.filter(
+    (detail): detail is TimesheetSubmissionDetail => detail?.status === 'submitted',
+  )
+}
+
+export const timeEntryNoteLength = (notes: string | null | undefined): number =>
+  notes === null || notes === undefined ? 0 : Array.from(notes.trim()).length
+
+export class TimeEntryNoteValidationError extends Error {
+  readonly minimumLength: number
+
+  constructor(minimumLength: number) {
+    super(
+      `A note of at least ${minimumLength} ${minimumLength === 1 ? 'character is' : 'characters are'} required for that project and task.`,
+    )
+    this.name = 'TimeEntryNoteValidationError'
+    this.minimumLength = minimumLength
+  }
+}
+
 export interface DisplayTimeEntry extends TimeEntry {
   readonly project_label: string
   readonly task_label: string
@@ -46,10 +182,13 @@ export interface DisplayTimeEntry extends TimeEntry {
 
 export interface ShellSnapshot {
   readonly entries: readonly DisplayTimeEntry[]
+  readonly expenses: readonly Expense[]
   readonly running: DisplayTimeEntry | null
+  readonly timeEntrySettings: TimeEntrySettings
   readonly catalog: {
     readonly projects: readonly GeneralResource[]
     readonly tasks: readonly GeneralResource[]
+    readonly timeEntryOptions: readonly TimeEntryOption[]
   }
 }
 
@@ -57,6 +196,7 @@ const navigation = new Map([
   ['time', '/'],
   ['expenses', '/expenses'],
   ['projects', '/projects'],
+  ['tasks', '/tasks'],
   ['clients', '/clients'],
   ['invoices', '/invoices'],
   ['reports', '/reports'],
@@ -114,6 +254,55 @@ const loadCatalogResources = async (
   return { projects, tasks }
 }
 
+const assertNoteIsAllowed = (
+  notes: string | null | undefined,
+  minimumLength: number,
+): void => {
+  if (
+    notes !== null &&
+    notes !== undefined &&
+    notes.length > maximumTimeEntryNoteLength
+  ) {
+    throw new Error(
+      `Notes cannot exceed ${maximumTimeEntryNoteLength.toLocaleString('en-US')} characters.`,
+    )
+  }
+  const length = timeEntryNoteLength(notes)
+  if (length < minimumLength) {
+    throw new TimeEntryNoteValidationError(minimumLength)
+  }
+}
+
+const resolveAvailableEntrySelection = async (
+  api: ShellApi,
+  projectValue: string,
+  taskValue: string,
+  signal?: AbortSignal,
+): Promise<{
+  project: GeneralResource
+  task: GeneralResource
+  minimumNoteLength: number
+}> => {
+  const [resources, options] = await Promise.all([
+    loadCatalogResources(api, signal),
+    api.listTimeEntryOptions(signal),
+  ])
+  const project = resolveResource('project', projectValue, resources.projects)
+  const task = resolveResource('task', taskValue, resources.tasks)
+  const selected = options.find(
+    (option) =>
+      option.project_id === project.id && option.task_id === task.id,
+  )
+  if (selected === undefined) {
+    throw new Error('That project and task combination is not available.')
+  }
+  return {
+    project,
+    task,
+    minimumNoteLength: selected.minimum_note_length,
+  }
+}
+
 const resolveResource = (
   kind: 'project' | 'task',
   value: string,
@@ -168,10 +357,14 @@ export const localDate = (now = new Date()): string => {
   return `${year}-${month}-${day}`
 }
 
-export const weekRange = (within: string): { from: string; to: string } => {
+export const weekRange = (
+  within: string,
+  weekStartDay: 'saturday' | 'sunday' | 'monday' = 'monday',
+): { from: string; to: string } => {
   const date = new Date(`${within}T00:00:00.000Z`)
-  const daysSinceMonday = (date.getUTCDay() + 6) % 7
-  date.setUTCDate(date.getUTCDate() - daysSinceMonday)
+  const startIndex = weekStartDay === 'sunday' ? 0 : weekStartDay === 'monday' ? 1 : 6
+  const daysSinceStart = (date.getUTCDay() - startIndex + 7) % 7
+  date.setUTCDate(date.getUTCDate() - daysSinceStart)
   const from = date.toISOString().slice(0, 10)
   date.setUTCDate(date.getUTCDate() + 6)
   return { from, to: date.toISOString().slice(0, 10) }
@@ -218,11 +411,18 @@ export const loadShellSnapshot = async (
   now = new Date(),
   signal?: AbortSignal,
 ): Promise<ShellSnapshot> => {
-  const range = weekRange(localDate(now))
-  const [resources, entries, running] = await Promise.all([
+  const timeEntrySettings = await api.getTimeEntrySettings(signal)
+  const range = weekRange(localDate(now), timeEntrySettings.week_start_day)
+  const expenseRequest = api.listExpenses?.(range, signal).catch((error: unknown) => {
+    if (error instanceof EzactoApiError && error.status === 404) return []
+    throw error
+  }) ?? Promise.resolve([])
+  const [resources, entries, running, expenses, timeEntryOptions] = await Promise.all([
     loadCatalogResources(api, signal),
     api.listTimeEntries(range, signal),
     api.listTimeEntries({ is_running: true }, signal),
+    expenseRequest,
+    api.listTimeEntryOptions(signal),
   ])
   const displayedEntries = displayEntries(entries, resources)
   const displayedRunning = displayEntries(running, resources)
@@ -230,9 +430,47 @@ export const loadShellSnapshot = async (
     throw new Error('more than one timer is running')
   return {
     entries: displayedEntries,
+    expenses,
     running: displayedRunning[0] ?? null,
-    catalog: resources,
+    timeEntrySettings,
+    catalog: { ...resources, timeEntryOptions },
   }
+}
+
+export const prepareQuickAdd = async (
+  api: ShellApi,
+  value: string,
+  now = new Date(),
+  signal?: AbortSignal,
+): Promise<{ input: TimeEntryInput; minimumNoteLength: number }> => {
+  const command = parseQuickAdd(value)
+  const selection = await resolveAvailableEntrySelection(
+    api,
+    command.project,
+    command.task,
+    signal,
+  )
+  return {
+    input: {
+      project_id: selection.project.id,
+      task_id: selection.task.id,
+      spent_date: localDate(now),
+      seconds: command.seconds,
+      ...(command.notes === undefined ? {} : { notes: command.notes }),
+    },
+    minimumNoteLength: selection.minimumNoteLength,
+  }
+}
+
+export const quickAddInput = async (
+  api: ShellApi,
+  value: string,
+  now = new Date(),
+  signal?: AbortSignal,
+): Promise<TimeEntryInput> => {
+  const draft = await prepareQuickAdd(api, value, now, signal)
+  assertNoteIsAllowed(draft.input.notes, draft.minimumNoteLength)
+  return draft.input
 }
 
 export const quickAdd = async (
@@ -241,40 +479,28 @@ export const quickAdd = async (
   now = new Date(),
   signal?: AbortSignal,
 ): Promise<TimeEntry> => {
-  const command = parseQuickAdd(value)
-  const resources = await loadCatalogResources(api, signal)
-  const project = resolveResource(
-    'project',
-    command.project,
-    resources.projects,
-  )
-  const task = resolveResource('task', command.task, resources.tasks)
-  const input: TimeEntryInput = {
-    project_id: project.id,
-    task_id: task.id,
-    spent_date: localDate(now),
-    seconds: command.seconds,
-    ...(command.notes === undefined ? {} : { notes: command.notes }),
-  }
-  return signal === undefined
-    ? api.createTimeEntry(input)
-    : api.createTimeEntry(input, signal)
+  const input = await quickAddInput(api, value, now, signal)
+  return signal === undefined ? api.createTimeEntry(input) : api.createTimeEntry(input, signal)
 }
 
 export const startTimer = async (
   api: ShellApi,
   projectValue: string,
   taskValue: string,
-  now = new Date(),
   signal?: AbortSignal,
+  notes?: string,
 ): Promise<TimeEntry> => {
-  const resources = await loadCatalogResources(api, signal)
-  const project = resolveResource('project', projectValue, resources.projects)
-  const task = resolveResource('task', taskValue, resources.tasks)
+  const selection = await resolveAvailableEntrySelection(
+    api,
+    projectValue,
+    taskValue,
+    signal,
+  )
+  assertNoteIsAllowed(notes, selection.minimumNoteLength)
   const input: TimeEntryInput = {
-    project_id: project.id,
-    task_id: task.id,
-    spent_date: localDate(now),
+    project_id: selection.project.id,
+    task_id: selection.task.id,
+    ...(notes === undefined || notes.trim() === '' ? {} : { notes }),
   }
   return signal === undefined
     ? api.createTimeEntry(input)
@@ -314,6 +540,326 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     }),
+  listClients: (cursor, signal) =>
+    client.listClients({
+      query: {
+        per_page: 200,
+        is_active: true,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listDirectoryClients: (cursor, signal) =>
+    client.listClients({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  getDirectoryClient: async (id, signal) =>
+    (await client.getClient({ id, ...withSignal(signal) })).data,
+  createDirectoryClient: async (input, signal) =>
+    (await client.createClient({ body: input, ...withSignal(signal) })).data,
+  updateDirectoryClient: async (id, input, signal) =>
+    (await client.updateClient({ id, body: input, ...withSignal(signal) })).data,
+  archiveDirectoryClient: async (id, signal) => {
+    await client.deleteClient({ id, ...withSignal(signal) })
+  },
+  listClientContacts: (clientId, cursor, signal) =>
+    client.listContacts({
+      query: {
+        client_id: clientId,
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  createClientContact: async (input, signal) =>
+    (await client.createContact({ body: input, ...withSignal(signal) })).data,
+  updateClientContact: async (id, input, signal) =>
+    (await client.updateContact({ id, body: input, ...withSignal(signal) })).data,
+  deleteClientContact: async (id, signal) => {
+    await client.deleteContact({ id, ...withSignal(signal) })
+  },
+  listClientProjects: (clientId, cursor, signal) =>
+    client.listProjects({
+      query: {
+        client_id: clientId,
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listDirectoryProjects: (cursor, signal) =>
+    client.listProjects({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listProjectClients: (cursor, signal) =>
+    client.listClients({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listReportClients: (cursor, signal) =>
+    client.listClients({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listReportProjects: (cursor, signal) =>
+    client.listProjects({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  getUninvoicedReport: async (filter, signal) =>
+    (
+      await client.getUninvoicedReport({
+        query: filter,
+        ...withSignal(signal),
+      })
+    ).data,
+  getClientRollupReport: async (clientId, filter, signal) =>
+    (
+      await client.getClientRollupReport({
+        clientId,
+        query: filter,
+        ...withSignal(signal),
+      })
+    ).data,
+  getProjectBudgetReport: async (projectId, filter, signal) =>
+    (
+      await client.getProjectBudgetReport({
+        projectId,
+        query: filter,
+        ...withSignal(signal),
+      })
+    ).data,
+  getDirectoryProject: async (id, signal) =>
+    (await client.getProject({ id, ...withSignal(signal) })).data,
+  createDirectoryProject: async (input, signal) =>
+    (await client.createProject({ body: input, ...withSignal(signal) })).data,
+  updateDirectoryProject: async (id, input, signal) =>
+    (await client.updateProject({ id, body: input, ...withSignal(signal) })).data,
+  archiveDirectoryProject: async (id, signal) => {
+    await client.deleteProject({ id, ...withSignal(signal) })
+  },
+  listDirectoryTasks: (cursor, signal) =>
+    client.listTasks({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listAdminTasks: (filter, cursor, signal) =>
+    client.listTasks({
+      query: {
+        per_page: 50,
+        ...(filter === 'active' ? { is_active: true } : {}),
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  createAdminTask: async (input, signal) =>
+    (await client.createTask({ body: input, ...withSignal(signal) })).data,
+  updateAdminTask: async (id, input, signal) =>
+    (await client.updateTask({ id, body: input, ...withSignal(signal) })).data,
+  archiveAdminTask: async (id, signal) => {
+    await client.deleteTask({ id, ...withSignal(signal) })
+  },
+  listProjectTaskAssignments: (projectId, cursor, signal) =>
+    client.listTaskAssignments({
+      query: {
+        project_id: projectId,
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  createProjectTaskAssignment: async (input, signal) =>
+    (await client.createTaskAssignment({ body: input, ...withSignal(signal) })).data,
+  updateProjectTaskAssignment: async (id, input, signal) =>
+    (await client.updateTaskAssignment({ id, body: input, ...withSignal(signal) })).data,
+  archiveProjectTaskAssignment: async (id, signal) => {
+    await client.deleteTaskAssignment({ id, ...withSignal(signal) })
+  },
+  listDirectoryProjectAttachments: async (projectId, signal) =>
+    (await client.listProjectAttachments({ projectId, ...withSignal(signal) })).data,
+  uploadDirectoryProjectAttachment: async (projectId, commandId, body, signal) =>
+    (
+      await client.createProjectAttachment({
+        projectId,
+        'Idempotency-Key': commandId,
+        body,
+        ...withSignal(signal),
+      })
+    ).data,
+  listWorkflowExpenses: (filters, cursor, signal) =>
+    client.listExpenses({
+      query: {
+        ...filters,
+        per_page: 100,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  getExpenseWeekStartDay: async (signal) =>
+    (await client.getTimeEntrySettings(withSignal(signal))).data.week_start_day,
+  getWorkflowExpense: async (id, signal) =>
+    (await client.getExpense({ id, ...withSignal(signal) })).data,
+  createWorkflowExpense: async (input, signal) =>
+    (await client.createExpense({ body: input, ...withSignal(signal) })).data,
+  updateWorkflowExpense: async (id, input, signal) =>
+    (await client.updateExpense({ id, body: input, ...withSignal(signal) })).data,
+  listExpenseCategories: (cursor, signal) =>
+    client.listExpenseCategories({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listExpenseProjects: (cursor, signal) =>
+    client.listProjects({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listExpenseClients: (cursor, signal) =>
+    client.listClients({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listWorkflowExpenseAttachments: async (expenseId, signal) =>
+    (await client.listExpenseAttachments({ expenseId, ...withSignal(signal) })).data,
+  uploadWorkflowExpenseAttachment: async (expenseId, commandId, body, signal) =>
+    (
+      await client.createExpenseAttachment({
+        expenseId,
+        'Idempotency-Key': commandId,
+        body,
+        ...withSignal(signal),
+      })
+    ).data,
+  listDirectoryExpenseCategories: (activeOnly, cursor, signal) =>
+    client.listExpenseCategories({
+      query: {
+        per_page: 50,
+        ...(activeOnly ? { is_active: true } : {}),
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  createDirectoryExpenseCategory: async (input, signal) =>
+    (await client.createExpenseCategory({ body: input, ...withSignal(signal) })).data,
+  updateDirectoryExpenseCategory: async (id, body, signal) =>
+    (await client.updateExpenseCategory({ id, body, ...withSignal(signal) })).data,
+  archiveDirectoryExpenseCategory: async (id, signal) =>
+    (
+      await client.updateExpenseCategory({
+        id,
+        body: { is_active: false },
+        ...withSignal(signal),
+      })
+    ).data,
+  listInvoices: (cursor, signal) =>
+    client.listInvoices({
+      query: {
+        per_page: 50,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  getInvoice: async (id, signal) =>
+    (await client.getInvoice({ id, ...withSignal(signal) })).data,
+  listInvoiceMessages: async (id, signal) =>
+    (await client.listInvoiceMessages({ id, ...withSignal(signal) })).data,
+  listInvoicePayments: async (id, signal) =>
+    (await client.listInvoicePayments({ id, ...withSignal(signal) })).data,
+  recordInvoicePayment: async (id, commandId, input, signal) =>
+    (
+      await client.recordInvoicePayment({
+        id,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data.invoice,
+  updateInvoicePayment: async (id, paymentId, commandId, input, signal) =>
+    (
+      await client.updateInvoicePayment({
+        id,
+        paymentId,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data.invoice,
+  deleteInvoicePayment: async (id, paymentId, commandId, input, signal) =>
+    (
+      await client.deleteInvoicePayment({
+        id,
+        paymentId,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data.invoice,
+  createInvoiceLine: async (id, commandId, input, signal) =>
+    (
+      await client.createInvoiceLine({
+        id,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data.invoice,
+  updateInvoiceLine: async (id, lineId, commandId, input, signal) =>
+    (
+      await client.updateInvoiceLine({
+        id,
+        lineId,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data.invoice,
+  deleteInvoiceLine: async (id, lineId, commandId, input, signal) =>
+    (
+      await client.deleteInvoiceLine({
+        id,
+        lineId,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data.invoice,
+  transitionInvoice: async (id, commandId, input, signal) =>
+    (
+      await client.transitionInvoice({
+        id,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data.invoice,
   listTasks: (cursor, signal) =>
     client.listTasks({
       query: {
@@ -323,6 +869,10 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     }),
+  listTimeEntryOptions: async (signal) =>
+    (await client.listTimeEntryOptions(withSignal(signal))).data,
+  getTimeEntrySettings: async (signal) =>
+    (await client.getTimeEntrySettings(withSignal(signal))).data,
   listTimeEntries: async (query, signal) => {
     const entries: TimeEntry[] = []
     let cursor: string | undefined
@@ -340,6 +890,23 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     } while (cursor !== undefined)
     return entries
   },
+  listExpenses: async (query, signal) => {
+    const expenses: Expense[] = []
+    let cursor: string | undefined
+    do {
+      const page = await client.listExpenses({
+        query: {
+          ...query,
+          per_page: 200,
+          ...(cursor === undefined ? {} : { cursor }),
+        },
+        ...withSignal(signal),
+      })
+      expenses.push(...page.data)
+      cursor = page.page.next_cursor ?? undefined
+    } while (cursor !== undefined)
+    return expenses
+  },
   createTimeEntry: async (input, signal) =>
     (await client.createTimeEntry({ body: input, ...withSignal(signal) })).data,
   updateTimeEntry: async (id, patch, signal) =>
@@ -349,6 +916,115 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   },
   stopTimeEntry: async (id, signal) =>
     (await client.stopTimeEntry({ id, ...withSignal(signal) })).data,
+  listTimesheetSubmissions: async (periodStart, periodEnd, signal) => {
+    const submissions: TimesheetSubmission[] = []
+    let cursor: string | undefined
+    do {
+      const page = await client.listTimesheetSubmissions({
+        query: {
+          period_start: periodStart,
+          period_end: periodEnd,
+          per_page: 200,
+          ...(cursor === undefined ? {} : { cursor }),
+        },
+        ...withSignal(signal),
+      })
+      submissions.push(...page.data)
+      cursor = page.page.next_cursor ?? undefined
+    } while (cursor !== undefined)
+    return submissions
+  },
+  submitTimesheet: async (input, signal) =>
+    (await client.submitTimesheet({ body: input, ...withSignal(signal) })).data,
+  listPendingTimesheetSubmissions: async (signal) => {
+    const page = await client.listPendingTimesheetSubmissions({
+      query: { per_page: pendingTimesheetQueueLimit },
+      ...withSignal(signal),
+    })
+    return page.data.slice(0, pendingTimesheetQueueLimit)
+  },
+  listApprovedTimesheetSubmissions: async (periodStart, signal) => {
+    const page = await client.listApprovedTimesheetSubmissions({
+      query: { period_start: periodStart, per_page: pendingTimesheetQueueLimit },
+      ...withSignal(signal),
+    })
+    return page.data.slice(0, pendingTimesheetQueueLimit)
+  },
+  getTimesheetSubmission: async (id, signal) =>
+    (await client.getTimesheetSubmission({ id, ...withSignal(signal) })).data,
+  approveTimesheetSubmission: async (id, signal) =>
+    (
+      await client.approveTimesheetSubmission({
+        id,
+        ...withSignal(signal),
+      })
+    ).data,
+  rejectTimesheetSubmission: async (id, input, signal) =>
+    (
+      await client.rejectTimesheetSubmission({
+        id,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data,
+  withdrawTimesheetSubmission: async (id, input, signal) =>
+    (
+      await client.withdrawTimesheetSubmission({
+        id,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data,
+  getTimesheetLockPolicy: async (signal) =>
+    (await client.getTimesheetLockPolicy(withSignal(signal))).data,
+  updateTimesheetLockPolicy: async (input, signal) =>
+    (
+      await client.updateTimesheetLockPolicy({
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data,
+  listTimesheetLocks: async (signal) => {
+    const locks: TimesheetLockWindow[] = []
+    let cursor: string | undefined
+    do {
+      const page = await client.listTimesheetLocks({
+        query: {
+          active: true,
+          per_page: 200,
+          ...(cursor === undefined ? {} : { cursor }),
+        },
+        ...withSignal(signal),
+      })
+      locks.push(...page.data)
+      cursor = page.page.next_cursor ?? undefined
+    } while (cursor !== undefined)
+    return locks
+  },
+  createTimesheetManualLock: async (commandId, input, signal) =>
+    (
+      await client.createTimesheetManualLock({
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data,
+  unlockTimesheetLock: async (id, input, signal) =>
+    (
+      await client.unlockTimesheetLock({
+        id,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data,
+  generateInvoice: async (commandId, input, signal) =>
+    (
+      await client.generateInvoice({
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data,
 })
 
 export const createSameOriginShellApi = (): ShellApi =>

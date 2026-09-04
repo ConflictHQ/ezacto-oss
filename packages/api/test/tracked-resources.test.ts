@@ -10,6 +10,7 @@ import {
   DrizzleTrackedResourceRepository,
   type PolicySubject,
 } from '../../db/src/tracked-resource-repository.js'
+import { createTimesheetApprovalRepository } from '../../db/src/timesheet-approvals.js'
 import { createApiApp } from '../src/app.js'
 import type { ApiAuthentication } from '../src/auth.js'
 import type { UserProfile } from '../src/context.js'
@@ -27,8 +28,18 @@ interface TestDatabase {
   orm: OrmDatabase
   run(sql: string, ...params: unknown[]): Promise<void>
   rows<T>(sql: string, ...params: unknown[]): Promise<T[]>
+  interleaveAtomic(sql: string, ...params: unknown[]): OrmDatabase
   close(): Promise<void>
 }
+
+const ormWithNativeClient = (orm: OrmDatabase, client: unknown): OrmDatabase =>
+  new Proxy(orm, {
+    get(target, property) {
+      if (property === '$client') return client
+      const value: unknown = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
 
 const timestamp = '2026-08-28T08:00:00.000Z'
 const modules = JSON.stringify({
@@ -40,13 +51,38 @@ const modules = JSON.stringify({
 const containerDatabase = (): TestDatabase => {
   const sqlite = new BetterSqlite3(':memory:')
   migrateContainer(sqlite)
+  const orm = createContainerDatabase(sqlite)
   return {
-    orm: createContainerDatabase(sqlite),
+    orm,
     run: async (statement, ...params) => {
       sqlite.prepare(statement).run(...params)
     },
     rows: async <T>(statement: string, ...params: unknown[]) =>
       sqlite.prepare(statement).all(...params) as T[],
+    interleaveAtomic: (statement, ...params) => {
+      let pending = true
+      const client = new Proxy(sqlite, {
+        get(target, property) {
+          if (property === 'transaction') {
+            return (callback: () => unknown) => {
+              const transaction = target.transaction(callback)
+              return {
+                immediate: () => {
+                  if (pending) {
+                    pending = false
+                    target.prepare(statement).run(...params)
+                  }
+                  return transaction.immediate()
+                },
+              }
+            }
+          }
+          const value: unknown = Reflect.get(target, property, target)
+          return typeof value === 'function' ? value.bind(target) : value
+        },
+      })
+      return ormWithNativeClient(orm, client)
+    },
     close: async () => {
       sqlite.close()
     },
@@ -61,8 +97,9 @@ const d1Database = async (): Promise<TestDatabase> => {
   })
   const d1 = await miniflare.getD1Database('DB')
   await migrateD1(d1)
+  const orm = createD1Database(d1)
   return {
-    orm: createD1Database(d1),
+    orm,
     run: async (statement, ...params) => {
       await d1
         .prepare(statement)
@@ -76,6 +113,25 @@ const d1Database = async (): Promise<TestDatabase> => {
           .bind(...params)
           .all<T>()
       ).results,
+    interleaveAtomic: (statement, ...params) => {
+      let pending = true
+      const client = new Proxy(d1, {
+        get(target, property) {
+          if (property === 'batch') {
+            return async (statements: D1PreparedStatement[]) => {
+              if (pending) {
+                pending = false
+                await target.prepare(statement).bind(...params).run()
+              }
+              return target.batch(statements)
+            }
+          }
+          const value: unknown = Reflect.get(target, property, target)
+          return typeof value === 'function' ? value.bind(target) : value
+        },
+      })
+      return ormWithNativeClient(orm, client)
+    },
     close: async () => miniflare.dispose(),
   }
 }
@@ -217,6 +273,8 @@ const authentication: ApiAuthentication = {
 const policyKey = (subject: Readonly<PolicySubject>): string =>
   subject.entityType === 'running_time_entry_replacement'
     ? `running:${subject.userId}`
+    : subject.entityType === 'tracked_date'
+      ? `tracked_date:${subject.spentDate}`
     : `${subject.entityType}:${subject.entityId}`
 
 interface Harness {
@@ -228,12 +286,24 @@ interface Harness {
 
 const harness = async (
   factory: () => Promise<TestDatabase>,
+  interleave?: { sql: string; params: readonly unknown[] },
+  policyInterleave?: { sql: string; params: readonly unknown[] },
 ): Promise<Harness> => {
   const database = await factory()
   await seed(database)
   const locks = new Set<string>()
-  const implementation = new DrizzleTrackedResourceRepository(database.orm, {
-    isLocked: async (subject) => locks.has(policyKey(subject)),
+  const orm = interleave === undefined
+    ? database.orm
+    : database.interleaveAtomic(interleave.sql, ...interleave.params)
+  let pendingPolicyInterleave = policyInterleave !== undefined
+  const implementation = new DrizzleTrackedResourceRepository(orm, {
+    isLocked: async (subject) => {
+      if (pendingPolicyInterleave && subject.entityType === 'tracked_date') {
+        pendingPolicyInterleave = false
+        await database.run(policyInterleave!.sql, ...policyInterleave!.params)
+      }
+      return locks.has(policyKey(subject))
+    },
   })
   const repository: TrackedResourceRepository = implementation
   let current: ResourceTimeBoundary = {
@@ -250,6 +320,7 @@ const harness = async (
         cursorSigningKey: new TextEncoder().encode(
           'tracked-resource-cursor-key-32-bytes',
         ),
+        isExpensesModuleEnabled: async () => true,
       }),
   })
   return {
@@ -292,6 +363,14 @@ const asProfile = (
 
 for (const [runtime, factory] of factories) {
   const slowRuntimeTimeout = runtime === 'D1' ? 20_000 : undefined
+  const interleavedLock = {
+    sql: `INSERT INTO timesheet_lock_windows (
+      kind, period_start, period_end, locked_by_user_id, locked_at, lock_reason,
+      command_id, input_fingerprint, version, created_at, updated_at
+    ) VALUES ('manual_cutoff', NULL, '2026-08-28', 3, ?, 'Concurrent close',
+      'race-lock', ?, 0, ?, ?)`,
+    params: [timestamp, `sha256:${'a'.repeat(64)}`, timestamp, timestamp],
+  } as const
 
   describe(`tracked resource API (${runtime})`, () => {
     let active: Harness | undefined
@@ -302,6 +381,399 @@ for (const [runtime, factory] of factories) {
       active = await harness(factory)
       return active
     }
+
+    it('[api] translates a policy lock created after the time-entry precheck to 422', async () => {
+      active = await harness(factory, interleavedLock)
+      const test = active
+      await test.database.run(
+        `INSERT INTO users
+          (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
+         VALUES (3, 'Policy', 'Admin', 'administrator', '[]', ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+      await test.database.run(
+        `INSERT INTO time_entries (
+          id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+          spent_date, seconds, seconds_without_timer, rounded_seconds, notes,
+          billable, created_at, updated_at
+        ) VALUES (99, 1, 1, 1, 1, 1, '2026-08-28', 60, 60, 60,
+          'before race', 1, ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+
+      const response = await test.request(
+        '/api/v1/time-entries/99',
+        jsonRequest('PATCH', { notes: 'must not persist' }),
+      )
+
+      expect(response.status).toBe(422)
+      expect(await response.json()).toMatchObject({
+        error: {
+          code: 'tracked_mutation_locked',
+          fields: [{ code: 'policy_locked' }],
+        },
+      })
+      expect(
+        await test.database.rows<{ notes: string }>(
+          `SELECT notes FROM time_entries WHERE id = 99`,
+        ),
+      ).toEqual([{ notes: 'before race' }])
+    }, slowRuntimeTimeout)
+
+    it('[api] translates a policy lock created after the expense precheck to 422', async () => {
+      active = await harness(factory, undefined, interleavedLock)
+      const test = active
+      await test.database.run(
+        `INSERT INTO users
+          (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
+         VALUES (3, 'Policy', 'Admin', 'administrator', '[]', ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+
+      const response = await test.request(
+        '/api/v1/expenses',
+        jsonRequest('POST', {
+          project_id: 1,
+          expense_category_id: 1,
+          spent_date: '2026-08-28',
+          total_cost_cents: 500,
+        }),
+      )
+
+      expect(response.status).toBe(422)
+      expect(await response.json()).toMatchObject({
+        error: {
+          code: 'tracked_mutation_locked',
+          fields: [{ code: 'policy_locked' }],
+        },
+      })
+      expect(
+        await test.database.rows<{ count: number }>(
+          `SELECT count(*) AS count FROM expenses`,
+        ),
+      ).toEqual([{ count: 0 }])
+    }, slowRuntimeTimeout)
+
+    it('[api] exposes organization time-entry mode and display settings', async () => {
+      const test = await setup()
+      const initial = await test.request('/api/v1/time-entry-settings')
+      expect(initial.status).toBe(200)
+      expect(initial.headers.get('cache-control')).toBe('no-store')
+      expect(await initial.json()).toEqual({
+        data: {
+          time_entry_mode: 'duration',
+          time_format: 'decimal',
+          clock: '12h',
+          week_start_day: 'monday',
+        },
+        links: { self: '/api/v1/time-entry-settings' },
+      })
+
+      await test.database.run(
+        `UPDATE organizations
+         SET time_entry_mode = 'start_end', time_format = 'hours_minutes', clock = '24h'
+         WHERE id = 1`,
+      )
+      expect(
+        await data(await test.request('/api/v1/time-entry-settings')),
+      ).toEqual({
+        time_entry_mode: 'start_end',
+        time_format: 'hours_minutes',
+        clock: '24h',
+        week_start_day: 'monday',
+      })
+    })
+
+    it('[api] lists only active time-entry project/task options for the member', async () => {
+      const test = await setup()
+      await test.database.run(
+        `INSERT INTO tasks (id, name, created_at, updated_at)
+         VALUES (3, 'Unassigned Task', ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+      const options = async (): Promise<
+        readonly {
+          project_id: number
+          task_id: number
+          minimum_note_length: number
+        }[]
+      > => {
+        const response = await test.request('/api/v1/time-entry-options')
+        expect(response.status).toBe(200)
+        expect(response.headers.get('cache-control')).toBe('no-store')
+        expect(await response.clone().json()).toMatchObject({
+          links: { self: '/api/v1/time-entry-options' },
+        })
+        return data(response)
+      }
+
+      const initial = await options()
+      expect(initial).toEqual([
+        { project_id: 1, task_id: 1, minimum_note_length: 0 },
+        { project_id: 1, task_id: 2, minimum_note_length: 0 },
+      ])
+      expect(initial).not.toContainEqual({ project_id: 1, task_id: 3 })
+      expect(initial).not.toContainEqual({ project_id: 2, task_id: 1 })
+
+      await test.database.run(
+        `UPDATE user_assignments SET is_active = 0 WHERE id = 1`,
+      )
+      await expect(options()).resolves.toEqual([])
+      await test.database.run(
+        `UPDATE user_assignments SET is_active = 1 WHERE id = 1`,
+      )
+
+      await test.database.run(
+        `UPDATE task_assignments SET is_active = 0 WHERE id = 1`,
+      )
+      await expect(options()).resolves.toEqual([
+        { project_id: 1, task_id: 2, minimum_note_length: 0 },
+      ])
+      await test.database.run(
+        `UPDATE task_assignments SET is_active = 1 WHERE id = 1`,
+      )
+
+      await test.database.run(`UPDATE tasks SET is_active = 0 WHERE id = 1`)
+      await expect(options()).resolves.toEqual([
+        { project_id: 1, task_id: 2, minimum_note_length: 0 },
+      ])
+      await test.database.run(`UPDATE tasks SET is_active = 1 WHERE id = 1`)
+
+      await test.database.run(`UPDATE projects SET is_active = 0 WHERE id = 1`)
+      await expect(options()).resolves.toEqual([])
+      await test.database.run(`UPDATE projects SET is_active = 1 WHERE id = 1`)
+
+      await test.database.run(`UPDATE clients SET is_active = 0 WHERE id = 1`)
+      await expect(options()).resolves.toEqual([])
+    }, slowRuntimeTimeout)
+
+    it('[api] exposes organization note settings and restricts changes to organization admins', async () => {
+      const test = await setup()
+      const initial = await test.request('/api/v1/time-entry-note-settings')
+      expect(initial.status).toBe(200)
+      expect(await initial.json()).toMatchObject({
+        data: { required: false, minimum_length: 1 },
+      })
+
+      const forbidden = await test.request(
+        '/api/v1/time-entry-note-settings',
+        jsonRequest('PATCH', { required: true, minimum_length: 12 }),
+      )
+      expect(forbidden.status).toBe(403)
+
+      const adminRequest = jsonRequest('PATCH', {
+        required: true,
+        minimum_length: 12,
+      })
+      const adminHeaders = new Headers(adminRequest.headers)
+      adminHeaders.set('x-test-profile', 'administrator')
+      const updated = await test.request('/api/v1/time-entry-note-settings', {
+        ...adminRequest,
+        headers: adminHeaders,
+      })
+      expect(updated.status).toBe(200)
+      expect(await updated.json()).toMatchObject({
+        data: { required: true, minimum_length: 12 },
+      })
+      expect(
+        await test.database.rows<{
+          required: number
+          minimum_length: number
+        }>(
+          `SELECT time_entry_notes_required AS required,
+            time_entry_notes_minimum_length AS minimum_length
+           FROM organizations WHERE id = 1`,
+        ),
+      ).toEqual([{ required: 1, minimum_length: 12 }])
+
+      const invalidRequest = jsonRequest('PATCH', {
+        minimum_length: 10_001,
+      })
+      const invalidHeaders = new Headers(invalidRequest.headers)
+      invalidHeaders.set('x-test-profile', 'administrator')
+      const invalid = await test.request('/api/v1/time-entry-note-settings', {
+        ...invalidRequest,
+        headers: invalidHeaders,
+      })
+      expect(invalid.status).toBe(422)
+    }, slowRuntimeTimeout)
+
+    it('[api] enforces the strongest scoped note rule on every native write path', async () => {
+      const test = await setup()
+      await test.database.run(
+        `UPDATE organizations
+         SET time_entry_notes_required = 1, time_entry_notes_minimum_length = 4
+         WHERE id = 1`,
+      )
+      await test.database.run(
+        `UPDATE projects SET time_entry_notes_minimum_length = 5 WHERE id = 1`,
+      )
+      await test.database.run(
+        `UPDATE users SET time_entry_notes_minimum_length = 6 WHERE id = 1`,
+      )
+      await test.database.run(
+        `UPDATE user_assignments SET time_entry_notes_minimum_length = 7 WHERE id = 1`,
+      )
+
+      expect(
+        await data<unknown[]>(await test.request('/api/v1/time-entry-options')),
+      ).toEqual([
+        { project_id: 1, task_id: 1, minimum_note_length: 7 },
+        { project_id: 1, task_id: 2, minimum_note_length: 7 },
+      ])
+
+      const sixCodePoints = '😀😀😀😀😀😀'
+      const rejectedCreate = await test.request(
+        '/api/v1/time-entries',
+        jsonRequest('POST', {
+          project_id: 1,
+          task_id: 1,
+          spent_date: '2026-08-28',
+          seconds: 60,
+          notes: sixCodePoints,
+        }),
+      )
+      expect(rejectedCreate.status).toBe(422)
+      expect(await rejectedCreate.json()).toMatchObject({
+        error: {
+          code: 'validation_failed',
+          fields: [
+            {
+              field: 'notes',
+              code: 'minimum_length',
+              minimum_length: 7,
+            },
+          ],
+        },
+      })
+      expect(
+        await test.database.rows<{ count: number }>(
+          `SELECT count(*) AS count FROM time_entries`,
+        ),
+      ).toEqual([{ count: 0 }])
+
+      const exactNotes = '  😀😀😀😀😀😀😀  '
+      const exactResponse = await test.request(
+        '/api/v1/time-entries',
+        jsonRequest('POST', {
+          project_id: 1,
+          task_id: 1,
+          spent_date: '2026-08-28',
+          seconds: 60,
+          notes: exactNotes,
+        }),
+      )
+      expect(exactResponse.status).toBe(201)
+      const exact = await data<{
+        id: number
+        notes: string
+        minimum_note_length: number
+      }>(exactResponse)
+      expect(exact).toMatchObject({
+        notes: exactNotes,
+        minimum_note_length: 7,
+      })
+
+      const rejectedClear = await test.request(
+        `/api/v1/time-entries/${exact.id}`,
+        jsonRequest('PATCH', { notes: sixCodePoints }),
+      )
+      expect(rejectedClear.status).toBe(422)
+      expect(
+        await test.database.rows<{ notes: string }>(
+          `SELECT notes FROM time_entries WHERE id = ?`,
+          exact.id,
+        ),
+      ).toEqual([{ notes: exactNotes }])
+
+      await test.database.run(
+        `INSERT INTO user_assignments (
+          id, project_id, user_id, time_entry_notes_minimum_length, created_at, updated_at
+        ) VALUES (3, 2, 1, 9, ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+      const rejectedReassignment = await test.request(
+        `/api/v1/time-entries/${exact.id}`,
+        jsonRequest('PATCH', { project_id: 2, task_id: 1 }),
+      )
+      expect(rejectedReassignment.status).toBe(422)
+      expect(await rejectedReassignment.json()).toMatchObject({
+        error: {
+          fields: [{ field: 'notes', minimum_length: 9 }],
+        },
+      })
+
+      const runningResponse = await test.request(
+        '/api/v1/time-entries',
+        jsonRequest('POST', {
+          project_id: 1,
+          task_id: 1,
+          notes: '1234567',
+        }),
+      )
+      expect(runningResponse.status).toBe(201)
+      const running = await data<{ id: number }>(runningResponse)
+      await test.database.run(
+        `UPDATE user_assignments SET time_entry_notes_minimum_length = 8 WHERE id = 1`,
+      )
+
+      const rejectedReplacement = await test.request(
+        '/api/v1/time-entries',
+        jsonRequest('POST', {
+          project_id: 1,
+          task_id: 1,
+          notes: '1234567',
+        }),
+      )
+      expect(rejectedReplacement.status).toBe(422)
+      expect(
+        await data<{ is_running: boolean }>(
+          await test.request(`/api/v1/time-entries/${running.id}`),
+        ),
+      ).toMatchObject({ is_running: true })
+
+      const stopped = await test.request(
+        `/api/v1/time-entries/${running.id}/stop`,
+        { method: 'POST' },
+      )
+      expect(stopped.status).toBe(200)
+      const rejectedRestart = await test.request(
+        `/api/v1/time-entries/${running.id}/restart`,
+        { method: 'POST' },
+      )
+      expect(rejectedRestart.status).toBe(422)
+
+      await test.database.run(
+        `UPDATE organizations SET time_entry_notes_required = 0 WHERE id = 1`,
+      )
+      await test.database.run(
+        `UPDATE projects SET time_entry_notes_minimum_length = NULL WHERE id = 1`,
+      )
+      await test.database.run(
+        `UPDATE users SET time_entry_notes_minimum_length = NULL WHERE id = 1`,
+      )
+      await test.database.run(
+        `UPDATE user_assignments SET time_entry_notes_minimum_length = NULL WHERE id = 1`,
+      )
+      expect(
+        (
+          await test.request(
+            '/api/v1/time-entries',
+            jsonRequest('POST', {
+              project_id: 1,
+              task_id: 1,
+              spent_date: '2026-08-28',
+              seconds: 60,
+            }),
+          )
+        ).status,
+      ).toBe(201)
+    }, 40_000)
 
     it('[security] redacts both time-entry rate snapshots across all six profiles', async () => {
       const test = await setup()
@@ -630,8 +1102,20 @@ for (const [runtime, factory] of factories) {
         ),
       )
       await test.database.run(
-        `UPDATE time_entries SET approval_status = 'approved' WHERE id = ?`,
-        stopped.id,
+        `UPDATE organizations SET modules = json_set(modules, '$.approval', json('true'))
+         WHERE id = 1`,
+      )
+      const approvals = createTimesheetApprovalRepository(test.database.orm)
+      const submission = await approvals.submit(
+        1,
+        '2026-08-28',
+        '2026-08-28',
+        '2026-08-28T09:01:00.000Z',
+      )
+      await approvals.approve(
+        { userId: 1, profile: 'administrator' },
+        submission.id,
+        '2026-08-28T09:02:00.000Z',
       )
       const lockedPatch = await test.request(
         `/api/v1/time-entries/${stopped.id}`,
@@ -653,6 +1137,11 @@ for (const [runtime, factory] of factories) {
         ),
       ).toEqual([{ notes: 'before' }])
 
+      test.setBoundary({
+        instant: '2026-08-29T09:00:00.000Z',
+        date: '2026-08-29',
+        time: '09:00',
+      })
       const running = await data<{ id: number }>(
         await test.request(
           '/api/v1/time-entries',
@@ -692,7 +1181,7 @@ for (const [runtime, factory] of factories) {
           `SELECT count(*) AS count FROM time_entries`,
         ),
       ).toEqual([{ count: 2 }])
-    })
+    }, 20_000)
 
     it('[api] supports expense pricing, combined filters, CRUD, and strict input validation', async () => {
       const test = await setup()
@@ -728,6 +1217,31 @@ for (const [runtime, factory] of factories) {
         total_cost_cents: number
       }>(unitResponse)
       expect(unit).toMatchObject({ units: 3, total_cost_cents: 750 })
+
+      await test.database.run(
+        `UPDATE expense_categories
+         SET unit_price_cents = 300, is_active = 0, updated_at = ?
+         WHERE id = 2`,
+        '2026-08-28T09:30:00.000Z',
+      )
+      const notesOnly = await test.request(
+        `/api/v1/expenses/${unit.id}`,
+        jsonRequest('PATCH', { notes: 'price-preserving archived category edit' }),
+      )
+      expect(notesOnly.status).toBe(200)
+      expect(
+        await data<{ units: number; total_cost_cents: number; notes: string }>(notesOnly),
+      ).toMatchObject({
+        units: 3,
+        total_cost_cents: 750,
+        notes: 'price-preserving archived category edit',
+      })
+      await test.database.run(
+        `UPDATE expense_categories
+         SET unit_price_cents = 250, is_active = 1, updated_at = ?
+         WHERE id = 2`,
+        '2026-08-28T09:31:00.000Z',
+      )
 
       const list = await test.request(
         '/api/v1/expenses?client_id=1&project_id=1&expense_category_id=2' +
@@ -824,8 +1338,20 @@ for (const [runtime, factory] of factories) {
         ),
       )
       await test.database.run(
-        `UPDATE expenses SET approval_status = 'approved' WHERE id = ?`,
-        approved.id,
+        `UPDATE organizations SET modules = json_set(modules, '$.approval', json('true'))
+         WHERE id = 1`,
+      )
+      const approvals = createTimesheetApprovalRepository(test.database.orm)
+      const submission = await approvals.submit(
+        1,
+        '2026-08-28',
+        '2026-08-28',
+        '2026-08-28T09:01:00.000Z',
+      )
+      await approvals.approve(
+        { userId: 1, profile: 'administrator' },
+        submission.id,
+        '2026-08-28T09:02:00.000Z',
       )
       const locked = await test.request(
         `/api/v1/expenses/${approved.id}`,
@@ -851,7 +1377,7 @@ for (const [runtime, factory] of factories) {
           jsonRequest('POST', {
             project_id: 1,
             expense_category_id: 1,
-            spent_date: '2026-08-28',
+            spent_date: '2026-08-29',
             total_cost_cents: 550,
           }),
         ),
@@ -878,7 +1404,7 @@ for (const [runtime, factory] of factories) {
           jsonRequest('POST', {
             project_id: 1,
             expense_category_id: 1,
-            spent_date: '2026-08-28',
+            spent_date: '2026-08-29',
             total_cost_cents: 600,
           }),
         ),

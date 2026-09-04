@@ -28,6 +28,8 @@ type WorkerDatabase = DrizzleD1Database<typeof schema> & {
 export type InvoiceStateDatabase = ContainerDatabase | WorkerDatabase
 
 export type InvoiceCommandKind =
+  | 'invoice.create'
+  | 'invoice.delete'
   | 'invoice.send'
   | 'invoice.view'
   | 'invoice.draft'

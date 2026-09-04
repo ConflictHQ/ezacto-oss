@@ -1,6 +1,10 @@
-import { canViewMoneyField, type ApprovalStatus } from '@ezacto/core'
+import {
+  canViewMoneyField,
+  maximumTimeEntryNoteLength,
+  type ApprovalStatus,
+} from '@ezacto/core'
 import type { Hono } from 'hono'
-import { requireApiScope } from '../auth.js'
+import { requireApiScope, requireSessionPrincipal } from '../auth.js'
 import type { ApiContext, UserPrincipal } from '../context.js'
 import { ApiError, type FieldError } from '../errors.js'
 import { cursorPage } from '../pagination.js'
@@ -29,11 +33,14 @@ import {
 } from './support.js'
 import type {
   CreateTimeEntryRequest,
+  OrganizationTimeEntrySettings,
+  OrganizationTimeEntryNoteSettings,
   TimeEntryFilters,
   TimeEntryRecord,
   TrackedResourceClock,
   TrackedResourceRepository,
   UpdateTimeEntryRequest,
+  UpdateOrganizationTimeEntryNoteSettings,
 } from './tracked-repository.js'
 
 export interface TimeEntryRouteOptions {
@@ -68,6 +75,7 @@ interface TimeEntryOutput {
   locked_reason: string | null
   external_ref: Record<string, unknown> | null
   calendar_event_ref: Record<string, unknown> | null
+  minimum_note_length: number
   billable_rate_cents?: number | null
   cost_rate_cents?: number | null
   created_at: string
@@ -105,6 +113,7 @@ export const serializeTimeEntry = (
   locked_reason: entry.state.lockedReason,
   external_ref: entry.externalRef,
   calendar_event_ref: entry.calendarEventRef,
+  minimum_note_length: entry.noteMinimumLength,
   ...(canViewMoneyField(viewer, 'billable_rate')
     ? { billable_rate_cents: entry.billableRateCents }
     : {}),
@@ -289,10 +298,135 @@ const updateInput = (body: Record<string, unknown>): UpdateTimeEntryRequest => {
 
 const selfLink = (id: number) => `/api/v1/time-entries/${id}`
 
+const serializeTimeEntrySettings = (
+  settings: Readonly<OrganizationTimeEntrySettings>,
+) => ({
+  time_entry_mode: settings.mode,
+  time_format: settings.timeFormat,
+  clock: settings.clock,
+  week_start_day: settings.weekStartDay,
+})
+
+const noteSettingsBodyKeys = new Set(['required', 'minimum_length'])
+
+const noteSettingsInput = (
+  body: Record<string, unknown>,
+): UpdateOrganizationTimeEntryNoteSettings => {
+  const errors = unknownFieldErrors(body, noteSettingsBodyKeys)
+  if (!Object.keys(body).some((key) => noteSettingsBodyKeys.has(key))) {
+    errors.push({
+      field: 'body',
+      code: 'empty',
+      message: 'at least one writable field is required',
+    })
+  }
+  const required = optionalBoolean(body, 'required', errors)
+  const minimumLength = optionalPositiveInteger(body, 'minimum_length', errors)
+  if (
+    minimumLength !== undefined &&
+    minimumLength > maximumTimeEntryNoteLength
+  ) {
+    errors.push({
+      field: 'minimum_length',
+      code: 'too_large',
+      message: `minimum_length must not exceed ${maximumTimeEntryNoteLength}`,
+    })
+  }
+  assertFields(errors)
+  return {
+    ...(required !== undefined ? { required } : {}),
+    ...(minimumLength !== undefined ? { minimumLength } : {}),
+  }
+}
+
+const serializeNoteSettings = (
+  settings: Readonly<OrganizationTimeEntryNoteSettings>,
+) => ({
+  required: settings.required,
+  minimum_length: settings.minimumLength,
+})
+
 export const installTimeEntryRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   options: TimeEntryRouteOptions,
 ): void => {
+  api.get('/time-entry-settings', async (context) => {
+    requireApiScope(context, 'time_entries:read')
+    return context.json(
+      {
+        data: serializeTimeEntrySettings(
+          await options.repository.timeEntrySettings(),
+        ),
+        links: { self: '/api/v1/time-entry-settings' },
+      },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
+  api.get('/time-entry-note-settings', async (context) => {
+    requireApiScope(context, 'time_entries:read')
+    return context.json(
+      {
+        data: serializeNoteSettings(
+          await options.repository.timeEntryNoteSettings(),
+        ),
+        links: { self: '/api/v1/time-entry-note-settings' },
+      },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
+  api.patch('/time-entry-note-settings', async (context) => {
+    requireApiScope(context, 'time_entries:write')
+    const principal = requireSessionPrincipal(context)
+    if (
+      principal.profile !== 'executive_manager' &&
+      principal.profile !== 'administrator'
+    ) {
+      throw new ApiError({
+        status: 403,
+        code: 'profile_forbidden',
+        message: 'Only executive managers and administrators can change organization note settings.',
+      })
+    }
+    const settings = await options.repository.updateTimeEntryNoteSettings(
+      noteSettingsInput(await readObjectBody(context)),
+      options.clock.now().instant,
+    )
+    return context.json(
+      {
+        data: serializeNoteSettings(settings),
+        links: { self: '/api/v1/time-entry-note-settings' },
+      },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
+  api.get('/time-entry-options', async (context) => {
+    requireApiScope(context, 'time_entries:read')
+    const principal = context.get('principal')
+    try {
+      const rows = await options.repository.timeEntryOptions(principal.userId)
+      return context.json(
+        {
+          data: rows.map((row) => ({
+            project_id: row.projectId,
+            task_id: row.taskId,
+            minimum_note_length: row.noteMinimumLength,
+          })),
+          links: { self: '/api/v1/time-entry-options' },
+        },
+        200,
+        { 'cache-control': 'no-store' },
+      )
+    } catch (error) {
+      return translateResourceError(error, 'time entry')
+    }
+  })
+
   api.get('/time-entries', async (context) => {
     requireApiScope(context, 'time_entries:read')
     const principal = context.get('principal')

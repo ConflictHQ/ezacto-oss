@@ -13,7 +13,12 @@ import {
   type InstanceBootstrapInput,
   type InstanceBootstrapOptions,
 } from '../src/instance-bootstrap.js'
-import { migrateContainer, migrateD1 } from '../src/migrate.js'
+import {
+  migrateContainer,
+  migrateContainerThrough,
+  migrateD1,
+  migrateD1Through,
+} from '../src/migrate.js'
 import { orgPeopleMigration } from '../src/migrations/0000_org_people.js'
 import { apiTokensMigration } from '../src/migrations/0011_api_tokens.js'
 import { instanceBootstrapMigration } from '../src/migrations/0012_instance_bootstrap.js'
@@ -149,6 +154,12 @@ for (const [runtime, factory] of factories) {
     it('[security] atomically creates the owner credential and accepts only an exact re-run', async () => {
       harness = await factory()
       await harness.bootstrap()
+      expect(await harness.rows(`SELECT modules FROM organizations WHERE id = 1`)).toEqual([
+        { modules: '{"approval":true,"expenses":true,"invoices":true}' },
+      ])
+      expect(await harness.rows(`SELECT timezone FROM organizations WHERE id = 1`)).toEqual([
+        { timezone: 'UTC' },
+      ])
 
       expect(await harness.authenticate(token)).toEqual({
         tokenId: 1,
@@ -227,6 +238,25 @@ for (const [runtime, factory] of factories) {
       expect(JSON.stringify(stored)).not.toContain(token)
       expect(JSON.stringify(stored)).not.toContain('A'.repeat(43))
 
+      await harness.run(
+        `UPDATE organizations SET time_entry_notes_minimum_length = 2 WHERE id = 1`,
+      )
+      await expect(harness.bootstrap()).rejects.toBeInstanceOf(
+        InstanceBootstrapConflictError,
+      )
+      await harness.run(
+        `UPDATE organizations SET time_entry_notes_minimum_length = 1 WHERE id = 1`,
+      )
+      await harness.run(
+        `UPDATE users SET time_entry_notes_minimum_length = 2 WHERE id = 1`,
+      )
+      await expect(harness.bootstrap()).rejects.toBeInstanceOf(
+        InstanceBootstrapConflictError,
+      )
+      await harness.run(
+        `UPDATE users SET time_entry_notes_minimum_length = NULL WHERE id = 1`,
+      )
+
       for (const mismatch of [
         { ...input, organizationName: 'Different Organization' },
         { ...input, ownerFirstName: 'Rosalind' },
@@ -237,6 +267,16 @@ for (const [runtime, factory] of factories) {
           InstanceBootstrapConflictError,
         )
       }
+    })
+
+    it('[security] includes the organization timezone in exact bootstrap retries', async () => {
+      harness = await factory()
+      await harness.bootstrap()
+      await harness.run(`UPDATE organizations SET timezone = 'America/New_York' WHERE id = 1`)
+
+      await expect(harness.bootstrap()).rejects.toBeInstanceOf(
+        InstanceBootstrapConflictError,
+      )
     })
 
     it('[security] rejects unexpected identity state without adding bootstrap rows', async () => {
@@ -325,6 +365,85 @@ for (const [runtime, factory] of factories) {
     })
   })
 }
+
+describe('approval-aware instance bootstrap upgrade', () => {
+  it('[regression] upgrades the persisted container bootstrap assertion before first use', async () => {
+    const client = new BetterSqlite3(':memory:')
+    try {
+      migrateContainerThrough(client, '0026_invoice_generation')
+      migrateContainer(client)
+      await bootstrapInstanceContainer(client, input, options)
+      await bootstrapInstanceContainer(client, input, options)
+      expect(client.prepare(`SELECT modules FROM organizations WHERE id = 1`).get()).toEqual({
+        modules: '{"approval":true,"expenses":true,"invoices":true}',
+      })
+    } finally {
+      client.close()
+    }
+  })
+
+  it('[regression] upgrades the persisted D1 bootstrap assertion before first use', async () => {
+    const miniflare = new Miniflare({
+      modules: true,
+      script: 'export default { fetch() { return new Response("ok") } }',
+      d1Databases: ['DB'],
+    })
+    try {
+      const client = await miniflare.getD1Database('DB')
+      await migrateD1Through(client, '0026_invoice_generation')
+      await migrateD1(client)
+      await bootstrapInstanceD1(client, input, options)
+      await bootstrapInstanceD1(client, input, options)
+      await expect(client.prepare(`SELECT modules FROM organizations WHERE id = 1`).first()).resolves.toEqual({
+        modules: '{"approval":true,"expenses":true,"invoices":true}',
+      })
+    } finally {
+      await miniflare.dispose()
+    }
+  })
+
+  for (const runtime of ['container', 'D1'] as const) {
+    it(`[regression] leaves an existing ${runtime} organization module choice unchanged`, async () => {
+      if (runtime === 'container') {
+        const client = new BetterSqlite3(':memory:')
+        try {
+          migrateContainerThrough(client, '0026_invoice_generation')
+          client.prepare(
+            `INSERT INTO organizations (name, modules, created_at, updated_at)
+             VALUES ('Existing', '{"approval":false,"expenses":true}', ?, ?)`,
+          ).run(timestamp, timestamp)
+          migrateContainer(client)
+          expect(client.prepare(`SELECT modules FROM organizations WHERE id = 1`).get()).toEqual({
+            modules: '{"approval":false,"expenses":true}',
+          })
+        } finally {
+          client.close()
+        }
+        return
+      }
+
+      const miniflare = new Miniflare({
+        modules: true,
+        script: 'export default { fetch() { return new Response("ok") } }',
+        d1Databases: ['DB'],
+      })
+      try {
+        const client = await miniflare.getD1Database('DB')
+        await migrateD1Through(client, '0026_invoice_generation')
+        await client.prepare(
+          `INSERT INTO organizations (name, modules, created_at, updated_at)
+           VALUES ('Existing', '{"approval":false,"expenses":true}', ?, ?)`,
+        ).bind(timestamp, timestamp).run()
+        await migrateD1(client)
+        await expect(client.prepare(`SELECT modules FROM organizations WHERE id = 1`).first()).resolves.toEqual({
+          modules: '{"approval":false,"expenses":true}',
+        })
+      } finally {
+        await miniflare.dispose()
+      }
+    })
+  }
+})
 
 describe('instance bootstrap migration gate', () => {
   it('[unit] refuses an unmigrated database without creating application state', async () => {

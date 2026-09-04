@@ -6,6 +6,7 @@ import {
   getInvariant,
   invariantIds,
   invariantRegistry,
+  type InvariantDefinition,
 } from "../src/invariants.js";
 
 const repositoryRoot = resolve(
@@ -67,10 +68,12 @@ describe("domain invariant registry", () => {
       "inv-03",
       "inv-04",
       "inv-05",
+      "inv-06",
       "inv-07",
       "inv-08",
       "inv-09",
       "inv-10",
+      "inv-11",
       "inv-12",
       "inv-13",
       "inv-14",
@@ -83,6 +86,18 @@ describe("domain invariant registry", () => {
             issue: 77,
           });
           expect(definition.evidence.runtimes).toEqual(["sqlite"]);
+        } else if (definition.id === "inv-06") {
+          expect(definition.owner).toMatchObject({
+            story: "v0-5-working-system/invoicing/generation",
+            issue: 50,
+          });
+          expect(definition.evidence.runtimes).toEqual(["d1"]);
+        } else if (definition.id === "inv-11") {
+          expect(definition.owner).toMatchObject({
+            story: "v0-5-working-system/invoicing/generation",
+            issue: 50,
+          });
+          expect(definition.evidence.runtimes).toEqual(["sqlite", "d1"]);
         } else {
           expect(definition.owner).toMatchObject({
             story: "v0-prove-the-model/schema-core-domain/invariant-suite",
@@ -95,11 +110,17 @@ describe("domain invariant registry", () => {
 
     expect(getInvariant("inv-06")).toMatchObject({
       owner: { story: "v0-5-working-system/invoicing/generation", issue: 50 },
-      evidence: { state: "downstream" },
+      evidence: {
+        state: "executable",
+        testFile: "entries/worker/test/runtime-d1.test.ts",
+      },
     });
     expect(getInvariant("inv-11")).toMatchObject({
       owner: { story: "v0-5-working-system/invoicing/generation", issue: 50 },
-      evidence: { state: "downstream" },
+      evidence: {
+        state: "executable",
+        testFile: "packages/db/test/invoice-generation.test.ts",
+      },
     });
     expect(getInvariant("inv-14")).toMatchObject({
       owner: {
@@ -125,7 +146,7 @@ describe("domain invariant registry", () => {
       }
     }
 
-    for (const definition of invariantRegistry) {
+    for (const definition of invariantRegistry as readonly InvariantDefinition[]) {
       const tag = `[${definition.id}]`;
       const occurrences = [...testSources.values()].reduce(
         (total, source) => total + occurrenceCount(source, tag),

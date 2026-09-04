@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { EzactoClient } from "../src/index.js";
 import type { EzactoApiError } from "../src/index.js";
 import type {
+  ExpenseCategoryInput,
+  ExpenseCategoryPatch,
   InvoicePaymentInput,
   InvoicePaymentUpdateInput,
   RecurringAmountConfig,
@@ -64,6 +66,75 @@ const app = createApiApp({
         page: { per_page: 25, next_cursor: null },
       }),
     );
+    api.get("/expense-categories", (context) =>
+      context.json({
+        data: [
+          {
+            id: 4,
+            name: "Mileage",
+            unit_name: "mile",
+            unit_price_cents: 67,
+            is_active: context.req.query("is_active") === "true",
+            created_at: "2026-08-28T12:00:00.000Z",
+            updated_at: "2026-08-28T12:00:00.000Z",
+          },
+        ],
+        links: {
+          self: `/api/v1/expense-categories?${new URL(context.req.url).searchParams.toString()}`,
+          next: null,
+        },
+        page: { per_page: 25, next_cursor: null },
+      }),
+    );
+    api.post("/expense-categories", async (context) =>
+      context.json(
+        {
+          data: {
+            id: 5,
+            ...(await context.req.json<Record<string, unknown>>()),
+            is_active: true,
+            created_at: "2026-08-28T12:00:00.000Z",
+            updated_at: "2026-08-28T12:00:00.000Z",
+          },
+          links: { self: "/api/v1/expense-categories/5" },
+        },
+        201,
+      ),
+    );
+    api.get("/expense-categories/:id", (context) =>
+      context.json({
+        data: {
+          id: Number(context.req.param("id")),
+          name: "Mileage",
+          unit_name: "mile",
+          unit_price_cents: 67,
+          is_active: true,
+          created_at: "2026-08-28T12:00:00.000Z",
+          updated_at: "2026-08-28T12:00:00.000Z",
+        },
+        links: {
+          self: `/api/v1/expense-categories/${context.req.param("id")}`,
+        },
+      }),
+    );
+    api.patch("/expense-categories/:id", async (context) =>
+      context.json({
+        data: {
+          id: Number(context.req.param("id")),
+          name: "Mileage",
+          unit_name: "mile",
+          unit_price_cents: 67,
+          is_active: true,
+          ...(await context.req.json<Record<string, unknown>>()),
+          created_at: "2026-08-28T12:00:00.000Z",
+          updated_at: "2026-08-28T13:00:00.000Z",
+        },
+        links: {
+          self: `/api/v1/expense-categories/${context.req.param("id")}`,
+        },
+      }),
+    );
+    api.delete("/expense-categories/:id", (context) => context.body(null, 204));
     api.post("/time-entries", async (context) => {
       const body = await context.req.json<Record<string, unknown>>();
       return context.json(
@@ -88,6 +159,18 @@ const app = createApiApp({
         201,
       );
     });
+    api.get("/timesheet-submissions/:id", (context) =>
+      context.json({
+        data: {
+          id: Number(context.req.param("id")),
+          status: "submitted",
+          entries: [{ id: 11, notes: "Reviewer-visible context" }],
+        },
+        links: {
+          self: `/api/v1/timesheet-submissions/${context.req.param("id")}`,
+        },
+      }),
+    );
     api.patch("/invoices/:id", async (context) =>
       context.json({
         data: {
@@ -175,6 +258,18 @@ const client = (token = "generated-client-test") =>
     fetch: async (input, init) => app.fetch(new Request(input, init)),
   });
 
+it("[unit] dereferences timesheet submission detail through the generated client", async () => {
+  const response = await client().getTimesheetSubmission({ id: 42 });
+  expect(response).toMatchObject({
+    data: {
+      id: 42,
+      status: "submitted",
+      entries: [{ id: 11, notes: "Reviewer-visible context" }],
+    },
+    links: { self: "/api/v1/timesheet-submissions/42" },
+  });
+});
+
 it("[unit] sends required report range filters through the generated client", async () => {
   const report = await client().getUninvoicedReport({
     query: { from: "2026-08-01", to: "2026-08-31" },
@@ -206,6 +301,59 @@ describe("generated ezacto client", () => {
       seconds: 7200,
       is_running: false,
     });
+  });
+
+  it("[unit] sends expense-category master-data operations through typed client methods", async () => {
+    const listed = await client().listExpenseCategories({
+      query: {
+        per_page: 25,
+        is_active: true,
+        updated_since: "2026-08-01T00:00:00.000Z",
+      },
+    });
+    expect(listed.data).toEqual([
+      expect.objectContaining({
+        id: 4,
+        name: "Mileage",
+        unit_name: "mile",
+        unit_price_cents: 67,
+        is_active: true,
+      }),
+    ]);
+
+    const input: ExpenseCategoryInput = {
+      name: "Travel",
+      unit_name: null,
+      unit_price_cents: null,
+    };
+    const created = await client().createExpenseCategory({
+      body: input,
+    });
+    expect(created.data).toMatchObject({
+      id: 5,
+      name: "Travel",
+      unit_name: null,
+      unit_price_cents: null,
+      is_active: true,
+    });
+
+    await expect(client().getExpenseCategory({ id: 4 })).resolves.toMatchObject(
+      {
+        data: { id: 4, name: "Mileage" },
+      },
+    );
+    const patch: ExpenseCategoryPatch = {
+      unit_name: "km",
+      unit_price_cents: 42,
+    };
+    await expect(
+      client().updateExpenseCategory({ id: 4, body: patch }),
+    ).resolves.toMatchObject({
+      data: { id: 4, unit_name: "km", unit_price_cents: 42 },
+    });
+    await expect(
+      client().deleteExpenseCategory({ id: 4 }),
+    ).resolves.toBeUndefined();
   });
 
   it("[unit] surfaces the stable API error and request id", async () => {

@@ -9,6 +9,8 @@ import { Miniflare, NoOpLog } from 'miniflare'
 const listenHost = '127.0.0.1'
 const listenPort = 4173
 const cursorSigningKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+const fixtureControlPath = '/__ezacto_browser_fixture__/start-end'
+const fixtureControlHeader = 'start-end-round-trip'
 const fixtureEmail = process.env.EZACTO_BROWSER_FIXTURE_EMAIL
 const fixtureInstant = process.env.EZACTO_BROWSER_FIXTURE_INSTANT
 const fixtureTimeZone = process.env.EZACTO_BROWSER_FIXTURE_TIME_ZONE
@@ -66,6 +68,7 @@ const miniflare = new Miniflare({
   },
   compatibilityDate: '2026-08-06',
   d1Databases: ['DB'],
+  r2Buckets: ['ATTACHMENTS'],
   host: listenHost,
   log: new NoOpLog(),
   modules: true,
@@ -100,6 +103,13 @@ const seedPasswordUser = async () => {
   await passwordAuth.verifyEmail(delivery.token, 'browser-fixture-seed')
 }
 await seedPasswordUser()
+await database
+  .prepare(
+    `UPDATE organizations
+     SET modules = json_set(modules, '$.approval', json('true'))
+     WHERE id = 1`,
+  )
+  .run()
 
 // Leave the generated password and one-time verification token in memory only
 // for the minimum setup window. Neither value is written to the D1 fixture in
@@ -112,6 +122,293 @@ const run = async (statement, ...bindings) => {
   await database.prepare(statement).bind(...bindings).run()
 }
 
+const fixtureControl = async (request, response) => {
+  if (
+    request.method !== 'POST' ||
+    request.headers['x-ezacto-browser-fixture-control'] !== fixtureControlHeader
+  ) {
+    response.statusCode = 404
+    response.end()
+    return
+  }
+  const chunks = []
+  let length = 0
+  for await (const chunk of request) {
+    length += chunk.length
+    if (length > 1_024) {
+      response.statusCode = 413
+      response.end()
+      return
+    }
+    chunks.push(chunk)
+  }
+  let action
+  try {
+    action = JSON.parse(Buffer.concat(chunks).toString('utf8')).action
+  } catch {
+    response.statusCode = 400
+    response.end()
+    return
+  }
+  if (action === 'seed') {
+    await database.batch([
+      database.prepare(
+        `UPDATE organizations
+         SET time_entry_mode = 'start_end', time_format = 'hours_minutes', clock = '12h'
+         WHERE id = 1`,
+      ),
+      database.prepare('DELETE FROM time_entries WHERE id = 900'),
+      database
+        .prepare(
+          `INSERT INTO time_entries (
+             id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+             spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+             billable_rate_cents, cost_rate_cents, started_time, ended_time, notes,
+             created_at, updated_at
+           ) VALUES (
+             900, 1, 1, 1, 1, 1, '2026-08-29', 30600, 30600, 30600, 1,
+             10000, 5000, '09:05', '17:35', 'Real D1 start/end entry', ?, ?
+           )`,
+        )
+        .bind(timestamp, timestamp),
+    ])
+  } else if (action === 'reset') {
+    await database.batch([
+      database.prepare('DELETE FROM time_entries WHERE id = 900'),
+      database.prepare(
+        `UPDATE organizations
+         SET time_entry_mode = 'duration', time_format = 'decimal', clock = '12h'
+         WHERE id = 1`,
+      ),
+    ])
+  } else if (action === 'approval-seed') {
+    await database.batch([
+      database.prepare('DELETE FROM time_entries WHERE id = 901'),
+      database.prepare('DELETE FROM expenses WHERE id = 901'),
+      database.prepare(
+        `UPDATE organizations
+         SET time_entry_mode = 'duration', time_format = 'decimal', clock = '12h',
+             week_start_day = 'sunday',
+             modules = json_set(modules, '$.approval', json('true'))
+         WHERE id = 1`,
+      ),
+      database
+        .prepare(
+          `INSERT INTO time_entries (
+             id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+             spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+             billable_rate_cents, cost_rate_cents, notes, created_at, updated_at
+           ) VALUES (
+             901, 1, 1, 1, 1, 1, '2026-08-19', 3600, 3600, 3600, 1,
+             10000, 5000, 'Ready for review', ?, ?
+           )`,
+        )
+        .bind(timestamp, timestamp),
+      database
+        .prepare(
+          `INSERT INTO expenses (
+             id, user_id, project_id, expense_category_id, spent_date, notes,
+             total_cost_cents, billable, created_at, updated_at
+           ) VALUES (
+             901, 1, 1, 1, '2026-08-19', 'Receipt ready for review',
+             1250, 1, ?, ?
+           )`,
+        )
+        .bind(timestamp, timestamp),
+    ])
+  } else if (action === 'approval-expense-only-seed') {
+    await database.batch([
+      database.prepare(
+        `DELETE FROM time_entries
+         WHERE user_id = 1 AND spent_date BETWEEN '2026-08-09' AND '2026-08-15'`,
+      ),
+      database.prepare('DELETE FROM expenses WHERE id = 902'),
+      database.prepare(
+        `UPDATE organizations
+         SET time_entry_mode = 'duration', time_format = 'decimal', clock = '12h',
+             week_start_day = 'sunday',
+             modules = json_set(modules, '$.approval', json('true'))
+         WHERE id = 1`,
+      ),
+      database
+        .prepare(
+          `INSERT INTO expenses (
+             id, user_id, project_id, expense_category_id, spent_date, notes,
+             total_cost_cents, billable, created_at, updated_at
+           ) VALUES (
+             902, 1, 1, 1, '2026-08-12', 'Expense-only receipt',
+             875, 1, ?, ?
+           )`,
+        )
+        .bind(timestamp, timestamp),
+    ])
+  } else if (action === 'invoice-payment-seed') {
+    await database.batch([
+      database.prepare('DELETE FROM time_entries WHERE id = 903'),
+      database
+        .prepare(
+          `INSERT INTO time_entries (
+             id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+             spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+             billable_rate_cents, cost_rate_cents, notes, created_at, updated_at
+           ) VALUES (
+             903, 1, 1, 1, 1, 1, '2026-08-15', 2700, 2700, 2700, 1,
+             10000, 5000, 'Invoice payment acceptance', ?, ?
+           )`,
+        )
+        .bind(timestamp, timestamp),
+    ])
+  } else if (action === 'project-directory-cleanup') {
+    await database.batch([
+      database
+        .prepare(
+          `UPDATE task_assignments
+           SET is_active = 0, updated_at = ?
+           WHERE project_id IN (
+             SELECT id FROM projects WHERE name = 'Browser UI Project'
+           )`,
+        )
+        .bind(timestamp),
+      database
+        .prepare(
+          `UPDATE user_assignments
+           SET is_active = 0, updated_at = ?
+           WHERE project_id IN (
+             SELECT id FROM projects WHERE name = 'Browser UI Project'
+           )`,
+        )
+        .bind(timestamp),
+      database
+        .prepare(
+          `UPDATE projects
+           SET is_active = 0, updated_at = ?
+           WHERE name = 'Browser UI Project'`,
+        )
+        .bind(timestamp),
+      database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+    ])
+    const remaining = await database
+      .prepare(
+        `SELECT count(*) AS count
+         FROM projects
+         WHERE name = 'Browser UI Project' AND is_active = 1`,
+      )
+      .first()
+    if (remaining?.count !== 0) {
+      throw new Error('project directory fixture cleanup left active work behind')
+    }
+  } else if (action === 'invoice-generation-seed') {
+    await database.batch([
+      database.prepare(
+        `DELETE FROM time_entries
+         WHERE invoice_id IS NULL
+           AND (
+             id IN (1, 2)
+             OR notes IN (
+               'Browser invoice generation fixture 1',
+               'Browser invoice generation fixture 2'
+             )
+           )`,
+      ),
+      database
+        .prepare(
+          `INSERT INTO time_entries (
+             id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+             spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+             billable_rate_cents, cost_rate_cents, budgeted, notes, created_at, updated_at
+           ) VALUES (
+             (SELECT coalesce(max(id), 0) + 1 FROM time_entries),
+             1, 1, 1, 1, 1, ?, 1800, 1800, 1800, 1, 10000, 5000,
+             1, 'Browser invoice generation fixture 1', ?, ?
+           )`,
+        )
+        .bind(spentDate, timestamp, timestamp),
+      database
+        .prepare(
+          `INSERT INTO time_entries (
+             id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+             spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+             billable_rate_cents, cost_rate_cents, budgeted, notes, created_at, updated_at
+           ) VALUES (
+             (SELECT coalesce(max(id), 0) + 1 FROM time_entries),
+             1, 1, 1, 1, 1, ?, 900, 900, 900, 1, 10000, 5000,
+             1, 'Browser invoice generation fixture 2', ?, ?
+           )`,
+        )
+        .bind(spentDate, timestamp, timestamp),
+      database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+    ])
+    const seeded = await database
+      .prepare(
+        `SELECT count(*) AS count, sum(rounded_seconds) AS seconds
+         FROM time_entries
+         WHERE invoice_id IS NULL
+           AND notes IN (
+             'Browser invoice generation fixture 1',
+             'Browser invoice generation fixture 2'
+           )`,
+      )
+      .first()
+    if (seeded?.count !== 2 || seeded.seconds !== 2700) {
+      throw new Error('invoice generation fixture did not own one exact work set')
+    }
+  } else if (action === 'invoice-generation-cleanup') {
+    await database.batch([
+      database.prepare(
+        `DELETE FROM time_entries
+         WHERE invoice_id IS NULL
+           AND notes IN (
+             'Browser invoice generation fixture 1',
+             'Browser invoice generation fixture 2'
+           )`,
+      ),
+      database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+    ])
+  } else if (action === 'invoice-line-seed') {
+    await database.batch([
+      database.prepare('DELETE FROM time_entries WHERE id = 904'),
+      database
+        .prepare(
+          `INSERT INTO time_entries (
+             id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+             spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+             billable_rate_cents, cost_rate_cents, notes, created_at, updated_at
+           ) VALUES (
+             904, 1, 1, 1, 1, 1, '2026-08-14', 2700, 2700, 2700, 1,
+             10000, 5000, 'Invoice line acceptance', ?, ?
+           )`,
+        )
+        .bind(timestamp, timestamp),
+    ])
+  } else if (action === 'task-admin-cleanup') {
+    await database.batch([
+      database.prepare(
+        `DELETE FROM task_assignments
+         WHERE task_id IN (SELECT id FROM tasks WHERE name = 'Browser Default Task Updated')
+            OR project_id IN (SELECT id FROM projects WHERE name LIKE 'Task admin default project %')`,
+      ),
+      database.prepare(
+        `DELETE FROM user_assignments
+         WHERE project_id IN (SELECT id FROM projects WHERE name LIKE 'Task admin default project %')`,
+      ),
+      database.prepare(
+        `DELETE FROM projects WHERE name LIKE 'Task admin default project %'`,
+      ),
+      database.prepare(
+        `DELETE FROM tasks WHERE name = 'Browser Default Task Updated'`,
+      ),
+      database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+    ])
+  } else {
+    response.statusCode = 400
+    response.end()
+    return
+  }
+  response.statusCode = 204
+  response.setHeader('cache-control', 'no-store')
+  response.end()
+}
+
 await run(
   `INSERT INTO clients (id, name, currency, created_at, updated_at)
    VALUES (1, 'Browser Acceptance Client', 'USD', ?, ?)`,
@@ -120,28 +417,56 @@ await run(
 )
 await run(
   `INSERT INTO projects (
-     id, client_id, name, code, hourly_rate_cents, created_at, updated_at
-   ) VALUES (1, 1, 'Browser Acceptance Project', 'BROWSER', 10000, ?, ?)`,
+     id, client_id, name, code, hourly_rate_cents,
+     budget_by, budget_seconds, time_entry_notes_minimum_length, created_at, updated_at
+   ) VALUES
+     (1, 1, 'Browser Acceptance Project', 'BROWSER', 10000, 'project', 14400, NULL, ?, ?),
+     (2, 1, 'Browser Secondary Project', 'SECONDARY', 12500, 'none', NULL, 8, ?, ?)`,
+  timestamp,
+  timestamp,
   timestamp,
   timestamp,
 )
 await run(
   `INSERT INTO tasks (id, name, created_at, updated_at)
-   VALUES (1, 'Browser Acceptance Task', ?, ?)`,
+   VALUES
+     (1, 'Browser Acceptance Task', ?, ?),
+     (2, 'Browser Secondary Task', ?, ?)`,
+  timestamp,
+  timestamp,
+  timestamp,
+  timestamp,
+)
+await run(
+  `INSERT INTO expense_categories (
+     id, name, unit_name, unit_price_cents, created_at, updated_at
+   ) VALUES
+     (1, 'Travel', NULL, NULL, ?, ?),
+     (2, 'Mileage', 'mile', 67, ?, ?)`,
+  timestamp,
+  timestamp,
   timestamp,
   timestamp,
 )
 await run(
   `INSERT INTO user_assignments (
      id, project_id, user_id, created_at, updated_at
-   ) VALUES (1, 1, 1, ?, ?)`,
+   ) VALUES
+     (1, 1, 1, ?, ?),
+     (2, 2, 1, ?, ?)`,
+  timestamp,
+  timestamp,
   timestamp,
   timestamp,
 )
 await run(
   `INSERT INTO task_assignments (
      id, project_id, task_id, billable, created_at, updated_at
-   ) VALUES (1, 1, 1, 1, ?, ?)`,
+   ) VALUES
+     (1, 1, 1, 1, ?, ?),
+     (2, 2, 2, 1, ?, ?)`,
+  timestamp,
+  timestamp,
   timestamp,
   timestamp,
 )
@@ -149,18 +474,33 @@ await run(
   `INSERT INTO time_entries (
      id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
      spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
-     billable_rate_cents, cost_rate_cents, created_at, updated_at
-   ) VALUES (1, 1, 1, 1, 1, 1, ?, 1800, 1800, 1800, 1, 10000, 5000, ?, ?)`,
+     billable_rate_cents, cost_rate_cents, budgeted, notes, created_at, updated_at
+   ) VALUES
+     (
+       1, 1, 1, 1, 1, 1, ?, 1800, 1800, 1800, 1, 10000, 5000,
+       1, 'First line\nSecond line with delivery detail', ?, ?
+     ),
+     (
+       2, 1, 1, 1, 1, 1, ?, 900, 900, 900, 1, 10000, 5000,
+       1, 'Separate follow-up', ?, ?
+     )`,
+  spentDate,
+  timestamp,
+  timestamp,
   spentDate,
   timestamp,
   timestamp,
 )
 
 const proxyFetch = async (request, response) => {
+  const url = new URL(request.url ?? '/', `http://${listenHost}:${listenPort}`)
+  if (url.pathname === fixtureControlPath) {
+    await fixtureControl(request, response)
+    return
+  }
   const chunks = []
   for await (const chunk of request) chunks.push(chunk)
   const body = chunks.length === 0 ? undefined : Buffer.concat(chunks)
-  const url = new URL(request.url ?? '/', `http://${listenHost}:${listenPort}`)
   const upstream = await miniflare.dispatchFetch(url, {
     method: request.method,
     headers: request.headers,

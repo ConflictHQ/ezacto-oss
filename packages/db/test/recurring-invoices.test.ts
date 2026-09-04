@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import * as publicDatabase from '../src/index.js'
 import { ensureHarvestRecurringInvoiceStub } from '../src/internal/recurring-invoice-import.js'
+import { completeHarvestRecurringInvoice } from '../src/internal/worksheet-import.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import { orgPeopleMigration } from '../src/migrations/0000_org_people.js'
 import { clientsMigration } from '../src/migrations/0001_clients.js'
@@ -232,7 +233,7 @@ for (const [runtime, factory] of factories) {
         await database.rows<{ id: string }>(
           `SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`,
         ),
-      ).toEqual([{ id: '0023_migration_import_authority' }])
+      ).toEqual([{ id: '0030_email_templates' }])
       const recurringForeignKeys = await database.rows<{
         from: string
         table: string
@@ -615,16 +616,35 @@ for (const [runtime, factory] of factories) {
         createdAt: timestamp,
         updatedAt: timestamp,
       })
-      await database.run(
-        `UPDATE recurring_invoices
-         SET definition_status = 'complete', subject_template = 'Completed definition',
-             notes_template = '', every_n_months = 1, day_of_month = 1,
-             next_issue_on = '2026-09-01', amount_config = ?, updated_at = ?
-         WHERE id = ?`,
-        JSON.stringify(fixedAmountConfig),
-        timestamp,
-        stub.id,
-      )
+      await completeHarvestRecurringInvoice(database.orm, {
+        harvestRecurringInvoiceId: sourceRecurringId,
+        snapshotSha256: 'a'.repeat(64),
+        contextSha256: 'b'.repeat(64),
+        subjectTemplate: 'Completed definition',
+        notesTemplate: '',
+        everyNMonths: 1,
+        dayOfMonth: 1,
+        nextIssueOn: '2026-09-01',
+        sourceAmountConfig: {
+          schema_version: 1,
+          type: 'fixed_lines',
+          line_items: [
+            {
+              kind: 'Service',
+              description: 'Sanitized monthly service',
+              quantity: 1,
+              unit_price_cents: 125_000,
+              taxed: true,
+              taxed2: false,
+              harvest_project_id: null,
+            },
+          ],
+        },
+        resolvedAmountConfig: fixedAmountConfig,
+        sourceCanDrawFromHarvestRetainerId: null,
+        resolvedCanDrawFromRetainerId: null,
+        completedAt: timestamp,
+      })
       await insertInvoice(database, 175_002, 1, 75_002)
 
       const completed = await ensureHarvestRecurringInvoiceStub(database.orm, {

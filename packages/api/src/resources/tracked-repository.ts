@@ -42,6 +42,30 @@ export interface TimeEntryRecord extends TrackedRecord {
   costRateCents: number | null
   externalRef: Record<string, unknown> | null
   calendarEventRef: Record<string, unknown> | null
+  noteMinimumLength: number
+}
+
+export interface TimeEntryOption {
+  projectId: number
+  taskId: number
+  noteMinimumLength: number
+}
+
+export interface OrganizationTimeEntryNoteSettings {
+  required: boolean
+  minimumLength: number
+}
+
+export interface OrganizationTimeEntrySettings {
+  mode: 'duration' | 'start_end'
+  timeFormat: 'decimal' | 'hours_minutes'
+  clock: '12h' | '24h'
+  weekStartDay: 'saturday' | 'sunday' | 'monday'
+}
+
+export interface UpdateOrganizationTimeEntryNoteSettings {
+  required?: boolean
+  minimumLength?: number
 }
 
 export type ReimbursementStatus = 'none' | 'pending' | 'approved' | 'paid'
@@ -138,6 +162,13 @@ export interface UpdateExpenseRequest {
 }
 
 export interface TrackedResourceRepository {
+  timeEntrySettings(): Promise<OrganizationTimeEntrySettings>
+  timeEntryNoteSettings(): Promise<OrganizationTimeEntryNoteSettings>
+  updateTimeEntryNoteSettings(
+    input: Readonly<UpdateOrganizationTimeEntryNoteSettings>,
+    updatedAt: string,
+  ): Promise<OrganizationTimeEntryNoteSettings>
+  timeEntryOptions(userId: number): Promise<readonly TimeEntryOption[]>
   timeEntries(
     userId: number,
     filters: Readonly<TimeEntryFilters>,

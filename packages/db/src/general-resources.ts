@@ -74,6 +74,19 @@ const definitions: Readonly<Record<GeneralResourceKind, ResourceDefinition>> = {
     archive: false,
     filters: { clientId: 'client_id', updatedSince: 'updated_at' },
   },
+  'expense-categories': {
+    table: 'expense_categories',
+    columns: {
+      name: 'name',
+      unitName: 'unit_name',
+      unitPriceCents: 'unit_price_cents',
+      isActive: 'is_active',
+    },
+    booleans: new Set(['isActive']),
+    json: new Set(),
+    archive: true,
+    filters: { isActive: 'is_active', updatedSince: 'updated_at' },
+  },
   projects: {
     table: 'projects',
     columns: {
@@ -98,6 +111,7 @@ const definitions: Readonly<Record<GeneralResourceKind, ResourceDefinition>> = {
       endsOn: 'ends_on',
       notes: 'notes',
       billingCurrency: 'billing_currency',
+      timeEntryNotesMinimumLength: 'time_entry_notes_minimum_length',
     },
     booleans: new Set([
       'isActive',
@@ -155,6 +169,7 @@ const definitions: Readonly<Record<GeneralResourceKind, ResourceDefinition>> = {
       useDefaultRates: 'use_default_rates',
       hourlyRateCents: 'hourly_rate_cents',
       budgetSeconds: 'budget_seconds',
+      timeEntryNotesMinimumLength: 'time_entry_notes_minimum_length',
     },
     booleans: new Set(['isActive', 'isProjectManager', 'useDefaultRates']),
     json: new Set(),
@@ -184,6 +199,7 @@ const definitions: Readonly<Record<GeneralResourceKind, ResourceDefinition>> = {
       samlExempt: 'saml_exempt',
       isOwner: 'is_owner',
       email: '__email_relation__',
+      timeEntryNotesMinimumLength: 'time_entry_notes_minimum_length',
     },
     booleans: new Set([
       'isContractor',
@@ -559,8 +575,24 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
           })
         }
         if (kind === 'projects') {
-          statements.push({
-            text: `WITH new_project(id) AS MATERIALIZED (VALUES(last_insert_rowid()))
+          statements.push(
+            {
+              text: `WITH new_project(id) AS MATERIALIZED (
+                SELECT max(id) FROM projects
+              )
+                INSERT INTO user_assignments
+                  (project_id, user_id, created_at, updated_at)
+                SELECT new_project.id, user.id, ?, ?
+                FROM users AS user CROSS JOIN new_project
+                WHERE user.is_active = 1
+                  AND user.has_access_to_all_future_projects = 1
+                ORDER BY user.id RETURNING id`,
+              params: [now, now],
+            },
+            {
+              text: `WITH new_project(id) AS MATERIALIZED (
+                SELECT max(id) FROM projects
+              )
               INSERT INTO task_assignments
                 (project_id, task_id, billable, hourly_rate_cents, created_at, updated_at)
               SELECT new_project.id, task.id, task.billable_by_default,
@@ -568,8 +600,9 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
               FROM tasks AS task CROSS JOIN new_project
               WHERE task.is_default = 1 AND task.is_active = 1
               ORDER BY task.id RETURNING id`,
-            params: [now, now],
-          })
+              params: [now, now],
+            },
+          )
         }
         const atomicRows = await runAtomic(database, statements)
         rows = atomicRows[0] ?? []

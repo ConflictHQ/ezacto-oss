@@ -5,23 +5,31 @@ import {
   createApiApp,
   generateOpenApiDocument,
   installAttachmentRoutes,
+  installEmailConfigurationRoutes,
   installEmailLogRoutes,
   installGeneralResourceRoutes,
   installMoneyResourceRoutes,
   installOidcRoutes,
+  installOutboxRoutes,
   installPasswordAuthRoutes,
   installReportRoutes,
   installSessionRoutes,
   installTrackedResourceRoutes,
+  installTimesheetApprovalRoutes,
+  installTimesheetLockPolicyRoutes,
   type ApiSessionService,
+  type EmailConfigurationService,
   type AuthMailer,
   type ApiTokenService,
   type OidcIdentityResolver,
   type OidcTransactionStorePort,
+  type OutboxMonitor,
   type PasswordAuthService,
   type MoneyResourceRouteOptions,
   type ReportReader,
   type TrackedResourceRepository,
+  type TimesheetApprovalService,
+  type TimesheetLockPolicyService,
 } from "../src/index.js";
 
 const unavailable = () => Promise.reject(new Error("contract fixture only"));
@@ -33,6 +41,14 @@ const trackedRepository = new Proxy(
   {},
   { get: () => unavailable },
 ) as TrackedResourceRepository;
+const timesheetApprovals = new Proxy(
+  {},
+  { get: () => unavailable },
+) as TimesheetApprovalService;
+const timesheetLockPolicy = new Proxy(
+  {},
+  { get: () => unavailable },
+) as TimesheetLockPolicyService;
 const moneyResources = new Proxy(
   {},
   { get: () => unavailable },
@@ -46,6 +62,11 @@ const passwordAuth = new Proxy(
 const authMailer = new Proxy({}, { get: () => unavailable }) as AuthMailer;
 const sessions = new Proxy({}, { get: () => unavailable }) as ApiSessionService;
 const emailLog = { list: unavailable };
+const emailConfiguration = new Proxy(
+  {},
+  { get: () => unavailable },
+) as EmailConfigurationService;
+const outbox = new Proxy({}, { get: () => unavailable }) as OutboxMonitor;
 const identities = new Proxy(
   {},
   { get: () => unavailable },
@@ -69,16 +90,22 @@ const documentedApp = () =>
       installPasswordAuthRoutes(app, {
         service: passwordAuth,
         sessions: { issue: unavailable },
-        mailer: authMailer,
+        deploymentMailer: authMailer,
         clientKey: () => "contract-fixture",
       });
     },
     installApi: (api) => {
       installSessionRoutes(api, sessions);
       installEmailLogRoutes(api, emailLog);
+      installEmailConfigurationRoutes(api, {
+        service: emailConfiguration,
+        clock: () => "2026-08-28T12:00:00.000Z",
+      });
+      installOutboxRoutes(api, outbox);
       installGeneralResourceRoutes(api, {
         repository: generalRepository,
         cursorSigningKey: new Uint8Array(32),
+        isExpensesModuleEnabled: async () => true,
       });
       installTrackedResourceRoutes(api, {
         repository: trackedRepository,
@@ -90,6 +117,17 @@ const documentedApp = () =>
             time: "12:00",
           }),
         },
+        isExpensesModuleEnabled: async () => true,
+      });
+      installTimesheetApprovalRoutes(api, {
+        service: timesheetApprovals,
+        cursorSigningKey: new Uint8Array(32),
+        clock: () => "2026-08-28T12:00:00.000Z",
+      });
+      installTimesheetLockPolicyRoutes(api, {
+        service: timesheetLockPolicy,
+        cursorSigningKey: new Uint8Array(32),
+        clock: () => "2026-08-28T12:00:00.000Z",
       });
       installMoneyResourceRoutes(api, {
         service: moneyResources,
@@ -139,6 +177,45 @@ describe("OpenAPI contract", () => {
     );
     for (const reference of references)
       expect(schemas, reference[1]).toHaveProperty(reference[1]!);
+
+    const paths = first.paths as Record<
+      string,
+      Record<string, { responses: Record<string, unknown> }>
+    >;
+    expect(
+      paths["/api/v1/timesheet-submissions"]?.post?.responses,
+    ).toMatchObject({ "200": expect.any(Object), "201": expect.any(Object) });
+    expect(
+      paths["/api/v1/timesheet-submissions/{id}"]?.get?.responses,
+    ).toMatchObject({ "200": expect.any(Object) });
+    expect(schemas).toHaveProperty("TimesheetSubmissionDetail");
+    expect(schemas).toHaveProperty("TimesheetSubmissionEntry");
+
+    const categoryCollection = paths["/api/v1/expense-categories"] as
+      | {
+          get?: {
+            operationId: string;
+            security: Array<Record<string, unknown>>;
+            parameters: Array<{ name: string }>;
+          };
+          post?: {
+            operationId: string;
+            security: Array<Record<string, unknown>>;
+          };
+        }
+      | undefined;
+    expect(categoryCollection?.get).toMatchObject({
+      operationId: "listExpenseCategories",
+      security: [{ bearerAuth: [] }, { cookieSession: [] }],
+      parameters: expect.arrayContaining([
+        expect.objectContaining({ name: "is_active" }),
+        expect.objectContaining({ name: "updated_since" }),
+      ]),
+    });
+    expect(categoryCollection?.post).toMatchObject({
+      operationId: "createExpenseCategory",
+      security: [{ cookieSession: [] }],
+    });
   });
 
   it("[contract] documents exact durable and discriminated money request shapes", () => {

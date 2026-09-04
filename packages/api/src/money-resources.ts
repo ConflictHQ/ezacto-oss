@@ -707,6 +707,18 @@ const translateMoneyError = (error: unknown): never => {
   }
   if (code === "invoice_not_found") throw notFound("invoice");
   if (code === "estimate_not_found") throw notFound("estimate");
+  if (code === "invalid_command_input") {
+    throw validationError([
+      {
+        field: "command",
+        code,
+        message:
+          databaseMessage === ""
+            ? "The invoice generation request is not valid."
+            : databaseMessage,
+      },
+    ]);
+  }
   if (
     code === "invoice_version_conflict" ||
     code === "estimate_version_conflict" ||
@@ -715,6 +727,7 @@ const translateMoneyError = (error: unknown): never => {
     code === "trigger_row_conflict" ||
     code === "command_id_reused" ||
     code === "command_incomplete" ||
+    code === "generation_conflict" ||
     code === "command_storage_conflict"
   ) {
     throw new ApiError({
@@ -866,11 +879,16 @@ const installGeneration = <Bindings extends object>(
         message: "Invoice generation is not available in this deployment.",
       });
     }
-    const invoice = await options.generation.generate({
-      commandId,
-      principal,
-      request,
-    });
+    let invoice: InvoiceResource;
+    try {
+      invoice = await options.generation.generate({
+        commandId,
+        principal,
+        request,
+      });
+    } catch (error) {
+      return translateMoneyError(error);
+    }
     return context.json(
       {
         data: invoice,

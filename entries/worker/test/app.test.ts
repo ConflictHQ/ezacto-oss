@@ -55,6 +55,199 @@ describe('worker entry', () => {
     )
   })
 
+  it('[acceptance] serves invoice browse and numeric detail shells without redirects', async () => {
+    const list = await app.request('/invoices', {}, env)
+    const detail = await app.request('/invoices/42', {}, env)
+
+    expect(list.status).toBe(200)
+    expect(list.headers.get('location')).toBeNull()
+    const listHtml = await list.text()
+    expect(listHtml).toContain('data-app-view="invoice-list"')
+    expect(listHtml).toContain('data-invoice-list-page')
+    expect(listHtml).toContain('href="/invoices" aria-current="page"')
+
+    expect(detail.status).toBe(200)
+    const detailHtml = await detail.text()
+    expect(detailHtml).toContain('data-app-view="invoice-detail"')
+    expect(detailHtml).toContain('data-invoice-detail-page')
+    expect(detailHtml).toContain('data-invoice-document data-document-shell')
+    expect(detailHtml).toContain('data-ez-theme="precision"')
+  })
+
+  it.each(['/invoices/0', '/invoices/nope', '/invoices/9007199254740992'])(
+    '[security] rejects invalid invoice detail path %s',
+    async (path) => {
+      expect((await app.request(path, {}, env)).status).toBe(404)
+    },
+  )
+
+  it('[acceptance] serves the Clients V1 list and numeric detail shells', async () => {
+    const list = await app.request('/clients', {}, env)
+    const detail = await app.request('/clients/42', {}, env)
+
+    expect(list.status).toBe(200)
+    expect(list.headers.get('location')).toBeNull()
+    const listHtml = await list.text()
+    expect(listHtml).toContain('data-app-view="client-list"')
+    expect(listHtml).toContain('data-client-list-page')
+    expect(listHtml).toContain('href="/clients" aria-current="page"')
+
+    expect(detail.status).toBe(200)
+    const detailHtml = await detail.text()
+    expect(detailHtml).toContain('data-app-view="client-detail"')
+    expect(detailHtml).toContain('data-client-detail-page')
+    expect(detailHtml).toContain('<dt>Worked-for parent</dt>')
+    expect(detailHtml).toContain('<dt>Bill-to client</dt>')
+  })
+
+  it.each(['/clients/0', '/clients/nope', '/clients/9007199254740992'])(
+    '[security] rejects invalid client detail path %s',
+    async (path) => {
+      expect((await app.request(path, {}, env)).status).toBe(404)
+    },
+  )
+
+  it('[acceptance] serves the Projects V1 list and numeric detail shells', async () => {
+    const list = await app.request('/projects', {}, env)
+    const detail = await app.request('/projects/42', {}, env)
+
+    expect(list.status).toBe(200)
+    expect(list.headers.get('location')).toBeNull()
+    const listHtml = await list.text()
+    expect(listHtml).toContain('data-app-view="project-list"')
+    expect(listHtml).toContain('data-project-list-page')
+    expect(listHtml).toContain('href="/projects" aria-current="page"')
+
+    expect(detail.status).toBe(200)
+    const detailHtml = await detail.text()
+    expect(detailHtml).toContain('data-app-view="project-detail"')
+    expect(detailHtml).toContain('data-project-detail-page')
+    expect(detailHtml).toContain('data-project-task-assignments')
+    expect(detailHtml).toContain('<div class="project-form-body" data-project-form-body></div>')
+    expect(detailHtml).not.toContain('name="hourly_rate_cents"')
+    expect(detailHtml).not.toContain('name="cost_budget_cents"')
+  })
+
+  it('[acceptance] serves the Tasks administration shell without a redirect', async () => {
+    const response = await app.request('/tasks', {}, env)
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('location')).toBeNull()
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    const html = await response.text()
+    expect(html).toContain('data-app-view="task-list"')
+    expect(html).toContain('data-task-admin-page')
+    expect(html).toContain('data-task-form-dialog')
+    expect(html).toContain('data-task-archive-dialog')
+    expect(html).toContain('href="/tasks" aria-current="page"')
+  })
+
+  it('[acceptance] serves the operational Reports shell without a redirect', async () => {
+    const response = await app.request(
+      '/reports?report=project-budget&from=2026-08-01&to=2026-08-31&project_id=42',
+      {},
+      env,
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('location')).toBeNull()
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    const html = await response.text()
+    expect(html).toContain('data-app-view="reports"')
+    expect(html).toContain('data-reports-page')
+    expect(html).toContain('href="/reports" aria-current="page"')
+    expect(html).toContain('Each currency remains separate.')
+    expect(html).not.toContain('Export')
+    expect(html).not.toContain('Profit')
+  })
+
+  it.each(['/projects/0', '/projects/nope', '/projects/9007199254740992'])(
+    '[security] rejects invalid project detail path %s',
+    async (path) => {
+      expect((await app.request(path, {}, env)).status).toBe(404)
+    },
+  )
+
+  it('[acceptance] serves the Expenses V1 list and numeric detail shells', async () => {
+    const list = await app.request('/expenses', {}, env)
+    const detail = await app.request('/expenses/42', {}, env)
+
+    expect(list.status).toBe(200)
+    expect(list.headers.get('location')).toBeNull()
+    const listHtml = await list.text()
+    expect(listHtml).toContain('data-app-view="expense-list"')
+    expect(listHtml).toContain('data-expense-list-page')
+    expect(listHtml).toContain('data-expense-create-form')
+    expect(listHtml).toContain('href="/expenses" aria-current="page"')
+    expect(listHtml).toContain('href="/expense-categories">Manage categories</a>')
+
+    expect(detail.status).toBe(200)
+    const detailHtml = await detail.text()
+    expect(detailHtml).toContain('data-app-view="expense-detail"')
+    expect(detailHtml).toContain('data-expense-detail-page')
+    expect(detailHtml).toContain('data-expense-edit-form')
+    expect(detailHtml).toContain('data-expense-attachment-form')
+  })
+
+  it('[acceptance] serves the Expense Categories administration shell', async () => {
+    const response = await app.request('/expense-categories?status=all', {}, env)
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('location')).toBeNull()
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    const html = await response.text()
+    expect(html).toContain('data-app-view="expense-categories"')
+    expect(html).toContain('data-expense-categories-page')
+    expect(html).toContain('data-expense-category-create-form')
+    expect(html).toContain('data-expense-category-list')
+    expect(html).toContain('href="/expenses" aria-current="page"')
+    expect(html).toContain('Existing expenses keep their category')
+  })
+
+  it.each(['/expenses/0', '/expenses/nope', '/expenses/9007199254740992'])(
+    '[security] rejects invalid expense detail path %s',
+    async (path) => {
+      expect((await app.request(path, {}, env)).status).toBe(404)
+    },
+  )
+
+  it.each(['/', '/clients', '/clients/42', '/projects', '/projects/42', '/tasks', '/expenses', '/expenses/42', '/expense-categories', '/invoices', '/invoices/42', '/invoices/new', '/approvals', '/reports'])(
+    '[security] renders %s as an inert shell under an overlay when a session cookie is present',
+    async (path) => {
+      const res = await app.request(
+        path,
+        { headers: { cookie: '__Host-ezacto_session=opaque-session-token' } },
+        env,
+      )
+
+      expect(res.status).toBe(200)
+      const html = await res.text()
+      expect(html).toMatch(/data-auth-gateway[^>]+ hidden>/u)
+      expect(html).toContain(
+        'data-session-check-overlay role="status" aria-live="polite" aria-atomic="true">',
+      )
+      expect(html).toContain('data-authenticated-shell inert aria-busy="true"')
+      expect(html).toContain('data-auth-action disabled')
+      expect(html).not.toContain('opaque-session-token')
+    },
+  )
+
+  it.each([
+    'unrelated=value',
+    '__Host-ezacto_session=',
+    '__Host-ezacto_sessionish=opaque-session-token',
+  ])('[security] does not resume the shell for non-session cookie %s', async (cookie) => {
+    const res = await app.request('/', { headers: { cookie } }, env)
+    const html = await res.text()
+
+    expect(res.status).toBe(200)
+    expect(html).toContain('data-authenticated-shell hidden inert aria-busy="true"')
+    expect(html).toContain(
+      'data-session-check-overlay role="status" aria-live="polite" aria-atomic="true" hidden>',
+    )
+    expect(html).not.toMatch(/data-auth-gateway[^>]+ hidden>/u)
+  })
+
   it('serves deterministic shell assets with explicit content types', async () => {
     const [style, script] = await Promise.all([
       app.request('/assets/ezacto.css', {}, env),

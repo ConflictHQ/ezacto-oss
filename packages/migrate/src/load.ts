@@ -2590,6 +2590,7 @@ const rowStatements = (
             'updated_at',
             'invoice_id',
             'approval_status',
+            'source_approval_status',
           ],
           [
             harvestId,
@@ -2617,6 +2618,7 @@ const rowStatements = (
             nestedId(row, 'invoice') === null
               ? null
               : idFrom('invoices', nestedId(row, 'invoice')!),
+            'unsubmitted',
             stringValue(row, 'approval_status', 'unsubmitted'),
           ],
           harvestId,
@@ -3540,6 +3542,7 @@ const loadExpense = async (
         'total_cost_cents',
         'billable',
         'approval_status',
+        'source_approval_status',
         'invoice_id',
         'created_at',
         'updated_at',
@@ -3554,6 +3557,7 @@ const loadExpense = async (
         units,
         moneyLiteralToCents(numberAt(source, '/total_cost'), 'expense.total_cost'),
         bool(row, 'billable', true) ? 1 : 0,
+        'unsubmitted',
         stringValue(row, 'approval_status', 'unsubmitted'),
         invoiceHarvestId === null ? null : idFrom('invoices', invoiceHarvestId),
         requiredText(row, 'created_at'),

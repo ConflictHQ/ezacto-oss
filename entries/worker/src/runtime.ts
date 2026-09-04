@@ -6,31 +6,74 @@ import {
   createD1Database,
   createD1IdentityStore,
   createD1OidcTransactionStore,
+  createD1OutboxService,
   createGeneralResourceRepository,
   createMoneyResourceRepository,
+  createInvoiceGenerationService,
   createReportRepository,
+  createTimesheetApprovalRepository,
+  createTimesheetLockPolicyRepository,
   createD1EmailLogStore,
+  createD1EmailConfigurationStore,
   createD1PasswordAuthService,
   createD1SessionStore,
   DrizzleTrackedResourceRepository,
   migrateD1,
-  type TrackedPolicyResolver,
 } from "@ezacto/db/d1";
-import { createApiSessionService } from "@ezacto/api";
-import type { AttachmentObjectPort, AttachmentRouteOptions } from "@ezacto/api";
+import {
+  createApiSessionService,
+  createCloudflareAccessSessionResolver,
+  createCloudflareAccessVerifier,
+} from "@ezacto/api";
+import type {
+  AttachmentObjectPort,
+  AttachmentRouteOptions,
+  CloudflareAccessFetch,
+  CloudflareAccessVerifier,
+  CloudflareAccessVerifierConfig,
+} from "@ezacto/api";
 import {
   SesMailer,
   type HttpEmailProvider,
   type SesMailerOptions,
 } from "@ezacto/mailer";
 import type { RuntimeServices } from "./app.js";
-import type { WorkerEnv } from "./app.js";
-import { createWorkerAuthMailer } from "./email-queue.js";
+import { cloudflareAccessConfig, type WorkerEnv } from "./app.js";
+import {
+  createWorkerDeploymentAuthMailer,
+  createWorkerOrganizationMailer,
+} from "./email-queue.js";
 
 const cursorSecretPattern = /^[A-Za-z0-9_-]+$/;
 const cursorSecretBytes = 32;
 
 const readiness = new WeakMap<object, Promise<void>>();
+
+let cachedAccessVerifier:
+  | {
+      teamDomain: string;
+      audience: string;
+      verifier: CloudflareAccessVerifier;
+    }
+  | undefined;
+
+const accessVerifier = (
+  config: CloudflareAccessVerifierConfig,
+): CloudflareAccessVerifier => {
+  if (
+    cachedAccessVerifier?.teamDomain === config.teamDomain &&
+    cachedAccessVerifier.audience === config.audience
+  ) {
+    return cachedAccessVerifier.verifier;
+  }
+  const verifier = createCloudflareAccessVerifier(config);
+  cachedAccessVerifier = {
+    teamDomain: config.teamDomain,
+    audience: config.audience,
+    verifier,
+  };
+  return verifier;
+};
 
 export const createWorkerSesMailer = (
   env: WorkerEnv,
@@ -71,6 +114,54 @@ export const createWorkerSesMailer = (
     options,
   );
 };
+
+export const createSesSenderIdentityVerifier = (
+  emailProvider: SesMailer,
+): NonNullable<RuntimeServices['senderIdentityVerifier']> => ({
+  provider: 'ses',
+  verify: async (identity, signal) => {
+    const health = await emailProvider.getIdentityHealth(
+      identity.providerIdentity,
+      signal,
+    )
+    const identityType = health.type?.toUpperCase()
+    if (identityType !== 'EMAIL_ADDRESS' && identityType !== 'DOMAIN') {
+      throw new Error('SES returned an unsupported sender identity type')
+    }
+    const dkimStatus =
+      identityType === 'EMAIL_ADDRESS' &&
+      !health.dkim.signingEnabled
+        ? ('not_applicable' as const)
+        : health.dkim.signingEnabled &&
+            health.dkim.status?.toUpperCase() === 'SUCCESS'
+          ? ('verified' as const)
+          : health.dkim.status?.toUpperCase() === 'FAILED'
+            ? ('failed' as const)
+            : ('pending' as const)
+    const mailFromStatus =
+      health.mailFrom.domain === null
+        ? ('not_configured' as const)
+        : health.mailFrom.status?.toUpperCase() === 'SUCCESS'
+          ? ('verified' as const)
+          : health.mailFrom.status?.toUpperCase() === 'FAILED'
+            ? ('failed' as const)
+            : ('pending' as const)
+    return {
+      source: 'provider_api',
+      identityKind:
+        identityType === 'EMAIL_ADDRESS'
+          ? ('email_address' as const)
+          : ('domain' as const),
+      verificationStatus: health.verifiedForSending
+        ? ('verified' as const)
+        : ('pending' as const),
+      dkimStatus,
+      mailFromDomain: health.mailFrom.domain,
+      mailFromStatus,
+      observedAt: new Date().toISOString(),
+    }
+  },
+})
 
 /**
  * Decode a canonical base64url secret. Text encodings are deliberately not
@@ -148,12 +239,6 @@ export const ensureRuntimeDatabaseReady = async (
   return migration;
 };
 
-// Approval and invoice locks are persisted and derived by the repository. The
-// current organization model defines no additional calendar/policy lock source.
-const organizationPolicy: TrackedPolicyResolver = {
-  isLocked: async () => false,
-};
-
 export const createR2AttachmentObjectStore = (
   bucket: R2Bucket,
 ): AttachmentObjectPort => ({
@@ -211,7 +296,12 @@ export const createD1AttachmentOwnerAuthorizer =
         );
       case "expense":
         return exists(
-          "SELECT 1 AS authorized FROM expenses WHERE id = ? AND user_id = ?",
+          `SELECT 1 AS authorized FROM expenses
+           WHERE id = ? AND user_id = ?
+             AND COALESCE((
+               SELECT json_extract(modules, '$.expenses')
+               FROM organizations WHERE id = 1
+             ), 0) = 1`,
           parentId,
           principal.userId,
         );
@@ -248,22 +338,67 @@ export const createRuntimeServices = async (
   options: {
     emailProvider?: HttpEmailProvider;
     ses?: SesMailerOptions;
+    cloudflareAccessFetch?: CloudflareAccessFetch;
   } = {},
 ): Promise<RuntimeServices> => {
   const database = requireDatabase(env);
   const cursorSigningKey = parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY);
   await ensureRuntimeDatabaseReady(database);
   const drizzle = createD1Database(database);
+  const timesheetLockPolicy = createTimesheetLockPolicyRepository(drizzle);
   const sessions = createApiSessionService(createD1SessionStore(database));
+  const identities = createD1IdentityStore(database);
+  const access = cloudflareAccessConfig(env);
+  const authenticationSessions =
+    access === null
+      ? sessions
+      : createCloudflareAccessSessionResolver({
+          sessions,
+          identities,
+          verifier:
+            options.cloudflareAccessFetch === undefined
+              ? accessVerifier(access)
+              : createCloudflareAccessVerifier({
+                  ...access,
+                  fetch: options.cloudflareAccessFetch,
+                }),
+        });
   const emailLog = createD1EmailLogStore(database);
+  const emailConfiguration = createD1EmailConfigurationStore(database);
   const emailProvider =
     options.emailProvider ?? createWorkerSesMailer(env, options.ses);
-  const authMailer =
-    env.EMAIL_QUEUE === undefined ||
-    env.APP_BASE_URL === undefined ||
-    emailProvider === null
+  const organizationName = async () => {
+    const row = await database
+      .prepare('SELECT name FROM organizations WHERE id = 1')
+      .first<{ name: string }>();
+    if (row === null) throw new Error('organization is unavailable');
+    return row.name;
+  };
+  const emailTransportReady =
+    env.EMAIL_QUEUE !== undefined &&
+    emailProvider !== null;
+  const emailQueueReady =
+    emailTransportReady && env.APP_BASE_URL !== undefined;
+  const deploymentAuthMailer =
+    !emailQueueReady || env.SES_FROM === undefined
       ? undefined
-      : createWorkerAuthMailer(env.EMAIL_QUEUE, emailLog, env.APP_BASE_URL);
+      : createWorkerDeploymentAuthMailer(
+          env.EMAIL_QUEUE!,
+          emailLog,
+          env.SES_FROM,
+          emailConfiguration,
+          organizationName,
+          env.APP_BASE_URL!,
+        );
+  const organizationMailer =
+    !emailTransportReady
+      ? undefined
+      : createWorkerOrganizationMailer(
+          env.EMAIL_QUEUE!,
+          emailLog,
+          emailProvider.name,
+          emailConfiguration,
+        );
   return {
     bootstrap: (input) => bootstrapInstanceD1(database, input),
     enrollOwnerPassword: (input) =>
@@ -271,18 +406,37 @@ export const createRuntimeServices = async (
     tokens: createApiTokenStore(drizzle),
     generalResources: createGeneralResourceRepository(drizzle),
     moneyResources: createMoneyResourceRepository(drizzle),
+    invoiceGeneration: createInvoiceGenerationService(drizzle),
     trackedResources: new DrizzleTrackedResourceRepository(
       drizzle,
-      organizationPolicy,
+      timesheetLockPolicy,
     ),
+    isExpensesModuleEnabled: async () => {
+      const row = await database
+        .prepare(
+          `SELECT COALESCE(json_extract(modules, '$.expenses'), 0) AS enabled
+           FROM organizations WHERE id = 1`,
+        )
+        .first<{ enabled: number | boolean }>();
+      return row?.enabled === 1 || row?.enabled === true;
+    },
+    timesheetApprovals: createTimesheetApprovalRepository(drizzle),
+    timesheetLockPolicy,
     reports: createReportRepository(drizzle),
     cursorSigningKey,
     passwordAuth: createD1PasswordAuthService(database),
     sessions,
+    authenticationSessions,
     emailLog,
-    identities: createD1IdentityStore(database),
+    emailConfiguration,
+    ...(emailProvider instanceof SesMailer
+      ? { senderIdentityVerifier: createSesSenderIdentityVerifier(emailProvider) }
+      : {}),
+    outbox: createD1OutboxService(database),
+    identities,
     oidcTransactions: createD1OidcTransactionStore(database),
-    ...(authMailer === undefined ? {} : { authMailer }),
+    ...(deploymentAuthMailer === undefined ? {} : { deploymentAuthMailer }),
+    ...(organizationMailer === undefined ? {} : { organizationMailer }),
     ...(env.ATTACHMENTS === undefined
       ? {}
       : {

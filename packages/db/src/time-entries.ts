@@ -1,9 +1,14 @@
 import { and, eq, getTableColumns, isNotNull, isNull, or, sql } from 'drizzle-orm'
+import type { ApprovalStatus } from '@ezacto/core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
 import { resolveEntryRates } from './rate-resolver.js'
 import { organizations, taskAssignments, timeEntries } from './schema.js'
+import {
+  assertStoredTimeEntryNoteRequirement,
+  currentTimeEntryNotePolicyAllows,
+} from './time-entry-note-requirements.js'
 import {
   executeAtomicTrackedMutation,
   type RunningTimeEntryReplacementReference,
@@ -45,6 +50,9 @@ interface TimeEntryBaseInput {
   budgeted?: boolean
   externalRef?: Record<string, unknown> | null
   calendarEventRef?: Record<string, unknown> | null
+  approvalStatus?: ApprovalStatus
+  timesheetSubmissionId?: number | null
+  sourceApprovalStatus?: ApprovalStatus | null
 }
 
 export type StartTimeEntryInput = TimeEntryBaseInput
@@ -236,8 +244,13 @@ const valuesFromBase = async (database: Database, input: TimeEntryBaseInput, spe
     getTaskBillable(database, input.taskAssignmentId),
     resolveEntryRates(database, { ...input, spentDate }),
   ])
+  const harvestId = input.harvestId ?? null
+  const sourceApprovalStatus =
+    harvestId === null
+      ? null
+      : (input.sourceApprovalStatus ?? input.approvalStatus ?? 'unsubmitted')
   return {
-    harvestId: input.harvestId ?? null,
+    harvestId,
     userId: input.userId,
     projectId: input.projectId,
     taskId: input.taskId,
@@ -250,6 +263,9 @@ const valuesFromBase = async (database: Database, input: TimeEntryBaseInput, spe
     costRateCents: rates.costRateCents,
     externalRef: input.externalRef ?? null,
     calendarEventRef: input.calendarEventRef ?? null,
+    approvalStatus: harvestId === null ? (input.approvalStatus ?? 'unsubmitted') : 'unsubmitted',
+    timesheetSubmissionId: harvestId === null ? (input.timesheetSubmissionId ?? null) : null,
+    sourceApprovalStatus,
   }
 }
 
@@ -260,6 +276,12 @@ export const startTimeEntry = async (
   runningEntryPolicyLocked: boolean,
 ): Promise<TimeEntry> => {
   validateBoundary(boundary)
+  await assertStoredTimeEntryNoteRequirement(
+    database,
+    input.userId,
+    input.projectId,
+    input.notes,
+  )
   const settings = await getTimeSettings(database)
   const base = await valuesFromBase(database, input, boundary.date)
   const replacementReference: RunningTimeEntryReplacementReference = {
@@ -267,14 +289,16 @@ export const startTimeEntry = async (
     userId: input.userId,
     policyLocked: runningEntryPolicyLocked,
   }
-  const created = await executeAtomicTrackedMutation(
-    database,
-    replacementReference,
-    (mutationPredicate) =>
-      database
-        .insert(timeEntries)
-        .select(
-          sql`SELECT
+  let created: Record<string, unknown>
+  try {
+    created = await executeAtomicTrackedMutation(
+      database,
+      replacementReference,
+      (mutationPredicate) =>
+        database
+          .insert(timeEntries)
+          .select(
+            sql`SELECT
           ${null},
           ${base.harvestId},
           ${base.userId},
@@ -294,17 +318,31 @@ export const startTimeEntry = async (
           ${base.budgeted ? 1 : 0},
           ${base.billableRateCents},
           ${base.costRateCents},
-          ${'unsubmitted'},
+          ${base.approvalStatus},
+          ${base.timesheetSubmissionId},
+          ${base.sourceApprovalStatus},
           ${null},
           ${base.externalRef === null ? null : JSON.stringify(base.externalRef)},
           ${base.calendarEventRef === null ? null : JSON.stringify(base.calendarEventRef)},
           ${boundary.instant},
           ${boundary.instant}
-        WHERE ${mutationPredicate}`,
-        )
-        .returning(),
-    () => new Error('time entry could not be started'),
-  )
+        WHERE ${and(
+          mutationPredicate,
+          currentTimeEntryNotePolicyAllows(input.userId, input.projectId, input.notes),
+        )}`,
+          )
+          .returning(),
+      () => new Error('time entry could not be started'),
+    )
+  } catch (error) {
+    await assertStoredTimeEntryNoteRequirement(
+      database,
+      input.userId,
+      input.projectId,
+      input.notes,
+    )
+    throw error
+  }
   return mapReturnedTimeEntry(created)
 }
 
@@ -343,23 +381,56 @@ export const createStoppedTimeEntry = async (
     )
   }
   const base = await valuesFromBase(database, input, input.spentDate)
+  await assertStoredTimeEntryNoteRequirement(
+    database,
+    input.userId,
+    input.projectId,
+    input.notes,
+  )
   const [created] = await database
     .insert(timeEntries)
-    .values({
-      ...base,
-      spentDate: input.spentDate,
-      seconds,
-      secondsWithoutTimer: seconds,
-      roundedSeconds: roundSeconds(seconds, settings.timeRounding),
-      timerStartedAt: null,
-      startedTime,
-      endedTime,
-      createdAt: input.createdAt,
-      updatedAt: input.updatedAt,
-    })
+    .select(
+      sql`SELECT
+        ${null},
+        ${base.harvestId},
+        ${base.userId},
+        ${base.projectId},
+        ${base.taskId},
+        ${base.userAssignmentId},
+        ${base.taskAssignmentId},
+        ${input.spentDate},
+        ${seconds},
+        ${seconds},
+        ${roundSeconds(seconds, settings.timeRounding)},
+        ${null},
+        ${startedTime},
+        ${endedTime},
+        ${base.notes},
+        ${base.billable ? 1 : 0},
+        ${base.budgeted ? 1 : 0},
+        ${base.billableRateCents},
+        ${base.costRateCents},
+        ${base.approvalStatus},
+        ${base.timesheetSubmissionId},
+        ${base.sourceApprovalStatus},
+        ${null},
+        ${base.externalRef === null ? null : JSON.stringify(base.externalRef)},
+        ${base.calendarEventRef === null ? null : JSON.stringify(base.calendarEventRef)},
+        ${input.createdAt},
+        ${input.updatedAt}
+      WHERE ${currentTimeEntryNotePolicyAllows(input.userId, input.projectId, input.notes)}`,
+    )
     .returning()
-  if (!created) throw new Error('time entry creation did not return a row')
-  return created
+  if (!created) {
+    await assertStoredTimeEntryNoteRequirement(
+      database,
+      input.userId,
+      input.projectId,
+      input.notes,
+    )
+    throw new Error('time entry creation did not return a row')
+  }
+  return base.sourceApprovalStatus === null ? created : getTimeEntry(database, created.id)
 }
 
 export const stopTimeEntry = async (
@@ -446,6 +517,12 @@ export const restartTimeEntry = async (
   if (entry.timerStartedAt !== null || (entry.startedTime !== null && entry.endedTime === null)) {
     throw new Error(`time entry ${timeEntryId} is already running`)
   }
+  await assertStoredTimeEntryNoteRequirement(
+    database,
+    entry.userId,
+    entry.projectId,
+    entry.notes,
+  )
   const replacementReference: RunningTimeEntryReplacementReference = {
     entityType: 'running_time_entry_replacement',
     userId: entry.userId,
@@ -462,23 +539,40 @@ export const restartTimeEntry = async (
     AND ${timeEntries.endedTime} IS ${entry.endedTime}
     AND ${timeEntries.updatedAt} = ${entry.updatedAt}
   `
-  const restarted = await executeAtomicTrackedMutation(
-    database,
-    [mutationReference, replacementReference],
-    (mutationPredicate) =>
-      database
-        .update(timeEntries)
-        .set({
-          spentDate: settings.timeEntryMode === 'start_end' ? boundary.date : entry.spentDate,
-          secondsWithoutTimer: entry.seconds,
-          timerStartedAt: settings.timeEntryMode === 'duration' ? boundary.instant : null,
-          startedTime: settings.timeEntryMode === 'start_end' ? boundary.time : null,
-          endedTime: null,
-          updatedAt: boundary.instant,
-        })
-        .where(and(expectedCheckpoint, mutationPredicate))
-        .returning(),
-    () => new Error(`time entry ${timeEntryId} could not be restarted`),
-  )
+  let restarted: Record<string, unknown>
+  try {
+    restarted = await executeAtomicTrackedMutation(
+      database,
+      [mutationReference, replacementReference],
+      (mutationPredicate) =>
+        database
+          .update(timeEntries)
+          .set({
+            spentDate: settings.timeEntryMode === 'start_end' ? boundary.date : entry.spentDate,
+            secondsWithoutTimer: entry.seconds,
+            timerStartedAt: settings.timeEntryMode === 'duration' ? boundary.instant : null,
+            startedTime: settings.timeEntryMode === 'start_end' ? boundary.time : null,
+            endedTime: null,
+            updatedAt: boundary.instant,
+          })
+          .where(
+            and(
+              expectedCheckpoint,
+              mutationPredicate,
+              currentTimeEntryNotePolicyAllows(entry.userId, entry.projectId, entry.notes),
+            ),
+          )
+          .returning(),
+      () => new Error(`time entry ${timeEntryId} could not be restarted`),
+    )
+  } catch (error) {
+    await assertStoredTimeEntryNoteRequirement(
+      database,
+      entry.userId,
+      entry.projectId,
+      entry.notes,
+    )
+    throw error
+  }
   return mapReturnedTimeEntry(restarted)
 }

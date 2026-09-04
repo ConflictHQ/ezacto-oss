@@ -201,9 +201,11 @@ export const invariantRegistry = [
       then: "One complete invoice wins and every consumed source row links in that transaction.",
     },
     evidence: {
-      state: "downstream",
-      testContract:
-        "Issue #50 owns the concurrent API assertion over the real generation transaction.",
+      state: "executable",
+      testFile: "entries/worker/test/runtime-d1.test.ts",
+      testName:
+        "[api] [inv-06] concurrently generates one invoice through the deployed Worker binding",
+      runtimes: ["d1"],
     },
   },
   {
@@ -330,9 +332,11 @@ export const invariantRegistry = [
       then: "Their grouped lines and total cents are identical.",
     },
     evidence: {
-      state: "downstream",
-      testContract:
-        "Issue #50 owns one unit assertion that calls the real report and generation paths.",
+      state: "executable",
+      testFile: "packages/db/test/invoice-generation.test.ts",
+      testName:
+        "[unit] [inv-11] reconciles every client report currency to generated invoices",
+      runtimes: bothRuntimes,
     },
   },
   {

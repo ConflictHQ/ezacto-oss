@@ -22,6 +22,16 @@ import { argon2PasswordsMigration } from './migrations/0020_argon2_passwords.js'
 import { estimateCommandsMigration } from './migrations/0021_estimate_commands.js'
 import { resourceCreateCommandsMigration } from './migrations/0022_resource_create_commands.js'
 import { migrationImportAuthorityMigration } from './migrations/0023_migration_import_authority.js'
+import { migrationWorksheetCompletionsMigration } from './migrations/0024_migration_worksheet_completions.js'
+import { timeEntryNoteRequirementsMigration } from './migrations/0025_time_entry_note_requirements.js'
+import { invoiceGenerationMigration } from './migrations/0026_invoice_generation.js'
+import {
+  timesheetApprovalsMigration,
+  timesheetApprovalsPreflight,
+} from './migrations/0027_timesheet_approvals.js'
+import { timesheetLockPolicyMigration } from './migrations/0028_timesheet_lock_policy.js'
+import { outboxDeliveryMigration } from './migrations/0029_outbox_delivery.js'
+import { emailTemplatesMigration } from './migrations/0030_email_templates.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL
@@ -1306,7 +1316,7 @@ export const invoiceLifecycleMigration = [
     BEGIN SELECT RAISE(ABORT, 'closed invoice financials are immutable'); END`,
 ] as const
 
-type MigrationPreflightRow = { id: number; code: string }
+type MigrationPreflightRow = { id: number; code: string; resource_kind?: string }
 
 const assertInvoiceLifecyclePreflight = (rows: MigrationPreflightRow[]): void => {
   if (rows.length === 0) return
@@ -1317,6 +1327,18 @@ const assertInvoiceLifecyclePreflight = (rows: MigrationPreflightRow[]): void =>
   const more = rows.length > 10 ? ',…' : ''
   throw new Error(
     `invoice lifecycle migration preflight failed: code=${rows[0]!.code} invoice_ids=${shown}${more}`,
+  )
+}
+
+const assertTimesheetApprovalsPreflight = (rows: MigrationPreflightRow[]): void => {
+  if (rows.length === 0) return
+  const shown = rows
+    .slice(0, 10)
+    .map(({ id, resource_kind: resourceKind }) => `${resourceKind ?? 'entry'}:${id}`)
+    .join(',')
+  const more = rows.length > 10 ? ',…' : ''
+  throw new Error(
+    `timesheet approval migration preflight failed: code=${rows[0]!.code} entry_refs=${shown}${more}`,
   )
 }
 
@@ -1349,6 +1371,23 @@ const migrations = [
   { id: '0021_estimate_commands', statements: estimateCommandsMigration },
   { id: '0022_resource_create_commands', statements: resourceCreateCommandsMigration },
   { id: '0023_migration_import_authority', statements: migrationImportAuthorityMigration },
+  {
+    id: '0024_migration_worksheet_completions',
+    statements: migrationWorksheetCompletionsMigration,
+  },
+  {
+    id: '0025_time_entry_note_requirements',
+    statements: timeEntryNoteRequirementsMigration,
+  },
+  { id: '0026_invoice_generation', statements: invoiceGenerationMigration },
+  {
+    id: '0027_timesheet_approvals',
+    statements: timesheetApprovalsMigration,
+    preflight: timesheetApprovalsPreflight,
+  },
+  { id: '0028_timesheet_lock_policy', statements: timesheetLockPolicyMigration },
+  { id: '0029_outbox_delivery', statements: outboxDeliveryMigration },
+  { id: '0030_email_templates', statements: emailTemplatesMigration },
 ] as const
 
 const migrateContainerPlan = (
@@ -1366,9 +1405,9 @@ const migrateContainerPlan = (
         continue
       }
       if ('preflight' in migration) {
-        assertInvoiceLifecyclePreflight(
-          database.prepare(migration.preflight).all() as MigrationPreflightRow[],
-        )
+        const rows = database.prepare(migration.preflight).all() as MigrationPreflightRow[]
+        if (migration.id === '0006_invoice_state_events') assertInvoiceLifecyclePreflight(rows)
+        else assertTimesheetApprovalsPreflight(rows)
       }
       for (const statement of migration.statements) database.exec(statement)
       database
@@ -1392,7 +1431,10 @@ export const migrateContainerThrough = (
   through: (typeof migrations)[number]['id'],
 ): void => migrateContainerPlan(database, through)
 
-export const migrateD1 = async (database: D1Database): Promise<void> => {
+const migrateD1Plan = async (
+  database: D1Database,
+  through: (typeof migrations)[number]['id'] | null,
+): Promise<void> => {
   // The ledger insert leads the atomic batch. If two Worker isolates observe a
   // migration as absent, D1 serializes their batches: one commits the complete
   // migration and the other's unique ledger insert aborts before any DDL runs.
@@ -1408,12 +1450,13 @@ export const migrateD1 = async (database: D1Database): Promise<void> => {
         .bind(migration.id)
         .first()
     ) {
+      if (migration.id === through) return
       continue
     }
     if ('preflight' in migration) {
-      assertInvoiceLifecyclePreflight(
-        (await database.prepare(migration.preflight).all<MigrationPreflightRow>()).results,
-      )
+      const rows = (await database.prepare(migration.preflight).all<MigrationPreflightRow>()).results
+      if (migration.id === '0006_invoice_state_events') assertInvoiceLifecyclePreflight(rows)
+      else assertTimesheetApprovalsPreflight(rows)
     }
     try {
       await database.batch([
@@ -1429,5 +1472,15 @@ export const migrateD1 = async (database: D1Database): Promise<void> => {
         .first()
       if (completed === null) throw error
     }
+    if (migration.id === through) return
   }
 }
+
+export const migrateD1 = async (database: D1Database): Promise<void> =>
+  migrateD1Plan(database, null)
+
+/** Version-boundary acceptance seam; production callers should use migrateD1. */
+export const migrateD1Through = async (
+  database: D1Database,
+  through: (typeof migrations)[number]['id'],
+): Promise<void> => migrateD1Plan(database, through)

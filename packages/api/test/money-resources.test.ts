@@ -20,10 +20,35 @@ import {
 
 interface TestDatabase {
   orm: MoneyResourceDatabase;
+  trace: DatabaseTrace;
   run(sql: string, ...params: unknown[]): Promise<void>;
   rows<T>(sql: string, ...params: unknown[]): Promise<T[]>;
   close(): Promise<void>;
 }
+
+interface DatabaseTrace {
+  preparedStatements: number;
+  batchSizes: number[];
+  transactions: number;
+  reset(): void;
+}
+
+const databaseTrace = (): DatabaseTrace => ({
+  preparedStatements: 0,
+  batchSizes: [],
+  transactions: 0,
+  reset() {
+    this.preparedStatements = 0;
+    this.batchSizes = [];
+    this.transactions = 0;
+  },
+});
+
+const traceSnapshot = ({
+  preparedStatements,
+  batchSizes,
+  transactions,
+}: DatabaseTrace) => ({ preparedStatements, batchSizes, transactions });
 
 const seedTime = "2026-08-28T08:00:00.000Z";
 const firstTime = "2026-08-28T09:00:00.000Z";
@@ -34,8 +59,31 @@ const fourthTime = "2026-08-28T09:03:00.000Z";
 const containerDatabase = (): TestDatabase => {
   const sqlite = new BetterSqlite3(":memory:");
   migrateContainer(sqlite);
+  const trace = databaseTrace();
+  const observed = new Proxy(sqlite, {
+    get(native, property) {
+      if (property === "prepare") {
+        return (statement: string) => {
+          trace.preparedStatements += 1;
+          return native.prepare(statement);
+        };
+      }
+      if (property === "transaction") {
+        return (operation: () => unknown) => {
+          trace.transactions += 1;
+          return native.transaction(operation);
+        };
+      }
+      const value = Reflect.get(native, property, native);
+      return typeof value === "function" ? value.bind(native) : value;
+    },
+  });
   return {
-    orm: createContainerDatabase(sqlite),
+    orm: {
+      ...createContainerDatabase(sqlite),
+      $client: observed,
+    } as MoneyResourceDatabase,
+    trace,
     run: async (statement, ...params) => {
       sqlite.prepare(statement).run(...params);
     },
@@ -55,8 +103,28 @@ const d1Database = async (): Promise<TestDatabase> => {
   });
   const d1 = await miniflare.getD1Database("DB");
   await migrateD1(d1);
+  const trace = databaseTrace();
+  const observed = new Proxy(d1, {
+    get(native, property) {
+      if (property === "prepare") {
+        return (statement: string) => {
+          trace.preparedStatements += 1;
+          return native.prepare(statement);
+        };
+      }
+      if (property === "batch") {
+        return async (statements: Parameters<D1Database["batch"]>[0]) => {
+          trace.batchSizes.push(statements.length);
+          return native.batch(statements);
+        };
+      }
+      const value = Reflect.get(native, property, native);
+      return typeof value === "function" ? value.bind(native) : value;
+    },
+  });
   return {
-    orm: createD1Database(d1),
+    orm: createD1Database(observed),
+    trace,
     run: async (statement, ...params) => {
       await d1
         .prepare(statement)
@@ -187,6 +255,42 @@ const seed = async (database: TestDatabase): Promise<void> => {
       estimate_id, position, kind, description, quantity, unit_price_cents,
       amount_cents, taxed, taxed2, created_at, updated_at
     ) VALUES (10, 0, 'Service', 'Fractional exact line', 1.5, 101, 152, 1, 0, ?, ?)`,
+    seedTime,
+    seedTime,
+  );
+};
+
+const seedInvoicePage = async (database: TestDatabase): Promise<void> => {
+  await database.run(
+    `WITH RECURSIVE invoice_ids(id) AS (
+       SELECT 4
+       UNION ALL
+       SELECT id + 1 FROM invoice_ids WHERE id < 205
+     )
+     INSERT INTO invoices (
+       id, client_id, number, currency, issue_date, due_date, state,
+       amount_cents, due_amount_cents, created_at, updated_at
+     )
+     SELECT id, 1, printf('INV-%03d', id), 'USD', '2026-08-01', '2026-08-31', 'draft',
+       CASE WHEN id = 4 THEN 600 ELSE 0 END,
+       CASE WHEN id = 4 THEN 600 ELSE 0 END,
+       ?, ?
+     FROM invoice_ids`,
+    seedTime,
+    seedTime,
+  );
+  await database.run(
+    `INSERT INTO invoice_line_items (
+       id, invoice_id, position, kind, description, quantity, unit_price_cents,
+       amount_cents, taxed, taxed2, created_at, updated_at
+     ) VALUES
+       (4002, 4, 1, 'Service', 'Middle by position', 1, 200, 200, 0, 0, ?, ?),
+       (4000, 4, 2, 'Expense', 'Last by position', 1, 300, 300, 0, 0, ?, ?),
+       (4001, 4, 0, 'Service', 'First by position', 1, 100, 100, 0, 0, ?, ?)`,
+    seedTime,
+    seedTime,
+    seedTime,
+    seedTime,
     seedTime,
     seedTime,
   );
@@ -473,6 +577,108 @@ for (const [runtime, factory] of factories) {
         updated_at: secondTime,
         line_items: [{ id: 777001, amount_cents: 101, updated_at: secondTime }],
       });
+    });
+
+    it("[db] returns a self-consistent invoice page header/line snapshot", async () => {
+      const test = await setup(undefined, "invoice");
+      expect(
+        await test.service.listInvoices({
+          afterId: null,
+          throughId: 1,
+          take: 1,
+        }),
+      ).toMatchObject([
+        {
+          id: 1,
+          version: 1,
+          amount_cents: 101,
+          due_amount_cents: 101,
+          updated_at: secondTime,
+          line_items: [
+            { id: 777001, amount_cents: 101, updated_at: secondTime },
+          ],
+        },
+      ]);
+    });
+
+    it("[api] hydrates a high-cardinality invoice traversal with fixed query count", async () => {
+      const test = await setup();
+      await seedInvoicePage(test.database);
+
+      const overLimit = await test.request("/api/v1/invoices?per_page=201");
+      expect(overLimit.status).toBe(422);
+
+      test.database.trace.reset();
+      const defaultResponse = await test.request("/api/v1/invoices");
+      expect(defaultResponse.status).toBe(200);
+      expect(
+        ((await defaultResponse.json()) as { data: unknown[] }).data,
+      ).toHaveLength(50);
+      expect(traceSnapshot(test.database.trace)).toEqual(
+        runtime === "D1"
+          ? { preparedStatements: 3, batchSizes: [2], transactions: 0 }
+          : { preparedStatements: 3, batchSizes: [], transactions: 1 },
+      );
+
+      test.database.trace.reset();
+      const firstResponse = await test.request("/api/v1/invoices?per_page=200");
+      expect(firstResponse.status).toBe(200);
+      const firstPage = (await firstResponse.json()) as {
+        data: Array<{ id: number; line_items: Array<{ id: number }> }>;
+        links: { next: string | null };
+        page: { per_page: number; next_cursor: string | null };
+      };
+      expect(firstPage.data.map(({ id }) => id)).toEqual(
+        Array.from({ length: 200 }, (_, index) => index + 1),
+      );
+      expect(firstPage.data.find(({ id }) => id === 4)?.line_items).toEqual([
+        expect.objectContaining({ id: 4001 }),
+        expect.objectContaining({ id: 4002 }),
+        expect.objectContaining({ id: 4000 }),
+      ]);
+      expect(firstPage.data.find(({ id }) => id === 5)?.line_items).toEqual([]);
+      expect(firstPage.page).toMatchObject({
+        per_page: 200,
+        next_cursor: expect.any(String),
+      });
+      expect(firstPage.links.next).toEqual(expect.any(String));
+      expect(traceSnapshot(test.database.trace)).toEqual(
+        runtime === "D1"
+          ? { preparedStatements: 3, batchSizes: [2], transactions: 0 }
+          : { preparedStatements: 3, batchSizes: [], transactions: 1 },
+      );
+
+      await test.database.run(
+        `INSERT INTO invoices (
+           id, client_id, number, currency, issue_date, due_date, state,
+           amount_cents, due_amount_cents, created_at, updated_at
+         ) VALUES (206, 1, 'INV-206', 'USD', '2026-08-01', '2026-08-31', 'draft',
+           0, 0, ?, ?)`,
+        secondTime,
+        secondTime,
+      );
+
+      test.database.trace.reset();
+      const secondResponse = await test.request(firstPage.links.next!);
+      expect(secondResponse.status).toBe(200);
+      const secondPage = (await secondResponse.json()) as {
+        data: Array<{ id: number; line_items: Array<{ id: number }> }>;
+        links: { next: string | null };
+        page: { per_page: number; next_cursor: string | null };
+      };
+      expect(secondPage.data.map(({ id }) => id)).toEqual([
+        201, 202, 203, 204, 205,
+      ]);
+      expect(
+        secondPage.data.every(({ line_items }) => line_items.length === 0),
+      ).toBe(true);
+      expect(secondPage.links.next).toBeNull();
+      expect(secondPage.page).toEqual({ per_page: 200, next_cursor: null });
+      expect(traceSnapshot(test.database.trace)).toEqual(
+        runtime === "D1"
+          ? { preparedStatements: 2, batchSizes: [2], transactions: 0 }
+          : { preparedStatements: 2, batchSizes: [], transactions: 1 },
+      );
     });
 
     it("[db] returns a self-consistent estimate header/line snapshot", async () => {
@@ -1231,6 +1437,65 @@ for (const [runtime, factory] of factories) {
       );
       expect(hostile.status).toBe(422);
       expect(captured).toHaveLength(1);
+    });
+
+    it("[api] translates invoice generation domain failures without masking unexpected faults", async () => {
+      let failure: Error = Object.assign(new Error("selected rows have no usable billable rate"), {
+        code: "invalid_command_input",
+      });
+      const test = await setup(() => {
+        throw failure;
+      });
+      const body = {
+        client_id: 1,
+        from: "2026-08-01",
+        to: "2026-08-31",
+        project_ids: [1],
+        time_summary_type: "project",
+        expense_summary_type: null,
+      };
+      const request = (commandId: string) =>
+        test.request(
+          "/api/v1/invoice-generations",
+          jsonRequest("POST", body, commandId),
+        );
+
+      const invalid = await request("invalid-generation");
+      expect(invalid.status).toBe(422);
+      expect(await invalid.json()).toMatchObject({
+        error: {
+          fields: [
+            {
+              field: "command",
+              code: "invalid_command_input",
+              message: "selected rows have no usable billable rate",
+            },
+          ],
+        },
+      });
+
+      for (const code of ["generation_conflict", "command_id_reused"] as const) {
+        failure = Object.assign(new Error(`internal ${code} detail`), { code });
+        const conflict = await request(`conflict-${code}`);
+        expect(conflict.status).toBe(409);
+        expect(await conflict.json()).toMatchObject({ error: { code } });
+      }
+
+      failure = Object.assign(new Error("internal authorization detail"), {
+        code: "forbidden",
+      });
+      const forbidden = await request("forbidden-generation");
+      expect(forbidden.status).toBe(403);
+      expect(await forbidden.json()).toMatchObject({
+        error: { code: "profile_forbidden" },
+      });
+
+      failure = new Error("unexpected database fault");
+      const unexpected = await request("unexpected-generation");
+      expect(unexpected.status).toBe(500);
+      expect(await unexpected.json()).toMatchObject({
+        error: { code: "internal_error", fields: [] },
+      });
     });
 
     it("[api] leaves state untouched and returns 503 until the generation engine is bound", async () => {

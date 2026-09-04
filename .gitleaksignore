@@ -22,6 +22,7 @@
 # path; the historical occurrence is pinned because the branch history is scanned.
 # Git 2.55 also reports the unchanged fixture at the later transform/load and
 # idempotent-load merges, where history traversal re-attributed the same line.
+# The #198 worksheet integration merge re-attributed it once more.
 # These exact reviewed fingerprints are retained because the value is not
 # authentication material. The earlier extract-engine merge similarly
 # re-attributed the reviewed short CLI placeholder; its exact merge fingerprint
@@ -30,4 +31,10 @@
 15234222dddd2bc9683189346769cabffdb83b64:packages/db/test/invoice-import-contract.test.ts:generic-api-key:646
 2f178a98e8ef6dee345ed4755cb20b790311f687:packages/db/test/invoice-import-contract.test.ts:generic-api-key:646
 ce42034359565ae94f14a77dae23c29fa801b4a0:packages/db/test/invoice-import-contract.test.ts:generic-api-key:646
+8b0372c89ab678f84025d4771932bd5224ef81ef:packages/db/test/invoice-import-contract.test.ts:generic-api-key:646
+6f78aa1c996190ab07fa311d8c394cae72a48f9d:packages/db/test/invoice-import-contract.test.ts:generic-api-key:646
 41246407df66dcf3ea2d555acfe6bb5545a5bfc8:packages/migrate/test/cli.test.ts:harvest-pat-assignment:91
+
+# A historical test-only synthetic JWT fixture; current source constructs the
+# detector-shaped value from separate segments.
+a7f98dc929b3dc4d98abe951e6b0cc9c9df26aeb:packages/migrate/test/worksheets.test.ts:jwt:543

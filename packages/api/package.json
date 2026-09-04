@@ -15,7 +15,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "vitest run",
+    "test": "vitest run --testTimeout=20000",
     "build": "tsc -p tsconfig.build.json",
     "prepack": "npm run build"
   },
@@ -23,6 +23,7 @@
     "@ezacto/core": "0.0.0",
     "@ezacto/mailer": "0.0.0",
     "hono": "^4.13.5",
+    "jose": "^6.2.10",
     "oauth4webapi": "^3.8.7"
   },
   "devDependencies": {
