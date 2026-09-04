@@ -35,7 +35,6 @@ const BACKUP_TABLES = [
   'invoice_item_categories',
   'invoice_messages',
   'invoice_payments',
-  'invoice_totals_migration_guard',
   'invoice_number_sequence',
   'invoice_command_ledger',
   'estimates',
