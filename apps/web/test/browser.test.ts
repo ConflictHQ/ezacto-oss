@@ -1327,6 +1327,87 @@ describe('invoice browse browser behavior', () => {
     expect(send.textContent).toBe('Record another sent message')
   })
 
+  it('[e2e:invoice-email] requires F13 confirmation and retries one durable delivery command', async () => {
+    renderBrowserShell({ view: 'invoice-detail' })
+    const base = browserApi()
+    let currentInvoice = invoice(7)
+    let attempts = 0
+    const deliverInvoiceEmail = vi.fn(
+      async (_id: number, _commandId: string, input: { expected_version: number }) => {
+        attempts += 1
+        if (attempts === 1) throw new Error('network unavailable')
+        currentInvoice = {
+          ...currentInvoice,
+          state: 'open',
+          version: input.expected_version + 1,
+          sent_at: timestamp,
+        }
+        return currentInvoice
+      },
+    )
+    const transitionInvoice = vi.fn()
+    const api: ShellApi = {
+      ...base,
+      getInvoice: vi.fn(async () => currentInvoice),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+      deliverInvoiceEmail,
+      transitionInvoice,
+    }
+
+    await mountShell(api)
+    const deliver = document.querySelector<HTMLButtonElement>('[data-invoice-deliver]')!
+    const dialog = document.querySelector<HTMLDialogElement>('[data-invoice-delivery-dialog]')!
+    const form = document.querySelector<HTMLFormElement>('[data-invoice-delivery-form]')!
+    expect(deliver.hidden).toBe(false)
+    expect(deliver.textContent).toBe('Send invoice')
+
+    deliver.click()
+    expect(dialog.open).toBe(true)
+    expect(dialog.textContent).toContain('No PDF is attached')
+    dialog.querySelector<HTMLButtonElement>('[data-dialog-close]:not([aria-label])')!.click()
+    expect(dialog.open).toBe(false)
+    expect(deliverInvoiceEmail).not.toHaveBeenCalled()
+    deliver.click()
+    dialog.querySelector<HTMLButtonElement>('[data-dialog-close][aria-label]')!.click()
+    expect(dialog.open).toBe(false)
+    expect(deliverInvoiceEmail).not.toHaveBeenCalled()
+
+    deliver.click()
+    const recipients = document.querySelector<HTMLTextAreaElement>(
+      '[data-invoice-delivery-recipients]',
+    )!
+    recipients.value = 'Accounts Payable <AP@Example.Test>\nap@example.test'
+    recipients.dispatchEvent(new Event('input', { bubbles: true }))
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    expect(document.querySelector('[data-invoice-delivery-result]')?.textContent).toBe(
+      'Confirm the recipients before sending this invoice email.',
+    )
+    expect(deliverInvoiceEmail).not.toHaveBeenCalled()
+
+    document.querySelector<HTMLInputElement>('[data-invoice-delivery-confirm]')!.click()
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-delivery-result]')?.textContent).toBe(
+        'network unavailable',
+      ),
+    )
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(dialog.open).toBe(false))
+
+    expect(deliverInvoiceEmail).toHaveBeenCalledTimes(2)
+    expect(deliverInvoiceEmail.mock.calls[0]?.[1]).toBe(deliverInvoiceEmail.mock.calls[1]?.[1])
+    expect(deliverInvoiceEmail.mock.calls[1]?.[2]).toEqual({
+      expected_version: 1,
+      recipients: [{ name: 'Accounts Payable', email: 'AP@Example.Test' }],
+      confirmed: true,
+    })
+    expect(transitionInvoice).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-invoice-payment-status]')?.textContent).toBe(
+      'Invoice email queued for the confirmed recipients.',
+    )
+  })
+
   it('[reliability] never reissues a committed send when its detail refresh fails', async () => {
     renderBrowserShell({ view: 'invoice-detail' })
     const base = browserApi()

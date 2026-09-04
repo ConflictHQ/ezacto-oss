@@ -88,6 +88,20 @@ export const renderInvoiceLineDialogs = (): string => `
     </form>
   </dialog>`
 
+export const renderInvoiceAttachmentSection = (): string => `
+      <section class="invoice-history invoice-attachment-section" aria-labelledby="invoice-attachment-heading">
+        <header class="invoice-payment-heading">
+          <div><h3 id="invoice-attachment-heading">Attachments</h3><p>Files attached to this invoice.</p></div>
+        </header>
+        <form class="invoice-attachment-form" data-invoice-attachment-form hidden>
+          <input type="file" name="file" aria-label="Choose file">
+          <button type="submit" data-invoice-attachment-submit data-auth-action disabled>Upload</button>
+        </form>
+        <p class="hint" data-invoice-attachment-readonly hidden>You have read-only invoice access. Uploading requires the invoices:write scope.</p>
+        <p class="form-result" data-invoice-attachment-status role="status" aria-live="polite"></p>
+        <ul data-invoice-attachments></ul>
+      </section>`
+
 export const renderInvoiceComposerDialog = (): string => `
   <dialog class="invoice-composer-dialog" data-invoice-composer-dialog aria-labelledby="invoice-composer-title">
     <form data-invoice-composer-form novalidate>
@@ -123,5 +137,21 @@ export const renderInvoiceComposerDialog = (): string => `
       </div>
       <p class="form-result" data-invoice-composer-result role="status" aria-live="polite"></p>
       <div class="invoice-payment-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button class="primary-action" type="submit" data-invoice-composer-submit>Mark sent</button></div>
+    </form>
+  </dialog>`
+
+export const renderInvoiceDeliveryDialog = (): string => `
+  <dialog class="invoice-composer-dialog" data-invoice-delivery-dialog aria-labelledby="invoice-delivery-title">
+    <form data-invoice-delivery-form novalidate>
+      <header><div><p class="eyebrow">External delivery</p><h2 id="invoice-delivery-title">Send invoice?</h2></div><button type="button" data-dialog-close aria-label="Close delivery dialog">×</button></header>
+      <p>This will send the current invoice from the verified organization sender to every recipient below.</p>
+      <p class="hint">Delivery is queued after confirmation. No PDF is attached or claimed.</p>
+      <label for="ez-invoice-delivery-recipients">Recipients
+        <textarea id="ez-invoice-delivery-recipients" name="recipients" data-invoice-delivery-recipients rows="4" maxlength="321000" autocomplete="off" required aria-describedby="invoice-delivery-recipient-hint"></textarea>
+      </label>
+      <p class="hint" id="invoice-delivery-recipient-hint">One per line: email@example.com or Name &lt;email@example.com&gt;.</p>
+      <label class="invoice-composer-check"><input name="confirmed" data-invoice-delivery-confirm type="checkbox" required> I confirm these recipients and want to send this invoice.</label>
+      <p class="form-result" data-invoice-delivery-result role="status" aria-live="polite"></p>
+      <div class="invoice-payment-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button class="primary-action" type="submit" data-invoice-delivery-submit>Send invoice</button></div>
     </form>
   </dialog>`
