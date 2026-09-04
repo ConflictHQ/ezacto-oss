@@ -9,7 +9,6 @@ import {
 } from '../src/invoice-state.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import {
-  ACTIVITY_LOG_SUBSCRIBER_ID,
   createContainerOutboxService,
   createD1OutboxService,
   type OutboxService,
@@ -17,7 +16,6 @@ import {
 import {
   createContainerReminderScheduler,
   createD1ReminderScheduler,
-  REMINDER_SUBSCRIBER_ID,
   type ReminderScheduler,
   type ScheduledReminderRecord,
 } from '../src/reminders.js'
