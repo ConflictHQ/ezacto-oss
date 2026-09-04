@@ -280,9 +280,17 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
     </header>
     <section data-approval-review-panel>
       <p class="approval-intro">Review submitted time before it becomes locked.</p>
+      <form class="approval-filters" data-approval-filters>
+        <label>Person <select name="user_id" data-approval-filter-user><option value="">All</option></select></label>
+        <label>Client <select name="client_id" data-approval-filter-client><option value="">All</option></select></label>
+        <label>Project <select name="project_id" data-approval-filter-project><option value="">All</option></select></label>
+        <button type="submit" class="filter-apply">Apply</button>
+      </form>
       <p class="form-result" data-approval-queue-result role="status" aria-live="polite"></p>
       <section class="approval-queue" data-approval-queue aria-label="Pending timesheets"></section>
+      <button type="button" class="load-more" data-approval-load-more hidden>Load more</button>
       <section class="approval-queue" data-approval-history aria-label="Recently approved timesheets"></section>
+      <button type="button" class="load-more" data-approval-history-load-more hidden>Load more</button>
     </section>
     <section class="timesheet-lock-policy" data-lock-policy-panel hidden aria-labelledby="lock-policy-title">
       <header>
