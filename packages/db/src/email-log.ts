@@ -5,6 +5,7 @@ import type {
   EmailLogRecord,
   EmailLogStore,
   EmailRecipient,
+  EmailSender,
 } from '@ezacto/mailer'
 
 export interface EmailLogStoreOptions {
@@ -18,6 +19,8 @@ interface PortableDatabase {
 
 interface EmailLogRow {
   id: number
+  fromJson: string | null
+  replyToJson: string | null
   toJson: string
   template: string
   subject: string
@@ -46,7 +49,8 @@ const assertCanonicalTimestamp = (value: string): void => {
   }
 }
 
-const columns = `id, to_json AS toJson, template, subject, provider,
+const columns = `id, from_json AS fromJson, reply_to_json AS replyToJson,
+  to_json AS toJson, template, subject, provider,
   provider_message_id AS providerMessageId,
   provider_request_id AS providerRequestId, provider_latency_ms AS providerLatencyMs,
   status, related_type AS relatedType,
@@ -57,8 +61,12 @@ const columns = `id, to_json AS toJson, template, subject, provider,
 const rowRecord = (row: EmailLogRow | null): EmailLogRecord => {
   if (row === null) throw new Error('email delivery state transition did not match a queued log')
   let recipients: unknown
+  let from: unknown
+  let replyTo: unknown
   try {
     recipients = JSON.parse(row.toJson)
+    from = row.fromJson === null ? null : JSON.parse(row.fromJson)
+    replyTo = row.replyToJson === null ? [] : JSON.parse(row.replyToJson)
   } catch {
     throw new Error('email log contains malformed recipients')
   }
@@ -75,8 +83,19 @@ const rowRecord = (row: EmailLogRow | null): EmailLogRecord => {
   ) {
     throw new Error('email log contains malformed recipients')
   }
+  const mailbox = (value: unknown): value is EmailSender =>
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { email?: unknown }).email === 'string' &&
+    ((value as { name?: unknown }).name === undefined ||
+      typeof (value as { name?: unknown }).name === 'string')
+  if ((from !== null && !mailbox(from)) || !Array.isArray(replyTo) || !replyTo.every(mailbox)) {
+    throw new Error('email log contains malformed sender metadata')
+  }
   return {
     id: row.id,
+    from,
+    replyTo: replyTo as EmailRecipient[],
     to: recipients as EmailRecipient[],
     template: row.template,
     subject: row.subject,
@@ -111,10 +130,13 @@ const createStore = (
       return rowRecord(
         await database.first<EmailLogRow>(
           `INSERT INTO email_log (
-             to_json, template, subject, related_type, related_id, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?)
+             from_json, reply_to_json, to_json, template, subject,
+             related_type, related_id, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
            RETURNING ${columns}`,
           [
+            JSON.stringify(message.from),
+            message.replyTo === undefined ? null : JSON.stringify(message.replyTo),
             JSON.stringify(message.to),
             message.template,
             message.subject,

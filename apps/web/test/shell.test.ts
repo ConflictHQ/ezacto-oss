@@ -469,6 +469,9 @@ describe('S-1 through S-5 application shell', () => {
     expect(detail).toContain('data-invoice-document data-document-shell')
     expect(detail).toContain('data-ez-theme="precision"')
     expect(detail).toContain('data-invoice-detail-lines')
+    expect(detail).toContain('data-invoice-line-add')
+    expect(detail).toContain('data-invoice-line-dialog')
+    expect(detail).toContain('data-invoice-line-delete-dialog')
     expect(detail).toContain('data-invoice-detail-payments')
     expect(detail).toContain('data-invoice-payment-record')
     expect(detail).toContain('data-invoice-payment-dialog')
@@ -485,6 +488,8 @@ describe('S-1 through S-5 application shell', () => {
     expect(detail).not.toMatch(/name="(?:provider|reference|send_thank_you)"/u)
     expect(webAssets.stylesheet).toContain('.invoice-document {')
     expect(webAssets.stylesheet).toContain('.invoice-payment-dialog-actions {')
+    expect(webAssets.stylesheet).toContain('.invoice-line-dialog {')
+    expect(webAssets.stylesheet).toContain('.invoice-line-actions {')
     expect(webAssets.stylesheet).toContain('.invoice-load-more {')
   })
 

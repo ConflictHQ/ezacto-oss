@@ -120,6 +120,8 @@ export type EmailRecipient = {
 
 export type EmailLog = {
   "id": number;
+  "from": EmailRecipient | null;
+  "reply_to": Array<EmailRecipient>;
   "to": Array<EmailRecipient>;
   "template": string;
   "subject": string;
@@ -140,6 +142,131 @@ export type EmailLog = {
 export type EmailLogPage = {
   "data": Array<EmailLog>;
   "links": Links;
+};
+
+export type EmailTemplateVariable = {
+  "name": string;
+  "token": string;
+  "description": string;
+  "compatibility": "harvest" | "native";
+};
+
+export type EmailTemplateVariableGroup = {
+  "kind": "invoice" | "reminder" | "thank_you" | "auth_email_verification" | "auth_password_reset";
+  "variables": Array<EmailTemplateVariable>;
+};
+
+export type EmailTemplateVariableCatalog = {
+  "data": Array<EmailTemplateVariableGroup>;
+  "links": Links;
+};
+
+export type EmailTemplate = {
+  "kind": "invoice" | "reminder" | "thank_you" | "auth_email_verification" | "auth_password_reset";
+  "version": number;
+  "subject_template": string;
+  "text_template": string;
+  "html_template": string | null;
+  "unknown_variable_policy": "error" | "literal";
+  "created_by_user_id": number | null;
+  "created_at": string;
+};
+
+export type EmailTemplatePage = {
+  "data": Array<EmailTemplate>;
+  "links": Links;
+};
+
+export type EmailTemplateEnvelope = {
+  "data": EmailTemplate;
+};
+
+export type EmailTemplateVersionInput = {
+  "expected_version": number;
+  "subject_template": string;
+  "text_template": string;
+  "html_template"?: string | null;
+  "unknown_variable_policy"?: "error" | "literal";
+};
+
+export type SenderIdentityEvidence = {
+  "version": number;
+  "source": "provider_api" | "deployment_config";
+  "identity_kind": "email_address" | "domain";
+  "verification_status": "pending" | "verified" | "failed" | "temporary_failure" | "operator_configured";
+  "dkim_status": "pending" | "verified" | "failed" | "not_applicable";
+  "mail_from_domain": string | null;
+  "mail_from_status": "pending" | "verified" | "failed" | "not_configured";
+  "observed_at": string;
+};
+
+export type SenderIdentity = {
+  "id": number;
+  "email": string;
+  "display_name": string;
+  "reply_to_email": string | null;
+  "provider": string;
+  "provider_identity": string;
+  "is_default": boolean;
+  "version": number;
+  "archived_at": string | null;
+  "evidence": SenderIdentityEvidence | null;
+  "created_by_user_id": number;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type SenderIdentityPage = {
+  "data": Array<SenderIdentity>;
+  "links": Links;
+};
+
+export type SenderIdentityEnvelope = {
+  "data": SenderIdentity;
+};
+
+export type SenderIdentityInput = {
+  "email": string;
+  "display_name": string;
+  "reply_to_email"?: string | null;
+  "provider": string;
+  "provider_identity": string;
+};
+
+export type SenderIdentityPatch = {
+  "expected_version": number;
+  "display_name"?: string;
+  "reply_to_email"?: string | null;
+};
+
+export type SenderIdentityVersionInput = {
+  "expected_version": number;
+};
+
+export type SenderEvidenceRefreshInput = {
+  "expected_evidence_version": number;
+};
+
+export type EmailTestSendInput = {
+  "template_kind": "invoice" | "reminder" | "thank_you";
+  "template_version": number;
+  "variables": {
+  [key: string]: string;
+};
+  "confirmed": true;
+};
+
+export type EmailTestSend = {
+  "status": "queued";
+  "delivery_id": number;
+  "sender_identity_id": number;
+  "template_kind": "invoice" | "reminder" | "thank_you";
+  "template_version": number;
+  "recipient_email": string;
+};
+
+export type EmailTestSendEnvelope = {
+  "data": EmailTestSend;
 };
 
 export type OutboxAggregate = {
@@ -1760,6 +1887,112 @@ export class EzactoClient {
 
     return this.request<EmailLogPage>("GET", "/api/v1/email-log", {
       query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listEmailTemplateVariables(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<EmailTemplateVariableCatalog> {
+    const headers = new Headers(args.headers);
+
+    return this.request<EmailTemplateVariableCatalog>("GET", "/api/v1/email-template-variables", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listEmailTemplates(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<EmailTemplatePage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<EmailTemplatePage>("GET", "/api/v1/email-templates", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listEmailTemplateVersions(args: { "kind": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<EmailTemplatePage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<EmailTemplatePage>("GET", "/api/v1/email-templates/:kind/versions".replace(":kind", encodeURIComponent(String(args["kind"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createEmailTemplateVersion(args: { "kind": string; "Idempotency-Key": string; body: EmailTemplateVersionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<EmailTemplateEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<EmailTemplateEnvelope>("POST", "/api/v1/email-templates/:kind/versions".replace(":kind", encodeURIComponent(String(args["kind"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listSenderIdentities(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<SenderIdentityPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<SenderIdentityPage>("GET", "/api/v1/sender-identities", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createSenderIdentity(args: { "Idempotency-Key": string; body: SenderIdentityInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<SenderIdentityEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<SenderIdentityEnvelope>("POST", "/api/v1/sender-identities", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateSenderIdentity(args: { "id": number; "Idempotency-Key": string; body: SenderIdentityPatch; signal?: AbortSignal; headers?: HeadersInit }): Promise<SenderIdentityEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<SenderIdentityEnvelope>("PATCH", "/api/v1/sender-identities/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async setDefaultSenderIdentity(args: { "id": number; "Idempotency-Key": string; body: SenderIdentityVersionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<SenderIdentityEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<SenderIdentityEnvelope>("POST", "/api/v1/sender-identities/:id/default".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async archiveSenderIdentity(args: { "id": number; "Idempotency-Key": string; body: SenderIdentityVersionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<SenderIdentityEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<SenderIdentityEnvelope>("POST", "/api/v1/sender-identities/:id/archive".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async refreshSenderIdentityEvidence(args: { "id": number; "Idempotency-Key": string; body: SenderEvidenceRefreshInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<SenderIdentityEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<SenderIdentityEnvelope>("POST", "/api/v1/sender-identities/:id/refresh".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async testSendEmailTemplate(args: { "id": number; "Idempotency-Key": string; body: EmailTestSendInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<EmailTestSendEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<EmailTestSendEnvelope>("POST", "/api/v1/sender-identities/:id/test-send".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });

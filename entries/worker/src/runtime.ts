@@ -15,6 +15,7 @@ import {
   createTimesheetLockPolicyRepository,
   createTeamRepository,
   createD1EmailLogStore,
+  createD1EmailConfigurationStore,
   createD1PasswordAuthService,
   createD1SessionStore,
   DrizzleTrackedResourceRepository,
@@ -39,7 +40,10 @@ import {
 } from "@ezacto/mailer";
 import type { RuntimeServices } from "./app.js";
 import { cloudflareAccessConfig, type WorkerEnv } from "./app.js";
-import { createWorkerAuthMailer } from "./email-queue.js";
+import {
+  createWorkerDeploymentAuthMailer,
+  createWorkerOrganizationMailer,
+} from "./email-queue.js";
 
 const cursorSecretPattern = /^[A-Za-z0-9_-]+$/;
 const cursorSecretBytes = 32;
@@ -111,6 +115,54 @@ export const createWorkerSesMailer = (
     options,
   );
 };
+
+export const createSesSenderIdentityVerifier = (
+  emailProvider: SesMailer,
+): NonNullable<RuntimeServices['senderIdentityVerifier']> => ({
+  provider: 'ses',
+  verify: async (identity, signal) => {
+    const health = await emailProvider.getIdentityHealth(
+      identity.providerIdentity,
+      signal,
+    )
+    const identityType = health.type?.toUpperCase()
+    if (identityType !== 'EMAIL_ADDRESS' && identityType !== 'DOMAIN') {
+      throw new Error('SES returned an unsupported sender identity type')
+    }
+    const dkimStatus =
+      identityType === 'EMAIL_ADDRESS' &&
+      !health.dkim.signingEnabled
+        ? ('not_applicable' as const)
+        : health.dkim.signingEnabled &&
+            health.dkim.status?.toUpperCase() === 'SUCCESS'
+          ? ('verified' as const)
+          : health.dkim.status?.toUpperCase() === 'FAILED'
+            ? ('failed' as const)
+            : ('pending' as const)
+    const mailFromStatus =
+      health.mailFrom.domain === null
+        ? ('not_configured' as const)
+        : health.mailFrom.status?.toUpperCase() === 'SUCCESS'
+          ? ('verified' as const)
+          : health.mailFrom.status?.toUpperCase() === 'FAILED'
+            ? ('failed' as const)
+            : ('pending' as const)
+    return {
+      source: 'provider_api',
+      identityKind:
+        identityType === 'EMAIL_ADDRESS'
+          ? ('email_address' as const)
+          : ('domain' as const),
+      verificationStatus: health.verifiedForSending
+        ? ('verified' as const)
+        : ('pending' as const),
+      dkimStatus,
+      mailFromDomain: health.mailFrom.domain,
+      mailFromStatus,
+      observedAt: new Date().toISOString(),
+    }
+  },
+})
 
 /**
  * Decode a canonical base64url secret. Text encodings are deliberately not
@@ -313,14 +365,41 @@ export const createRuntimeServices = async (
                 }),
         });
   const emailLog = createD1EmailLogStore(database);
+  const emailConfiguration = createD1EmailConfigurationStore(database);
   const emailProvider =
     options.emailProvider ?? createWorkerSesMailer(env, options.ses);
-  const authMailer =
-    env.EMAIL_QUEUE === undefined ||
-    env.APP_BASE_URL === undefined ||
-    emailProvider === null
+  const organizationName = async () => {
+    const row = await database
+      .prepare('SELECT name FROM organizations WHERE id = 1')
+      .first<{ name: string }>();
+    if (row === null) throw new Error('organization is unavailable');
+    return row.name;
+  };
+  const emailTransportReady =
+    env.EMAIL_QUEUE !== undefined &&
+    emailProvider !== null;
+  const emailQueueReady =
+    emailTransportReady && env.APP_BASE_URL !== undefined;
+  const deploymentAuthMailer =
+    !emailQueueReady || env.SES_FROM === undefined
       ? undefined
-      : createWorkerAuthMailer(env.EMAIL_QUEUE, emailLog, env.APP_BASE_URL);
+      : createWorkerDeploymentAuthMailer(
+          env.EMAIL_QUEUE!,
+          emailLog,
+          env.SES_FROM,
+          emailConfiguration,
+          organizationName,
+          env.APP_BASE_URL!,
+        );
+  const organizationMailer =
+    !emailTransportReady
+      ? undefined
+      : createWorkerOrganizationMailer(
+          env.EMAIL_QUEUE!,
+          emailLog,
+          emailProvider.name,
+          emailConfiguration,
+        );
   return {
     bootstrap: (input) => bootstrapInstanceD1(database, input),
     enrollOwnerPassword: (input) =>
@@ -360,10 +439,15 @@ export const createRuntimeServices = async (
     sessions,
     authenticationSessions,
     emailLog,
+    emailConfiguration,
+    ...(emailProvider instanceof SesMailer
+      ? { senderIdentityVerifier: createSesSenderIdentityVerifier(emailProvider) }
+      : {}),
     outbox: createD1OutboxService(database),
     identities,
     oidcTransactions: createD1OidcTransactionStore(database),
-    ...(authMailer === undefined ? {} : { authMailer }),
+    ...(deploymentAuthMailer === undefined ? {} : { deploymentAuthMailer }),
+    ...(organizationMailer === undefined ? {} : { organizationMailer }),
     ...(env.ATTACHMENTS === undefined
       ? {}
       : {

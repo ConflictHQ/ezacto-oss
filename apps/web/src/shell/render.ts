@@ -11,6 +11,8 @@ import {
   renderInvoiceComposerDialog,
   renderInvoicePaymentDialogs,
   renderInvoicePaymentSection,
+  renderInvoiceLineDialogs,
+  renderInvoiceLineEditor,
 } from '../invoices/render.js'
 
 export interface AppShellOptions {
@@ -345,9 +347,10 @@ export const renderAppShell = (options: AppShellOptions): string => {
         <div><dt>Period</dt><dd data-invoice-detail-period>—</dd></div>
         <div><dt>Purchase order</dt><dd data-invoice-detail-purchase-order>—</dd></div>
       </dl>
+      ${renderInvoiceLineEditor()}
       <div class="invoice-line-wrap">
         <table class="invoice-line-table">
-          <thead><tr><th scope="col">Description</th><th scope="col">Quantity</th><th scope="col">Rate</th><th scope="col">Amount</th></tr></thead>
+          <thead><tr><th scope="col">Description</th><th scope="col">Quantity</th><th scope="col">Rate</th><th scope="col">Amount</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
           <tbody data-invoice-detail-lines></tbody>
         </table>
       </div>
@@ -431,6 +434,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   ${renderExpenseWorkflowPages(view)}
   ${renderExpenseCategoriesPage(view)}
   ${renderInvoiceComposerDialog()}
+  ${renderInvoiceLineDialogs()}
   ${renderInvoicePaymentDialogs()}
   <dialog class="command-dialog" data-command-dialog aria-labelledby="command-title">
     <form data-command-form>

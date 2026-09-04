@@ -4,6 +4,8 @@ import { createApiApp, installEmailLogRoutes } from '../src/index.js'
 
 const delivery: EmailLogRecord = {
   id: 4,
+  from: { email: 'billing@example.test', name: 'Billing' },
+  replyTo: [{ email: 'reply@example.test' }],
   to: [{ email: 'owner@example.test', name: 'Avery' }],
   template: 'password_reset',
   subject: 'Reset your ezacto password',
@@ -52,6 +54,8 @@ describe('email log API', () => {
       data: [
         {
           id: 4,
+          from: { email: 'billing@example.test', name: 'Billing' },
+          reply_to: [{ email: 'reply@example.test' }],
           to: [{ email: 'owner@example.test', name: 'Avery' }],
           template: 'password_reset',
           subject: 'Reset your ezacto password',

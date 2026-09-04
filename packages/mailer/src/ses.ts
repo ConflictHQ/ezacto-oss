@@ -12,6 +12,7 @@ export interface SesMailerConfig {
   secretAccessKey: string;
   sessionToken?: string;
   region: string;
+  /** Legacy deployment default retained for diagnostics; each message owns From. */
   from: string;
   configurationSet?: string;
 }
@@ -444,7 +445,7 @@ export class SesMailer implements HttpEmailProvider {
       };
     }
     const payload: Record<string, unknown> = {
-      FromEmailAddress: this.from,
+      FromEmailAddress: recipientAddress(message.from),
       Destination: { ToAddresses: message.to.map(recipientAddress) },
       Content: {
         Simple: {
@@ -460,6 +461,9 @@ export class SesMailer implements HttpEmailProvider {
       },
       EmailTags: [{ Name: "ezacto_idempotency_key", Value: idempotencyKey }],
     };
+    if (message.replyTo !== undefined) {
+      payload.ReplyToAddresses = message.replyTo.map(recipientAddress);
+    }
     if (this.configurationSet !== null) {
       payload.ConfigurationSetName = this.configurationSet;
     }

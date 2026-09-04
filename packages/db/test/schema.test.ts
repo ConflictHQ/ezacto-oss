@@ -875,6 +875,7 @@ for (const [runtime, factory] of factories) {
         { id: '0027_timesheet_approvals' },
         { id: '0028_timesheet_lock_policy' },
         { id: '0029_outbox_delivery' },
+        { id: '0030_email_templates' },
         { id: '0031_team_people' },
       ])
       expect(
@@ -931,6 +932,7 @@ for (const [runtime, factory] of factories) {
         { id: '0027_timesheet_approvals' },
         { id: '0028_timesheet_lock_policy' },
         { id: '0029_outbox_delivery' },
+        { id: '0030_email_templates' },
         { id: '0031_team_people' },
       ])
       expect(
@@ -1000,6 +1002,7 @@ for (const [runtime, factory] of factories) {
         { id: '0027_timesheet_approvals' },
         { id: '0028_timesheet_lock_policy' },
         { id: '0029_outbox_delivery' },
+        { id: '0030_email_templates' },
         { id: '0031_team_people' },
       ])
       expect(
@@ -1045,6 +1048,7 @@ for (const [runtime, factory] of factories) {
         { id: '0027_timesheet_approvals' },
         { id: '0028_timesheet_lock_policy' },
         { id: '0029_outbox_delivery' },
+        { id: '0030_email_templates' },
         { id: '0031_team_people' },
       ])
     })
@@ -1165,6 +1169,10 @@ describe('package contents', () => {
         'dist/migrations/0027_timesheet_approvals.d.ts',
         'dist/migrations/0028_timesheet_lock_policy.js',
         'dist/migrations/0028_timesheet_lock_policy.d.ts',
+        'dist/migrations/0030_email_templates.js',
+        'dist/migrations/0030_email_templates.d.ts',
+        'dist/email-configuration.js',
+        'dist/email-configuration.d.ts',
         'dist/migrations/0029_outbox_delivery.js',
         'dist/migrations/0029_outbox_delivery.d.ts',
         'dist/migrations/0031_team_people.js',

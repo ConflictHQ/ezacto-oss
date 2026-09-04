@@ -44,7 +44,11 @@ export {
   type IssuedApiToken,
   type SessionPrincipal,
 } from './auth.js'
-export { createQueuedAuthMailer } from './auth-email.js'
+export {
+  createQueuedAuthMailer,
+  type AuthEmailTemplate,
+  type AuthEmailTemplateSource,
+} from './auth-email.js'
 export {
   installGeneralResourceRoutes,
   type GeneralResourceRouteOptions,
@@ -87,6 +91,17 @@ export {
   installEmailLogRoutes,
   type EmailLogReader,
 } from './email-log.js'
+export {
+  installEmailConfigurationRoutes,
+  type EmailConfigurationRouteOptions,
+  type EmailConfigurationService,
+  type EmailTestSendCommandRecord,
+  type EmailTestSendFailureCode,
+  type EmailTemplateConfigurationRecord,
+  type ProviderSenderIdentityEvidence,
+  type SenderIdentityConfigurationRecord,
+  type SenderIdentityVerifier,
+} from './email-configuration.js'
 export {
   installOutboxRoutes,
   type ActivityLogResource,

@@ -31,6 +31,7 @@ import {
 } from './migrations/0027_timesheet_approvals.js'
 import { timesheetLockPolicyMigration } from './migrations/0028_timesheet_lock_policy.js'
 import { outboxDeliveryMigration } from './migrations/0029_outbox_delivery.js'
+import { emailTemplatesMigration } from './migrations/0030_email_templates.js'
 import { teamPeopleMigration } from './migrations/0031_team_people.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
@@ -1387,6 +1388,7 @@ const migrations = [
   },
   { id: '0028_timesheet_lock_policy', statements: timesheetLockPolicyMigration },
   { id: '0029_outbox_delivery', statements: outboxDeliveryMigration },
+  { id: '0030_email_templates', statements: emailTemplatesMigration },
   { id: '0031_team_people', statements: teamPeopleMigration },
 ] as const
 

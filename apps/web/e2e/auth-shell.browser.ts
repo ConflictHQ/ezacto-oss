@@ -1765,6 +1765,278 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expect(generatedCard).toContainText('$75.00')
 })
 
+test('[e2e:invoice-lines] adds, edits, and deletes exact lines through the real worker and D1', async ({
+  context,
+  page,
+}) => {
+  const seeded = await context.request.post('/__ezacto_browser_fixture__/start-end', {
+    data: { action: 'invoice-line-seed' },
+    headers: {
+      'x-ezacto-browser-fixture-control': 'start-end-round-trip',
+    },
+  })
+  expect(seeded.status()).toBe(204)
+
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto('/invoices/new')
+  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+
+  const draft = await page.evaluate(async () => {
+    const response = await fetch('/api/v1/invoice-generations', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': 'browser-invoice-lines-generate',
+      },
+      body: JSON.stringify({
+        client_id: 1,
+        from: '2026-08-14',
+        to: '2026-08-14',
+        project_ids: [1],
+        time_summary_type: 'project',
+        expense_summary_type: null,
+      }),
+    })
+    if (!response.ok) throw new Error(`invoice generation failed: ${response.status}`)
+    const body = (await response.json()) as {
+      data: { id: number; version: number; amount_cents: number; currency: string }
+    }
+    const financials = await fetch(`/api/v1/invoices/${body.data.id}`, {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': 'browser-invoice-lines-financials',
+      },
+      body: JSON.stringify({
+        expected_version: body.data.version,
+        tax_rate_ppm: 100_000,
+        tax2_rate_ppm: null,
+        discount_rate_ppm: 0,
+      }),
+    })
+    if (!financials.ok) throw new Error(`invoice financial edit failed: ${financials.status}`)
+    const financialBody = (await financials.json()) as {
+      data: { invoice: { id: number; version: number; amount_cents: number; currency: string } }
+    }
+    const sent = await fetch(`/api/v1/invoices/${body.data.id}/transitions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': 'browser-invoice-lines-open',
+      },
+      body: JSON.stringify({
+        command: 'send',
+        expected_version: financialBody.data.invoice.version,
+      }),
+    })
+    if (!sent.ok) throw new Error(`invoice transition failed: ${sent.status}`)
+    const sentBody = (await sent.json()) as {
+      data: { invoice: { id: number; version: number; amount_cents: number; currency: string } }
+    }
+    const paid = await fetch(`/api/v1/invoices/${body.data.id}/payments`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': 'browser-invoice-lines-payment',
+      },
+      body: JSON.stringify({
+        expected_version: sentBody.data.invoice.version,
+        amount_cents: sentBody.data.invoice.amount_cents,
+        currency: sentBody.data.invoice.currency,
+        paid_date: '2026-08-30',
+        notes: 'Payment-state reconciliation fixture',
+      }),
+    })
+    if (!paid.ok) throw new Error(`invoice payment failed: ${paid.status}`)
+    const paidBody = (await paid.json()) as {
+      data: {
+        invoice: {
+          id: number
+          version: number
+          amount_cents: number
+          due_amount_cents: number
+          state: string
+        }
+      }
+    }
+    return paidBody.data.invoice
+  })
+  expect(draft.amount_cents).toBe(7_500)
+  expect(draft.due_amount_cents).toBe(0)
+  expect(draft.state).toBe('paid')
+  await page.goto(`/invoices/${draft.id}`)
+
+  const detail = page.locator('[data-invoice-document]')
+  const add = detail.getByRole('button', { name: 'Add line', exact: true })
+  const editor = page.locator('[data-invoice-line-dialog]')
+  await expect(detail).toBeVisible()
+  await expectPhoneControl(add)
+  await add.click()
+  await editor.getByRole('button', { name: 'Cancel' }).click()
+  await expect(editor).toBeHidden()
+  await expect(detail.locator('[data-invoice-line-id]')).toHaveCount(1)
+  await add.click()
+  await editor.getByRole('button', { name: 'Close invoice line dialog' }).click()
+  await expect(editor).toBeHidden()
+  await expect(detail.locator('[data-invoice-line-id]')).toHaveCount(1)
+
+  const commandIds: string[] = []
+  page.on('request', (request) => {
+    if (
+      request.method() === 'POST' &&
+      new URL(request.url()).pathname === `/api/v1/invoices/${draft.id}/line-items`
+    ) {
+      commandIds.push(request.headers()['idempotency-key'] ?? '')
+    }
+  })
+  await page.route(
+    `**/api/v1/invoices/${draft.id}/line-items`,
+    async (route) => {
+      const committed = await route.fetch()
+      expect(committed.status()).toBe(201)
+      await route.abort('failed')
+    },
+    { times: 1 },
+  )
+
+  await add.click()
+  await editor.getByLabel('Item type').fill('Consulting')
+  await editor.getByLabel('Description').fill('Exact tenth-hour adjustment')
+  await editor.getByLabel('Quantity').fill('0.1')
+  await editor.getByLabel('Rate (USD)').fill('1.05')
+  await editor.getByLabel('Apply tax 1').check()
+  await expect(editor.locator('[data-invoice-line-preview]')).toHaveText('$0.11')
+  for (const control of [
+    editor.getByLabel('Item type'),
+    editor.getByLabel('Description'),
+    editor.getByLabel('Quantity'),
+    editor.getByLabel('Rate (USD)'),
+    editor.getByRole('button', { name: 'Add line', exact: true }),
+  ]) {
+    await expectPhoneControl(control)
+  }
+  await expectNoPageOverflow(page)
+
+  await editor.getByRole('button', { name: 'Add line', exact: true }).click()
+  await expect(editor.locator('[data-invoice-line-result]')).not.toHaveText('')
+  await expect(editor).toBeVisible()
+  const retried = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/invoices/${draft.id}/line-items` &&
+      response.request().method() === 'POST',
+  )
+  await editor.getByRole('button', { name: 'Add line', exact: true }).click()
+  expect((await retried).status()).toBe(201)
+  await expect(editor).toBeHidden()
+  expect(commandIds).toHaveLength(2)
+  expect(commandIds[0]).not.toBe('')
+  expect(commandIds[0]).toBe(commandIds[1])
+
+  const createdRow = detail.locator('[data-invoice-line-id]', { hasText: 'Consulting' })
+  await expect(createdRow).toHaveCount(1)
+  await expect(createdRow).toContainText('Exact tenth-hour adjustment')
+  await expect(createdRow).toContainText('$0.11')
+  await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$75.12')
+  await expect(detail.locator('[data-invoice-detail-due]')).toHaveText('$0.12')
+  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Open')
+  await expectNoPageOverflow(page)
+
+  const persistedCreated = await page.evaluate(async (invoiceId) => {
+    const response = await fetch(`/api/v1/invoices/${invoiceId}`)
+    return (await response.json()) as {
+      data: {
+        version: number
+        amount_cents: number
+        due_amount_cents: number
+        tax_amount_cents: number
+        line_items: Array<{
+          id: number
+          kind: string
+          quantity: number
+          unit_price_cents: number
+          amount_cents: number
+          taxed: boolean
+          updated_at: string
+        }>
+      }
+    }
+  }, draft.id)
+  expect(persistedCreated.data.amount_cents).toBe(7_512)
+  expect(persistedCreated.data.due_amount_cents).toBe(12)
+  expect(persistedCreated.data.tax_amount_cents).toBe(1)
+  const createdLine = persistedCreated.data.line_items.find((line) => line.kind === 'Consulting')!
+  expect(createdLine).toMatchObject({
+    quantity: 0.1,
+    unit_price_cents: 105,
+    amount_cents: 11,
+    taxed: true,
+  })
+
+  await createdRow.getByRole('button', { name: 'Edit' }).click()
+  await editor.getByLabel('Description').fill('Updated fractional adjustment')
+  await editor.getByLabel('Quantity').fill('1.5')
+  await editor.getByLabel('Rate (USD)').fill('2.05')
+  await expect(editor.locator('[data-invoice-line-preview]')).toHaveText('$3.08')
+  const updated = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/v1/invoices/${draft.id}/line-items/${createdLine.id}` &&
+      response.request().method() === 'PATCH',
+  )
+  await editor.getByRole('button', { name: 'Save line', exact: true }).click()
+  const updatedResponse = await updated
+  expect(updatedResponse.status()).toBe(200)
+  expect(updatedResponse.request().postDataJSON()).toMatchObject({
+    expected_version: persistedCreated.data.version,
+    expected_updated_at: createdLine.updated_at,
+    kind: 'Consulting',
+    quantity: 1.5,
+    unit_price_cents: 205,
+  })
+  await expect(editor).toBeHidden()
+  await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$78.39')
+  await expect(detail.locator('[data-invoice-detail-due]')).toHaveText('$3.39')
+
+  const updatedRow = detail.locator('[data-invoice-line-id]', { hasText: 'Consulting' })
+  await updatedRow.getByRole('button', { name: 'Delete' }).click()
+  const confirmation = page.locator('[data-invoice-line-delete-dialog]')
+  await expect(confirmation).toBeVisible()
+  await confirmation.getByRole('button', { name: 'Cancel' }).click()
+  await expect(confirmation).toBeHidden()
+  await expect(updatedRow).toHaveCount(1)
+  await updatedRow.getByRole('button', { name: 'Delete' }).click()
+  await confirmation.getByRole('button', { name: 'Close delete line dialog' }).click()
+  await expect(confirmation).toBeHidden()
+  await expect(updatedRow).toHaveCount(1)
+  await updatedRow.getByRole('button', { name: 'Delete' }).click()
+  const deleted = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/v1/invoices/${draft.id}/line-items/${createdLine.id}` &&
+      response.request().method() === 'DELETE',
+  )
+  await confirmation.getByRole('button', { name: 'Delete line', exact: true }).click()
+  expect((await deleted).status()).toBe(200)
+  await expect(confirmation).toBeHidden()
+  await expect(detail.locator('[data-invoice-line-id]')).toHaveCount(1)
+  await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$75.00')
+  await expect(detail.locator('[data-invoice-detail-due]')).toHaveText('$0.00')
+  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Paid')
+
+  const persistedDeleted = await page.evaluate(async (invoiceId) => {
+    const response = await fetch(`/api/v1/invoices/${invoiceId}`)
+    return (await response.json()) as {
+      data: { amount_cents: number; due_amount_cents: number; line_items: Array<{ id: number }> }
+    }
+  }, draft.id)
+  expect(persistedDeleted.data.amount_cents).toBe(7_500)
+  expect(persistedDeleted.data.due_amount_cents).toBe(0)
+  expect(persistedDeleted.data.line_items.some((line) => line.id === createdLine.id)).toBe(false)
+})
+
 test('[e2e:invoice-cycle] records a final payment and restores the open balance on delete', async ({
   context,
   page,
