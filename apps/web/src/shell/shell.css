@@ -469,10 +469,52 @@
   font-weight: 700;
 }
 .invoice-notes,
-.invoice-history {
+.invoice-history,
+.invoice-attachment-section {
   margin-top: 32px;
   padding-top: 24px;
   border-top: 1px solid var(--ez-border);
+}
+.invoice-attachment-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.invoice-attachment-form button,
+.invoice-attachment-form input {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+[data-invoice-attachments] {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+[data-invoice-attachments] li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 18px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+[data-invoice-attachments] a {
+  color: var(--ez-ink);
+  font-weight: 700;
+  text-underline-offset: 3px;
+}
+.invoice-attachment-empty {
+  color: var(--ez-muted);
+  font-size: 14px;
 }
 .invoice-notes h3,
 .invoice-history h3 {
