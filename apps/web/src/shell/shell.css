@@ -1829,6 +1829,52 @@
   background: var(--ez-action);
   color: var(--ez-action-fg);
 }
+.approval-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  margin-top: 16px;
+}
+.approval-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--ez-muted);
+}
+.approval-filters select {
+  min-height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+  color: var(--ez-ink);
+}
+.approval-filters .filter-apply {
+  min-height: 36px;
+  padding: 0 16px;
+  border: 1px solid var(--ez-action);
+  border-radius: var(--ez-radius);
+  background: var(--ez-action);
+  color: var(--ez-action-fg);
+  cursor: pointer;
+}
+.load-more {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+  color: var(--ez-ink);
+  cursor: pointer;
+  text-align: center;
+}
+.load-more[hidden] {
+  display: none;
+}
 .approval-empty {
   padding: 28px 20px;
   border: 1px solid var(--ez-border);
