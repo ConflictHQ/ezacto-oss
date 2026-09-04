@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type {
+  EmailDeliveryStatus,
   EmailLogRecord,
   EmailLogStore,
   HttpEmailProvider,
 } from '@ezacto/mailer'
 import { ContainerEmailQueue } from '../src/email-queue.js'
 
-const record = (attemptCount: number, status: 'queued' | 'failed'): EmailLogRecord => ({
+const record = (attemptCount: number, status: EmailDeliveryStatus): EmailLogRecord => ({
   id: 1,
   from: { email: 'billing@example.test', name: 'Billing' },
   replyTo: [],
