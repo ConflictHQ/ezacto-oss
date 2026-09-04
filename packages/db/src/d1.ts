@@ -133,6 +133,20 @@ export {
   type InstanceOwnerPasswordInput,
   type InstanceOwnerPasswordResult,
 } from './instance-bootstrap.js'
+export {
+  BACKUP_TABLES,
+  BUNDLE_VERSION,
+  completeBackupRun,
+  exportBundle,
+  failBackupRun,
+  getLatestBackupRuns,
+  recordBackupStart,
+  SCHEMA_VERSION,
+  shouldRunNightlyBackup,
+  type BackupManifest,
+  type BackupObjectStore,
+  type BackupRunRecord,
+} from './backup.js'
 export { migrateD1 } from './migrate.js'
 export {
   DrizzleTrackedResourceRepository,

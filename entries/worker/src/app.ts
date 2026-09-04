@@ -16,6 +16,7 @@ import {
   installSessionRoutes,
   installTrackedResourceRoutes,
   installTimesheetApprovalRoutes,
+  installBackupStatusRoutes,
   installTimesheetLockPolicyRoutes,
   readJsonBody,
   SESSION_COOKIE_NAME,
@@ -33,6 +34,7 @@ import {
   type OidcProviderConfig,
   type OidcTransactionStorePort,
   type PasswordAuthService,
+  type BackupStatusReader,
   type ReportReader,
   type TrackedResourceRepository,
   type TimesheetApprovalService,
@@ -116,6 +118,7 @@ export interface RuntimeServices {
   /** Deployment-brand sender for all authentication mail. */
   deploymentAuthMailer?: AuthMailer
   attachments?: AttachmentRouteOptions
+  backupStatus?: BackupStatusReader
 }
 
 export type Health = {
@@ -190,6 +193,9 @@ export const createApp = (services?: RuntimeServices) =>
             })
             installAttachmentRoutes(api, services.attachments)
             installReportRoutes(api, services.reports)
+            if (services.backupStatus !== undefined) {
+              installBackupStatusRoutes(api, services.backupStatus)
+            }
           },
         }),
     installApp(app) {

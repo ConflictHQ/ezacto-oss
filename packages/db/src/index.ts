@@ -1,4 +1,5 @@
 export * from './adapters.js'
+export * from './backup.js'
 export * from './api-tokens.js'
 export * from './attachments.js'
 export * from './expenses.js'
