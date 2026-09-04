@@ -7,8 +7,10 @@ import {
   createAttachmentStore,
   createContainerDatabase,
   createContainerEmailLogStore,
+  createContainerEmailConfigurationStore,
   createContainerIdentityStore,
   createContainerOidcTransactionStore,
+  createContainerOutboxService,
   createContainerPasswordAuthService,
   createContainerSessionStore,
   createGeneralResourceRepository,
@@ -28,7 +30,11 @@ import {
   type UserPrincipal,
 } from '@ezacto/api'
 import {
+  configuredEmailSender,
+  createDeploymentSenderQueuedMailer,
   createQueuedMailer,
+  createSenderBoundQueuedMailer,
+  SenderIdentityUnavailableError,
   type HttpEmailProvider,
 } from '@ezacto/mailer'
 import { SmtpMailer } from '@ezacto/mailer/smtp'
@@ -36,6 +42,7 @@ import type { RuntimeServices } from '../../worker/src/app.js'
 import type { ContainerConfig } from './config.js'
 import { createDiskAttachmentObjectStore } from './disk-attachments.js'
 import { ContainerEmailQueue } from './email-queue.js'
+import { ContainerOutboxScheduler } from './outbox-scheduler.js'
 
 const exists = (
   database: BetterSqlite3.Database,
@@ -61,7 +68,12 @@ export const createContainerAttachmentOwnerAuthorizer = (
       case 'expense':
         return exists(
           database,
-          'SELECT 1 FROM expenses WHERE id = ? AND user_id = ?',
+          `SELECT 1 FROM expenses
+           WHERE id = ? AND user_id = ?
+             AND COALESCE((
+               SELECT json_extract(modules, '$.expenses')
+               FROM organizations WHERE id = 1
+             ), 0) = 1`,
           parentId,
           principal.userId,
         )
@@ -138,12 +150,54 @@ export const prepareContainerDatabase = (
 export interface ContainerRuntime {
   database: BetterSqlite3.Database
   services: RuntimeServices
+  drainOutbox(): ReturnType<RuntimeServices['outbox']['drain']>
   close(timeoutMs?: number): Promise<void>
 }
 
 export interface ContainerRuntimeOptions {
   emailProvider?: HttpEmailProvider
   verifyEmailProvider?: () => Promise<void>
+}
+
+/**
+ * Attests only the exact SMTP mailbox already validated from deployment
+ * configuration. This is not a DNS or provider verification claim.
+ */
+export const createSmtpSenderIdentityVerifier = (
+  from: string,
+): NonNullable<RuntimeServices['senderIdentityVerifier']> => {
+  const configured = configuredEmailSender(from)
+  return {
+    provider: 'smtp',
+    verify: async (identity) => {
+      if (identity.archivedAt !== null) {
+        throw new SenderIdentityUnavailableError('sender_identity_archived', identity.id)
+      }
+      if (identity.provider !== 'smtp') {
+        throw new SenderIdentityUnavailableError('sender_provider_mismatch', identity.id)
+      }
+      const address = identity.email.normalize('NFC').trim().toLowerCase()
+      const providerIdentity = identity.providerIdentity
+        .normalize('NFC')
+        .trim()
+        .toLowerCase()
+      if (address !== configured.email || providerIdentity !== configured.email) {
+        throw new SenderIdentityUnavailableError(
+          'sender_identity_binding_mismatch',
+          identity.id,
+        )
+      }
+      return {
+        source: 'deployment_config',
+        identityKind: 'email_address',
+        verificationStatus: 'operator_configured',
+        dkimStatus: 'not_applicable',
+        mailFromDomain: null,
+        mailFromStatus: 'not_configured',
+        observedAt: new Date().toISOString(),
+      }
+    },
+  }
 }
 
 const ensureDataDirectory = async (directory: string): Promise<void> => {
@@ -191,6 +245,7 @@ export const createContainerRuntime = async (
   await assertDatabasePath(config.databasePath)
   const database = new BetterSqlite3(config.databasePath, { timeout: 5_000 })
   let queue: ContainerEmailQueue | undefined
+  let outboxScheduler: ContainerOutboxScheduler | undefined
   try {
     prepareContainerDatabase(database)
     await chmod(config.databasePath, 0o600)
@@ -201,6 +256,8 @@ export const createContainerRuntime = async (
       createContainerSessionStore(database),
     )
     const emailLog = createContainerEmailLogStore(database)
+    const emailConfiguration = createContainerEmailConfigurationStore(database)
+    const outbox = createContainerOutboxService(database)
     const smtp =
       options.emailProvider ??
       new SmtpMailer({ url: config.smtp.url, from: config.smtp.from })
@@ -209,6 +266,14 @@ export const createContainerRuntime = async (
       (smtp instanceof SmtpMailer ? () => smtp.verify() : undefined)
     if (verify !== undefined) await verify()
     queue = new ContainerEmailQueue(emailLog, smtp)
+    const queuedMailer = createQueuedMailer(emailLog, queue)
+    const organizationName = async () => {
+      const row = database
+        .prepare('SELECT name FROM organizations WHERE id = 1')
+        .get() as { name: string } | undefined
+      return row?.name ?? 'Ezacto'
+    }
+    outboxScheduler = new ContainerOutboxScheduler(outbox)
     const objects = await createDiskAttachmentObjectStore(
       config.attachmentDirectory,
     )
@@ -223,6 +288,15 @@ export const createContainerRuntime = async (
         drizzle,
         timesheetLockPolicy,
       ),
+      isExpensesModuleEnabled: async () => {
+        const row = database
+          .prepare(
+            `SELECT COALESCE(json_extract(modules, '$.expenses'), 0) AS enabled
+             FROM organizations WHERE id = 1`,
+          )
+          .get() as { enabled: number } | undefined
+        return row?.enabled === 1
+      },
       moneyResources: createMoneyResourceRepository(drizzle),
       invoiceGeneration: createInvoiceGenerationService(drizzle),
       reports: createReportRepository(drizzle),
@@ -232,11 +306,25 @@ export const createContainerRuntime = async (
       passwordAuth: createContainerPasswordAuthService(database),
       sessions,
       emailLog,
+      emailConfiguration,
+      senderIdentityVerifier: createSmtpSenderIdentityVerifier(config.smtp.from),
+      outbox,
       identities: createContainerIdentityStore(database),
       oidcTransactions: createContainerOidcTransactionStore(database),
-      authMailer: createQueuedAuthMailer(
-        createQueuedMailer(emailLog, queue),
+      deploymentAuthMailer: createQueuedAuthMailer(
+        createDeploymentSenderQueuedMailer(
+          config.smtp.from,
+          queuedMailer,
+        ),
+        emailConfiguration,
+        organizationName,
         config.appBaseUrl,
+      ),
+      organizationMailer: createSenderBoundQueuedMailer(
+        emailConfiguration,
+        queuedMailer,
+        smtp.name,
+        config.smtp.from,
       ),
       attachments: {
         metadata: createAttachmentStore(drizzle),
@@ -245,15 +333,18 @@ export const createContainerRuntime = async (
           createContainerAttachmentOwnerAuthorizer(database),
       },
     }
+    outboxScheduler.start()
 
     let closed = false
     return {
       database,
       services,
+      drainOutbox: () => outboxScheduler!.drain(),
       async close(timeoutMs) {
         if (closed) return
         closed = true
         try {
+          await outboxScheduler!.close(timeoutMs)
           await queue!.close(timeoutMs)
           database.pragma('wal_checkpoint(TRUNCATE)')
         } finally {
@@ -262,6 +353,7 @@ export const createContainerRuntime = async (
       },
     }
   } catch (error) {
+    await outboxScheduler?.close().catch(() => undefined)
     await queue?.close().catch(() => undefined)
     if (database.open) database.close()
     throw error

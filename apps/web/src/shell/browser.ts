@@ -19,11 +19,16 @@ import {
   type TimeEntryMode,
 } from '../components/time-entry-editor.js'
 import { createClientDirectoryController } from '../clients/browser.js'
-import { renderInvoiceDetail, renderInvoiceListItems } from '../invoices/browser.js'
+import { createProjectDirectoryController } from '../projects/browser.js'
+import { createReportsController } from '../reports/browser.js'
+import { createExpenseWorkflowController } from '../expenses/browser.js'
+import { createTaskAdminController } from '../tasks/browser.js'
+import { createExpenseCategoryDirectoryController } from '../expense-categories/browser.js'
 import {
-  invoiceIdFromPathname,
-  invoiceProfileHasAccess,
-} from '../invoices/model.js'
+  createInvoicePaymentController,
+  renderInvoiceListItems,
+} from '../invoices/browser.js'
+import { invoiceIdentityCanRead } from '../invoices/model.js'
 import {
   buildWeekGrid,
   formatCellHours,
@@ -47,6 +52,7 @@ import {
   timeEntryNoteLength,
   weekRange,
   type DisplayTimeEntry,
+  type ApprovalQueueFilters,
   type ShellApi,
   type ShellSnapshot,
   TimeEntryNoteValidationError,
@@ -705,8 +711,17 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const invoiceDetailPage = document.documentElement.dataset.appView === 'invoice-detail'
   const clientListPage = document.documentElement.dataset.appView === 'client-list'
   const clientDetailPage = document.documentElement.dataset.appView === 'client-detail'
+  const projectListPage = document.documentElement.dataset.appView === 'project-list'
+  const projectDetailPage = document.documentElement.dataset.appView === 'project-detail'
+  const taskListPage = document.documentElement.dataset.appView === 'task-list'
+  const reportsPage = document.documentElement.dataset.appView === 'reports'
+  const expenseListPage = document.documentElement.dataset.appView === 'expense-list'
+  const expenseDetailPage = document.documentElement.dataset.appView === 'expense-detail'
+  const expenseCategoriesPage =
+    document.documentElement.dataset.appView === 'expense-categories'
   const timesheetApprovalsPage =
     document.documentElement.dataset.appView === 'timesheet-approvals'
+  const brandName = document.documentElement.dataset.brand ?? 'ezacto'
   const signedOutDocumentTitle = document.title
   const authenticatedDocumentTitle = signedOutDocumentTitle.replace(
     / — Sign in$/u,
@@ -720,9 +735,23 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
             ? ' — Clients'
             : clientDetailPage
               ? ' — Client detail'
-              : timesheetApprovalsPage
-                ? ' — Approvals'
-                : ' — Time',
+              : projectListPage
+                ? ' — Projects'
+                : projectDetailPage
+                  ? ' — Project detail'
+                  : taskListPage
+                    ? ' — Tasks'
+                  : reportsPage
+                    ? ' — Reports'
+                    : expenseListPage
+                      ? ' — Expenses'
+                      : expenseDetailPage
+                        ? ' — Expense detail'
+                        : expenseCategoriesPage
+                          ? ' — Expense categories'
+                          : timesheetApprovalsPage
+                            ? ' — Approvals'
+                            : ' — Time',
   )
   const status = required<HTMLElement>('[data-session-status]')
   const statusMessage = required<HTMLElement>('[data-session-message]')
@@ -772,6 +801,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const invoiceSuccess = required<HTMLElement>('[data-invoice-generation-success]')
   const generatedInvoiceLink = required<HTMLAnchorElement>('[data-generated-invoice-link]')
   const clientDirectory = createClientDirectoryController(api)
+  const projectDirectory = createProjectDirectoryController(api)
+  const taskAdmin = createTaskAdminController(api)
+  const reports = createReportsController(api)
+  const expenseWorkflow = createExpenseWorkflowController(api)
+  const expenseCategories = createExpenseCategoryDirectoryController(api)
+  const invoicePayments = createInvoicePaymentController(api)
   const invoiceList = required<HTMLElement>('[data-invoice-list]')
   const invoiceListStatus = required<HTMLElement>('[data-invoice-list-status]')
   const invoiceLoadMore = required<HTMLButtonElement>('[data-invoice-load-more]')
@@ -788,6 +823,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const approvalQueue = required<HTMLElement>('[data-approval-queue]')
   const approvalHistory = required<HTMLElement>('[data-approval-history]')
   const approvalQueueResult = required<HTMLElement>('[data-approval-queue-result]')
+  const approvalFiltersForm = required<HTMLFormElement>('[data-approval-filters]')
+  const approvalFilterUser = required<HTMLSelectElement>('[data-approval-filter-user]')
+  const approvalFilterClient = required<HTMLSelectElement>('[data-approval-filter-client]')
+  const approvalFilterProject = required<HTMLSelectElement>('[data-approval-filter-project]')
+  const approvalLoadMore = required<HTMLButtonElement>('[data-approval-load-more]')
+  const approvalHistoryLoadMore = required<HTMLButtonElement>('[data-approval-history-load-more]')
   const rejectionReason = required<HTMLTextAreaElement>('[data-rejection-reason]')
   const rejectionResult = required<HTMLElement>('[data-rejection-result]')
   const rejectionSubmit = required<HTMLButtonElement>('[data-rejection-submit]')
@@ -841,6 +882,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   let currentSubmission: TimesheetSubmission | null = null
   let pendingSubmissions: readonly TimesheetSubmissionDetail[] = []
   let approvedSubmissions: readonly TimesheetSubmission[] = []
+  let pendingNextCursor: string | null = null
+  let approvedNextCursor: string | null = null
+  let approvalQueueFilters: ApprovalQueueFilters = {}
   let lockPolicy: TimesheetLockPolicy | null = null
   let activeTimesheetLocks: readonly TimesheetLockWindow[] = []
   let timesheetTransitionPending = false
@@ -1013,6 +1057,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     currentSubmission = null
     pendingSubmissions = []
     approvedSubmissions = []
+    pendingNextCursor = null
+    approvedNextCursor = null
     lockPolicy = null
     activeTimesheetLocks = []
     timesheetTransitionPending = false
@@ -1416,6 +1462,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         return card
       }),
     )
+    approvalLoadMore.hidden = pendingNextCursor === null
+    approvalHistoryLoadMore.hidden = approvedNextCursor === null
   }
 
   const render = (): void => {
@@ -1458,29 +1506,33 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     current: TimesheetSubmission | null
     pending: readonly TimesheetSubmissionDetail[]
     approved: readonly TimesheetSubmission[]
+    pendingCursor: string | null
+    approvedCursor: string | null
   }> => {
     if (api.listTimesheetSubmissions === undefined) {
-      return { available: false, current: null, pending: [], approved: [] }
+      return { available: false, current: null, pending: [], approved: [], pendingCursor: null, approvedCursor: null }
     }
     const range = weekRange(requestedWithin, requestedWeekStartDay)
     try {
       const own = await api.listTimesheetSubmissions(range.from, range.to, operation.signal)
-      const pendingSummaries =
+      const pendingPage =
         timesheetApprovalsPage &&
         canReviewTimesheets() &&
         api.listPendingTimesheetSubmissions !== undefined
-          ? await api.listPendingTimesheetSubmissions(operation.signal)
-          : []
+          ? await api.listPendingTimesheetSubmissions(approvalQueueFilters, operation.signal)
+          : null
+      const pendingSummaries = pendingPage?.submissions ?? []
       const getSubmission = api.getTimesheetSubmission
-      const approved =
+      const approvedPage =
         timesheetApprovalsPage &&
         canManageTimesheetLocks() &&
         api.listApprovedTimesheetSubmissions !== undefined
           ? await api.listApprovedTimesheetSubmissions(
               shiftDate(localDate(), -90),
+              approvalQueueFilters,
               operation.signal,
             )
-          : []
+          : null
       const pending =
         getSubmission === undefined
           ? []
@@ -1497,11 +1549,13 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
               submission.period_start === range.from && submission.period_end === range.to,
           ) ?? null,
         pending,
-        approved,
+        approved: approvedPage?.submissions ?? [],
+        pendingCursor: pendingPage?.nextCursor ?? null,
+        approvedCursor: approvedPage?.nextCursor ?? null,
       }
     } catch (error) {
       if (error instanceof EzactoApiError && error.status === 404) {
-        return { available: false, current: null, pending: [], approved: [] }
+        return { available: false, current: null, pending: [], approved: [], pendingCursor: null, approvedCursor: null }
       }
       throw error
     }
@@ -1564,6 +1618,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     currentSubmission = approval.current
     pendingSubmissions = approval.pending
     approvedSubmissions = approval.approved
+    pendingNextCursor = approval.pendingCursor
+    approvedNextCursor = approval.approvedCursor
     lockPolicyAvailable = policy.available
     lockPolicy = policy.policy
     activeTimesheetLocks = policy.locks
@@ -1577,7 +1633,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     setSessionStatus('Loading your week…', 'loading')
     try {
       if (!(await refresh(operation))) return
-      setSessionStatus('Connected. Changes save directly to ezacto.', 'ready')
+      setSessionStatus(`Connected. Changes save directly to ${brandName}.`, 'ready')
     } catch (error) {
       if (handleSessionFailure(error, operation)) return
       renderWeekLoadFailure()
@@ -1664,8 +1720,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     cursor?: string,
   ): Promise<void> => {
     if (!isSessionCurrent(operation) || !invoiceListPage) return
-    if (currentIdentity === null || !invoiceProfileHasAccess(currentIdentity.profile)) {
-      invoiceListStatus.textContent = 'Your profile does not have access to invoices.'
+    if (currentIdentity === null || !invoiceIdentityCanRead(currentIdentity)) {
+      invoiceListStatus.textContent =
+        currentIdentity?.authentication.kind === 'token'
+          ? 'This API token does not grant invoice read access.'
+          : 'Your profile does not have access to invoices.'
       invoiceList.replaceChildren()
       invoiceLoadMore.hidden = true
       return
@@ -1705,44 +1764,6 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
   }
 
-  const loadInvoiceDetail = async (operation: AuthOperation): Promise<void> => {
-    if (!isSessionCurrent(operation) || !invoiceDetailPage) return
-    if (currentIdentity === null || !invoiceProfileHasAccess(currentIdentity.profile)) {
-      invoiceDetailStatus.textContent = 'Your profile does not have access to invoices.'
-      invoiceDocument.hidden = true
-      return
-    }
-    const invoiceId = invoiceIdFromPathname(globalThis.location.pathname)
-    const getInvoice = api.getInvoice
-    const listMessages = api.listInvoiceMessages
-    const listPayments = api.listInvoicePayments
-    if (
-      invoiceId === null ||
-      getInvoice === undefined ||
-      listMessages === undefined ||
-      listPayments === undefined
-    ) {
-      invoiceDetailStatus.textContent = 'Invoice detail is unavailable in this build.'
-      invoiceDocument.hidden = true
-      return
-    }
-    invoiceDetailStatus.textContent = 'Loading invoice…'
-    invoiceDocument.hidden = true
-    try {
-      const [invoice, messages, payments] = await Promise.all([
-        getInvoice(invoiceId, operation.signal),
-        listMessages(invoiceId, operation.signal),
-        listPayments(invoiceId, operation.signal),
-      ])
-      if (!isSessionCurrent(operation)) return
-      renderInvoiceDetail(invoice, messages, payments)
-    } catch (error) {
-      if (handleSessionFailure(error, operation)) return
-      invoiceDetailStatus.textContent = messageFor(error)
-      invoiceDocument.hidden = true
-    }
-  }
-
   const loadAuthenticatedShell = async (
     operation: AuthOperation,
   ): Promise<void> => {
@@ -1754,10 +1775,62 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     } else if (invoiceListPage) {
       await Promise.all([loadInvoiceList(authenticated), loadWeek(authenticated)])
     } else if (invoiceDetailPage) {
-      await Promise.all([loadInvoiceDetail(authenticated), loadWeek(authenticated)])
+      await Promise.all([
+        invoicePayments.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
     } else if (clientListPage || clientDetailPage) {
       await Promise.all([
         clientDirectory.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (projectListPage || projectDetailPage) {
+      await Promise.all([
+        projectDirectory.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (taskListPage) {
+      await Promise.all([
+        taskAdmin.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (reportsPage) {
+      await Promise.all([
+        reports.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (expenseListPage || expenseDetailPage) {
+      await Promise.all([
+        expenseWorkflow.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (expenseCategoriesPage) {
+      await Promise.all([
+        expenseCategories.activate(
           identity,
           authenticated.signal,
           (error) => handleSessionFailure(error, authenticated),
@@ -2705,6 +2778,29 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     rejectionResult.textContent = ''
   })
 
+  approvalFiltersForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const operation = sessionOperation()
+    if (operation === null) return
+    const userVal = approvalFilterUser.value
+    const clientVal = approvalFilterClient.value
+    const projectVal = approvalFilterProject.value
+    approvalQueueFilters = {
+      ...(userVal ? { userId: Number(userVal) } : {}),
+      ...(clientVal ? { clientId: Number(clientVal) } : {}),
+      ...(projectVal ? { projectId: Number(projectVal) } : {}),
+    }
+    void refresh(operation)
+  })
+
+  approvalLoadMore.addEventListener('click', () => {
+    approvalLoadMore.hidden = true
+  })
+
+  approvalHistoryLoadMore.addEventListener('click', () => {
+    approvalHistoryLoadMore.hidden = true
+  })
+
   const moveWeek = (days: number): void => {
     const operation = sessionOperation()
     if (operation === null || operation.userId === null) return
@@ -2717,7 +2813,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     void refresh(operation)
       .then((loaded) => {
         if (!loaded || !isSessionCurrent(operation)) return
-        setSessionStatus('Connected. Changes save directly to ezacto.', 'ready')
+        setSessionStatus(`Connected. Changes save directly to ${brandName}.`, 'ready')
       })
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return

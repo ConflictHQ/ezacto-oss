@@ -68,6 +68,7 @@ const miniflare = new Miniflare({
   },
   compatibilityDate: '2026-08-06',
   d1Databases: ['DB'],
+  r2Buckets: ['ATTACHMENTS'],
   host: listenHost,
   log: new NoOpLog(),
   modules: true,
@@ -241,6 +242,163 @@ const fixtureControl = async (request, response) => {
         )
         .bind(timestamp, timestamp),
     ])
+  } else if (action === 'invoice-payment-seed') {
+    await database.batch([
+      database.prepare('DELETE FROM time_entries WHERE id = 903'),
+      database
+        .prepare(
+          `INSERT INTO time_entries (
+             id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+             spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+             billable_rate_cents, cost_rate_cents, notes, created_at, updated_at
+           ) VALUES (
+             903, 1, 1, 1, 1, 1, '2026-08-15', 2700, 2700, 2700, 1,
+             10000, 5000, 'Invoice payment acceptance', ?, ?
+           )`,
+        )
+        .bind(timestamp, timestamp),
+    ])
+  } else if (action === 'project-directory-cleanup') {
+    await database.batch([
+      database
+        .prepare(
+          `UPDATE task_assignments
+           SET is_active = 0, updated_at = ?
+           WHERE project_id IN (
+             SELECT id FROM projects WHERE name = 'Browser UI Project'
+           )`,
+        )
+        .bind(timestamp),
+      database
+        .prepare(
+          `UPDATE user_assignments
+           SET is_active = 0, updated_at = ?
+           WHERE project_id IN (
+             SELECT id FROM projects WHERE name = 'Browser UI Project'
+           )`,
+        )
+        .bind(timestamp),
+      database
+        .prepare(
+          `UPDATE projects
+           SET is_active = 0, updated_at = ?
+           WHERE name = 'Browser UI Project'`,
+        )
+        .bind(timestamp),
+      database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+    ])
+    const remaining = await database
+      .prepare(
+        `SELECT count(*) AS count
+         FROM projects
+         WHERE name = 'Browser UI Project' AND is_active = 1`,
+      )
+      .first()
+    if (remaining?.count !== 0) {
+      throw new Error('project directory fixture cleanup left active work behind')
+    }
+  } else if (action === 'invoice-generation-seed') {
+    await database.batch([
+      database.prepare(
+        `DELETE FROM time_entries
+         WHERE invoice_id IS NULL
+           AND (
+             id IN (1, 2)
+             OR notes IN (
+               'Browser invoice generation fixture 1',
+               'Browser invoice generation fixture 2'
+             )
+           )`,
+      ),
+      database
+        .prepare(
+          `INSERT INTO time_entries (
+             id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+             spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+             billable_rate_cents, cost_rate_cents, budgeted, notes, created_at, updated_at
+           ) VALUES (
+             (SELECT coalesce(max(id), 0) + 1 FROM time_entries),
+             1, 1, 1, 1, 1, ?, 1800, 1800, 1800, 1, 10000, 5000,
+             1, 'Browser invoice generation fixture 1', ?, ?
+           )`,
+        )
+        .bind(spentDate, timestamp, timestamp),
+      database
+        .prepare(
+          `INSERT INTO time_entries (
+             id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+             spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+             billable_rate_cents, cost_rate_cents, budgeted, notes, created_at, updated_at
+           ) VALUES (
+             (SELECT coalesce(max(id), 0) + 1 FROM time_entries),
+             1, 1, 1, 1, 1, ?, 900, 900, 900, 1, 10000, 5000,
+             1, 'Browser invoice generation fixture 2', ?, ?
+           )`,
+        )
+        .bind(spentDate, timestamp, timestamp),
+      database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+    ])
+    const seeded = await database
+      .prepare(
+        `SELECT count(*) AS count, sum(rounded_seconds) AS seconds
+         FROM time_entries
+         WHERE invoice_id IS NULL
+           AND notes IN (
+             'Browser invoice generation fixture 1',
+             'Browser invoice generation fixture 2'
+           )`,
+      )
+      .first()
+    if (seeded?.count !== 2 || seeded.seconds !== 2700) {
+      throw new Error('invoice generation fixture did not own one exact work set')
+    }
+  } else if (action === 'invoice-generation-cleanup') {
+    await database.batch([
+      database.prepare(
+        `DELETE FROM time_entries
+         WHERE invoice_id IS NULL
+           AND notes IN (
+             'Browser invoice generation fixture 1',
+             'Browser invoice generation fixture 2'
+           )`,
+      ),
+      database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+    ])
+  } else if (action === 'invoice-line-seed') {
+    await database.batch([
+      database.prepare('DELETE FROM time_entries WHERE id = 904'),
+      database
+        .prepare(
+          `INSERT INTO time_entries (
+             id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+             spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+             billable_rate_cents, cost_rate_cents, notes, created_at, updated_at
+           ) VALUES (
+             904, 1, 1, 1, 1, 1, '2026-08-14', 2700, 2700, 2700, 1,
+             10000, 5000, 'Invoice line acceptance', ?, ?
+           )`,
+        )
+        .bind(timestamp, timestamp),
+    ])
+  } else if (action === 'task-admin-cleanup') {
+    await database.batch([
+      database.prepare(
+        `DELETE FROM task_assignments
+         WHERE task_id IN (SELECT id FROM tasks WHERE name = 'Browser Default Task Updated')
+            OR project_id IN (SELECT id FROM projects WHERE name LIKE 'Task admin default project %')`,
+      ),
+      database.prepare(
+        `DELETE FROM user_assignments
+         WHERE project_id IN (SELECT id FROM projects WHERE name LIKE 'Task admin default project %')`,
+      ),
+      database.prepare(
+        `DELETE FROM projects WHERE name LIKE 'Task admin default project %'`,
+      ),
+      database.prepare(
+        `DELETE FROM tasks WHERE name = 'Browser Default Task Updated'`,
+      ),
+      database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+    ])
   } else {
     response.statusCode = 400
     response.end()
@@ -260,10 +418,10 @@ await run(
 await run(
   `INSERT INTO projects (
      id, client_id, name, code, hourly_rate_cents,
-     time_entry_notes_minimum_length, created_at, updated_at
+     budget_by, budget_seconds, time_entry_notes_minimum_length, created_at, updated_at
    ) VALUES
-     (1, 1, 'Browser Acceptance Project', 'BROWSER', 10000, NULL, ?, ?),
-     (2, 1, 'Browser Secondary Project', 'SECONDARY', 12500, 8, ?, ?)`,
+     (1, 1, 'Browser Acceptance Project', 'BROWSER', 10000, 'project', 14400, NULL, ?, ?),
+     (2, 1, 'Browser Secondary Project', 'SECONDARY', 12500, 'none', NULL, 8, ?, ?)`,
   timestamp,
   timestamp,
   timestamp,
@@ -280,8 +438,13 @@ await run(
   timestamp,
 )
 await run(
-  `INSERT INTO expense_categories (id, name, created_at, updated_at)
-   VALUES (1, 'Travel', ?, ?)`,
+  `INSERT INTO expense_categories (
+     id, name, unit_name, unit_price_cents, created_at, updated_at
+   ) VALUES
+     (1, 'Travel', NULL, NULL, ?, ?),
+     (2, 'Mileage', 'mile', 67, ?, ?)`,
+  timestamp,
+  timestamp,
   timestamp,
   timestamp,
 )
@@ -311,15 +474,15 @@ await run(
   `INSERT INTO time_entries (
      id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
      spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
-     billable_rate_cents, cost_rate_cents, notes, created_at, updated_at
+     billable_rate_cents, cost_rate_cents, budgeted, notes, created_at, updated_at
    ) VALUES
      (
        1, 1, 1, 1, 1, 1, ?, 1800, 1800, 1800, 1, 10000, 5000,
-       'First line\nSecond line with delivery detail', ?, ?
+       1, 'First line\nSecond line with delivery detail', ?, ?
      ),
      (
        2, 1, 1, 1, 1, 1, ?, 900, 900, 900, 1, 10000, 5000,
-       'Separate follow-up', ?, ?
+       1, 'Separate follow-up', ?, ?
      )`,
   spentDate,
   timestamp,

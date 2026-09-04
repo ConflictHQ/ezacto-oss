@@ -6,8 +6,7 @@ import {
   type GeneralResource,
   type Invoice,
   type InvoiceGenerationInput,
-  type InvoiceMessage,
-  type InvoicePayment,
+  type InvoiceTransitionInput,
   type PasswordSignInInput,
   type Session,
   type TimeEntry,
@@ -28,22 +27,43 @@ import {
 } from '@ezacto/client'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 import type { ClientDirectoryApi } from '../clients/model.js'
+import type { ProjectDirectoryApi } from '../projects/model.js'
+import type { ReportWorkspaceApi } from '../reports/model.js'
+import type { ExpenseWorkflowApi } from '../expenses/model.js'
+import type { ExpenseCategoryDirectoryApi } from '../expense-categories/model.js'
+import type { InvoicePaymentApi } from '../invoices/model.js'
+import type { TaskAdminApi } from '../tasks/model.js'
 
 interface CursorPage<T> {
   readonly data: readonly T[]
   readonly page: { readonly next_cursor: string | null }
 }
 
-export interface ShellApi extends Partial<ClientDirectoryApi> {
+export interface ApprovalQueueFilters {
+  readonly userId?: number
+  readonly clientId?: number
+  readonly projectId?: number
+}
+
+export interface ApprovalQueuePage {
+  readonly submissions: readonly TimesheetSubmission[]
+  readonly nextCursor: string | null
+}
+
+export interface ShellApi
+  extends Partial<ClientDirectoryApi>,
+    Partial<ProjectDirectoryApi>,
+    Partial<ReportWorkspaceApi>,
+    Partial<ExpenseWorkflowApi>,
+    Partial<ExpenseCategoryDirectoryApi>,
+    Partial<InvoicePaymentApi>,
+    Partial<TaskAdminApi> {
   whoami(signal?: AbortSignal): Promise<Whoami>
   signIn(credentials: PasswordSignInInput, signal?: AbortSignal): Promise<AuthPrincipal>
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
   listProjects(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listClients?(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listInvoices?(cursor?: string, signal?: AbortSignal): Promise<CursorPage<Invoice>>
-  getInvoice?(id: number, signal?: AbortSignal): Promise<Invoice>
-  listInvoiceMessages?(id: number, signal?: AbortSignal): Promise<readonly InvoiceMessage[]>
-  listInvoicePayments?(id: number, signal?: AbortSignal): Promise<readonly InvoicePayment[]>
   listTasks(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listTimeEntryOptions(signal?: AbortSignal): Promise<readonly TimeEntryOption[]>
   getTimeEntrySettings(signal?: AbortSignal): Promise<TimeEntrySettings>
@@ -69,11 +89,15 @@ export interface ShellApi extends Partial<ClientDirectoryApi> {
     input: TimesheetSubmissionInput,
     signal?: AbortSignal,
   ): Promise<TimesheetSubmission>
-  listPendingTimesheetSubmissions?(signal?: AbortSignal): Promise<readonly TimesheetSubmission[]>
+  listPendingTimesheetSubmissions?(
+    filters?: ApprovalQueueFilters,
+    signal?: AbortSignal,
+  ): Promise<ApprovalQueuePage>
   listApprovedTimesheetSubmissions?(
     periodStart: string,
+    filters?: ApprovalQueueFilters,
     signal?: AbortSignal,
-  ): Promise<readonly TimesheetSubmission[]>
+  ): Promise<ApprovalQueuePage>
   getTimesheetSubmission?(id: number, signal?: AbortSignal): Promise<TimesheetSubmissionDetail>
   approveTimesheetSubmission?(id: number, signal?: AbortSignal): Promise<TimesheetSubmission>
   rejectTimesheetSubmission?(
@@ -105,6 +129,12 @@ export interface ShellApi extends Partial<ClientDirectoryApi> {
   generateInvoice?(
     commandId: string,
     input: InvoiceGenerationInput,
+    signal?: AbortSignal,
+  ): Promise<Invoice>
+  transitionInvoice?(
+    id: number,
+    commandId: string,
+    input: InvoiceTransitionInput,
     signal?: AbortSignal,
   ): Promise<Invoice>
 }
@@ -181,6 +211,7 @@ const navigation = new Map([
   ['time', '/'],
   ['expenses', '/expenses'],
   ['projects', '/projects'],
+  ['tasks', '/tasks'],
   ['clients', '/clients'],
   ['invoices', '/invoices'],
   ['reports', '/reports'],
@@ -575,6 +606,194 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     }),
+  listDirectoryProjects: (cursor, signal) =>
+    client.listProjects({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listProjectClients: (cursor, signal) =>
+    client.listClients({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listReportClients: (cursor, signal) =>
+    client.listClients({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listReportProjects: (cursor, signal) =>
+    client.listProjects({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  getUninvoicedReport: async (filter, signal) =>
+    (
+      await client.getUninvoicedReport({
+        query: filter,
+        ...withSignal(signal),
+      })
+    ).data,
+  getClientRollupReport: async (clientId, filter, signal) =>
+    (
+      await client.getClientRollupReport({
+        clientId,
+        query: filter,
+        ...withSignal(signal),
+      })
+    ).data,
+  getProjectBudgetReport: async (projectId, filter, signal) =>
+    (
+      await client.getProjectBudgetReport({
+        projectId,
+        query: filter,
+        ...withSignal(signal),
+      })
+    ).data,
+  getDirectoryProject: async (id, signal) =>
+    (await client.getProject({ id, ...withSignal(signal) })).data,
+  createDirectoryProject: async (input, signal) =>
+    (await client.createProject({ body: input, ...withSignal(signal) })).data,
+  updateDirectoryProject: async (id, input, signal) =>
+    (await client.updateProject({ id, body: input, ...withSignal(signal) })).data,
+  archiveDirectoryProject: async (id, signal) => {
+    await client.deleteProject({ id, ...withSignal(signal) })
+  },
+  listDirectoryTasks: (cursor, signal) =>
+    client.listTasks({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listAdminTasks: (filter, cursor, signal) =>
+    client.listTasks({
+      query: {
+        per_page: 50,
+        ...(filter === 'active' ? { is_active: true } : {}),
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  createAdminTask: async (input, signal) =>
+    (await client.createTask({ body: input, ...withSignal(signal) })).data,
+  updateAdminTask: async (id, input, signal) =>
+    (await client.updateTask({ id, body: input, ...withSignal(signal) })).data,
+  archiveAdminTask: async (id, signal) => {
+    await client.deleteTask({ id, ...withSignal(signal) })
+  },
+  listProjectTaskAssignments: (projectId, cursor, signal) =>
+    client.listTaskAssignments({
+      query: {
+        project_id: projectId,
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  createProjectTaskAssignment: async (input, signal) =>
+    (await client.createTaskAssignment({ body: input, ...withSignal(signal) })).data,
+  updateProjectTaskAssignment: async (id, input, signal) =>
+    (await client.updateTaskAssignment({ id, body: input, ...withSignal(signal) })).data,
+  archiveProjectTaskAssignment: async (id, signal) => {
+    await client.deleteTaskAssignment({ id, ...withSignal(signal) })
+  },
+  listDirectoryProjectAttachments: async (projectId, signal) =>
+    (await client.listProjectAttachments({ projectId, ...withSignal(signal) })).data,
+  uploadDirectoryProjectAttachment: async (projectId, commandId, body, signal) =>
+    (
+      await client.createProjectAttachment({
+        projectId,
+        'Idempotency-Key': commandId,
+        body,
+        ...withSignal(signal),
+      })
+    ).data,
+  listWorkflowExpenses: (filters, cursor, signal) =>
+    client.listExpenses({
+      query: {
+        ...filters,
+        per_page: 100,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  getExpenseWeekStartDay: async (signal) =>
+    (await client.getTimeEntrySettings(withSignal(signal))).data.week_start_day,
+  getWorkflowExpense: async (id, signal) =>
+    (await client.getExpense({ id, ...withSignal(signal) })).data,
+  createWorkflowExpense: async (input, signal) =>
+    (await client.createExpense({ body: input, ...withSignal(signal) })).data,
+  updateWorkflowExpense: async (id, input, signal) =>
+    (await client.updateExpense({ id, body: input, ...withSignal(signal) })).data,
+  listExpenseCategories: (cursor, signal) =>
+    client.listExpenseCategories({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listExpenseProjects: (cursor, signal) =>
+    client.listProjects({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listExpenseClients: (cursor, signal) =>
+    client.listClients({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listWorkflowExpenseAttachments: async (expenseId, signal) =>
+    (await client.listExpenseAttachments({ expenseId, ...withSignal(signal) })).data,
+  uploadWorkflowExpenseAttachment: async (expenseId, commandId, body, signal) =>
+    (
+      await client.createExpenseAttachment({
+        expenseId,
+        'Idempotency-Key': commandId,
+        body,
+        ...withSignal(signal),
+      })
+    ).data,
+  listDirectoryExpenseCategories: (activeOnly, cursor, signal) =>
+    client.listExpenseCategories({
+      query: {
+        per_page: 50,
+        ...(activeOnly ? { is_active: true } : {}),
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  createDirectoryExpenseCategory: async (input, signal) =>
+    (await client.createExpenseCategory({ body: input, ...withSignal(signal) })).data,
+  updateDirectoryExpenseCategory: async (id, body, signal) =>
+    (await client.updateExpenseCategory({ id, body, ...withSignal(signal) })).data,
+  archiveDirectoryExpenseCategory: async (id, signal) =>
+    (
+      await client.updateExpenseCategory({
+        id,
+        body: { is_active: false },
+        ...withSignal(signal),
+      })
+    ).data,
   listInvoices: (cursor, signal) =>
     client.listInvoices({
       query: {
@@ -589,6 +808,73 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.listInvoiceMessages({ id, ...withSignal(signal) })).data,
   listInvoicePayments: async (id, signal) =>
     (await client.listInvoicePayments({ id, ...withSignal(signal) })).data,
+  recordInvoicePayment: async (id, commandId, input, signal) =>
+    (
+      await client.recordInvoicePayment({
+        id,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data.invoice,
+  updateInvoicePayment: async (id, paymentId, commandId, input, signal) =>
+    (
+      await client.updateInvoicePayment({
+        id,
+        paymentId,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data.invoice,
+  deleteInvoicePayment: async (id, paymentId, commandId, input, signal) =>
+    (
+      await client.deleteInvoicePayment({
+        id,
+        paymentId,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data.invoice,
+  createInvoiceLine: async (id, commandId, input, signal) =>
+    (
+      await client.createInvoiceLine({
+        id,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data.invoice,
+  updateInvoiceLine: async (id, lineId, commandId, input, signal) =>
+    (
+      await client.updateInvoiceLine({
+        id,
+        lineId,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data.invoice,
+  deleteInvoiceLine: async (id, lineId, commandId, input, signal) =>
+    (
+      await client.deleteInvoiceLine({
+        id,
+        lineId,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data.invoice,
+  transitionInvoice: async (id, commandId, input, signal) =>
+    (
+      await client.transitionInvoice({
+        id,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data.invoice,
   listTasks: (cursor, signal) =>
     client.listTasks({
       query: {
@@ -665,19 +951,30 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   },
   submitTimesheet: async (input, signal) =>
     (await client.submitTimesheet({ body: input, ...withSignal(signal) })).data,
-  listPendingTimesheetSubmissions: async (signal) => {
+  listPendingTimesheetSubmissions: async (filters, signal) => {
     const page = await client.listPendingTimesheetSubmissions({
-      query: { per_page: pendingTimesheetQueueLimit },
+      query: {
+        per_page: pendingTimesheetQueueLimit,
+        ...(filters?.userId !== undefined ? { user_id: filters.userId } : {}),
+        ...(filters?.clientId !== undefined ? { client_id: filters.clientId } : {}),
+        ...(filters?.projectId !== undefined ? { project_id: filters.projectId } : {}),
+      },
       ...withSignal(signal),
     })
-    return page.data.slice(0, pendingTimesheetQueueLimit)
+    return { submissions: page.data, nextCursor: page.page.next_cursor ?? null }
   },
-  listApprovedTimesheetSubmissions: async (periodStart, signal) => {
+  listApprovedTimesheetSubmissions: async (periodStart, filters, signal) => {
     const page = await client.listApprovedTimesheetSubmissions({
-      query: { period_start: periodStart, per_page: pendingTimesheetQueueLimit },
+      query: {
+        period_start: periodStart,
+        per_page: pendingTimesheetQueueLimit,
+        ...(filters?.userId !== undefined ? { user_id: filters.userId } : {}),
+        ...(filters?.clientId !== undefined ? { client_id: filters.clientId } : {}),
+        ...(filters?.projectId !== undefined ? { project_id: filters.projectId } : {}),
+      },
       ...withSignal(signal),
     })
-    return page.data.slice(0, pendingTimesheetQueueLimit)
+    return { submissions: page.data, nextCursor: page.page.next_cursor ?? null }
   },
   getTimesheetSubmission: async (id, signal) =>
     (await client.getTimesheetSubmission({ id, ...withSignal(signal) })).data,

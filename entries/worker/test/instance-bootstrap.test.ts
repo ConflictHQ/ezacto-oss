@@ -202,6 +202,85 @@ describe("Worker operator bootstrap", () => {
       },
     });
 
+    const variables = await request('/api/v1/email-template-variables', {
+      headers: { cookie: sessionCookie },
+    })
+    expect(variables.status).toBe(200)
+    expect(await variables.json()).toMatchObject({
+      data: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'invoice',
+          variables: expect.arrayContaining([
+            expect.objectContaining({
+              token: '%invoice_id%',
+              compatibility: 'harvest',
+            }),
+          ]),
+        }),
+      ]),
+    })
+
+    const appendTemplate = () =>
+      request('/api/v1/email-templates/invoice/versions', {
+        method: 'POST',
+        headers: {
+          cookie: sessionCookie,
+          origin: 'https://worker.test',
+          'content-type': 'application/json',
+          'idempotency-key': 'miniflare-template-invoice-v2',
+        },
+        body: JSON.stringify({
+          expected_version: 1,
+          subject_template: 'Invoice %invoice_id% from %company_name%',
+          text_template: 'Invoice %invoice_number% is due %invoice_due_date%.',
+          html_template: null,
+        }),
+      })
+    expect((await appendTemplate()).status).toBe(201)
+    expect((await appendTemplate()).status).toBe(201)
+
+    const configuredSender = await request('/api/v1/sender-identities', {
+      method: 'POST',
+      headers: {
+        cookie: sessionCookie,
+        origin: 'https://worker.test',
+        'content-type': 'application/json',
+        'idempotency-key': 'miniflare-sender-example',
+      },
+      body: JSON.stringify({
+        email: 'billing@example.com',
+        display_name: 'Example Billing',
+        reply_to_email: 'accounts@example.com',
+        provider: 'ses',
+        provider_identity: 'example.com',
+      }),
+    })
+    expect(configuredSender.status).toBe(201)
+    const configuredSenderBody = (await configuredSender.json()) as {
+      data: { id: number; evidence: unknown; is_default: boolean }
+    }
+    expect(configuredSenderBody.data).toMatchObject({
+      evidence: null,
+      is_default: false,
+    })
+    const unavailableVerification = await request(
+      `/api/v1/sender-identities/${configuredSenderBody.data.id}/refresh`,
+      {
+        method: 'POST',
+        headers: {
+          cookie: sessionCookie,
+          origin: 'https://worker.test',
+          'content-type': 'application/json',
+          'idempotency-key': 'miniflare-sender-refresh',
+        },
+        body: JSON.stringify({ expected_evidence_version: 0 }),
+      },
+    )
+    expect(unavailableVerification.status).toBe(409)
+    expect(await unavailableVerification.json()).toMatchObject({
+      error: { code: 'provider_verification_unavailable' },
+    })
+
     const sessions = await request("/api/v1/sessions", {
       headers: { cookie: sessionCookie },
     });
@@ -247,7 +326,7 @@ describe("Worker operator bootstrap", () => {
       await database
         .prepare(`SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`)
         .first<{ id: string }>(),
-    ).toEqual({ id: "0028_timesheet_lock_policy" });
+    ).toEqual({ id: "0030_email_templates" });
   }, 40_000);
 
   it("[security] remains unavailable when the temporary Worker secret is absent", async () => {

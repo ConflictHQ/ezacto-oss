@@ -26,10 +26,12 @@ export interface GeneralResourceRouteOptions {
   repository: GeneralResourceRepository;
   cursorSigningKey: Uint8Array;
   clock?: () => string;
+  isExpensesModuleEnabled(): Promise<boolean>;
 }
 
 type FieldType =
   | "string"
+  | "empty-string"
   | "nullable-string"
   | "boolean"
   | "positive-int"
@@ -64,6 +66,7 @@ const managerGrantValues = [
 ] as const;
 
 const string = { type: "string" } as const;
+const emptyString = { type: "empty-string" } as const;
 const nullableString = { type: "nullable-string" } as const;
 const bool = { type: "boolean" } as const;
 const positiveInt = { type: "positive-int" } as const;
@@ -145,7 +148,7 @@ const routeDefinitions: Readonly<
     fields: {
       client_id: positiveInt,
       name: string,
-      code: string,
+      code: emptyString,
       is_active: bool,
       billing_method: valueEnum("non_billable", "time_materials", "fixed_fee"),
       bill_by: valueEnum("project", "tasks", "people", "none"),
@@ -295,8 +298,16 @@ const serializeRaw = (
 const canSeeBillableMoney = (viewer: Readonly<UserPrincipal>): boolean =>
   canViewMoneyField(viewer, "billable_rate");
 
-const canSeeMoneyBudgets = (viewer: Readonly<UserPrincipal>): boolean =>
-  canViewMoneyField(viewer, "money_budget");
+const canSeeProjectBillableMoney = (
+  viewer: Readonly<UserPrincipal>,
+): boolean =>
+  viewer.profile === "executive_manager" ||
+  viewer.profile === "administrator" ||
+  (viewer.profile === "project_manager" &&
+    viewer.managerGrants.includes("billable_rates_manager"));
+
+const canSeeProjectCostBudget = (viewer: Readonly<UserPrincipal>): boolean =>
+  viewer.profile === "executive_manager" || viewer.profile === "administrator";
 
 const hiddenGeneralField = (
   kind: GeneralResourceKind,
@@ -306,18 +317,19 @@ const hiddenGeneralField = (
   if (kind === "projects") {
     if (field === "notes") return viewer.profile !== "administrator";
     if (field === "hourlyRateCents" || field === "feeCents")
-      return !canSeeBillableMoney(viewer);
-    if (field === "costBudgetCents") return !canSeeMoneyBudgets(viewer);
+      return !canSeeProjectBillableMoney(viewer);
+    if (field === "costBudgetCents") return !canSeeProjectCostBudget(viewer);
   }
   if (
     (kind === "tasks" && field === "defaultHourlyRateCents") ||
-    ((kind === "task-assignments" || kind === "user-assignments") &&
-      field === "hourlyRateCents")
+    (kind === "user-assignments" && field === "hourlyRateCents")
   ) {
     return !canSeeBillableMoney(viewer);
   }
+  if (kind === "task-assignments" && field === "hourlyRateCents")
+    return !canSeeProjectBillableMoney(viewer);
   if (kind === "task-assignments" && field === "budgetCents")
-    return !canSeeMoneyBudgets(viewer);
+    return !canSeeProjectCostBudget(viewer);
   if (
     kind === "users" &&
     (field === "managerGrants" || field === "samlExempt")
@@ -370,6 +382,10 @@ const parseField = (
     return typeof value === "string" && value.trim().length > 0
       ? value
       : invalid("invalid_string", `${field} must be a non-empty string`);
+  if (spec.type === "empty-string")
+    return typeof value === "string"
+      ? value
+      : invalid("invalid_string", `${field} must be a string`);
   if (spec.type === "nullable-string")
     return value === null || typeof value === "string"
       ? value
@@ -604,6 +620,20 @@ const translate = (error: unknown): never => {
   ]);
 };
 
+const requireResourceModule = async (
+  kind: GeneralResourceKind,
+  options: Required<GeneralResourceRouteOptions>,
+): Promise<void> => {
+  if (kind !== "expense-categories" || (await options.isExpensesModuleEnabled())) {
+    return;
+  }
+  throw new ApiError({
+    status: 403,
+    code: "module_disabled",
+    message: "The expenses module is not enabled for this organization.",
+  });
+};
+
 const profileForbidden = (): never => {
   throw new ApiError({
     status: 403,
@@ -693,17 +723,22 @@ const authorizeMutationFields = (
   if (
     ((kind === "projects" &&
       (fields.has("hourlyRateCents") || fields.has("feeCents"))) ||
-      (kind === "tasks" && fields.has("defaultHourlyRateCents")) ||
-      ((kind === "task-assignments" || kind === "user-assignments") &&
-        fields.has("hourlyRateCents"))) &&
-    !canSeeBillableMoney(principal)
+      (kind === "task-assignments" && fields.has("hourlyRateCents"))) &&
+    !canSeeProjectBillableMoney(principal)
   ) {
     return profileForbidden();
   }
   if (
     ((kind === "projects" && fields.has("costBudgetCents")) ||
       (kind === "task-assignments" && fields.has("budgetCents"))) &&
-    !canSeeMoneyBudgets(principal)
+    !canSeeProjectCostBudget(principal)
+  ) {
+    return profileForbidden();
+  }
+  if (
+    ((kind === "tasks" && fields.has("defaultHourlyRateCents")) ||
+      (kind === "user-assignments" && fields.has("hourlyRateCents"))) &&
+    !canSeeBillableMoney(principal)
   ) {
     return profileForbidden();
   }
@@ -758,6 +793,7 @@ const installResource = <Bindings extends object>(
   const definition = routeDefinitions[kind];
   api.get(`/${kind}`, async (context) => {
     const principal = requireResourceRead(context, kind);
+    await requireResourceModule(kind, options);
     const filters = parseFilters(new URL(context.req.url), definition);
     try {
       return context.json(
@@ -780,6 +816,7 @@ const installResource = <Bindings extends object>(
   });
   api.post(`/${kind}`, async (context) => {
     const principal = requireResourceWrite(context, kind);
+    await requireResourceModule(kind, options);
     const input = await parseMutation(context, definition, true);
     authorizeMutationFields(kind, input, principal);
     try {
@@ -795,6 +832,7 @@ const installResource = <Bindings extends object>(
   });
   api.get(`/${kind}/:id`, async (context) => {
     const principal = requireResourceRead(context, kind);
+    await requireResourceModule(kind, options);
     try {
       return context.json(
         envelope(
@@ -812,6 +850,7 @@ const installResource = <Bindings extends object>(
   });
   api.patch(`/${kind}/:id`, async (context) => {
     const principal = requireResourceWrite(context, kind);
+    await requireResourceModule(kind, options);
     const input = await parseMutation(context, definition, false);
     authorizeMutationFields(kind, input, principal);
     try {
@@ -828,6 +867,7 @@ const installResource = <Bindings extends object>(
   });
   api.delete(`/${kind}/:id`, async (context) => {
     requireResourceWrite(context, kind);
+    await requireResourceModule(kind, options);
     try {
       await options.repository.remove(
         kind,

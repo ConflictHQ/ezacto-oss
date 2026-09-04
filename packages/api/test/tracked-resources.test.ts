@@ -320,6 +320,7 @@ const harness = async (
         cursorSigningKey: new TextEncoder().encode(
           'tracked-resource-cursor-key-32-bytes',
         ),
+        isExpensesModuleEnabled: async () => true,
       }),
   })
   return {
@@ -1216,6 +1217,31 @@ for (const [runtime, factory] of factories) {
         total_cost_cents: number
       }>(unitResponse)
       expect(unit).toMatchObject({ units: 3, total_cost_cents: 750 })
+
+      await test.database.run(
+        `UPDATE expense_categories
+         SET unit_price_cents = 300, is_active = 0, updated_at = ?
+         WHERE id = 2`,
+        '2026-08-28T09:30:00.000Z',
+      )
+      const notesOnly = await test.request(
+        `/api/v1/expenses/${unit.id}`,
+        jsonRequest('PATCH', { notes: 'price-preserving archived category edit' }),
+      )
+      expect(notesOnly.status).toBe(200)
+      expect(
+        await data<{ units: number; total_cost_cents: number; notes: string }>(notesOnly),
+      ).toMatchObject({
+        units: 3,
+        total_cost_cents: 750,
+        notes: 'price-preserving archived category edit',
+      })
+      await test.database.run(
+        `UPDATE expense_categories
+         SET unit_price_cents = 250, is_active = 1, updated_at = ?
+         WHERE id = 2`,
+        '2026-08-28T09:31:00.000Z',
+      )
 
       const list = await test.request(
         '/api/v1/expenses?client_id=1&project_id=1&expense_category_id=2' +

@@ -89,6 +89,11 @@ export interface ProjectBudgetReportRecord extends ReportDateRange {
   grains: readonly ProjectBudgetGrainRecord[];
 }
 
+export interface ProjectReportViewer {
+  userId: number;
+  profile: UserPrincipal["profile"];
+}
+
 export interface ReportReader {
   uninvoiced(filter: {
     from: string;
@@ -103,6 +108,7 @@ export interface ReportReader {
   projectBudget(
     projectId: number,
     range: Readonly<ReportDateRange>,
+    viewer: Readonly<ProjectReportViewer>,
   ): Promise<ProjectBudgetReportRecord | null>;
 }
 
@@ -318,7 +324,11 @@ export const installReportRoutes = <Bindings extends object>(
     const parsed = rangeFrom(new URL(context.req.url), reportKeys);
     assertFields(parsed.errors);
     const projectId = resourceId(context.req.param("projectId"), "project");
-    const report = await reports.projectBudget(projectId, parsed.range);
+    const report = await reports.projectBudget(
+      projectId,
+      parsed.range,
+      context.get("principal"),
+    );
     if (report === null) throw notFound("project");
     return context.json(
       {

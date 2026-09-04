@@ -1,4 +1,11 @@
-import { expect, test, type Locator, type Page, type Route } from '@playwright/test'
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Locator,
+  type Page,
+  type Route,
+} from '@playwright/test'
 
 const timestamp = '2026-08-28T12:00:00.000Z'
 const fixtureEmail = process.env.EZACTO_BROWSER_FIXTURE_EMAIL
@@ -17,6 +24,32 @@ if (
 
 test.beforeEach(async ({ page }) => {
   await page.clock.setFixedTime(fixtureInstant)
+})
+
+type BrowserFixtureAction =
+  | 'invoice-generation-cleanup'
+  | 'invoice-generation-seed'
+  | 'project-directory-cleanup'
+
+const controlBrowserFixture = (
+  request: APIRequestContext,
+  action: BrowserFixtureAction,
+) =>
+  request.post('/__ezacto_browser_fixture__/start-end', {
+    data: { action },
+    headers: { 'x-ezacto-browser-fixture-control': 'start-end-round-trip' },
+  })
+
+test.afterEach(async ({ request }, testInfo) => {
+  const action = testInfo.title.includes('[e2e:project-directory]')
+    ? 'project-directory-cleanup'
+    : testInfo.title ===
+        '[e2e:invoice-cycle] generates a real draft through the authenticated wizard'
+      ? 'invoice-generation-cleanup'
+      : null
+  if (action === null) return
+  const cleaned = await controlBrowserFixture(request, action)
+  expect(cleaned.status()).toBe(204)
 })
 
 const fulfillJson = (route: Route, body: unknown, status = 200) =>
@@ -1012,9 +1045,612 @@ test('[e2e:client-directory] persists hierarchy, bill-to, contacts, projects, an
   expect(archived.contacts).toEqual([])
 })
 
-test('[e2e:invoice-cycle] generates a real draft through the authenticated wizard', async ({
+test('[e2e:project-directory] creates selectable work, edits assignments, uploads, and archives through real D1', async ({
+  page,
+  request,
+}) => {
+  const prepared = await controlBrowserFixture(request, 'project-directory-cleanup')
+  expect(prepared.status()).toBe(204)
+
+  let blockNextAttachmentRefresh = false
+  let markAttachmentRefreshStarted = (): void => undefined
+  const attachmentRefreshStarted = new Promise<void>((resolve) => {
+    markAttachmentRefreshStarted = resolve
+  })
+  let releaseAttachmentRefresh = (): void => undefined
+  const attachmentRefreshRelease = new Promise<void>((resolve) => {
+    releaseAttachmentRefresh = resolve
+  })
+  await page.route('**/api/v1/projects/*/attachments*', async (route) => {
+    if (blockNextAttachmentRefresh && route.request().method() === 'GET') {
+      blockNextAttachmentRefresh = false
+      markAttachmentRefreshStarted()
+      await attachmentRefreshRelease
+    }
+    await route.continue()
+  })
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto('/projects')
+  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+  await expect(page.locator('[data-project-list]')).toContainText(
+    'Browser Acceptance Project',
+  )
+  await expect(page.locator('[data-project-list]')).not.toContainText(
+    'Browser UI Project',
+  )
+  await expectPhoneControl(page.getByRole('button', { name: 'Add project' }))
+  await expectPhoneControl(page.getByRole('button', { name: 'Active', exact: true }))
+  await expectNoPageOverflow(page)
+
+  await page.getByRole('button', { name: 'Add project' }).click()
+  const projectDialog = page.locator('[data-project-form-dialog]')
+  await projectDialog.getByLabel('Client').selectOption({
+    label: 'Browser Acceptance Client',
+  })
+  await projectDialog.getByLabel('Name').fill('Browser UI Project')
+  await projectDialog.getByLabel('Code').fill('BPROJ')
+  await projectDialog.getByLabel('Bill by').selectOption('tasks')
+  await projectDialog.getByLabel('Budget by').selectOption('project')
+  await projectDialog.getByLabel('Hours budget').fill('12.5')
+  await projectDialog.getByLabel('Hourly rate').fill('175.25')
+  await projectDialog.getByLabel('Cost budget', { exact: true }).fill('2345.67')
+  await projectDialog.getByLabel('Minimum time-entry note length').fill('3')
+  await projectDialog.getByLabel('Administrator notes').fill('Browser delivery detail')
+  const created = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/projects' &&
+      response.request().method() === 'POST',
+  )
+  await projectDialog.getByRole('button', { name: 'Add project' }).click()
+  expect((await created).status()).toBe(201)
+  await expect(projectDialog).toBeHidden()
+
+  const row = page.locator('[data-project-list] li').filter({
+    hasText: 'Browser UI Project',
+  })
+  await expect(row).toContainText('Browser Acceptance Client')
+  await row.getByRole('link', { name: '[BPROJ] Browser UI Project' }).click()
+  await expect(page.locator('[data-project-facts]')).toContainText(
+    'Browser delivery detail',
+  )
+  await expect(page.locator('[data-project-facts]')).toContainText('$175.25')
+  await expectNoPageOverflow(page)
+
+  await page.getByRole('button', { name: 'Assign task' }).click()
+  const assignmentDialog = page.locator('[data-task-assignment-dialog]')
+  await assignmentDialog.locator('select[name="task_id"]').selectOption({
+    label: 'Browser Acceptance Task',
+  })
+  await assignmentDialog.getByLabel('Hours budget').fill('7.25')
+  await assignmentDialog.getByLabel('Task hourly rate').fill('201.01')
+  await assignmentDialog.getByLabel('Task fee budget').fill('999.99')
+  const assigned = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/task-assignments' &&
+      response.request().method() === 'POST',
+  )
+  await assignmentDialog.getByRole('button', { name: 'Assign task' }).click()
+  const assignedResponse = await assigned
+  expect(assignedResponse.status()).toBe(201)
+  const assignedBody = await assignedResponse.json()
+  const taskCard = page.locator('[data-project-task-assignments] li').filter({
+    hasText: 'Browser Acceptance Task',
+  })
+  await expect(taskCard).toContainText('7.25 hours')
+  await expect(taskCard).toContainText('$201.01')
+
+  const projectId = Number(new URL(page.url()).pathname.split('/').at(-1))
+  expect(Number.isSafeInteger(projectId)).toBe(true)
+  const selectable = await page.evaluate(async (expectedProjectId) => {
+    const response = await fetch('/api/v1/time-entry-options')
+    const body = await response.json()
+    return body.data.some(
+      (option: { project_id: number; minimum_note_length: number }) =>
+        option.project_id === expectedProjectId && option.minimum_note_length === 3,
+    )
+  }, projectId)
+  expect(selectable).toBe(true)
+
+  const upload = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/v1/projects/${projectId}/attachments` &&
+      response.request().method() === 'POST',
+  )
+  await page
+    .getByLabel('Attach a file')
+    .setInputFiles({ name: 'browser-project.txt', mimeType: 'text/plain', buffer: Buffer.from('browser project') })
+  await page.getByRole('button', { name: 'Upload' }).click()
+  expect((await upload).status()).toBe(201)
+  const attachment = page.getByRole('link', { name: 'browser-project.txt' })
+  await expect(attachment).toBeVisible()
+  const attachmentHref = await attachment.getAttribute('href')
+  expect(attachmentHref).not.toBeNull()
+  expect(
+    await page.evaluate(async (href) => (await fetch(href)).text(), attachmentHref!),
+  ).toBe('browser project')
+
+  await page
+    .locator('.project-header-actions')
+    .getByRole('button', { name: 'Edit', exact: true })
+    .click()
+  await projectDialog.getByLabel('Starts on').fill('2026-08-01')
+  await projectDialog.getByLabel('Ends on').fill('2026-12-31')
+  await projectDialog.getByLabel('Administrator notes').fill('Updated browser detail')
+  const updatedProject = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/projects/${projectId}` &&
+      response.request().method() === 'PATCH',
+  )
+  blockNextAttachmentRefresh = true
+  await projectDialog.getByRole('button', { name: 'Save project' }).click()
+  expect((await updatedProject).status()).toBe(200)
+  await attachmentRefreshStarted
+  const editAssignment = taskCard.getByRole('button', { name: 'Edit', exact: true })
+  try {
+    await expect(editAssignment).toBeDisabled()
+  } finally {
+    releaseAttachmentRefresh()
+  }
+  await expect(editAssignment).toBeEnabled()
+  await expect(page.locator('[data-project-facts]')).toContainText('Updated browser detail')
+  await expect(page.locator('[data-project-facts]')).toContainText('2026-12-31')
+
+  await editAssignment.click()
+  await assignmentDialog.getByLabel('Hours budget').fill('8.5')
+  const updatedAssignment = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/v1/task-assignments/${assignedBody.data.id}` &&
+      response.request().method() === 'PATCH',
+  )
+  await assignmentDialog.getByRole('button', { name: 'Save assignment' }).click()
+  expect((await updatedAssignment).status()).toBe(200)
+  await expect(taskCard).toContainText('8.5 hours')
+
+  await taskCard.getByRole('button', { name: 'Archive' }).click()
+  const assignmentArchive = page.locator('[data-task-assignment-archive-dialog]')
+  await assignmentArchive.getByRole('button', { name: 'Archive assignment' }).click()
+  await expect(taskCard).toContainText('Archived')
+
+  await page.locator('[data-project-header-actions], .project-header-actions').getByRole('button', {
+    name: 'Archive',
+    exact: true,
+  }).click()
+  const projectArchive = page.locator('[data-project-archive-dialog]')
+  await projectArchive.getByRole('button', { name: 'Archive project' }).click()
+  await expect(page).toHaveURL(/\/projects$/u)
+  await page.getByRole('button', { name: 'All', exact: true }).click()
+  const archivedRow = page.locator('[data-project-list] li').filter({
+    has: page.locator(`a[href="/projects/${projectId}"]`),
+  })
+  await expect(archivedRow).toContainText('Archived')
+})
+
+test('[e2e:task-admin] creates, edits, applies a default to a new project, and archives through real D1', async ({
+  context,
   page,
 }) => {
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  const archiveRequests: string[] = []
+  page.on('request', (request) => {
+    if (
+      request.method() === 'DELETE' &&
+      new URL(request.url()).pathname.startsWith('/api/v1/tasks/')
+    ) {
+      archiveRequests.push(request.url())
+    }
+  })
+  await page.goto('/tasks')
+  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+  await expect(page.locator('[data-task-list]')).toContainText(
+    'Browser Acceptance Task',
+  )
+  await expectPhoneControl(page.getByRole('button', { name: 'Add task' }))
+  await expectPhoneControl(page.getByRole('button', { name: 'Active', exact: true }))
+  await expectNoPageOverflow(page)
+
+  await page.getByRole('button', { name: 'Add task' }).click()
+  const formDialog = page.locator('[data-task-form-dialog]')
+  await formDialog.getByLabel('Name').fill('Browser Default Task')
+  await formDialog.getByLabel('Default hourly rate').fill('123.45')
+  await formDialog.getByLabel('Automatically add to new projects').check()
+  const created = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/tasks' &&
+      response.request().method() === 'POST',
+  )
+  await formDialog.getByRole('button', { name: 'Add task' }).click()
+  const createdResponse = await created
+  expect(createdResponse.status()).toBe(201)
+  const createdTask = (await createdResponse.json()).data as { id: number }
+  await expect(formDialog).toBeHidden()
+
+  let row = page.locator('[data-task-list] [data-task-id]').filter({
+    hasText: 'Browser Default Task',
+  })
+  await expect(row).toContainText('$123.45/hour')
+  await expect(row).toContainText('Added to new projects')
+  await row.getByRole('button', { name: 'Edit', exact: true }).click()
+  await formDialog.getByLabel('Name').fill('Browser Default Task Updated')
+  await formDialog.getByLabel('Default hourly rate').fill('150.05')
+  await formDialog.getByLabel('Billable by default').uncheck()
+  const updated = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/tasks/${createdTask.id}` &&
+      response.request().method() === 'PATCH',
+  )
+  await formDialog.getByRole('button', { name: 'Save task' }).click()
+  expect((await updated).status()).toBe(200)
+  row = page.locator('[data-task-list] [data-task-id]').filter({
+    hasText: 'Browser Default Task Updated',
+  })
+  await expect(row).toContainText('$150.05/hour')
+  await expect(row).toContainText('Non-billable by default')
+
+  const projectAssignment = await page.evaluate(async (taskId) => {
+    const projectResponse = await fetch('/api/v1/projects', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        client_id: 1,
+        name: `Task admin default project ${taskId}`,
+        code: `TASK-${taskId}`,
+        billing_method: 'time_materials',
+        bill_by: 'tasks',
+      }),
+    })
+    const project = (await projectResponse.json()).data as { id: number }
+    const assignmentsResponse = await fetch(
+      `/api/v1/task-assignments?project_id=${project.id}&task_id=${taskId}&per_page=200`,
+    )
+    const assignments = (await assignmentsResponse.json()).data
+    const cleanupResponse = await fetch(`/api/v1/projects/${project.id}`, {
+      method: 'DELETE',
+    })
+    return {
+      projectStatus: projectResponse.status,
+      assignmentStatus: assignmentsResponse.status,
+      cleanupStatus: cleanupResponse.status,
+      assignments,
+    }
+  }, createdTask.id)
+  expect(projectAssignment).toEqual({
+    projectStatus: 201,
+    assignmentStatus: 200,
+    cleanupStatus: 204,
+    assignments: [
+      expect.objectContaining({
+        task_id: createdTask.id,
+        billable: false,
+        hourly_rate_cents: 15_005,
+        is_active: true,
+      }),
+    ],
+  })
+
+  await row.getByRole('button', { name: 'Archive' }).click()
+  const archiveDialog = page.locator('[data-task-archive-dialog]')
+  await archiveDialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(archiveDialog).toBeHidden()
+  expect(archiveRequests).toEqual([])
+
+  await row.getByRole('button', { name: 'Archive' }).click()
+  await archiveDialog.getByRole('button', { name: 'Close' }).click()
+  await expect(archiveDialog).toBeHidden()
+  expect(archiveRequests).toEqual([])
+
+  await row.getByRole('button', { name: 'Archive' }).click()
+  const archived = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/tasks/${createdTask.id}` &&
+      response.request().method() === 'DELETE',
+  )
+  await archiveDialog.getByRole('button', { name: 'Archive task' }).click()
+  expect((await archived).status()).toBe(204)
+  await expect(archiveDialog).toBeHidden()
+  await expect(row).toHaveCount(0)
+  expect(archiveRequests).toHaveLength(1)
+
+  await page.getByRole('button', { name: 'All', exact: true }).click()
+  const archivedRow = page.locator('[data-task-list] [data-task-id]').filter({
+    hasText: 'Browser Default Task Updated',
+  })
+  await expect(archivedRow).toContainText('Archived')
+  await expect(archivedRow).toContainText('Edit or reactivate')
+  await expectNoPageOverflow(page)
+
+  const cleaned = await context.request.post('/__ezacto_browser_fixture__/start-end', {
+    data: { action: 'task-admin-cleanup' },
+    headers: {
+      'x-ezacto-browser-fixture-control': 'start-end-round-trip',
+    },
+  })
+  expect(cleaned.status()).toBe(204)
+})
+
+test('[e2e:reports-ui] runs uninvoiced, client rollup, and project budget reports through real D1', async ({
+  page,
+}) => {
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto(
+    '/reports?report=uninvoiced&from=2026-08-01&to=2026-08-30',
+  )
+  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+  const reports = page.locator('[data-reports-page]')
+  await expect(reports).toBeVisible()
+  await expect(page).toHaveTitle('ezacto — Reports')
+  await expect(reports.getByRole('heading', { name: 'Uninvoiced work' })).toBeVisible()
+  await expect(reports.locator('.report-currency-card')).toContainText('USD')
+  const uninvoicedTotal = await page.evaluate(async () => {
+    const response = await fetch(
+      '/api/v1/reports/uninvoiced?from=2026-08-01&to=2026-08-30',
+    )
+    return (await response.json()).data.totals.find(
+      (total: { currency: string }) => total.currency === 'USD',
+    ).total_cents as number
+  })
+  await expect(reports.locator('.report-currency-card strong')).toHaveText(
+    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(
+      uninvoicedTotal / 100,
+    ),
+  )
+  for (const control of [
+    reports.getByLabel('Report', { exact: true }),
+    reports.getByLabel('From'),
+    reports.getByLabel('To'),
+    reports.getByLabel('Client (optional)'),
+    reports.getByLabel('Project (optional)'),
+    reports.getByRole('button', { name: 'Run report' }),
+  ]) {
+    await expectPhoneControl(control)
+  }
+  await expectNoPageOverflow(page)
+
+  await reports.getByLabel('Report', { exact: true }).selectOption('client-rollup')
+  await reports.getByLabel('Root client').selectOption({
+    label: 'Browser Acceptance Client',
+  })
+  const runReport = reports.getByRole('button', { name: 'Run report' })
+  await expect(runReport).toBeEnabled()
+  await runReport.click()
+  await expect(page).toHaveURL(
+    /\/reports\?report=client-rollup&from=2026-08-01&to=2026-08-30&client_id=1$/u,
+  )
+  await expect(reports.getByRole('heading', { name: 'Client rollup' })).toBeVisible()
+  await expect(reports).toContainText('Root client · client #1')
+  await expect(reports).toContainText('Direct activity')
+  await expect(reports).toContainText('Including descendants')
+  await expectNoPageOverflow(page)
+
+  await reports.getByLabel('Report', { exact: true }).selectOption('project-budget')
+  await reports.getByLabel('Project').selectOption({
+    label: '[BROWSER] Browser Acceptance Project',
+  })
+  await reports.getByRole('button', { name: 'Run report' }).click()
+  await expect(page).toHaveURL(
+    /\/reports\?report=project-budget&from=2026-08-01&to=2026-08-30&project_id=1$/u,
+  )
+  await expect(reports.getByRole('heading', { name: 'Project budget' })).toBeVisible()
+  await expect(reports).toContainText('Project #1')
+  await expect(reports).toContainText('Budget4 h')
+  const budgetSpent = await page.evaluate(async () => {
+    const response = await fetch(
+      '/api/v1/reports/project-budget/1?from=2026-08-01&to=2026-08-30',
+    )
+    return (await response.json()).data.grains[0].spent_seconds as number
+  })
+  await expect(reports).toContainText(
+    `Spent${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(budgetSpent / 3_600)} h`,
+  )
+  await expectNoPageOverflow(page)
+})
+
+test('[e2e:expense-categories] [e2e:expense-receipt] manages category availability, history, and receipts through real D1 and R2', async ({
+  page,
+}) => {
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto('/expense-categories')
+  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+  const workspace = page.locator('[data-expense-categories-page]')
+  await expect(workspace).toBeVisible()
+  await expect(page).toHaveTitle('ezacto — Expense categories')
+  const createCategory = page.locator('[data-expense-category-create-form]')
+  await createCategory.getByLabel('Name', { exact: true }).fill('Browser UI Mileage')
+  await createCategory.getByLabel('Entry method').selectOption('unit')
+  await createCategory.getByLabel('Unit name').fill('km')
+  await createCategory.getByLabel('Unit price (cents)').fill('42')
+  const categoryCreated = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/expense-categories' &&
+      response.request().method() === 'POST',
+  )
+  await createCategory.getByRole('button', { name: 'Create category' }).click()
+  const categoryResponse = await categoryCreated
+  expect(categoryResponse.status()).toBe(201)
+  const categoryId = Number((await categoryResponse.json()).data.id)
+  expect(Number.isSafeInteger(categoryId)).toBe(true)
+  const categoryRow = page.locator(`[data-expense-category-id="${categoryId}"]`)
+  await expect(categoryRow).toContainText('42 cents per km')
+  await expectNoPageOverflow(page)
+
+  await page.getByRole('link', { name: 'Back to expenses' }).click()
+  const createExpense = page.locator('[data-expense-create-form]')
+  await createExpense
+    .getByLabel('Project')
+    .selectOption({ label: '[BROWSER] Browser Acceptance Project' })
+  await createExpense.getByLabel('Category').selectOption({ label: 'Browser UI Mileage' })
+  await createExpense.getByLabel('Date').fill('2026-07-15')
+  await createExpense.getByLabel('Units (km)').fill('3')
+  await createExpense.getByLabel('Notes').fill('Historical category retention')
+  const expenseCreated = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/expenses' &&
+      response.request().method() === 'POST',
+  )
+  await createExpense.getByRole('button', { name: 'Add expense' }).click()
+  const expenseResponse = await expenseCreated
+  expect(expenseResponse.status()).toBe(201)
+  const expenseId = Number((await expenseResponse.json()).data.id)
+  expect(Number.isSafeInteger(expenseId)).toBe(true)
+
+  await page.goto('/expense-categories')
+  await expect(categoryRow).toBeVisible()
+  await categoryRow.getByRole('button', { name: 'Archive' }).click()
+  const archiveDialog = page.locator('[data-expense-category-archive-dialog]')
+  await archiveDialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(archiveDialog).toBeHidden()
+  await expect(categoryRow).toContainText('Active')
+
+  await categoryRow.getByRole('button', { name: 'Archive' }).click()
+  const archived = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/expense-categories/${categoryId}` &&
+      response.request().method() === 'PATCH',
+  )
+  await archiveDialog.getByRole('button', { name: 'Archive category' }).click()
+  const archivedResponse = await archived
+  expect(archivedResponse.status()).toBe(200)
+  expect(archivedResponse.request().postDataJSON()).toEqual({ is_active: false })
+  await expect(categoryRow).toBeHidden()
+  await workspace.getByRole('button', { name: 'All', exact: true }).click()
+  await expect(categoryRow).toContainText('Archived')
+
+  await page.goto('/expenses')
+  await expect(
+    page.locator('[data-expense-create-category] option', { hasText: 'Browser UI Mileage' }),
+  ).toHaveCount(0)
+  await page.goto(`/expenses/${expenseId}`)
+  const historicalCategory = page.locator(
+    '[data-expense-edit-category] option:checked',
+  )
+  await expect(historicalCategory).toHaveText('Browser UI Mileage')
+  await expect(page.locator('[data-expense-detail-total]')).toContainText('$1.26')
+  await expect(page.locator('[data-expense-edit-form] [name="notes"]')).toHaveValue(
+    'Historical category retention',
+  )
+  await expectNoPageOverflow(page)
+  await test.step('preserves the expense receipt workflow', async () =>
+    exerciseExpenseReceipt(page),
+  )
+})
+
+const exerciseExpenseReceipt = async (page: Page): Promise<void> => {
+  await page.goto('/expenses')
+
+  const create = page.locator('[data-expense-create-form]')
+  await expect(create).toBeVisible()
+  await create.getByLabel('Project').selectOption({ label: '[BROWSER] Browser Acceptance Project' })
+  await create.getByLabel('Category').selectOption({ label: 'Travel' })
+  await create.getByLabel('Date').fill('2026-08-25')
+  await create.getByLabel('Amount').fill('18.75')
+  await create.getByLabel('Notes').fill('Airport shuttle receipt\nCustomer kickoff')
+  await create.getByLabel('Billable').check()
+  await create.getByLabel('Reimbursable').check()
+  const created = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/expenses' &&
+      response.request().method() === 'POST',
+  )
+  await create.getByRole('button', { name: 'Add expense' }).click()
+  const createdResponse = await created
+  expect(createdResponse.status()).toBe(201)
+  const createdBody = await createdResponse.json()
+  const expenseId = Number(createdBody.data.id)
+  expect(Number.isSafeInteger(expenseId)).toBe(true)
+
+  const filters = page.locator('[data-expense-filter-form]')
+  await filters.locator('input[name="from"]').fill('2026-08-25')
+  await filters.locator('input[name="to"]').fill('2026-08-25')
+  await filters.locator('select[name="client_id"]').selectOption({ label: 'Browser Acceptance Client' })
+  await filters.locator('select[name="project_id"]').selectOption({ label: '[BROWSER] Browser Acceptance Project' })
+  await filters.locator('select[name="expense_category_id"]').selectOption({ label: 'Travel' })
+  await filters.locator('select[name="approval_status"]').selectOption('unsubmitted')
+  await filters.locator('select[name="reimbursement_status"]').selectOption('none')
+  const filtered = page.waitForResponse((response) => {
+    const url = new URL(response.url())
+    return (
+      url.pathname === '/api/v1/expenses' &&
+      response.request().method() === 'GET' &&
+      url.searchParams.get('client_id') === '1' &&
+      url.searchParams.get('expense_category_id') === '1'
+    )
+  })
+  await filters.getByRole('button', { name: 'Apply filters' }).click()
+  expect((await filtered).status()).toBe(200)
+  await expect(page).toHaveURL(/\/expenses\?.*approval_status=unsubmitted/u)
+  const row = page.locator(`[data-expense-id="${expenseId}"]`)
+  await expect(row).toBeVisible()
+  await expect(row).toContainText('Airport shuttle receipt')
+  await expect(row).toContainText('$18.75')
+  await expect(row).toContainText('Reimbursement: None')
+  await expect(page.locator('.expense-week-heading')).toContainText('Week of Aug 24, 2026')
+  await expectNoPageOverflow(page)
+
+  await row.getByRole('link').click()
+  await expect(page).toHaveURL(new RegExp(`/expenses/${expenseId}$`, 'u'))
+  const edit = page.locator('[data-expense-edit-form]')
+  await expect(edit.getByLabel('Notes')).toHaveValue(/Customer kickoff/u)
+  await expect(page.locator('[data-expense-detail-approval-fact]')).toHaveText('Unsubmitted')
+  await edit.getByLabel('Notes').fill('Airport shuttle receipt\nReviewed detail')
+  const updated = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/expenses/${expenseId}` &&
+      response.request().method() === 'PATCH',
+  )
+  await edit.getByRole('button', { name: 'Save expense' }).click()
+  expect((await updated).status()).toBe(200)
+  await expect(page.locator('[data-expense-edit-result]')).toHaveText('Expense saved.')
+
+  const uploaded = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/expenses/${expenseId}/attachments` &&
+      response.request().method() === 'POST',
+  )
+  await page
+    .getByLabel('Attach a receipt')
+    .setInputFiles({
+      name: 'airport-shuttle.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('real R2 receipt bytes'),
+    })
+  await page.getByRole('button', { name: 'Upload receipt' }).click()
+  expect((await uploaded).status()).toBe(201)
+  const receiptLink = page.getByRole('link', { name: 'airport-shuttle.txt' })
+  await expect(receiptLink).toBeVisible()
+  const href = await receiptLink.getAttribute('href')
+  expect(href).not.toBeNull()
+  expect(await page.evaluate(async (path) => (await fetch(path)).text(), href!)).toBe(
+    'real R2 receipt bytes',
+  )
+
+  await page.goto(
+    '/expenses?from=2026-08-25&to=2026-08-25&client_id=1&project_id=1&expense_category_id=1&approval_status=unsubmitted&reimbursement_status=none',
+  )
+  await expect(page.locator(`[data-expense-id="${expenseId}"]`)).toContainText(
+    'Reviewed detail',
+  )
+}
+
+test('[e2e:invoice-cycle] generates a real draft through the authenticated wizard', async ({
+  page,
+  request,
+}) => {
+  const seeded = await controlBrowserFixture(request, 'invoice-generation-seed')
+  expect(seeded.status()).toBe(204)
+
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/invoices/new')
 
@@ -1032,11 +1668,24 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expect(wizard.getByLabel('Client')).toHaveValue('1')
   await expect(wizard.getByLabel('From')).toHaveValue('2026-08-01')
   await expect(wizard.getByLabel('To')).toHaveValue('2026-08-30')
-  await expect(wizard.getByRole('checkbox')).toHaveCount(2)
+  const primaryProject = wizard.getByRole('checkbox', {
+    name: 'Browser Acceptance Project',
+    exact: true,
+  })
+  const secondaryProject = wizard.getByRole('checkbox', {
+    name: 'Browser Secondary Project',
+    exact: true,
+  })
+  await expect(primaryProject).toHaveCount(1)
+  await expect(primaryProject).toHaveValue('1')
+  await expect(secondaryProject).toHaveCount(1)
+  await expect(secondaryProject).toHaveValue('2')
   await expectPhoneControl(
-    wizard.getByRole('checkbox', { name: 'Browser Acceptance Project' }).locator('..'),
+    primaryProject.locator('..'),
   )
-  await wizard.getByRole('checkbox', { name: 'Browser Secondary Project' }).uncheck()
+  for (const projectChoice of await wizard.locator('input[name="project"]').all()) {
+    await projectChoice.setChecked((await projectChoice.inputValue()) === '1')
+  }
   await wizard.getByLabel('Expenses').selectOption('')
   for (const control of [
     wizard.getByLabel('Client'),
@@ -1056,7 +1705,15 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
       response.request().method() === 'POST',
   )
   await wizard.getByRole('button', { name: 'Generate draft invoice' }).click()
-  expect((await generated).status()).toBe(201)
+  const generatedResponse = await generated
+  expect(generatedResponse.status()).toBe(201)
+  expect(generatedResponse.request().postDataJSON()).toMatchObject({
+    client_id: 1,
+    project_ids: [1],
+  })
+  const generatedPayload = (await generatedResponse.json()) as {
+    data: { id: number; due_date: string }
+  }
 
   await expect(page.locator('[data-invoice-generation-result]')).toHaveText(
     'Draft invoice generated successfully.',
@@ -1079,11 +1736,490 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   )
   await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$75.00')
 
+  await detail.getByRole('button', { name: 'Mark sent', exact: true }).click()
+  const composer = page.locator('[data-invoice-composer-dialog]')
+  await expect(composer).toBeVisible()
+  await expect(composer).toContainText('%invoice_number%')
+  await expect(composer).toContainText('%invoice_amount%')
+  await composer.getByLabel('Recipients').fill('Accounts Payable <ap@example.test>')
+  await composer.getByLabel('Subject').fill('Invoice %invoice_number%')
+  await composer
+    .locator('[data-invoice-composer-body]')
+    .fill('Invoice #%invoice_id% totals %invoice_amount% and is due %invoice_due_date%.')
+  await composer.getByLabel('Record a planned reminder date').check()
+  await composer.locator('[data-invoice-composer-reminder-date]').fill('2099-09-30')
+  for (const control of [
+    composer.getByLabel('Recipients'),
+    composer.getByLabel('Subject'),
+    composer.locator('[data-invoice-composer-body]'),
+    composer.getByRole('button', { name: 'Mark sent', exact: true }),
+  ]) {
+    await expectPhoneControl(control)
+  }
+  await expectNoPageOverflow(page)
+  const sent = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.match(/^\/api\/v1\/invoices\/\d+\/transitions$/u) !==
+        null && response.request().method() === 'POST',
+  )
+  await composer.getByRole('button', { name: 'Mark sent', exact: true }).click()
+  const sentResponse = await sent
+  expect(sentResponse.status()).toBe(201)
+  expect(sentResponse.request().postDataJSON()).toMatchObject({
+    command: 'send',
+    recipients: [{ name: 'Accounts Payable', email: 'ap@example.test' }],
+    subject: `Invoice ${generatedNumber}`,
+    body: `Invoice #${generatedPayload.data.id} totals $75.00 and is due ${generatedPayload.data.due_date}.`,
+    attach_pdf: false,
+    send_me_a_copy: false,
+    thank_you: false,
+    reminder: true,
+    send_reminder_on: '2099-09-30',
+  })
+  await expect(composer).toBeHidden()
+  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Open')
+  await expect(detail.locator('[data-invoice-reminder-line]')).toContainText(
+    'Sep 30, 2099',
+  )
+  await expect(detail.locator('[data-invoice-detail-messages]')).toContainText(
+    `Invoice #${generatedPayload.data.id} totals $75.00`,
+  )
+
   await page.getByRole('link', { name: 'Back to invoices' }).click()
   await expect(page).toHaveURL(/\/invoices$/u)
-  const generatedCard = page.locator('[data-invoice-id]', { hasText: generatedNumber })
+  const generatedCard = page.locator(
+    `[data-invoice-id="${generatedPayload.data.id}"]`,
+  )
   await expect(generatedCard).toBeVisible()
   await expect(generatedCard).toContainText('$75.00')
+})
+
+test('[e2e:invoice-lines] adds, edits, and deletes exact lines through the real worker and D1', async ({
+  context,
+  page,
+}) => {
+  const seeded = await context.request.post('/__ezacto_browser_fixture__/start-end', {
+    data: { action: 'invoice-line-seed' },
+    headers: {
+      'x-ezacto-browser-fixture-control': 'start-end-round-trip',
+    },
+  })
+  expect(seeded.status()).toBe(204)
+
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto('/invoices/new')
+  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+
+  const draft = await page.evaluate(async () => {
+    const response = await fetch('/api/v1/invoice-generations', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': 'browser-invoice-lines-generate',
+      },
+      body: JSON.stringify({
+        client_id: 1,
+        from: '2026-08-14',
+        to: '2026-08-14',
+        project_ids: [1],
+        time_summary_type: 'project',
+        expense_summary_type: null,
+      }),
+    })
+    if (!response.ok) throw new Error(`invoice generation failed: ${response.status}`)
+    const body = (await response.json()) as {
+      data: { id: number; version: number; amount_cents: number; currency: string }
+    }
+    const financials = await fetch(`/api/v1/invoices/${body.data.id}`, {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': 'browser-invoice-lines-financials',
+      },
+      body: JSON.stringify({
+        expected_version: body.data.version,
+        tax_rate_ppm: 100_000,
+        tax2_rate_ppm: null,
+        discount_rate_ppm: 0,
+      }),
+    })
+    if (!financials.ok) throw new Error(`invoice financial edit failed: ${financials.status}`)
+    const financialBody = (await financials.json()) as {
+      data: { invoice: { id: number; version: number; amount_cents: number; currency: string } }
+    }
+    const sent = await fetch(`/api/v1/invoices/${body.data.id}/transitions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': 'browser-invoice-lines-open',
+      },
+      body: JSON.stringify({
+        command: 'send',
+        expected_version: financialBody.data.invoice.version,
+      }),
+    })
+    if (!sent.ok) throw new Error(`invoice transition failed: ${sent.status}`)
+    const sentBody = (await sent.json()) as {
+      data: { invoice: { id: number; version: number; amount_cents: number; currency: string } }
+    }
+    const paid = await fetch(`/api/v1/invoices/${body.data.id}/payments`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': 'browser-invoice-lines-payment',
+      },
+      body: JSON.stringify({
+        expected_version: sentBody.data.invoice.version,
+        amount_cents: sentBody.data.invoice.amount_cents,
+        currency: sentBody.data.invoice.currency,
+        paid_date: '2026-08-30',
+        notes: 'Payment-state reconciliation fixture',
+      }),
+    })
+    if (!paid.ok) throw new Error(`invoice payment failed: ${paid.status}`)
+    const paidBody = (await paid.json()) as {
+      data: {
+        invoice: {
+          id: number
+          version: number
+          amount_cents: number
+          due_amount_cents: number
+          state: string
+        }
+      }
+    }
+    return paidBody.data.invoice
+  })
+  expect(draft.amount_cents).toBe(7_500)
+  expect(draft.due_amount_cents).toBe(0)
+  expect(draft.state).toBe('paid')
+  await page.goto(`/invoices/${draft.id}`)
+
+  const detail = page.locator('[data-invoice-document]')
+  const add = detail.getByRole('button', { name: 'Add line', exact: true })
+  const editor = page.locator('[data-invoice-line-dialog]')
+  await expect(detail).toBeVisible()
+  await expectPhoneControl(add)
+  await add.click()
+  await editor.getByRole('button', { name: 'Cancel' }).click()
+  await expect(editor).toBeHidden()
+  await expect(detail.locator('[data-invoice-line-id]')).toHaveCount(1)
+  await add.click()
+  await editor.getByRole('button', { name: 'Close invoice line dialog' }).click()
+  await expect(editor).toBeHidden()
+  await expect(detail.locator('[data-invoice-line-id]')).toHaveCount(1)
+
+  const commandIds: string[] = []
+  page.on('request', (request) => {
+    if (
+      request.method() === 'POST' &&
+      new URL(request.url()).pathname === `/api/v1/invoices/${draft.id}/line-items`
+    ) {
+      commandIds.push(request.headers()['idempotency-key'] ?? '')
+    }
+  })
+  await page.route(
+    `**/api/v1/invoices/${draft.id}/line-items`,
+    async (route) => {
+      const committed = await route.fetch()
+      expect(committed.status()).toBe(201)
+      await route.abort('failed')
+    },
+    { times: 1 },
+  )
+
+  await add.click()
+  await editor.getByLabel('Item type').fill('Consulting')
+  await editor.getByLabel('Description').fill('Exact tenth-hour adjustment')
+  await editor.getByLabel('Quantity').fill('0.1')
+  await editor.getByLabel('Rate (USD)').fill('1.05')
+  await editor.getByLabel('Apply tax 1').check()
+  await expect(editor.locator('[data-invoice-line-preview]')).toHaveText('$0.11')
+  for (const control of [
+    editor.getByLabel('Item type'),
+    editor.getByLabel('Description'),
+    editor.getByLabel('Quantity'),
+    editor.getByLabel('Rate (USD)'),
+    editor.getByRole('button', { name: 'Add line', exact: true }),
+  ]) {
+    await expectPhoneControl(control)
+  }
+  await expectNoPageOverflow(page)
+
+  await editor.getByRole('button', { name: 'Add line', exact: true }).click()
+  await expect(editor.locator('[data-invoice-line-result]')).not.toHaveText('')
+  await expect(editor).toBeVisible()
+  const retried = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/invoices/${draft.id}/line-items` &&
+      response.request().method() === 'POST',
+  )
+  await editor.getByRole('button', { name: 'Add line', exact: true }).click()
+  expect((await retried).status()).toBe(201)
+  await expect(editor).toBeHidden()
+  expect(commandIds).toHaveLength(2)
+  expect(commandIds[0]).not.toBe('')
+  expect(commandIds[0]).toBe(commandIds[1])
+
+  const createdRow = detail.locator('[data-invoice-line-id]', { hasText: 'Consulting' })
+  await expect(createdRow).toHaveCount(1)
+  await expect(createdRow).toContainText('Exact tenth-hour adjustment')
+  await expect(createdRow).toContainText('$0.11')
+  await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$75.12')
+  await expect(detail.locator('[data-invoice-detail-due]')).toHaveText('$0.12')
+  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Open')
+  await expectNoPageOverflow(page)
+
+  const persistedCreated = await page.evaluate(async (invoiceId) => {
+    const response = await fetch(`/api/v1/invoices/${invoiceId}`)
+    return (await response.json()) as {
+      data: {
+        version: number
+        amount_cents: number
+        due_amount_cents: number
+        tax_amount_cents: number
+        line_items: Array<{
+          id: number
+          kind: string
+          quantity: number
+          unit_price_cents: number
+          amount_cents: number
+          taxed: boolean
+          updated_at: string
+        }>
+      }
+    }
+  }, draft.id)
+  expect(persistedCreated.data.amount_cents).toBe(7_512)
+  expect(persistedCreated.data.due_amount_cents).toBe(12)
+  expect(persistedCreated.data.tax_amount_cents).toBe(1)
+  const createdLine = persistedCreated.data.line_items.find((line) => line.kind === 'Consulting')!
+  expect(createdLine).toMatchObject({
+    quantity: 0.1,
+    unit_price_cents: 105,
+    amount_cents: 11,
+    taxed: true,
+  })
+
+  await createdRow.getByRole('button', { name: 'Edit' }).click()
+  await editor.getByLabel('Description').fill('Updated fractional adjustment')
+  await editor.getByLabel('Quantity').fill('1.5')
+  await editor.getByLabel('Rate (USD)').fill('2.05')
+  await expect(editor.locator('[data-invoice-line-preview]')).toHaveText('$3.08')
+  const updated = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/v1/invoices/${draft.id}/line-items/${createdLine.id}` &&
+      response.request().method() === 'PATCH',
+  )
+  await editor.getByRole('button', { name: 'Save line', exact: true }).click()
+  const updatedResponse = await updated
+  expect(updatedResponse.status()).toBe(200)
+  expect(updatedResponse.request().postDataJSON()).toMatchObject({
+    expected_version: persistedCreated.data.version,
+    expected_updated_at: createdLine.updated_at,
+    kind: 'Consulting',
+    quantity: 1.5,
+    unit_price_cents: 205,
+  })
+  await expect(editor).toBeHidden()
+  await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$78.39')
+  await expect(detail.locator('[data-invoice-detail-due]')).toHaveText('$3.39')
+
+  const updatedRow = detail.locator('[data-invoice-line-id]', { hasText: 'Consulting' })
+  await updatedRow.getByRole('button', { name: 'Delete' }).click()
+  const confirmation = page.locator('[data-invoice-line-delete-dialog]')
+  await expect(confirmation).toBeVisible()
+  await confirmation.getByRole('button', { name: 'Cancel' }).click()
+  await expect(confirmation).toBeHidden()
+  await expect(updatedRow).toHaveCount(1)
+  await updatedRow.getByRole('button', { name: 'Delete' }).click()
+  await confirmation.getByRole('button', { name: 'Close delete line dialog' }).click()
+  await expect(confirmation).toBeHidden()
+  await expect(updatedRow).toHaveCount(1)
+  await updatedRow.getByRole('button', { name: 'Delete' }).click()
+  const deleted = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/v1/invoices/${draft.id}/line-items/${createdLine.id}` &&
+      response.request().method() === 'DELETE',
+  )
+  await confirmation.getByRole('button', { name: 'Delete line', exact: true }).click()
+  expect((await deleted).status()).toBe(200)
+  await expect(confirmation).toBeHidden()
+  await expect(detail.locator('[data-invoice-line-id]')).toHaveCount(1)
+  await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$75.00')
+  await expect(detail.locator('[data-invoice-detail-due]')).toHaveText('$0.00')
+  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Paid')
+
+  const persistedDeleted = await page.evaluate(async (invoiceId) => {
+    const response = await fetch(`/api/v1/invoices/${invoiceId}`)
+    return (await response.json()) as {
+      data: { amount_cents: number; due_amount_cents: number; line_items: Array<{ id: number }> }
+    }
+  }, draft.id)
+  expect(persistedDeleted.data.amount_cents).toBe(7_500)
+  expect(persistedDeleted.data.due_amount_cents).toBe(0)
+  expect(persistedDeleted.data.line_items.some((line) => line.id === createdLine.id)).toBe(false)
+})
+
+test('[e2e:invoice-cycle] records a final payment and restores the open balance on delete', async ({
+  context,
+  page,
+}) => {
+  const seeded = await context.request.post('/__ezacto_browser_fixture__/start-end', {
+    data: { action: 'invoice-payment-seed' },
+    headers: {
+      'x-ezacto-browser-fixture-control': 'start-end-round-trip',
+    },
+  })
+  expect(seeded.status()).toBe(204)
+
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto('/invoices/new')
+  await page.getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+
+  const openedInvoice = await page.evaluate(async () => {
+    const generated = await fetch('/api/v1/invoice-generations', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': 'browser-payment-cycle-generate',
+      },
+      body: JSON.stringify({
+        client_id: 1,
+        from: '2026-08-15',
+        to: '2026-08-15',
+        project_ids: [1],
+        time_summary_type: 'project',
+        expense_summary_type: null,
+      }),
+    })
+    if (!generated.ok) throw new Error(`invoice generation failed: ${generated.status}`)
+    const generatedBody = (await generated.json()) as {
+      data: { id: number; version: number; amount_cents: number }
+    }
+    const sent = await fetch(`/api/v1/invoices/${generatedBody.data.id}/transitions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': 'browser-payment-cycle-open',
+      },
+      body: JSON.stringify({
+        command: 'send',
+        expected_version: generatedBody.data.version,
+      }),
+    })
+    if (!sent.ok) throw new Error(`invoice transition failed: ${sent.status}`)
+    const sentBody = (await sent.json()) as {
+      data: { invoice: { id: number; version: number; amount_cents: number } }
+    }
+    return sentBody.data.invoice
+  })
+  expect(openedInvoice.amount_cents).toBe(7_500)
+  await page.goto(`/invoices/${openedInvoice.id}`)
+
+  const detail = page.locator('[data-invoice-document]')
+  await expect(detail).toBeVisible()
+  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Open')
+  await expect(detail.locator('[data-invoice-detail-due]')).toHaveText('$75.00')
+  const record = detail.getByRole('button', { name: 'Record payment' })
+  await expectPhoneControl(record)
+  await record.click()
+
+  const paymentDialog = page.locator('[data-invoice-payment-dialog]')
+  await expect(paymentDialog).toBeVisible()
+  await expect(paymentDialog.getByLabel('Amount')).toHaveValue('75.00')
+  await expect(paymentDialog.getByLabel('Currency')).toHaveValue('USD')
+  await expect(paymentDialog.getByLabel('Payment timing')).toHaveValue('date')
+  await paymentDialog.getByLabel('Paid date').fill('2026-08-30')
+  await paymentDialog.getByLabel('Notes').fill('Final payment from browser acceptance')
+  await expect(paymentDialog).toContainText('No email or thank-you message will be sent.')
+  for (const control of [
+    paymentDialog.getByLabel('Amount'),
+    paymentDialog.getByLabel('Currency'),
+    paymentDialog.getByLabel('Payment timing'),
+    paymentDialog.getByLabel('Paid date'),
+    paymentDialog.getByLabel('Notes'),
+    paymentDialog.getByRole('button', { name: 'Record payment' }),
+  ]) {
+    await expectPhoneControl(control)
+  }
+  await expectNoPageOverflow(page)
+
+  const recorded = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/v1/invoices/${openedInvoice.id}/payments` &&
+      response.request().method() === 'POST',
+  )
+  await paymentDialog.getByRole('button', { name: 'Record payment' }).click()
+  const recordedResponse = await recorded
+  expect(recordedResponse.status()).toBe(201)
+  expect(recordedResponse.request().postDataJSON()).toEqual({
+    expected_version: openedInvoice.version,
+    amount_cents: 7_500,
+    currency: 'USD',
+    paid_date: '2026-08-30',
+    notes: 'Final payment from browser acceptance',
+  })
+  await expect(paymentDialog).toBeHidden()
+  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Paid')
+  await expect(detail.locator('[data-invoice-detail-due]')).toHaveText('$0.00')
+  const paymentRow = detail.locator('[data-invoice-payment-id]')
+  await expect(paymentRow).toHaveCount(1)
+  await expect(paymentRow).toContainText('$75.00')
+  await expect(paymentRow).toContainText('Method: Manual')
+  await expect(paymentRow).toContainText('Final payment from browser acceptance')
+  await expect(record).toBeDisabled()
+
+  const deleteRequests: string[] = []
+  page.on('request', (request) => {
+    if (
+      request.method() === 'DELETE' &&
+      new URL(request.url()).pathname.startsWith(
+        `/api/v1/invoices/${openedInvoice.id}/payments/`,
+      )
+    ) {
+      deleteRequests.push(request.url())
+    }
+  })
+  await paymentRow.getByRole('button', { name: 'Delete' }).click()
+  const confirmation = page.locator('[data-invoice-payment-delete-dialog]')
+  await expect(confirmation).toBeVisible()
+  await confirmation.getByRole('button', { name: 'Cancel' }).click()
+  await expect(confirmation).toBeHidden()
+  expect(deleteRequests).toEqual([])
+
+  await paymentRow.getByRole('button', { name: 'Delete' }).click()
+  await confirmation.getByRole('button', { name: 'Close delete payment dialog' }).click()
+  await expect(confirmation).toBeHidden()
+  expect(deleteRequests).toEqual([])
+
+  await paymentRow.getByRole('button', { name: 'Delete' }).click()
+  const deleted = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.startsWith(
+        `/api/v1/invoices/${openedInvoice.id}/payments/`,
+      ) &&
+      response.request().method() === 'DELETE',
+  )
+  await confirmation
+    .getByRole('button', { name: 'Delete payment', exact: true })
+    .click()
+  expect((await deleted).status()).toBe(200)
+  await expect(confirmation).toBeHidden()
+  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Open')
+  await expect(detail.locator('[data-invoice-detail-due]')).toHaveText('$75.00')
+  await expect(detail.locator('[data-invoice-detail-payments]')).toContainText(
+    'No payments recorded.',
+  )
 })
 
 test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, policy-locks, and unlocks a real D1 timesheet', async ({

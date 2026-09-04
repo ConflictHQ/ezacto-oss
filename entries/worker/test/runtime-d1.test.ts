@@ -20,6 +20,7 @@ let database: D1Database;
 let bootstrapResponse: Response;
 let bearer: string;
 let moneyBearer: string;
+let projectBearer: string;
 
 const request = (path: string, init?: RequestInit): Promise<Response> =>
   miniflare.dispatchFetch(
@@ -76,10 +77,11 @@ beforeAll(async () => {
   );
   await run(
     `INSERT INTO users (
-      id, first_name, last_name, profile, manager_grants, created_at, updated_at
+      id, first_name, last_name, profile, manager_grants,
+      has_access_to_all_future_projects, created_at, updated_at
     ) VALUES
-      (1, 'Runtime', 'Owner', 'administrator', '[]', ?, ?),
-      (2, 'Runtime', 'Member', 'member', '[]', ?, ?)`,
+      (1, 'Runtime', 'Owner', 'administrator', '[]', 1, ?, ?),
+      (2, 'Runtime', 'Member', 'member', '[]', 0, ?, ?)`,
     timestamp,
     timestamp,
     timestamp,
@@ -93,10 +95,11 @@ beforeAll(async () => {
   );
   await run(
     `INSERT INTO projects (
-      id, client_id, name, code, hourly_rate_cents, created_at, updated_at
+      id, client_id, name, code, hourly_rate_cents, budget_by, budget_seconds,
+      created_at, updated_at
     ) VALUES
-      (1, 1, 'Runtime Project', 'RUN', 10000, ?, ?),
-      (2, 1, 'Unassigned Project', 'PRIVATE', 10000, ?, ?)`,
+      (1, 1, 'Runtime Project', 'RUN', 10000, 'project', 3600, ?, ?),
+      (2, 1, 'Unassigned Project', 'PRIVATE', 10000, 'none', NULL, ?, ?)`,
     timestamp,
     timestamp,
     timestamp,
@@ -126,10 +129,10 @@ beforeAll(async () => {
     `INSERT INTO time_entries (
       id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
       spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
-      billable_rate_cents, cost_rate_cents, created_at, updated_at
+      billable_rate_cents, cost_rate_cents, budgeted, created_at, updated_at
     ) VALUES
-      (1, 2, 1, 1, 1, 1, '2026-08-27', 600, 600, 600, 1, 10000, 5000, ?, ?),
-      (2, 2, 1, 1, 1, 1, '2026-08-28', 900, 900, 900, 1, 10000, 5000, ?, ?)`,
+      (1, 2, 1, 1, 1, 1, '2026-08-27', 600, 600, 600, 1, 10000, 5000, 1, ?, ?),
+      (2, 2, 1, 1, 1, 1, '2026-08-28', 900, 900, 900, 1, 10000, 5000, 1, ?, ?)`,
     timestamp,
     timestamp,
     timestamp,
@@ -182,8 +185,28 @@ beforeAll(async () => {
       scopes: ["invoices:read", "invoices:write"],
     })
   ).token;
+  projectBearer = (
+    await store.issue({
+      userId: 1,
+      name: "Runtime project lifecycle test",
+      scopes: [
+        "clients:read",
+        "clients:write",
+        "projects:read",
+        "projects:write",
+        "time_entries:read",
+        "time_entries:write",
+        "reports:read",
+        "expenses:read",
+        "expenses:write",
+      ],
+    })
+  ).token;
   expect(await store.authenticate(bearer)).toMatchObject({ profile: "member" });
   expect(await store.authenticate(moneyBearer)).toMatchObject({
+    profile: "administrator",
+  });
+  expect(await store.authenticate(projectBearer)).toMatchObject({
     profile: "administrator",
   });
 }, 20_000);
@@ -200,9 +223,9 @@ describe("Worker D1 runtime composition", () => {
       .prepare("SELECT id FROM _ezacto_migrations ORDER BY id")
       .all<{ id: string }>();
     expect(migrations.results.at(-1)?.id).toBe(
-      "0028_timesheet_lock_policy",
+      "0030_email_templates",
     );
-    expect(migrations.results).toHaveLength(29);
+    expect(migrations.results).toHaveLength(31);
   });
 
   it("[security] keeps unverified session-like cookies fail-closed", async () => {
@@ -258,6 +281,154 @@ describe("Worker D1 runtime composition", () => {
     expect(project.data).not.toHaveProperty("hourly_rate_cents");
   });
 
+  it("[e2e:reports] reads exact operational reports through generated client and real D1", async () => {
+    const client = new EzactoClient({
+      baseUrl: "https://worker.test",
+      token: projectBearer,
+      fetch: workerFetch,
+    });
+    const range = { from: "2026-08-27", to: "2026-08-28" };
+
+    const [uninvoiced, rollup, budget] = await Promise.all([
+      client.getUninvoicedReport({ query: range }),
+      client.getClientRollupReport({ clientId: 1, query: range }),
+      client.getProjectBudgetReport({ projectId: 1, query: range }),
+    ]);
+
+    expect(uninvoiced.data.totals).toEqual([
+      {
+        currency: "USD",
+        rounded_seconds: 1500,
+        time_entry_count: 2,
+        unpriced_time_entry_count: 0,
+        expense_count: 1,
+        time_cents: 4167,
+        expense_cents: 100,
+        total_cents: 4267,
+      },
+    ]);
+    expect(rollup.data).toMatchObject({
+      root_client_id: 1,
+      nodes: [
+        {
+          client_id: 1,
+          depth: 0,
+          direct: {
+            rounded_seconds: 1500,
+            expense_count: 1,
+            currencies: [
+              expect.objectContaining({
+                currency: "USD",
+                uninvoiced_total_cents: 4267,
+              }),
+            ],
+          },
+          rollup: { rounded_seconds: 1500 },
+        },
+      ],
+    });
+    expect(budget.data).toMatchObject({
+      project_id: 1,
+      budget_by: "project",
+      grains: [
+        {
+          source: "project",
+          source_id: 1,
+          unit: "seconds",
+          calculation: "time",
+          budget_seconds: 3600,
+          spent_seconds: 1500,
+          remaining_seconds: 2100,
+        },
+      ],
+    });
+  });
+
+  it("[security] enforces the expenses module at every Worker expense route and attachment boundary", async () => {
+    await run(
+      `UPDATE organizations
+       SET modules = json_set(modules, '$.expenses', json('false'))
+       WHERE id = 1`,
+    );
+    try {
+      const requests: Array<Promise<Response>> = [
+        request("/api/v1/expenses", {
+          headers: { authorization: `Bearer ${projectBearer}` },
+        }),
+        request("/api/v1/expenses/1", {
+          headers: { authorization: `Bearer ${projectBearer}` },
+        }),
+        request("/api/v1/expenses", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${projectBearer}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            project_id: 1,
+            expense_category_id: 1,
+            spent_date: "2026-08-28",
+            total_cost_cents: 125,
+          }),
+        }),
+        request("/api/v1/expenses/1", {
+          method: "PATCH",
+          headers: {
+            authorization: `Bearer ${projectBearer}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ notes: "must not write" }),
+        }),
+        request("/api/v1/expenses/1", {
+          method: "DELETE",
+          headers: { authorization: `Bearer ${projectBearer}` },
+        }),
+        request("/api/v1/expense-categories", {
+          headers: { authorization: `Bearer ${projectBearer}` },
+        }),
+        request("/api/v1/expense-categories/1", {
+          headers: { authorization: `Bearer ${projectBearer}` },
+        }),
+      ];
+      for (const response of await Promise.all(requests)) {
+        expect(response.status).toBe(403);
+        expect(await response.json()).toMatchObject({
+          error: { code: "module_disabled", fields: [] },
+        });
+      }
+      const receipt = new FormData();
+      receipt.set("file", new File(["denied"], "denied.txt"));
+      const attachmentAttempts = await Promise.all([
+        request("/api/v1/expenses/1/attachments", {
+          headers: { authorization: `Bearer ${projectBearer}` },
+        }),
+        request("/api/v1/expenses/1/attachments/1", {
+          headers: { authorization: `Bearer ${projectBearer}` },
+        }),
+        request("/api/v1/expenses/1/attachments/1/content", {
+          headers: { authorization: `Bearer ${projectBearer}` },
+        }),
+        request("/api/v1/expenses/1/attachments", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${projectBearer}`,
+            "idempotency-key": "module-disabled-receipt",
+          },
+          body: receipt,
+        }),
+      ]);
+      expect(attachmentAttempts.map((response) => response.status)).toEqual([
+        404, 404, 404, 404,
+      ]);
+    } finally {
+      await run(
+        `UPDATE organizations
+         SET modules = json_set(modules, '$.expenses', json('true'))
+         WHERE id = 1`,
+      );
+    }
+  });
+
   it("[api] executes and replays a generated-client money command through the real D1 binding", async () => {
     const client = new EzactoClient({
       baseUrl: "https://worker.test",
@@ -307,6 +478,104 @@ describe("Worker D1 runtime composition", () => {
         .bind(1)
         .first(),
     ).toEqual({ eventCount: 1 });
+  });
+
+  it("[e2e:projects] creates client → project → task assignment → selectable time through real D1 and R2", async () => {
+    const client = new EzactoClient({
+      baseUrl: "https://worker.test",
+      token: projectBearer,
+      fetch: workerFetch,
+    });
+    const createdClient = await client.createClient({
+      body: { name: "Native project client", currency: "USD" },
+    });
+    const task = await client.createTask({
+      body: { name: "Native project task", billable_by_default: true },
+    });
+    const project = await client.createProject({
+      body: {
+        client_id: createdClient.data.id,
+        name: "Native project",
+        code: "",
+        billing_method: "time_materials",
+        bill_by: "tasks",
+        budget_by: "project",
+        budget_seconds: 36_000,
+        time_entry_notes_minimum_length: 3,
+      },
+    });
+
+    expect(project.data).toMatchObject({
+      client_id: createdClient.data.id,
+      name: "Native project",
+      code: "",
+      budget_seconds: 36_000,
+    });
+    expect(
+      await database
+        .prepare(
+          `SELECT project_id AS projectId, user_id AS userId
+           FROM user_assignments WHERE project_id = ? AND user_id = ?`,
+        )
+        .bind(project.data.id, 1)
+        .first(),
+    ).toEqual({ projectId: project.data.id, userId: 1 });
+
+    const assignment = await client.createTaskAssignment({
+      body: {
+        project_id: project.data.id,
+        task_id: task.data.id,
+        billable: true,
+        budget_seconds: 18_000,
+      },
+    });
+    expect((await client.listTimeEntryOptions()).data).toContainEqual({
+      project_id: project.data.id,
+      task_id: task.data.id,
+      minimum_note_length: 3,
+    });
+    const entry = await client.createTimeEntry({
+      body: {
+        project_id: project.data.id,
+        task_id: task.data.id,
+        spent_date: "2026-08-28",
+        seconds: 1_800,
+        notes: "Built",
+      },
+    });
+    expect(entry.data).toMatchObject({
+      project_id: project.data.id,
+      task_id: task.data.id,
+      seconds: 1_800,
+      notes: "Built",
+    });
+
+    const form = new FormData();
+    form.set(
+      "file",
+      new File(["project brief"], "brief.txt", { type: "text/plain" }),
+    );
+    const attachment = await client.createProjectAttachment({
+      projectId: project.data.id,
+      "Idempotency-Key": "runtime-project-attachment",
+      body: form,
+    });
+    expect(
+      new TextDecoder().decode(
+        await client.downloadProjectAttachment({
+          projectId: project.data.id,
+          attachmentId: attachment.data.id,
+        }),
+      ),
+    ).toBe("project brief");
+
+    await client.deleteTaskAssignment({ id: assignment.data.id });
+    expect((await client.listTimeEntryOptions()).data).not.toContainEqual(
+      expect.objectContaining({
+        project_id: project.data.id,
+        task_id: task.data.id,
+      }),
+    );
   });
 
   it("[api] [inv-06] concurrently generates one invoice through the deployed Worker binding", async () => {

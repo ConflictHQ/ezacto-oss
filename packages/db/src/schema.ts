@@ -14,7 +14,7 @@ import {
 } from 'drizzle-orm/sqlite-core'
 import type { RecurringAmountConfig } from './recurring-invoices.js'
 import type { StaticRecurringAttachmentPolicyV1 } from './attachments.js'
-import type { EmailFailureCode, EmailRecipient } from '@ezacto/mailer'
+import type { EmailFailureCode, EmailRecipient, EmailSender } from '@ezacto/mailer'
 
 const timestamps = {
   createdAt: text('created_at').notNull(),
@@ -1834,6 +1834,8 @@ export const emailLog = sqliteTable(
   'email_log',
   {
     id: integer('id').primaryKey(),
+    from: text('from_json', { mode: 'json' }).$type<EmailSender | null>(),
+    replyTo: text('reply_to_json', { mode: 'json' }).$type<EmailRecipient[] | null>(),
     to: text('to_json', { mode: 'json' }).$type<EmailRecipient[]>().notNull(),
     template: text('template').notNull(),
     subject: text('subject').notNull(),
@@ -1911,6 +1913,295 @@ export const emailLog = sqliteTable(
     ),
     check('email_log_created_at_canonical', canonicalTimestamp(table.createdAt)),
     check('email_log_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+  ],
+)
+
+export const emailTemplateVersions = sqliteTable(
+  'email_template_versions',
+  {
+    templateKind: text('template_kind', {
+      enum: [
+        'invoice',
+        'reminder',
+        'thank_you',
+        'auth_email_verification',
+        'auth_password_reset',
+      ],
+    }).notNull(),
+    version: integer('version').notNull(),
+    subjectTemplate: text('subject_template').notNull(),
+    textTemplate: text('text_template').notNull(),
+    htmlTemplate: text('html_template'),
+    unknownVariablePolicy: text('unknown_variable_policy', {
+      enum: ['error', 'literal'],
+    })
+      .notNull()
+      .default('error'),
+    createdByUserId: integer('created_by_user_id').references(() => users.id, {
+      onDelete: 'restrict',
+    }),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.templateKind, table.version] }),
+    check(
+      'email_template_versions_version_safe',
+      sql`${table.version} between 1 and 9007199254740991`,
+    ),
+    check(
+      'email_template_versions_subject_safe',
+      sql`length(trim(${table.subjectTemplate})) between 1 and 998`,
+    ),
+    check(
+      'email_template_versions_text_safe',
+      sql`length(trim(${table.textTemplate})) between 1 and 1000000`,
+    ),
+    check(
+      'email_template_versions_html_safe',
+      sql`${table.htmlTemplate} is null or length(trim(${table.htmlTemplate})) between 1 and 2000000`,
+    ),
+    check(
+      'email_template_versions_created_at_canonical',
+      canonicalTimestamp(table.createdAt),
+    ),
+  ],
+)
+
+export const emailTemplateHeads = sqliteTable(
+  'email_template_heads',
+  {
+    templateKind: text('template_kind', {
+      enum: [
+        'invoice',
+        'reminder',
+        'thank_you',
+        'auth_email_verification',
+        'auth_password_reset',
+      ],
+    }).primaryKey(),
+    currentVersion: integer('current_version').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.templateKind, table.currentVersion],
+      foreignColumns: [
+        emailTemplateVersions.templateKind,
+        emailTemplateVersions.version,
+      ],
+    }).onDelete('restrict'),
+    check(
+      'email_template_heads_version_safe',
+      sql`${table.currentVersion} between 1 and 9007199254740991`,
+    ),
+    check(
+      'email_template_heads_updated_at_canonical',
+      canonicalTimestamp(table.updatedAt),
+    ),
+  ],
+)
+
+export const emailTemplateCommands = sqliteTable(
+  'email_template_commands',
+  {
+    commandId: text('command_id').primaryKey(),
+    templateKind: text('template_kind', {
+      enum: [
+        'invoice',
+        'reminder',
+        'thank_you',
+        'auth_email_verification',
+        'auth_password_reset',
+      ],
+    }).notNull(),
+    expectedVersion: integer('expected_version').notNull(),
+    resultVersion: integer('result_version').notNull(),
+    actorUserId: integer('actor_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    inputFingerprint: text('input_fingerprint').notNull(),
+    occurredAt: text('occurred_at').notNull(),
+    result: text('result_json', { mode: 'json' })
+      .$type<Record<string, unknown>>()
+      .notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.templateKind, table.resultVersion],
+      foreignColumns: [
+        emailTemplateVersions.templateKind,
+        emailTemplateVersions.version,
+      ],
+    }).onDelete('restrict'),
+    check(
+      'email_template_commands_id_format',
+      sql`length(${table.commandId}) between 1 and 128
+        and ${table.commandId} not glob '*[^A-Za-z0-9._:-]*'`,
+    ),
+    check(
+      'email_template_commands_version_shape',
+      sql`${table.expectedVersion} between 1 and 9007199254740991
+        and ${table.resultVersion} = ${table.expectedVersion} + 1`,
+    ),
+    check(
+      'email_template_commands_occurred_at_canonical',
+      canonicalTimestamp(table.occurredAt),
+    ),
+    check(
+      'email_template_commands_fingerprint_shape',
+      sql`length(${table.inputFingerprint}) = 71
+        and substr(${table.inputFingerprint}, 1, 7) = 'sha256:'
+        and substr(${table.inputFingerprint}, 8) not glob '*[^0-9a-f]*'`,
+    ),
+    check(
+      'email_template_commands_result_json',
+      sql`json_valid(${table.result}) and json_type(${table.result}) = 'object'`,
+    ),
+  ],
+)
+
+export const senderIdentities = sqliteTable(
+  'sender_identities',
+  {
+    id: integer('id').primaryKey(),
+    email: text('email').notNull().unique(),
+    displayName: text('display_name').notNull(),
+    replyToEmail: text('reply_to_email'),
+    provider: text('provider').notNull(),
+    providerIdentity: text('provider_identity').notNull(),
+    isDefault: integer('is_default', { mode: 'boolean' }).notNull().default(false),
+    version: integer('version').notNull().default(0),
+    archivedAt: text('archived_at'),
+    createdByUserId: integer('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('sender_identities_default_unique')
+      .on(table.isDefault)
+      .where(sql`${table.isDefault} = 1 and ${table.archivedAt} is null`),
+    uniqueIndex('sender_identities_provider_binding_unique').on(
+      table.provider,
+      table.providerIdentity,
+      table.email,
+    ),
+    check(
+      'sender_identities_version_safe',
+      sql`${table.version} between 0 and 9007199254740991`,
+    ),
+    check(
+      'sender_identities_created_at_canonical',
+      canonicalTimestamp(table.createdAt),
+    ),
+    check(
+      'sender_identities_updated_at_canonical',
+      canonicalTimestamp(table.updatedAt),
+    ),
+    check(
+      'sender_identities_archived_at_canonical',
+      nullableCanonicalTimestamp(table.archivedAt),
+    ),
+  ],
+)
+
+export const senderIdentityEvidence = sqliteTable(
+  'sender_identity_evidence',
+  {
+    senderIdentityId: integer('sender_identity_id')
+      .notNull()
+      .references(() => senderIdentities.id, { onDelete: 'restrict' }),
+    evidenceVersion: integer('evidence_version').notNull(),
+    source: text('source', {
+      enum: ['provider_api', 'deployment_config'],
+    }).notNull(),
+    identityKind: text('identity_kind', {
+      enum: ['email_address', 'domain'],
+    }).notNull(),
+    verificationStatus: text('verification_status', {
+      enum: [
+        'pending',
+        'verified',
+        'failed',
+        'temporary_failure',
+        'operator_configured',
+      ],
+    }).notNull(),
+    dkimStatus: text('dkim_status', {
+      enum: ['pending', 'verified', 'failed', 'not_applicable'],
+    }).notNull(),
+    mailFromDomain: text('mail_from_domain'),
+    mailFromStatus: text('mail_from_status', {
+      enum: ['pending', 'verified', 'failed', 'not_configured'],
+    }).notNull(),
+    observedAt: text('observed_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.senderIdentityId, table.evidenceVersion] }),
+    index('sender_identity_evidence_latest').on(
+      table.senderIdentityId,
+      table.evidenceVersion,
+    ),
+    check(
+      'sender_identity_evidence_version_safe',
+      sql`${table.evidenceVersion} between 1 and 9007199254740991`,
+    ),
+    check(
+      'sender_identity_evidence_observed_at_canonical',
+      canonicalTimestamp(table.observedAt),
+    ),
+    check(
+      'sender_identity_evidence_mail_from_shape',
+      sql`(${table.mailFromDomain} is null) = (${table.mailFromStatus} = 'not_configured')`,
+    ),
+  ],
+)
+
+export const senderIdentityCommands = sqliteTable(
+  'sender_identity_commands',
+  {
+    commandId: text('command_id').primaryKey(),
+    commandKind: text('command_kind', {
+      enum: [
+        'sender.create',
+        'sender.update',
+        'sender.default',
+        'sender.archive',
+        'sender.evidence',
+      ],
+    }).notNull(),
+    senderIdentityId: integer('sender_identity_id')
+      .notNull()
+      .references(() => senderIdentities.id, { onDelete: 'restrict' }),
+    actorUserId: integer('actor_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    inputFingerprint: text('input_fingerprint').notNull(),
+    occurredAt: text('occurred_at').notNull(),
+    result: text('result_json', { mode: 'json' })
+      .$type<Record<string, unknown>>()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      'sender_identity_commands_id_format',
+      sql`length(${table.commandId}) between 1 and 128
+        and ${table.commandId} not glob '*[^A-Za-z0-9._:-]*'`,
+    ),
+    check(
+      'sender_identity_commands_occurred_at_canonical',
+      canonicalTimestamp(table.occurredAt),
+    ),
+    check(
+      'sender_identity_commands_fingerprint_shape',
+      sql`length(${table.inputFingerprint}) = 71
+        and substr(${table.inputFingerprint}, 1, 7) = 'sha256:'
+        and substr(${table.inputFingerprint}, 8) not glob '*[^0-9a-f]*'`,
+    ),
+    check(
+      'sender_identity_commands_result_json',
+      sql`json_valid(${table.result}) and json_type(${table.result}) = 'object'`,
+    ),
   ],
 )
 
@@ -2037,6 +2328,119 @@ export const eventOutbox = sqliteTable(
     check('event_outbox_occurred_at_canonical', canonicalTimestamp(table.occurredAt)),
     check('event_outbox_available_at_canonical', canonicalTimestamp(table.availableAt)),
     check('event_outbox_published_at_canonical', nullableCanonicalTimestamp(table.publishedAt)),
+  ],
+)
+
+export const outboxDeliveryReceipts = sqliteTable(
+  'outbox_delivery_receipts',
+  {
+    subscriberId: text('subscriber_id').notNull(),
+    eventId: text('event_id')
+      .notNull()
+      .references(() => eventOutbox.id, { onDelete: 'restrict' }),
+    status: text('status', {
+      enum: ['pending', 'processing', 'delivered', 'failed'],
+    })
+      .notNull()
+      .default('pending'),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    nextAttemptAt: text('next_attempt_at'),
+    activeAttemptId: text('active_attempt_id'),
+    attemptLeaseExpiresAt: text('attempt_lease_expires_at'),
+    lastErrorCode: text('last_error_code', {
+      enum: ['subscriber_timeout', 'subscriber_rejected'],
+    }),
+    deliveredAt: text('delivered_at'),
+    failedAt: text('failed_at'),
+    ...timestamps,
+  },
+  (table) => [
+    primaryKey({ columns: [table.subscriberId, table.eventId] }),
+    index('outbox_delivery_receipts_ready').on(
+      table.subscriberId,
+      table.status,
+      table.nextAttemptAt,
+      table.updatedAt,
+      table.eventId,
+    ),
+    index('outbox_delivery_receipts_failures')
+      .on(table.status, table.failedAt, table.subscriberId, table.eventId)
+      .where(sql`${table.status} = 'failed'`),
+    check(
+      'outbox_delivery_receipts_subscriber_id_format',
+      sql`length(${table.subscriberId}) between 1 and 128
+        and ${table.subscriberId} not glob '*[^A-Za-z0-9._:-]*'`,
+    ),
+    check(
+      'outbox_delivery_receipts_attempt_count_safe',
+      sql`${table.attemptCount} between 0 and 9007199254740991`,
+    ),
+    check(
+      'outbox_delivery_receipts_active_attempt_format',
+      sql`${table.activeAttemptId} is null or (
+        length(${table.activeAttemptId}) between 1 and 128
+        and ${table.activeAttemptId} not glob '*[^A-Za-z0-9._:-]*'
+      )`,
+    ),
+    check(
+      'outbox_delivery_receipts_attempt_pair',
+      sql`(${table.activeAttemptId} is null) = (${table.attemptLeaseExpiresAt} is null)`,
+    ),
+    check(
+      'outbox_delivery_receipts_next_attempt_canonical',
+      nullableCanonicalTimestamp(table.nextAttemptAt),
+    ),
+    check(
+      'outbox_delivery_receipts_lease_canonical',
+      nullableCanonicalTimestamp(table.attemptLeaseExpiresAt),
+    ),
+    check(
+      'outbox_delivery_receipts_delivered_canonical',
+      nullableCanonicalTimestamp(table.deliveredAt),
+    ),
+    check(
+      'outbox_delivery_receipts_failed_canonical',
+      nullableCanonicalTimestamp(table.failedAt),
+    ),
+    check('outbox_delivery_receipts_created_canonical', canonicalTimestamp(table.createdAt)),
+    check('outbox_delivery_receipts_updated_canonical', canonicalTimestamp(table.updatedAt)),
+    check(
+      'outbox_delivery_receipts_timestamp_order',
+      sql`julianday(${table.updatedAt}) >= julianday(${table.createdAt})`,
+    ),
+    check(
+      'outbox_delivery_receipts_state_shape',
+      sql`(
+          ${table.status} = 'pending' and ${table.activeAttemptId} is null
+          and ${table.deliveredAt} is null and ${table.failedAt} is null
+        ) or (
+          ${table.status} = 'processing' and ${table.activeAttemptId} is not null
+          and ${table.nextAttemptAt} is null and ${table.deliveredAt} is null
+          and ${table.failedAt} is null and ${table.attemptCount} > 0
+        ) or (
+          ${table.status} = 'delivered' and ${table.activeAttemptId} is null
+          and ${table.nextAttemptAt} is null and ${table.lastErrorCode} is null
+          and ${table.deliveredAt} is not null and ${table.failedAt} is null
+        ) or (
+          ${table.status} = 'failed' and ${table.activeAttemptId} is null
+          and ${table.nextAttemptAt} is null and ${table.lastErrorCode} is not null
+          and ${table.deliveredAt} is null and ${table.failedAt} is not null
+        )`,
+    ),
+  ],
+)
+
+export const activityLog = sqliteTable(
+  'activity_log',
+  {
+    eventId: text('event_id')
+      .primaryKey()
+      .references(() => eventOutbox.id, { onDelete: 'restrict' }),
+    recordedAt: text('recorded_at').notNull(),
+  },
+  (table) => [
+    index('activity_log_recorded_event').on(table.recordedAt, table.eventId),
+    check('activity_log_recorded_at_canonical', canonicalTimestamp(table.recordedAt)),
   ],
 )
 

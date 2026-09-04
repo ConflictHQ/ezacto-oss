@@ -25,6 +25,8 @@ const statuses = new Set<EmailDeliveryStatus>([
 
 const emailLogData = (record: EmailLogRecord) => ({
   id: record.id,
+  from: record.from === null ? null : { ...record.from },
+  reply_to: record.replyTo.map((recipient) => ({ ...recipient })),
   to: record.to.map((recipient) => ({ ...recipient })),
   template: record.template,
   subject: record.subject,

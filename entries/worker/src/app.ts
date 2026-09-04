@@ -6,9 +6,11 @@ import {
   generateOpenApiDocument,
   installAttachmentRoutes,
   installEmailLogRoutes,
+  installEmailConfigurationRoutes,
   installGeneralResourceRoutes,
   installMoneyResourceRoutes,
   installOidcRoutes,
+  installOutboxRoutes,
   installPasswordAuthRoutes,
   installReportRoutes,
   installSessionRoutes,
@@ -25,6 +27,7 @@ import {
   type CloudflareAccessVerifierConfig,
   type ApiSessionService,
   type GeneralResourceRouteOptions,
+  type EmailConfigurationRouteOptions,
   type MoneyResourceRouteOptions,
   type OidcIdentityResolver,
   type OidcProviderConfig,
@@ -42,9 +45,14 @@ import {
   type InstanceBootstrapResult,
   type InstanceOwnerPasswordInput,
   type InstanceOwnerPasswordResult,
+  type OutboxService,
 } from '@ezacto/db/d1'
-import { renderAppShell, webAssets, type SignInProvider } from '@ezacto/web'
-import type { EmailLogStore, QueuedEmailJob } from '@ezacto/mailer'
+import { brandFromEnv, renderAppShell, webAssets, type SignInProvider } from '@ezacto/web'
+import type {
+  EmailLogStore,
+  QueuedEmailJob,
+  SenderBoundQueuedMailer,
+} from '@ezacto/mailer'
 
 /** Worker bindings stay entry-owned; the shared API package is runtime-agnostic. */
 export type Env = {
@@ -57,6 +65,13 @@ export type AppEnv = Env & {
   OIDC_GOOGLE_CLIENT_ID?: string
   OIDC_GOOGLE_CLIENT_SECRET?: string
   EZACTO_BOOTSTRAP_TOKEN?: string
+  BRAND_NAME?: string
+  BRAND_TAGLINE?: string
+  BRAND_DESCRIPTION?: string
+  BRAND_FAVICON?: string
+  BRAND_WORDMARK_LIGHT?: string
+  BRAND_WORDMARK_DARK?: string
+  BRAND_EMAIL_SENDER_NAME?: string
 }
 
 export type WorkerEnv = AppEnv & {
@@ -87,6 +102,7 @@ export interface RuntimeServices {
   tokens: ApiTokenService
   generalResources: GeneralResourceRouteOptions['repository']
   trackedResources: TrackedResourceRepository
+  isExpensesModuleEnabled(): Promise<boolean>
   timesheetApprovals: TimesheetApprovalService
   timesheetLockPolicy: TimesheetLockPolicyService
   moneyResources: MoneyResourceRouteOptions['service']
@@ -98,9 +114,14 @@ export interface RuntimeServices {
   /** Composite browser resolver when an optional edge identity provider is configured. */
   authenticationSessions?: ApiSessionResolver
   emailLog: EmailLogStore
+  emailConfiguration: EmailConfigurationRouteOptions['service']
+  senderIdentityVerifier?: EmailConfigurationRouteOptions['verifier']
+  organizationMailer?: SenderBoundQueuedMailer
+  outbox: OutboxService
   identities: OidcIdentityResolver
   oidcTransactions: OidcTransactionStorePort
-  authMailer?: AuthMailer
+  /** Deployment-brand sender for all authentication mail. */
+  deploymentAuthMailer?: AuthMailer
   attachments?: AttachmentRouteOptions
 }
 
@@ -136,14 +157,27 @@ export const createApp = (services?: RuntimeServices) =>
           installApi: (api) => {
             installSessionRoutes(api, services.sessions)
             installEmailLogRoutes(api, services.emailLog)
+            installEmailConfigurationRoutes(api, {
+              service: services.emailConfiguration,
+              ...(services.senderIdentityVerifier === undefined
+                ? {}
+                : { verifier: services.senderIdentityVerifier }),
+              ...(services.organizationMailer === undefined
+                ? {}
+                : { organizationMailer: services.organizationMailer }),
+              clock: () => systemClock.now().instant,
+            })
+            installOutboxRoutes(api, services.outbox)
             installGeneralResourceRoutes(api, {
               repository: services.generalResources,
               cursorSigningKey: services.cursorSigningKey,
+              isExpensesModuleEnabled: services.isExpensesModuleEnabled,
             })
             installTrackedResourceRoutes(api, {
               repository: services.trackedResources,
               clock: systemClock,
               cursorSigningKey: services.cursorSigningKey,
+              isExpensesModuleEnabled: services.isExpensesModuleEnabled,
             })
             installTimesheetApprovalRoutes(api, {
               service: services.timesheetApprovals,
@@ -178,9 +212,9 @@ export const createApp = (services?: RuntimeServices) =>
         installPasswordAuthRoutes(app, {
           service: services.passwordAuth,
           sessions: services.sessions,
-          ...(services.authMailer === undefined
+          ...(services.deploymentAuthMailer === undefined
             ? {}
-            : { mailer: services.authMailer }),
+            : { deploymentMailer: services.deploymentAuthMailer }),
           clientKey: (request) =>
             request.headers.get('cf-connecting-ip') ?? 'unknown-client',
         })
@@ -366,6 +400,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -385,6 +420,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Invoices',
             view: 'invoice-generation',
             signInProviders: configuredSignInProviders(context.env),
@@ -406,6 +442,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Approvals',
             view: 'timesheet-approvals',
             signInProviders: configuredSignInProviders(context.env),
@@ -427,6 +464,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Invoices',
             view: 'invoice-list',
             signInProviders: configuredSignInProviders(context.env),
@@ -448,6 +486,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Clients',
             view: 'client-list',
             signInProviders: configuredSignInProviders(context.env),
@@ -464,6 +503,176 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
+      app.get('/projects', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
+            activeSection: 'Projects',
+            view: 'project-list',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/tasks', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
+            activeSection: 'Tasks',
+            view: 'task-list',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/reports', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
+            activeSection: 'Reports',
+            view: 'reports',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/expenses', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
+            activeSection: 'Expenses',
+            view: 'expense-list',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/expense-categories', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
+            activeSection: 'Expenses',
+            view: 'expense-categories',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/expenses/:expenseId', (context) => {
+        const rawExpenseId = context.req.param('expenseId')
+        const expenseId = Number(rawExpenseId)
+        if (
+          !/^[1-9][0-9]*$/u.test(rawExpenseId) ||
+          !Number.isSafeInteger(expenseId)
+        ) {
+          return context.notFound()
+        }
+        return context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
+            activeSection: 'Expenses',
+            view: 'expense-detail',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        )
+      })
+
+      app.get('/projects/:projectId', (context) => {
+        const rawProjectId = context.req.param('projectId')
+        const projectId = Number(rawProjectId)
+        if (
+          !/^[1-9][0-9]*$/u.test(rawProjectId) ||
+          !Number.isSafeInteger(projectId)
+        ) {
+          return context.notFound()
+        }
+        return context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
+            activeSection: 'Projects',
+            view: 'project-detail',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        )
+      })
+
       app.get('/clients/:clientId', (context) => {
         const rawClientId = context.req.param('clientId')
         const clientId = Number(rawClientId)
@@ -477,6 +686,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Clients',
             view: 'client-detail',
             signInProviders: configuredSignInProviders(context.env),
@@ -506,6 +716,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Invoices',
             view: 'invoice-detail',
             signInProviders: configuredSignInProviders(context.env),
