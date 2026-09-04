@@ -38,3 +38,10 @@ ce42034359565ae94f14a77dae23c29fa801b4a0:packages/db/test/invoice-import-contrac
 # A historical test-only synthetic JWT fixture; current source constructs the
 # detector-shaped value from separate segments.
 a7f98dc929b3dc4d98abe951e6b0cc9c9df26aeb:packages/migrate/test/worksheets.test.ts:jwt:543
+
+# Mailgun provider test fixtures: test-only placeholder API key values used to
+# verify the HTTP Authorization header construction. Not real credentials.
+2c6b98a95969c24cb6177f12fd0436d3a0ef7e99:packages/mailer/test/mailgun.test.ts:generic-api-key:5
+2c6b98a95969c24cb6177f12fd0436d3a0ef7e99:packages/mailer/test/mailgun.test.ts:generic-api-key:57
+6b76ed5547937059a37566ab41cbf5b624630267:packages/mailer/test/mailgun.test.ts:generic-api-key:5
+6b76ed5547937059a37566ab41cbf5b624630267:packages/mailer/test/mailgun.test.ts:generic-api-key:57
