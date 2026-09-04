@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { MailgunMailer, type MailgunConfig } from "../src/mailgun.js";
 
 const config: MailgunConfig = {
-  apiKey: "key-test-1234567890abcdef",
+  apiKey: "key-test-00000000deadbeef00000000",
   domain: "mail.example.test",
   region: "us",
 };
@@ -54,7 +54,7 @@ describe("Mailgun HTTP provider", () => {
       "application/x-www-form-urlencoded",
     );
     expect(request.headers.get("authorization")).toBe(
-      `Basic ${btoa("api:key-test-1234567890abcdef")}`,
+      `Basic ${btoa("api:key-test-00000000deadbeef00000000")}`,
     );
 
     const body = new URLSearchParams(await request.text());
