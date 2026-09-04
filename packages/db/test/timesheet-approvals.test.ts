@@ -1686,6 +1686,97 @@ for (const [runtime, factory] of factories) {
         'Timesheet submission expense currency is invalid.',
       )
     })
+
+    it('[api] filters pending submissions by user_id', async () => {
+      database = await factory()
+      await installFixture(database)
+      await database.run(
+        `INSERT INTO user_assignments (id, project_id, user_id, created_at, updated_at)
+         VALUES (2, 1, 2, ?, ?)`,
+        t0, t0,
+      )
+      await database.run(
+        `INSERT INTO time_entries (
+          id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+          spent_date, seconds, seconds_without_timer, rounded_seconds, notes,
+          billable, created_at, updated_at
+        ) VALUES (2, 2, 1, 1, 2, 1, '2026-08-25', 1800, 1800, 1800,
+          'Manager work', 1, ?, ?)`,
+        t0, t0,
+      )
+      await database.run(
+        `INSERT INTO teammate_assignments (manager_id, user_id, created_at, updated_at)
+         VALUES (2, 1, ?, ?)`,
+        t0, t0,
+      )
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      await approvals.submit(1, periodStart, periodEnd, t1)
+      await approvals.submit(2, periodStart, periodEnd, t1)
+
+      const all = approvals.pendingSubmissions(actor(10, 'administrator'), {})
+      const allResults = await all.list({ afterId: null, throughId: (await all.highWatermark())!, take: 50 })
+      expect(allResults).toHaveLength(2)
+
+      const filtered = approvals.pendingSubmissions(actor(10, 'administrator'), { userId: 1 })
+      const hwm = await filtered.highWatermark()
+      const filteredResults = await filtered.list({ afterId: null, throughId: hwm!, take: 50 })
+      expect(filteredResults).toHaveLength(1)
+      expect(filteredResults[0]!.userId).toBe(1)
+    })
+
+    it('[api] filters pending submissions by client_id via time entry project', async () => {
+      database = await factory()
+      await installFixture(database)
+      await database.run(
+        `INSERT INTO clients (id, name, currency, created_at, updated_at)
+         VALUES (2, 'Other client', 'EUR', ?, ?)`,
+        t0, t0,
+      )
+      await database.run(
+        `INSERT INTO projects (id, client_id, name, created_at, updated_at)
+         VALUES (2, 2, 'Other project', ?, ?)`,
+        t0, t0,
+      )
+      await database.run(
+        `INSERT INTO user_assignments (id, project_id, user_id, created_at, updated_at)
+         VALUES (3, 2, 1, ?, ?)`,
+        t0, t0,
+      )
+      await database.run(
+        `INSERT INTO task_assignments (id, project_id, task_id, billable, created_at, updated_at)
+         VALUES (3, 2, 1, 1, ?, ?)`,
+        t0, t0,
+      )
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      await approvals.submit(1, periodStart, periodEnd, t1)
+
+      const matchClient1 = approvals.pendingSubmissions(actor(10, 'administrator'), { clientId: 1 })
+      const hwm1 = await matchClient1.highWatermark()
+      expect(hwm1).not.toBeNull()
+      const results1 = await matchClient1.list({ afterId: null, throughId: hwm1!, take: 50 })
+      expect(results1).toHaveLength(1)
+
+      const matchClient2 = approvals.pendingSubmissions(actor(10, 'administrator'), { clientId: 2 })
+      const hwm2 = await matchClient2.highWatermark()
+      expect(hwm2).toBeNull()
+    })
+
+    it('[e2e] bounded hydration keeps query count stable with all filters', async () => {
+      database = await factory()
+      await installFixture(database)
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      await approvals.submit(1, periodStart, periodEnd, t1)
+
+      const source = approvals.pendingSubmissions(actor(10, 'administrator'), {
+        userId: 1,
+        clientId: 1,
+        projectId: 1,
+      })
+      const hwm = await source.highWatermark()
+      expect(hwm).not.toBeNull()
+      const results = await source.list({ afterId: null, throughId: hwm!, take: 50 })
+      expect(results).toHaveLength(1)
+    })
   })
 }
 
@@ -1929,5 +2020,6 @@ for (const [runtime, factory] of upgradeFactories) {
           WHERE type = 'table' AND name = 'timesheet_submissions'`),
       ).toEqual([])
     })
+
   })
 }

@@ -47,7 +47,7 @@ import {
   type InstanceOwnerPasswordResult,
   type OutboxService,
 } from '@ezacto/db/d1'
-import { renderAppShell, webAssets, type SignInProvider } from '@ezacto/web'
+import { brandFromEnv, renderAppShell, webAssets, type SignInProvider } from '@ezacto/web'
 import type {
   EmailLogStore,
   QueuedEmailJob,
@@ -65,6 +65,13 @@ export type AppEnv = Env & {
   OIDC_GOOGLE_CLIENT_ID?: string
   OIDC_GOOGLE_CLIENT_SECRET?: string
   EZACTO_BOOTSTRAP_TOKEN?: string
+  BRAND_NAME?: string
+  BRAND_TAGLINE?: string
+  BRAND_DESCRIPTION?: string
+  BRAND_FAVICON?: string
+  BRAND_WORDMARK_LIGHT?: string
+  BRAND_WORDMARK_DARK?: string
+  BRAND_EMAIL_SENDER_NAME?: string
 }
 
 export type WorkerEnv = AppEnv & {
@@ -393,6 +400,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -412,6 +420,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Invoices',
             view: 'invoice-generation',
             signInProviders: configuredSignInProviders(context.env),
@@ -433,6 +442,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Approvals',
             view: 'timesheet-approvals',
             signInProviders: configuredSignInProviders(context.env),
@@ -454,6 +464,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Invoices',
             view: 'invoice-list',
             signInProviders: configuredSignInProviders(context.env),
@@ -475,6 +486,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Clients',
             view: 'client-list',
             signInProviders: configuredSignInProviders(context.env),
@@ -496,6 +508,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Projects',
             view: 'project-list',
             signInProviders: configuredSignInProviders(context.env),
@@ -517,6 +530,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Tasks',
             view: 'task-list',
             signInProviders: configuredSignInProviders(context.env),
@@ -538,6 +552,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Reports',
             view: 'reports',
             signInProviders: configuredSignInProviders(context.env),
@@ -559,6 +574,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Expenses',
             view: 'expense-list',
             signInProviders: configuredSignInProviders(context.env),
@@ -580,6 +596,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Expenses',
             view: 'expense-categories',
             signInProviders: configuredSignInProviders(context.env),
@@ -609,6 +626,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Expenses',
             view: 'expense-detail',
             signInProviders: configuredSignInProviders(context.env),
@@ -638,6 +656,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Projects',
             view: 'project-detail',
             signInProviders: configuredSignInProviders(context.env),
@@ -667,6 +686,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Clients',
             view: 'client-detail',
             signInProviders: configuredSignInProviders(context.env),
@@ -696,6 +716,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Invoices',
             view: 'invoice-detail',
             signInProviders: configuredSignInProviders(context.env),
