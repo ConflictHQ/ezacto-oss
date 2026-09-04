@@ -57,10 +57,6 @@ describe('container in-process email queue', () => {
       getByProviderMessageId: async () => null,
       countByStatus: async () => ({ queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0 }),
       list: async () => [],
-      markBounced: async (id: number) => record(id, 'bounced'),
-      markComplained: async (id: number) => record(id, 'complained'),
-      getByProviderMessageId: async () => null,
-      countByStatus: async () => ({ queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0 }),
     }
     const provider: HttpEmailProvider = {
       name: 'smtp',
@@ -130,10 +126,6 @@ describe('container in-process email queue', () => {
       getByProviderMessageId: async () => null,
       countByStatus: async () => ({ queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0 }),
       list: async () => [],
-      markBounced: async (id: number) => record(id, 'bounced'),
-      markComplained: async (id: number) => record(id, 'complained'),
-      getByProviderMessageId: async () => null,
-      countByStatus: async () => ({ queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0 }),
     }
     const provider: HttpEmailProvider = {
       name: 'smtp',
