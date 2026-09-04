@@ -321,7 +321,7 @@ const createStore = (
         failed: 0,
       }
       for (const row of rows) counts[row.status] = row.count
-      return counts as Record<import('@ezacto/mailer').EmailDeliveryStatus, number>
+      return counts as Record<EmailDeliveryStatus, number>
     },
 
     async list(input = {}) {
