@@ -460,6 +460,9 @@ const timesheetApprovalOperations: ApiContractOperation[] = [
       ...pageParameters,
       query("period_start", dateSchema),
       query("period_end", dateSchema),
+      query("user_id", integerSchema),
+      query("client_id", integerSchema),
+      query("project_id", integerSchema),
     ],
   },
   {
@@ -474,6 +477,9 @@ const timesheetApprovalOperations: ApiContractOperation[] = [
       ...pageParameters,
       query("period_start", dateSchema),
       query("period_end", dateSchema),
+      query("user_id", integerSchema),
+      query("client_id", integerSchema),
+      query("project_id", integerSchema),
     ],
   },
   {
