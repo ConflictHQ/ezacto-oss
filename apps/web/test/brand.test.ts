@@ -4,7 +4,6 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   type DeploymentBrand,
-  type ReportBrand,
   brandFromEnv,
   defaultBrand,
   defaultReportBrand,
@@ -14,18 +13,6 @@ import {
 import { renderAppShell, renderDocumentShell } from '../src/shell/render.js'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-
-const filesUnder = async (directory: string): Promise<string[]> => {
-  const { readdir } = await import('node:fs/promises')
-  const entries = await readdir(directory, { withFileTypes: true })
-  const paths = await Promise.all(
-    entries.map((entry) => {
-      const path = resolve(directory, entry.name)
-      return entry.isDirectory() ? filesUnder(path) : Promise.resolve([path])
-    }),
-  )
-  return paths.flat()
-}
 
 describe('F12/DV-23 deployment brand seam', () => {
   it('[unit] no inline wordmark — shell source has zero hardcoded "ezacto" in user-visible text', async () => {
