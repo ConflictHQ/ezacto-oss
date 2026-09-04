@@ -276,7 +276,6 @@ for (const [runtime, factory] of factories) {
       const db = await setup()
       expect(
         await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`),
-      ).toEqual([{ id: '0031_team_people' }])
       ).toEqual([{ id: '0032_invoice_email_delivery' }])
       for (const table of ['time_entries', 'expenses']) {
         const columns = await db.rows<{

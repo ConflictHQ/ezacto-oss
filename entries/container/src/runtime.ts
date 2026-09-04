@@ -320,7 +320,6 @@ export const createContainerRuntime = async (
           .get() as { enabled: number } | undefined
         return row?.enabled === 1
       },
-      moneyResources: createMoneyResourceRepository(drizzle),
       moneyResources,
       invoiceGeneration: createInvoiceGenerationService(drizzle),
       reports: createReportRepository(drizzle),

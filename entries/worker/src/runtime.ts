@@ -414,7 +414,6 @@ export const createRuntimeServices = async (
     tokens: createApiTokenStore(drizzle),
     generalResources: createGeneralResourceRepository(drizzle),
     team: createTeamRepository(drizzle),
-    moneyResources: createMoneyResourceRepository(drizzle),
     moneyResources,
     invoiceGeneration: createInvoiceGenerationService(drizzle),
     trackedResources: new DrizzleTrackedResourceRepository(

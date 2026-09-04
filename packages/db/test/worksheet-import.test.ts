@@ -766,7 +766,6 @@ describe('worksheet completion migration boundary', () => {
         await database.rows<{ id: string }>(
           `SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`,
         ),
-      ).toEqual([{ id: '0031_team_people' }])
       ).toEqual([{ id: '0032_invoice_email_delivery' }])
     } finally {
       await miniflare.dispose()

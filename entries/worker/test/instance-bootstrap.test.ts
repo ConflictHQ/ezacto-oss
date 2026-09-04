@@ -326,7 +326,6 @@ describe("Worker operator bootstrap", () => {
       await database
         .prepare(`SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`)
         .first<{ id: string }>(),
-    ).toEqual({ id: "0031_team_people" });
     ).toEqual({ id: "0032_invoice_email_delivery" });
   }, 40_000);
 
