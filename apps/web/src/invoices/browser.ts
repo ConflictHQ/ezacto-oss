@@ -2,6 +2,7 @@ import {
   type Attachment,
   EzactoApiError,
   type Invoice,
+  type InvoiceEmailDeliveryInput,
   type InvoiceLine,
   type InvoiceLineInput,
   type InvoiceLineUpdateInput,
@@ -417,6 +418,7 @@ export const createInvoicePaymentController = (
   const deleteResult = required<HTMLElement>('[data-invoice-payment-delete-result]')
   const deleteSubmit = required<HTMLButtonElement>('[data-invoice-payment-delete-submit]')
   const send = required<HTMLButtonElement>('[data-invoice-send]')
+  const deliver = required<HTMLButtonElement>('[data-invoice-deliver]')
   const composerDialog = required<HTMLDialogElement>('[data-invoice-composer-dialog]')
   const composerForm = required<HTMLFormElement>('[data-invoice-composer-form]')
   const composerTitle = required<HTMLElement>('[data-invoice-composer-title]')
@@ -428,6 +430,12 @@ export const createInvoicePaymentController = (
   const composerReminderDate = required<HTMLInputElement>('[data-invoice-composer-reminder-date]')
   const composerResult = required<HTMLElement>('[data-invoice-composer-result]')
   const composerSubmit = required<HTMLButtonElement>('[data-invoice-composer-submit]')
+  const deliveryDialog = required<HTMLDialogElement>('[data-invoice-delivery-dialog]')
+  const deliveryForm = required<HTMLFormElement>('[data-invoice-delivery-form]')
+  const deliveryRecipients = required<HTMLTextAreaElement>('[data-invoice-delivery-recipients]')
+  const deliveryConfirm = required<HTMLInputElement>('[data-invoice-delivery-confirm]')
+  const deliveryResult = required<HTMLElement>('[data-invoice-delivery-result]')
+  const deliverySubmit = required<HTMLButtonElement>('[data-invoice-delivery-submit]')
   const addLine = required<HTMLButtonElement>('[data-invoice-line-add]')
   const lineReadonlyNotice = required<HTMLElement>('[data-invoice-line-readonly]')
   const lineWorkflowStatus = required<HTMLElement>('[data-invoice-line-status]')
@@ -471,6 +479,7 @@ export const createInvoicePaymentController = (
   let paymentCommandId: string | null = null
   let deleteCommandId: string | null = null
   let invoiceCommandId: string | null = null
+  let deliveryCommandId: string | null = null
   let lineCommandId: string | null = null
   let lineDeleteCommandId: string | null = null
 
@@ -540,6 +549,8 @@ export const createInvoicePaymentController = (
     send.hidden = !canSend
     send.disabled = controlsLocked || !canSend
     send.textContent = invoice?.state === 'open' ? 'Record another sent message' : 'Mark sent'
+    deliver.hidden = !canSend
+    deliver.disabled = controlsLocked || !canSend
     readonlyNotice.hidden = session === null || canWrite
     const canEditLines = canWrite && invoice !== null && invoiceCanEditLines(invoice)
     addLine.hidden = !canWrite
@@ -565,11 +576,17 @@ export const createInvoicePaymentController = (
     >('input, textarea, button')) {
       control.disabled = controlsLocked
     }
+    for (const control of deliveryForm.querySelectorAll<
+      HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement
+    >('input, textarea, button')) {
+      control.disabled = controlsLocked
+    }
     for (const control of lineForm.querySelectorAll<
       HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement
     >('input, textarea, button')) {
       control.disabled = controlsLocked
     }
+    deliverySubmit.disabled = controlsLocked
     lineSubmit.disabled = controlsLocked
     lineDeleteSubmit.disabled = controlsLocked
     syncReminder()
@@ -579,6 +596,7 @@ export const createInvoicePaymentController = (
     if (paymentDialog.open) paymentDialog.close()
     if (deleteDialog.open) deleteDialog.close()
     if (composerDialog.open) composerDialog.close()
+    if (deliveryDialog.open) deliveryDialog.close()
     if (lineDialog.open) lineDialog.close()
     if (lineDeleteDialog.open) lineDeleteDialog.close()
   }
@@ -647,18 +665,21 @@ export const createInvoicePaymentController = (
     paymentCommandId = null
     deleteCommandId = null
     invoiceCommandId = null
+    deliveryCommandId = null
     lineCommandId = null
     lineDeleteCommandId = null
     closeDialogs()
     paymentForm.reset()
     deleteForm.reset()
     composerForm.reset()
+    deliveryForm.reset()
     lineForm.reset()
     lineDeleteForm.reset()
     attachmentForm.reset()
     paymentResult.textContent = ''
     deleteResult.textContent = ''
     composerResult.textContent = ''
+    deliveryResult.textContent = ''
     lineResult.textContent = ''
     lineDeleteResult.textContent = ''
     lineWorkflowStatus.textContent = ''
@@ -936,6 +957,20 @@ export const createInvoicePaymentController = (
     composerRecipients.focus()
   }
 
+  const openDelivery = (): void => {
+    const session = current()
+    if (
+      session === null || invoice === null || mutationPending || refreshRequired ||
+      !invoiceIdentityCanWrite(session.identity) || !invoiceCanMarkSent(invoice)
+    ) return
+    deliveryCommandId = null
+    deliveryForm.reset()
+    deliveryResult.textContent = ''
+    syncControls()
+    deliveryDialog.showModal()
+    deliveryRecipients.focus()
+  }
+
   const conflictCodes = new Set([
     'invoice_version_conflict',
     'trigger_row_conflict',
@@ -958,6 +993,7 @@ export const createInvoicePaymentController = (
       paymentCommandId = null
       deleteCommandId = null
       invoiceCommandId = null
+      deliveryCommandId = null
       lineCommandId = null
       lineDeleteCommandId = null
       const loaded = await loadDetail(session, { hideDocument: false })
@@ -984,6 +1020,9 @@ export const createInvoicePaymentController = (
       if (composerDialog.open && (invoice === null || !invoiceCanMarkSent(invoice))) {
         composerDialog.close()
       }
+      if (deliveryDialog.open && (invoice === null || !invoiceCanMarkSent(invoice))) {
+        deliveryDialog.close()
+      }
       return
     }
     result.textContent = apiMessage(error)
@@ -994,6 +1033,72 @@ export const createInvoicePaymentController = (
     syncPrecision()
   })
   send.addEventListener('click', openComposer)
+  deliver.addEventListener('click', openDelivery)
+  deliveryForm.addEventListener('input', () => {
+    if (!mutationPending) deliveryCommandId = null
+    deliveryResult.textContent = ''
+  })
+  deliveryForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const session = current()
+    const selectedInvoice = invoice
+    const deliverInvoiceEmail = api.deliverInvoiceEmail
+    if (
+      session === null || selectedInvoice === null || deliverInvoiceEmail === undefined ||
+      mutationPending || refreshRequired || !invoiceIdentityCanWrite(session.identity) ||
+      !invoiceCanMarkSent(selectedInvoice)
+    ) return
+    let recipients: ReturnType<typeof invoiceRecipients>
+    try {
+      recipients = invoiceRecipients(deliveryRecipients.value)
+      if (!deliveryConfirm.checked) {
+        throw new Error('Confirm the recipients before sending this invoice email.')
+      }
+    } catch (error) {
+      deliveryResult.textContent = apiMessage(error)
+      return
+    }
+    const input: InvoiceEmailDeliveryInput = {
+      expected_version: selectedInvoice.version,
+      recipients,
+      confirmed: true,
+    }
+    deliveryCommandId ??= `web.invoice.delivery:${globalThis.crypto.randomUUID()}`
+    const activeCommand = deliveryCommandId
+    mutationPending = true
+    deliveryResult.textContent = 'Confirming and queueing invoice email…'
+    syncControls()
+    void deliverInvoiceEmail(selectedInvoice.id, activeCommand, input, session.signal)
+      .then(async (updatedInvoice) => {
+        if (current() !== session) return
+        deliveryCommandId = null
+        invoice = updatedInvoice
+        mutationPending = false
+        refreshRequired = true
+        deliveryDialog.close()
+        workflowStatus.textContent = 'Invoice email queued. Refreshing its history…'
+        syncControls()
+        const loaded = await loadDetail(session, {
+          hideDocument: false,
+          successMessage: 'Invoice email queued for the confirmed recipients.',
+        })
+        if (!loaded && current() === session && refreshRequired) {
+          workflowStatus.textContent =
+            'Invoice email was queued, but the updated invoice could not be refreshed. Retry invoice; the email will not be submitted again.'
+        }
+      })
+      .catch(async (error: unknown) => {
+        if (current() !== session) return
+        mutationPending = false
+        await handleMutationFailure(error, session, deliveryResult)
+      })
+      .finally(() => {
+        if (current() === session) {
+          mutationPending = false
+          syncControls()
+        }
+      })
+  })
   composerReminderToggle.addEventListener('change', () => {
     if (!mutationPending) invoiceCommandId = null
     syncReminder()

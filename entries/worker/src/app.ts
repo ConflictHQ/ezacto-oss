@@ -196,6 +196,14 @@ export const createApp = (services?: RuntimeServices) =>
             installMoneyResourceRoutes(api, {
               service: services.moneyResources,
               generation: services.invoiceGeneration,
+              ...(services.organizationMailer === undefined
+                ? {}
+                : {
+                    invoiceDelivery: {
+                      configuration: services.emailConfiguration,
+                      mailer: services.organizationMailer,
+                    },
+                  }),
               cursorSigningKey: services.cursorSigningKey,
               clock: () => systemClock.now().instant,
             })

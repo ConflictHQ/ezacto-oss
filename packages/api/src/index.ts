@@ -54,7 +54,10 @@ export {
   type GeneralResourceRouteOptions,
 } from './general-resources.js'
 export {
+  createInvoiceEmailOutboxSubscriber,
   installMoneyResourceRoutes,
+  type InvoiceDeliveryContext,
+  type InvoiceDeliveryJob,
   type InvoiceGenerationCommand,
   type InvoiceGenerationExpenseSummary,
   type InvoiceGenerationPort,
