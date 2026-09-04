@@ -243,9 +243,10 @@ for (const [runtime, factory] of factories) {
         `INSERT INTO time_entries
           (harvest_id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
            spent_date, seconds, seconds_without_timer, rounded_seconds, billable, budgeted,
-           billable_rate_cents, cost_rate_cents, created_at, updated_at)
+           billable_rate_cents, cost_rate_cents, approval_status, source_approval_status,
+           created_at, updated_at)
          VALUES ('imported-1', 1, 1, 1, 1, 1, '2026-06-30', 3600, 3600, 3600,
-           1, 0, 12345, 6789, ?, ?)`,
+           1, 0, 12345, 6789, 'unsubmitted', 'unsubmitted', ?, ?)`,
         timestamp,
         timestamp,
       )
@@ -466,6 +467,10 @@ for (const [runtime, factory] of factories) {
         '0024_migration_worksheet_completions',
         '0025_time_entry_note_requirements',
         '0026_invoice_generation',
+        '0027_timesheet_approvals',
+        '0028_timesheet_lock_policy',
+        '0029_outbox_delivery',
+        '0030_email_templates',
       ])
       expect(firstLedger.slice(0, 3).map(({ applied_at: appliedAt }) => appliedAt)).toEqual([
         timestamp,
@@ -536,6 +541,10 @@ for (const [runtime, factory] of factories) {
         { id: '0024_migration_worksheet_completions' },
         { id: '0025_time_entry_note_requirements' },
         { id: '0026_invoice_generation' },
+        { id: '0027_timesheet_approvals' },
+        { id: '0028_timesheet_lock_policy' },
+        { id: '0029_outbox_delivery' },
+        { id: '0030_email_templates' },
       ])
     })
   })

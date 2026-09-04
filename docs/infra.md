@@ -32,12 +32,14 @@ the earlier plan for our instance — is dropped in favour of `app.example.com`.
 - D1/R2/Queues bindings land in `wrangler.jsonc` with the stories that use them.
   A binding nothing reads is a lie about what the Worker needs.
 
-## Backups (D3)
+## Backups (D3 / D18)
 
-- Hosted: D1 Time Travel (30 d, per-minute, on by default) + **nightly logical
-  export to R2** per org (cron Worker). Restore = operator action with
-  confirmation; never automated.
-- Container: SQLite file copy + the same logical export format.
+- Available now: hosted D1 Time Travel (30 days on the Paid plan, per-minute,
+  on by default) and a stopped-container physical snapshot of `db.sqlite` plus
+  attachments. Restore is a confirmed operator action, never automatic.
+- Planned, not yet implemented: the shared D18 logical bundle, nightly Worker
+  export to R2 (#37), and `ez backup` / `ez restore` (#28). The physical
+  container snapshot is not that portable bundle. See [`RESTORE.md`](../RESTORE.md).
 
 ## Env & secrets
 

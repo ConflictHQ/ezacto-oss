@@ -1,5 +1,18 @@
 export { createApiApp } from './app.js'
 export {
+  assertValidCloudflareAccessConfig,
+  CLOUDFLARE_ACCESS_JWT_HEADER,
+  createCloudflareAccessSessionResolver,
+  createCloudflareAccessVerifier,
+  type CloudflareAccessAssertion,
+  type CloudflareAccessFetch,
+  type CloudflareAccessIdentityResolver,
+  type CloudflareAccessSessionResolverOptions,
+  type CloudflareAccessSessionService,
+  type CloudflareAccessVerifier,
+  type CloudflareAccessVerifierConfig,
+} from './cloudflare-access.js'
+export {
   installAttachmentRoutes,
   MAX_ATTACHMENT_BYTES,
   type AttachmentMetadataInput,
@@ -31,6 +44,11 @@ export {
   type IssuedApiToken,
   type SessionPrincipal,
 } from './auth.js'
+export {
+  createQueuedAuthMailer,
+  type AuthEmailTemplate,
+  type AuthEmailTemplateSource,
+} from './auth-email.js'
 export {
   installGeneralResourceRoutes,
   type GeneralResourceRouteOptions,
@@ -74,6 +92,24 @@ export {
   type EmailLogReader,
 } from './email-log.js'
 export {
+  installEmailConfigurationRoutes,
+  type EmailConfigurationRouteOptions,
+  type EmailConfigurationService,
+  type EmailTestSendCommandRecord,
+  type EmailTestSendFailureCode,
+  type EmailTemplateConfigurationRecord,
+  type ProviderSenderIdentityEvidence,
+  type SenderIdentityConfigurationRecord,
+  type SenderIdentityVerifier,
+} from './email-configuration.js'
+export {
+  installOutboxRoutes,
+  type ActivityLogResource,
+  type OutboxDeliveryResource,
+  type OutboxDeliveryStatus,
+  type OutboxMonitor,
+} from './outbox.js'
+export {
   installPasswordAuthRoutes,
   type AuthDelivery,
   type AuthMailer,
@@ -86,8 +122,34 @@ export {
   serializeClientRollup,
   serializeProjectBudget,
   serializeUninvoiced,
+  type ProjectReportViewer,
   type ReportReader,
 } from './reports.js'
+export {
+  installTimesheetApprovalRoutes,
+  serializeTimesheetSubmission,
+  type TimesheetApprovalActor,
+  type TimesheetApprovalRouteOptions,
+  type TimesheetApprovalService,
+  type TimesheetSubmissionDetailRecord,
+  type TimesheetSubmissionEntryRecord,
+  type TimesheetSubmissionExpenseRecord,
+  type TimesheetSubmissionFilters,
+  type TimesheetSubmissionRecord,
+  type TimesheetSubmissionStatus,
+} from './timesheet-approvals.js'
+export {
+  installTimesheetLockPolicyRoutes,
+  type TimesheetDeadline,
+  type TimesheetDeadlineDay,
+  type TimesheetLockFilters,
+  type TimesheetLockPolicyActor,
+  type TimesheetLockPolicyRouteOptions,
+  type TimesheetLockPolicyService,
+  type TimesheetLockPolicySettings,
+  type TimesheetLockWindowRecord,
+  type UpdateTimesheetLockPolicySettings,
+} from './timesheet-lock-policy.js'
 export {
   assertValidOidcProviderConfig,
   installOidcRoutes,

@@ -66,6 +66,10 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
     })
     await consumeCloudflareEmailBatch(batch, services.emailLog, provider)
   },
+  async scheduled(_controller, env) {
+    const services = await createRuntimeServices(env)
+    await services.outbox.drain()
+  },
 }
 
 export default worker

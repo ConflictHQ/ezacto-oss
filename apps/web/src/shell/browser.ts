@@ -2,8 +2,33 @@ import {
   EzactoApiError,
   type GeneralResource,
   type InvoiceGenerationInput,
+  type TimeEntryInput,
+  type TimeEntryPatch,
+  type TimesheetLockPolicy,
+  type TimesheetLockWindow,
+  type TimesheetSubmission,
+  type TimesheetSubmissionDetail,
   type Whoami,
 } from '@ezacto/client'
+import {
+  contextLabel,
+  formatTimeForClock,
+  modeForEntryDraft,
+  parseTimeForClock,
+  type EntryEditorContext,
+  type TimeEntryMode,
+} from '../components/time-entry-editor.js'
+import { createClientDirectoryController } from '../clients/browser.js'
+import { createProjectDirectoryController } from '../projects/browser.js'
+import { createReportsController } from '../reports/browser.js'
+import { createExpenseWorkflowController } from '../expenses/browser.js'
+import { createTaskAdminController } from '../tasks/browser.js'
+import { createExpenseCategoryDirectoryController } from '../expense-categories/browser.js'
+import {
+  createInvoicePaymentController,
+  renderInvoiceListItems,
+} from '../invoices/browser.js'
+import { invoiceIdentityCanRead } from '../invoices/model.js'
 import {
   buildWeekGrid,
   formatCellHours,
@@ -18,12 +43,12 @@ import {
 } from '../week-grid/model.js'
 import {
   createSameOriginShellApi,
+  hydratePendingTimesheetDetails,
   loadShellSnapshot,
   localDate,
   navigationDestination,
-  quickAdd,
+  prepareQuickAdd,
   runningElapsedSeconds,
-  startTimer,
   timeEntryNoteLength,
   weekRange,
   type DisplayTimeEntry,
@@ -56,6 +81,8 @@ interface AuthOperation {
 
 interface GridHandlers {
   readonly cellStates: Map<string, CellSaveState>
+  readonly organizationMode: TimeEntryMode
+  readonly organizationTimeFormat: 'decimal' | 'hours_minutes'
   commit(
     input: HTMLInputElement,
     cell: WeekGridCell,
@@ -63,13 +90,24 @@ interface GridHandlers {
     focus?: FocusTarget,
   ): Promise<boolean>
   retry(cell: WeekGridCell, view: GridView): Promise<void>
-  openNote(cell: WeekGridCell, view: GridView): void
+  openEntry(cell: WeekGridCell, view: GridView): void
 }
 
-interface ActiveNote {
-  readonly cell: WeekGridCell
-  readonly view: GridView
+interface ActiveEntryEditor {
+  readonly context: EntryEditorContext
+  readonly cell?: WeekGridCell
+  readonly view?: GridView
+  readonly entry: DisplayTimeEntry | null
+  readonly projectId: number
+  readonly taskId: number
+  readonly spentDate: string
+  readonly seconds: number
+  readonly notes: string | null
+  readonly mode: TimeEntryMode
+  readonly timer: boolean
   readonly minimumNoteLength: number
+  readonly initialDurationValue?: string
+  readonly durationWasEditedBeforeOpen?: boolean
 }
 
 const required = <ElementType extends Element>(selector: string): ElementType => {
@@ -83,6 +121,9 @@ const formatSeconds = (seconds: number): string => {
   const minutes = Math.floor((seconds % 3_600) / 60)
   return `${hours}:${String(minutes).padStart(2, '0')}`
 }
+
+const formatMoney = (cents: number, currency: string): string =>
+  new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100)
 
 const parseDate = (value: string): Date => new Date(`${value}T00:00:00.000Z`)
 
@@ -212,22 +253,26 @@ const cellInput = (
   cell: WeekGridCell,
   view: GridView,
   state: CellSaveState | undefined,
+  organizationMode: TimeEntryMode,
+  organizationTimeFormat: 'decimal' | 'hours_minutes',
 ): HTMLInputElement => {
   const input = document.createElement('input')
   input.type = 'text'
   input.inputMode = 'decimal'
   input.autocomplete = 'off'
   input.dataset.cellKey = cell.key
-  input.dataset.savedValue = formatCellHours(cell.totalSeconds)
+  input.dataset.savedValue = formatCellHours(cell.totalSeconds, organizationTimeFormat)
   input.dataset.view = view
   input.value = state?.rawValue ?? input.dataset.savedValue
   input.ariaLabel = `${dayLabel(cell.date)} hours`
   input.placeholder = '0'
-  input.disabled = cell.isConflict || cell.isLocked || cell.isRunning
+  const mode = modeForEntryDraft(cell.entries[0] ?? null, organizationMode)
+  input.disabled = cell.isConflict || cell.isLocked || cell.isRunning || mode === 'start_end'
   if (cell.isConflict)
     input.title = 'Multiple entries share this cell. Open Day view to edit them separately.'
-  if (cell.isLocked) input.title = 'This entry is locked.'
+  if (cell.isLocked) input.title = cell.lockedReason ?? 'This entry is locked.'
   if (cell.isRunning) input.title = 'Stop the running timer before editing this cell.'
+  if (mode === 'start_end') input.title = 'Open entry details to edit start and end times.'
   return input
 }
 
@@ -258,7 +303,13 @@ const renderCellControl = (
   status.className = 'cell-status'
   status.setAttribute('role', 'status')
 
-  const input = cellInput(cell, view, state)
+  const input = cellInput(
+    cell,
+    view,
+    state,
+    handlers.organizationMode,
+    handlers.organizationTimeFormat,
+  )
   input.addEventListener('input', () => {
     const current = handlers.cellStates.get(cell.key)
     const dirty: CellSaveState = {
@@ -288,11 +339,15 @@ const renderCellControl = (
   note.type = 'button'
   note.className = 'cell-note'
   note.dataset.noteCell = cell.key
-  note.ariaLabel = `${currentNotes === null ? 'Add' : 'Edit'} note for ${noteContext} on ${dayLabel(cell.date)}${minimumNoteLength > 0 ? `; at least ${minimumNoteLength} characters required` : ''}`
-  note.title = currentNotes ?? (minimumNoteLength > 0 ? noteHint(minimumNoteLength) : 'Add note')
+  note.ariaLabel = `${cell.entries.length === 0 ? 'Add time' : currentNotes === null ? 'Add note' : 'Edit note'} for ${noteContext} on ${dayLabel(cell.date)}${minimumNoteLength > 0 ? `; at least ${minimumNoteLength} characters required` : ''}`
+  note.title = currentNotes ?? (minimumNoteLength > 0 ? noteHint(minimumNoteLength) : cell.entries.length === 0 ? 'Add time' : 'Add note')
   note.textContent = currentNotes === null ? '+' : '•'
-  note.disabled = cell.entries.length !== 1 || cell.isConflict || cell.isLocked || cell.isRunning
-  note.addEventListener('click', () => handlers.openNote(cell, view))
+  note.disabled =
+    cell.entries.length > 1 ||
+    cell.isConflict ||
+    cell.isLocked ||
+    state?.state === 'saving'
+  note.addEventListener('click', () => handlers.openEntry(cell, view))
   wrapper.append(note)
 
   status.textContent = cell.isConflict
@@ -309,11 +364,20 @@ const renderCellControl = (
               ? 'Saved'
               : state?.state === 'dirty'
                 ? 'Unsaved'
-                : cell.entries.length === 1 &&
+              : cell.entries.length === 1 &&
                     timeEntryNoteLength(currentNotes) < minimumNoteLength
                   ? 'Note required'
                   : ''
   wrapper.append(status)
+
+  if (cell.isLocked) {
+    const reason = document.createElement('span')
+    reason.className = 'cell-lock-reason'
+    reason.dataset.lockedReason = cell.key
+    reason.textContent = cell.lockedReason ?? 'Approved timesheet'
+    reason.title = reason.textContent
+    wrapper.append(reason)
+  }
 
   if (state?.state === 'retry') {
     const retry = document.createElement('button')
@@ -438,6 +502,7 @@ const renderPhoneDay = (grid: WeekGrid, selectedDay: number, handlers: GridHandl
         ),
         isConflict: false,
         isLocked: entry.is_locked,
+        lockedReason: entry.locked_reason ?? null,
         isRunning: entry.is_running,
       },
     }))
@@ -498,13 +563,19 @@ const renderTimer = (running: DisplayTimeEntry | null): void => {
   timerInterval = globalThis.setInterval(update, 1_000)
 }
 
-const storageKey = (userId: number, within: string): string =>
-  `ezacto:user:${userId}:week-rows:${weekDates(within)[0]}`
+type WeekStartDay = 'saturday' | 'sunday' | 'monday'
 
-const loadSupplementalRows = (userId: number, within: string): WeekRowSeed[] => {
+const storageKey = (userId: number, within: string, weekStartDay: WeekStartDay): string =>
+  `ezacto:user:${userId}:week-rows:${weekDates(within, weekStartDay)[0]}`
+
+const loadSupplementalRows = (
+  userId: number,
+  within: string,
+  weekStartDay: WeekStartDay,
+): WeekRowSeed[] => {
   try {
     const value: unknown = JSON.parse(
-      globalThis.localStorage.getItem(storageKey(userId, within)) ?? '[]',
+      globalThis.localStorage.getItem(storageKey(userId, within, weekStartDay)) ?? '[]',
     )
     if (!Array.isArray(value)) return []
     return value.flatMap((item): WeekRowSeed[] => {
@@ -524,10 +595,11 @@ const saveSupplementalRows = (
   userId: number,
   within: string,
   rows: readonly WeekRowSeed[],
+  weekStartDay: WeekStartDay,
 ): void => {
   try {
     globalThis.localStorage.setItem(
-      storageKey(userId, within),
+      storageKey(userId, within, weekStartDay),
       JSON.stringify(rows),
     )
   } catch {
@@ -548,10 +620,11 @@ const initialWithin = (): string => {
   return localDate()
 }
 
-const setWeekUrl = (within: string): void => {
+const setWeekUrl = (within: string, weekStartDay: WeekStartDay): void => {
   const url = new URL(globalThis.location.href)
-  if (weekDates(within)[0] === weekDates(localDate())[0]) url.searchParams.delete('week')
-  else url.searchParams.set('week', weekDates(within)[0]!)
+  if (weekDates(within, weekStartDay)[0] === weekDates(localDate(), weekStartDay)[0])
+    url.searchParams.delete('week')
+  else url.searchParams.set('week', weekDates(within, weekStartDay)[0]!)
   globalThis.history.replaceState(null, '', url)
 }
 
@@ -629,13 +702,54 @@ const collectResources = async (
 export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Promise<void> => {
   const authGateway = required<HTMLElement>('[data-auth-gateway]')
   const authChecking = required<HTMLElement>('[data-auth-checking]')
+  const sessionCheckOverlay = required<HTMLElement>('[data-session-check-overlay]')
   const authenticatedShell = required<HTMLElement>('[data-authenticated-shell]')
   const invoiceGenerationPage =
     document.documentElement.dataset.appView === 'invoice-generation'
+  const invoiceListPage = document.documentElement.dataset.appView === 'invoice-list'
+  const invoiceDetailPage = document.documentElement.dataset.appView === 'invoice-detail'
+  const clientListPage = document.documentElement.dataset.appView === 'client-list'
+  const clientDetailPage = document.documentElement.dataset.appView === 'client-detail'
+  const projectListPage = document.documentElement.dataset.appView === 'project-list'
+  const projectDetailPage = document.documentElement.dataset.appView === 'project-detail'
+  const taskListPage = document.documentElement.dataset.appView === 'task-list'
+  const reportsPage = document.documentElement.dataset.appView === 'reports'
+  const expenseListPage = document.documentElement.dataset.appView === 'expense-list'
+  const expenseDetailPage = document.documentElement.dataset.appView === 'expense-detail'
+  const expenseCategoriesPage =
+    document.documentElement.dataset.appView === 'expense-categories'
+  const timesheetApprovalsPage =
+    document.documentElement.dataset.appView === 'timesheet-approvals'
   const signedOutDocumentTitle = document.title
   const authenticatedDocumentTitle = signedOutDocumentTitle.replace(
     / — Sign in$/u,
-    invoiceGenerationPage ? ' — Generate invoice' : ' — Time',
+    invoiceGenerationPage
+      ? ' — Generate invoice'
+      : invoiceListPage
+        ? ' — Invoices'
+        : invoiceDetailPage
+          ? ' — Invoice detail'
+          : clientListPage
+            ? ' — Clients'
+            : clientDetailPage
+              ? ' — Client detail'
+              : projectListPage
+                ? ' — Projects'
+                : projectDetailPage
+                  ? ' — Project detail'
+                  : taskListPage
+                    ? ' — Tasks'
+                  : reportsPage
+                    ? ' — Reports'
+                    : expenseListPage
+                      ? ' — Expenses'
+                      : expenseDetailPage
+                        ? ' — Expense detail'
+                        : expenseCategoriesPage
+                          ? ' — Expense categories'
+                          : timesheetApprovalsPage
+                            ? ' — Approvals'
+                            : ' — Time',
   )
   const status = required<HTMLElement>('[data-session-status]')
   const statusMessage = required<HTMLElement>('[data-session-message]')
@@ -650,20 +764,32 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const logout = required<HTMLButtonElement>('[data-logout]')
   const logoutResult = required<HTMLElement>('[data-logout-result]')
   const commandDialog = required<HTMLDialogElement>('[data-command-dialog]')
-  const timerDialog = required<HTMLDialogElement>('[data-timer-dialog]')
+  const entryDialog = required<HTMLDialogElement>('[data-entry-dialog]')
+  const entryContext = required<HTMLElement>('[data-entry-context]')
+  const entryTitle = required<HTMLElement>('[data-entry-title]')
   const menuDialog = required<HTMLDialogElement>('[data-menu-dialog]')
   const rowDialog = required<HTMLDialogElement>('[data-row-dialog]')
-  const noteDialog = required<HTMLDialogElement>('[data-note-dialog]')
+  const rejectionDialog = required<HTMLDialogElement>('[data-rejection-dialog]')
+  const withdrawalDialog = required<HTMLDialogElement>('[data-withdrawal-dialog]')
   const commandForm = required<HTMLFormElement>('[data-command-form]')
-  const timerForm = required<HTMLFormElement>('[data-timer-form]')
+  const entryForm = required<HTMLFormElement>('[data-entry-form]')
   const rowForm = required<HTMLFormElement>('[data-row-form]')
-  const noteForm = required<HTMLFormElement>('[data-note-form]')
-  const noteInput = required<HTMLTextAreaElement>('[data-note-input]')
-  const noteResult = required<HTMLElement>('[data-note-result]')
-  const noteHintElement = required<HTMLElement>('[data-note-hint]')
-  const timerNoteInput = required<HTMLTextAreaElement>('[data-timer-note]')
-  const timerNoteHint = required<HTMLElement>('[data-timer-note-hint]')
-  const timerResult = required<HTMLElement>('[data-timer-result]')
+  const rejectionForm = required<HTMLFormElement>('[data-rejection-form]')
+  const withdrawalForm = required<HTMLFormElement>('[data-withdrawal-form]')
+  const entryProject = required<HTMLInputElement>('[data-entry-project]')
+  const entryTask = required<HTMLInputElement>('[data-entry-task]')
+  const entryDate = required<HTMLInputElement>('[data-entry-date]')
+  const entryDuration = required<HTMLElement>('[data-entry-duration]')
+  const entryDurationInput = required<HTMLInputElement>('[data-entry-duration-input]')
+  const entryTimes = required<HTMLElement>('[data-entry-times]')
+  const entryStart = required<HTMLInputElement>('[data-entry-start]')
+  const entryEnd = required<HTMLInputElement>('[data-entry-end]')
+  const entryRunning = required<HTMLElement>('[data-entry-running]')
+  const entryNoteInput = required<HTMLTextAreaElement>('[data-entry-note-input]')
+  const entryNoteHint = required<HTMLElement>('[data-entry-note-hint]')
+  const entryResult = required<HTMLElement>('[data-entry-result]')
+  const entrySubmit = required<HTMLButtonElement>('[data-entry-submit]')
+  const stopTimer = required<HTMLButtonElement>('[data-stop-timer]')
   const invoiceForm = required<HTMLFormElement>('[data-invoice-generation-form]')
   const invoiceClient = required<HTMLSelectElement>('[data-invoice-client]')
   const invoiceProjects = required<HTMLElement>('[data-invoice-projects]')
@@ -671,6 +797,49 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const invoiceSubmit = required<HTMLButtonElement>('[data-invoice-generation-submit]')
   const invoiceRetry = required<HTMLButtonElement>('[data-retry-invoice-catalog]')
   const invoiceSuccess = required<HTMLElement>('[data-invoice-generation-success]')
+  const generatedInvoiceLink = required<HTMLAnchorElement>('[data-generated-invoice-link]')
+  const clientDirectory = createClientDirectoryController(api)
+  const projectDirectory = createProjectDirectoryController(api)
+  const taskAdmin = createTaskAdminController(api)
+  const reports = createReportsController(api)
+  const expenseWorkflow = createExpenseWorkflowController(api)
+  const expenseCategories = createExpenseCategoryDirectoryController(api)
+  const invoicePayments = createInvoicePaymentController(api)
+  const invoiceList = required<HTMLElement>('[data-invoice-list]')
+  const invoiceListStatus = required<HTMLElement>('[data-invoice-list-status]')
+  const invoiceLoadMore = required<HTMLButtonElement>('[data-invoice-load-more]')
+  const invoiceDetailStatus = required<HTMLElement>('[data-invoice-detail-status]')
+  const invoiceDocument = required<HTMLElement>('[data-invoice-document]')
+  const timesheetStatus = required<HTMLElement>('[data-timesheet-status]')
+  const timesheetStatusLabel = required<HTMLElement>('[data-timesheet-status-label]')
+  const timesheetRejectionReason = required<HTMLElement>('[data-timesheet-rejection-reason]')
+  const timesheetResult = required<HTMLElement>('[data-timesheet-result]')
+  const submitTimesheet = required<HTMLButtonElement>('[data-submit-timesheet]')
+  const withdrawTimesheet = required<HTMLButtonElement>('[data-withdraw-timesheet]')
+  const approvalsPageElement = required<HTMLElement>('[data-timesheet-approvals-page]')
+  const approvalReviewPanel = required<HTMLElement>('[data-approval-review-panel]')
+  const approvalQueue = required<HTMLElement>('[data-approval-queue]')
+  const approvalHistory = required<HTMLElement>('[data-approval-history]')
+  const approvalQueueResult = required<HTMLElement>('[data-approval-queue-result]')
+  const rejectionReason = required<HTMLTextAreaElement>('[data-rejection-reason]')
+  const rejectionResult = required<HTMLElement>('[data-rejection-result]')
+  const rejectionSubmit = required<HTMLButtonElement>('[data-rejection-submit]')
+  const withdrawalReason = required<HTMLTextAreaElement>('[data-withdrawal-reason]')
+  const withdrawalResult = required<HTMLElement>('[data-withdrawal-result]')
+  const withdrawalSubmit = required<HTMLButtonElement>('[data-withdrawal-submit]')
+  const lockPolicyPanel = required<HTMLElement>('[data-lock-policy-panel]')
+  const lockPolicyForm = required<HTMLFormElement>('[data-lock-policy-form]')
+  const lockPolicyAuto = required<HTMLInputElement>('[data-lock-policy-auto]')
+  const lockPolicyDay = required<HTMLSelectElement>('[data-lock-policy-day]')
+  const lockPolicyTime = required<HTMLInputElement>('[data-lock-policy-time]')
+  const lockPolicyTimezone = required<HTMLInputElement>('[data-lock-policy-timezone]')
+  const lockPolicySubmit = required<HTMLButtonElement>('[data-lock-policy-submit]')
+  const manualLockForm = required<HTMLFormElement>('[data-manual-lock-form]')
+  const manualLockThrough = required<HTMLInputElement>('[data-manual-lock-through]')
+  const manualLockReason = required<HTMLTextAreaElement>('[data-manual-lock-reason]')
+  const manualLockSubmit = required<HTMLButtonElement>('[data-manual-lock-submit]')
+  const lockPolicyResult = required<HTMLElement>('[data-lock-policy-result]')
+  const timesheetLockList = required<HTMLElement>('[data-timesheet-lock-list]')
   const requestedView = new URL(globalThis.location.href).searchParams.get('view')
   document.documentElement.dataset.timeView = requestedView === 'day' ? 'day' : 'week'
   for (const link of document.querySelectorAll<HTMLAnchorElement>('.tabstrip a')) {
@@ -681,11 +850,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   }
   const cellStates = new Map<string, CellSaveState>()
   let within = initialWithin()
+  let weekStartDay: WeekStartDay = 'monday'
   let supplementalRows: WeekRowSeed[] = []
-  let selectedDay = Math.max(0, weekDates(within).indexOf(localDate()))
+  let selectedDay = Math.max(0, weekDates(within, weekStartDay).indexOf(localDate()))
   let snapshot: ShellSnapshot | null = null
   let grid: WeekGrid | null = null
-  let activeNote: ActiveNote | null = null
+  let activeEntry: ActiveEntryEditor | null = null
   let currentIdentity: Whoami | null = null
   let signingIn = false
   let signingOut = false
@@ -697,6 +867,20 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   } | null = null
   let invoiceGenerationPending = false
   let invoiceCommandId: string | null = null
+  let invoiceNextCursor: string | null = null
+  let invoiceListCount = 0
+  let approvalModuleAvailable = false
+  let lockPolicyAvailable = false
+  let currentSubmission: TimesheetSubmission | null = null
+  let pendingSubmissions: readonly TimesheetSubmissionDetail[] = []
+  let approvedSubmissions: readonly TimesheetSubmission[] = []
+  let lockPolicy: TimesheetLockPolicy | null = null
+  let activeTimesheetLocks: readonly TimesheetLockWindow[] = []
+  let timesheetTransitionPending = false
+  let lockPolicyTransitionPending = false
+  let manualLockCommandId: string | null = null
+  let rejectionSubmissionId: number | null = null
+  let withdrawalSubmissionId: number | null = null
 
   const setInvoiceFormPending = (pending: boolean): void => {
     invoiceGenerationPending = pending
@@ -765,8 +949,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   }
 
   const showSignedOutScreen = (): void => {
+    sessionCheckOverlay.hidden = true
     authenticatedShell.hidden = true
     authenticatedShell.inert = true
+    authenticatedShell.setAttribute('aria-busy', 'false')
     authGateway.hidden = false
     authGateway.dataset.state = 'signed-out'
     authGateway.setAttribute('aria-busy', 'false')
@@ -777,6 +963,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   }
 
   const showAuthenticatedShell = (): void => {
+    sessionCheckOverlay.hidden = true
     authGateway.hidden = true
     authGateway.dataset.state = 'authenticated'
     authGateway.setAttribute('aria-busy', 'false')
@@ -784,6 +971,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     signInForm.hidden = true
     authenticatedShell.hidden = false
     authenticatedShell.inert = false
+    authenticatedShell.setAttribute('aria-busy', 'false')
     document.documentElement.dataset.authState = 'authenticated'
     document.title = authenticatedDocumentTitle
   }
@@ -798,19 +986,20 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const clearFormState = (): void => {
     signInForm.reset()
     commandForm.reset()
-    timerForm.reset()
+    entryForm.reset()
     rowForm.reset()
-    noteForm.reset()
+    rejectionForm.reset()
+    withdrawalForm.reset()
+    lockPolicyForm.reset()
+    manualLockForm.reset()
     invoiceForm.reset()
-    configureNoteInput(noteInput, noteHintElement, 0)
-    configureNoteInput(timerNoteInput, timerNoteHint, 0)
+    configureNoteInput(entryNoteInput, entryNoteHint, 0)
     required<HTMLSelectElement>('[data-row-project]').replaceChildren()
     required<HTMLSelectElement>('[data-row-task]').replaceChildren()
     required<HTMLElement>('[data-command-result]').textContent = ''
-    timerResult.textContent = ''
+    entryResult.textContent = ''
     required<HTMLElement>('[data-row-result]').textContent = ''
-    noteResult.textContent = ''
-    required<HTMLElement>('[data-note-title]').textContent = 'Add a note'
+    entryTitle.textContent = 'Log time'
     required<HTMLElement>('[data-current-user-id]').textContent = '—'
     required<HTMLElement>('[data-current-profile]').textContent = '—'
     required<HTMLElement>('[data-timer-label]').textContent = 'Timer'
@@ -823,16 +1012,60 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     invoiceProjects.replaceChildren()
     invoiceResult.textContent = ''
     invoiceSuccess.hidden = true
+    generatedInvoiceLink.hidden = true
+    generatedInvoiceLink.href = '/invoices'
     invoiceRetry.hidden = true
     invoiceCatalog = null
     setInvoiceFormPending(false)
     invoiceCommandId = null
-    activeNote = null
+    invoiceList.replaceChildren()
+    invoiceListStatus.textContent = 'Loading invoices…'
+    invoiceLoadMore.hidden = true
+    invoiceLoadMore.disabled = false
+    invoiceNextCursor = null
+    invoiceListCount = 0
+    invoiceDetailStatus.textContent = 'Loading invoice…'
+    invoiceDocument.hidden = true
+    timesheetStatus.hidden = true
+    timesheetStatusLabel.textContent = 'Not submitted'
+    timesheetRejectionReason.hidden = true
+    timesheetRejectionReason.textContent = ''
+    timesheetResult.textContent = ''
+    approvalsPageElement.hidden = !timesheetApprovalsPage
+    approvalQueue.replaceChildren()
+    approvalHistory.replaceChildren()
+    approvalQueueResult.textContent = ''
+    rejectionResult.textContent = ''
+    withdrawalResult.textContent = ''
+    lockPolicyResult.textContent = ''
+    lockPolicyPanel.hidden = true
+    timesheetLockList.replaceChildren()
+    withdrawTimesheet.hidden = true
+    approvalModuleAvailable = false
+    lockPolicyAvailable = false
+    currentSubmission = null
+    pendingSubmissions = []
+    approvedSubmissions = []
+    lockPolicy = null
+    activeTimesheetLocks = []
+    timesheetTransitionPending = false
+    lockPolicyTransitionPending = false
+    manualLockCommandId = null
+    rejectionSubmissionId = null
+    withdrawalSubmissionId = null
+    activeEntry = null
     supplementalRows = []
     snapshot = null
     grid = null
     cellStates.clear()
-    for (const dialog of [commandDialog, timerDialog, menuDialog, rowDialog, noteDialog]) {
+    for (const dialog of [
+      commandDialog,
+      entryDialog,
+      menuDialog,
+      rowDialog,
+      rejectionDialog,
+      withdrawalDialog,
+    ]) {
       if (dialog.open) dialog.close()
     }
     if (timerInterval !== undefined) {
@@ -849,7 +1082,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     required<HTMLButtonElement>('[data-timer-chip]').dataset.state = 'signed-out'
     required<HTMLElement>('[data-timer-label]').textContent = 'Sign in required'
     required<HTMLElement>('[data-timer-elapsed]').textContent = '—'
-    required<HTMLElement>('[data-week-label]').textContent = weekLabel(weekDates(within))
+    required<HTMLElement>('[data-week-label]').textContent = weekLabel(
+      weekDates(within, weekStartDay),
+    )
     required<HTMLElement>('[data-week-total]').textContent = '—'
     const unavailable = document.createElement('tr')
     const cell = document.createElement('td')
@@ -869,7 +1104,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     snapshot = null
     grid = null
     cellStates.clear()
-    required<HTMLElement>('[data-week-label]').textContent = weekLabel(weekDates(within))
+    required<HTMLElement>('[data-week-label]').textContent = weekLabel(
+      weekDates(within, weekStartDay),
+    )
     required<HTMLElement>('[data-week-total]').textContent = '—'
     const unavailable = document.createElement('tr')
     const cell = document.createElement('td')
@@ -916,7 +1153,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     signingOut = false
     setSignInPending(false)
     logout.disabled = false
-    supplementalRows = loadSupplementalRows(identity.user_id, within)
+    supplementalRows = loadSupplementalRows(identity.user_id, within, weekStartDay)
     authShell.dataset.state = 'ready'
     signInForm.hidden = true
     currentIdentityPanel.hidden = false
@@ -968,6 +1205,252 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     updateRowTaskOptions(projects[0]?.id ?? 0)
   }
 
+  const canReviewTimesheets = (): boolean =>
+    currentIdentity?.profile === 'administrator' ||
+    currentIdentity?.profile === 'executive_manager' ||
+    currentIdentity?.profile === 'project_manager'
+
+  const canManageTimesheetLocks = (): boolean =>
+    currentIdentity?.profile === 'administrator' ||
+    currentIdentity?.profile === 'executive_manager'
+
+  const renderApprovalNavigation = (): void => {
+    const visible =
+      (approvalModuleAvailable && canReviewTimesheets()) ||
+      (lockPolicyAvailable && canManageTimesheetLocks())
+    for (const link of document.querySelectorAll<HTMLElement>('[data-approvals-nav]')) {
+      link.hidden = !visible
+    }
+    approvalsPageElement.hidden = !(timesheetApprovalsPage && visible)
+  }
+
+  const renderTimesheetStatus = (): void => {
+    timesheetStatus.hidden = !approvalModuleAvailable
+    if (!approvalModuleAvailable) return
+    const status = currentSubmission?.status ?? 'unsubmitted'
+    timesheetStatus.dataset.status = status
+    timesheetStatusLabel.textContent =
+      status === 'approved'
+        ? 'Approved'
+        : status === 'submitted'
+          ? 'Submitted for approval'
+          : currentSubmission?.rejection_reason === null ||
+              currentSubmission?.rejection_reason === undefined
+            ? 'Not submitted'
+            : 'Changes requested'
+    const reason = currentSubmission?.rejection_reason?.trim() ?? ''
+    timesheetRejectionReason.hidden = reason === ''
+    timesheetRejectionReason.textContent = reason === '' ? '' : `Needs changes: ${reason}`
+    submitTimesheet.textContent =
+      status === 'approved'
+        ? 'Approved'
+        : status === 'submitted'
+          ? 'Awaiting approval'
+          : currentSubmission?.rejection_reason === null ||
+              currentSubmission?.rejection_reason === undefined
+            ? 'Submit week'
+            : 'Resubmit week'
+    submitTimesheet.disabled =
+      timesheetTransitionPending ||
+      status !== 'unsubmitted' ||
+      snapshot === null ||
+      (snapshot.entries.length === 0 && snapshot.expenses.length === 0) ||
+      snapshot.entries.some((entry) => entry.is_running)
+    withdrawTimesheet.hidden = status !== 'approved' || !canManageTimesheetLocks()
+    withdrawTimesheet.disabled = timesheetTransitionPending || withdrawTimesheet.hidden
+  }
+
+  const renderLockPolicy = (): void => {
+    const visible =
+      timesheetApprovalsPage && lockPolicyAvailable && canManageTimesheetLocks()
+    lockPolicyPanel.hidden = !visible
+    approvalReviewPanel.hidden = !approvalModuleAvailable
+    if (!visible || lockPolicy === null) {
+      timesheetLockList.replaceChildren()
+      return
+    }
+    lockPolicyAuto.checked = lockPolicy.auto_lock
+    lockPolicyDay.value = lockPolicy.timesheet_deadline?.day ?? 'monday'
+    lockPolicyTime.value = lockPolicy.timesheet_deadline?.time ?? '17:00'
+    lockPolicyTimezone.value = lockPolicy.timezone
+    lockPolicySubmit.disabled = lockPolicyTransitionPending
+    manualLockSubmit.disabled = lockPolicyTransitionPending
+    if (manualLockThrough.value === '') manualLockThrough.value = localDate()
+    if (activeTimesheetLocks.length === 0) {
+      const empty = document.createElement('p')
+      empty.className = 'approval-empty'
+      empty.textContent = 'No active manual or deadline locks.'
+      timesheetLockList.replaceChildren(empty)
+      return
+    }
+    timesheetLockList.replaceChildren(
+      ...activeTimesheetLocks.map((lock) => {
+        const card = document.createElement('article')
+        card.className = 'timesheet-lock-card'
+        card.dataset.lockId = String(lock.id)
+        const summary = document.createElement('div')
+        const title = document.createElement('strong')
+        title.textContent = lock.kind === 'manual' ? 'Manual cutoff' : 'Weekly deadline'
+        const period = document.createElement('p')
+        period.textContent =
+          lock.period_start === null
+            ? `All tracked work through ${dayLabel(lock.period_end, true)}`
+            : `${dayLabel(lock.period_start, true)} – ${dayLabel(lock.period_end, true)}`
+        const detail = document.createElement('p')
+        detail.textContent = lock.reason
+        summary.append(title, period, detail)
+        const label = document.createElement('label')
+        label.textContent = 'Unlock reason'
+        const reason = document.createElement('input')
+        reason.type = 'text'
+        reason.maxLength = 10_000
+        reason.required = true
+        reason.dataset.lockUnlockReason = String(lock.id)
+        label.append(reason)
+        const unlock = document.createElement('button')
+        unlock.type = 'button'
+        unlock.textContent = 'Unlock'
+        unlock.disabled = lockPolicyTransitionPending
+        unlock.addEventListener('click', () => void unlockTimesheetWindow(lock.id, reason))
+        card.append(summary, label, unlock)
+        return card
+      }),
+    )
+  }
+
+  const renderApprovalQueue = (): void => {
+    renderApprovalNavigation()
+    if (!timesheetApprovalsPage || !approvalModuleAvailable || !canReviewTimesheets()) {
+      approvalQueue.replaceChildren()
+      approvalHistory.replaceChildren()
+      return
+    }
+    if (pendingSubmissions.length === 0) {
+      const empty = document.createElement('p')
+      empty.className = 'approval-empty'
+      empty.textContent = 'No timesheets are waiting for review.'
+      approvalQueue.replaceChildren(empty)
+    } else {
+      approvalQueue.replaceChildren(
+        ...pendingSubmissions.map((submission) => {
+        const card = document.createElement('article')
+        card.className = 'approval-card'
+        card.dataset.submissionId = String(submission.id)
+        const summary = document.createElement('div')
+        const title = document.createElement('h2')
+        title.textContent = submission.user_name
+        const period = document.createElement('p')
+        period.textContent = `${dayLabel(submission.period_start, true)} – ${dayLabel(submission.period_end, true)}`
+        const totals = document.createElement('p')
+        totals.className = 'approval-totals'
+        const totalParts = [
+          ...(submission.entry_count === 0
+            ? []
+            : [`${formatSeconds(submission.total_seconds)} · ${submission.entry_count} ${submission.entry_count === 1 ? 'time entry' : 'time entries'}`]),
+          ...(submission.expense_count === 0
+            ? []
+            : [`${submission.expense_count} ${submission.expense_count === 1 ? 'expense' : 'expenses'}`]),
+        ]
+        totals.textContent = totalParts.join(' · ')
+        const entries = document.createElement('ul')
+        entries.className = 'approval-entry-list'
+        entries.replaceChildren(
+          ...submission.entries.map((entry) => {
+            const item = document.createElement('li')
+            const entryHeader = document.createElement('div')
+            entryHeader.className = 'approval-entry-header'
+            const identity = document.createElement('strong')
+            identity.textContent = `${entry.project_name} / ${entry.task_name}`
+            const duration = document.createElement('span')
+            duration.textContent = `${dayLabel(entry.spent_date, true)} · ${formatSeconds(entry.seconds)}`
+            entryHeader.append(identity, duration)
+            const note = document.createElement('p')
+            note.className = 'approval-entry-note'
+            note.textContent = entry.notes?.trim() || 'No note'
+            if (entry.notes === null || entry.notes.trim() === '') note.dataset.empty = 'true'
+            item.append(entryHeader, note)
+            return item
+          }),
+        )
+        const expenses = document.createElement('ul')
+        expenses.className = 'approval-entry-list approval-expense-list'
+        expenses.replaceChildren(
+          ...submission.expenses.map((expense) => {
+            const item = document.createElement('li')
+            const expenseHeader = document.createElement('div')
+            expenseHeader.className = 'approval-entry-header'
+            const identity = document.createElement('strong')
+            identity.textContent = `${expense.project_name} / ${expense.expense_category_name}`
+            const amount = document.createElement('span')
+            amount.textContent = `${dayLabel(expense.spent_date, true)} · ${formatMoney(expense.total_cost_cents, expense.currency)}`
+            expenseHeader.append(identity, amount)
+            const note = document.createElement('p')
+            note.className = 'approval-entry-note'
+            note.textContent = expense.notes?.trim() || 'No note'
+            if (expense.notes === null || expense.notes.trim() === '') note.dataset.empty = 'true'
+            item.append(expenseHeader, note)
+            return item
+          }),
+        )
+        summary.append(title, period, totals, entries, expenses)
+        const actions = document.createElement('div')
+        actions.className = 'approval-actions'
+        const approve = document.createElement('button')
+        approve.type = 'button'
+        approve.className = 'primary-action'
+        approve.textContent = 'Approve'
+        approve.disabled = timesheetTransitionPending
+        approve.addEventListener('click', () => void reviewTimesheet(submission.id))
+        const reject = document.createElement('button')
+        reject.type = 'button'
+        reject.textContent = 'Reject'
+        reject.disabled = timesheetTransitionPending
+        reject.addEventListener('click', () => openRejection(submission.id))
+        actions.append(approve, reject)
+        card.append(summary, actions)
+        return card
+        }),
+      )
+    }
+    if (!canManageTimesheetLocks()) {
+      approvalHistory.replaceChildren()
+      return
+    }
+    const heading = document.createElement('h2')
+    heading.textContent = 'Recently approved'
+    if (approvedSubmissions.length === 0) {
+      const empty = document.createElement('p')
+      empty.className = 'approval-empty'
+      empty.textContent = 'No approved timesheets are available to reopen.'
+      approvalHistory.replaceChildren(heading, empty)
+      return
+    }
+    approvalHistory.replaceChildren(
+      heading,
+      ...approvedSubmissions.map((submission) => {
+        const card = document.createElement('article')
+        card.className = 'approval-card'
+        card.dataset.approvedSubmissionId = String(submission.id)
+        const summary = document.createElement('div')
+        const title = document.createElement('h3')
+        title.textContent = submission.user_name
+        const period = document.createElement('p')
+        period.textContent = `${dayLabel(submission.period_start, true)} – ${dayLabel(submission.period_end, true)}`
+        const totals = document.createElement('p')
+        totals.className = 'approval-totals'
+        totals.textContent = `${formatSeconds(submission.total_seconds)} · ${submission.entry_count} time ${submission.expense_count > 0 ? ` · ${submission.expense_count} expenses` : ''}`
+        summary.append(title, period, totals)
+        const reopen = document.createElement('button')
+        reopen.type = 'button'
+        reopen.textContent = 'Reopen'
+        reopen.disabled = timesheetTransitionPending
+        reopen.addEventListener('click', () => openWithdrawal(submission.id))
+        card.append(summary, reopen)
+        return card
+      }),
+    )
+  }
+
   const render = (): void => {
     if (snapshot === null) return
     const availableRows = new Set(
@@ -983,14 +1466,107 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     required<HTMLElement>('[data-week-total]').textContent = formatSeconds(grid.totalSeconds)
     const handlers: GridHandlers = {
       cellStates,
+      organizationMode: snapshot.timeEntrySettings.time_entry_mode,
+      organizationTimeFormat: snapshot.timeEntrySettings.time_format,
       commit: commitCell,
       retry: retryCell,
-      openNote,
+      openEntry,
     }
     renderDesktopGrid(grid, handlers)
     renderPhoneDay(grid, selectedDay, handlers)
     renderTimer(snapshot.running)
     updateRowOptions()
+    renderApprovalNavigation()
+    renderTimesheetStatus()
+    renderApprovalQueue()
+    renderLockPolicy()
+  }
+
+  const loadApprovalData = async (
+    operation: AuthOperation,
+    requestedWithin: string,
+    requestedWeekStartDay: WeekStartDay,
+  ): Promise<{
+    available: boolean
+    current: TimesheetSubmission | null
+    pending: readonly TimesheetSubmissionDetail[]
+    approved: readonly TimesheetSubmission[]
+  }> => {
+    if (api.listTimesheetSubmissions === undefined) {
+      return { available: false, current: null, pending: [], approved: [] }
+    }
+    const range = weekRange(requestedWithin, requestedWeekStartDay)
+    try {
+      const own = await api.listTimesheetSubmissions(range.from, range.to, operation.signal)
+      const pendingSummaries =
+        timesheetApprovalsPage &&
+        canReviewTimesheets() &&
+        api.listPendingTimesheetSubmissions !== undefined
+          ? await api.listPendingTimesheetSubmissions(operation.signal)
+          : []
+      const getSubmission = api.getTimesheetSubmission
+      const approved =
+        timesheetApprovalsPage &&
+        canManageTimesheetLocks() &&
+        api.listApprovedTimesheetSubmissions !== undefined
+          ? await api.listApprovedTimesheetSubmissions(
+              shiftDate(localDate(), -90),
+              operation.signal,
+            )
+          : []
+      const pending =
+        getSubmission === undefined
+          ? []
+          : await hydratePendingTimesheetDetails(
+              pendingSummaries,
+              getSubmission,
+              operation.signal,
+            )
+      return {
+        available: true,
+        current:
+          own.find(
+            (submission) =>
+              submission.period_start === range.from && submission.period_end === range.to,
+          ) ?? null,
+        pending,
+        approved,
+      }
+    } catch (error) {
+      if (error instanceof EzactoApiError && error.status === 404) {
+        return { available: false, current: null, pending: [], approved: [] }
+      }
+      throw error
+    }
+  }
+
+  const loadLockPolicyData = async (
+    operation: AuthOperation,
+  ): Promise<{
+    available: boolean
+    policy: TimesheetLockPolicy | null
+    locks: readonly TimesheetLockWindow[]
+  }> => {
+    if (!canManageTimesheetLocks() || api.getTimesheetLockPolicy === undefined) {
+      return { available: false, policy: null, locks: [] }
+    }
+    try {
+      const [policy, locks] = await Promise.all([
+        api.getTimesheetLockPolicy(operation.signal),
+        timesheetApprovalsPage && api.listTimesheetLocks !== undefined
+          ? api.listTimesheetLocks(operation.signal)
+          : Promise.resolve([]),
+      ])
+      return { available: true, policy, locks }
+    } catch (error) {
+      if (
+        error instanceof EzactoApiError &&
+        (error.status === 403 || error.status === 404)
+      ) {
+        return { available: false, policy: null, locks: [] }
+      }
+      throw error
+    }
   }
 
   const refresh = async (
@@ -998,13 +1574,32 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     focus: FocusTarget | undefined = focusedCell(),
   ): Promise<boolean> => {
     const requestedWithin = within
+    const selectedDate =
+      grid?.dates[selectedDay] ?? weekDates(requestedWithin, weekStartDay)[selectedDay]
     const loaded = await loadShellSnapshot(
       api,
       new Date(`${requestedWithin}T12:00:00`),
       operation.signal,
     )
+    const loadedWeekStartDay = loaded.timeEntrySettings.week_start_day
+    const [approval, policy] = await Promise.all([
+      loadApprovalData(operation, requestedWithin, loadedWeekStartDay),
+      loadLockPolicyData(operation),
+    ])
     if (!isSessionCurrent(operation) || within !== requestedWithin) return false
+    weekStartDay = loadedWeekStartDay
     snapshot = loaded
+    supplementalRows = loadSupplementalRows(operation.userId!, within, weekStartDay)
+    const loadedDates = weekDates(within, weekStartDay)
+    const preservedIndex = selectedDate === undefined ? -1 : loadedDates.indexOf(selectedDate)
+    selectedDay = preservedIndex >= 0 ? preservedIndex : Math.max(0, loadedDates.indexOf(localDate()))
+    approvalModuleAvailable = approval.available
+    currentSubmission = approval.current
+    pendingSubmissions = approval.pending
+    approvedSubmissions = approval.approved
+    lockPolicyAvailable = policy.available
+    lockPolicy = policy.policy
+    activeTimesheetLocks = policy.locks
     render()
     focusCell(focus)
     return true
@@ -1097,6 +1692,55 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
   }
 
+  const loadInvoiceList = async (
+    operation: AuthOperation,
+    cursor?: string,
+  ): Promise<void> => {
+    if (!isSessionCurrent(operation) || !invoiceListPage) return
+    if (currentIdentity === null || !invoiceIdentityCanRead(currentIdentity)) {
+      invoiceListStatus.textContent =
+        currentIdentity?.authentication.kind === 'token'
+          ? 'This API token does not grant invoice read access.'
+          : 'Your profile does not have access to invoices.'
+      invoiceList.replaceChildren()
+      invoiceLoadMore.hidden = true
+      return
+    }
+    const listInvoices = api.listInvoices
+    if (listInvoices === undefined) {
+      invoiceListStatus.textContent = 'Invoice browsing is unavailable in this build.'
+      invoiceLoadMore.hidden = true
+      return
+    }
+    const append = cursor !== undefined
+    invoiceList.setAttribute('aria-busy', 'true')
+    invoiceLoadMore.disabled = true
+    invoiceListStatus.textContent = append ? 'Loading more invoices…' : 'Loading invoices…'
+    try {
+      const page = await listInvoices(cursor, operation.signal)
+      if (!isSessionCurrent(operation)) return
+      invoiceListCount = append
+        ? invoiceListCount + page.data.length
+        : page.data.length
+      renderInvoiceListItems(page.data, append)
+      invoiceNextCursor = page.page.next_cursor
+      invoiceLoadMore.hidden = invoiceNextCursor === null
+      invoiceListStatus.textContent =
+        invoiceListCount === 0
+          ? 'No invoices found.'
+          : `${invoiceListCount} ${invoiceListCount === 1 ? 'invoice' : 'invoices'} loaded${invoiceNextCursor === null ? '.' : '; more are available.'}`
+    } catch (error) {
+      if (handleSessionFailure(error, operation)) return
+      invoiceListStatus.textContent = messageFor(error)
+      invoiceLoadMore.hidden = invoiceNextCursor === null
+    } finally {
+      if (isSessionCurrent(operation)) {
+        invoiceList.removeAttribute('aria-busy')
+        invoiceLoadMore.disabled = false
+      }
+    }
+  }
+
   const loadAuthenticatedShell = async (
     operation: AuthOperation,
   ): Promise<void> => {
@@ -1105,8 +1749,145 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const authenticated = showAuthenticated(identity)
     if (invoiceGenerationPage) {
       await Promise.all([loadInvoiceGeneration(authenticated), loadWeek(authenticated)])
+    } else if (invoiceListPage) {
+      await Promise.all([loadInvoiceList(authenticated), loadWeek(authenticated)])
+    } else if (invoiceDetailPage) {
+      await Promise.all([
+        invoicePayments.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (clientListPage || clientDetailPage) {
+      await Promise.all([
+        clientDirectory.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (projectListPage || projectDetailPage) {
+      await Promise.all([
+        projectDirectory.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (taskListPage) {
+      await Promise.all([
+        taskAdmin.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (reportsPage) {
+      await Promise.all([
+        reports.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (expenseListPage || expenseDetailPage) {
+      await Promise.all([
+        expenseWorkflow.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (expenseCategoriesPage) {
+      await Promise.all([
+        expenseCategories.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
     } else {
       await loadWeek(authenticated)
+    }
+  }
+
+  async function reviewTimesheet(submissionId: number): Promise<void> {
+    const operation = sessionOperation()
+    if (
+      operation === null ||
+      timesheetTransitionPending ||
+      api.approveTimesheetSubmission === undefined
+    ) {
+      return
+    }
+    timesheetTransitionPending = true
+    approvalQueueResult.textContent = 'Approving timesheet…'
+    renderApprovalQueue()
+    try {
+      await api.approveTimesheetSubmission(submissionId, operation.signal)
+      if (!(await refresh(operation))) return
+      approvalQueueResult.textContent = 'Timesheet approved and its entries are now locked.'
+    } catch (error) {
+      if (handleSessionFailure(error, operation)) return
+      approvalQueueResult.textContent = messageFor(error)
+    } finally {
+      if (isSessionCurrent(operation)) {
+        timesheetTransitionPending = false
+        renderApprovalQueue()
+      }
+    }
+  }
+
+  function openRejection(submissionId: number): void {
+    if (timesheetTransitionPending) return
+    rejectionSubmissionId = submissionId
+    rejectionForm.reset()
+    rejectionResult.textContent = ''
+    open(rejectionDialog)
+    rejectionReason.focus()
+  }
+
+  async function unlockTimesheetWindow(
+    lockId: number,
+    reasonInput: HTMLInputElement,
+  ): Promise<void> {
+    const operation = sessionOperation()
+    const reason = reasonInput.value.trim()
+    if (reason === '') {
+      lockPolicyResult.textContent = 'Enter a reason before unlocking this period.'
+      reasonInput.focus()
+      return
+    }
+    if (
+      operation === null ||
+      lockPolicyTransitionPending ||
+      api.unlockTimesheetLock === undefined
+    ) {
+      return
+    }
+    lockPolicyTransitionPending = true
+    lockPolicyResult.textContent = 'Unlocking tracked work…'
+    renderLockPolicy()
+    try {
+      await api.unlockTimesheetLock(lockId, { reason }, operation.signal)
+      if (!(await refresh(operation))) return
+      lockPolicyResult.textContent = 'Tracked work unlocked. The reason was added to the audit trail.'
+    } catch (error) {
+      if (handleSessionFailure(error, operation)) return
+      lockPolicyResult.textContent = messageFor(error)
+    } finally {
+      if (isSessionCurrent(operation)) {
+        lockPolicyTransitionPending = false
+        renderLockPolicy()
+      }
     }
   }
 
@@ -1139,7 +1920,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
           minimumNoteLength,
         })
         render()
-        openNote(cell, view, noteRequirementMessage(minimumNoteLength))
+        openEntry(cell, view, noteRequirementMessage(minimumNoteLength))
         return false
       }
     } catch {
@@ -1174,7 +1955,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
           minimumNoteLength: currentMinimum,
         })
         render()
-        openNote(
+        openEntry(
           cell,
           view,
           `The note policy changed. ${noteRequirementMessage(currentMinimum)}`,
@@ -1229,7 +2010,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
           minimumNoteLength: currentMinimum,
         })
         render()
-        openNote(
+        openEntry(
           cell,
           view,
           `The note policy changed. ${noteRequirementMessage(currentMinimum)}`,
@@ -1254,7 +2035,106 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
   }
 
-  function openNote(
+  const editorResourceId = (
+    kind: 'project' | 'task',
+    value: string,
+    fallback: number,
+  ): number | null => {
+    if (snapshot === null) return null
+    const resources = kind === 'project' ? snapshot.catalog.projects : snapshot.catalog.tasks
+    const wanted = value.trim().toLocaleLowerCase('en-US')
+    const candidates = (resource: GeneralResource): string[] => [
+      String(resource.id),
+      ...['name', 'code'].flatMap((field) => {
+        const candidate = resource[field]
+        return typeof candidate === 'string' && candidate.trim() !== ''
+          ? [candidate.trim()]
+          : []
+      }),
+    ]
+    const matches = resources.filter((resource) =>
+      candidates(resource).some(
+        (candidate) => candidate.toLocaleLowerCase('en-US') === wanted,
+      ),
+    )
+    if (matches.length === 1) return matches[0]!.id
+    const fallbackResource = resources.find((resource) => resource.id === fallback)
+    return fallbackResource !== undefined && candidates(fallbackResource).includes(value.trim())
+      ? fallback
+      : null
+  }
+
+  const configureEntryEditor = (
+    next: ActiveEntryEditor,
+    message = '',
+    durationValue?: string,
+  ): void => {
+    if (snapshot === null) return
+    const initialDurationValue =
+      durationValue ?? formatCellHours(next.seconds, snapshot.timeEntrySettings.time_format)
+    activeEntry = { ...next, initialDurationValue }
+    entryDialog.dataset.entryContext = next.context
+    entryContext.textContent =
+      next.context === 'timer' ? 'Global timer' : 'Time entry'
+    entryTitle.textContent = contextLabel(
+      next.context,
+      next.entry !== null,
+    )
+    const project = snapshot.catalog.projects.find((resource) => resource.id === next.projectId)
+    const task = snapshot.catalog.tasks.find((resource) => resource.id === next.taskId)
+    entryProject.value = project === undefined ? String(next.projectId) : resourceLabel(project)
+    entryTask.value = task === undefined ? String(next.taskId) : resourceLabel(task)
+    entryDate.value = next.spentDate
+    entryDurationInput.value = initialDurationValue
+    entryStart.value =
+      next.entry?.started_time === null || next.entry?.started_time === undefined
+        ? ''
+        : formatTimeForClock(next.entry.started_time, snapshot.timeEntrySettings.clock)
+    entryEnd.value =
+      next.entry?.ended_time === null || next.entry?.ended_time === undefined
+        ? ''
+        : formatTimeForClock(next.entry.ended_time, snapshot.timeEntrySettings.clock)
+    entryStart.placeholder = snapshot.timeEntrySettings.clock === '12h' ? '9:00 AM' : '09:00'
+    entryEnd.placeholder = snapshot.timeEntrySettings.clock === '12h' ? '5:00 PM' : '17:00'
+    entryNoteInput.value = next.notes ?? ''
+    configureNoteInput(entryNoteInput, entryNoteHint, next.minimumNoteLength)
+    const running = next.entry?.is_running === true
+    entryDuration.hidden = next.mode !== 'duration' || next.timer || running
+    entryTimes.hidden = next.mode !== 'start_end' || next.timer || running
+    entryRunning.hidden = !running
+    const immutable = running || next.entry?.is_locked === true
+    for (const field of [
+      entryProject,
+      entryTask,
+      entryDate,
+      entryDurationInput,
+      entryStart,
+      entryEnd,
+    ]) field.disabled = immutable
+    entryNoteInput.disabled = next.entry?.is_locked === true
+    entrySubmit.hidden = next.entry?.is_locked === true
+    entrySubmit.textContent = running
+      ? 'Save note'
+      : next.timer
+        ? 'Start timer'
+        : next.entry === null
+          ? 'Log time'
+          : 'Save entry'
+    stopTimer.hidden = !running
+    entryResult.textContent = message
+    open(entryDialog)
+    ;(running ||
+    (next.minimumNoteLength > 0 && timeEntryNoteLength(next.notes) < next.minimumNoteLength)
+      ? entryNoteInput
+      : next.mode === 'start_end' && !next.timer
+        ? entryStart
+        : next.mode === 'duration' && !next.timer
+          ? entryDurationInput
+          : entryProject
+    ).focus()
+  }
+
+  function openEntry(
     cell: WeekGridCell,
     view: GridView,
     message = '',
@@ -1262,27 +2142,37 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const state = cellStates.get(cell.key)
     if (
       currentIdentity === null ||
+      state?.state === 'saving' ||
       cell.entries.length > 1 ||
       cell.isConflict ||
       cell.isLocked ||
-      cell.isRunning
+      snapshot === null
     )
       return
     const minimumNoteLength = effectiveMinimumNoteLength(cell, state)
-    activeNote = { cell, view, minimumNoteLength }
-    const project = snapshot?.catalog.projects.find(
-      (candidate) => candidate.id === cell.projectId,
+    const entry = cell.entries[0] ?? null
+    configureEntryEditor(
+      {
+        context: view === 'phone' ? 'day' : entry === null ? 'week-cell' : 'edit',
+        cell,
+        view,
+        entry,
+        projectId: cell.projectId,
+        taskId: cell.taskId,
+        spentDate: cell.date,
+        seconds: cell.totalSeconds,
+        notes: notesForCell(cell, state),
+        mode: modeForEntryDraft(entry, snapshot.timeEntrySettings.time_entry_mode),
+        timer: false,
+        minimumNoteLength,
+        durationWasEditedBeforeOpen:
+          state?.rawValue !== undefined &&
+          state.rawValue !==
+            formatCellHours(cell.totalSeconds, snapshot.timeEntrySettings.time_format),
+      },
+      message,
+      state?.rawValue,
     )
-    const projectLabel =
-      cell.entries[0]?.project_label ??
-      (project === undefined ? `#${cell.projectId}` : resourceLabel(project))
-    required<HTMLElement>('[data-note-title]').textContent =
-      `${dayLabel(cell.date)} · ${projectLabel}`
-    noteInput.value = notesForCell(cell, state) ?? ''
-    configureNoteInput(noteInput, noteHintElement, minimumNoteLength)
-    noteResult.textContent = message
-    open(noteDialog)
-    noteInput.focus()
   }
 
   for (const trigger of document.querySelectorAll<HTMLElement>('[data-command-trigger]')) {
@@ -1291,7 +2181,35 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     })
   }
   required<HTMLButtonElement>('[data-timer-chip]').addEventListener('click', () => {
-    if (currentIdentity !== null) open(timerDialog)
+    if (currentIdentity === null || snapshot === null) return
+    if (snapshot.running !== null) {
+      const running = snapshot.running
+      configureEntryEditor({
+        context: 'timer',
+        entry: running,
+        projectId: running.project_id,
+        taskId: running.task_id,
+        spentDate: running.spent_date,
+        seconds: running.seconds,
+        notes: running.notes ?? null,
+        mode: modeForEntryDraft(running, snapshot.timeEntrySettings.time_entry_mode),
+        timer: false,
+        minimumNoteLength: running.minimum_note_length,
+      })
+      return
+    }
+    configureEntryEditor({
+      context: 'timer',
+      entry: null,
+      projectId: snapshot.catalog.timeEntryOptions[0]?.project_id ?? 0,
+      taskId: snapshot.catalog.timeEntryOptions[0]?.task_id ?? 0,
+      spentDate: localDate(),
+      seconds: 0,
+      notes: null,
+      mode: snapshot.timeEntrySettings.time_entry_mode,
+      timer: true,
+      minimumNoteLength: snapshot.catalog.timeEntryOptions[0]?.minimum_note_length ?? 0,
+    })
   })
   required<HTMLButtonElement>('[data-menu-trigger]').addEventListener('click', () =>
     open(menuDialog),
@@ -1325,13 +2243,24 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       globalThis.location.assign(destination)
       return
     }
-    result.textContent = 'Logging time…'
-    void quickAdd(api, command, new Date(), operation.signal)
-      .then(async (entry) => {
-        if (!isSessionCurrent(operation)) return
-        if (!(await refresh(operation))) return
-        result.textContent = `Logged ${formatSeconds(entry.seconds)}.`
-        document.dispatchEvent(new CustomEvent('ezacto:time-entry-created', { detail: entry }))
+    result.textContent = 'Preparing entry…'
+    void prepareQuickAdd(api, command, new Date(), operation.signal)
+      .then((draft) => {
+        if (!isSessionCurrent(operation) || snapshot === null) return
+        commandDialog.close()
+        configureEntryEditor({
+          context: 'quick-add',
+          entry: null,
+          projectId: draft.input.project_id,
+          taskId: draft.input.task_id,
+          spentDate: draft.input.spent_date ?? localDate(),
+          seconds: draft.input.seconds ?? 0,
+          notes: draft.input.notes ?? null,
+          mode: snapshot.timeEntrySettings.time_entry_mode,
+          timer: false,
+          minimumNoteLength: draft.minimumNoteLength,
+        })
+        result.textContent = ''
       })
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return
@@ -1347,83 +2276,189 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     required<HTMLElement>('[data-command-result]').textContent = ''
   })
 
-  timerForm.addEventListener('submit', (event) => {
+  entryForm.addEventListener('submit', (event) => {
     event.preventDefault()
     const operation = sessionOperation()
-    if (operation === null) return
-    const result = required<HTMLElement>('[data-timer-result]')
-    const form = new FormData(timerForm)
-    const project = form.get('project')
-    const task = form.get('task')
-    const notes = form.get('notes')
+    if (operation === null || activeEntry === null || snapshot === null) return
+    const editor = activeEntry
+    const projectValue = entryProject.value
+    const taskValue = entryTask.value
+    const notes = entryNoteInput.value
+    const projectId = editorResourceId('project', projectValue, editor.projectId)
+    const taskId = editorResourceId('task', taskValue, editor.taskId)
+    const selectedOption = snapshot.catalog.timeEntryOptions.find(
+      (option) => option.project_id === projectId && option.task_id === taskId,
+    )
+    const sameExistingAssignment =
+      editor.entry !== null &&
+      projectId === editor.entry.project_id &&
+      taskId === editor.entry.task_id
     if (
-      typeof project !== 'string' ||
-      typeof task !== 'string' ||
-      typeof notes !== 'string'
-    )
+      projectId === null ||
+      taskId === null ||
+      (selectedOption === undefined && !sameExistingAssignment)
+    ) {
+      entryResult.textContent = 'That project/task combination is not available.'
       return
-    result.textContent = 'Starting timer…'
-    void startTimer(
-      api,
-      project,
-      task,
-      operation.signal,
-      notes.trim() === '' ? undefined : notes,
+    }
+    const minimumNoteLength = Math.max(
+      editor.minimumNoteLength,
+      selectedOption?.minimum_note_length ?? 0,
     )
+    if (timeEntryNoteLength(notes) < minimumNoteLength) {
+      activeEntry = { ...editor, minimumNoteLength }
+      configureNoteInput(entryNoteInput, entryNoteHint, minimumNoteLength)
+      entryResult.textContent = noteRequirementMessage(minimumNoteLength)
+      entryNoteInput.focus()
+      return
+    }
+    const running = editor.entry?.is_running === true
+    let timing: Pick<TimeEntryInput, 'seconds' | 'started_time' | 'ended_time'>
+    try {
+      if (editor.timer || running) timing = {}
+      else if (editor.mode === 'duration') {
+        const durationChanged =
+          editor.durationWasEditedBeforeOpen === true ||
+          entryDurationInput.value !== editor.initialDurationValue
+        if (editor.entry !== null && !durationChanged) {
+          timing = {}
+        } else {
+          const seconds = parseCellSeconds(entryDurationInput.value)
+          if (seconds < 1) throw new Error('duration must be greater than zero')
+          timing = { seconds }
+        }
+      } else {
+        timing = {
+          started_time: parseTimeForClock(
+            entryStart.value,
+            snapshot.timeEntrySettings.clock,
+          ),
+          ended_time: parseTimeForClock(
+            entryEnd.value,
+            snapshot.timeEntrySettings.clock,
+          ),
+        }
+      }
+    } catch (error) {
+      entryResult.textContent = messageFor(error)
+      ;(editor.mode === 'start_end' ? entryStart : entryDurationInput).focus()
+      return
+    }
+    const common = {
+      project_id: projectId,
+      task_id: taskId,
+      notes: notes.trim() === '' ? null : notes,
+    }
+    const request = editor.entry === null
+      ? api.createTimeEntry(
+          editor.timer
+            ? common
+            : { ...common, spent_date: entryDate.value, ...timing },
+          operation.signal,
+        )
+      : api.updateTimeEntry(
+          editor.entry.id,
+          running
+            ? { notes: common.notes }
+            : {
+                ...common,
+                spent_date: entryDate.value,
+                ...timing,
+              } satisfies TimeEntryPatch,
+          operation.signal,
+        )
+    entryResult.textContent = editor.timer ? 'Starting timer…' : 'Saving entry…'
+    entrySubmit.disabled = true
+    void request
       .then(async (entry) => {
         if (!isSessionCurrent(operation)) return
         if (!(await refresh(operation))) return
-        result.textContent = 'Timer started.'
-        timerDialog.close()
-        document.dispatchEvent(new CustomEvent('ezacto:time-entry-created', { detail: entry }))
+        if (editor.cell !== undefined) cellStates.delete(editor.cell.key)
+        if (editor.timer) entryResult.textContent = 'Timer started.'
+        entryDialog.close()
+        activeEntry = null
+        if (editor.entry === null) {
+          document.dispatchEvent(new CustomEvent('ezacto:time-entry-created', { detail: entry }))
+        }
       })
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return
         const minimumNoteLength = requiredMinimumFromError(error)
         if (minimumNoteLength === null) {
-          result.textContent = messageFor(error)
+          entryResult.textContent = messageFor(error)
           return
         }
-        configureNoteInput(
-          timerNoteInput,
-          timerNoteHint,
-          minimumNoteLength,
-        )
-        result.textContent = noteRequirementMessage(minimumNoteLength)
-        timerNoteInput.focus()
+        activeEntry = { ...editor, minimumNoteLength }
+        configureNoteInput(entryNoteInput, entryNoteHint, minimumNoteLength)
+        entryResult.textContent = `The note policy changed. ${noteRequirementMessage(minimumNoteLength)}`
+        entryNoteInput.focus()
+      })
+      .finally(() => {
+        if (isSessionCurrent(operation) && entryDialog.open) entrySubmit.disabled = false
       })
   })
 
-  for (const input of timerForm.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
+  for (const input of entryForm.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
     'input, textarea',
   )) {
     input.addEventListener('input', () => {
-      timerResult.textContent = ''
-      if (input !== timerNoteInput) {
-        configureNoteInput(timerNoteInput, timerNoteHint, 0)
+      entryResult.textContent = ''
+      if (
+        activeEntry !== null &&
+        snapshot !== null &&
+        (input === entryProject || input === entryTask)
+      ) {
+        const projectId = editorResourceId(
+          'project',
+          entryProject.value,
+          activeEntry.projectId,
+        )
+        const taskId = editorResourceId('task', entryTask.value, activeEntry.taskId)
+        const option = snapshot.catalog.timeEntryOptions.find(
+          (candidate) =>
+            candidate.project_id === projectId && candidate.task_id === taskId,
+        )
+        if (option !== undefined) {
+          activeEntry = {
+            ...activeEntry,
+            projectId: option.project_id,
+            taskId: option.task_id,
+            minimumNoteLength: option.minimum_note_length,
+          }
+          configureNoteInput(
+            entryNoteInput,
+            entryNoteHint,
+            option.minimum_note_length,
+          )
+        }
       }
     })
   }
 
-  required<HTMLButtonElement>('[data-stop-timer]').addEventListener('click', () => {
+  stopTimer.addEventListener('click', () => {
     const operation = sessionOperation()
     if (operation === null) return
-    const result = required<HTMLElement>('[data-timer-result]')
-    if (snapshot?.running === null || snapshot === null) {
-      result.textContent = 'No timer is running.'
+    const running = activeEntry?.entry
+    if (running?.is_running !== true) {
+      entryResult.textContent = 'No timer is running.'
       return
     }
-    result.textContent = 'Stopping timer…'
+    entryResult.textContent = 'Stopping timer…'
+    stopTimer.disabled = true
     void api
-      .stopTimeEntry(snapshot.running.id, operation.signal)
+      .stopTimeEntry(running.id, operation.signal)
       .then(async () => {
         if (!isSessionCurrent(operation)) return
         if (!(await refresh(operation))) return
-        result.textContent = 'Timer stopped.'
+        entryDialog.close()
+        activeEntry = null
       })
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return
-        result.textContent = messageFor(error)
+        entryResult.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (isSessionCurrent(operation)) stopTimer.disabled = false
       })
   })
 
@@ -1459,7 +2494,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         ]),
       ).values(),
     ]
-    saveSupplementalRows(operation.userId, within, supplementalRows)
+    saveSupplementalRows(operation.userId, within, supplementalRows, weekStartDay)
     render()
     rowDialog.close()
     result.textContent = ''
@@ -1482,58 +2517,252 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     updateRowTaskOptions(Number((event.currentTarget as HTMLSelectElement).value))
   })
 
-  noteForm.addEventListener('submit', (event) => {
-    event.preventDefault()
+  submitTimesheet.addEventListener('click', () => {
     const operation = sessionOperation()
-    if (operation === null || activeNote === null) return
-    const notes = new FormData(noteForm).get('notes')
-    if (typeof notes !== 'string') return
-    if (timeEntryNoteLength(notes) < activeNote.minimumNoteLength) {
-      noteResult.textContent = noteRequirementMessage(
-        activeNote.minimumNoteLength,
-      )
-      noteInput.focus()
+    if (operation === null || timesheetTransitionPending || api.submitTimesheet === undefined) {
       return
     }
-    const input = [...document.querySelectorAll<HTMLInputElement>('input[data-cell-key]')].find(
-      (candidate) =>
-        candidate.dataset.cellKey === activeNote?.cell.key &&
-        candidate.dataset.view === activeNote?.view,
-    )
-    if (input === undefined) return
-    cellStates.set(activeNote.cell.key, {
-      state: 'dirty',
-      rawValue: input.value,
-      notes: notes.trim() === '' ? null : notes,
-      minimumNoteLength: activeNote.minimumNoteLength,
-    })
-    noteResult.textContent = 'Saving note…'
-    void commitCell(input, activeNote.cell, activeNote.view, {
-      key: activeNote.cell.key,
-      view: activeNote.view,
-    }).then((saved) => {
-      if (!isSessionCurrent(operation)) return
-      if (saved) {
-        noteResult.textContent = 'Saved.'
-        noteDialog.close()
-        activeNote = null
-      } else if (noteResult.textContent === 'Saving note…') {
-        noteResult.textContent = 'The note was not saved. Use Retry in the cell.'
-      }
-    })
+    const range = weekRange(within, snapshot?.timeEntrySettings.week_start_day ?? weekStartDay)
+    timesheetTransitionPending = true
+    timesheetResult.textContent = 'Submitting this week for approval…'
+    renderTimesheetStatus()
+    void api
+      .submitTimesheet({ period_start: range.from, period_end: range.to }, operation.signal)
+      .then(async () => {
+        if (!(await refresh(operation))) return
+        timesheetResult.textContent = 'Week submitted. You can still edit it until approval.'
+      })
+      .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
+        timesheetResult.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (!isSessionCurrent(operation)) return
+        timesheetTransitionPending = false
+        renderTimesheetStatus()
+      })
   })
-  noteInput.addEventListener('input', () => {
-    noteResult.textContent = ''
+
+  const openWithdrawal = (submissionId: number): void => {
+    if (timesheetTransitionPending || !canManageTimesheetLocks()) return
+    withdrawalSubmissionId = submissionId
+    withdrawalForm.reset()
+    withdrawalResult.textContent = ''
+    open(withdrawalDialog)
+    withdrawalReason.focus()
+  }
+
+  withdrawTimesheet.addEventListener('click', () => {
+    if (currentSubmission?.status !== 'approved') return
+    openWithdrawal(currentSubmission.id)
+  })
+
+  withdrawalForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const operation = sessionOperation()
+    const reason = withdrawalReason.value.trim()
+    if (reason === '') {
+      withdrawalResult.textContent = 'Enter a reason before reopening this timesheet.'
+      withdrawalReason.focus()
+      return
+    }
+    if (
+      operation === null ||
+      withdrawalSubmissionId === null ||
+      timesheetTransitionPending ||
+      api.withdrawTimesheetSubmission === undefined
+    ) {
+      return
+    }
+    const submissionId = withdrawalSubmissionId
+    timesheetTransitionPending = true
+    withdrawalSubmit.disabled = true
+    withdrawalResult.textContent = 'Reopening approved time and expenses…'
+    void api
+      .withdrawTimesheetSubmission(submissionId, { reason }, operation.signal)
+      .then(async () => {
+        if (!(await refresh(operation))) return
+        withdrawalSubmissionId = null
+        withdrawalDialog.close()
+        timesheetResult.textContent =
+          'Approval withdrawn. Time and expenses are editable unless another lock applies.'
+      })
+      .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
+        withdrawalResult.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (!isSessionCurrent(operation)) return
+        timesheetTransitionPending = false
+        withdrawalSubmit.disabled = false
+        renderTimesheetStatus()
+      })
+  })
+
+  withdrawalReason.addEventListener('input', () => {
+    withdrawalResult.textContent = ''
+  })
+
+  lockPolicyForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const operation = sessionOperation()
+    if (
+      operation === null ||
+      lockPolicyTransitionPending ||
+      api.updateTimesheetLockPolicy === undefined
+    ) {
+      return
+    }
+    const autoLock = lockPolicyAuto.checked
+    const day = lockPolicyDay.value
+    const time = lockPolicyTime.value
+    const timezone = lockPolicyTimezone.value.trim()
+    if (timezone === '' || time === '') {
+      lockPolicyResult.textContent = 'Enter a deadline time and organization timezone.'
+      return
+    }
+    if (
+      day !== 'sunday' &&
+      day !== 'monday' &&
+      day !== 'tuesday' &&
+      day !== 'wednesday' &&
+      day !== 'thursday' &&
+      day !== 'friday' &&
+      day !== 'saturday'
+    ) {
+      lockPolicyResult.textContent = 'Choose a valid deadline day.'
+      return
+    }
+    lockPolicyTransitionPending = true
+    lockPolicyResult.textContent = 'Saving lock policy…'
+    renderLockPolicy()
+    void api
+      .updateTimesheetLockPolicy(
+        {
+          auto_lock: autoLock,
+          timesheet_deadline: { day, time },
+          timezone,
+        },
+        operation.signal,
+      )
+      .then(async () => {
+        if (!(await refresh(operation))) return
+        lockPolicyResult.textContent = autoLock
+          ? 'Deadline saved. Due weeks are locked in the organization timezone.'
+          : 'Automatic locking disabled. Existing lock records remain in effect.'
+      })
+      .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
+        lockPolicyResult.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (!isSessionCurrent(operation)) return
+        lockPolicyTransitionPending = false
+        renderLockPolicy()
+      })
+  })
+
+  manualLockForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const operation = sessionOperation()
+    const lockedThrough = manualLockThrough.value
+    const reason = manualLockReason.value.trim()
+    if (lockedThrough === '' || reason === '') {
+      lockPolicyResult.textContent = 'Choose a cutoff date and enter a lock reason.'
+      return
+    }
+    if (
+      operation === null ||
+      lockPolicyTransitionPending ||
+      api.createTimesheetManualLock === undefined
+    ) {
+      return
+    }
+    lockPolicyTransitionPending = true
+    manualLockCommandId ??= crypto.randomUUID()
+    const commandId = manualLockCommandId
+    lockPolicyResult.textContent = 'Locking tracked work…'
+    renderLockPolicy()
+    void api
+      .createTimesheetManualLock(
+        commandId,
+        { locked_through: lockedThrough, reason },
+        operation.signal,
+      )
+      .then(async () => {
+        if (!(await refresh(operation))) return
+        manualLockCommandId = null
+        manualLockReason.value = ''
+        lockPolicyResult.textContent = `Tracked work through ${dayLabel(lockedThrough, true)} is locked.`
+      })
+      .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
+        lockPolicyResult.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (!isSessionCurrent(operation)) return
+        lockPolicyTransitionPending = false
+        renderLockPolicy()
+      })
+  })
+
+  manualLockForm.addEventListener('input', () => {
+    if (!lockPolicyTransitionPending) manualLockCommandId = null
+  })
+
+  rejectionForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const operation = sessionOperation()
+    const reason = rejectionReason.value.trim()
+    if (reason === '') {
+      rejectionResult.textContent = 'Enter a reason before rejecting this timesheet.'
+      rejectionReason.focus()
+      return
+    }
+    if (
+      operation === null ||
+      rejectionSubmissionId === null ||
+      timesheetTransitionPending ||
+      api.rejectTimesheetSubmission === undefined
+    ) {
+      return
+    }
+    const submissionId = rejectionSubmissionId
+    timesheetTransitionPending = true
+    rejectionSubmit.disabled = true
+    rejectionResult.textContent = 'Rejecting timesheet…'
+    void api
+      .rejectTimesheetSubmission(submissionId, { reason }, operation.signal)
+      .then(async () => {
+        if (!(await refresh(operation))) return
+        rejectionDialog.close()
+        rejectionSubmissionId = null
+        approvalQueueResult.textContent = 'Timesheet returned for changes.'
+      })
+      .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
+        rejectionResult.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (!isSessionCurrent(operation)) return
+        timesheetTransitionPending = false
+        rejectionSubmit.disabled = false
+        renderApprovalQueue()
+      })
+  })
+
+  rejectionReason.addEventListener('input', () => {
+    rejectionResult.textContent = ''
   })
 
   const moveWeek = (days: number): void => {
     const operation = sessionOperation()
     if (operation === null || operation.userId === null) return
     within = shiftDate(within, days)
-    supplementalRows = loadSupplementalRows(operation.userId, within)
+    supplementalRows = loadSupplementalRows(operation.userId, within, weekStartDay)
     selectedDay = 0
     cellStates.clear()
-    setWeekUrl(within)
+    setWeekUrl(within, weekStartDay)
     setSessionStatus('Loading week…', 'loading')
     void refresh(operation)
       .then((loaded) => {
@@ -1556,10 +2785,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const operation = sessionOperation()
     if (operation === null || operation.userId === null) return
     within = localDate()
-    supplementalRows = loadSupplementalRows(operation.userId, within)
-    selectedDay = Math.max(0, weekDates(within).indexOf(localDate()))
+    supplementalRows = loadSupplementalRows(operation.userId, within, weekStartDay)
+    selectedDay = Math.max(0, weekDates(within, weekStartDay).indexOf(localDate()))
     cellStates.clear()
-    setWeekUrl(within)
+    setWeekUrl(within, weekStartDay)
     void loadWeek(operation)
   })
   const moveDay = (offset: number): void => {
@@ -1575,7 +2804,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     setSessionStatus('Copying project/task rows from last week…', 'loading')
     const previousMonday = shiftDate(grid.dates[0]!, -7)
     void api
-      .listTimeEntries(weekRange(previousMonday), operation.signal)
+      .listTimeEntries(weekRange(previousMonday, weekStartDay), operation.signal)
       .then((entries) => {
         if (!isSessionCurrent(operation)) return
         const copied = seedsFromEntries(entries)
@@ -1584,7 +2813,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
             [...supplementalRows, ...copied].map((row) => [`${row.projectId}:${row.taskId}`, row]),
           ).values(),
         ]
-        saveSupplementalRows(operation.userId!, within, supplementalRows)
+        saveSupplementalRows(operation.userId!, within, supplementalRows, weekStartDay)
         render()
         setSessionStatus(
           copied.length === 0
@@ -1608,7 +2837,13 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   invoiceForm.addEventListener('change', () => {
     invoiceCommandId = null
     invoiceSuccess.hidden = true
+    generatedInvoiceLink.hidden = true
     if (!invoiceGenerationPending) invoiceResult.textContent = ''
+  })
+  invoiceLoadMore.addEventListener('click', () => {
+    const operation = sessionOperation()
+    if (operation === null || invoiceNextCursor === null) return
+    void loadInvoiceList(operation, invoiceNextCursor)
   })
   invoiceForm.addEventListener('submit', (event) => {
     event.preventDefault()
@@ -1684,6 +2919,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
             style: 'currency',
             currency: invoice.currency,
           }).format(invoice.amount_cents / 100)} · ${invoice.line_items.length} ${invoice.line_items.length === 1 ? 'line' : 'lines'}`
+        generatedInvoiceLink.href = `/invoices/${invoice.id}`
+        generatedInvoiceLink.hidden = false
         invoiceResult.textContent = 'Draft invoice generated successfully.'
         invoiceSuccess.hidden = false
       })

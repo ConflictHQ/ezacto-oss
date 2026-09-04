@@ -16,6 +16,7 @@ interface Harness {
   run(sql: string, ...params: unknown[]): Promise<void>;
   rows<T>(sql: string, ...params: unknown[]): Promise<T[]>;
   close(): Promise<void>;
+  setExpensesModuleEnabled(enabled: boolean): void;
 }
 
 const signingKey = new Uint8Array(32).fill(0x71);
@@ -43,6 +44,16 @@ const bearerPrincipals: Readonly<
     profile: "member",
     managerGrants: [],
     scopes: ["projects:read"],
+  },
+  "member-expenses": {
+    profile: "member",
+    managerGrants: [],
+    scopes: ["expenses:read"],
+  },
+  "administrator-expenses": {
+    profile: "administrator",
+    managerGrants: [],
+    scopes: ["expenses:read", "expenses:write"],
   },
   "people-team": {
     profile: "people_admin",
@@ -118,6 +129,7 @@ const containerHarness = async (): Promise<Harness> => {
   const repository = createGeneralResourceRepository(
     createContainerDatabase(sqlite),
   );
+  let expensesModuleEnabled = true;
   const app = createApiApp({
     authentication,
     installApi: (api) =>
@@ -125,6 +137,7 @@ const containerHarness = async (): Promise<Harness> => {
         repository,
         cursorSigningKey: signingKey,
         clock: () => now,
+        isExpensesModuleEnabled: async () => expensesModuleEnabled,
       }),
   });
   return {
@@ -142,6 +155,9 @@ const containerHarness = async (): Promise<Harness> => {
       sqlite.prepare(sql).all(...params) as T[],
     close: async () => {
       sqlite.close();
+    },
+    setExpensesModuleEnabled: (enabled) => {
+      expensesModuleEnabled = enabled;
     },
   };
 };
@@ -161,6 +177,7 @@ const d1Harness = async (): Promise<Harness> => {
     .bind("Test org", "{}", now, now)
     .run();
   const repository = createGeneralResourceRepository(createD1Database(d1));
+  let expensesModuleEnabled = true;
   const app = createApiApp({
     authentication,
     installApi: (api) =>
@@ -168,6 +185,7 @@ const d1Harness = async (): Promise<Harness> => {
         repository,
         cursorSigningKey: signingKey,
         clock: () => now,
+        isExpensesModuleEnabled: async () => expensesModuleEnabled,
       }),
   });
   return {
@@ -193,6 +211,9 @@ const d1Harness = async (): Promise<Harness> => {
       ).results,
     close: async () => {
       await miniflare.dispose();
+    },
+    setExpensesModuleEnabled: (enabled) => {
+      expensesModuleEnabled = enabled;
     },
   };
 };
@@ -269,13 +290,14 @@ for (const [runtime, createHarness] of factories) {
         ),
       );
 
-      await data(
+      const owner = await data(
         await harness.request(
           "/users",
           json({
             first_name: "Owner",
             last_name: "Admin",
             email: "owner@example.test",
+            has_access_to_all_future_projects: true,
           }),
         ),
       );
@@ -336,10 +358,19 @@ for (const [runtime, createHarness] of factories) {
       const project = await data(
         await harness.request(
           "/projects",
-          json({ client_id: childId, name: "Launch" }),
+          json({ client_id: childId, name: "Launch", code: "" }),
         ),
       );
+      expect(project.code).toBe("");
       const projectId = project.id as number;
+      expect(
+        await harness.rows<{ project_id: number; user_id: number }>(
+          `SELECT project_id, user_id FROM user_assignments
+           WHERE project_id = ? AND user_id = ?`,
+          projectId,
+          owner.id,
+        ),
+      ).toEqual([{ project_id: projectId, user_id: owner.id }]);
       const commonAssignmentsResponse = await harness.request(
         `/task-assignments?project_id=${projectId}&task_id=${commonTask.id as number}`,
       );
@@ -531,6 +562,232 @@ for (const [runtime, createHarness] of factories) {
           false,
         );
       }
+    }, 20_000);
+
+    it("[api] administers expense categories from a fresh organization without breaking expense references", async () => {
+      const initial = await harness.request(
+        "/expense-categories?is_active=true",
+        asBearer("member-expenses"),
+      );
+      expect(initial.status).toBe(200);
+      expect(await initial.json()).toMatchObject({ data: [] });
+
+      const direct = await data(
+        await harness.request(
+          "/expense-categories",
+          json({
+            name: "Travel",
+            unit_name: null,
+            unit_price_cents: null,
+          }),
+        ),
+      );
+      expect(direct).toMatchObject({
+        name: "Travel",
+        unit_name: null,
+        unit_price_cents: null,
+        is_active: true,
+      });
+      expect(direct).not.toHaveProperty("harvest_id");
+
+      const unitPriced = await data(
+        await harness.request(
+          "/expense-categories",
+          json({
+            name: "Mileage",
+            unit_name: "mile",
+            unit_price_cents: 67,
+          }),
+        ),
+      );
+      expect(unitPriced).toMatchObject({
+        name: "Mileage",
+        unit_name: "mile",
+        unit_price_cents: 67,
+        is_active: true,
+      });
+
+      await harness.run(
+        "UPDATE expense_categories SET updated_at = ? WHERE id = ?",
+        "2026-08-27T12:00:00.000Z",
+        direct.id,
+      );
+      const updatedSince = await harness.request(
+        "/expense-categories?updated_since=2026-08-28T00%3A00%3A00.000Z",
+        asBearer("member-expenses"),
+      );
+      expect(updatedSince.status).toBe(200);
+      expect(
+        ((await updatedSince.json()) as { data: Array<{ id: number }> }).data,
+      ).toEqual([expect.objectContaining({ id: unitPriced.id })]);
+
+      const user = await data(
+        await harness.request(
+          "/users",
+          json({
+            first_name: "Fresh",
+            last_name: "Owner",
+            email: "fresh-owner@example.test",
+          }),
+        ),
+      );
+      const client = await data(
+        await harness.request("/clients", json({ name: "Fresh client" })),
+      );
+      const project = await data(
+        await harness.request(
+          "/projects",
+          json({ client_id: client.id, name: "Fresh project" }),
+        ),
+      );
+      await harness.run(
+        `INSERT INTO expenses (
+          user_id, project_id, expense_category_id, spent_date,
+          total_cost_cents, created_at, updated_at
+        ) VALUES (?, ?, ?, '2026-08-28', 1250, ?, ?)`,
+        user.id,
+        project.id,
+        direct.id,
+        now,
+        now,
+      );
+
+      const archived = await harness.request(
+        `/expense-categories/${direct.id as number}`,
+        { method: "DELETE" },
+      );
+      expect(archived.status).toBe(204);
+      expect(
+        await data(
+          await harness.request(
+            `/expense-categories/${direct.id as number}`,
+            asBearer("member-expenses"),
+          ),
+        ),
+      ).toMatchObject({ id: direct.id, is_active: false });
+      expect(
+        await harness.rows<{ expense_category_id: number }>(
+          "SELECT expense_category_id FROM expenses",
+        ),
+      ).toEqual([{ expense_category_id: direct.id }]);
+      expect(
+        (
+          (await (
+            await harness.request(
+              "/expense-categories?is_active=true",
+              asBearer("member-expenses"),
+            )
+          ).json()) as { data: Array<{ id: number }> }
+        ).data,
+      ).toEqual([expect.objectContaining({ id: unitPriced.id })]);
+
+      const patched = await data(
+        await harness.request(
+          `/expense-categories/${unitPriced.id as number}`,
+          json({ unit_name: "km", unit_price_cents: 42 }, "PATCH"),
+        ),
+      );
+      expect(patched).toMatchObject({ unit_name: "km", unit_price_cents: 42 });
+
+      const outOfRange = await harness.request(
+        "/expense-categories",
+        json({ name: "Too expensive", unit_price_cents: 9_000_000_000_001 }),
+      );
+      expect(outOfRange.status).toBe(422);
+      expect(await outOfRange.json()).toMatchObject({
+        error: {
+          code: "validation_failed",
+          fields: [
+            {
+              field: "unit_price_cents",
+              code: "invalid_integer",
+            },
+          ],
+        },
+      });
+    }, 20_000);
+
+    it("[security] closes every expense-category route when the expenses module is disabled", async () => {
+      harness.setExpensesModuleEnabled(false);
+      const attempts = [
+        harness.request("/expense-categories"),
+        harness.request("/expense-categories/1"),
+        harness.request("/expense-categories", json({ name: "Denied" })),
+        harness.request(
+          "/expense-categories/1",
+          json({ name: "Denied patch" }, "PATCH"),
+        ),
+        harness.request("/expense-categories/1", { method: "DELETE" }),
+      ];
+      for (const response of await Promise.all(attempts)) {
+        expect(response.status).toBe(403);
+        expect(await response.json()).toMatchObject({
+          error: { code: "module_disabled", fields: [] },
+        });
+      }
+      expect((await harness.request("/projects")).status).toBe(200);
+    });
+
+    it("[security] limits expense-category mutation to administrator browser sessions", async () => {
+      const protectedCategory = await data(
+        await harness.request(
+          "/expense-categories",
+          json({ name: "Administrator owned" }),
+        ),
+      );
+      for (const profile of [
+        "member",
+        "project_manager",
+        "people_admin",
+        "accounting",
+        "executive_manager",
+      ] as const) {
+        for (const [path, init] of [
+          ["/expense-categories", json({ name: `Denied ${profile}` })],
+          [
+            `/expense-categories/${protectedCategory.id as number}`,
+            json({ name: `Denied ${profile}` }, "PATCH"),
+          ],
+          [
+            `/expense-categories/${protectedCategory.id as number}`,
+            { method: "DELETE" },
+          ],
+        ] as const) {
+          const response = await harness.request(
+            path,
+            asProfile(profile, init),
+          );
+          expect(response.status, `${profile}:${init.method}`).toBe(403);
+          expect(await response.json()).toMatchObject({
+            error: { code: "profile_forbidden" },
+          });
+        }
+      }
+
+      const tokenMutation = await harness.request(
+        "/expense-categories",
+        asBearer("administrator-expenses", json({ name: "Token denied" })),
+      );
+      expect(tokenMutation.status).toBe(403);
+      expect(await tokenMutation.json()).toMatchObject({
+        error: { code: "session_required" },
+      });
+      expect(
+        (
+          await harness.request(
+            "/expense-categories",
+            asBearer("member-projects"),
+          )
+        ).status,
+      ).toBe(403);
+      expect(
+        (
+          await harness.request(
+            "/expense-categories",
+            asBearer("member-expenses"),
+          )
+        ).status,
+      ).toBe(200);
     }, 20_000);
 
     it("[api] persists bounded project, person, and pair note minimums through generic resources", async () => {
@@ -774,9 +1031,9 @@ for (const [runtime, createHarness] of factories) {
           path: `/projects/${project.id as number}`,
           readableBy: profiles,
           fields: {
-            hourly_rate_cents: "billable_rate",
-            fee_cents: "billable_rate",
-            cost_budget_cents: "money_budget",
+            hourly_rate_cents: "project_billable_rate",
+            fee_cents: "project_billable_rate",
+            cost_budget_cents: "project_cost_budget",
           },
         },
         {
@@ -788,8 +1045,8 @@ for (const [runtime, createHarness] of factories) {
           path: `/task-assignments/${taskAssignment.id as number}`,
           readableBy: profiles,
           fields: {
-            hourly_rate_cents: "billable_rate",
-            budget_cents: "money_budget",
+            hourly_rate_cents: "project_billable_rate",
+            budget_cents: "project_cost_budget",
           },
         },
         {
@@ -806,15 +1063,50 @@ for (const [runtime, createHarness] of factories) {
       const matrix: Readonly<
         Record<
           UserProfile,
-          Readonly<{ billable_rate: boolean; money_budget: boolean }>
+          Readonly<{
+            billable_rate: boolean;
+            money_budget: boolean;
+            project_billable_rate: boolean;
+            project_cost_budget: boolean;
+          }>
         >
       > = {
-        member: { billable_rate: false, money_budget: false },
-        project_manager: { billable_rate: false, money_budget: false },
-        people_admin: { billable_rate: false, money_budget: false },
-        accounting: { billable_rate: true, money_budget: true },
-        executive_manager: { billable_rate: true, money_budget: true },
-        administrator: { billable_rate: true, money_budget: true },
+        member: {
+          billable_rate: false,
+          money_budget: false,
+          project_billable_rate: false,
+          project_cost_budget: false,
+        },
+        project_manager: {
+          billable_rate: false,
+          money_budget: false,
+          project_billable_rate: false,
+          project_cost_budget: false,
+        },
+        people_admin: {
+          billable_rate: false,
+          money_budget: false,
+          project_billable_rate: false,
+          project_cost_budget: false,
+        },
+        accounting: {
+          billable_rate: true,
+          money_budget: true,
+          project_billable_rate: false,
+          project_cost_budget: false,
+        },
+        executive_manager: {
+          billable_rate: true,
+          money_budget: true,
+          project_billable_rate: true,
+          project_cost_budget: true,
+        },
+        administrator: {
+          billable_rate: true,
+          money_budget: true,
+          project_billable_rate: true,
+          project_cost_budget: true,
+        },
       };
       const allProfiles: readonly UserProfile[] = [
         "member",
@@ -873,7 +1165,10 @@ for (const [runtime, createHarness] of factories) {
           expect(
             Object.hasOwn(serialized, field),
             `granted_project_manager:${path}:${field}`,
-          ).toBe(category === "billable_rate");
+          ).toBe(
+            category === "billable_rate" ||
+              category === "project_billable_rate",
+          );
         }
       }
       expect(
@@ -974,13 +1269,12 @@ for (const [runtime, createHarness] of factories) {
         asProfile("accounting"),
       );
       expect(accounting.status).toBe(200);
-      expect(
-        ((await accounting.json()) as { data: Record<string, unknown> }).data,
-      ).toMatchObject({
-        hourly_rate_cents: 20_000,
-        fee_cents: 100_000,
-        cost_budget_cents: 50_000,
-      });
+      const accountingData = (
+        (await accounting.json()) as { data: Record<string, unknown> }
+      ).data;
+      expect(accountingData).not.toHaveProperty("hourly_rate_cents");
+      expect(accountingData).not.toHaveProperty("fee_cents");
+      expect(accountingData).not.toHaveProperty("cost_budget_cents");
       expect(
         (
           (await (

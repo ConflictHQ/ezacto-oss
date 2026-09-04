@@ -17,6 +17,7 @@ export interface WeekGridCell {
   readonly minimumNoteLength: number
   readonly isConflict: boolean
   readonly isLocked: boolean
+  readonly lockedReason: string | null
   readonly isRunning: boolean
 }
 
@@ -61,13 +62,17 @@ const catalogLabels = (resources: readonly GeneralResource[]): ReadonlyMap<numbe
     ]),
   )
 
-export const weekDates = (within: string): readonly string[] => {
+export const weekDates = (
+  within: string,
+  weekStartDay: 'saturday' | 'sunday' | 'monday' = 'monday',
+): readonly string[] => {
   const date = new Date(`${within}T00:00:00.000Z`)
   if (!Number.isFinite(date.valueOf()) || date.toISOString().slice(0, 10) !== within) {
     throw new Error(`invalid week date: ${within}`)
   }
-  const daysSinceMonday = (date.getUTCDay() + 6) % 7
-  date.setUTCDate(date.getUTCDate() - daysSinceMonday)
+  const startIndex = weekStartDay === 'sunday' ? 0 : weekStartDay === 'monday' ? 1 : 6
+  const daysSinceStart = (date.getUTCDay() - startIndex + 7) % 7
+  date.setUTCDate(date.getUTCDate() - daysSinceStart)
   return Array.from({ length: 7 }, (_value, index) => {
     const day = new Date(date)
     day.setUTCDate(day.getUTCDate() + index)
@@ -82,7 +87,7 @@ export const buildWeekGrid = (
   within: string,
   supplementalRows: readonly WeekRowSeed[] = [],
 ): WeekGrid => {
-  const dates = weekDates(within)
+  const dates = weekDates(within, snapshot.timeEntrySettings.week_start_day)
   const dateSet = new Set(dates)
   const entries = snapshot.entries.filter((entry) => dateSet.has(entry.spent_date))
   const rowSeeds = new Map<string, WeekRowSeed>()
@@ -123,6 +128,13 @@ export const buildWeekGrid = (
               : optionMinimum,
           isConflict: cellEntries.length > 1,
           isLocked: cellEntries.some((entry) => entry.is_locked),
+          lockedReason:
+            cellEntries.find(
+              (entry) =>
+                entry.is_locked &&
+                entry.locked_reason !== null &&
+                entry.locked_reason !== undefined,
+            )?.locked_reason ?? null,
           isRunning: cellEntries.some((entry) => entry.is_running),
         }
       })
@@ -153,9 +165,16 @@ export const buildWeekGrid = (
   }
 }
 
-export const formatCellHours = (seconds: number): string => {
+export const formatCellHours = (
+  seconds: number,
+  timeFormat: 'decimal' | 'hours_minutes' = 'decimal',
+): string => {
   if (!Number.isSafeInteger(seconds) || seconds < 0) throw new Error('invalid cell seconds')
   if (seconds === 0) return ''
+  if (timeFormat === 'hours_minutes') {
+    const totalMinutes = Math.round(seconds / 60)
+    return `${Math.floor(totalMinutes / 60)}:${String(totalMinutes % 60).padStart(2, '0')}`
+  }
   const hours = seconds / 3_600
   return Number.isInteger(hours)
     ? String(hours)

@@ -120,6 +120,8 @@ export type EmailRecipient = {
 
 export type EmailLog = {
   "id": number;
+  "from": EmailRecipient | null;
+  "reply_to": Array<EmailRecipient>;
   "to": Array<EmailRecipient>;
   "template": string;
   "subject": string;
@@ -139,6 +141,180 @@ export type EmailLog = {
 
 export type EmailLogPage = {
   "data": Array<EmailLog>;
+  "links": Links;
+};
+
+export type EmailTemplateVariable = {
+  "name": string;
+  "token": string;
+  "description": string;
+  "compatibility": "harvest" | "native";
+};
+
+export type EmailTemplateVariableGroup = {
+  "kind": "invoice" | "reminder" | "thank_you" | "auth_email_verification" | "auth_password_reset";
+  "variables": Array<EmailTemplateVariable>;
+};
+
+export type EmailTemplateVariableCatalog = {
+  "data": Array<EmailTemplateVariableGroup>;
+  "links": Links;
+};
+
+export type EmailTemplate = {
+  "kind": "invoice" | "reminder" | "thank_you" | "auth_email_verification" | "auth_password_reset";
+  "version": number;
+  "subject_template": string;
+  "text_template": string;
+  "html_template": string | null;
+  "unknown_variable_policy": "error" | "literal";
+  "created_by_user_id": number | null;
+  "created_at": string;
+};
+
+export type EmailTemplatePage = {
+  "data": Array<EmailTemplate>;
+  "links": Links;
+};
+
+export type EmailTemplateEnvelope = {
+  "data": EmailTemplate;
+};
+
+export type EmailTemplateVersionInput = {
+  "expected_version": number;
+  "subject_template": string;
+  "text_template": string;
+  "html_template"?: string | null;
+  "unknown_variable_policy"?: "error" | "literal";
+};
+
+export type SenderIdentityEvidence = {
+  "version": number;
+  "source": "provider_api" | "deployment_config";
+  "identity_kind": "email_address" | "domain";
+  "verification_status": "pending" | "verified" | "failed" | "temporary_failure" | "operator_configured";
+  "dkim_status": "pending" | "verified" | "failed" | "not_applicable";
+  "mail_from_domain": string | null;
+  "mail_from_status": "pending" | "verified" | "failed" | "not_configured";
+  "observed_at": string;
+};
+
+export type SenderIdentity = {
+  "id": number;
+  "email": string;
+  "display_name": string;
+  "reply_to_email": string | null;
+  "provider": string;
+  "provider_identity": string;
+  "is_default": boolean;
+  "version": number;
+  "archived_at": string | null;
+  "evidence": SenderIdentityEvidence | null;
+  "created_by_user_id": number;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type SenderIdentityPage = {
+  "data": Array<SenderIdentity>;
+  "links": Links;
+};
+
+export type SenderIdentityEnvelope = {
+  "data": SenderIdentity;
+};
+
+export type SenderIdentityInput = {
+  "email": string;
+  "display_name": string;
+  "reply_to_email"?: string | null;
+  "provider": string;
+  "provider_identity": string;
+};
+
+export type SenderIdentityPatch = {
+  "expected_version": number;
+  "display_name"?: string;
+  "reply_to_email"?: string | null;
+};
+
+export type SenderIdentityVersionInput = {
+  "expected_version": number;
+};
+
+export type SenderEvidenceRefreshInput = {
+  "expected_evidence_version": number;
+};
+
+export type EmailTestSendInput = {
+  "template_kind": "invoice" | "reminder" | "thank_you";
+  "template_version": number;
+  "variables": {
+  [key: string]: string;
+};
+  "confirmed": true;
+};
+
+export type EmailTestSend = {
+  "status": "queued";
+  "delivery_id": number;
+  "sender_identity_id": number;
+  "template_kind": "invoice" | "reminder" | "thank_you";
+  "template_version": number;
+  "recipient_email": string;
+};
+
+export type EmailTestSendEnvelope = {
+  "data": EmailTestSend;
+};
+
+export type OutboxAggregate = {
+  "type": string;
+  "id": number;
+  "sequence": number;
+};
+
+export type ActivityLog = {
+  "event_id": string;
+  "event_type": string;
+  "aggregate": OutboxAggregate;
+  "payload": {
+  [key: string]: unknown;
+};
+  "occurred_at": string;
+  "available_at": string;
+  "recorded_at": string;
+};
+
+export type ActivityLogPage = {
+  "data": Array<ActivityLog>;
+  "links": Links;
+};
+
+export type OutboxDelivery = {
+  "subscriber_id": string;
+  "event_id": string;
+  "event_type": string;
+  "aggregate": OutboxAggregate;
+  "status": "pending" | "processing" | "delivered" | "failed";
+  "attempt_count": number;
+  "next_attempt_at": string | null;
+  "last_error_code": "subscriber_timeout" | "subscriber_rejected" | null;
+  "delivered_at": string | null;
+  "failed_at": string | null;
+  "occurred_at": string;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type OutboxDeliveryPage = {
+  "data": Array<OutboxDelivery>;
+  "links": Links;
+};
+
+export type OutboxDeliveryEnvelope = {
+  "data": OutboxDelivery;
   "links": Links;
 };
 
@@ -206,6 +382,41 @@ export type GeneralResourceEnvelope = {
 
 export type GeneralResourcePage = {
   "data": Array<GeneralResource>;
+  "links": PageLinks;
+  "page": PageMetadata;
+};
+
+export type ExpenseCategory = {
+  "id": number;
+  "name": string;
+  "unit_name": string | null;
+  "unit_price_cents": number | null;
+  "is_active": boolean;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type ExpenseCategoryInput = {
+  "name": string;
+  "unit_name"?: string | null;
+  "unit_price_cents"?: number | null;
+  "is_active"?: boolean;
+};
+
+export type ExpenseCategoryPatch = {
+  "name"?: string;
+  "unit_name"?: string | null;
+  "unit_price_cents"?: number | null;
+  "is_active"?: boolean;
+};
+
+export type ExpenseCategoryEnvelope = {
+  "data": ExpenseCategory;
+  "links": Links;
+};
+
+export type ExpenseCategoryPage = {
+  "data": Array<ExpenseCategory>;
   "links": PageLinks;
   "page": PageMetadata;
 };
@@ -354,6 +565,18 @@ export type TimeEntryPage = {
   "page": PageMetadata;
 };
 
+export type TimeEntrySettings = {
+  "time_entry_mode": "duration" | "start_end";
+  "time_format": "decimal" | "hours_minutes";
+  "clock": "12h" | "24h";
+  "week_start_day": "saturday" | "sunday" | "monday";
+};
+
+export type TimeEntrySettingsEnvelope = {
+  "data": TimeEntrySettings;
+  "links": Links;
+};
+
 export type TimeEntryNoteSettings = {
   "required": boolean;
   "minimum_length": number;
@@ -378,6 +601,168 @@ export type TimeEntryOption = {
 export type TimeEntryOptionListEnvelope = {
   "data": Array<TimeEntryOption>;
   "links": Links;
+};
+
+export type TimesheetSubmission = {
+  "id": number;
+  "user_id": number;
+  "user_name": string;
+  "period_start": string;
+  "period_end": string;
+  "status": "unsubmitted" | "submitted" | "approved";
+  "origin": "native" | "harvest_import" | "legacy_backfill";
+  "source_status": "submitted" | "approved" | null;
+  "source_observed_at": string | null;
+  "submitted_by_user_id": number | null;
+  "submitted_at": string | null;
+  "reviewed_by_user_id": number | null;
+  "reviewed_at": string | null;
+  "rejection_reason": string | null;
+  "version": number;
+  "entry_count": number;
+  "expense_count": number;
+  "total_seconds": number;
+  "billable_seconds": number;
+  "nonbillable_seconds": number;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type TimesheetSubmissionInput = {
+  "period_start": string;
+  "period_end": string;
+};
+
+export type TimesheetSubmissionEntry = {
+  "id": number;
+  "spent_date": string;
+  "project_id": number;
+  "project_name": string;
+  "task_id": number;
+  "task_name": string;
+  "seconds": number;
+  "notes": string | null;
+};
+
+export type TimesheetSubmissionExpense = {
+  "id": number;
+  "spent_date": string;
+  "project_id": number;
+  "project_name": string;
+  "expense_category_id": number;
+  "expense_category_name": string;
+  "total_cost_cents": number;
+  "currency": string;
+  "notes": string | null;
+};
+
+export type TimesheetSubmissionDetail = {
+  "id": number;
+  "user_id": number;
+  "user_name": string;
+  "period_start": string;
+  "period_end": string;
+  "status": "unsubmitted" | "submitted" | "approved";
+  "origin": "native" | "harvest_import" | "legacy_backfill";
+  "source_status": "submitted" | "approved" | null;
+  "source_observed_at": string | null;
+  "submitted_by_user_id": number | null;
+  "submitted_at": string | null;
+  "reviewed_by_user_id": number | null;
+  "reviewed_at": string | null;
+  "rejection_reason": string | null;
+  "version": number;
+  "entry_count": number;
+  "expense_count": number;
+  "total_seconds": number;
+  "billable_seconds": number;
+  "nonbillable_seconds": number;
+  "created_at": string;
+  "updated_at": string;
+  "entries": Array<TimesheetSubmissionEntry>;
+  "expenses": Array<TimesheetSubmissionExpense>;
+};
+
+export type TimesheetRejectionInput = {
+  "reason": string;
+};
+
+export type TimesheetWithdrawalInput = {
+  "reason": string;
+};
+
+export type TimesheetSubmissionEnvelope = {
+  "data": TimesheetSubmission;
+  "links": Links;
+};
+
+export type TimesheetSubmissionDetailEnvelope = {
+  "data": TimesheetSubmissionDetail;
+  "links": Links;
+};
+
+export type TimesheetSubmissionPage = {
+  "data": Array<TimesheetSubmission>;
+  "links": PageLinks;
+  "page": PageMetadata;
+};
+
+export type TimesheetDeadline = {
+  "day": "sunday" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday";
+  "time": string;
+};
+
+export type TimesheetLockPolicy = {
+  "auto_lock": boolean;
+  "timesheet_deadline": TimesheetDeadline | null;
+  "timezone": string;
+  "week_start_day": "saturday" | "sunday" | "monday";
+  "updated_at": string;
+};
+
+export type TimesheetLockPolicyPatch = {
+  "auto_lock"?: boolean;
+  "timesheet_deadline"?: TimesheetDeadline | null;
+  "timezone"?: string;
+};
+
+export type TimesheetLockPolicyEnvelope = {
+  "data": TimesheetLockPolicy;
+  "links": Links;
+};
+
+export type TimesheetLockWindow = {
+  "id": number;
+  "kind": "manual" | "auto";
+  "period_start": string | null;
+  "period_end": string;
+  "reason": string;
+  "locked_by_user_id": number | null;
+  "locked_at": string;
+  "unlocked_by_user_id": number | null;
+  "unlocked_at": string | null;
+  "unlock_reason": string | null;
+  "active": boolean;
+};
+
+export type TimesheetManualLockInput = {
+  "locked_through": string;
+  "reason": string;
+};
+
+export type TimesheetUnlockInput = {
+  "reason": string;
+};
+
+export type TimesheetLockWindowEnvelope = {
+  "data": TimesheetLockWindow;
+  "links": Links;
+};
+
+export type TimesheetLockWindowPage = {
+  "data": Array<TimesheetLockWindow>;
+  "links": PageLinks;
+  "page": PageMetadata;
 };
 
 export type Expense = {
@@ -1322,6 +1707,141 @@ export class EzactoClient {
     });
   }
 
+  async listEmailTemplateVariables(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<EmailTemplateVariableCatalog> {
+    const headers = new Headers(args.headers);
+
+    return this.request<EmailTemplateVariableCatalog>("GET", "/api/v1/email-template-variables", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listEmailTemplates(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<EmailTemplatePage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<EmailTemplatePage>("GET", "/api/v1/email-templates", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listEmailTemplateVersions(args: { "kind": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<EmailTemplatePage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<EmailTemplatePage>("GET", "/api/v1/email-templates/:kind/versions".replace(":kind", encodeURIComponent(String(args["kind"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createEmailTemplateVersion(args: { "kind": string; "Idempotency-Key": string; body: EmailTemplateVersionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<EmailTemplateEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<EmailTemplateEnvelope>("POST", "/api/v1/email-templates/:kind/versions".replace(":kind", encodeURIComponent(String(args["kind"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listSenderIdentities(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<SenderIdentityPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<SenderIdentityPage>("GET", "/api/v1/sender-identities", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createSenderIdentity(args: { "Idempotency-Key": string; body: SenderIdentityInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<SenderIdentityEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<SenderIdentityEnvelope>("POST", "/api/v1/sender-identities", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateSenderIdentity(args: { "id": number; "Idempotency-Key": string; body: SenderIdentityPatch; signal?: AbortSignal; headers?: HeadersInit }): Promise<SenderIdentityEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<SenderIdentityEnvelope>("PATCH", "/api/v1/sender-identities/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async setDefaultSenderIdentity(args: { "id": number; "Idempotency-Key": string; body: SenderIdentityVersionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<SenderIdentityEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<SenderIdentityEnvelope>("POST", "/api/v1/sender-identities/:id/default".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async archiveSenderIdentity(args: { "id": number; "Idempotency-Key": string; body: SenderIdentityVersionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<SenderIdentityEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<SenderIdentityEnvelope>("POST", "/api/v1/sender-identities/:id/archive".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async refreshSenderIdentityEvidence(args: { "id": number; "Idempotency-Key": string; body: SenderEvidenceRefreshInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<SenderIdentityEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<SenderIdentityEnvelope>("POST", "/api/v1/sender-identities/:id/refresh".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async testSendEmailTemplate(args: { "id": number; "Idempotency-Key": string; body: EmailTestSendInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<EmailTestSendEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<EmailTestSendEnvelope>("POST", "/api/v1/sender-identities/:id/test-send".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listActivityLog(args: { query?: { "per_page"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ActivityLogPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ActivityLogPage>("GET", "/api/v1/activity-log", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listOutboxDeliveries(args: { query?: { "status"?: "pending" | "processing" | "delivered" | "failed"; "per_page"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<OutboxDeliveryPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<OutboxDeliveryPage>("GET", "/api/v1/outbox-deliveries", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async retryOutboxDelivery(args: { "subscriberId": string; "eventId": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<OutboxDeliveryEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<OutboxDeliveryEnvelope>("POST", "/api/v1/outbox-deliveries/:subscriberId/:eventId/retry".replace(":subscriberId", encodeURIComponent(String(args["subscriberId"]))).replace(":eventId", encodeURIComponent(String(args["eventId"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
   async revokeSession(args: { "sessionId": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<SessionEnvelope> {
     const headers = new Headers(args.headers);
 
@@ -1468,6 +1988,54 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<void>("DELETE", "/api/v1/contacts/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listExpenseCategories(args: { query?: { "cursor"?: string; "per_page"?: number; "is_active"?: boolean; "updated_since"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ExpenseCategoryPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ExpenseCategoryPage>("GET", "/api/v1/expense-categories", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createExpenseCategory(args: { body: ExpenseCategoryInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<ExpenseCategoryEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ExpenseCategoryEnvelope>("POST", "/api/v1/expense-categories", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getExpenseCategory(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<ExpenseCategoryEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ExpenseCategoryEnvelope>("GET", "/api/v1/expense-categories/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateExpenseCategory(args: { "id": number; body: ExpenseCategoryPatch; signal?: AbortSignal; headers?: HeadersInit }): Promise<ExpenseCategoryEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ExpenseCategoryEnvelope>("PATCH", "/api/v1/expense-categories/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async deleteExpenseCategory(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/expense-categories/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });
@@ -1819,6 +2387,15 @@ export class EzactoClient {
     });
   }
 
+  async getTimeEntrySettings(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimeEntrySettingsEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimeEntrySettingsEnvelope>("GET", "/api/v1/time-entry-settings", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
   async getTimeEntryNoteSettings(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimeEntryNoteSettingsEnvelope> {
     const headers = new Headers(args.headers);
 
@@ -1908,6 +2485,142 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<TimeEntryEnvelope>("POST", "/api/v1/time-entries/:id/restart".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listTimesheetSubmissions(args: { query?: { "cursor"?: string; "per_page"?: number; "period_start"?: string; "period_end"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimesheetSubmissionPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetSubmissionPage>("GET", "/api/v1/timesheet-submissions", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async submitTimesheet(args: { body: TimesheetSubmissionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetSubmissionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetSubmissionEnvelope>("POST", "/api/v1/timesheet-submissions", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listPendingTimesheetSubmissions(args: { query?: { "cursor"?: string; "per_page"?: number; "period_start"?: string; "period_end"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimesheetSubmissionPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetSubmissionPage>("GET", "/api/v1/timesheet-submissions/pending", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listApprovedTimesheetSubmissions(args: { query?: { "cursor"?: string; "per_page"?: number; "period_start"?: string; "period_end"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimesheetSubmissionPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetSubmissionPage>("GET", "/api/v1/timesheet-submissions/approved", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getTimesheetSubmission(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetSubmissionDetailEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetSubmissionDetailEnvelope>("GET", "/api/v1/timesheet-submissions/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async approveTimesheetSubmission(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetSubmissionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetSubmissionEnvelope>("POST", "/api/v1/timesheet-submissions/:id/approve".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async rejectTimesheetSubmission(args: { "id": number; body: TimesheetRejectionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetSubmissionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetSubmissionEnvelope>("POST", "/api/v1/timesheet-submissions/:id/reject".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async withdrawTimesheetSubmission(args: { "id": number; body: TimesheetWithdrawalInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetSubmissionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetSubmissionEnvelope>("POST", "/api/v1/timesheet-submissions/:id/withdraw".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getTimesheetLockPolicy(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimesheetLockPolicyEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetLockPolicyEnvelope>("GET", "/api/v1/timesheet-lock-policy", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateTimesheetLockPolicy(args: { body: TimesheetLockPolicyPatch; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetLockPolicyEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetLockPolicyEnvelope>("PATCH", "/api/v1/timesheet-lock-policy", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listTimesheetLocks(args: { query?: { "cursor"?: string; "per_page"?: number; "active"?: boolean; "kind"?: "manual" | "auto" }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimesheetLockWindowPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetLockWindowPage>("GET", "/api/v1/timesheet-locks", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getTimesheetLock(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetLockWindowEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetLockWindowEnvelope>("GET", "/api/v1/timesheet-locks/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createTimesheetManualLock(args: { "Idempotency-Key": string; body: TimesheetManualLockInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetLockWindowEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<TimesheetLockWindowEnvelope>("POST", "/api/v1/timesheet-locks", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async unlockTimesheetLock(args: { "id": number; body: TimesheetUnlockInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetLockWindowEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetLockWindowEnvelope>("POST", "/api/v1/timesheet-locks/:id/unlock".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });

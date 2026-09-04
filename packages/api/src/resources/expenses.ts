@@ -38,6 +38,7 @@ export interface ExpenseRouteOptions {
   repository: TrackedResourceRepository
   clock: TrackedResourceClock
   cursorSigningKey: Uint8Array
+  isExpensesModuleEnabled(): Promise<boolean>
 }
 
 interface ExpenseOutput {
@@ -295,6 +296,15 @@ const readUpdateInput = (
 
 const selfLink = (id: number) => `/api/v1/expenses/${id}`
 
+const requireExpensesModule = async (options: ExpenseRouteOptions): Promise<void> => {
+  if (await options.isExpensesModuleEnabled()) return
+  throw new ApiError({
+    status: 403,
+    code: 'module_disabled',
+    message: 'The expenses module is not enabled for this organization.',
+  })
+}
+
 export const installExpenseRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   options: ExpenseRouteOptions,
@@ -303,6 +313,7 @@ export const installExpenseRoutes = <Bindings extends object>(
     requireApiScope(context, 'expenses:read')
     const principal = context.get('principal')
     try {
+      await requireExpensesModule(options)
       const url = new URL(context.req.url)
       const filters = expenseFilters(url, principal)
       const envelope = await cursorPage({
@@ -322,6 +333,7 @@ export const installExpenseRoutes = <Bindings extends object>(
     requireApiScope(context, 'expenses:write')
     const principal = context.get('principal')
     try {
+      await requireExpensesModule(options)
       const expense = await options.repository.createExpense(
         principal.userId,
         readCreateInput(await readObjectBody(context)),
@@ -344,6 +356,7 @@ export const installExpenseRoutes = <Bindings extends object>(
     requireApiScope(context, 'expenses:read')
     const principal = context.get('principal')
     try {
+      await requireExpensesModule(options)
       const expense = await options.repository.getExpense(
         principal.userId,
         resourceId(context.req.param('id'), 'expense'),
@@ -365,6 +378,7 @@ export const installExpenseRoutes = <Bindings extends object>(
     requireApiScope(context, 'expenses:write')
     const principal = context.get('principal')
     try {
+      await requireExpensesModule(options)
       const expense = await options.repository.updateExpense(
         principal.userId,
         resourceId(context.req.param('id'), 'expense'),
@@ -388,6 +402,7 @@ export const installExpenseRoutes = <Bindings extends object>(
     requireApiScope(context, 'expenses:write')
     const principal = context.get('principal')
     try {
+      await requireExpensesModule(options)
       const expense = await options.repository.deleteExpense(
         principal.userId,
         resourceId(context.req.param('id'), 'expense'),

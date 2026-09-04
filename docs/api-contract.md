@@ -90,7 +90,11 @@ The native report slice requires an explicit inclusive `from`/`to` date range:
 - `GET /api/v1/reports/project-budget/:projectId` reports the active budget grain
   (`project`, task assignment, or user assignment). Time budgets are visible on
   the project-read surface; money budget, billable, and cost-derived fields are
-  independently omitted by the shared permission-profile policy.
+  independently omitted by the shared permission-profile policy. Account-wide
+  reporting profiles can read every project. Other profiles need an active project
+  assignment and either `report_visibility = everyone` or a project-manager profile
+  with that assignment's `is_project_manager` grant. A denied project is indistinguishable
+  from a missing one.
 
 Report responses are `no-store`. Invalid, duplicate, missing, or inverted date
 filters fail before the repository runs.

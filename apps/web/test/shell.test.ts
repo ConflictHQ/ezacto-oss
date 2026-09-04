@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  createShellApi,
+  hydratePendingTimesheetDetails,
   loadShellSnapshot,
   maximumTimeEntryNoteLength,
   navigationDestination,
@@ -16,10 +18,13 @@ import {
   type ShellApi,
 } from '../src/index.js'
 import type {
+  EzactoClient,
   GeneralResource,
   TimeEntry,
   TimeEntryInput,
   TimeEntryPatch,
+  TimesheetSubmission,
+  TimesheetSubmissionDetail,
   Whoami,
 } from '@ezacto/client'
 
@@ -106,6 +111,12 @@ const memoryApi = (
         minimum_note_length: minimumNoteLength,
       },
     ]),
+    getTimeEntrySettings: vi.fn(async () => ({
+      time_entry_mode: 'duration' as const,
+      time_format: 'decimal' as const,
+      clock: '12h' as const,
+      week_start_day: 'monday' as const,
+    })),
     listTimeEntries: vi.fn(async (query) =>
       query.is_running === true ? entries.filter((item) => item.is_running) : [...entries],
     ),
@@ -137,6 +148,79 @@ const memoryApi = (
 }
 
 describe('S-1 through S-5 application shell', () => {
+  it('[unit] maps invoice browse operations to the generated client', async () => {
+    const listInvoices = vi.fn(async () => ({
+      data: [],
+      links: {},
+      page: { next_cursor: null },
+    }))
+    const getInvoice = vi.fn(async () => ({ data: {}, links: {} }))
+    const listInvoiceMessages = vi.fn(async () => ({ data: [], links: {} }))
+    const listInvoicePayments = vi.fn(async () => ({ data: [], links: {} }))
+    const api = createShellApi({
+      listInvoices,
+      getInvoice,
+      listInvoiceMessages,
+      listInvoicePayments,
+    } as unknown as EzactoClient)
+    const signal = new AbortController().signal
+
+    await api.listInvoices!('opaque-cursor', signal)
+    await api.getInvoice!(7, signal)
+    await api.listInvoiceMessages!(7, signal)
+    await api.listInvoicePayments!(7, signal)
+
+    expect(listInvoices).toHaveBeenCalledWith({
+      query: { cursor: 'opaque-cursor', per_page: 50 },
+      signal,
+    })
+    expect(getInvoice).toHaveBeenCalledWith({ id: 7, signal })
+    expect(listInvoiceMessages).toHaveBeenCalledWith({ id: 7, signal })
+    expect(listInvoicePayments).toHaveBeenCalledWith({ id: 7, signal })
+  })
+
+  it('[unit] requests only one bounded approval queue page', async () => {
+    const listPendingTimesheetSubmissions = vi.fn(async () => ({
+      data: [],
+      page: { next_cursor: 'ignored-because-the-view-is-bounded' },
+    }))
+    const api = createShellApi({ listPendingTimesheetSubmissions } as unknown as EzactoClient)
+
+    await api.listPendingTimesheetSubmissions!()
+
+    expect(listPendingTimesheetSubmissions).toHaveBeenCalledTimes(1)
+    expect(listPendingTimesheetSubmissions).toHaveBeenCalledWith({
+      query: { per_page: 50 },
+    })
+  })
+
+  it('[unit] bounds and concurrency-limits approval detail hydration and drops stale rows', async () => {
+    const summaries = Array.from({ length: 55 }, (_, index) => ({
+      id: index + 1,
+      status: 'submitted',
+    })) as TimesheetSubmission[]
+    let active = 0
+    let maximumActive = 0
+    const getSubmission = vi.fn(async (id: number) => {
+      active++
+      maximumActive = Math.max(maximumActive, active)
+      await Promise.resolve()
+      active--
+      return {
+        id,
+        status: id === 7 ? 'approved' : 'submitted',
+        entries: [],
+      } as unknown as TimesheetSubmissionDetail
+    })
+
+    const details = await hydratePendingTimesheetDetails(summaries, getSubmission)
+
+    expect(getSubmission).toHaveBeenCalledTimes(50)
+    expect(maximumActive).toBeLessThanOrEqual(4)
+    expect(details).toHaveLength(49)
+    expect(details.some((detail) => detail.id === 7)).toBe(false)
+  })
+
   it('[e2e:track-week] keeps the global timer in desktop and phone shell CSS', () => {
     const html = renderAppShell({
       environment: 'test',
@@ -151,13 +235,16 @@ describe('S-1 through S-5 application shell', () => {
     expect(html).toContain('data-add-row-trigger')
     expect(html).toContain('data-note-dialog')
     expect(html).toContain('data-timer-note')
-    expect(html).toContain('<form data-timer-form novalidate>')
+    expect(html).toContain('<form data-timer-form novalidate data-entry-form data-note-form>')
+    expect(html.match(/data-entry-form/gu)).toHaveLength(1)
     expect(html).toContain('data-note-hint')
     expect(html).toContain('maxlength="10000"')
     expect(html).not.toContain('maxlength="65535"')
     expect(html).toContain('data-sign-in-form')
     expect(html).toContain('data-auth-gateway data-state="checking"')
     expect(html).toContain('data-authenticated-shell hidden inert')
+    expect(html).toContain('data-session-check-overlay role="status"')
+    expect(html).toContain('data-session-check-overlay role="status" aria-live="polite" aria-atomic="true" hidden')
     expect(html).toContain('method="post" action="/auth/sign-in"')
     expect(html).toContain('autocomplete="username"')
     expect(html).toContain('autocomplete="current-password"')
@@ -167,8 +254,27 @@ describe('S-1 through S-5 application shell', () => {
     expect(webAssets.stylesheet).toContain('@media (max-width: 720px)')
     expect(webAssets.stylesheet).toContain('.timer-chip {')
     expect(webAssets.stylesheet).toContain('.auth-gateway {')
+    expect(webAssets.stylesheet).toContain('.session-check-overlay {')
     expect(webAssets.stylesheet).not.toMatch(/\.timer-chip\s*\{[^}]*display:\s*none/su)
     expect(webAssets.javascript).toContain('credentials:"same-origin"')
+  })
+
+  it('[security] uses a cookie-presence hint only to show an inert shell under a session-check overlay', () => {
+    const html = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      sessionCookiePresent: true,
+    })
+
+    expect(html).toContain('data-auth-state="checking"')
+    expect(html).toContain('data-auth-gateway data-state="checking"')
+    expect(html).toMatch(/data-auth-gateway[^>]+ hidden>/u)
+    expect(html).toContain(
+      'data-session-check-overlay role="status" aria-live="polite" aria-atomic="true">',
+    )
+    expect(html).toContain('data-authenticated-shell inert aria-busy="true"')
+    expect(html).not.toContain('data-authenticated-shell hidden inert')
+    expect(html).toContain('data-auth-action disabled')
   })
 
   it('[e2e:phone-week] swaps the seven-day table for a touch-sized day switcher', () => {
@@ -220,6 +326,7 @@ describe('S-1 through S-5 application shell', () => {
 
   it('[unit] resolves K-bar navigation and computes a live timer counter', () => {
     expect(navigationDestination('go reports')).toBe('/reports')
+    expect(navigationDestination('go tasks')).toBe('/tasks')
     expect(navigationDestination('GO time')).toBe('/')
     expect(navigationDestination('log 2h northpeak devops')).toBeNull()
     const running = entry({ project_id: 1, task_id: 1 }, 1)
@@ -333,5 +440,85 @@ describe('S-1 through S-5 application shell', () => {
     expect(html).toContain('Invoice &lt;123&gt;')
     expect(html).toContain('&lt;script&gt;unsafe()&lt;/script&gt;')
     expect(html).not.toContain('<script>unsafe()</script>')
+  })
+
+  it('[acceptance] renders honest invoice list and pinned detail workspaces', () => {
+    const list = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      activeSection: 'Invoices',
+      view: 'invoice-list',
+    })
+    const detail = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      activeSection: 'Invoices',
+      view: 'invoice-detail',
+    })
+    const generation = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      activeSection: 'Invoices',
+      view: 'invoice-generation',
+    })
+
+    expect(list).toContain('data-invoice-list-page')
+    expect(list).toContain('data-invoice-list aria-label="Invoices"')
+    expect(list).toContain('href="/invoices" aria-current="page"')
+    expect(detail).toContain('data-invoice-detail-page')
+    expect(detail).toContain('data-invoice-document data-document-shell')
+    expect(detail).toContain('data-ez-theme="precision"')
+    expect(detail).toContain('data-invoice-detail-lines')
+    expect(detail).toContain('data-invoice-line-add')
+    expect(detail).toContain('data-invoice-line-dialog')
+    expect(detail).toContain('data-invoice-line-delete-dialog')
+    expect(detail).toContain('data-invoice-detail-payments')
+    expect(detail).toContain('data-invoice-payment-record')
+    expect(detail).toContain('data-invoice-payment-dialog')
+    expect(detail).toContain('data-invoice-payment-delete-dialog')
+    expect(detail).toContain('No email or thank-you message will be sent.')
+    expect(detail).toContain('data-invoice-detail-messages')
+    expect(detail).toContain('data-invoice-send')
+    expect(detail).toContain('data-invoice-reminder-line')
+    expect(detail).toContain('data-invoice-composer-dialog')
+    expect(detail).toContain('%invoice_number%')
+    expect(generation).toContain('data-generated-invoice-link')
+    expect(generation).toContain('The draft is saved and ready to review.')
+    expect(detail).not.toMatch(/>Send<|Download PDF|Send reminder/u)
+    expect(detail).not.toMatch(/name="(?:provider|reference|send_thank_you)"/u)
+    expect(webAssets.stylesheet).toContain('.invoice-document {')
+    expect(webAssets.stylesheet).toContain('.invoice-payment-dialog-actions {')
+    expect(webAssets.stylesheet).toContain('.invoice-line-dialog {')
+    expect(webAssets.stylesheet).toContain('.invoice-line-actions {')
+    expect(webAssets.stylesheet).toContain('.invoice-load-more {')
+  })
+
+  it('[acceptance] renders project list and detail workspaces without server-side restricted fields', () => {
+    const list = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      activeSection: 'Projects',
+      view: 'project-list',
+    })
+    const detail = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      activeSection: 'Projects',
+      view: 'project-detail',
+    })
+
+    expect(list).toContain('data-project-list-page')
+    expect(list).toContain('data-project-client-filter')
+    expect(list).toContain('href="/projects" aria-current="page"')
+    expect(detail).toContain('data-project-detail-page')
+    expect(detail).toContain('data-project-task-assignments')
+    expect(detail).toContain('data-project-attachment-form hidden')
+    expect(detail).toContain('<div class="project-form-body" data-project-form-body></div>')
+    expect(detail).not.toContain('name="hourly_rate_cents"')
+    expect(detail).not.toContain('name="cost_budget_cents"')
+    expect(webAssets.stylesheet).toContain('.project-detail {')
+    expect(webAssets.stylesheet).toMatch(
+      /@media \(max-width: 720px\)[\s\S]*\.project-detail,[\s\S]*grid-template-columns: 1fr;/u,
+    )
   })
 })

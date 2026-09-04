@@ -33,6 +33,7 @@ import {
 } from './support.js'
 import type {
   CreateTimeEntryRequest,
+  OrganizationTimeEntrySettings,
   OrganizationTimeEntryNoteSettings,
   TimeEntryFilters,
   TimeEntryRecord,
@@ -297,6 +298,15 @@ const updateInput = (body: Record<string, unknown>): UpdateTimeEntryRequest => {
 
 const selfLink = (id: number) => `/api/v1/time-entries/${id}`
 
+const serializeTimeEntrySettings = (
+  settings: Readonly<OrganizationTimeEntrySettings>,
+) => ({
+  time_entry_mode: settings.mode,
+  time_format: settings.timeFormat,
+  clock: settings.clock,
+  week_start_day: settings.weekStartDay,
+})
+
 const noteSettingsBodyKeys = new Set(['required', 'minimum_length'])
 
 const noteSettingsInput = (
@@ -340,6 +350,20 @@ export const installTimeEntryRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   options: TimeEntryRouteOptions,
 ): void => {
+  api.get('/time-entry-settings', async (context) => {
+    requireApiScope(context, 'time_entries:read')
+    return context.json(
+      {
+        data: serializeTimeEntrySettings(
+          await options.repository.timeEntrySettings(),
+        ),
+        links: { self: '/api/v1/time-entry-settings' },
+      },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
   api.get('/time-entry-note-settings', async (context) => {
     requireApiScope(context, 'time_entries:read')
     return context.json(

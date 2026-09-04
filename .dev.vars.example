@@ -3,7 +3,9 @@
 # bindings, not env vars — they live in wrangler.jsonc when the worker entry lands.
 
 # --- Identity seam: Cloudflare Access implementation (D4) ---
-ACCESS_TEAM_DOMAIN=https://<team>.cloudflareaccess.com
+# Optional pair. Leave both empty to disable. The team domain must be the exact
+# origin form https://your-team.cloudflareaccess.com (without a trailing slash).
+ACCESS_TEAM_DOMAIN=
 ACCESS_POLICY_AUD=
 
 # --- Browser identity: provider-generic OIDC with Google configured first ---

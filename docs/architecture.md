@@ -3,8 +3,9 @@
 - **Runtime:** TypeScript + Hono + Drizzle. Worker (default) + container. Hono and
   Drizzle both run on both targets; entry points are thin.
 - **Data:** SQLite dialect everywhere. Hosted = D1, one database per organization
-  (tenancy is a connection). Self-host container = one SQLite file. Backups:
-  D1 Time Travel + nightly R2 export; container = file copy + logical export.
+  (tenancy is a connection). Self-host container = one SQLite file. Current
+  recovery is D1 Time Travel or a stopped-container physical snapshot; the D18
+  nightly R2 and portable logical exports remain tracked by #37 and #28.
   D1 limits designed against: 100 bound params/statement, 1000 statements/invocation,
   30s/query, 10 GB/db.
 - **API:** REST `/api/v1` (canonical, honest) + `/harvest/v2` shim (compat quirks at

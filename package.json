@@ -11,6 +11,7 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
+    "test:container": "node entries/container/test/first-run.docker.mjs",
     "build": "npm run build --workspaces --if-present",
     "verify": "npm run contract:check && npm run typecheck && npm run lint && npm run test && npm run build"
   }

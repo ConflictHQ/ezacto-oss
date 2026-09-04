@@ -73,6 +73,76 @@ describe('transform and load', () => {
       expect(
         db
           .prepare(
+            `SELECT entry.approval_status, entry.source_approval_status,
+              submission.status, submission.origin, submission.source_status,
+              submission.period_start, submission.period_end,
+              submission.submitted_by_user_id, submission.submitted_at,
+              submission.reviewed_by_user_id, submission.reviewed_at,
+              event.event_type
+             FROM time_entries entry
+             JOIN timesheet_submissions submission
+               ON submission.id = entry.timesheet_submission_id
+             JOIN event_outbox event ON event.aggregate_type = 'timesheet_submission'
+               AND event.aggregate_id = submission.id
+             WHERE entry.harvest_id = '9007199254740993'`,
+          )
+          .get(),
+      ).toEqual({
+        approval_status: 'approved',
+        source_approval_status: 'approved',
+        status: 'approved',
+        origin: 'harvest_import',
+        source_status: 'approved',
+        period_start: '2026-08-10',
+        period_end: '2026-08-16',
+        submitted_by_user_id: null,
+        submitted_at: null,
+        reviewed_by_user_id: null,
+        reviewed_at: null,
+        event_type: 'timesheet.status_imported',
+      })
+      const aggregate = db
+        .prepare(
+          `SELECT timesheet_submission_id AS id FROM time_entries
+           WHERE harvest_id = '9007199254740993'`,
+        )
+        .get() as { id: number }
+      expect(
+        db
+          .prepare(
+            `SELECT harvest_id, total_cost_cents, approval_status,
+              source_approval_status, timesheet_submission_id
+             FROM expenses WHERE harvest_id IN (152975211, 152975212)
+             ORDER BY harvest_id`,
+          )
+          .all(),
+      ).toEqual([
+        {
+          harvest_id: 152975211,
+          total_cost_cents: 8125,
+          approval_status: 'approved',
+          source_approval_status: 'approved',
+          timesheet_submission_id: aggregate.id,
+        },
+        {
+          harvest_id: 152975212,
+          total_cost_cents: 10_000,
+          approval_status: 'approved',
+          source_approval_status: 'approved',
+          timesheet_submission_id: aggregate.id,
+        },
+      ])
+      expect(
+        db
+          .prepare(
+            `SELECT count(*) AS count FROM event_outbox
+             WHERE aggregate_type = 'timesheet_submission' AND aggregate_id = ?`,
+          )
+          .get(aggregate.id),
+      ).toEqual({ count: 1 })
+      expect(
+        db
+          .prepare(
             `SELECT harvest_id, seconds, seconds_without_timer, timer_started_at, started_time
         FROM time_entries WHERE harvest_id = '9007199254740994'`,
           )
@@ -284,6 +354,26 @@ describe('transform and load', () => {
       ).toEqual({ body: 'Please review the sanitized estimate.' })
     } finally {
       afterGap.close()
+    }
+  }, 30_000)
+
+  it('[integration] preserves a signed Harvest direct-expense amount', async () => {
+    const path = join(snapshotDir, 'raw', 'expenses.jsonl')
+    const source = await readFile(path, 'utf8')
+    expect(source).toContain('"total_cost":100')
+    await writeFile(path, source.replace('"total_cost":100', '"total_cost":-100'))
+    await refreshChecksum(snapshotDir)
+
+    await runLoad({ snapshotDir, databasePath })
+    const db = new BetterSqlite3(databasePath, { readonly: true })
+    try {
+      expect(
+        db
+          .prepare(`SELECT total_cost_cents FROM expenses WHERE harvest_id = 152975212`)
+          .get(),
+      ).toEqual({ total_cost_cents: -10_000 })
+    } finally {
+      db.close()
     }
   }, 30_000)
 

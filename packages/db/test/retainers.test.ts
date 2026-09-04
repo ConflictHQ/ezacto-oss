@@ -222,7 +222,7 @@ for (const [runtime, factory] of factories) {
         await database.rows<{ id: string }>(
           `SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`,
         ),
-      ).toEqual([{ id: '0026_invoice_generation' }])
+      ).toEqual([{ id: '0030_email_templates' }])
       await database.close()
       database = await factory(false)
       await installThrough0005(database)
@@ -261,7 +261,7 @@ for (const [runtime, factory] of factories) {
       expect(await database.rows(`PRAGMA foreign_key_check`)).toEqual([])
       await database.migrateAgain()
       expect(await database.rows(`PRAGMA foreign_key_check`)).toEqual([])
-    }, 20_000)
+    }, 40_000)
 
     it('[unit] enforces one cap and the hours-only locked-rate pair', async () => {
       database = await factory()

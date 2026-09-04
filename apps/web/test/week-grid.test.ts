@@ -1,12 +1,20 @@
-import type { GeneralResource, TimeEntry, TimeEntryInput, TimeEntryPatch } from '@ezacto/client'
+import {
+  EzactoApiError,
+  type GeneralResource,
+  type TimeEntry,
+  type TimeEntryInput,
+  type TimeEntryPatch,
+} from '@ezacto/client'
 import { describe, expect, it, vi } from 'vitest'
 import {
   buildWeekGrid,
   formatCellHours,
+  loadShellSnapshot,
   parseCellSeconds,
   saveWeekCellWithRetry,
   seedsFromEntries,
   weekDates,
+  weekRange,
   type DisplayTimeEntry,
   type ShellApi,
   type ShellSnapshot,
@@ -46,7 +54,14 @@ const entry = (id: number, overrides: Partial<DisplayTimeEntry> = {}): DisplayTi
 
 const snapshot = (entries: readonly DisplayTimeEntry[]): ShellSnapshot => ({
   entries,
+  expenses: [],
   running: entries.find((item) => item.is_running) ?? null,
+  timeEntrySettings: {
+    time_entry_mode: 'duration',
+    time_format: 'decimal',
+    clock: '12h',
+    week_start_day: 'monday',
+  },
   catalog: {
     projects: [project(1, 'Northpeak'), project(2, 'Acme')],
     tasks: [task(1, 'Development'), task(2, 'Design')],
@@ -118,6 +133,12 @@ const apiFor = (
       { project_id: 1, task_id: 1, minimum_note_length: 0 },
       { project_id: 2, task_id: 2, minimum_note_length: 0 },
     ]),
+    getTimeEntrySettings: vi.fn(async () => ({
+      time_entry_mode: 'duration' as const,
+      time_format: 'decimal' as const,
+      clock: '12h' as const,
+      week_start_day: 'monday' as const,
+    })),
     listTimeEntries: vi.fn(),
     stopTimeEntry: vi.fn(),
     createTimeEntry,
@@ -127,6 +148,33 @@ const apiFor = (
 }
 
 describe('timesheet week grid', () => {
+  it('[unit] keeps time tracking available when only the expenses module is hidden', async () => {
+    const timeEntries = [entry(1)]
+    const api = apiFor(timeEntries)
+    const page = (data: readonly GeneralResource[]) => ({
+      data,
+      page: { next_cursor: null },
+    })
+    api.listProjects = vi.fn(async () => page([project(1, 'Northpeak')]))
+    api.listTasks = vi.fn(async () => page([task(1, 'Development')]))
+    api.listTimeEntries = vi.fn(async (query) => query.is_running === true ? [] : timeEntries)
+    api.listExpenses = vi.fn(async () => {
+      throw new EzactoApiError(404, { error: 'not_found' }, null)
+    })
+
+    await expect(loadShellSnapshot(api, new Date('2026-08-28T12:00:00Z'))).resolves.toMatchObject({
+      entries: [{ id: 1, project_label: 'Northpeak', task_label: 'Development' }],
+      expenses: [],
+    })
+
+    api.listExpenses = vi.fn(async () => {
+      throw new EzactoApiError(503, { error: 'unavailable' }, null)
+    })
+    await expect(loadShellSnapshot(api, new Date('2026-08-28T12:00:00Z'))).rejects.toMatchObject({
+      status: 503,
+    })
+  })
+
   it('[unit] builds Monday-through-Sunday rows, totals, conflicts, and live edges', () => {
     const entries = [
       entry(1, { spent_date: '2026-08-24', seconds: 1_800 }),
@@ -195,10 +243,20 @@ describe('timesheet week grid', () => {
 
   it('[unit] parses and formats decimal or clock-form hours without ambiguous values', () => {
     expect(weekDates('2026-08-24')).toHaveLength(7)
+    expect(weekDates('2026-08-24', 'sunday')).toEqual([
+      '2026-08-23', '2026-08-24', '2026-08-25', '2026-08-26',
+      '2026-08-27', '2026-08-28', '2026-08-29',
+    ])
+    expect(weekRange('2026-08-24', 'saturday')).toEqual({
+      from: '2026-08-22',
+      to: '2026-08-28',
+    })
     expect(parseCellSeconds('1.25')).toBe(4_500)
     expect(parseCellSeconds('1:30')).toBe(5_400)
     expect(parseCellSeconds('')).toBe(0)
     expect(formatCellHours(5_400)).toBe('1.5')
+    expect(formatCellHours(5_400, 'hours_minutes')).toBe('1:30')
+    expect(formatCellHours(3_600, 'hours_minutes')).toBe('1:00')
     expect(formatCellHours(0)).toBe('')
     for (const seconds of [1, 59, 60, 3_599, 3_601, 86_399]) {
       expect(parseCellSeconds(formatCellHours(seconds))).toBe(seconds)

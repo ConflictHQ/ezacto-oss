@@ -20,6 +20,7 @@ interface Harness {
     path: string,
     profile?: UserProfile,
     managerGrants?: readonly string[],
+    userId?: number,
   ): Promise<Response>;
   close(): Promise<void>;
 }
@@ -43,7 +44,7 @@ const authentication: ApiAuthentication = {
       if (profile === null || !profiles.includes(profile)) return null;
       return {
         type: "user",
-        userId: 1,
+        userId: Number(request.headers.get("x-test-user-id") ?? "1"),
         profile,
         managerGrants: (request.headers.get("x-test-manager-grants") ?? "")
           .split(",")
@@ -63,8 +64,10 @@ const seedStatements = [
   {
     sql: `INSERT INTO users
       (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
-      VALUES (1, 'Report', 'Owner', 'administrator', '[]', ?, ?)`,
-    params: [now, now],
+      VALUES
+      (1, 'Report', 'Owner', 'administrator', '[]', ?, ?),
+      (2, 'Unassigned', 'Viewer', 'member', '[]', ?, ?)`,
+    params: [now, now, now, now],
   },
   {
     sql: `INSERT INTO clients
@@ -78,13 +81,13 @@ const seedStatements = [
     sql: `INSERT INTO projects
       (id, client_id, name, code, billing_method, bill_by, hourly_rate_cents,
        budget_by, budget_seconds, cost_budget_cents, cost_budget_include_expenses,
-       created_at, updated_at) VALUES
+       report_visibility, created_at, updated_at) VALUES
       (1, 1, 'Root project', 'ROOT', 'time_materials', 'project', 10000,
-       'project', 72000, NULL, 0, ?, ?),
+       'project', 72000, NULL, 0, 'managers', ?, ?),
       (2, 2, 'Child project', 'CHILD', 'time_materials', 'project', 12345,
-       'task_fees', NULL, NULL, 0, ?, ?),
+       'task_fees', NULL, NULL, 0, 'everyone', ?, ?),
       (3, 3, 'Leaf project', 'LEAF', 'time_materials', 'project', 8000,
-       'project_cost', NULL, 50000, 1, ?, ?)`,
+       'project_cost', NULL, 50000, 1, 'managers', ?, ?)`,
     params: [now, now, now, now, now, now],
   },
   {
@@ -102,9 +105,10 @@ const seedStatements = [
   },
   {
     sql: `INSERT INTO user_assignments
-      (id, project_id, user_id, created_at, updated_at) VALUES
-      (21, 1, 1, ?, ?), (22, 2, 1, ?, ?), (23, 3, 1, ?, ?)`,
-    params: [now, now, now, now, now, now],
+      (id, project_id, user_id, is_active, is_project_manager, created_at, updated_at) VALUES
+      (21, 1, 1, 1, 1, ?, ?), (22, 2, 1, 1, 0, ?, ?),
+      (23, 3, 1, 1, 0, ?, ?), (24, 2, 2, 0, 1, ?, ?)`,
+    params: [now, now, now, now, now, now, now, now],
   },
   {
     sql: `INSERT INTO time_entries
@@ -170,13 +174,19 @@ const createHarness = async (kind: "SQLite" | "D1"): Promise<Harness> => {
     installApi: (api) => installReportRoutes(api, reports),
   });
   return {
-    request: (path, profile = "administrator", managerGrants = []) =>
+    request: (
+      path,
+      profile = "administrator",
+      managerGrants = [],
+      userId = 1,
+    ) =>
       Promise.resolve(
         app.request(`https://api.test/api/v1${path}`, {
           headers: {
             origin: "https://api.test",
             "x-test-profile": profile,
             "x-test-manager-grants": managerGrants.join(","),
+            "x-test-user-id": String(userId),
           },
         }),
       ),
@@ -372,6 +382,51 @@ for (const [runtime, factory] of factories) {
         spent_cents: 2000,
         remaining_cents: 48000,
       });
+    });
+
+    it("[security] enforces project report visibility and assignment row access", async () => {
+      harness = await factory();
+      const range = "?from=2026-08-01&to=2026-08-31";
+
+      const memberOnManagersOnly = await harness.request(
+        `/reports/project-budget/1${range}`,
+        "member",
+      );
+      expect(memberOnManagersOnly.status).toBe(404);
+
+      const managerOnManagedProject = await harness.request(
+        `/reports/project-budget/1${range}`,
+        "project_manager",
+      );
+      expect(managerOnManagedProject.status).toBe(200);
+
+      const managerWithoutProjectGrant = await harness.request(
+        `/reports/project-budget/3${range}`,
+        "project_manager",
+      );
+      expect(managerWithoutProjectGrant.status).toBe(404);
+
+      const memberOnEveryoneProject = await harness.request(
+        `/reports/project-budget/2${range}`,
+        "member",
+      );
+      expect(memberOnEveryoneProject.status).toBe(200);
+
+      const inactiveAssignment = await harness.request(
+        `/reports/project-budget/2${range}`,
+        "member",
+        [],
+        2,
+      );
+      expect(inactiveAssignment.status).toBe(404);
+
+      const accountWideViewer = await harness.request(
+        `/reports/project-budget/3${range}`,
+        "accounting",
+        [],
+        2,
+      );
+      expect(accountWideViewer.status).toBe(200);
     });
 
     it("[api] rejects missing, duplicate, invalid, and inverted report filters", async () => {

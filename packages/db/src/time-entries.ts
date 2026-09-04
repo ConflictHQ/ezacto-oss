@@ -1,4 +1,5 @@
 import { and, eq, getTableColumns, isNotNull, isNull, or, sql } from 'drizzle-orm'
+import type { ApprovalStatus } from '@ezacto/core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
@@ -49,6 +50,9 @@ interface TimeEntryBaseInput {
   budgeted?: boolean
   externalRef?: Record<string, unknown> | null
   calendarEventRef?: Record<string, unknown> | null
+  approvalStatus?: ApprovalStatus
+  timesheetSubmissionId?: number | null
+  sourceApprovalStatus?: ApprovalStatus | null
 }
 
 export type StartTimeEntryInput = TimeEntryBaseInput
@@ -240,8 +244,13 @@ const valuesFromBase = async (database: Database, input: TimeEntryBaseInput, spe
     getTaskBillable(database, input.taskAssignmentId),
     resolveEntryRates(database, { ...input, spentDate }),
   ])
+  const harvestId = input.harvestId ?? null
+  const sourceApprovalStatus =
+    harvestId === null
+      ? null
+      : (input.sourceApprovalStatus ?? input.approvalStatus ?? 'unsubmitted')
   return {
-    harvestId: input.harvestId ?? null,
+    harvestId,
     userId: input.userId,
     projectId: input.projectId,
     taskId: input.taskId,
@@ -254,6 +263,9 @@ const valuesFromBase = async (database: Database, input: TimeEntryBaseInput, spe
     costRateCents: rates.costRateCents,
     externalRef: input.externalRef ?? null,
     calendarEventRef: input.calendarEventRef ?? null,
+    approvalStatus: harvestId === null ? (input.approvalStatus ?? 'unsubmitted') : 'unsubmitted',
+    timesheetSubmissionId: harvestId === null ? (input.timesheetSubmissionId ?? null) : null,
+    sourceApprovalStatus,
   }
 }
 
@@ -306,7 +318,9 @@ export const startTimeEntry = async (
           ${base.budgeted ? 1 : 0},
           ${base.billableRateCents},
           ${base.costRateCents},
-          ${'unsubmitted'},
+          ${base.approvalStatus},
+          ${base.timesheetSubmissionId},
+          ${base.sourceApprovalStatus},
           ${null},
           ${base.externalRef === null ? null : JSON.stringify(base.externalRef)},
           ${base.calendarEventRef === null ? null : JSON.stringify(base.calendarEventRef)},
@@ -396,7 +410,9 @@ export const createStoppedTimeEntry = async (
         ${base.budgeted ? 1 : 0},
         ${base.billableRateCents},
         ${base.costRateCents},
-        ${'unsubmitted'},
+        ${base.approvalStatus},
+        ${base.timesheetSubmissionId},
+        ${base.sourceApprovalStatus},
         ${null},
         ${base.externalRef === null ? null : JSON.stringify(base.externalRef)},
         ${base.calendarEventRef === null ? null : JSON.stringify(base.calendarEventRef)},
@@ -414,7 +430,7 @@ export const createStoppedTimeEntry = async (
     )
     throw new Error('time entry creation did not return a row')
   }
-  return created
+  return base.sourceApprovalStatus === null ? created : getTimeEntry(database, created.id)
 }
 
 export const stopTimeEntry = async (
