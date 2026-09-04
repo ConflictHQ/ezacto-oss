@@ -85,7 +85,7 @@ const fakeGitHub = (): FakeGitHub => {
   const calls: string[] = []
   const tokenBodies: URLSearchParams[] = []
   let rejectTokenExchange = false
-  let user = { id: 42, name: 'Avery Ng', login: 'averyng' }
+  let user: { id: number; name: string | null; login: string } = { id: 42, name: 'Avery Ng', login: 'averyng' }
   let emails = [
     { email: 'owner@example.test', verified: true, primary: true },
   ]
@@ -139,7 +139,7 @@ const fakeGitHub = (): FakeGitHub => {
 const harness = (github: FakeGitHub) => {
   const transactions = new MemoryTransactions()
   const identities = {
-    resolveProvider: vi.fn(async () => ({
+    resolveProvider: vi.fn(async (_input: unknown) => ({
       status: 'active' as const,
       matchedBy: 'verified_email' as const,
       userId: 7,
