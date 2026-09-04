@@ -1,5 +1,6 @@
 import { shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
 import { themeManifest } from '../theme.js'
+import { type DeploymentBrand, resolveDeploymentBrand } from '../brand.js'
 import { renderClientDirectoryPages } from '../clients/render.js'
 import { renderProjectDirectoryPages } from '../projects/render.js'
 import { renderReportsPage } from '../reports/render.js'
@@ -8,7 +9,9 @@ import { renderTaskAdminPage } from '../tasks/render.js'
 import { renderExpenseCategoriesPage } from '../expense-categories/render.js'
 import { renderModuleSettingsPage } from '../module-settings/render.js'
 import {
+  renderInvoiceAttachmentSection,
   renderInvoiceComposerDialog,
+  renderInvoiceDeliveryDialog,
   renderInvoicePaymentDialogs,
   renderInvoicePaymentSection,
   renderInvoiceLineDialogs,
@@ -18,7 +21,7 @@ import {
 export interface AppShellOptions {
   readonly environment: string
   readonly release: string
-  readonly brand?: string
+  readonly brand?: Partial<DeploymentBrand>
   readonly activeSection?:
     'Time' | 'Approvals' | 'Expenses' | 'Projects' | 'Tasks' | 'Clients' | 'Invoices' | 'Reports'
   readonly view?:
@@ -74,11 +77,13 @@ export const renderEmptyState = (title: string, detail: string): string =>
   `<section class="empty-state" data-empty-state>` +
   `<h2>${escapeHtml(title)}</h2><p>${escapeHtml(detail)}</p></section>`
 
-export const renderDocumentShell = (title: string, content: string): string =>
-  `<article class="document-shell" data-document-shell data-ez-theme="precision">` +
-  `<header><a href="/">← Time</a><span>ezacto</span></header>` +
+export const renderDocumentShell = (title: string, content: string, brand?: Partial<DeploymentBrand>): string => {
+  const b = resolveDeploymentBrand(brand)
+  return `<article class="document-shell" data-document-shell data-ez-theme="precision">` +
+  `<header><a href="/">← Time</a><span>${escapeHtml(b.name)}</span></header>` +
   `<main><h1>${escapeHtml(title)}</h1><div class="document-content">${escapeHtml(content)}</div>` +
   `</main></article>`
+}
 
 const sections = [
   'Time',
@@ -113,7 +118,8 @@ const providerSignIn = (providers: readonly SignInProvider[]): string => {
 export const renderAppShell = (options: AppShellOptions): string => {
   const active = options.activeSection ?? 'Time'
   const view = options.view ?? 'time'
-  const brand = options.brand ?? 'ezacto'
+  const b = resolveDeploymentBrand(options.brand)
+  const brand = b.name
   const resumeSession = options.sessionCookiePresent === true
   const shortRelease = options.release.slice(0, 7)
   const navigation = sections
@@ -124,7 +130,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
     .join('')
 
   return `<!doctype html>
-<html lang="en" data-ez-theme="precision" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}">
+<html lang="en" data-ez-theme="precision" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -135,7 +141,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="${escapeHtml(themeManifest.precision.fontStylesheet)}">
-  <link rel="stylesheet" href="/assets/ezacto.css">
+${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <link rel="stylesheet" href="/assets/ezacto.css">
   <script type="module" src="/assets/ezacto.js"></script>
 </head>
 <body>
@@ -143,11 +149,11 @@ export const renderAppShell = (options: AppShellOptions): string => {
     <div class="auth-splash">
       <a class="auth-wordmark" href="/" aria-label="${escapeHtml(brand)} home">${escapeHtml(brand)}</a>
       <div class="auth-splash-copy">
-        <p class="eyebrow">Time, exactly.</p>
+        <p class="eyebrow">${escapeHtml(b.tagline)}</p>
         <h1>Make every hour visible.</h1>
         <p>Track the work, understand the week, and turn time into a clear record.</p>
       </div>
-      <p class="auth-splash-foot">Open-source time tracking and invoicing.</p>
+      <p class="auth-splash-foot">${escapeHtml(b.description)}</p>
     </div>
     <div class="auth-entry">
       <div class="auth-card">
@@ -158,7 +164,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
         <form class="sign-in-form" data-sign-in-form method="post" action="/auth/sign-in" hidden>
           <div class="auth-heading">
             <p class="eyebrow">Welcome back</p>
-            <h2 id="sign-in-title">Sign in to ezacto</h2>
+            <h2 id="sign-in-title">Sign in to ${escapeHtml(brand)}</h2>
             <p>Use your account to continue to your workspace.</p>
           </div>
           ${providerSignIn(options.signInProviders ?? [])}
@@ -171,7 +177,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
           <button class="primary-action" type="submit" data-sign-in-submit>Sign in</button>
           <p class="auth-result" data-sign-in-result role="status" aria-live="polite"></p>
         </form>
-        <noscript>${renderEmptyState('JavaScript is required', 'The ezacto app uses JavaScript to establish and protect your session.')}</noscript>
+        <noscript>${renderEmptyState('JavaScript is required', `The ${escapeHtml(brand)} app uses JavaScript to establish and protect your session.`)}</noscript>
       </div>
       <p class="auth-build-stamp">${escapeHtml(options.environment)} · ${escapeHtml(shortRelease)}</p>
     </div>
@@ -213,7 +219,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
       <button class="primary-action" type="button" data-command-trigger data-auth-action disabled>Log time</button>
     </header>
     <aside class="session-status" data-session-status role="status">
-      <span data-session-message>Connecting to your ezacto session…</span>
+      <span data-session-message>Connecting to your ${escapeHtml(brand)} session…</span>
       <button type="button" data-retry-week hidden>Retry week</button>
     </aside>
     <section class="week-surface" aria-labelledby="week-heading">
@@ -267,9 +273,17 @@ export const renderAppShell = (options: AppShellOptions): string => {
     </header>
     <section data-approval-review-panel>
       <p class="approval-intro">Review submitted time before it becomes locked.</p>
+      <form class="approval-filters" data-approval-filters>
+        <label>Person <select name="user_id" data-approval-filter-user><option value="">All</option></select></label>
+        <label>Client <select name="client_id" data-approval-filter-client><option value="">All</option></select></label>
+        <label>Project <select name="project_id" data-approval-filter-project><option value="">All</option></select></label>
+        <button type="submit" class="filter-apply">Apply</button>
+      </form>
       <p class="form-result" data-approval-queue-result role="status" aria-live="polite"></p>
       <section class="approval-queue" data-approval-queue aria-label="Pending timesheets"></section>
+      <button type="button" class="load-more" data-approval-load-more hidden>Load more</button>
       <section class="approval-queue" data-approval-history aria-label="Recently approved timesheets"></section>
+      <button type="button" class="load-more" data-approval-history-load-more hidden>Load more</button>
     </section>
     <section class="timesheet-lock-policy" data-lock-policy-panel hidden aria-labelledby="lock-policy-title">
       <header>
@@ -327,7 +341,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
           <h2 data-invoice-detail-number>—</h2>
           <p data-invoice-detail-subject hidden></p>
         </div>
-        <div class="invoice-document-actions"><strong class="invoice-state" data-invoice-detail-state>—</strong><button type="button" data-invoice-send disabled hidden>Mark sent</button></div>
+        <div class="invoice-document-actions"><strong class="invoice-state" data-invoice-detail-state>—</strong><button type="button" data-invoice-deliver disabled hidden>Send invoice</button><button type="button" data-invoice-send disabled hidden>Mark sent</button></div>
       </header>
       <p class="invoice-reminder-line" data-invoice-reminder-line hidden></p>
       <dl class="invoice-facts">
@@ -354,6 +368,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
         <h3>Notes</h3><p data-invoice-detail-notes></p>
       </section>
       ${renderInvoicePaymentSection()}
+      ${renderInvoiceAttachmentSection()}
       <section class="invoice-history" aria-labelledby="invoice-message-heading">
         <h3 id="invoice-message-heading">History</h3>
         <ul data-invoice-detail-messages></ul>
@@ -424,6 +439,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   ${renderExpenseCategoriesPage(view)}
   ${renderModuleSettingsPage(view)}
   ${renderInvoiceComposerDialog()}
+  ${renderInvoiceDeliveryDialog()}
   ${renderInvoiceLineDialogs()}
   ${renderInvoicePaymentDialogs()}
   <dialog class="command-dialog" data-command-dialog aria-labelledby="command-title">

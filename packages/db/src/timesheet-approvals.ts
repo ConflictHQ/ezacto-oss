@@ -77,6 +77,9 @@ export interface TimesheetSubmissionDetailRecord extends TimesheetSubmissionReco
 export interface TimesheetSubmissionFilters {
   periodStart?: string
   periodEnd?: string
+  userId?: number
+  clientId?: number
+  projectId?: number
 }
 
 export interface ApprovalListWindow {
@@ -338,6 +341,32 @@ const listConditions = (
   if (filters.periodEnd !== undefined) {
     sql.push('submission.period_end <= ?')
     params.push(filters.periodEnd)
+  }
+  if (filters.userId !== undefined) {
+    sql.push('submission.user_id = ?')
+    params.push(filters.userId)
+  }
+  if (filters.clientId !== undefined) {
+    sql.push(`EXISTS (
+      SELECT 1 FROM time_entries te
+      JOIN projects p ON p.id = te.project_id
+      WHERE te.timesheet_submission_id = submission.id AND p.client_id = ?
+      UNION ALL
+      SELECT 1 FROM expenses ex
+      JOIN projects p ON p.id = ex.project_id
+      WHERE ex.timesheet_submission_id = submission.id AND p.client_id = ?
+    )`)
+    params.push(filters.clientId, filters.clientId)
+  }
+  if (filters.projectId !== undefined) {
+    sql.push(`EXISTS (
+      SELECT 1 FROM time_entries te
+      WHERE te.timesheet_submission_id = submission.id AND te.project_id = ?
+      UNION ALL
+      SELECT 1 FROM expenses ex
+      WHERE ex.timesheet_submission_id = submission.id AND ex.project_id = ?
+    )`)
+    params.push(filters.projectId, filters.projectId)
   }
   return { sql, params }
 }

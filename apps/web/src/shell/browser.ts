@@ -53,6 +53,7 @@ import {
   timeEntryNoteLength,
   weekRange,
   type DisplayTimeEntry,
+  type ApprovalQueueFilters,
   type ShellApi,
   type ShellSnapshot,
   TimeEntryNoteValidationError,
@@ -723,6 +724,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     document.documentElement.dataset.appView === 'module-settings'
   const timesheetApprovalsPage =
     document.documentElement.dataset.appView === 'timesheet-approvals'
+  const brandName = document.documentElement.dataset.brand ?? 'ezacto'
   const signedOutDocumentTitle = document.title
   const authenticatedDocumentTitle = signedOutDocumentTitle.replace(
     / — Sign in$/u,
@@ -827,6 +829,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const approvalQueue = required<HTMLElement>('[data-approval-queue]')
   const approvalHistory = required<HTMLElement>('[data-approval-history]')
   const approvalQueueResult = required<HTMLElement>('[data-approval-queue-result]')
+  const approvalFiltersForm = required<HTMLFormElement>('[data-approval-filters]')
+  const approvalFilterUser = required<HTMLSelectElement>('[data-approval-filter-user]')
+  const approvalFilterClient = required<HTMLSelectElement>('[data-approval-filter-client]')
+  const approvalFilterProject = required<HTMLSelectElement>('[data-approval-filter-project]')
+  const approvalLoadMore = required<HTMLButtonElement>('[data-approval-load-more]')
+  const approvalHistoryLoadMore = required<HTMLButtonElement>('[data-approval-history-load-more]')
   const rejectionReason = required<HTMLTextAreaElement>('[data-rejection-reason]')
   const rejectionResult = required<HTMLElement>('[data-rejection-result]')
   const rejectionSubmit = required<HTMLButtonElement>('[data-rejection-submit]')
@@ -880,6 +888,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   let currentSubmission: TimesheetSubmission | null = null
   let pendingSubmissions: readonly TimesheetSubmissionDetail[] = []
   let approvedSubmissions: readonly TimesheetSubmission[] = []
+  let pendingNextCursor: string | null = null
+  let approvedNextCursor: string | null = null
+  let approvalQueueFilters: ApprovalQueueFilters = {}
   let lockPolicy: TimesheetLockPolicy | null = null
   let activeTimesheetLocks: readonly TimesheetLockWindow[] = []
   let timesheetTransitionPending = false
@@ -1052,6 +1063,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     currentSubmission = null
     pendingSubmissions = []
     approvedSubmissions = []
+    pendingNextCursor = null
+    approvedNextCursor = null
     lockPolicy = null
     activeTimesheetLocks = []
     timesheetTransitionPending = false
@@ -1455,6 +1468,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         return card
       }),
     )
+    approvalLoadMore.hidden = pendingNextCursor === null
+    approvalHistoryLoadMore.hidden = approvedNextCursor === null
   }
 
   const render = (): void => {
@@ -1497,29 +1512,33 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     current: TimesheetSubmission | null
     pending: readonly TimesheetSubmissionDetail[]
     approved: readonly TimesheetSubmission[]
+    pendingCursor: string | null
+    approvedCursor: string | null
   }> => {
     if (api.listTimesheetSubmissions === undefined) {
-      return { available: false, current: null, pending: [], approved: [] }
+      return { available: false, current: null, pending: [], approved: [], pendingCursor: null, approvedCursor: null }
     }
     const range = weekRange(requestedWithin, requestedWeekStartDay)
     try {
       const own = await api.listTimesheetSubmissions(range.from, range.to, operation.signal)
-      const pendingSummaries =
+      const pendingPage =
         timesheetApprovalsPage &&
         canReviewTimesheets() &&
         api.listPendingTimesheetSubmissions !== undefined
-          ? await api.listPendingTimesheetSubmissions(operation.signal)
-          : []
+          ? await api.listPendingTimesheetSubmissions(approvalQueueFilters, operation.signal)
+          : null
+      const pendingSummaries = pendingPage?.submissions ?? []
       const getSubmission = api.getTimesheetSubmission
-      const approved =
+      const approvedPage =
         timesheetApprovalsPage &&
         canManageTimesheetLocks() &&
         api.listApprovedTimesheetSubmissions !== undefined
           ? await api.listApprovedTimesheetSubmissions(
               shiftDate(localDate(), -90),
+              approvalQueueFilters,
               operation.signal,
             )
-          : []
+          : null
       const pending =
         getSubmission === undefined
           ? []
@@ -1536,11 +1555,13 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
               submission.period_start === range.from && submission.period_end === range.to,
           ) ?? null,
         pending,
-        approved,
+        approved: approvedPage?.submissions ?? [],
+        pendingCursor: pendingPage?.nextCursor ?? null,
+        approvedCursor: approvedPage?.nextCursor ?? null,
       }
     } catch (error) {
       if (error instanceof EzactoApiError && error.status === 404) {
-        return { available: false, current: null, pending: [], approved: [] }
+        return { available: false, current: null, pending: [], approved: [], pendingCursor: null, approvedCursor: null }
       }
       throw error
     }
@@ -1603,6 +1624,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     currentSubmission = approval.current
     pendingSubmissions = approval.pending
     approvedSubmissions = approval.approved
+    pendingNextCursor = approval.pendingCursor
+    approvedNextCursor = approval.approvedCursor
     lockPolicyAvailable = policy.available
     lockPolicy = policy.policy
     activeTimesheetLocks = policy.locks
@@ -1616,7 +1639,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     setSessionStatus('Loading your week…', 'loading')
     try {
       if (!(await refresh(operation))) return
-      setSessionStatus('Connected. Changes save directly to ezacto.', 'ready')
+      setSessionStatus(`Connected. Changes save directly to ${brandName}.`, 'ready')
     } catch (error) {
       if (handleSessionFailure(error, operation)) return
       renderWeekLoadFailure()
@@ -2770,6 +2793,29 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     rejectionResult.textContent = ''
   })
 
+  approvalFiltersForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const operation = sessionOperation()
+    if (operation === null) return
+    const userVal = approvalFilterUser.value
+    const clientVal = approvalFilterClient.value
+    const projectVal = approvalFilterProject.value
+    approvalQueueFilters = {
+      ...(userVal ? { userId: Number(userVal) } : {}),
+      ...(clientVal ? { clientId: Number(clientVal) } : {}),
+      ...(projectVal ? { projectId: Number(projectVal) } : {}),
+    }
+    void refresh(operation)
+  })
+
+  approvalLoadMore.addEventListener('click', () => {
+    approvalLoadMore.hidden = true
+  })
+
+  approvalHistoryLoadMore.addEventListener('click', () => {
+    approvalHistoryLoadMore.hidden = true
+  })
+
   const moveWeek = (days: number): void => {
     const operation = sessionOperation()
     if (operation === null || operation.userId === null) return
@@ -2782,7 +2828,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     void refresh(operation)
       .then((loaded) => {
         if (!loaded || !isSessionCurrent(operation)) return
-        setSessionStatus('Connected. Changes save directly to ezacto.', 'ready')
+        setSessionStatus(`Connected. Changes save directly to ${brandName}.`, 'ready')
       })
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return

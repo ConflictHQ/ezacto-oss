@@ -1,5 +1,7 @@
 import type {
+  Attachment,
   Invoice,
+  InvoiceEmailDeliveryInput,
   InvoiceLine,
   InvoiceLineInput,
   InvoiceLineUpdateInput,
@@ -17,6 +19,13 @@ export interface InvoicePaymentApi {
   getInvoice(id: number, signal?: AbortSignal): Promise<Invoice>
   listInvoiceMessages(id: number, signal?: AbortSignal): Promise<readonly InvoiceMessage[]>
   listInvoicePayments(id: number, signal?: AbortSignal): Promise<readonly InvoicePayment[]>
+  listInvoiceAttachments?(id: number, signal?: AbortSignal): Promise<readonly Attachment[]>
+  uploadInvoiceAttachment?(
+    id: number,
+    commandId: string,
+    body: FormData,
+    signal?: AbortSignal,
+  ): Promise<Attachment>
   recordInvoicePayment(
     id: number,
     commandId: string,
@@ -61,6 +70,12 @@ export interface InvoicePaymentApi {
     id: number,
     commandId: string,
     input: InvoiceTransitionInput,
+    signal?: AbortSignal,
+  ): Promise<Invoice>
+  deliverInvoiceEmail(
+    id: number,
+    commandId: string,
+    input: InvoiceEmailDeliveryInput,
     signal?: AbortSignal,
   ): Promise<Invoice>
 }

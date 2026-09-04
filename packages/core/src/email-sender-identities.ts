@@ -7,6 +7,8 @@ export type SenderIdentityVerificationStatus =
 
 export interface ResolvedSenderIdentity {
   id: number
+  /** Present for version-fenced delivery snapshots. Legacy resolvers may omit it. */
+  version?: number
   email: string
   displayName: string
   replyToEmail: string | null
@@ -15,6 +17,8 @@ export interface ResolvedSenderIdentity {
   isDefault: boolean
   archivedAt: string | null
   evidence: null | {
+    /** Present for version-fenced delivery snapshots. Legacy resolvers may omit it. */
+    version?: number
     source: 'provider_api' | 'deployment_config'
     identityKind: 'email_address' | 'domain'
     verificationStatus: SenderIdentityVerificationStatus
