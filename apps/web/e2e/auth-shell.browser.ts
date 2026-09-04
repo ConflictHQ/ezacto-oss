@@ -1771,9 +1771,9 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await page
     .getByLabel('Choose file')
     .setInputFiles({
-      name: 'browser-invoice.txt',
+      name: 'browser-invoice-2.txt',
       mimeType: 'text/plain',
-      buffer: Buffer.from('invoice attachment content'),
+      buffer: Buffer.from('second attachment content'),
     })
   await page.getByRole('button', { name: 'Upload' }).click()
   expect((await attachUpload2).status()).toBe(201)
