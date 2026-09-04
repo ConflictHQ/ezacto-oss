@@ -92,6 +92,10 @@ export {
   type EmailLogReader,
 } from './email-log.js'
 export {
+  installEmailHealthRoutes,
+  type EmailHealthReader,
+} from './email-health.js'
+export {
   installEmailConfigurationRoutes,
   type EmailConfigurationRouteOptions,
   type EmailConfigurationService,

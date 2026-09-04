@@ -107,6 +107,10 @@ export interface EmailLogStore {
     failureReason?: string,
   ): Promise<EmailLogRecord>
   markQueueFailed(deliveryId: number): Promise<EmailLogRecord>
+  markBounced(deliveryId: number): Promise<EmailLogRecord>
+  markComplained(deliveryId: number): Promise<EmailLogRecord>
+  getByProviderMessageId(providerMessageId: string): Promise<EmailLogRecord | null>
+  countByStatus(): Promise<Record<EmailDeliveryStatus, number>>
   list(input?: {
     status?: EmailDeliveryStatus
     limit?: number
@@ -627,4 +631,84 @@ export class InProcessEmailQueue implements EmailQueue {
     }
     this.schedule(async () => run(1), 0)
   }
+}
+
+// ---------------------------------------------------------------------------
+// Bounce / complaint feedback processing
+// ---------------------------------------------------------------------------
+
+export type EmailFeedbackType = 'bounce' | 'complaint'
+
+export interface EmailFeedbackEvent {
+  type: EmailFeedbackType
+  providerMessageId: string
+  timestamp?: string
+  details?: string
+}
+
+export interface EmailReputationSnapshot {
+  sent: number
+  bounced: number
+  complained: number
+  failed: number
+  bounceRatePpm: number
+  complaintRatePpm: number
+}
+
+const safeFeedbackField = (
+  value: string | undefined,
+  field: string,
+  maximum: number,
+): string | undefined => {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string') throw new TypeError(`${field} must be a string`)
+  const normalized = value.normalize('NFC').trim()
+  if (normalized.length === 0 || [...normalized].length > maximum) {
+    throw new RangeError(`${field} must contain between 1 and ${maximum} characters`)
+  }
+  return normalized
+}
+
+/**
+ * Process a provider feedback event (bounce or complaint) and update the
+ * corresponding message log record. Returns the updated record, or null if the
+ * provider message ID does not match any known delivery.
+ */
+export const processFeedbackEvent = async (
+  event: EmailFeedbackEvent,
+  log: EmailLogStore,
+): Promise<EmailLogRecord | null> => {
+  if (event.type !== 'bounce' && event.type !== 'complaint') {
+    throw new TypeError('feedback event type must be bounce or complaint')
+  }
+  const providerMessageId = text(event.providerMessageId, 'provider message id', 512)
+  safeFeedbackField(event.timestamp, 'feedback timestamp', 64)
+  safeFeedbackField(event.details, 'feedback details', 1024)
+
+  const record = await log.getByProviderMessageId(providerMessageId)
+  if (record === null) return null
+
+  // Only update records that are in a 'sent' state. Records that are already
+  // terminal (bounced, complained, failed) should not be overwritten.
+  if (record.status !== 'sent') return record
+
+  return event.type === 'bounce'
+    ? log.markBounced(record.id)
+    : log.markComplained(record.id)
+}
+
+/**
+ * Compute a reputation snapshot from status counts. Rates are expressed in
+ * parts-per-million (ppm) to avoid floating-point ambiguity in JSON.
+ */
+export const computeReputationSnapshot = (
+  counts: Record<EmailDeliveryStatus, number>,
+): EmailReputationSnapshot => {
+  const sent = counts.sent + counts.bounced + counts.complained
+  const bounced = counts.bounced
+  const complained = counts.complained
+  const failed = counts.failed
+  const bounceRatePpm = sent === 0 ? 0 : Math.round((bounced / sent) * 1_000_000)
+  const complaintRatePpm = sent === 0 ? 0 : Math.round((complained / sent) * 1_000_000)
+  return { sent, bounced, complained, failed, bounceRatePpm, complaintRatePpm }
 }
