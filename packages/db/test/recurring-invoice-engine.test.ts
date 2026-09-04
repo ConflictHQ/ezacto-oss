@@ -81,8 +81,8 @@ const seedDatabase = async (database: TestDatabase): Promise<void> => {
     timestamp,
   )
   await database.run(
-    `INSERT INTO users (id, email, display_name, profile, is_active, created_at, updated_at)
-     VALUES (1, 'admin@sanitized.example', 'Admin', 'administrator', 1, ?, ?)`,
+    `INSERT INTO users (id, first_name, last_name, profile, is_active, manager_grants, created_at, updated_at)
+     VALUES (1, 'Admin', 'User', 'administrator', 1, '[]', ?, ?)`,
     timestamp,
     timestamp,
   )
