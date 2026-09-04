@@ -331,7 +331,7 @@ export const renderInvoiceDetail = (
 
   required<HTMLElement>('[data-invoice-detail-status]').textContent = ''
   required<HTMLElement>('[data-invoice-document]').hidden = false
-  document.title = `ezacto — Invoice ${invoice.number}`
+  document.title = `${document.documentElement.dataset.brand ?? 'ezacto'} — Invoice ${invoice.number}`
 }
 
 const apiMessage = (error: unknown): string => {
