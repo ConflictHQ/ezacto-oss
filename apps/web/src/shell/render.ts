@@ -8,6 +8,7 @@ import { renderExpenseWorkflowPages } from '../expenses/render.js'
 import { renderTaskAdminPage } from '../tasks/render.js'
 import { renderExpenseCategoriesPage } from '../expense-categories/render.js'
 import {
+  renderInvoiceAttachmentSection,
   renderInvoiceComposerDialog,
   renderInvoicePaymentDialogs,
   renderInvoicePaymentSection,
@@ -364,6 +365,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
         <h3>Notes</h3><p data-invoice-detail-notes></p>
       </section>
       ${renderInvoicePaymentSection()}
+      ${renderInvoiceAttachmentSection()}
       <section class="invoice-history" aria-labelledby="invoice-message-heading">
         <h3 id="invoice-message-heading">History</h3>
         <ul data-invoice-detail-messages></ul>
