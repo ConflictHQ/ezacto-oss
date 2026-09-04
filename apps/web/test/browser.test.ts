@@ -2099,7 +2099,7 @@ describe('native browser authentication', () => {
     const api: ShellApi = {
       ...base,
       listTimesheetSubmissions: vi.fn(async () => []),
-      listPendingTimesheetSubmissions: vi.fn(async () => []),
+      listPendingTimesheetSubmissions: vi.fn(async () => ({ submissions: [], nextCursor: null })),
       getTimesheetLockPolicy: vi.fn(async () => policy),
       listTimesheetLocks: vi.fn(async () => locks.filter((lock) => lock.active)),
       updateTimesheetLockPolicy,
@@ -2203,7 +2203,7 @@ describe('native browser authentication', () => {
     const api: ShellApi = {
       ...base,
       listTimesheetSubmissions: vi.fn(async () => [submission]),
-      listPendingTimesheetSubmissions: vi.fn(async () => []),
+      listPendingTimesheetSubmissions: vi.fn(async () => ({ submissions: [], nextCursor: null })),
       withdrawTimesheetSubmission,
     }
 

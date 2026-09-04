@@ -2510,7 +2510,7 @@ export class EzactoClient {
     });
   }
 
-  async listPendingTimesheetSubmissions(args: { query?: { "cursor"?: string; "per_page"?: number; "period_start"?: string; "period_end"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimesheetSubmissionPage> {
+  async listPendingTimesheetSubmissions(args: { query?: { "cursor"?: string; "per_page"?: number; "period_start"?: string; "period_end"?: string; "user_id"?: number; "client_id"?: number; "project_id"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimesheetSubmissionPage> {
     const headers = new Headers(args.headers);
 
     return this.request<TimesheetSubmissionPage>("GET", "/api/v1/timesheet-submissions/pending", {
@@ -2520,7 +2520,7 @@ export class EzactoClient {
     });
   }
 
-  async listApprovedTimesheetSubmissions(args: { query?: { "cursor"?: string; "per_page"?: number; "period_start"?: string; "period_end"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimesheetSubmissionPage> {
+  async listApprovedTimesheetSubmissions(args: { query?: { "cursor"?: string; "per_page"?: number; "period_start"?: string; "period_end"?: string; "user_id"?: number; "client_id"?: number; "project_id"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimesheetSubmissionPage> {
     const headers = new Headers(args.headers);
 
     return this.request<TimesheetSubmissionPage>("GET", "/api/v1/timesheet-submissions/approved", {

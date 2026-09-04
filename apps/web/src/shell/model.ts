@@ -39,6 +39,17 @@ interface CursorPage<T> {
   readonly page: { readonly next_cursor: string | null }
 }
 
+export interface ApprovalQueueFilters {
+  readonly userId?: number
+  readonly clientId?: number
+  readonly projectId?: number
+}
+
+export interface ApprovalQueuePage {
+  readonly submissions: readonly TimesheetSubmission[]
+  readonly nextCursor: string | null
+}
+
 export interface ShellApi
   extends Partial<ClientDirectoryApi>,
     Partial<ProjectDirectoryApi>,
@@ -78,11 +89,15 @@ export interface ShellApi
     input: TimesheetSubmissionInput,
     signal?: AbortSignal,
   ): Promise<TimesheetSubmission>
-  listPendingTimesheetSubmissions?(signal?: AbortSignal): Promise<readonly TimesheetSubmission[]>
+  listPendingTimesheetSubmissions?(
+    filters?: ApprovalQueueFilters,
+    signal?: AbortSignal,
+  ): Promise<ApprovalQueuePage>
   listApprovedTimesheetSubmissions?(
     periodStart: string,
+    filters?: ApprovalQueueFilters,
     signal?: AbortSignal,
-  ): Promise<readonly TimesheetSubmission[]>
+  ): Promise<ApprovalQueuePage>
   getTimesheetSubmission?(id: number, signal?: AbortSignal): Promise<TimesheetSubmissionDetail>
   approveTimesheetSubmission?(id: number, signal?: AbortSignal): Promise<TimesheetSubmission>
   rejectTimesheetSubmission?(
@@ -936,19 +951,30 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   },
   submitTimesheet: async (input, signal) =>
     (await client.submitTimesheet({ body: input, ...withSignal(signal) })).data,
-  listPendingTimesheetSubmissions: async (signal) => {
+  listPendingTimesheetSubmissions: async (filters, signal) => {
     const page = await client.listPendingTimesheetSubmissions({
-      query: { per_page: pendingTimesheetQueueLimit },
+      query: {
+        per_page: pendingTimesheetQueueLimit,
+        ...(filters?.userId !== undefined ? { user_id: filters.userId } : {}),
+        ...(filters?.clientId !== undefined ? { client_id: filters.clientId } : {}),
+        ...(filters?.projectId !== undefined ? { project_id: filters.projectId } : {}),
+      },
       ...withSignal(signal),
     })
-    return page.data.slice(0, pendingTimesheetQueueLimit)
+    return { submissions: page.data, nextCursor: page.page.next_cursor ?? null }
   },
-  listApprovedTimesheetSubmissions: async (periodStart, signal) => {
+  listApprovedTimesheetSubmissions: async (periodStart, filters, signal) => {
     const page = await client.listApprovedTimesheetSubmissions({
-      query: { period_start: periodStart, per_page: pendingTimesheetQueueLimit },
+      query: {
+        period_start: periodStart,
+        per_page: pendingTimesheetQueueLimit,
+        ...(filters?.userId !== undefined ? { user_id: filters.userId } : {}),
+        ...(filters?.clientId !== undefined ? { client_id: filters.clientId } : {}),
+        ...(filters?.projectId !== undefined ? { project_id: filters.projectId } : {}),
+      },
       ...withSignal(signal),
     })
-    return page.data.slice(0, pendingTimesheetQueueLimit)
+    return { submissions: page.data, nextCursor: page.page.next_cursor ?? null }
   },
   getTimesheetSubmission: async (id, signal) =>
     (await client.getTimesheetSubmission({ id, ...withSignal(signal) })).data,

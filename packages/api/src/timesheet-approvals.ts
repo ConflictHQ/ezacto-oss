@@ -7,6 +7,7 @@ import {
   assertFields,
   isCanonicalDate,
   queryDate,
+  queryPositiveInteger,
   readObjectBody,
   resourceId,
   strictSearchParams,
@@ -71,6 +72,9 @@ export interface TimesheetSubmissionDetailRecord extends TimesheetSubmissionReco
 export interface TimesheetSubmissionFilters {
   periodStart?: string
   periodEnd?: string
+  userId?: number
+  clientId?: number
+  projectId?: number
 }
 
 export interface TimesheetApprovalActor {
@@ -230,13 +234,19 @@ const serializeDetail = (submission: Readonly<TimesheetSubmissionDetailRecord>) 
   })),
 })
 
-const listKeys = new Set(['cursor', 'per_page', 'period_start', 'period_end'])
+const listKeys = new Set([
+  'cursor', 'per_page', 'period_start', 'period_end',
+  'user_id', 'client_id', 'project_id',
+])
 
 const filters = (url: URL): TimesheetSubmissionFilters => {
   const params = strictSearchParams(url, listKeys)
   const errors: FieldError[] = []
   const periodStart = queryDate(params, 'period_start', errors)
   const periodEnd = queryDate(params, 'period_end', errors)
+  const userId = queryPositiveInteger(params, 'user_id', errors)
+  const clientId = queryPositiveInteger(params, 'client_id', errors)
+  const projectId = queryPositiveInteger(params, 'project_id', errors)
   if (periodStart !== undefined && periodEnd !== undefined && periodStart > periodEnd) {
     errors.push({
       field: 'period_end',
@@ -248,6 +258,9 @@ const filters = (url: URL): TimesheetSubmissionFilters => {
   return {
     ...(periodStart === undefined ? {} : { periodStart }),
     ...(periodEnd === undefined ? {} : { periodEnd }),
+    ...(userId === undefined ? {} : { userId }),
+    ...(clientId === undefined ? {} : { clientId }),
+    ...(projectId === undefined ? {} : { projectId }),
   }
 }
 
