@@ -2,7 +2,7 @@ export const renderProjectDirectoryPages = (view?: string): string => `
   <main class="app-content project-workspace" data-project-list-page${view === 'project-list' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Work</p><h1>Projects</h1></div>
-      <button class="primary-action" type="button" data-project-create data-project-write data-auth-action hidden disabled>Add project</button>
+      <button class="primary-action" type="button" data-project-create data-project-mutation-action data-project-write data-auth-action hidden disabled>Add project</button>
     </header>
     <p class="project-intro">Find active work by client, or include archived projects for reference.</p>
     <div class="project-list-toolbar">
@@ -24,8 +24,8 @@ export const renderProjectDirectoryPages = (view?: string): string => `
       <div><p class="eyebrow">Projects</p><h1 data-project-detail-name>Project detail</h1></div>
       <div class="project-header-actions">
         <a href="/projects">Back to projects</a>
-        <button type="button" data-project-edit data-project-write data-auth-action hidden disabled>Edit</button>
-        <button type="button" data-project-archive data-project-write data-auth-action hidden disabled>Archive</button>
+        <button type="button" data-project-edit data-project-mutation-action data-project-write data-auth-action hidden disabled>Edit</button>
+        <button type="button" data-project-archive data-project-mutation-action data-project-write data-auth-action hidden disabled>Archive</button>
       </div>
     </header>
     <p class="form-result project-page-status" data-project-detail-status role="status" aria-live="polite">Loading project…</p>
@@ -37,7 +37,7 @@ export const renderProjectDirectoryPages = (view?: string): string => `
       <section class="project-tasks" aria-labelledby="project-tasks-heading">
         <header>
           <div><p class="eyebrow">Time entry</p><h2 id="project-tasks-heading">Assigned tasks</h2></div>
-          <button type="button" data-task-assignment-create data-project-write data-auth-action hidden disabled>Assign task</button>
+          <button type="button" data-task-assignment-create data-project-mutation-action data-project-write data-auth-action hidden disabled>Assign task</button>
         </header>
         <p class="project-section-status" data-project-tasks-status role="status" aria-live="polite"></p>
         <ul data-project-task-assignments></ul>

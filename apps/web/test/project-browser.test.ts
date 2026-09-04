@@ -226,6 +226,57 @@ describe('Projects V1 browser controller', () => {
     })
   })
 
+  it('[browser] holds follow-up mutation actions until post-save detail hydration finishes', async () => {
+    writeDocument('project-detail', '/projects/7')
+    let attachmentReads = 0
+    let releaseAttachmentRefresh = (attachments: Attachment[]): void => {
+      void attachments
+    }
+    const delayedAttachmentRefresh = new Promise<Attachment[]>((resolve) => {
+      releaseAttachmentRefresh = resolve
+    })
+    const listDirectoryProjectAttachments = vi.fn(() => {
+      attachmentReads += 1
+      return attachmentReads === 1
+        ? Promise.resolve([attachment])
+        : delayedAttachmentRefresh
+    })
+    const updateDirectoryProject = vi.fn(async (_id, patch) => ({ ...project, ...patch }))
+    const updateProjectTaskAssignment = vi.fn(async (_id, patch) => ({ ...assignment, ...patch }))
+    const controller = createProjectDirectoryController(
+      detailApi({
+        listDirectoryProjectAttachments,
+        updateDirectoryProject,
+        updateProjectTaskAssignment,
+      }),
+    )
+
+    await controller.activate(identity('administrator'), new AbortController().signal, () => false)
+    document.querySelector<HTMLButtonElement>('[data-project-edit]')!.click()
+    const projectForm = document.querySelector<HTMLFormElement>('[data-project-form]')!
+    ;(projectForm.elements.namedItem('notes') as HTMLTextAreaElement).value = 'Hydrated note'
+    projectForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() => expect(listDirectoryProjectAttachments).toHaveBeenCalledTimes(2))
+    const editAssignment = (): HTMLButtonElement =>
+      [...document.querySelectorAll<HTMLButtonElement>('[data-project-task-assignments] button')]
+        .find((button) => button.textContent === 'Edit')!
+    expect(editAssignment().disabled).toBe(true)
+    editAssignment().click()
+    expect(document.querySelector<HTMLDialogElement>('[data-task-assignment-dialog]')!.open).toBe(
+      false,
+    )
+
+    releaseAttachmentRefresh([attachment])
+    await vi.waitFor(() => expect(editAssignment().disabled).toBe(false))
+    editAssignment().click()
+    const assignmentForm = document.querySelector<HTMLFormElement>(
+      '[data-task-assignment-form]',
+    )!
+    assignmentForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(updateProjectTaskAssignment).toHaveBeenCalledTimes(1))
+  })
+
   it('[browser] inherits and tracks the selected task billable default for a new assignment', async () => {
     writeDocument('project-detail', '/projects/7')
     const nonBillable = { ...task, billable_by_default: false }
