@@ -11,6 +11,7 @@ import {
   createMoneyResourceRepository,
   createInvoiceGenerationService,
   createReportRepository,
+  createModuleSettingsRepository,
   createTimesheetApprovalRepository,
   createTimesheetLockPolicyRepository,
   createD1EmailLogStore,
@@ -420,6 +421,7 @@ export const createRuntimeServices = async (
         .first<{ enabled: number | boolean }>();
       return row?.enabled === 1 || row?.enabled === true;
     },
+    moduleSettings: createModuleSettingsRepository(drizzle),
     timesheetApprovals: createTimesheetApprovalRepository(drizzle),
     timesheetLockPolicy,
     reports: createReportRepository(drizzle),

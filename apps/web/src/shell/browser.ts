@@ -24,6 +24,7 @@ import { createReportsController } from '../reports/browser.js'
 import { createExpenseWorkflowController } from '../expenses/browser.js'
 import { createTaskAdminController } from '../tasks/browser.js'
 import { createExpenseCategoryDirectoryController } from '../expense-categories/browser.js'
+import { createModuleSettingsController } from '../module-settings/browser.js'
 import {
   createInvoicePaymentController,
   renderInvoiceListItems,
@@ -718,6 +719,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const expenseDetailPage = document.documentElement.dataset.appView === 'expense-detail'
   const expenseCategoriesPage =
     document.documentElement.dataset.appView === 'expense-categories'
+  const moduleSettingsPage =
+    document.documentElement.dataset.appView === 'module-settings'
   const timesheetApprovalsPage =
     document.documentElement.dataset.appView === 'timesheet-approvals'
   const signedOutDocumentTitle = document.title
@@ -747,7 +750,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
                         ? ' — Expense detail'
                         : expenseCategoriesPage
                           ? ' — Expense categories'
-                          : timesheetApprovalsPage
+                          : moduleSettingsPage
+                            ? ' — Module settings'
+                            : timesheetApprovalsPage
                             ? ' — Approvals'
                             : ' — Time',
   )
@@ -804,6 +809,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const reports = createReportsController(api)
   const expenseWorkflow = createExpenseWorkflowController(api)
   const expenseCategories = createExpenseCategoryDirectoryController(api)
+  const moduleSettings = createModuleSettingsController()
   const invoicePayments = createInvoicePaymentController(api)
   const invoiceList = required<HTMLElement>('[data-invoice-list]')
   const invoiceListStatus = required<HTMLElement>('[data-invoice-list-status]')
@@ -1808,6 +1814,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     } else if (expenseCategoriesPage) {
       await Promise.all([
         expenseCategories.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (moduleSettingsPage) {
+      await Promise.all([
+        moduleSettings.activate(
           identity,
           authenticated.signal,
           (error) => handleSessionFailure(error, authenticated),

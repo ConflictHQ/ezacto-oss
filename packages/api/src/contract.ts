@@ -955,6 +955,32 @@ const requiredReportRange = [
   { ...query("to", dateSchema), required: true },
 ] as const;
 
+const moduleSettingsOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/admin/modules",
+    operationId: "listModules",
+    summary: "List module enabled states",
+    tag: "admin-modules",
+    responseStatus: 200,
+    responseSchema: "ModuleListEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "patch",
+    path: "/api/v1/admin/modules/:module",
+    operationId: "updateModule",
+    summary: "Enable or disable a module",
+    tag: "admin-modules",
+    responseStatus: 200,
+    responseSchema: "ModuleListEnvelope",
+    requestSchema: "ModulePatch",
+    requestRequired: true,
+    sessionOnly: true,
+    parameters: [stringPath("module")],
+  },
+];
+
 const reportOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -1345,6 +1371,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...moneyOperations,
   ...attachmentContractOperations,
   ...reportOperations,
+  ...moduleSettingsOperations,
 ];
 
 const nullable = (schema: JsonSchema): JsonSchema => ({
@@ -4225,6 +4252,32 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   ProjectBudgetReportEnvelope: envelope("ProjectBudgetReport"),
+  ModuleState: {
+    type: "object",
+    required: ["module", "enabled"],
+    properties: {
+      module: { type: "string", enum: ["approval", "expenses"] },
+      enabled: booleanSchema,
+    },
+    additionalProperties: false,
+  },
+  ModuleListEnvelope: {
+    type: "object",
+    required: ["data", "links"],
+    properties: {
+      data: { type: "array", items: reference("ModuleState") },
+      links: reference("Links"),
+    },
+    additionalProperties: false,
+  },
+  ModulePatch: {
+    type: "object",
+    required: ["enabled"],
+    properties: {
+      enabled: booleanSchema,
+    },
+    additionalProperties: false,
+  },
 };
 
 const openApiPath = (runtimePath: string): string =>

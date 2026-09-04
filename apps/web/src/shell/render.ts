@@ -6,6 +6,7 @@ import { renderReportsPage } from '../reports/render.js'
 import { renderExpenseWorkflowPages } from '../expenses/render.js'
 import { renderTaskAdminPage } from '../tasks/render.js'
 import { renderExpenseCategoriesPage } from '../expense-categories/render.js'
+import { renderModuleSettingsPage } from '../module-settings/render.js'
 import {
   renderInvoiceComposerDialog,
   renderInvoicePaymentDialogs,
@@ -35,6 +36,7 @@ export interface AppShellOptions {
     | 'expense-list'
     | 'expense-detail'
     | 'expense-categories'
+    | 'module-settings'
   readonly signInProviders?: readonly SignInProvider[]
   /** Presentation hint only. The browser still validates the session before enabling the app. */
   readonly sessionCookiePresent?: boolean
@@ -420,6 +422,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   ${renderReportsPage(view)}
   ${renderExpenseWorkflowPages(view)}
   ${renderExpenseCategoriesPage(view)}
+  ${renderModuleSettingsPage(view)}
   ${renderInvoiceComposerDialog()}
   ${renderInvoiceLineDialogs()}
   ${renderInvoicePaymentDialogs()}

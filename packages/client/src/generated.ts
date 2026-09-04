@@ -1550,6 +1550,20 @@ export type ProjectBudgetReportEnvelope = {
   "links": Links;
 };
 
+export type ModuleState = {
+  "module": "approval" | "expenses";
+  "enabled": boolean;
+};
+
+export type ModuleListEnvelope = {
+  "data": Array<ModuleState>;
+  "links": Links;
+};
+
+export type ModulePatch = {
+  "enabled": boolean;
+};
+
 export interface EzactoClientOptions {
   baseUrl: string;
   token?: string;
@@ -3195,6 +3209,25 @@ export class EzactoClient {
 
     return this.request<ProjectBudgetReportEnvelope>("GET", "/api/v1/reports/project-budget/:projectId".replace(":projectId", encodeURIComponent(String(args["projectId"]))), {
       query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listModules(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ModuleListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ModuleListEnvelope>("GET", "/api/v1/admin/modules", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateModule(args: { "module": string; body: ModulePatch; signal?: AbortSignal; headers?: HeadersInit }): Promise<ModuleListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ModuleListEnvelope>("PATCH", "/api/v1/admin/modules/:module".replace(":module", encodeURIComponent(String(args["module"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });

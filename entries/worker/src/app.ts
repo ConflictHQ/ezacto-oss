@@ -8,6 +8,7 @@ import {
   installEmailLogRoutes,
   installEmailConfigurationRoutes,
   installGeneralResourceRoutes,
+  installModuleSettingsRoutes,
   installMoneyResourceRoutes,
   installOidcRoutes,
   installOutboxRoutes,
@@ -27,6 +28,7 @@ import {
   type CloudflareAccessVerifierConfig,
   type ApiSessionService,
   type GeneralResourceRouteOptions,
+  type ModuleSettingsService,
   type EmailConfigurationRouteOptions,
   type MoneyResourceRouteOptions,
   type OidcIdentityResolver,
@@ -96,6 +98,7 @@ export interface RuntimeServices {
   generalResources: GeneralResourceRouteOptions['repository']
   trackedResources: TrackedResourceRepository
   isExpensesModuleEnabled(): Promise<boolean>
+  moduleSettings: ModuleSettingsService
   timesheetApprovals: TimesheetApprovalService
   timesheetLockPolicy: TimesheetLockPolicyService
   moneyResources: MoneyResourceRouteOptions['service']
@@ -190,6 +193,10 @@ export const createApp = (services?: RuntimeServices) =>
             })
             installAttachmentRoutes(api, services.attachments)
             installReportRoutes(api, services.reports)
+            installModuleSettingsRoutes(api, {
+              service: services.moduleSettings,
+              clock: () => systemClock.now().instant,
+            })
           },
         }),
     installApp(app) {
@@ -582,6 +589,26 @@ export const createApp = (services?: RuntimeServices) =>
             release: context.env.RELEASE,
             activeSection: 'Expenses',
             view: 'expense-categories',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/settings/modules', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            view: 'module-settings',
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
