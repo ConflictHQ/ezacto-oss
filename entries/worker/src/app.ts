@@ -8,6 +8,7 @@ import {
   installEmailLogRoutes,
   installEmailConfigurationRoutes,
   installGeneralResourceRoutes,
+  installMagicLinkRoutes,
   installMoneyResourceRoutes,
   installOidcRoutes,
   installOutboxRoutes,
@@ -28,6 +29,7 @@ import {
   type ApiSessionService,
   type GeneralResourceRouteOptions,
   type EmailConfigurationRouteOptions,
+  type MagicLinkRouteOptions,
   type MoneyResourceRouteOptions,
   type OidcIdentityResolver,
   type OidcProviderConfig,
@@ -116,6 +118,8 @@ export interface RuntimeServices {
   /** Deployment-brand sender for all authentication mail. */
   deploymentAuthMailer?: AuthMailer
   attachments?: AttachmentRouteOptions
+  /** Portal magic-link authentication for contacts. */
+  portalAuth?: MagicLinkRouteOptions
 }
 
 export type Health = {
@@ -211,6 +215,9 @@ export const createApp = (services?: RuntimeServices) =>
           clientKey: (request) =>
             request.headers.get('cf-connecting-ip') ?? 'unknown-client',
         })
+        if (services.portalAuth !== undefined) {
+          installMagicLinkRoutes(app, services.portalAuth)
+        }
       }
 
       app.get('/healthz', (context) => {
