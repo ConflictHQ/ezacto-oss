@@ -372,6 +372,38 @@
 .invoice-line-wrap {
   overflow-x: auto;
 }
+.invoice-line-editor {
+  margin-top: 8px;
+}
+.invoice-line-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.invoice-line-heading h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+.invoice-line-heading p {
+  margin: 0;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.invoice-line-heading button,
+.invoice-line-actions button {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.invoice-line-editor > .form-result,
+.invoice-line-editor > .hint {
+  margin-bottom: 12px;
+}
 .invoice-line-table {
   width: 100%;
   min-width: 620px;
@@ -387,6 +419,28 @@
 .invoice-line-table th:first-child,
 .invoice-line-table tbody th {
   text-align: left;
+}
+.invoice-line-table tbody th strong,
+.invoice-line-table tbody th span,
+.invoice-line-table tbody th small {
+  display: block;
+}
+.invoice-line-table tbody th span,
+.invoice-line-table tbody th small {
+  margin-top: 3px;
+  color: var(--ez-muted);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.invoice-line-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.invoice-line-actions button {
+  min-height: 36px;
+  padding-inline: 10px;
 }
 .invoice-line-table thead th {
   color: var(--ez-muted);
@@ -534,6 +588,48 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(110px, 0.35fr);
   gap: 12px;
+}
+.invoice-line-dialog {
+  width: min(680px, calc(100vw - 32px));
+}
+.invoice-line-number-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.invoice-line-tax-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+}
+.invoice-line-tax-fields legend {
+  padding-inline: 4px;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.invoice-line-tax-fields label {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  gap: 8px;
+}
+.invoice-line-tax-fields input {
+  width: auto;
+  min-height: auto;
+}
+.invoice-line-preview {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  font-variant-numeric: tabular-nums;
 }
 .invoice-payment-dialog-actions {
   display: flex;
@@ -1488,16 +1584,62 @@
     grid-template-columns: 1fr;
   }
   .invoice-payment-heading,
+  .invoice-line-heading,
   .invoice-payment-dialog-actions {
     align-items: stretch;
     flex-direction: column;
   }
   .invoice-payment-heading button,
+  .invoice-line-heading button,
   .invoice-payment-dialog-actions button {
     width: 100%;
   }
   .invoice-payment-amount-fields {
     grid-template-columns: 1fr;
+  }
+  .invoice-line-number-fields {
+    grid-template-columns: 1fr;
+  }
+  .invoice-line-table {
+    min-width: 0;
+  }
+  .invoice-line-table thead {
+    display: none;
+  }
+  .invoice-line-table tbody {
+    display: grid;
+    gap: 12px;
+  }
+  .invoice-line-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border: 1px solid var(--ez-border);
+    border-radius: var(--ez-radius);
+  }
+  .invoice-line-table tbody th,
+  .invoice-line-table tbody td {
+    border: 0;
+    text-align: left;
+  }
+  .invoice-line-table tbody th,
+  .invoice-line-actions,
+  .invoice-line-empty {
+    grid-column: 1 / -1;
+  }
+  .invoice-line-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 3px;
+    color: var(--ez-muted);
+    font-size: 11px;
+  }
+  .invoice-line-actions {
+    justify-content: stretch;
+    padding-top: 0 !important;
+  }
+  .invoice-line-actions button {
+    flex: 1;
+    min-height: 44px;
   }
   .approval-card {
     align-items: stretch;
