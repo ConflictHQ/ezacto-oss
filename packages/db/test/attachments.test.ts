@@ -243,7 +243,7 @@ for (const [runtime, factory] of factories) {
       database = await factory()
       const db = database
       const before = await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id`)
-      expect(before.at(-1)).toEqual({ id: '0032_invoice_email_delivery' })
+      expect(before.at(-1)).toEqual({ id: '0033_contact_portal' })
       await db.migrateAgain()
       expect(await db.rows(`SELECT id FROM _ezacto_migrations ORDER BY id`)).toEqual(before)
 
