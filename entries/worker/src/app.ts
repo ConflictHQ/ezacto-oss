@@ -5,6 +5,7 @@ import {
   assertValidOidcProviderConfig,
   generateOpenApiDocument,
   installAttachmentRoutes,
+  installEmailHealthRoutes,
   installEmailLogRoutes,
   installEmailConfigurationRoutes,
   installGeneralResourceRoutes,
@@ -157,6 +158,7 @@ export const createApp = (services?: RuntimeServices) =>
           installApi: (api) => {
             installSessionRoutes(api, services.sessions)
             installEmailLogRoutes(api, services.emailLog)
+            installEmailHealthRoutes(api, services.emailLog)
             installEmailConfigurationRoutes(api, {
               service: services.emailConfiguration,
               ...(services.senderIdentityVerifier === undefined
