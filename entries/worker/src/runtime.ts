@@ -11,6 +11,7 @@ import {
   createMoneyResourceRepository,
   createInvoiceGenerationService,
   createReportRepository,
+  createModuleSettingsRepository,
   createTimesheetApprovalRepository,
   createTimesheetLockPolicyRepository,
   createTeamRepository,
@@ -429,6 +430,7 @@ export const createRuntimeServices = async (
         .first<{ enabled: number | boolean }>();
       return row?.enabled === 1 || row?.enabled === true;
     },
+    moduleSettings: createModuleSettingsRepository(drizzle),
     isTeamModuleEnabled: async () => {
       const row = await database
         .prepare(
