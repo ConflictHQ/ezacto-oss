@@ -356,6 +356,7 @@ const renderBrowserShell = (
       | 'invoice-list'
       | 'invoice-detail'
     sessionCookiePresent?: boolean
+    identity?: Whoami
   } = {},
 ): void => {
   const path =
@@ -373,7 +374,10 @@ const renderBrowserShell = (
     '',
     path,
   )
-  if (options.preserveStorage !== true) globalThis.localStorage.clear()
+  if (options.preserveStorage !== true) {
+    globalThis.localStorage.clear()
+    globalThis.sessionStorage.clear()
+  }
   document.open()
   document.write(
     renderAppShell({
@@ -383,6 +387,7 @@ const renderBrowserShell = (
       ...(options.sessionCookiePresent === undefined
         ? {}
         : { sessionCookiePresent: options.sessionCookiePresent }),
+      ...(options.identity === undefined ? {} : { identity: options.identity }),
     })
       .replace(
         / {2}<link[^>]+(?:fonts\.googleapis|fonts\.gstatic|\/assets\/ezacto\.css)[^>]*>\n/gu,
@@ -1729,6 +1734,59 @@ describe('invoice browse browser behavior', () => {
 })
 
 describe('native browser authentication', () => {
+  it('[perf] activates from the inlined identity without calling whoami', async () => {
+    renderBrowserShell({ sessionCookiePresent: true, identity })
+    const api = browserApi()
+
+    await mountShell(api)
+
+    expect(api.whoami).not.toHaveBeenCalled()
+    const shell = document.querySelector<HTMLElement>('[data-authenticated-shell]')!
+    const overlay = document.querySelector<HTMLElement>('[data-session-check-overlay]')!
+    expect(shell.inert).toBe(false)
+    expect(overlay.hidden).toBe(true)
+    expect(
+      document.querySelector<HTMLElement>('[data-current-user-id]')!.textContent,
+    ).toBe(String(identity.user_id))
+    // The protected data still loads; only the identity round-trip is skipped.
+    expect(api.listProjects).toHaveBeenCalledTimes(1)
+  })
+
+  it('[perf] paints from the cached identity on a document rendered without one', async () => {
+    renderBrowserShell({ sessionCookiePresent: true, identity })
+    await mountShell(browserApi())
+
+    // Second navigation: no inlined identity this time, but the cache survives.
+    renderBrowserShell({ sessionCookiePresent: true, preserveStorage: true })
+    const api = browserApi()
+    const identityCheck = deferred<Whoami>()
+    const revalidating = { ...api, whoami: vi.fn(() => identityCheck.promise) }
+
+    const mounted = mountShell(revalidating)
+    await Promise.resolve()
+
+    // Painted before whoami settled, rather than waiting behind the overlay.
+    expect(
+      document.querySelector<HTMLElement>('[data-current-user-id]')!.textContent,
+    ).toBe(String(identity.user_id))
+
+    identityCheck.resolve(identity)
+    await mounted
+    // Still reconciled against the server.
+    expect(revalidating.whoami).toHaveBeenCalled()
+  })
+
+  it('[security] drops the cached identity on sign-out', async () => {
+    renderBrowserShell({ sessionCookiePresent: true, identity })
+    await mountShell(browserApi())
+    expect(globalThis.sessionStorage.getItem('ezacto.identity')).not.toBeNull()
+
+    document.querySelector<HTMLButtonElement>('[data-logout]')!.click()
+    await vi.waitFor(() => {
+      expect(globalThis.sessionStorage.getItem('ezacto.identity')).toBeNull()
+    })
+  })
+
   it('[security] keeps the hinted shell inert under an overlay until whoami succeeds', async () => {
     renderBrowserShell({ sessionCookiePresent: true })
     const base = browserApi()

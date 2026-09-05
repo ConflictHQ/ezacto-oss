@@ -277,6 +277,71 @@ describe('S-1 through S-5 application shell', () => {
     expect(html).toContain('data-auth-action disabled')
   })
 
+  it('[perf] carries a server-resolved identity so the browser can skip the whoami round-trip', () => {
+    const html = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      sessionCookiePresent: true,
+      identity: {
+        user_id: 7,
+        profile: 'administrator',
+        manager_grants: [],
+        authentication: { kind: 'session' },
+      },
+    })
+
+    expect(html).toContain('data-auth-state="ready"')
+    expect(html).toContain('data-auth-gateway data-state="ready"')
+    expect(html).toContain('<script type="application/json" id="ezacto-identity">')
+    expect(html).toContain('"user_id":7')
+    // The payload must be parseable by the shell that reads it.
+    const payload = /<script type="application\/json" id="ezacto-identity">(.*?)<\/script>/su.exec(
+      html,
+    )
+    expect(payload).not.toBeNull()
+    expect(JSON.parse(payload![1]!)).toEqual({
+      user_id: 7,
+      profile: 'administrator',
+      manager_grants: [],
+      authentication: { kind: 'session' },
+    })
+  })
+
+  it('[security] escapes the inlined identity so it cannot close its own script element', () => {
+    const html = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      identity: {
+        user_id: 7,
+        profile: '</script><script>globalThis.pwned = true</script>',
+        manager_grants: [],
+        authentication: { kind: 'session' },
+      },
+    })
+
+    // Exactly one script element opened, and no attacker-controlled close tag.
+    expect(html).not.toContain('</script><script>globalThis.pwned')
+    expect(html).toContain('\\u003c/script')
+    const payload = /<script type="application\/json" id="ezacto-identity">(.*?)<\/script>/su.exec(
+      html,
+    )
+    expect(payload).not.toBeNull()
+    expect(JSON.parse(payload![1]!).profile).toBe(
+      '</script><script>globalThis.pwned = true</script>',
+    )
+  })
+
+  it('[security] falls back to the session-check overlay when no identity was resolved', () => {
+    const html = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      sessionCookiePresent: true,
+    })
+
+    expect(html).toContain('data-auth-state="checking"')
+    expect(html).not.toContain('id="ezacto-identity"')
+  })
+
   it('[e2e:phone-week] swaps the seven-day table for a touch-sized day switcher', () => {
     const html = renderAppShell({ environment: 'test', release: 'abcdef012345' })
     expect(html).toContain('class="day-switcher"')

@@ -15,11 +15,24 @@ export type UserPrincipal = ActingUserAuthority & {
     | { kind: 'token'; tokenId: number; scopes: string[] }
 }
 
+/**
+ * The session identity resolved while rendering the app shell, in the shape
+ * `GET /api/v1/whoami` returns. Set by the entry's shell middleware so the
+ * document can carry it, letting the browser skip the whoami round-trip.
+ */
+export interface ShellIdentity {
+  user_id: number
+  profile: string
+  manager_grants: string[]
+  authentication: { kind: 'session' }
+}
+
 export type ApiContext<Bindings extends object = object> = {
   Bindings: Bindings
   Variables: {
     requestId: string
     principal: UserPrincipal
+    shellIdentity: ShellIdentity
   }
 }
 

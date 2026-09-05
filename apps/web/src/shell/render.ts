@@ -52,7 +52,38 @@ export interface AppShellOptions {
   readonly signInProviders?: readonly SignInProvider[]
   /** Presentation hint only. The browser still validates the session before enabling the app. */
   readonly sessionCookiePresent?: boolean
+  /**
+   * The already-validated session identity, in the shape `GET /api/v1/whoami`
+   * returns. Present only when the worker resolved the session while rendering,
+   * which lets the browser activate the shell on first paint instead of waiting
+   * on a whoami round-trip. Absent falls back to `sessionCookiePresent`.
+   */
+  readonly identity?: ShellIdentity | undefined
 }
+
+/**
+ * The `data` payload of `GET /api/v1/whoami`, inlined into the document.
+ * `authentication` is left open here because this layer only serializes it —
+ * the worker inlines a session identity, but narrowing it would stop the whoami
+ * type the browser parses this back into from being assignable.
+ */
+export interface ShellIdentity {
+  readonly user_id: number
+  readonly profile: string
+  readonly manager_grants: readonly string[]
+  readonly authentication: { readonly kind: string }
+}
+
+/**
+ * Serializes a value for a `<script type="application/json">` data block.
+ * `<` is escaped so no substring of the payload can close the element early;
+ * U+2028/U+2029 are escaped because they are raw line terminators in JS.
+ */
+const escapeJsonForScript = (value: unknown): string =>
+  JSON.stringify(value)
+    .replace(/</gu, '\\u003c')
+    .replace(/\u2028/gu, '\\u2028')
+    .replace(/\u2029/gu, '\\u2029')
 
 export type SignInProvider = 'google' | 'github'
 
@@ -141,7 +172,13 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const view = options.view ?? 'time'
   const b = resolveDeploymentBrand(options.brand)
   const brand = b.name
-  const resumeSession = options.sessionCookiePresent === true
+  const identity = options.identity
+  // A resolved identity means the browser can skip whoami entirely; a bare
+  // cookie still means "probably signed in", which keeps the shell up while
+  // the browser checks.
+  const resumeSession = identity !== undefined || options.sessionCookiePresent === true
+  const authState =
+    identity !== undefined ? 'ready' : resumeSession ? 'checking' : 'unknown'
   const shortRelease = options.release.slice(0, 7)
   const navigation = sections
     .map(
@@ -151,7 +188,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
     .join('')
 
   return `<!doctype html>
-<html lang="en" data-ez-theme="precision" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}">
+<html lang="en" data-ez-theme="precision" data-app-view="${view}" data-auth-state="${authState}" data-brand="${escapeHtml(brand)}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -163,10 +200,10 @@ export const renderAppShell = (options: AppShellOptions): string => {
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="${escapeHtml(themeManifest.precision.fontStylesheet)}">
 ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <link rel="stylesheet" href="/assets/ezacto.css">
-  <script type="module" src="/assets/ezacto.js"></script>
+${identity === undefined ? '' : `  <script type="application/json" id="ezacto-identity">${escapeJsonForScript(identity)}</script>\n`}  <script type="module" src="/assets/ezacto.js"></script>
 </head>
 <body>
-  <section class="auth-gateway" data-auth-gateway data-state="checking" aria-label="${escapeHtml(brand)} sign in" aria-busy="true"${resumeSession ? ' hidden' : ''}>
+  <section class="auth-gateway" data-auth-gateway data-state="${authState === 'ready' ? 'ready' : 'checking'}" aria-label="${escapeHtml(brand)} sign in" aria-busy="true"${resumeSession ? ' hidden' : ''}>
     <div class="auth-splash">
       <a class="auth-wordmark" href="/" aria-label="${escapeHtml(brand)} home">${escapeHtml(brand)}</a>
       <div class="auth-splash-copy">
