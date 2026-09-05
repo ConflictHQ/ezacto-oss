@@ -70,7 +70,6 @@ export type {
   ApiInstaller,
   AppInstaller,
   CreateApiAppOptions,
-  ShellIdentity,
   UserPrincipal,
   UserProfile,
 } from './context.js'

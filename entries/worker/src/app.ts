@@ -225,55 +225,6 @@ export const createApp = (services?: RuntimeServices) =>
         }),
     installApp(app) {
       if (services !== undefined) {
-        // Resolve the session while rendering, so the document can carry the
-        // identity and the browser does not have to spend a whoami round-trip
-        // before the shell becomes usable on every single navigation (#263).
-        //
-        // Deliberately scoped to shell documents: /api/* already resolves the
-        // principal in its own auth middleware, and /assets/* is anonymous.
-        app.use('*', async (context, next) => {
-          const request = context.req.raw
-          const path = new URL(request.url).pathname
-          if (
-            request.method !== 'GET' ||
-            path.startsWith('/api/') ||
-            path.startsWith('/assets/') ||
-            !hasSessionCookie(request)
-          ) {
-            await next()
-            return
-          }
-          const resolver = services.authenticationSessions ?? services.sessions
-          try {
-            const resolved = await resolver.resolve(request)
-            if (resolved !== null && resolved !== undefined) {
-              const principal =
-                'principal' in resolved ? resolved.principal : resolved
-              // Contact sessions are not organization users — the API answers
-              // them with 403 — so they get the sign-in gateway, not a shell.
-              if (principal.type === 'user') {
-                context.set('shellIdentity', {
-                  user_id: principal.userId,
-                  profile: principal.profile,
-                  manager_grants: [...(principal.managerGrants ?? [])],
-                  authentication: { kind: 'session' },
-                })
-              }
-              // Sliding refresh: resolve() can rotate the cookie, and dropping
-              // that header here would silently stop sessions renewing.
-              if ('principal' in resolved && resolved.setCookie !== undefined) {
-                context.header('set-cookie', resolved.setCookie, {
-                  append: true,
-                })
-              }
-            }
-          } catch {
-            // A failed resolve is not fatal: fall through with no identity and
-            // let the browser's existing whoami path decide.
-          }
-          await next()
-        })
-
         installOidcRoutes(app, {
           transactions: services.oidcTransactions,
           identities: services.identities,
@@ -484,7 +435,6 @@ export const createApp = (services?: RuntimeServices) =>
             brand: brandFromEnv(context.env),
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
-            identity: context.get('shellIdentity'),
           }),
           200,
           {
@@ -507,7 +457,6 @@ export const createApp = (services?: RuntimeServices) =>
             view: 'invoice-generation',
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
-            identity: context.get('shellIdentity'),
           }),
           200,
           {
@@ -530,7 +479,6 @@ export const createApp = (services?: RuntimeServices) =>
             view: 'timesheet-approvals',
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
-            identity: context.get('shellIdentity'),
           }),
           200,
           {
@@ -553,7 +501,6 @@ export const createApp = (services?: RuntimeServices) =>
             view: 'invoice-list',
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
-            identity: context.get('shellIdentity'),
           }),
           200,
           {
@@ -576,7 +523,6 @@ export const createApp = (services?: RuntimeServices) =>
             view: 'client-list',
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
-            identity: context.get('shellIdentity'),
           }),
           200,
           {
@@ -599,7 +545,6 @@ export const createApp = (services?: RuntimeServices) =>
             view: 'project-list',
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
-            identity: context.get('shellIdentity'),
           }),
           200,
           {
@@ -621,7 +566,6 @@ export const createApp = (services?: RuntimeServices) =>
             view: 'team-list',
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
-            identity: context.get('shellIdentity'),
           }),
           200,
           {
@@ -644,7 +588,6 @@ export const createApp = (services?: RuntimeServices) =>
             view: 'task-list',
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
-            identity: context.get('shellIdentity'),
           }),
           200,
           {
@@ -667,7 +610,6 @@ export const createApp = (services?: RuntimeServices) =>
             view: 'reports',
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
-            identity: context.get('shellIdentity'),
           }),
           200,
           {
@@ -690,7 +632,6 @@ export const createApp = (services?: RuntimeServices) =>
             view: 'expense-list',
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
-            identity: context.get('shellIdentity'),
           }),
           200,
           {
@@ -713,7 +654,6 @@ export const createApp = (services?: RuntimeServices) =>
             view: 'expense-categories',
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
-            identity: context.get('shellIdentity'),
           }),
           200,
           {
@@ -744,7 +684,6 @@ export const createApp = (services?: RuntimeServices) =>
             view: 'expense-detail',
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
-            identity: context.get('shellIdentity'),
           }),
           200,
           {
@@ -775,7 +714,6 @@ export const createApp = (services?: RuntimeServices) =>
             view: 'project-detail',
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
-            identity: context.get('shellIdentity'),
           }),
           200,
           {
@@ -805,7 +743,6 @@ export const createApp = (services?: RuntimeServices) =>
             view: 'team-person',
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
-            identity: context.get('shellIdentity'),
           }),
           200,
           {
@@ -836,7 +773,6 @@ export const createApp = (services?: RuntimeServices) =>
             view: 'client-detail',
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
-            identity: context.get('shellIdentity'),
           }),
           200,
           {
@@ -867,7 +803,6 @@ export const createApp = (services?: RuntimeServices) =>
             view: 'invoice-detail',
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
-            identity: context.get('shellIdentity'),
           }),
           200,
           {

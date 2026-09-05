@@ -116,31 +116,6 @@ interface ActiveEntryEditor {
 const IDENTITY_CACHE_KEY = 'ezacto.identity'
 
 /**
- * The identity the worker resolved while rendering this document (#263).
- * Present whenever the session was valid at render time, which lets the shell
- * activate on first paint instead of waiting on a whoami round-trip. Read once:
- * it describes the document, not the live session.
- */
-const readInlineIdentity = (): Whoami | undefined => {
-  const element = document.getElementById('ezacto-identity')
-  if (element === null) return undefined
-  element.remove()
-  try {
-    const parsed: unknown = JSON.parse(element.textContent ?? '')
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      typeof (parsed as { user_id?: unknown }).user_id === 'number'
-    ) {
-      return parsed as Whoami
-    }
-  } catch {
-    // A malformed block is not worth failing over — fall back to whoami.
-  }
-  return undefined
-}
-
-/**
  * Last known identity, so a document rendered without one still paints
  * immediately. This is a rendering hint only: it grants nothing, because every
  * protected request is still authorized by the worker against the real cookie.
@@ -1865,19 +1840,18 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const loadAuthenticatedShell = async (
     operation: AuthOperation,
   ): Promise<void> => {
-    // Three ways to learn who we are, cheapest first. The inlined identity was
-    // resolved server-side for this exact document; the cache is last-known and
-    // is reconciled below; whoami is the blocking fallback (#263).
-    const inline = readInlineIdentity()
-    const presumed = inline ?? readCachedIdentity()
-    const identity = presumed ?? (await api.whoami(operation.signal))
+    // Paint from the last known identity when there is one, and confirm it
+    // against the server without blocking; otherwise whoami is the gate, as
+    // before (issue 263).
+    const cached = readCachedIdentity()
+    const identity = cached ?? (await api.whoami(operation.signal))
     if (!isGenerationCurrent(operation)) return
     rememberIdentity(identity)
     const authenticated = showAuthenticated(identity)
-    if (presumed !== undefined && inline === undefined) {
-      // Painted from cache, so confirm it against the server without blocking.
-      // Nothing was granted on its say-so: every protected load below is
-      // authorized by the worker regardless of what we rendered.
+    if (cached !== undefined) {
+      // Nothing is granted on the cache's say-so: every protected load below is
+      // authorized by the worker against the real cookie regardless of what was
+      // painted, so a stale cache can only be briefly wrong on screen.
       void api
         .whoami(authenticated.signal)
         .then((fresh) => {
