@@ -27,6 +27,7 @@ export {
   type CreateApiTokenStoreOptions,
 } from './api-tokens.js'
 export { createGeneralResourceRepository } from './general-resources.js'
+export { createTeamRepository } from './team.js'
 export {
   createTimesheetApprovalRepository,
   TimesheetApprovalError,

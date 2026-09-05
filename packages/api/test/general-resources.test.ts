@@ -6,6 +6,7 @@ import {
   createD1Database,
 } from "../../db/src/adapters.js";
 import { createGeneralResourceRepository } from "../../db/src/general-resources.js";
+import { createTeamRepository } from "../../db/src/team.js";
 import { migrateContainer, migrateD1 } from "../../db/src/migrate.js";
 import { createApiApp, installGeneralResourceRoutes } from "../src/index.js";
 import type { ApiAuthentication } from "../src/auth.js";
@@ -75,6 +76,11 @@ const bearerPrincipals: Readonly<
     managerGrants: ["billable_rates_manager"],
     scopes: ["projects:read"],
   },
+  "manager-team": {
+    profile: "project_manager",
+    managerGrants: ["billable_rates_manager"],
+    scopes: ["team:read"],
+  },
 };
 
 const authentication: ApiAuthentication = {
@@ -129,6 +135,7 @@ const containerHarness = async (): Promise<Harness> => {
   const repository = createGeneralResourceRepository(
     createContainerDatabase(sqlite),
   );
+  const teamRepository = createTeamRepository(createContainerDatabase(sqlite));
   let expensesModuleEnabled = true;
   const app = createApiApp({
     authentication,
@@ -138,6 +145,7 @@ const containerHarness = async (): Promise<Harness> => {
         cursorSigningKey: signingKey,
         clock: () => now,
         isExpensesModuleEnabled: async () => expensesModuleEnabled,
+        teamRepository,
       }),
   });
   return {
@@ -177,6 +185,7 @@ const d1Harness = async (): Promise<Harness> => {
     .bind("Test org", "{}", now, now)
     .run();
   const repository = createGeneralResourceRepository(createD1Database(d1));
+  const teamRepository = createTeamRepository(createD1Database(d1));
   let expensesModuleEnabled = true;
   const app = createApiApp({
     authentication,
@@ -186,6 +195,7 @@ const d1Harness = async (): Promise<Harness> => {
         cursorSigningKey: signingKey,
         clock: () => now,
         isExpensesModuleEnabled: async () => expensesModuleEnabled,
+        teamRepository,
       }),
   });
   return {
@@ -226,6 +236,15 @@ const factories = [
 const json = (body: unknown, method = "POST"): RequestInit => ({
   method,
   headers: { "content-type": "application/json" },
+  body: JSON.stringify(body),
+});
+
+const rateJson = (body: unknown, idempotencyKey: string): RequestInit => ({
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+    "idempotency-key": idempotencyKey,
+  },
   body: JSON.stringify(body),
 });
 
@@ -901,19 +920,28 @@ for (const [runtime, createHarness] of factories) {
       const first = await data(
         await harness.request(
           `/users/${userId}/billable-rates`,
-          json({ amount_cents: 12_500, start_date: null }),
+          rateJson(
+            { expected_version: 0, amount_cents: 12_500, start_date: null },
+            "rate-collection-first",
+          ),
         ),
       );
       const second = await data(
         await harness.request(
           `/users/${userId}/billable-rates`,
-          json({ amount_cents: 15_000, start_date: "2026-08-28" }),
+          rateJson(
+            { expected_version: 1, amount_cents: 15_000, start_date: "2026-08-28" },
+            "rate-collection-second",
+          ),
         ),
       );
       const cost = await data(
         await harness.request(
           `/users/${userId}/cost-rates`,
-          json({ amount_cents: 8_000, start_date: null }),
+          rateJson(
+            { expected_version: 2, amount_cents: 8_000, start_date: null },
+            "rate-collection-cost",
+          ),
         ),
       );
       expect(second.end_date).toBeNull();
@@ -1016,13 +1044,19 @@ for (const [runtime, createHarness] of factories) {
       await data(
         await harness.request(
           `/users/${user.id as number}/billable-rates`,
-          json({ amount_cents: 16_000, start_date: null }),
+          rateJson(
+            { expected_version: 1, amount_cents: 16_000, start_date: null },
+            "money-matrix-billable",
+          ),
         ),
       );
       await data(
         await harness.request(
           `/users/${user.id as number}/cost-rates`,
-          json({ amount_cents: 9_000, start_date: null }),
+          rateJson(
+            { expected_version: 2, amount_cents: 9_000, start_date: null },
+            "money-matrix-cost",
+          ),
         ),
       );
 
@@ -1120,6 +1154,10 @@ for (const [runtime, createHarness] of factories) {
       for (const profile of allProfiles) {
         for (const { path, readableBy, fields } of serializedCases) {
           const response = await harness.request(path, asProfile(profile));
+          if (profile === "project_manager" && path.startsWith("/user-assignments/")) {
+            expect(response.status, `${profile}:${path}`).toBe(404);
+            continue;
+          }
           if (!readableBy.has(profile)) {
             expect(response.status, `${profile}:${path}`).toBe(403);
             continue;
@@ -1155,6 +1193,17 @@ for (const [runtime, createHarness] of factories) {
       }
 
       for (const { path, fields } of serializedCases) {
+        if (path.startsWith("/user-assignments/")) {
+          expect(
+            (
+              await harness.request(
+                path,
+                asProfile("project_manager", {}, ["billable_rates_manager"]),
+              )
+            ).status,
+          ).toBe(404);
+          continue;
+        }
         const serialized = await data(
           await harness.request(
             path,
@@ -1387,7 +1436,10 @@ for (const [runtime, createHarness] of factories) {
         (
           await harness.request(
             billablePath,
-            json({ amount_cents: 12_500, start_date: null }),
+            rateJson(
+              { expected_version: 0, amount_cents: 12_500, start_date: null },
+              "admin-billable-initial",
+            ),
           )
         ).status,
       ).toBe(201);
@@ -1395,7 +1447,10 @@ for (const [runtime, createHarness] of factories) {
         (
           await harness.request(
             costPath,
-            json({ amount_cents: 8_000, start_date: null }),
+            rateJson(
+              { expected_version: 1, amount_cents: 8_000, start_date: null },
+              "admin-cost-initial",
+            ),
           )
         ).status,
       ).toBe(201);
@@ -1411,7 +1466,10 @@ for (const [runtime, createHarness] of factories) {
             billablePath,
             asProfile(
               "accounting",
-              json({ amount_cents: 13_000, start_date: "2026-08-28" }),
+              rateJson(
+                { expected_version: 2, amount_cents: 13_000, start_date: "2026-08-28" },
+                "accounting-rate-denied",
+              ),
             ),
           )
         ).status,
@@ -1434,7 +1492,10 @@ for (const [runtime, createHarness] of factories) {
             billablePath,
             asProfile(
               "project_manager",
-              json({ amount_cents: 15_000, start_date: "2026-08-28" }),
+              rateJson(
+                { expected_version: 2, amount_cents: 15_000, start_date: "2026-08-28" },
+                "manager-billable-change",
+              ),
               ["billable_rates_manager"],
             ),
           )
@@ -1496,7 +1557,341 @@ for (const [runtime, createHarness] of factories) {
         name: "Atomic role",
         user_ids: [originalUser.id],
       });
+      expect(otherUser.id).not.toBe(originalUser.id);
+    }, 20_000);
 
+    it("[security] scopes PM people, assignments, and legacy rate commands to managed targets", async () => {
+      const manager = await data(
+        await harness.request(
+          "/users",
+          json({
+            first_name: "Scoped",
+            last_name: "Manager",
+            email: "scoped-manager@example.test",
+            profile: "project_manager",
+            manager_grants: ["billable_rates_manager"],
+          }),
+        ),
+      );
+      const related = await data(
+        await harness.request(
+          "/users",
+          json({
+            first_name: "Managed",
+            last_name: "Person",
+            email: "managed-person@example.test",
+          }),
+        ),
+      );
+      const unrelated = await data(
+        await harness.request(
+          "/users",
+          json({
+            first_name: "Unrelated",
+            last_name: "Person",
+            email: "unrelated-person@example.test",
+          }),
+        ),
+      );
+      expect(manager.id).toBe(1);
+      const client = await data(
+        await harness.request("/clients", json({ name: "Scoped client" })),
+      );
+      const managedProject = await data(
+        await harness.request(
+          "/projects",
+          json({ client_id: client.id, name: "Managed project" }),
+        ),
+      );
+      const unrelatedProject = await data(
+        await harness.request(
+          "/projects",
+          json({ client_id: client.id, name: "Unrelated project" }),
+        ),
+      );
+      const managerAssignment = await data(
+        await harness.request(
+          "/user-assignments",
+          json({
+            project_id: managedProject.id,
+            user_id: manager.id,
+            is_project_manager: true,
+          }),
+        ),
+      );
+      const relatedAssignment = await data(
+        await harness.request(
+          "/user-assignments",
+          json({ project_id: managedProject.id, user_id: related.id }),
+        ),
+      );
+      const unrelatedAssignment = await data(
+        await harness.request(
+          "/user-assignments",
+          json({ project_id: unrelatedProject.id, user_id: unrelated.id }),
+        ),
+      );
+      const role = await data(
+        await harness.request(
+          "/roles",
+          json({ name: "Scoped role", user_ids: [manager.id, related.id, unrelated.id] }),
+        ),
+      );
+      const versionBeforeGenericEdit = (
+        await harness.rows<{ version: number }>(
+          "SELECT version FROM users WHERE id = ?",
+          related.id,
+        )
+      )[0]!.version;
+      await harness.run(
+        "UPDATE users SET team_write_token = ? WHERE id = ?",
+        "stale-generic-write",
+        related.id,
+      );
+      expect(
+        (
+          await harness.request(
+            `/users/${related.id as number}`,
+            json({ telephone: "+1-555-0123" }, "PATCH"),
+          )
+        ).status,
+      ).toBe(200);
+      expect(
+        await harness.rows<{ team_write_token: string | null; version: number }>(
+          "SELECT team_write_token, version FROM users WHERE id = ?",
+          related.id,
+        ),
+      ).toEqual([
+        { team_write_token: null, version: versionBeforeGenericEdit + 1 },
+      ]);
+      const managerSession = (init: RequestInit = {}): RequestInit =>
+        asProfile("project_manager", init, ["billable_rates_manager"]);
+
+      const peopleResponse = await harness.request("/users", managerSession());
+      expect(peopleResponse.status).toBe(200);
+      expect(
+        ((await peopleResponse.json()) as { data: Array<{ id: number }> }).data.map(
+          ({ id }) => id,
+        ),
+      ).toEqual([manager.id, related.id]);
+      expect(
+        (await harness.request(`/users/${unrelated.id as number}`, managerSession())).status,
+      ).toBe(404);
+      const roleForManager = await data(
+        await harness.request(`/roles/${role.id as number}`, managerSession()),
+      );
+      expect(roleForManager.user_ids).toEqual([manager.id, related.id]);
+
+      const tokenPeopleResponse = await harness.request(
+        "/users",
+        asBearer("manager-team"),
+      );
+      expect(tokenPeopleResponse.status).toBe(200);
+      expect(
+        ((await tokenPeopleResponse.json()) as { data: Array<{ id: number }> }).data.map(
+          ({ id }) => id,
+        ),
+      ).toEqual([manager.id, related.id]);
+      expect(
+        (
+          await harness.request(
+            `/users/${unrelated.id as number}`,
+            asBearer("manager-team"),
+          )
+        ).status,
+      ).toBe(404);
+
+      const assignmentsResponse = await harness.request(
+        "/user-assignments",
+        managerSession(),
+      );
+      expect(assignmentsResponse.status).toBe(200);
+      expect(
+        ((await assignmentsResponse.json()) as { data: Array<{ id: number }> }).data.map(
+          ({ id }) => id,
+        ),
+      ).toEqual([managerAssignment.id, relatedAssignment.id]);
+      const tokenAssignmentsResponse = await harness.request(
+        "/user-assignments",
+        asBearer("manager-team"),
+      );
+      expect(tokenAssignmentsResponse.status).toBe(200);
+      expect(
+        ((await tokenAssignmentsResponse.json()) as { data: Array<{ id: number }> }).data.map(
+          ({ id }) => id,
+        ),
+      ).toEqual([managerAssignment.id, relatedAssignment.id]);
+      expect(
+        (
+          await harness.request(
+            `/user-assignments/${unrelatedAssignment.id as number}`,
+            managerSession(),
+          )
+        ).status,
+      ).toBe(404);
+      expect(
+        (
+          await harness.request(
+            `/user-assignments/${unrelatedAssignment.id as number}`,
+            managerSession(json({ is_project_manager: true }, "PATCH")),
+          )
+        ).status,
+      ).toBe(404);
+      expect(
+        (
+          await harness.request(
+            `/user-assignments/${relatedAssignment.id as number}`,
+            managerSession(json({ is_project_manager: true }, "PATCH")),
+          )
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await harness.request(
+            `/user-assignments/${relatedAssignment.id as number}`,
+            managerSession(
+              json(
+                {
+                  project_id: unrelatedProject.id,
+                  is_project_manager: true,
+                },
+                "PATCH",
+              ),
+            ),
+          )
+        ).status,
+      ).toBe(404);
+      expect(
+        (
+          await harness.request(
+            "/user-assignments",
+            managerSession(
+              json({ project_id: managedProject.id, user_id: unrelated.id }),
+            ),
+          )
+        ).status,
+      ).toBe(404);
+
+      await harness.run(
+        `INSERT INTO teammate_assignments (manager_id, user_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?)`,
+        manager.id,
+        unrelated.id,
+        now,
+        now,
+      );
+      expect(
+        (
+          await harness.request(
+            "/user-assignments",
+            managerSession(
+              json({ project_id: unrelatedProject.id, user_id: unrelated.id }),
+            ),
+          )
+        ).status,
+      ).toBe(404);
+
+      const relatedVersion = (
+        await harness.rows<{ version: number }>(
+          "SELECT version FROM users WHERE id = ?",
+          related.id,
+        )
+      )[0]!.version;
+      const ratePath = `/users/${related.id as number}/billable-rates`;
+      const commandBody = {
+        expected_version: relatedVersion,
+        amount_cents: 12_345,
+        start_date: null,
+      };
+      const first = await harness.request(
+        ratePath,
+        managerSession(rateJson(commandBody, "legacy-rate-stable")),
+      );
+      expect(first.status, await first.clone().text()).toBe(201);
+      const firstPayload = await first.json();
+      expect(firstPayload).toMatchObject({ data: { amount_cents: 12_345 } });
+      const replay = await harness.request(
+        ratePath,
+        managerSession(rateJson(commandBody, "legacy-rate-stable")),
+      );
+      expect(replay.status).toBe(201);
+      expect(await replay.json()).toEqual(firstPayload);
+      expect(
+        await harness.rows<{ total: number }>(
+          "SELECT count(*) AS total FROM user_billable_rates WHERE user_id = ?",
+          related.id,
+        ),
+      ).toEqual([{ total: 1 }]);
+      expect(
+        (
+          await harness.request(
+            ratePath,
+            managerSession(rateJson(commandBody, "legacy-rate-stale")),
+          )
+        ).status,
+      ).toBe(409);
+      expect(
+        (
+          await harness.request(
+            ratePath,
+            managerSession(
+              rateJson({ ...commandBody, amount_cents: 12_346 }, "legacy-rate-stable"),
+            ),
+          )
+        ).status,
+      ).toBe(409);
+      expect(
+        (
+          await harness.request(
+            ratePath,
+            managerSession(json({ ...commandBody, expected_version: relatedVersion + 1 })),
+          )
+        ).status,
+      ).toBe(422);
+      expect(
+        (
+          await harness.request(
+            `/users/${unrelated.id as number}/billable-rates`,
+            managerSession(),
+          )
+        ).status,
+      ).toBe(200);
+      await harness.run(
+        "DELETE FROM teammate_assignments WHERE manager_id = ? AND user_id = ?",
+        manager.id,
+        unrelated.id,
+      );
+      expect(
+        (
+          await harness.request(
+            `/users/${unrelated.id as number}/billable-rates`,
+            managerSession(),
+          )
+        ).status,
+      ).toBe(404);
+    }, 30_000);
+
+    it("[api] rolls back multi-statement user and project mutation on failure", async () => {
+      const originalUser = await data(
+        await harness.request(
+          "/users",
+          json({
+            first_name: "Atomic",
+            last_name: "Original",
+            email: "atomic-original@example.test",
+          }),
+        ),
+      );
+      const otherUser = await data(
+        await harness.request(
+          "/users",
+          json({
+            first_name: "Atomic",
+            last_name: "Other",
+            email: "atomic-other@example.test",
+          }),
+        ),
+      );
       const conflictingEmailUpdate = await harness.request(
         `/users/${originalUser.id as number}`,
         json(
