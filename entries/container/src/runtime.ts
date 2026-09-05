@@ -19,6 +19,7 @@ import {
   createReportRepository,
   createTimesheetApprovalRepository,
   createTimesheetLockPolicyRepository,
+  createTeamRepository,
   DrizzleTrackedResourceRepository,
   enrollInstanceOwnerPasswordContainer,
   migrateContainer,
@@ -296,6 +297,7 @@ export const createContainerRuntime = async (
         enrollInstanceOwnerPasswordContainer(database, input),
       tokens: createApiTokenStore(drizzle),
       generalResources: createGeneralResourceRepository(drizzle),
+      team: createTeamRepository(drizzle),
       trackedResources: new DrizzleTrackedResourceRepository(
         drizzle,
         timesheetLockPolicy,
@@ -304,6 +306,15 @@ export const createContainerRuntime = async (
         const row = database
           .prepare(
             `SELECT COALESCE(json_extract(modules, '$.expenses'), 0) AS enabled
+             FROM organizations WHERE id = 1`,
+          )
+          .get() as { enabled: number } | undefined
+        return row?.enabled === 1
+      },
+      isTeamModuleEnabled: async () => {
+        const row = database
+          .prepare(
+            `SELECT COALESCE(json_extract(modules, '$.team'), 0) AS enabled
              FROM organizations WHERE id = 1`,
           )
           .get() as { enabled: number } | undefined

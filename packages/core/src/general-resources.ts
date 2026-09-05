@@ -1,3 +1,5 @@
+import type { TeamViewer } from "./team.js";
+
 export type GeneralResourceKind =
   | "clients"
   | "contacts"
@@ -79,25 +81,38 @@ export interface GeneralResourceRepository {
   highWatermark(
     kind: GeneralResourceKind,
     filters: Readonly<GeneralResourceFilters>,
+    viewer?: Readonly<TeamViewer>,
   ): Promise<number | null>;
   list(
     kind: GeneralResourceKind,
     filters: Readonly<GeneralResourceFilters>,
     window: Readonly<GeneralListWindow>,
+    viewer?: Readonly<TeamViewer>,
   ): Promise<readonly GeneralResourceRecord[]>;
-  get(kind: GeneralResourceKind, id: number): Promise<GeneralResourceRecord>;
+  get(
+    kind: GeneralResourceKind,
+    id: number,
+    viewer?: Readonly<TeamViewer>,
+  ): Promise<GeneralResourceRecord>;
   create(
     kind: GeneralResourceKind,
     input: GeneralMutationInput,
     now: string,
+    viewer?: Readonly<TeamViewer>,
   ): Promise<GeneralResourceRecord>;
   update(
     kind: GeneralResourceKind,
     id: number,
     input: GeneralMutationInput,
     now: string,
+    viewer?: Readonly<TeamViewer>,
   ): Promise<GeneralResourceRecord>;
-  remove(kind: GeneralResourceKind, id: number, now: string): Promise<void>;
+  remove(
+    kind: GeneralResourceKind,
+    id: number,
+    now: string,
+    viewer?: Readonly<TeamViewer>,
+  ): Promise<void>;
   highWatermarkRates(
     userId: number,
     kind: UserRateKind,
@@ -111,11 +126,5 @@ export interface GeneralResourceRepository {
     userId: number,
     kind: UserRateKind,
     id: number,
-  ): Promise<UserRateRecord>;
-  appendRate(
-    userId: number,
-    kind: UserRateKind,
-    input: Readonly<{ amountCents: number; startDate: string | null }>,
-    now: string,
   ): Promise<UserRateRecord>;
 }
