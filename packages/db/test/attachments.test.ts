@@ -629,7 +629,7 @@ for (const [runtime, factory] of factories) {
       expect(await db.rows(`SELECT id, number FROM invoices`)).toEqual(before)
       expect(
         await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`),
-      ).toEqual([{ id: '0032_invoice_email_delivery' }])
+      ).toEqual([{ id: '0033_contact_portal' }])
       await db.migrateAgain()
       expect(await db.rows(`SELECT id, number FROM invoices`)).toEqual(before)
       expect(await db.rows(`PRAGMA foreign_key_check`)).toEqual([])
