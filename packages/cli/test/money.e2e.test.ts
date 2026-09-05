@@ -95,7 +95,7 @@ describe('ez money commands against the native API', () => {
       ) VALUES (
         1, 1, 1, 1, 1, 1,
         '${spentDate}', 7200, 0, 7200, 1,
-        'approved', '${now}', '${now}'
+        'unsubmitted', '${now}', '${now}'
       );
     `)
     const database = createContainerDatabase(sqlite)
