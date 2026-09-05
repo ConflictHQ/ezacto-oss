@@ -54,6 +54,13 @@ export {
   type GeneralResourceRouteOptions,
 } from './general-resources.js'
 export {
+  installModuleSettingsRoutes,
+  type ModuleName,
+  type ModuleSettingsRouteOptions,
+  type ModuleSettingsService,
+  type ModuleState,
+} from './module-settings.js'
+export {
   createInvoiceEmailOutboxSubscriber,
   installMoneyResourceRoutes,
   type InvoiceDeliveryContext,
