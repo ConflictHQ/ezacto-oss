@@ -222,21 +222,21 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
     </button>
     <button class="command-trigger" type="button" data-command-trigger data-auth-action disabled aria-haspopup="dialog">⌘K</button>
     <button class="menu-trigger" type="button" data-menu-trigger aria-label="Open navigation" aria-haspopup="dialog">Menu</button>
+    <div class="account" data-auth-shell data-state="loading">
+      <div class="account-identity" data-current-identity hidden>
+        <svg class="identity-avatar" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8.5" r="3.25"/><path d="M5.75 19a6.25 6.25 0 0 1 12.5 0"/></svg>
+        <span class="identity-text">
+          <span class="visually-hidden">Signed in as </span><span class="identity-name" data-current-profile>—</span>
+          <span class="identity-meta">User #<span data-current-user-id>—</span></span>
+        </span>
+        <button type="button" class="identity-signout" data-logout>Sign out</button>
+        <p class="auth-result visually-hidden" data-logout-result role="status" aria-live="polite"></p>
+      </div>
+    </div>
   </header>
   <nav class="tabstrip" aria-label="Time views"${view === 'time' ? '' : ' hidden'}>
     <a href="/" aria-current="page">Week</a><a href="/?view=day">Day</a><a href="/?view=calendar">Calendar</a>
   </nav>
-  <section class="auth-shell workspace-identity" data-auth-shell data-state="loading" aria-label="Account">
-    <div class="current-identity" data-current-identity hidden>
-      <svg class="identity-avatar" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8.5" r="3.25"/><path d="M5.75 19a6.25 6.25 0 0 1 12.5 0"/></svg>
-      <p class="identity-text">
-        <span class="visually-hidden">Signed in as </span><span class="identity-name" data-current-profile>—</span>
-        <span class="identity-meta">User #<span data-current-user-id>—</span></span>
-      </p>
-      <button type="button" class="identity-signout" data-logout>Sign out</button>
-      <p class="auth-result" data-logout-result role="status" aria-live="polite"></p>
-    </div>
-  </section>
   <main class="app-content" data-app-content${view === 'time' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">This week</p><h1>Time</h1></div>
