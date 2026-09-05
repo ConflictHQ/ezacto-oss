@@ -19,6 +19,7 @@ export {
   type InvoicePaymentOption,
 } from './invoice-payments.js'
 export * from './migrate.js'
+export * from './module-settings.js'
 export * from './money-resources.js'
 export * from './operations.js'
 export * from './outbox.js'
