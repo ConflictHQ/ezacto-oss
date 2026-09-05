@@ -179,3 +179,4 @@ export {
   type SessionRevocationReason,
   type SessionStorePort,
 } from './sessions.js'
+export { installTeamRoutes, type TeamRouteOptions } from './team.js'

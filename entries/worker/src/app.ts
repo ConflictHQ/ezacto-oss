@@ -17,6 +17,7 @@ import {
   installTrackedResourceRoutes,
   installTimesheetApprovalRoutes,
   installTimesheetLockPolicyRoutes,
+  installTeamRoutes,
   readJsonBody,
   SESSION_COOKIE_NAME,
   validationError,
@@ -37,6 +38,7 @@ import {
   type TrackedResourceRepository,
   type TimesheetApprovalService,
   type TimesheetLockPolicyService,
+  type TeamRouteOptions,
 } from '@ezacto/api'
 import {
   InstanceBootstrapConflictError,
@@ -101,8 +103,10 @@ export interface RuntimeServices {
   ): Promise<InstanceOwnerPasswordResult>
   tokens: ApiTokenService
   generalResources: GeneralResourceRouteOptions['repository']
+  team: TeamRouteOptions['repository']
   trackedResources: TrackedResourceRepository
   isExpensesModuleEnabled(): Promise<boolean>
+  isTeamModuleEnabled(): Promise<boolean>
   timesheetApprovals: TimesheetApprovalService
   timesheetLockPolicy: TimesheetLockPolicyService
   moneyResources: MoneyResourceRouteOptions['service']
@@ -172,6 +176,13 @@ export const createApp = (services?: RuntimeServices) =>
               repository: services.generalResources,
               cursorSigningKey: services.cursorSigningKey,
               isExpensesModuleEnabled: services.isExpensesModuleEnabled,
+              isTeamModuleEnabled: services.isTeamModuleEnabled,
+              teamRepository: services.team,
+            })
+            installTeamRoutes(api, {
+              repository: services.team,
+              cursorSigningKey: services.cursorSigningKey,
+              isTeamModuleEnabled: services.isTeamModuleEnabled,
             })
             installTrackedResourceRoutes(api, {
               repository: services.trackedResources,
@@ -533,6 +544,27 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
+      app.get('/team', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            activeSection: 'Team',
+            view: 'team-list',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
       app.get('/tasks', (context) =>
         context.html(
           renderAppShell({
@@ -667,6 +699,35 @@ export const createApp = (services?: RuntimeServices) =>
             brand: brandFromEnv(context.env),
             activeSection: 'Projects',
             view: 'project-detail',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        )
+      })
+
+      app.get('/team/:personId', (context) => {
+        const rawPersonId = context.req.param('personId')
+        const personId = Number(rawPersonId)
+        if (
+          !/^[1-9][0-9]*$/u.test(rawPersonId) ||
+          !Number.isSafeInteger(personId)
+        ) {
+          return context.notFound()
+        }
+        return context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            activeSection: 'Team',
+            view: 'team-person',
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),

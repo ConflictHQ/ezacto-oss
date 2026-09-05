@@ -2,6 +2,399 @@
   box-sizing: border-box;
 }
 
+.team-workspace {
+  width: min(1100px, 100%);
+  margin-inline: auto;
+}
+.team-period,
+.team-list-toolbar,
+.team-person-tabs,
+.team-rate-columns,
+.team-form-pair,
+.team-summary {
+  display: flex;
+  gap: 12px;
+}
+.team-period {
+  align-items: center;
+  margin-top: 20px;
+}
+.team-period strong {
+  min-width: 180px;
+  text-align: center;
+}
+.team-period button,
+.team-list-toolbar button,
+.team-person-tabs button,
+.team-workspace button,
+.team-workspace input,
+.team-rate-dialog input,
+.team-deactivate-dialog input {
+  min-height: 44px;
+}
+.team-list-toolbar {
+  align-items: end;
+  justify-content: space-between;
+  margin-top: 20px;
+  padding: 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+.team-list-toolbar fieldset {
+  display: flex;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.team-list-toolbar label,
+.team-person-form label,
+.team-person-panel > form > label,
+.team-rate-dialog label,
+.team-deactivate-dialog label {
+  display: grid;
+  gap: 6px;
+}
+.team-list-toolbar input,
+.team-person-form input,
+.team-person-panel input,
+.team-rate-dialog input,
+.team-deactivate-dialog input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.team-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin-top: 20px;
+  padding: 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+.team-summary > div {
+  display: grid;
+  gap: 4px;
+}
+.team-summary span,
+.team-person-card p,
+.team-utilization span {
+  color: var(--ez-muted);
+}
+.team-summary strong {
+  font-size: 20px;
+}
+.team-page-status {
+  min-height: 24px;
+  margin-block: 16px;
+}
+.team-card-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.team-person-card,
+.team-empty {
+  padding: 18px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+.team-person-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.team-person-card-heading a {
+  color: var(--ez-ink);
+  font-size: 18px;
+  font-weight: 700;
+}
+.team-person-card p {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+.team-avatar {
+  display: grid;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--ez-action);
+  background-position: center;
+  background-size: cover;
+  color: var(--ez-action-fg);
+  font-weight: 700;
+}
+.team-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.team-utilization {
+  display: grid;
+  gap: 7px;
+  margin-top: 18px;
+}
+.team-utilization > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.team-utilization progress {
+  width: 100%;
+  height: 10px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ez-ground);
+}
+.team-utilization progress::-webkit-progress-bar {
+  background: var(--ez-ground);
+}
+.team-utilization progress::-webkit-progress-value,
+.team-utilization progress::-moz-progress-bar {
+  background: var(--ez-action);
+}
+.team-person-header {
+  align-items: end;
+}
+.team-person-tabs {
+  overflow-x: auto;
+  border-bottom: 1px solid var(--ez-border);
+  scrollbar-width: thin;
+}
+.team-person-tabs button {
+  flex: 0 0 auto;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: var(--ez-muted);
+}
+.team-person-tabs button[aria-selected='true'] {
+  border-bottom-color: var(--ez-action);
+  color: var(--ez-ink);
+  font-weight: 700;
+}
+.team-person-panel {
+  padding-block: 24px;
+}
+.team-person-panel > header,
+.team-rate-columns section > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.team-person-panel h2,
+.team-person-panel h3,
+.team-status-actions h3 {
+  margin-top: 0;
+}
+.team-person-form,
+.team-person-panel > form {
+  display: grid;
+  gap: 16px;
+  max-width: 760px;
+}
+.team-form-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.team-person-form fieldset,
+.team-person-panel fieldset {
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+}
+.team-option-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 16px;
+  margin-top: 10px;
+}
+.team-check {
+  display: flex !important;
+  align-items: center;
+  gap: 8px !important;
+  min-height: 36px;
+}
+.team-check input {
+  width: auto;
+  min-height: 20px;
+}
+.team-status-actions {
+  max-width: 760px;
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--ez-border);
+}
+.team-rate-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 20px;
+}
+.team-rate-columns section {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+.team-rate-columns table {
+  width: 100%;
+  margin-top: 12px;
+  border-collapse: collapse;
+}
+.team-rate-columns th,
+.team-rate-columns td {
+  padding: 10px 6px;
+  border-bottom: 1px solid var(--ez-border);
+  text-align: left;
+}
+.team-project-assignment-list {
+  display: grid;
+  gap: 10px;
+}
+.team-project-assignment {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+}
+.team-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+.team-profile-option {
+  display: flex;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+}
+.team-profile-option:has(input:checked) {
+  border-color: var(--ez-action);
+  background: var(--ez-status-bg);
+}
+.team-profile-option input {
+  width: auto;
+  min-height: 20px;
+}
+.team-profile-option span,
+.team-profile-option small {
+  display: grid;
+  gap: 4px;
+}
+.team-profile-option small {
+  color: var(--ez-muted);
+  line-height: 1.35;
+}
+.team-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+}
+.team-weekdays label {
+  display: grid;
+  min-height: 52px;
+  place-items: center;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+}
+.team-weekdays input {
+  width: auto;
+  min-height: 18px;
+}
+.team-rate-dialog form,
+.team-deactivate-dialog form {
+  display: grid;
+  gap: 16px;
+}
+.team-rate-dialog header,
+.team-deactivate-dialog header,
+.team-confirm-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+@media (max-width: 720px) {
+  .team-period {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
+  }
+  .team-period strong {
+    min-width: 0;
+  }
+  .team-period [data-team-week-current] {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+  .team-list-toolbar,
+  .team-person-panel > header,
+  .team-rate-columns section > header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .team-list-toolbar label,
+  .team-list-toolbar input,
+  .team-list-toolbar fieldset,
+  .team-list-toolbar button,
+  .team-person-panel button,
+  .team-status-actions button,
+  .team-rate-dialog button,
+  .team-deactivate-dialog button {
+    width: 100%;
+  }
+  .team-summary,
+  .team-card-list,
+  .team-form-pair,
+  .team-option-grid,
+  .team-rate-columns,
+  .team-profile-grid {
+    grid-template-columns: 1fr;
+  }
+  .team-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .team-person-tabs {
+    margin-inline: -16px;
+    padding-inline: 16px;
+  }
+  .team-person-tabs button {
+    min-width: 120px;
+  }
+  .team-project-assignment {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .team-weekdays {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .team-confirm-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+}
+
 .reports-workspace {
   width: min(1180px, 100%);
   margin-inline: auto;

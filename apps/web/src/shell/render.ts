@@ -6,6 +6,7 @@ import { renderProjectDirectoryPages } from '../projects/render.js'
 import { renderReportsPage } from '../reports/render.js'
 import { renderExpenseWorkflowPages } from '../expenses/render.js'
 import { renderTaskAdminPage } from '../tasks/render.js'
+import { renderTeamPages } from '../team/render.js'
 import { renderExpenseCategoriesPage } from '../expense-categories/render.js'
 import {
   renderInvoiceAttachmentSection,
@@ -22,7 +23,15 @@ export interface AppShellOptions {
   readonly release: string
   readonly brand?: Partial<DeploymentBrand>
   readonly activeSection?:
-    'Time' | 'Approvals' | 'Expenses' | 'Projects' | 'Tasks' | 'Clients' | 'Invoices' | 'Reports'
+    | 'Time'
+    | 'Approvals'
+    | 'Expenses'
+    | 'Team'
+    | 'Projects'
+    | 'Tasks'
+    | 'Clients'
+    | 'Invoices'
+    | 'Reports'
   readonly view?:
     | 'time'
     | 'timesheet-approvals'
@@ -38,6 +47,8 @@ export interface AppShellOptions {
     | 'expense-list'
     | 'expense-detail'
     | 'expense-categories'
+    | 'team-list'
+    | 'team-person'
   readonly signInProviders?: readonly SignInProvider[]
   /** Presentation hint only. The browser still validates the session before enabling the app. */
   readonly sessionCookiePresent?: boolean
@@ -87,6 +98,7 @@ const sections = [
   'Time',
   'Approvals',
   'Expenses',
+  'Team',
   'Projects',
   'Tasks',
   'Clients',
@@ -123,7 +135,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const navigation = sections
     .map(
       (section) =>
-        `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${section}</a>`,
+        `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${section}</a>`,
     )
     .join('')
 
@@ -430,6 +442,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
     </section>
   </main>
   ${renderClientDirectoryPages(view)}
+  ${renderTeamPages(view)}
   ${renderProjectDirectoryPages(view)}
   ${renderTaskAdminPage(view)}
   ${renderReportsPage(view)}

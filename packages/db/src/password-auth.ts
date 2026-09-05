@@ -429,7 +429,7 @@ const createPasswordAuthService = (
             RETURNING id`,
           bindings: [
             organizationName,
-            JSON.stringify({ approval: true, expenses: true, invoices: true }),
+            JSON.stringify({ approval: true, expenses: true, invoices: true, team: true }),
             timestamp,
             timestamp,
             claimNonce,

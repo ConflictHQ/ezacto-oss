@@ -155,7 +155,7 @@ for (const [runtime, factory] of factories) {
       harness = await factory()
       await harness.bootstrap()
       expect(await harness.rows(`SELECT modules FROM organizations WHERE id = 1`)).toEqual([
-        { modules: '{"approval":true,"expenses":true,"invoices":true}' },
+        { modules: '{"approval":true,"expenses":true,"invoices":true,"team":true}' },
       ])
       expect(await harness.rows(`SELECT timezone FROM organizations WHERE id = 1`)).toEqual([
         { timezone: 'UTC' },
@@ -375,7 +375,7 @@ describe('approval-aware instance bootstrap upgrade', () => {
       await bootstrapInstanceContainer(client, input, options)
       await bootstrapInstanceContainer(client, input, options)
       expect(client.prepare(`SELECT modules FROM organizations WHERE id = 1`).get()).toEqual({
-        modules: '{"approval":true,"expenses":true,"invoices":true}',
+        modules: '{"approval":true,"expenses":true,"invoices":true,"team":true}',
       })
     } finally {
       client.close()
@@ -395,7 +395,7 @@ describe('approval-aware instance bootstrap upgrade', () => {
       await bootstrapInstanceD1(client, input, options)
       await bootstrapInstanceD1(client, input, options)
       await expect(client.prepare(`SELECT modules FROM organizations WHERE id = 1`).first()).resolves.toEqual({
-        modules: '{"approval":true,"expenses":true,"invoices":true}',
+        modules: '{"approval":true,"expenses":true,"invoices":true,"team":true}',
       })
     } finally {
       await miniflare.dispose()
@@ -403,7 +403,7 @@ describe('approval-aware instance bootstrap upgrade', () => {
   })
 
   for (const runtime of ['container', 'D1'] as const) {
-    it(`[regression] leaves an existing ${runtime} organization module choice unchanged`, async () => {
+    it(`[regression] preserves existing ${runtime} module choices while enabling Team`, async () => {
       if (runtime === 'container') {
         const client = new BetterSqlite3(':memory:')
         try {
@@ -414,7 +414,7 @@ describe('approval-aware instance bootstrap upgrade', () => {
           ).run(timestamp, timestamp)
           migrateContainer(client)
           expect(client.prepare(`SELECT modules FROM organizations WHERE id = 1`).get()).toEqual({
-            modules: '{"approval":false,"expenses":true}',
+            modules: '{"approval":false,"expenses":true,"team":true}',
           })
         } finally {
           client.close()
@@ -436,7 +436,7 @@ describe('approval-aware instance bootstrap upgrade', () => {
         ).bind(timestamp, timestamp).run()
         await migrateD1(client)
         await expect(client.prepare(`SELECT modules FROM organizations WHERE id = 1`).first()).resolves.toEqual({
-          modules: '{"approval":false,"expenses":true}',
+          modules: '{"approval":false,"expenses":true,"team":true}',
         })
       } finally {
         await miniflare.dispose()
