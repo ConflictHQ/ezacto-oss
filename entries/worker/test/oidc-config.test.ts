@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   cloudflareAccessConfig,
   configuredSignInProviders,
+  githubProvider,
   oidcProvider,
   type WorkerEnv,
 } from '../src/app.js'
@@ -102,6 +103,64 @@ describe('Worker OIDC provider registry', () => {
         }),
       )?.redirectOrigin,
     ).toBe('https://local-tunnel.example')
+  })
+})
+
+describe('Worker GitHub provider registry', () => {
+  it('[security] exposes no provider when the GitHub credential pair is absent', () => {
+    expect(githubProvider(environment())).toBeNull()
+  })
+
+  it('[security] rejects a partial GitHub configuration', () => {
+    expect(() =>
+      githubProvider(environment({ GITHUB_CLIENT_ID: 'gh-client-id' })),
+    ).toThrow(/configured together/)
+    expect(() =>
+      githubProvider(environment({ GITHUB_CLIENT_SECRET: 'gh-client-secret' })),
+    ).toThrow(/configured together/)
+  })
+
+  it('[security] advertises GitHub only for a complete, valid runtime configuration', () => {
+    expect(configuredSignInProviders(environment())).toEqual([])
+    expect(
+      configuredSignInProviders(
+        environment({
+          APP_BASE_URL: 'https://local-tunnel.example',
+          GITHUB_CLIENT_ID: 'gh-client-id',
+          GITHUB_CLIENT_SECRET: 'gh-client-secret',
+        }),
+      ),
+    ).toEqual(['github'])
+  })
+
+  it('[unit] advertises both Google and GitHub when both are fully configured', () => {
+    expect(
+      configuredSignInProviders(
+        environment({
+          APP_BASE_URL: 'https://local-tunnel.example',
+          OIDC_GOOGLE_CLIENT_ID: 'client-id',
+          OIDC_GOOGLE_CLIENT_SECRET: 'client-secret',
+          GITHUB_CLIENT_ID: 'gh-client-id',
+          GITHUB_CLIENT_SECRET: 'gh-client-secret',
+        }),
+      ),
+    ).toEqual(['google', 'github'])
+  })
+
+  it('[acceptance] pins separate live callback origins independent of the request host', () => {
+    const credentials = {
+      GITHUB_CLIENT_ID: 'gh-client-id',
+      GITHUB_CLIENT_SECRET: 'gh-client-secret',
+      APP_BASE_URL: 'https://attacker.example',
+    }
+    expect(
+      githubProvider(environment({ ...credentials, ENVIRONMENT: 'dev' }))
+        ?.redirectOrigin,
+    ).toBe('https://ezacto.io')
+    expect(
+      githubProvider(environment({ ...credentials, ENVIRONMENT: 'prod' }))
+        ?.redirectOrigin,
+    ).toBe('https://app.example.com')
   })
 })
 

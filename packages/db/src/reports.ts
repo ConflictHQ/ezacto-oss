@@ -528,7 +528,11 @@ const clientRollupReport = async (
     else {
       addCurrencyMetric(
         metrics,
-        row.currency,
+        // Cost rates carry no currency of their own — there is no cost_currency
+        // column and rate-resolver never mentions one — so they are org-currency
+        // figures. Bucketing them under the project's billing currency would
+        // relabel a USD number as EUR without converting it.
+        organizationCurrency,
         'costCents',
         trackedAmountCents(row.roundedSeconds, row.costRateCents),
       )

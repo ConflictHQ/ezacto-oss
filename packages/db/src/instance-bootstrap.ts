@@ -87,7 +87,12 @@ interface NormalizedBootstrap {
 const tokenName = 'Instance owner bootstrap'
 const tokenScopes = JSON.stringify([...apiScopes].sort())
 const legacyModules = JSON.stringify({ expenses: true, invoices: true })
-const approvalModules = JSON.stringify({ approval: true, expenses: true, invoices: true })
+const approvalModules = JSON.stringify({
+  approval: true,
+  expenses: true,
+  invoices: true,
+  team: true,
+})
 const canonicalTimestampPattern =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/
 

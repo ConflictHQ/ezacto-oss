@@ -33,6 +33,7 @@ import type { ExpenseWorkflowApi } from '../expenses/model.js'
 import type { ExpenseCategoryDirectoryApi } from '../expense-categories/model.js'
 import type { InvoicePaymentApi } from '../invoices/model.js'
 import type { TaskAdminApi } from '../tasks/model.js'
+import type { TeamDirectoryApi } from '../team/model.js'
 
 interface CursorPage<T> {
   readonly data: readonly T[]
@@ -57,7 +58,8 @@ export interface ShellApi
     Partial<ExpenseWorkflowApi>,
     Partial<ExpenseCategoryDirectoryApi>,
     Partial<InvoicePaymentApi>,
-    Partial<TaskAdminApi> {
+    Partial<TaskAdminApi>,
+    Partial<TeamDirectoryApi> {
   whoami(signal?: AbortSignal): Promise<Whoami>
   signIn(credentials: PasswordSignInInput, signal?: AbortSignal): Promise<AuthPrincipal>
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
@@ -209,6 +211,7 @@ export interface ShellSnapshot {
 
 const navigation = new Map([
   ['time', '/'],
+  ['team', '/team'],
   ['expenses', '/expenses'],
   ['projects', '/projects'],
   ['tasks', '/tasks'],
@@ -614,6 +617,59 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     }),
+  listTeamPeople: (filter, cursor, signal) =>
+    client.listTeamPeople({
+      query: {
+        ...filter,
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  getTeamStatus: async (signal) =>
+    (await client.getTeamStatus(withSignal(signal))).data,
+  getTeamWeekStartDay: async (signal) =>
+    (await client.getTimeEntrySettings(withSignal(signal))).data.week_start_day,
+  getTeamPerson: async (id, signal) =>
+    (await client.getTeamPerson({ id, ...withSignal(signal) })).data,
+  getTeamCatalog: async (signal) =>
+    (await client.getTeamCatalog(withSignal(signal))).data,
+  updateTeamPerson: async (id, commandId, body, signal) =>
+    (
+      await client.updateTeamPerson({
+        id,
+        'Idempotency-Key': commandId,
+        body,
+        ...withSignal(signal),
+      })
+    ).data,
+  replaceTeamPersonProjectAssignments: async (id, commandId, body, signal) =>
+    (
+      await client.replaceTeamPersonProjectAssignments({
+        id,
+        'Idempotency-Key': commandId,
+        body,
+        ...withSignal(signal),
+      })
+    ).data,
+  updateTeamPersonNotifications: async (id, commandId, body, signal) =>
+    (
+      await client.updateTeamPersonNotifications({
+        id,
+        'Idempotency-Key': commandId,
+        body,
+        ...withSignal(signal),
+      })
+    ).data,
+  appendTeamPersonRate: async (id, commandId, body, signal) =>
+    (
+      await client.appendTeamPersonRate({
+        id,
+        'Idempotency-Key': commandId,
+        body,
+        ...withSignal(signal),
+      })
+    ).data,
   listProjectClients: (cursor, signal) =>
     client.listClients({
       query: {

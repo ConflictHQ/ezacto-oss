@@ -6,6 +6,7 @@ import {
   type GeneralResourceRecord,
   type GeneralResourceRepository,
   type GeneralValue,
+  type TeamViewer,
   type UserRateRecord,
 } from '@ezacto/core'
 import type BetterSqlite3 from 'better-sqlite3'
@@ -13,6 +14,12 @@ import { sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
+import {
+  teamAssignmentAccessPredicate,
+  teamGeneralResourceAccessSql,
+  teamPersonAccessSql,
+  teamProjectAccessSql,
+} from './team-access.js'
 
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
 type NativeClient = BetterSqlite3.Database | D1Database
@@ -256,11 +263,13 @@ const runAtomic = async (
 }
 
 const whereFor = (
+  kind: GeneralResourceKind,
   definition: ResourceDefinition,
   filters: Readonly<GeneralResourceFilters>,
   window?: Readonly<GeneralListWindow>,
+  viewer?: Readonly<TeamViewer>,
 ): SQL => {
-  const conditions: SQL[] = []
+  const conditions: SQL[] = [teamGeneralResourceAccessSql(kind, viewer)]
   for (const [field, column] of Object.entries(definition.filters)) {
     const value = filters[field as keyof GeneralResourceFilters]
     if (value === undefined) continue
@@ -303,7 +312,10 @@ const recordFromRow = (
 ): GeneralResourceRecord => {
   const output: Record<string, GeneralValue> = {}
   for (const [column, raw] of Object.entries(row)) {
-    if (column === 'statement_key') continue
+    if (
+      column === 'statement_key' ||
+      (definition.table === 'users' && (column === 'version' || column === 'team_write_token'))
+    ) continue
     const field = camelForColumn(definition, column)
     if (definition.booleans.has(field)) output[field] = raw === 1
     else if (definition.json.has(field))
@@ -337,7 +349,9 @@ const translate = (error: unknown): never => {
     lower.includes('sqlite_constraint_trigger') ||
     lower.includes('must be appended') ||
     lower.includes('must be a valid date') ||
-    lower.includes('derived')
+    lower.includes('derived') ||
+    lower.includes('retain an active administrator') ||
+    lower.includes('owner cannot be deactivated')
   ) {
     throw new GeneralResourceError('invalid_input', message)
   }
@@ -363,9 +377,18 @@ const assertWindow = (window: Readonly<GeneralListWindow>): void => {
   }
 }
 
-const roleUsers = async (database: Database, roleId: number): Promise<readonly number[]> => {
+const roleUsers = async (
+  database: Database,
+  roleId: number,
+  viewer?: Readonly<TeamViewer>,
+): Promise<readonly number[]> => {
   const rows = await database.all<{ user_id: number }>(
-    sql`SELECT user_id FROM user_roles WHERE role_id = ${roleId} ORDER BY user_id`,
+    sql`SELECT relation.user_id
+      FROM user_roles relation
+      JOIN users scoped_user ON scoped_user.id = relation.user_id
+      WHERE relation.role_id = ${roleId}
+        AND ${viewer === undefined ? sql`1` : teamPersonAccessSql(viewer, 'scoped_user')}
+      ORDER BY relation.user_id`,
   )
   return rows.map(({ user_id }) => user_id)
 }
@@ -373,9 +396,10 @@ const roleUsers = async (database: Database, roleId: number): Promise<readonly n
 const hydrateRole = async (
   database: Database,
   record: GeneralResourceRecord,
+  viewer?: Readonly<TeamViewer>,
 ): Promise<GeneralResourceRecord> => ({
   ...record,
-  userIds: await roleUsers(database, record.id),
+  userIds: await roleUsers(database, record.id, viewer),
 })
 
 const hydrateUser = async (
@@ -392,11 +416,51 @@ const hydrate = async (
   database: Database,
   kind: GeneralResourceKind,
   rows: readonly Record<string, unknown>[],
+  viewer?: Readonly<TeamViewer>,
 ): Promise<GeneralResourceRecord[]> => {
   const records = rows.map((row) => recordFromRow(definitions[kind], row))
-  if (kind === 'roles') return Promise.all(records.map((record) => hydrateRole(database, record)))
+  if (kind === 'roles')
+    return Promise.all(records.map((record) => hydrateRole(database, record, viewer)))
   if (kind === 'users') return Promise.all(records.map((record) => hydrateUser(database, record)))
   return records
+}
+
+const assertAssignmentAuthority = async (
+  database: Database,
+  viewer: Readonly<TeamViewer> | undefined,
+  userId: number,
+  projectId: number,
+): Promise<void> => {
+  if (viewer === undefined) return
+  const rows = await database.all<{ authorized: number }>(
+    sql`SELECT 1 AS authorized
+      FROM users scoped_user CROSS JOIN projects scoped_project
+      WHERE scoped_user.id = ${userId}
+        AND scoped_project.id = ${projectId}
+        AND ${teamPersonAccessSql(viewer, 'scoped_user')}
+        AND ${teamProjectAccessSql(viewer, 'scoped_project')}
+      LIMIT 1`,
+  )
+  if (rows.length === 0)
+    throw new GeneralResourceError(
+      'not_found',
+      'The user assignment is outside the acting user scope.',
+    )
+}
+
+const assertResourceAccess = async (
+  database: Database,
+  kind: GeneralResourceKind,
+  id: number,
+  viewer: Readonly<TeamViewer> | undefined,
+): Promise<void> => {
+  const definition = definitions[kind]
+  const rows = await database.all<{ id: number }>(
+    sql`SELECT id FROM ${identifier(definition.table)} WHERE id = ${id}
+      AND ${teamGeneralResourceAccessSql(kind, viewer)} LIMIT 1`,
+  )
+  if (rows.length === 0)
+    throw new GeneralResourceError('not_found', 'The resource does not exist.')
 }
 
 const validatedRoleUserIds = async (
@@ -447,34 +511,35 @@ const validatedUserEmail = async (
 }
 
 export const createGeneralResourceRepository = (database: Database): GeneralResourceRepository => ({
-  async highWatermark(kind, filters) {
+  async highWatermark(kind, filters, viewer) {
     const definition = definitions[kind]
     const rows = await database.all<{ maximum: number | null }>(
-      sql`SELECT max(id) AS maximum FROM ${identifier(definition.table)} WHERE ${whereFor(definition, filters)}`,
+      sql`SELECT max(id) AS maximum FROM ${identifier(definition.table)} WHERE ${whereFor(kind, definition, filters, undefined, viewer)}`,
     )
     return rows[0]?.maximum ?? null
   },
 
-  async list(kind, filters, window) {
+  async list(kind, filters, window, viewer) {
     assertWindow(window)
     const definition = definitions[kind]
     const rows = await database.all<Record<string, unknown>>(
-      sql`SELECT * FROM ${identifier(definition.table)} WHERE ${whereFor(definition, filters, window)} ORDER BY id LIMIT ${window.take}`,
+      sql`SELECT * FROM ${identifier(definition.table)} WHERE ${whereFor(kind, definition, filters, window, viewer)} ORDER BY id LIMIT ${window.take}`,
     )
-    return hydrate(database, kind, rows)
+    return hydrate(database, kind, rows, viewer)
   },
 
-  async get(kind, id) {
+  async get(kind, id, viewer) {
     const definition = definitions[kind]
     const rows = await database.all<Record<string, unknown>>(
-      sql`SELECT * FROM ${identifier(definition.table)} WHERE id = ${id} LIMIT 1`,
+      sql`SELECT * FROM ${identifier(definition.table)} WHERE id = ${id}
+        AND ${teamGeneralResourceAccessSql(kind, viewer)} LIMIT 1`,
     )
     if (rows.length === 0)
       throw new GeneralResourceError('not_found', 'The resource does not exist.')
-    return (await hydrate(database, kind, rows))[0]!
+    return (await hydrate(database, kind, rows, viewer))[0]!
   },
 
-  async create(kind, input, now) {
+  async create(kind, input, now, viewer) {
     const definition = definitions[kind]
     for (const field of Object.keys(input)) {
       if (definition.columns[field] === undefined)
@@ -525,6 +590,14 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
         )
       effectiveInput.billable = rows[0]!.billable_by_default === 1
     }
+    if (kind === 'user-assignments') {
+      await assertAssignmentAuthority(
+        database,
+        viewer,
+        Number(effectiveInput.userId),
+        Number(effectiveInput.projectId),
+      )
+    }
     const roleUserIds =
       kind === 'roles' ? await validatedRoleUserIds(database, relationUsers) : undefined
     const entries = Object.entries(effectiveInput).filter(
@@ -566,6 +639,13 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
               WHERE role.name = ? RETURNING user_id`,
             params: [now, now, JSON.stringify(roleUserIds), String(effectiveInput.name)],
           })
+          statements.push({
+            text: `UPDATE users
+              SET version = version + 1, team_write_token = NULL, updated_at = ?
+              WHERE id IN (SELECT CAST(value AS INTEGER) FROM json_each(?))
+              RETURNING id`,
+            params: [now, JSON.stringify(roleUserIds)],
+          })
         }
         if (kind === 'users' && relationEmail !== undefined) {
           statements.push({
@@ -591,6 +671,13 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
               params: [now, now],
             },
             {
+              text: `UPDATE users
+                SET version = version + 1, team_write_token = NULL, updated_at = ?
+                WHERE is_active = 1 AND has_access_to_all_future_projects = 1
+                RETURNING id`,
+              params: [now],
+            },
+            {
               text: `WITH new_project(id) AS MATERIALIZED (
                 SELECT max(id) FROM projects
               )
@@ -607,18 +694,55 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
         }
         const atomicRows = await runAtomic(database, statements)
         rows = atomicRows[0] ?? []
+      } else if (kind === 'user-assignments') {
+        const columnNames = [
+          ...entries.map(([field]) => definition.columns[field]!),
+          'created_at',
+          'updated_at',
+        ]
+        const guard =
+          viewer === undefined
+            ? { sql: '1', bindings: [] }
+            : teamAssignmentAccessPredicate(viewer, 'scoped_user', 'scoped_project')
+        const atomicRows = await runAtomic(database, [
+          {
+            text: `INSERT INTO ${definition.table} (${columnNames.join(', ')})
+              SELECT ${columnNames.map(() => '?').join(', ')}
+              WHERE EXISTS (
+                SELECT 1 FROM users scoped_user CROSS JOIN projects scoped_project
+                WHERE scoped_user.id = ? AND scoped_project.id = ? AND ${guard.sql}
+              ) RETURNING *`,
+            params: [
+              ...entries.map(([field, value]) => storedValue(definition, field, value)),
+              now,
+              now,
+              Number(effectiveInput.userId),
+              Number(effectiveInput.projectId),
+              ...guard.bindings,
+            ],
+          },
+          {
+            text: `UPDATE users
+              SET version = version + 1, team_write_token = NULL, updated_at = ?
+              WHERE id = ? AND changes() = 1 RETURNING id`,
+            params: [now, Number(effectiveInput.userId)],
+          },
+        ])
+        rows = atomicRows[0] ?? []
       } else {
         rows = await database.all<Record<string, unknown>>(
           sql`INSERT INTO ${identifier(definition.table)} (${sql.join(columns, sql`, `)}) VALUES (${sql.join(values, sql`, `)}) RETURNING *`,
         )
       }
+      if (rows.length === 0)
+        throw new GeneralResourceError('not_found', 'The resource does not exist.')
       const insertedId = Number(rows[0]!.id)
       const storedRows = await database.all<Record<string, unknown>>(
         sql`SELECT * FROM ${identifier(definition.table)} WHERE id = ${insertedId} LIMIT 1`,
       )
       const record = recordFromRow(definition, storedRows[0]!)
       if (kind === 'roles') {
-        return hydrateRole(database, record)
+        return hydrateRole(database, record, viewer)
       }
       if (kind === 'users') {
         return hydrateUser(database, record)
@@ -629,8 +753,9 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
     }
   },
 
-  async update(kind, id, input, now) {
+  async update(kind, id, input, now, viewer) {
     const definition = definitions[kind]
+    if (kind === 'users') await assertResourceAccess(database, kind, id, viewer)
     for (const field of Object.keys(input)) {
       if (definition.columns[field] === undefined)
         throw new GeneralResourceError(
@@ -655,16 +780,77 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
           sql`${identifier(definition.columns[field]!)} = ${storedValue(definition, field, value)}`,
       )
     assignments.push(sql`updated_at = ${now}`)
+    if (kind === 'users') {
+      assignments.push(sql`version = version + 1`)
+      assignments.push(sql`team_write_token = NULL`)
+    }
     try {
       let rows: Record<string, unknown>[]
-      if (
+      if (kind === 'user-assignments') {
+        const current = await database.all<{ project_id: number; user_id: number }>(
+          sql`SELECT project_id, user_id FROM user_assignments WHERE id = ${id}
+            AND ${teamGeneralResourceAccessSql(kind, viewer)} LIMIT 1`,
+        )
+        if (current.length === 0)
+          throw new GeneralResourceError('not_found', 'The resource does not exist.')
+        const nextUserId = Number(input.userId ?? current[0]!.user_id)
+        const nextProjectId = Number(input.projectId ?? current[0]!.project_id)
+        await assertAssignmentAuthority(database, viewer, nextUserId, nextProjectId)
+        const currentGuard =
+          viewer === undefined
+            ? { sql: '1', bindings: [] }
+            : teamAssignmentAccessPredicate(viewer, 'current_user', 'current_project')
+        const nextGuard =
+          viewer === undefined
+            ? { sql: '1', bindings: [] }
+            : teamAssignmentAccessPredicate(viewer, 'next_user', 'next_project')
+        const statements: AtomicStatement[] = [
+          {
+            text: `UPDATE ${definition.table} SET ${[
+              ...storedEntries.map(([field]) => `${definition.columns[field]} = ?`),
+              'updated_at = ?',
+            ].join(', ')} WHERE id = ?
+              AND EXISTS (
+                SELECT 1 FROM users current_user CROSS JOIN projects current_project
+                WHERE current_user.id = ? AND current_project.id = ? AND ${currentGuard.sql}
+              )
+              AND EXISTS (
+                SELECT 1 FROM users next_user CROSS JOIN projects next_project
+                WHERE next_user.id = ? AND next_project.id = ? AND ${nextGuard.sql}
+              )
+              RETURNING *`,
+            params: [
+              ...storedEntries.map(([field, value]) => storedValue(definition, field, value)),
+              now,
+              id,
+              current[0]!.user_id,
+              current[0]!.project_id,
+              ...currentGuard.bindings,
+              nextUserId,
+              nextProjectId,
+              ...nextGuard.bindings,
+            ],
+          },
+          {
+            text: `UPDATE users
+              SET version = version + 1, team_write_token = NULL, updated_at = ?
+              WHERE id IN (?, ?) AND changes() = 1 RETURNING id`,
+            params: [now, current[0]!.user_id, nextUserId],
+          },
+        ]
+        const atomicRows = await runAtomic(database, statements)
+        rows = atomicRows[0] ?? []
+      } else if (
         (kind === 'roles' && roleUserIds !== undefined) ||
-        (kind === 'users' && emailAddress !== undefined)
+        kind === 'users'
       ) {
         const statements: AtomicStatement[] = [
           {
             text: `UPDATE ${definition.table} SET ${[
               ...storedEntries.map(([field]) => `${definition.columns[field]} = ?`),
+              ...(kind === 'users'
+                ? ['version = version + 1', 'team_write_token = NULL']
+                : []),
               'updated_at = ?',
             ].join(', ')} WHERE id = ? RETURNING *`,
             params: [
@@ -675,6 +861,15 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
           },
         ]
         if (kind === 'roles' && roleUserIds !== undefined) {
+          statements.push({
+            text: `UPDATE users
+              SET version = version + 1, team_write_token = NULL, updated_at = ?
+              WHERE id IN (
+                SELECT user_id FROM user_roles WHERE role_id = ?
+                UNION SELECT CAST(value AS INTEGER) FROM json_each(?)
+              ) RETURNING id`,
+            params: [now, id, JSON.stringify(roleUserIds)],
+          })
           statements.push({
             text: 'DELETE FROM user_roles WHERE role_id = ? RETURNING user_id',
             params: [id],
@@ -715,7 +910,7 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
         throw new GeneralResourceError('not_found', 'The resource does not exist.')
       const record = recordFromRow(definition, rows[0]!)
       if (kind === 'roles') {
-        return hydrateRole(database, record)
+        return hydrateRole(database, record, viewer)
       }
       if (kind === 'users') {
         return hydrateUser(database, record)
@@ -726,12 +921,71 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
     }
   },
 
-  async remove(kind, id, now) {
+  async remove(kind, id, now, viewer) {
     const definition = definitions[kind]
     try {
+      if (kind === 'user-assignments') {
+        const current = await database.all<{ project_id: number; user_id: number }>(
+          sql`SELECT project_id, user_id FROM user_assignments WHERE id = ${id}
+            AND ${teamGeneralResourceAccessSql(kind, viewer)} LIMIT 1`,
+        )
+        if (current.length === 0)
+          throw new GeneralResourceError('not_found', 'The resource does not exist.')
+        const guard =
+          viewer === undefined
+            ? { sql: '1', bindings: [] }
+            : teamAssignmentAccessPredicate(viewer, 'scoped_user', 'scoped_project')
+        const atomicRows = await runAtomic(database, [
+          {
+            text: `UPDATE user_assignments
+              SET is_active = 0, updated_at = ? WHERE id = ?
+              AND EXISTS (
+                SELECT 1 FROM users scoped_user CROSS JOIN projects scoped_project
+                WHERE scoped_user.id = ? AND scoped_project.id = ? AND ${guard.sql}
+              ) RETURNING id`,
+            params: [
+              now,
+              id,
+              current[0]!.user_id,
+              current[0]!.project_id,
+              ...guard.bindings,
+            ],
+          },
+          {
+            text: `UPDATE users
+              SET version = version + 1, team_write_token = NULL, updated_at = ?
+              WHERE id = ? AND changes() = 1 RETURNING id`,
+            params: [now, current[0]!.user_id],
+          },
+        ])
+        if ((atomicRows[0] ?? []).length === 0)
+          throw new GeneralResourceError('not_found', 'The resource does not exist.')
+        return
+      }
+      if (kind === 'users') await assertResourceAccess(database, kind, id, viewer)
+      if (kind === 'roles') {
+        const atomicRows = await runAtomic(database, [
+          {
+            text: `UPDATE users
+              SET version = version + 1, team_write_token = NULL, updated_at = ?
+              WHERE id IN (SELECT user_id FROM user_roles WHERE role_id = ?)
+              RETURNING id`,
+            params: [now, id],
+          },
+          {
+            text: 'DELETE FROM roles WHERE id = ? RETURNING id',
+            params: [id],
+          },
+        ])
+        if ((atomicRows[1] ?? []).length === 0)
+          throw new GeneralResourceError('not_found', 'The resource does not exist.')
+        return
+      }
       const rows = definition.archive
         ? await database.all(
-            sql`UPDATE ${identifier(definition.table)} SET is_active = 0, updated_at = ${now} WHERE id = ${id} RETURNING id`,
+            kind === 'users'
+              ? sql`UPDATE ${identifier(definition.table)} SET is_active = 0, version = version + 1, team_write_token = NULL, updated_at = ${now} WHERE id = ${id} RETURNING id`
+              : sql`UPDATE ${identifier(definition.table)} SET is_active = 0, updated_at = ${now} WHERE id = ${id} RETURNING id`,
           )
         : await database.all(
             sql`DELETE FROM ${identifier(definition.table)} WHERE id = ${id} RETURNING id`,
@@ -784,17 +1038,6 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
     return rateFromRow(rows[0]!)
   },
 
-  async appendRate(userId, kind, input, now) {
-    const table = kind === 'billable' ? 'user_billable_rates' : 'user_cost_rates'
-    try {
-      const rows = await database.all<Record<string, unknown>>(
-        sql`INSERT INTO ${identifier(table)} (user_id, amount_cents, start_date, end_date, created_at, updated_at) VALUES (${userId}, ${input.amountCents}, ${input.startDate}, NULL, ${now}, ${now}) RETURNING *`,
-      )
-      return rateFromRow(rows[0]!)
-    } catch (error) {
-      return translate(error)
-    }
-  },
 })
 
 const rateFromRow = (row: Record<string, unknown>): UserRateRecord => ({

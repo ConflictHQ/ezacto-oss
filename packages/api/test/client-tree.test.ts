@@ -20,6 +20,7 @@ import {
   type UserProfile,
 } from "../src/index.js";
 import { createGeneralResourceRepository } from "../../db/src/general-resources.js";
+import { createTeamRepository } from "../../db/src/team.js";
 
 interface Harness {
   request(
@@ -155,12 +156,14 @@ const createHarness = async (kind: "SQLite" | "D1"): Promise<Harness> => {
   let reports: ReturnType<typeof createReportRepository>;
   let db: DbAdapter;
   let resources: ReturnType<typeof createGeneralResourceRepository>;
+  let team: ReturnType<typeof createTeamRepository>;
   if (kind === "SQLite") {
     const sqlite = new BetterSqlite3(":memory:");
     migrateContainer(sqlite);
     db = createContainerDatabase(sqlite);
     reports = createReportRepository(db);
     resources = createGeneralResourceRepository(db);
+    team = createTeamRepository(db);
     run = async (statement, params) => {
       sqlite.prepare(statement).run(...params);
     };
@@ -178,6 +181,7 @@ const createHarness = async (kind: "SQLite" | "D1"): Promise<Harness> => {
     db = createD1Database(d1);
     reports = createReportRepository(db);
     resources = createGeneralResourceRepository(db);
+    team = createTeamRepository(db);
     run = async (statement, params) => {
       await d1
         .prepare(statement)
@@ -201,6 +205,7 @@ const createHarness = async (kind: "SQLite" | "D1"): Promise<Harness> => {
         repository: resources,
         cursorSigningKey: signingKey,
         isExpensesModuleEnabled: async () => true,
+        teamRepository: team,
       });
     },
   });
