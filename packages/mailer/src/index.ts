@@ -15,6 +15,11 @@ export type {
   SenderIdentityVerificationStatus,
 }
 export {
+  MailgunMailer,
+  type MailgunConfig,
+  type MailgunOptions,
+} from './mailgun.js'
+export {
   SesMailer,
   type SesAccountHealth,
   type SesIdentityHealth,
