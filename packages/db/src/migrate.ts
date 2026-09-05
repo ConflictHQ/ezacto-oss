@@ -34,6 +34,7 @@ import { outboxDeliveryMigration } from './migrations/0029_outbox_delivery.js'
 import { emailTemplatesMigration } from './migrations/0030_email_templates.js'
 import { teamPeopleMigration } from './migrations/0031_team_people.js'
 import { invoiceEmailDeliveryMigration } from './migrations/0032_invoice_email_delivery.js'
+import { recurringGenerateCommandMigration } from './migrations/0037_recurring_generate_command.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL
@@ -1392,6 +1393,7 @@ const migrations = [
   { id: '0030_email_templates', statements: emailTemplatesMigration },
   { id: '0031_team_people', statements: teamPeopleMigration },
   { id: '0032_invoice_email_delivery', statements: invoiceEmailDeliveryMigration },
+  { id: '0037_recurring_generate_command', statements: recurringGenerateCommandMigration },
 ] as const
 
 const migrateContainerPlan = (

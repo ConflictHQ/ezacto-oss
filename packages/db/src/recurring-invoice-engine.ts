@@ -347,24 +347,52 @@ export const createRecurringInvoiceEngine = (
     let retainerDrawdownCents: number | null = null
     const statements: SqlStatement[] = []
 
+    // The ledger row is written before the invoice exists, so the line manifest
+    // has to name ids the lines will be inserted with (migration 0037).
+    const lineIds = await Promise.all(
+      lines.map((_, index) =>
+        stableId('recurring-generation-line', commandId, String(index)),
+      ),
+    )
+    const lineManifestJson = JSON.stringify({
+      schema_version: 1,
+      lines: lines.map((line, index) => ({
+        id: lineIds[index]!,
+        position: line.position,
+        kind: line.kind,
+        description: line.description,
+        quantity: line.quantity,
+        unit_price_cents: line.unit_price_cents,
+        amount_cents: line.amountCents,
+        project_id: line.project_id,
+      })),
+    })
+    const requestJson = JSON.stringify({
+      schema_version: 1,
+      expected_version: 0,
+      definition_id: definitionId,
+      client_id: definition.clientId,
+      period,
+      day_of_month: definition.dayOfMonth,
+      every_n_months: definition.everyNMonths,
+      currency: client.currency,
+      amount_cents: totalAmountCents,
+      line_count: lines.length,
+    })
+
     statements.push({
       text: `INSERT INTO invoice_command_ledger (
           invoice_id, command_id, command_kind, input_fingerprint, actor_type, actor_id,
-          expected_invoice_version, occurred_at, request_json
-        ) VALUES (?, ?, 'recurring.generate', ?, 'user', ?, 0, ?, ?)`,
+          expected_invoice_version, occurred_at, request_json, line_manifest_json
+        ) VALUES (?, ?, 'recurring.generate', ?, 'user', ?, 0, ?, ?, ?)`,
       params: [
         invoiceId,
         commandId,
         fingerprint,
         principal.userId,
         occurredAt,
-        JSON.stringify({
-          schema_version: 1,
-          definition_id: definitionId,
-          period,
-          day_of_month: definition.dayOfMonth,
-          every_n_months: definition.everyNMonths,
-        }),
+        requestJson,
+        lineManifestJson,
       ],
     })
 
@@ -411,7 +439,7 @@ export const createRecurringInvoiceEngine = (
     })
 
     for (const [index, line] of lines.entries()) {
-      const lineId = await stableId('recurring-generation-line', commandId, String(index))
+      const lineId = lineIds[index]!
       statements.push({
         text: `INSERT INTO invoice_line_items (
             id, invoice_id, position, kind, description, quantity, unit_price_cents,
@@ -491,8 +519,17 @@ export const createRecurringInvoiceEngine = (
           version: 0,
           updated_at: occurredAt,
           state: 'draft',
+          close_reason: null,
+          close_write_off_cents: 0,
+          sent_at: null,
+          paid_at: null,
+          paid_date: null,
+          closed_at: null,
           amount_cents: totalAmountCents,
           due_amount_cents: totalAmountCents,
+          written_off_cents: 0,
+          payment_count: 0,
+          payment_status: 'unpaid',
         },
       },
     })
