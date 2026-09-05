@@ -8,6 +8,7 @@ import {
   installEmailConfigurationRoutes,
   installEmailLogRoutes,
   installGeneralResourceRoutes,
+  installModuleSettingsRoutes,
   installMoneyResourceRoutes,
   installOidcRoutes,
   installOutboxRoutes,
@@ -25,6 +26,7 @@ import {
   type OidcTransactionStorePort,
   type OutboxMonitor,
   type PasswordAuthService,
+  type ModuleSettingsService,
   type MoneyResourceRouteOptions,
   type ReportReader,
   type TrackedResourceRepository,
@@ -54,6 +56,10 @@ const moneyResources = new Proxy(
   { get: () => unavailable },
 ) as MoneyResourceRouteOptions["service"];
 const reports = new Proxy({}, { get: () => unavailable }) as ReportReader;
+const moduleSettings = new Proxy(
+  {},
+  { get: () => unavailable },
+) as ModuleSettingsService;
 const tokens = new Proxy({}, { get: () => unavailable }) as ApiTokenService;
 const passwordAuth = new Proxy(
   {},
@@ -135,6 +141,10 @@ const documentedApp = () =>
       });
       installAttachmentRoutes(api);
       installReportRoutes(api, reports);
+      installModuleSettingsRoutes(api, {
+        service: moduleSettings,
+        clock: () => "2026-08-28T12:00:00.000Z",
+      });
     },
   });
 
