@@ -275,6 +275,39 @@ export const createRecurringInvoiceEngine = (
     }
 
     if (definition.nextIssueOn > asOfDate) {
+      // Nothing new is due — but the cycle that just ran may be exactly what the
+      // caller is retrying. Generation advances nextIssueOn, so by the time a
+      // retry arrives the period it targeted is no longer derivable from the
+      // definition; it has to be recovered from the ledger. Without this a retry
+      // gets `not_due` and the idempotency branch below is unreachable.
+      const previous = await first<{ completed: number | boolean; invoiceId: number; period: string }>(
+        database,
+        {
+          text: `SELECT completed, invoice_id AS "invoiceId",
+              json_extract(request_json, '$.period') AS period
+            FROM invoice_command_ledger
+            WHERE command_kind = 'recurring.generate'
+              AND json_extract(request_json, '$.definition_id') = ?
+              AND json_extract(request_json, '$.period') <= ?
+            ORDER BY json_extract(request_json, '$.period') DESC
+            LIMIT 1`,
+          params: [definitionId, asOfDate],
+        },
+      )
+      if (
+        previous !== null &&
+        previous.completed &&
+        advanceIssueDate(previous.period, definition.everyNMonths, definition.dayOfMonth) ===
+          definition.nextIssueOn
+      ) {
+        return {
+          invoiceId: previous.invoiceId,
+          definitionId,
+          period: previous.period,
+          nextIssueOn: definition.nextIssueOn,
+          retainerDrawdownCents: null,
+        }
+      }
       throw new RecurringEngineError('not_due', `definition ${definitionId} is not due until ${definition.nextIssueOn}`)
     }
 
@@ -401,9 +434,9 @@ export const createRecurringInvoiceEngine = (
     statements.push({
       text: `INSERT INTO invoices (
           id, client_id, created_by_user_id, number, subject, notes, currency,
-          issue_date, due_date, payment_terms, recurring_invoice_id, project_id,
-          created_at, updated_at
-        ) SELECT ?, ?, ?, CAST(sequence.next_number AS TEXT), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          issue_date, due_date, payment_terms, recurring_invoice_id, retainer_id,
+          project_id, created_at, updated_at
+        ) SELECT ?, ?, ?, CAST(sequence.next_number AS TEXT), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         FROM invoice_number_sequence sequence
         WHERE sequence.singleton = 1
           AND EXISTS (
@@ -428,6 +461,9 @@ export const createRecurringInvoiceEngine = (
         dueDate(issueDate, client.paymentTerms),
         client.paymentTerms,
         definitionId,
+        // A drawdown's invoice must link the retainer it draws from; the ledger
+        // trigger requires invoice.retainer_id to match the movement's.
+        definition.canDrawFromRetainerId,
         projectId,
         occurredAt,
         occurredAt,

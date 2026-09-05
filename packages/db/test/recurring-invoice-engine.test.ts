@@ -105,8 +105,11 @@ const seedRetainer = async (database: TestDatabase, retainerId: number, clientId
     timestamp,
   )
   await database.run(
+    // 'deposit' and 'drawdown' must reference an invoice; an opening balance has
+    // no invoice behind it, and 'reset' is the kind the schema provides for
+    // establishing one.
     `INSERT INTO retainer_ledger (id, retainer_id, kind, unit, amount, occurred_on, notes, created_at)
-     VALUES (?, ?, 'deposit', 'cents', ?, '2026-08-01', 'Initial deposit', ?)`,
+     VALUES (?, ?, 'reset', 'cents', ?, '2026-08-01', 'Opening balance', ?)`,
     `seed:${retainerId}`,
     retainerId,
     balanceCents,
@@ -354,18 +357,18 @@ for (const [runtime, factory] of factories) {
         createInput({ nextIssueOn: '2026-08-31' }),
       )
 
-      await database.run(
-        `UPDATE recurring_invoices SET amount_config = ? WHERE id = ?`,
-        JSON.stringify({ schema_version: 2, type: 'fixed_lines', line_items: [] }),
-        definition.id,
-      )
-
-      const engine = createRecurringInvoiceEngine(database.orm, {
-        clock: () => '2026-08-31T10:00:00.000Z',
-      })
+      // Failing closed is enforced in the schema, not only in the engine: the
+      // database refuses to store a config version it does not know, so
+      // generation can never be handed one. Asserting it here tests the
+      // invariant where it actually lives — the engine's own guard cannot be
+      // reached by staging invalid state, because staging it is impossible.
       await expect(
-        engine.generate(definition.id, '2026-08-31', principal),
-      ).rejects.toThrow()
+        database.run(
+          `UPDATE recurring_invoices SET amount_config = ? WHERE id = ?`,
+          JSON.stringify({ schema_version: 2, type: 'fixed_lines', line_items: [] }),
+          definition.id,
+        ),
+      ).rejects.toThrow(/recurring invoice amount config is invalid/)
     }, 20_000)
 
     it('[unit] rejects generation when definition is not yet due', async () => {
@@ -419,18 +422,15 @@ for (const [runtime, factory] of factories) {
         database.orm as unknown as RecurringInvoiceDatabase,
         createInput({ nextIssueOn: '2026-08-31' }),
       )
-      await database.run(
-        `UPDATE recurring_invoices SET attachment_policy = ? WHERE id = ?`,
-        JSON.stringify({ schema_version: 2, type: 'static', attachment_ids: [1] }),
-        definition.id,
-      )
-      const engine = createRecurringInvoiceEngine(database.orm, {
-        clock: () => '2026-08-31T10:00:00.000Z',
-      })
-
+      // As above: the policy version is rejected by the schema, so an invalid
+      // one never reaches generation.
       await expect(
-        engine.generate(definition.id, '2026-08-31', principal),
-      ).rejects.toThrow()
+        database.run(
+          `UPDATE recurring_invoices SET attachment_policy = ? WHERE id = ?`,
+          JSON.stringify({ schema_version: 2, type: 'static', attachment_ids: [1] }),
+          definition.id,
+        ),
+      ).rejects.toThrow(/recurring attachment policy is invalid/)
     }, 20_000)
 
     it('[unit] generates invoices with multi-line definitions', async () => {
