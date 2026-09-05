@@ -122,8 +122,9 @@ for (const [runtime, factory] of factories) {
         { id: '0028_timesheet_lock_policy' },
         { id: '0029_outbox_delivery' },
         { id: '0030_email_templates' },
-        { id: '0031_scheduled_reminders' },
+        { id: '0031_team_people' },
         { id: '0032_invoice_email_delivery' },
+        { id: '0034_scheduled_reminders' },
       ])
     })
 
@@ -156,8 +157,9 @@ for (const [runtime, factory] of factories) {
         { id: '0028_timesheet_lock_policy' },
         { id: '0029_outbox_delivery' },
         { id: '0030_email_templates' },
-        { id: '0031_scheduled_reminders' },
+        { id: '0031_team_people' },
         { id: '0032_invoice_email_delivery' },
+        { id: '0034_scheduled_reminders' },
       ])
       expect(
         await current.rows<{ name: string }>(

@@ -342,14 +342,11 @@ for (const [runtime, factory] of factories) {
       })
       await service.drain()
 
-      // Directly update invoice state to simulate it being paid without going
-      // through the outbox (e.g. direct import reconciliation)
-      await database.run(
-        `UPDATE invoices SET state = 'paid', paid_at = ?, version = 2,
-         updated_at = ? WHERE id = 1`,
-        paidAt,
-        paidAt,
-      )
+      // Pay the invoice without going through the outbox (e.g. direct import
+      // reconciliation). It still goes through the payment command: a raw
+      // UPDATE trips the lifecycle guard, which requires every invoice state
+      // change to carry its pending command.
+      await payInvoice(database)
 
       const result = await scheduler.processReminders({
         now: '2026-09-18T09:00:00.000Z',

@@ -19,6 +19,7 @@ export {
   type InvoicePaymentOption,
 } from './invoice-payments.js'
 export * from './migrate.js'
+export * from './module-settings.js'
 export * from './money-resources.js'
 export * from './operations.js'
 export * from './outbox.js'
@@ -37,3 +38,5 @@ export * from './timesheet-approvals.js'
 export * from './timesheet-lock-policy.js'
 export * from './tracked-resource-repository.js'
 export * from './tracked-state.js'
+export * from './team.js'
+export * from './team-access.js'

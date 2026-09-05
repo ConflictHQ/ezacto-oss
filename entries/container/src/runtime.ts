@@ -17,8 +17,10 @@ import {
   createInvoiceGenerationService,
   createMoneyResourceRepository,
   createReportRepository,
+  createModuleSettingsRepository,
   createTimesheetApprovalRepository,
   createTimesheetLockPolicyRepository,
+  createTeamRepository,
   DrizzleTrackedResourceRepository,
   enrollInstanceOwnerPasswordContainer,
   migrateContainer,
@@ -296,6 +298,7 @@ export const createContainerRuntime = async (
         enrollInstanceOwnerPasswordContainer(database, input),
       tokens: createApiTokenStore(drizzle),
       generalResources: createGeneralResourceRepository(drizzle),
+      team: createTeamRepository(drizzle),
       trackedResources: new DrizzleTrackedResourceRepository(
         drizzle,
         timesheetLockPolicy,
@@ -309,9 +312,19 @@ export const createContainerRuntime = async (
           .get() as { enabled: number } | undefined
         return row?.enabled === 1
       },
+      isTeamModuleEnabled: async () => {
+        const row = database
+          .prepare(
+            `SELECT COALESCE(json_extract(modules, '$.team'), 0) AS enabled
+             FROM organizations WHERE id = 1`,
+          )
+          .get() as { enabled: number } | undefined
+        return row?.enabled === 1
+      },
       moneyResources,
       invoiceGeneration: createInvoiceGenerationService(drizzle),
       reports: createReportRepository(drizzle),
+      moduleSettings: createModuleSettingsRepository(drizzle),
       timesheetApprovals: createTimesheetApprovalRepository(drizzle),
       timesheetLockPolicy,
       cursorSigningKey: config.cursorSigningKey,

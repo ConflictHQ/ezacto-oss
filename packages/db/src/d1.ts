@@ -27,6 +27,7 @@ export {
   type CreateApiTokenStoreOptions,
 } from './api-tokens.js'
 export { createGeneralResourceRepository } from './general-resources.js'
+export { createTeamRepository } from './team.js'
 export {
   createTimesheetApprovalRepository,
   TimesheetApprovalError,
@@ -94,6 +95,11 @@ export {
   type OutboxSubscriber,
   type OutboxSubscriberContext,
 } from './outbox.js'
+export {
+  createModuleSettingsRepository,
+  type ModuleName,
+  type ModuleState,
+} from './module-settings.js'
 export { createReportRepository, type ReportRepository } from './reports.js'
 export { createD1IdentityStore, type IdentityStore, type IdentityStoreOptions } from './identity.js'
 export {
