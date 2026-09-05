@@ -182,6 +182,8 @@ export const users = sqliteTable(
     avatarUrl: text('avatar_url'),
     samlExempt: integer('saml_exempt', { mode: 'boolean' }).notNull().default(false),
     timeEntryNotesMinimumLength: integer('time_entry_notes_minimum_length'),
+    version: integer('version').notNull().default(0),
+    teamWriteToken: text('team_write_token'),
     ...timestamps,
   },
   (table) => [
@@ -205,6 +207,7 @@ export const users = sqliteTable(
       'users_owner_is_administrator',
       sql`${table.isOwner} = 0 or ${table.profile} = 'administrator'`,
     ),
+    check('users_version_nonnegative', sql`${table.version} between 0 and 9007199254740991`),
   ],
 )
 
@@ -595,6 +598,75 @@ export const teammateAssignments = sqliteTable(
   (table) => [
     primaryKey({ columns: [table.managerId, table.userId] }),
     check('teammate_assignments_not_self', sql`${table.managerId} <> ${table.userId}`),
+  ],
+)
+
+export const notificationPreferences = sqliteTable(
+  'notification_preferences',
+  {
+    userId: integer('user_id')
+      .primaryKey()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    dailyReminderEnabled: integer('daily_reminder_enabled', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    reminderTime: text('reminder_time'),
+    reminderDays: text('reminder_days', { mode: 'json' }).$type<string[]>().notNull(),
+    emailEnabled: integer('email_enabled', { mode: 'boolean' }).notNull().default(false),
+    desktopEnabled: integer('desktop_enabled', { mode: 'boolean' }).notNull().default(false),
+    slackEnabled: integer('slack_enabled', { mode: 'boolean' }).notNull().default(false),
+    includeInTeamReminders: integer('include_in_team_reminders', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    weeklyDigest: integer('weekly_digest', { mode: 'boolean' }).notNull().default(false),
+    notifyProjectDeleted: integer('notify_project_deleted', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    ...timestamps,
+  },
+  (table) => [
+    check('notification_preferences_days_json', sql`json_valid(${table.reminderDays})`),
+    check(
+      'notification_preferences_daily_shape',
+      sql`${table.dailyReminderEnabled} = 0 or (
+        ${table.reminderTime} is not null and json_array_length(${table.reminderDays}) > 0
+        and (${table.emailEnabled} = 1 or ${table.desktopEnabled} = 1 or ${table.slackEnabled} = 1)
+      )`,
+    ),
+  ],
+)
+
+export const teamCommandLedger = sqliteTable(
+  'team_command_ledger',
+  {
+    targetUserId: integer('target_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    commandKind: text('command_kind', {
+      enum: [
+        'person.update',
+        'person.assignments.replace',
+        'person.notifications.update',
+        'person.billable_rate.append',
+        'person.cost_rate.append',
+      ],
+    }).notNull(),
+    commandId: text('command_id').notNull(),
+    inputFingerprint: text('input_fingerprint').notNull(),
+    actorUserId: integer('actor_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    resultJson: text('result_json').notNull(),
+    occurredAt: text('occurred_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.commandKind, table.commandId] }),
+    index('team_command_ledger_target').on(
+      table.targetUserId,
+      table.occurredAt,
+      table.commandKind,
+      table.commandId,
+    ),
   ],
 )
 
@@ -2328,6 +2400,83 @@ export const eventOutbox = sqliteTable(
     check('event_outbox_occurred_at_canonical', canonicalTimestamp(table.occurredAt)),
     check('event_outbox_available_at_canonical', canonicalTimestamp(table.availableAt)),
     check('event_outbox_published_at_canonical', nullableCanonicalTimestamp(table.publishedAt)),
+  ],
+)
+
+export const invoiceEmailIntents = sqliteTable(
+  'invoice_email_intents',
+  {
+    invoiceMessageId: integer('invoice_message_id')
+      .primaryKey()
+      .references(() => invoiceMessages.id, { onDelete: 'restrict' }),
+    eventId: text('event_id')
+      .notNull()
+      .unique()
+      .references(() => eventOutbox.id, { onDelete: 'restrict' }),
+    templateKind: text('template_kind', { enum: ['invoice'] }).notNull(),
+    templateVersion: integer('template_version').notNull(),
+    senderIdentityId: integer('sender_identity_id')
+      .notNull()
+      .references(() => senderIdentities.id, { onDelete: 'restrict' }),
+    senderIdentityVersion: integer('sender_identity_version').notNull(),
+    senderEvidenceVersion: integer('sender_evidence_version').notNull(),
+    fromName: text('from_name').notNull(),
+    fromEmail: text('from_email').notNull(),
+    replyToEmail: text('reply_to_email'),
+    subject: text('subject').notNull(),
+    textBody: text('text_body').notNull(),
+    htmlBody: text('html_body'),
+    confirmedByUserId: integer('confirmed_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    confirmedAt: text('confirmed_at').notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.templateKind, table.templateVersion],
+      foreignColumns: [emailTemplateVersions.templateKind, emailTemplateVersions.version],
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.senderIdentityId, table.senderEvidenceVersion],
+      foreignColumns: [
+        senderIdentityEvidence.senderIdentityId,
+        senderIdentityEvidence.evidenceVersion,
+      ],
+    }).onDelete('restrict'),
+    check('invoice_email_intents_confirmed_at_canonical', canonicalTimestamp(table.confirmedAt)),
+  ],
+)
+
+export const invoiceEmailRecipients = sqliteTable(
+  'invoice_email_recipients',
+  {
+    invoiceMessageId: integer('invoice_message_id')
+      .notNull()
+      .references(() => invoiceEmailIntents.invoiceMessageId, { onDelete: 'restrict' }),
+    recipientIndex: integer('recipient_index').notNull(),
+    deliveryId: integer('delivery_id')
+      .notNull()
+      .unique()
+      .references(() => emailLog.id, { onDelete: 'restrict' }),
+    name: text('name').notNull(),
+    email: text('email').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.invoiceMessageId, table.recipientIndex] }),
+    uniqueIndex('invoice_email_recipients_message_email_unique').on(
+      table.invoiceMessageId,
+      table.email,
+    ),
+    index('invoice_email_recipients_message').on(
+      table.invoiceMessageId,
+      table.recipientIndex,
+    ),
+    check(
+      'invoice_email_recipients_index_safe',
+      sql`${table.recipientIndex} between 0 and 999`,
+    ),
+    check('invoice_email_recipients_created_at_canonical', canonicalTimestamp(table.createdAt)),
   ],
 )
 

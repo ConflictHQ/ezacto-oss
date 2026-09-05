@@ -15,6 +15,11 @@ export type {
   SenderIdentityVerificationStatus,
 }
 export {
+  MailgunMailer,
+  type MailgunConfig,
+  type MailgunOptions,
+} from './mailgun.js'
+export {
   SesMailer,
   type SesAccountHealth,
   type SesIdentityHealth,
@@ -144,6 +149,8 @@ export interface EmailProviderReceipt {
 
 export interface QueuedMailer {
   enqueue(message: EmailMessage): Promise<EmailLogRecord>
+  /** Queue an already-persisted log row. Retries reuse its deterministic id. */
+  enqueueExisting?(deliveryId: number, message: EmailMessage): Promise<void>
 }
 
 export class EmailQueueUnavailableError extends Error {
@@ -249,6 +256,18 @@ export const createQueuedMailer = (
     }
     return delivery
   },
+  async enqueueExisting(deliveryId, message) {
+    if (!Number.isSafeInteger(deliveryId) || deliveryId < 1) {
+      throw new RangeError('delivery id must be a positive safe integer')
+    }
+    const safeMessage = copyMessage(message)
+    try {
+      await queue.send({ schemaVersion: 1, deliveryId, message: safeMessage })
+    } catch {
+      // The log remains queued: the outbox owns durable retry of this enqueue.
+      throw new EmailQueueUnavailableError()
+    }
+  },
 })
 
 export interface SenderIdentityResolver {
@@ -272,6 +291,17 @@ export interface SenderBoundQueuedMailer {
       senderIdentityId?: number
     },
   ): Promise<EmailLogRecord>
+  enqueuePersisted?(
+    deliveryId: number,
+    binding: Readonly<{
+      senderIdentityId: number
+      senderIdentityVersion: number
+      senderEvidenceVersion: number
+      from: EmailSender
+      replyTo?: readonly EmailRecipient[]
+    }>,
+    message: Omit<EmailMessage, 'from' | 'replyTo'>,
+  ): Promise<void>
 }
 
 export const configuredEmailSender = (value: string): EmailSender => {
@@ -324,6 +354,9 @@ export const createDeploymentSenderQueuedMailer = (
         ...(message.html === undefined ? {} : { html: message.html }),
         ...(message.related === undefined ? {} : { related: message.related }),
       })
+    },
+    enqueuePersisted() {
+      throw new SenderIdentityUnavailableError('sender_identity_missing', null)
     },
   }
 }
@@ -398,6 +431,29 @@ export const createSenderBoundQueuedMailer = (
         text: message.text,
         ...(message.html === undefined ? {} : { html: message.html }),
         ...(message.related === undefined ? {} : { related: message.related }),
+      })
+    },
+    async enqueuePersisted(deliveryId, binding, message) {
+      const identity = await resolveAvailable(binding.senderIdentityId)
+      const replyTo =
+        identity.replyToEmail === null ? undefined : [{ email: identity.replyToEmail }]
+      if (
+        identity.version !== binding.senderIdentityVersion ||
+        identity.evidence?.version !== binding.senderEvidenceVersion ||
+        identity.email !== binding.from.email ||
+        identity.displayName !== binding.from.name ||
+        JSON.stringify(replyTo ?? []) !== JSON.stringify(binding.replyTo ?? [])
+      ) {
+        throw new SenderIdentityUnavailableError(
+          'sender_identity_binding_mismatch',
+          identity.id,
+        )
+      }
+      if (queued.enqueueExisting === undefined) throw new EmailQueueUnavailableError()
+      await queued.enqueueExisting(deliveryId, {
+        ...message,
+        from: binding.from,
+        ...(binding.replyTo === undefined ? {} : { replyTo: binding.replyTo }),
       })
     },
   }

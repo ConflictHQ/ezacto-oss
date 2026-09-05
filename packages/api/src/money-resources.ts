@@ -1,8 +1,14 @@
 import {
   calculateInvoiceLineAmountCents,
+  interpolateEmailTemplate,
   type InvoiceActorType,
   type InvoiceLifecycleCommand,
 } from "@ezacto/core";
+import {
+  SenderIdentityUnavailableError,
+  type SenderBoundQueuedMailer,
+} from "@ezacto/mailer";
+import type { EmailConfigurationService } from "./email-configuration.js";
 import type { Context, Hono, MiddlewareHandler } from "hono";
 import { requireApiScope } from "./auth.js";
 import type { ApiContext, UserPrincipal } from "./context.js";
@@ -27,6 +33,35 @@ interface IdentifiedResource {
 interface InvoiceResource extends IdentifiedResource {
   version: number;
   currency: string;
+}
+
+export interface InvoiceDeliveryContext {
+  invoiceId: number;
+  number: string;
+  subject: string | null;
+  currency: string;
+  amountCents: number;
+  issueDate: string;
+  dueDate: string;
+  organizationName: string;
+  clientName: string;
+}
+
+export interface InvoiceDeliveryJob {
+  deliveryId: number;
+  senderIdentityId: number;
+  senderIdentityVersion: number;
+  senderEvidenceVersion: number;
+  fromName: string;
+  fromEmail: string;
+  replyToEmail: string | null;
+  recipientName: string;
+  recipientEmail: string;
+  templateVersion: number;
+  subject: string;
+  textBody: string;
+  htmlBody: string | null;
+  invoiceMessageId: number;
 }
 
 interface EstimateResource extends IdentifiedResource {
@@ -267,6 +302,8 @@ interface MoneyResourceService {
   ): Promise<number>;
   listInvoices(window: CursorWindow): Promise<InvoiceResource[]>;
   getInvoice(id: number): Promise<InvoiceResource | null>;
+  getInvoiceDeliveryContext(id: number): Promise<InvoiceDeliveryContext | null>;
+  listInvoiceDeliveryJobs(eventId: string): Promise<InvoiceDeliveryJob[]>;
   listEstimates(window: CursorWindow): Promise<EstimateResource[]>;
   getEstimate(id: number): Promise<EstimateResource | null>;
   listEstimateMessages(
@@ -292,6 +329,19 @@ interface MoneyResourceService {
       messageId: number;
       eventId: string;
       message?: LifecycleMessage;
+      delivery?: {
+        templateVersion: number;
+        senderIdentityId: number;
+        senderIdentityVersion: number;
+        senderEvidenceVersion: number;
+        fromName: string;
+        fromEmail: string;
+        replyToEmail: string | null;
+        subject: string;
+        textBody: string;
+        htmlBody: string | null;
+        recipients: readonly { deliveryId: number; name: string; email: string }[];
+      };
     },
   ): Promise<InvoiceCommandResult>;
   executeEdit(
@@ -394,6 +444,13 @@ export interface MoneyResourceRouteOptions {
   cursorSigningKey: Uint8Array;
   clock?: () => string;
   generation?: InvoiceGenerationPort;
+  invoiceDelivery?: {
+    configuration: Pick<
+      EmailConfigurationService,
+      "getTemplate" | "getSenderIdentity" | "listSenderIdentities"
+    >;
+    mailer: SenderBoundQueuedMailer;
+  };
 }
 
 type ResolvedMoneyResourceRouteOptions = Omit<
@@ -402,6 +459,55 @@ type ResolvedMoneyResourceRouteOptions = Omit<
 > & {
   clock: () => string;
 };
+
+interface InvoiceOutboxEvent {
+  id: string;
+  eventType: string;
+}
+
+/** Subscriber registration used by both runtimes; provider I/O remains in the queue consumer. */
+export const createInvoiceEmailOutboxSubscriber = (
+  service: Pick<MoneyResourceService, "listInvoiceDeliveryJobs">,
+  mailer?: SenderBoundQueuedMailer,
+): {
+  readonly id: "invoice_email";
+  deliver(event: Readonly<InvoiceOutboxEvent>): Promise<void>;
+} => ({
+  id: "invoice_email",
+  async deliver(event) {
+    if (event.eventType !== "invoice.sent") return;
+    const jobs = await service.listInvoiceDeliveryJobs(event.id);
+    if (jobs.length > 0 && mailer?.enqueuePersisted === undefined) {
+      throw new Error("invoice email durable enqueue is unavailable");
+    }
+    for (const job of jobs) {
+      await mailer!.enqueuePersisted!(
+        job.deliveryId,
+        {
+          senderIdentityId: job.senderIdentityId,
+          senderIdentityVersion: job.senderIdentityVersion,
+          senderEvidenceVersion: job.senderEvidenceVersion,
+          from: { email: job.fromEmail, name: job.fromName },
+          ...(job.replyToEmail === null
+            ? {}
+            : { replyTo: [{ email: job.replyToEmail }] }),
+        },
+        {
+          to: [
+            job.recipientName === ""
+              ? { email: job.recipientEmail }
+              : { email: job.recipientEmail, name: job.recipientName },
+          ],
+          template: `invoice:${job.templateVersion}`,
+          subject: job.subject,
+          text: job.textBody,
+          ...(job.htmlBody === null ? {} : { html: job.htmlBody }),
+          related: { type: "invoice_message", id: job.invoiceMessageId },
+        },
+      );
+    }
+  },
+});
 
 const commandIdPattern = /^[A-Za-z0-9._:-]{1,128}$/;
 const paymentTerms = [
@@ -933,6 +1039,49 @@ const parseRecipients = (
       return [];
     }
     return [{ name: recipient.name, email: recipient.email }];
+  });
+};
+
+const deliveryEmailPattern = /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/u;
+
+const parseDeliveryRecipients = (
+  body: JsonObject,
+  errors: FieldError[],
+): Array<{ name: string; email: string }> => {
+  const parsed = parseRecipients(body, errors);
+  if (parsed.length === 0) {
+    errors.push({
+      field: "recipients",
+      code: "required",
+      message: "at least one recipient is required",
+    });
+  }
+  const seen = new Set<string>();
+  return parsed.flatMap((recipient, index) => {
+    const name = recipient.name.normalize("NFC").trim();
+    const email = recipient.email.normalize("NFC").trim().toLowerCase();
+    if (
+      name.length > 200 ||
+      email.length > 254 ||
+      !deliveryEmailPattern.test(email)
+    ) {
+      errors.push({
+        field: `recipients[${index}]`,
+        code: "invalid_email",
+        message: "recipient must contain a valid bounded email address",
+      });
+      return [];
+    }
+    if (seen.has(email)) {
+      errors.push({
+        field: `recipients[${index}]`,
+        code: "duplicate",
+        message: "recipient email addresses must be unique",
+      });
+      return [];
+    }
+    seen.add(email);
+    return [{ name, email }];
   });
 };
 
@@ -1708,6 +1857,180 @@ const installLifecycle = <Bindings extends object>(
   );
 };
 
+const installInvoiceDelivery = <Bindings extends object>(
+  api: Hono<ApiContext<Bindings>>,
+  options: ResolvedMoneyResourceRouteOptions,
+): void => {
+  api.post("/invoices/:id/deliveries", async (context) => {
+    const principal = requireWrite(context);
+    const invoiceId = resourceId(context.req.param("id")!, "invoice");
+    const commandId = idempotencyKey(context);
+    const body = await readObjectBody(context);
+    const errors = unknownFieldErrors(
+      body,
+      new Set([
+        "expected_version",
+        "recipients",
+        "sender_identity_id",
+        "template_version",
+        "confirmed",
+      ]),
+    );
+    const version = expectedVersion(body, errors);
+    const recipients = parseDeliveryRecipients(body, errors);
+    const senderIdentityId = integerValue(body, "sender_identity_id", errors, {
+      minimum: 1,
+    });
+    const templateVersion = integerValue(body, "template_version", errors, {
+      minimum: 1,
+    });
+    if (body.confirmed !== true) {
+      errors.push({
+        field: "confirmed",
+        code: "confirmation_required",
+        message: "confirmed must be true to send this invoice email",
+      });
+    }
+    assertFields(errors);
+    if (options.invoiceDelivery === undefined) {
+      throw new ApiError({
+        status: 503,
+        code: "email_delivery_unavailable",
+        message: "Invoice email delivery is not configured.",
+      });
+    }
+
+    const configuration = options.invoiceDelivery.configuration;
+    const [invoice, template, senderSnapshot, senderList] = await Promise.all([
+      options.service.getInvoiceDeliveryContext(invoiceId),
+      configuration.getTemplate("invoice", templateVersion ?? undefined),
+      options.service.senderSnapshot(principal.userId),
+      typeof senderIdentityId !== "number"
+        ? configuration.listSenderIdentities()
+        : Promise.resolve([]),
+    ]);
+    if (invoice === null) throw notFound("invoice");
+    if (template === null) throw notFound("invoice email template version");
+    if (senderSnapshot === null) {
+      throw new ApiError({
+        status: 403,
+        code: "principal_unavailable",
+        message: "The acting user is no longer available.",
+      });
+    }
+    const sender =
+      typeof senderIdentityId !== "number"
+        ? senderList.find((candidate) => candidate.isDefault && candidate.archivedAt === null) ?? null
+        : await configuration.getSenderIdentity(senderIdentityId);
+    if (sender === null || sender.evidence === null) {
+      throw new ApiError({
+        status: 409,
+        code: "sender_identity_missing",
+        message: "Configure and verify an organization sender before sending.",
+      });
+    }
+    try {
+      await options.invoiceDelivery.mailer.assertAvailable(sender.id);
+    } catch (error) {
+      if (error instanceof SenderIdentityUnavailableError) {
+        throw new ApiError({
+          status: 409,
+          code: error.code,
+          message: error.message,
+        });
+      }
+      throw error;
+    }
+
+    const issue = new Date(`${invoice.issueDate}T00:00:00.000Z`);
+    const values = {
+      company_name: invoice.organizationName,
+      invoice_id: String(invoice.invoiceId),
+      invoice_issue_month_name: new Intl.DateTimeFormat("en-US", {
+        month: "long",
+        timeZone: "UTC",
+      }).format(issue),
+      invoice_issue_year: String(issue.getUTCFullYear()),
+      invoice_number: invoice.number,
+      invoice_subject: invoice.subject ?? "",
+      invoice_amount: new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: invoice.currency,
+      }).format(invoice.amountCents / 100),
+      invoice_currency: invoice.currency,
+      invoice_issue_date: invoice.issueDate,
+      invoice_due_date: invoice.dueDate,
+      client_name: invoice.clientName,
+    } as const;
+    const interpolation = { unknownVariable: template.unknownVariablePolicy } as const;
+    const subject = interpolateEmailTemplate(
+      "invoice",
+      template.subjectTemplate,
+      values,
+      interpolation,
+    );
+    const textBody = interpolateEmailTemplate(
+      "invoice",
+      template.textTemplate,
+      values,
+      interpolation,
+    );
+    const htmlBody =
+      template.htmlTemplate === null
+        ? null
+        : interpolateEmailTemplate("invoice", template.htmlTemplate, values, {
+            ...interpolation,
+            output: "html",
+          });
+    const eventId = (await eventIds(invoiceId, commandId))[0];
+    const deliveryRecipients = await Promise.all(
+      recipients.map(async (recipient, index) => ({
+        ...recipient,
+        deliveryId: await stableId(`invoice-email-${index}`, invoiceId, commandId),
+      })),
+    );
+    try {
+      const result = await options.service.executeLifecycle({
+        ...commonCommand(principal, invoiceId, commandId, options.clock()),
+        command: "send",
+        expectedVersion: version!,
+        messageId: await stableId("invoice-message", invoiceId, commandId),
+        eventId,
+        message: {
+          sentBy: senderSnapshot.name,
+          sentByEmail: senderSnapshot.email,
+          sentFrom: sender.displayName,
+          sentFromEmail: sender.email,
+          recipients,
+          subject,
+          body: textBody,
+          attachPdf: false,
+          sendMeACopy: false,
+          thankYou: false,
+          reminder: false,
+          sendReminderOn: null,
+        },
+        delivery: {
+          templateVersion: template.version,
+          senderIdentityId: sender.id,
+          senderIdentityVersion: sender.version,
+          senderEvidenceVersion: sender.evidence.version,
+          fromName: sender.displayName,
+          fromEmail: sender.email,
+          replyToEmail: sender.replyToEmail,
+          subject,
+          textBody,
+          htmlBody,
+          recipients: deliveryRecipients,
+        },
+      });
+      return context.json(await invoiceEnvelope(options.service, invoiceId, result), 202);
+    } catch (error) {
+      return translateMoneyError(error);
+    }
+  });
+};
+
 const installPayments = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   options: ResolvedMoneyResourceRouteOptions,
@@ -2421,6 +2744,7 @@ export const installMoneyResourceRoutes = <Bindings extends object>(
   installEstimates(api, options);
   installInvoiceEdits(api, options);
   installLifecycle(api, options);
+  installInvoiceDelivery(api, options);
   installPayments(api, options);
   installRetainers(api, options);
   installRecurring(api, options);

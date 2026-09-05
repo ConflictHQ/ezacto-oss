@@ -11,8 +11,10 @@ import {
   createMoneyResourceRepository,
   createInvoiceGenerationService,
   createReportRepository,
+  createModuleSettingsRepository,
   createTimesheetApprovalRepository,
   createTimesheetLockPolicyRepository,
+  createTeamRepository,
   createD1EmailLogStore,
   createD1EmailConfigurationStore,
   createD1PasswordAuthService,
@@ -24,6 +26,7 @@ import {
   createApiSessionService,
   createCloudflareAccessSessionResolver,
   createCloudflareAccessVerifier,
+  createInvoiceEmailOutboxSubscriber,
 } from "@ezacto/api";
 import type {
   AttachmentObjectPort,
@@ -399,13 +402,20 @@ export const createRuntimeServices = async (
           emailProvider.name,
           emailConfiguration,
         );
+  const moneyResources = createMoneyResourceRepository(drizzle);
+  const outbox = createD1OutboxService(database, {
+    additionalSubscribers: [
+      createInvoiceEmailOutboxSubscriber(moneyResources, organizationMailer),
+    ],
+  });
   return {
     bootstrap: (input) => bootstrapInstanceD1(database, input),
     enrollOwnerPassword: (input) =>
       enrollInstanceOwnerPasswordD1(database, input),
     tokens: createApiTokenStore(drizzle),
     generalResources: createGeneralResourceRepository(drizzle),
-    moneyResources: createMoneyResourceRepository(drizzle),
+    team: createTeamRepository(drizzle),
+    moneyResources,
     invoiceGeneration: createInvoiceGenerationService(drizzle),
     trackedResources: new DrizzleTrackedResourceRepository(
       drizzle,
@@ -415,6 +425,16 @@ export const createRuntimeServices = async (
       const row = await database
         .prepare(
           `SELECT COALESCE(json_extract(modules, '$.expenses'), 0) AS enabled
+           FROM organizations WHERE id = 1`,
+        )
+        .first<{ enabled: number | boolean }>();
+      return row?.enabled === 1 || row?.enabled === true;
+    },
+    moduleSettings: createModuleSettingsRepository(drizzle),
+    isTeamModuleEnabled: async () => {
+      const row = await database
+        .prepare(
+          `SELECT COALESCE(json_extract(modules, '$.team'), 0) AS enabled
            FROM organizations WHERE id = 1`,
         )
         .first<{ enabled: number | boolean }>();
@@ -432,7 +452,7 @@ export const createRuntimeServices = async (
     ...(emailProvider instanceof SesMailer
       ? { senderIdentityVerifier: createSesSenderIdentityVerifier(emailProvider) }
       : {}),
-    outbox: createD1OutboxService(database),
+    outbox,
     identities,
     oidcTransactions: createD1OidcTransactionStore(database),
     ...(deploymentAuthMailer === undefined ? {} : { deploymentAuthMailer }),

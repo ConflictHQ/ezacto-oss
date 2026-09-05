@@ -1,6 +1,7 @@
 import type {
   Attachment,
   Invoice,
+  InvoiceEmailDeliveryInput,
   InvoiceLine,
   InvoiceLineInput,
   InvoiceLineUpdateInput,
@@ -69,6 +70,12 @@ export interface InvoicePaymentApi {
     id: number,
     commandId: string,
     input: InvoiceTransitionInput,
+    signal?: AbortSignal,
+  ): Promise<Invoice>
+  deliverInvoiceEmail(
+    id: number,
+    commandId: string,
+    input: InvoiceEmailDeliveryInput,
     signal?: AbortSignal,
   ): Promise<Invoice>
 }
