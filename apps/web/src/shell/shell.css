@@ -2325,6 +2325,20 @@ dialog h2,
   font-size: clamp(32px, 4vw, 40px);
   line-height: 1.1;
 }
+/* Used by render.ts for table-header and control labels that must reach a
+   screen reader without occupying layout. It had no definition, so those
+   labels were rendering visibly. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
 .eyebrow {
   margin: 0 0 4px;
   color: var(--ez-muted);
@@ -2609,11 +2623,57 @@ dialog h2,
   color: var(--ez-muted);
   font-size: 13px;
 }
+/* Signed in, the account panel is a chip: it carries two short facts and one
+   action, so it sizes to its content and sits at the trailing edge instead of
+   stretching a bordered card across the workspace. The sign-in form shares this
+   shell and still wants the full width, hence the state selector. */
+.auth-shell[data-state='ready'] {
+  width: fit-content;
+  max-width: 100%;
+  /* .workspace-identity sets `margin: 16px auto 0`; with a fit-content width
+     that auto margin-right would centre the chip, so pin it to the edge. */
+  margin-left: auto;
+  margin-right: 0;
+  padding: 10px 10px 10px 14px;
+}
 .current-identity {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
+}
+.identity-avatar {
+  width: 30px;
+  height: 30px;
+  padding: 5px;
+  border: 1px solid var(--ez-border);
+  border-radius: 999px;
+  color: var(--ez-muted);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+}
+.identity-text {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  min-width: 0;
+  line-height: 1.3;
+}
+.identity-name {
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.identity-meta {
+  color: var(--ez-muted);
+  font:
+    500 12px/1.3 var(--ez-font-mono),
+    monospace;
+}
+.identity-signout {
+  padding: 0 14px;
+  font-size: 14px;
 }
 .current-identity button {
   padding: 0 16px;
@@ -2625,15 +2685,9 @@ dialog h2,
 .current-identity .auth-result {
   grid-column: 1 / -1;
 }
-.identity-label {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin: 0;
-}
-.identity-label span:last-child {
-  color: var(--ez-muted);
-  text-transform: capitalize;
+/* Only claim the row once sign-out has something to say. */
+.current-identity .auth-result:empty {
+  display: none;
 }
 .primary-action:disabled,
 button[data-auth-action]:disabled {

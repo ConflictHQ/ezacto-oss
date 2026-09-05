@@ -228,11 +228,12 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
   </nav>
   <section class="auth-shell workspace-identity" data-auth-shell data-state="loading" aria-label="Account">
     <div class="current-identity" data-current-identity hidden>
-      <div>
-        <p class="eyebrow">Signed in</p>
-        <p class="identity-label"><strong>User #<span data-current-user-id>—</span></strong><span data-current-profile>—</span></p>
-      </div>
-      <button type="button" data-logout>Sign out</button>
+      <svg class="identity-avatar" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8.5" r="3.25"/><path d="M5.75 19a6.25 6.25 0 0 1 12.5 0"/></svg>
+      <p class="identity-text">
+        <span class="visually-hidden">Signed in as </span><span class="identity-name" data-current-profile>—</span>
+        <span class="identity-meta">User #<span data-current-user-id>—</span></span>
+      </p>
+      <button type="button" class="identity-signout" data-logout>Sign out</button>
       <p class="auth-result" data-logout-result role="status" aria-live="polite"></p>
     </div>
   </section>
