@@ -1179,8 +1179,6 @@ describe('package contents', () => {
         'dist/migrations/0028_timesheet_lock_policy.d.ts',
         'dist/migrations/0030_email_templates.js',
         'dist/migrations/0030_email_templates.d.ts',
-        'dist/migrations/0031_scheduled_reminders.js',
-        'dist/migrations/0031_scheduled_reminders.d.ts',
         'dist/migrations/0032_invoice_email_delivery.js',
         'dist/migrations/0034_scheduled_reminders.js',
         'dist/migrations/0032_invoice_email_delivery.d.ts',
