@@ -2,12 +2,14 @@ import {
   createApiApp,
   ApiError,
   assertValidCloudflareAccessConfig,
+  assertValidGitHubProviderConfig,
   assertValidOidcProviderConfig,
   generateOpenApiDocument,
   installAttachmentRoutes,
   installEmailLogRoutes,
   installEmailConfigurationRoutes,
   installGeneralResourceRoutes,
+  installGitHubRoutes,
   installMoneyResourceRoutes,
   installOidcRoutes,
   installOutboxRoutes,
@@ -29,6 +31,7 @@ import {
   type ApiSessionService,
   type GeneralResourceRouteOptions,
   type EmailConfigurationRouteOptions,
+  type GitHubProviderConfig,
   type MoneyResourceRouteOptions,
   type OidcIdentityResolver,
   type OidcProviderConfig,
@@ -66,6 +69,8 @@ export type AppEnv = Env & {
   APP_BASE_URL?: string
   OIDC_GOOGLE_CLIENT_ID?: string
   OIDC_GOOGLE_CLIENT_SECRET?: string
+  GITHUB_CLIENT_ID?: string
+  GITHUB_CLIENT_SECRET?: string
   EZACTO_BOOTSTRAP_TOKEN?: string
   BRAND_NAME?: string
   BRAND_TAGLINE?: string
@@ -225,6 +230,14 @@ export const createApp = (services?: RuntimeServices) =>
           identities: services.identities,
           sessions: services.sessions,
           provider: oidcProvider,
+          clientKey: (request) =>
+            request.headers.get('cf-connecting-ip') ?? 'unknown-client',
+        })
+        installGitHubRoutes(app, {
+          transactions: services.oidcTransactions,
+          identities: services.identities,
+          sessions: services.sessions,
+          provider: (env) => githubProvider(env),
           clientKey: (request) =>
             request.headers.get('cf-connecting-ip') ?? 'unknown-client',
         })
@@ -859,20 +872,48 @@ export const oidcProvider = (
   }
 }
 
+/** GitHub OAuth2 provider. Not OIDC; uses /user and /user/emails endpoints. */
+export const githubProvider = (
+  env: AppEnv,
+): GitHubProviderConfig | null => {
+  const clientId = configuredCredential(env.GITHUB_CLIENT_ID)
+  const clientSecret = configuredCredential(env.GITHUB_CLIENT_SECRET)
+  if (clientId === null && clientSecret === null) return null
+  if (clientId === null || clientSecret === null) {
+    throw new TypeError('GitHub client id and secret must be configured together')
+  }
+  return {
+    clientId,
+    clientSecret,
+    redirectOrigin: redirectOrigin(env),
+  }
+}
+
 /** Public shell availability contains provider keys only, never credentials. */
 export const configuredSignInProviders = (
   env: AppEnv,
 ): readonly SignInProvider[] => {
+  const providers: SignInProvider[] = []
   try {
     const google = oidcProvider('google', env)
-    if (google === null) return []
-    assertValidOidcProviderConfig(google)
-    return ['google']
+    if (google !== null) {
+      assertValidOidcProviderConfig(google)
+      providers.push('google')
+    }
   } catch {
     // A partial or invalid deployment configuration must not advertise a flow
     // that cannot start. The fixed provider route continues to fail closed.
-    return []
   }
+  try {
+    const github = githubProvider(env)
+    if (github !== null) {
+      assertValidGitHubProviderConfig(github)
+      providers.push('github')
+    }
+  } catch {
+    // Same fail-closed policy as Google above.
+  }
+  return providers
 }
 
 type BootstrapBody = Omit<InstanceBootstrapInput, 'token'>

@@ -54,7 +54,7 @@ export interface AppShellOptions {
   readonly sessionCookiePresent?: boolean
 }
 
-export type SignInProvider = 'google'
+export type SignInProvider = 'google' | 'github'
 
 export interface DataQualityBannerOptions {
   readonly message: string
@@ -116,10 +116,21 @@ const hrefFor = (section: (typeof sections)[number]): string =>
         : `/${section.toLocaleLowerCase('en-US')}`
 
 const providerSignIn = (providers: readonly SignInProvider[]): string => {
-  if (!providers.includes('google')) return ''
+  const links: string[] = []
+  if (providers.includes('google')) {
+    links.push(
+      `<a class="oidc-sign-in" data-oidc-provider="google" href="${safePath('/auth/oidc/google')}">Continue with Google</a>`,
+    )
+  }
+  if (providers.includes('github')) {
+    links.push(
+      `<a class="oidc-sign-in" data-oidc-provider="github" href="${safePath('/auth/github')}">Continue with GitHub</a>`,
+    )
+  }
+  if (links.length === 0) return ''
   return (
     `<div class="oidc-entry" data-oidc-entry>` +
-    `<a class="oidc-sign-in" data-oidc-provider="google" href="${safePath('/auth/oidc/google')}">Continue with Google</a>` +
+    links.join('') +
     `<span class="auth-divider" aria-hidden="true">or use your password</span>` +
     `</div>`
   )
