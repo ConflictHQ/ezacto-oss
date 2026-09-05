@@ -23,7 +23,10 @@ import { createProjectDirectoryController } from '../projects/browser.js'
 import { createReportsController } from '../reports/browser.js'
 import { createExpenseWorkflowController } from '../expenses/browser.js'
 import { createTaskAdminController } from '../tasks/browser.js'
+import { createTeamDirectoryController } from '../team/browser.js'
+import { teamCapabilities } from '../team/model.js'
 import { createExpenseCategoryDirectoryController } from '../expense-categories/browser.js'
+import { createModuleSettingsController } from '../module-settings/browser.js'
 import {
   createInvoicePaymentController,
   renderInvoiceListItems,
@@ -714,11 +717,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const projectListPage = document.documentElement.dataset.appView === 'project-list'
   const projectDetailPage = document.documentElement.dataset.appView === 'project-detail'
   const taskListPage = document.documentElement.dataset.appView === 'task-list'
+  const teamListPage = document.documentElement.dataset.appView === 'team-list'
+  const teamPersonPage = document.documentElement.dataset.appView === 'team-person'
   const reportsPage = document.documentElement.dataset.appView === 'reports'
   const expenseListPage = document.documentElement.dataset.appView === 'expense-list'
   const expenseDetailPage = document.documentElement.dataset.appView === 'expense-detail'
   const expenseCategoriesPage =
     document.documentElement.dataset.appView === 'expense-categories'
+  const moduleSettingsPage =
+    document.documentElement.dataset.appView === 'module-settings'
   const timesheetApprovalsPage =
     document.documentElement.dataset.appView === 'timesheet-approvals'
   const brandName = document.documentElement.dataset.brand ?? 'ezacto'
@@ -740,7 +747,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
                 : projectDetailPage
                   ? ' — Project detail'
                   : taskListPage
-                    ? ' — Tasks'
+                  ? ' — Tasks'
+                  : teamListPage
+                    ? ' — Team'
+                    : teamPersonPage
+                      ? ' — Person'
                   : reportsPage
                     ? ' — Reports'
                     : expenseListPage
@@ -749,7 +760,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
                         ? ' — Expense detail'
                         : expenseCategoriesPage
                           ? ' — Expense categories'
-                          : timesheetApprovalsPage
+                          : moduleSettingsPage
+                            ? ' — Module settings'
+                            : timesheetApprovalsPage
                             ? ' — Approvals'
                             : ' — Time',
   )
@@ -803,9 +816,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const clientDirectory = createClientDirectoryController(api)
   const projectDirectory = createProjectDirectoryController(api)
   const taskAdmin = createTaskAdminController(api)
+  const teamDirectory = createTeamDirectoryController(api)
   const reports = createReportsController(api)
   const expenseWorkflow = createExpenseWorkflowController(api)
   const expenseCategories = createExpenseCategoryDirectoryController(api)
+  const moduleSettings = createModuleSettingsController()
   const invoicePayments = createInvoicePaymentController(api)
   const invoiceList = required<HTMLElement>('[data-invoice-list]')
   const invoiceListStatus = required<HTMLElement>('[data-invoice-list-status]')
@@ -1172,6 +1187,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     currentIdentityPanel.hidden = false
     required<HTMLElement>('[data-current-user-id]').textContent = String(identity.user_id)
     required<HTMLElement>('[data-current-profile]').textContent = profileLabel(identity.profile)
+    for (const link of document.querySelectorAll<HTMLElement>('[data-team-nav]')) {
+      link.hidden = true
+    }
     signInResult.textContent = ''
     logoutResult.textContent = ''
     setApplicationAvailability(true)
@@ -1190,6 +1208,22 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       return true
     }
     return false
+  }
+
+  const loadTeamNavigation = async (
+    identity: Whoami,
+    operation: AuthOperation,
+  ): Promise<void> => {
+    if (!teamCapabilities(identity).canRead || api.getTeamStatus === undefined) return
+    try {
+      const status = await api.getTeamStatus(operation.signal)
+      if (!isSessionCurrent(operation)) return
+      for (const link of document.querySelectorAll<HTMLElement>('[data-team-nav]')) {
+        link.hidden = !status.enabled
+      }
+    } catch (error) {
+      handleSessionFailure(error, operation)
+    }
   }
 
   const updateRowTaskOptions = (projectId: number): void => {
@@ -1770,6 +1804,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const identity = await api.whoami(operation.signal)
     if (!isGenerationCurrent(operation)) return
     const authenticated = showAuthenticated(identity)
+    void loadTeamNavigation(identity, authenticated)
     if (invoiceGenerationPage) {
       await Promise.all([loadInvoiceGeneration(authenticated), loadWeek(authenticated)])
     } else if (invoiceListPage) {
@@ -1810,6 +1845,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         ),
         loadWeek(authenticated),
       ])
+    } else if (teamListPage || teamPersonPage) {
+      await Promise.all([
+        teamDirectory.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
     } else if (reportsPage) {
       await Promise.all([
         reports.activate(
@@ -1831,6 +1875,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     } else if (expenseCategoriesPage) {
       await Promise.all([
         expenseCategories.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (moduleSettingsPage) {
+      await Promise.all([
+        moduleSettings.activate(
           identity,
           authenticated.signal,
           (error) => handleSessionFailure(error, authenticated),

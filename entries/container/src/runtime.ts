@@ -17,14 +17,17 @@ import {
   createInvoiceGenerationService,
   createMoneyResourceRepository,
   createReportRepository,
+  createModuleSettingsRepository,
   createTimesheetApprovalRepository,
   createTimesheetLockPolicyRepository,
+  createTeamRepository,
   DrizzleTrackedResourceRepository,
   enrollInstanceOwnerPasswordContainer,
   migrateContainer,
 } from '@ezacto/db'
 import {
   createApiSessionService,
+  createInvoiceEmailOutboxSubscriber,
   createQueuedAuthMailer,
   type AttachmentRouteOptions,
   type UserPrincipal,
@@ -257,7 +260,6 @@ export const createContainerRuntime = async (
     )
     const emailLog = createContainerEmailLogStore(database)
     const emailConfiguration = createContainerEmailConfigurationStore(database)
-    const outbox = createContainerOutboxService(database)
     const smtp =
       options.emailProvider ??
       new SmtpMailer({ url: config.smtp.url, from: config.smtp.from })
@@ -267,6 +269,18 @@ export const createContainerRuntime = async (
     if (verify !== undefined) await verify()
     queue = new ContainerEmailQueue(emailLog, smtp)
     const queuedMailer = createQueuedMailer(emailLog, queue)
+    const moneyResources = createMoneyResourceRepository(drizzle)
+    const organizationMailer = createSenderBoundQueuedMailer(
+      emailConfiguration,
+      queuedMailer,
+      smtp.name,
+      config.smtp.from,
+    )
+    const outbox = createContainerOutboxService(database, {
+      additionalSubscribers: [
+        createInvoiceEmailOutboxSubscriber(moneyResources, organizationMailer),
+      ],
+    })
     const organizationName = async () => {
       const row = database
         .prepare('SELECT name FROM organizations WHERE id = 1')
@@ -284,6 +298,7 @@ export const createContainerRuntime = async (
         enrollInstanceOwnerPasswordContainer(database, input),
       tokens: createApiTokenStore(drizzle),
       generalResources: createGeneralResourceRepository(drizzle),
+      team: createTeamRepository(drizzle),
       trackedResources: new DrizzleTrackedResourceRepository(
         drizzle,
         timesheetLockPolicy,
@@ -297,9 +312,19 @@ export const createContainerRuntime = async (
           .get() as { enabled: number } | undefined
         return row?.enabled === 1
       },
-      moneyResources: createMoneyResourceRepository(drizzle),
+      isTeamModuleEnabled: async () => {
+        const row = database
+          .prepare(
+            `SELECT COALESCE(json_extract(modules, '$.team'), 0) AS enabled
+             FROM organizations WHERE id = 1`,
+          )
+          .get() as { enabled: number } | undefined
+        return row?.enabled === 1
+      },
+      moneyResources,
       invoiceGeneration: createInvoiceGenerationService(drizzle),
       reports: createReportRepository(drizzle),
+      moduleSettings: createModuleSettingsRepository(drizzle),
       timesheetApprovals: createTimesheetApprovalRepository(drizzle),
       timesheetLockPolicy,
       cursorSigningKey: config.cursorSigningKey,
@@ -320,12 +345,7 @@ export const createContainerRuntime = async (
         organizationName,
         config.appBaseUrl,
       ),
-      organizationMailer: createSenderBoundQueuedMailer(
-        emailConfiguration,
-        queuedMailer,
-        smtp.name,
-        config.smtp.from,
-      ),
+      organizationMailer,
       attachments: {
         metadata: createAttachmentStore(drizzle),
         objects,

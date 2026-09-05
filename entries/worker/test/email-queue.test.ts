@@ -351,6 +351,137 @@ describe('Worker email queue composition', () => {
     }
   }, 20_000)
 
+  it('[integration] confirms in HTTP, drains through real D1/outbox/Queue, then calls SES once', async () => {
+    const isolated = new Miniflare({
+      modules: true,
+      script: 'export default { fetch() { return new Response("ok") } }',
+      d1Databases: ['DB'],
+    })
+    try {
+      const isolatedDatabase = await isolated.getD1Database('DB')
+      const jobs: QueuedEmailJob[] = []
+      const queue = {
+        send: vi.fn(async (job: QueuedEmailJob) => void jobs.push(job)),
+      } as unknown as Queue<QueuedEmailJob>
+      const provider: HttpEmailProvider = {
+        name: 'ses',
+        send: vi.fn(async () => ({ messageId: 'ses-invoice-1' })),
+      }
+      const env = {
+        DB: isolatedDatabase,
+        API_CURSOR_SIGNING_KEY: cursorKey,
+        EMAIL_QUEUE: queue,
+        APP_BASE_URL: 'https://ezacto.example',
+        SES_FROM: 'notify@example.test',
+        ENVIRONMENT: 'test',
+        RELEASE: 'invoice-delivery-acceptance',
+      } satisfies WorkerEnv
+      const services = await createRuntimeServices(env, { emailProvider: provider })
+      const app = createApp(services)
+      const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+        app.request(path, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', origin: 'http://localhost', ...headers },
+          body: JSON.stringify(body),
+        }, env)
+      const signup = await post('/auth/signup', {
+        organization_name: 'Invoice Delivery Studio',
+        first_name: 'Avery',
+        last_name: 'Ng',
+        email: 'owner@example.test',
+        password,
+      })
+      expect(signup.status).toBe(202)
+      const verificationToken = /ezacto_verify_[A-Za-z0-9_-]{16}_[A-Za-z0-9_-]{43}/u.exec(
+        jobs[0]!.message.text,
+      )![0]
+      expect((await post('/auth/verify-email', { token: verificationToken })).status).toBe(200)
+      const signedIn = await post('/auth/sign-in', { email: 'owner@example.test', password })
+      const cookie = signedIn.headers.get('set-cookie')!.split(';', 1)[0]!
+
+      const configuredAt = '2026-09-02T12:00:00.000Z'
+      await services.emailConfiguration.createSenderIdentity({
+        id: 81,
+        email: 'billing@example.test',
+        displayName: 'Invoice Delivery Billing',
+        provider: 'ses',
+        providerIdentity: 'example.test',
+        actorUserId: 1,
+        commandId: 'invoice-delivery-sender',
+        occurredAt: configuredAt,
+      })
+      await services.emailConfiguration.recordSenderEvidence({
+        id: 81,
+        expectedEvidenceVersion: 0,
+        evidence: {
+          source: 'provider_api',
+          identityKind: 'domain',
+          verificationStatus: 'verified',
+          dkimStatus: 'verified',
+          mailFromDomain: null,
+          mailFromStatus: 'not_configured',
+          observedAt: configuredAt,
+        },
+        actorUserId: 1,
+        commandId: 'invoice-delivery-evidence',
+        occurredAt: configuredAt,
+      })
+      await services.emailConfiguration.setDefaultSenderIdentity({
+        id: 81,
+        expectedVersion: 0,
+        actorUserId: 1,
+        commandId: 'invoice-delivery-default',
+        occurredAt: configuredAt,
+      })
+      await isolatedDatabase.prepare(
+        `INSERT INTO clients (id, name, currency, created_at, updated_at)
+         VALUES (71, 'Delivery Client', 'USD', ?, ?)`,
+      ).bind(configuredAt, configuredAt).run()
+      await isolatedDatabase.prepare(
+        `INSERT INTO invoices (id, client_id, number, currency, issue_date, due_date,
+           state, amount_cents, due_amount_cents, created_at, updated_at)
+         VALUES (72, 71, 'INV-72', 'USD', '2026-09-01', '2026-09-30',
+           'draft', 1234, 1234, ?, ?)`,
+      ).bind(configuredAt, configuredAt).run()
+
+      const delivered = await post('/api/v1/invoices/72/deliveries', {
+        expected_version: 0,
+        recipients: [{ name: 'Client', email: 'client@example.net' }],
+        confirmed: true,
+      }, { cookie, 'idempotency-key': 'worker-invoice-delivery' })
+      expect(delivered.status).toBe(202)
+      expect(provider.send).not.toHaveBeenCalled()
+      expect(jobs).toHaveLength(1)
+
+      await services.outbox.drain()
+      expect(jobs).toHaveLength(2)
+      expect(jobs[1]).toMatchObject({
+        message: {
+          from: { email: 'billing@example.test', name: 'Invoice Delivery Billing' },
+          to: [{ email: 'client@example.net', name: 'Client' }],
+          template: 'invoice:1',
+        },
+      })
+      const queueMessage = {
+        body: jobs[1]!,
+        attempts: 1,
+        retry: vi.fn(),
+        ack: vi.fn(),
+      }
+      await consumeCloudflareEmailBatch(
+        { messages: [queueMessage] } as unknown as MessageBatch<QueuedEmailJob>,
+        services.emailLog,
+        provider,
+      )
+      expect(provider.send).toHaveBeenCalledOnce()
+      expect(queueMessage.ack).toHaveBeenCalledOnce()
+      await services.outbox.drain()
+      expect(jobs).toHaveLength(2)
+    } finally {
+      await isolated.dispose()
+    }
+  }, 30_000)
+
   it('[unit] binds SES only from a complete validated static runtime contract', () => {
     const base = {
       DB: database,
