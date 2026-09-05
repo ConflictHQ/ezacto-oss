@@ -309,10 +309,12 @@ const generalResources: GeneralResourceRouteOptions['repository'] = {
   getRate: async () => {
     throw new Error('not used')
   },
-  appendRate: async () => {
-    throw new Error('not used')
-  },
 }
+
+const teamRepository = new Proxy(
+  {},
+  { get: () => async () => { throw new Error('not used') } },
+) as GeneralResourceRouteOptions['teamRepository']
 
 const app = createApiApp({
   authentication: { tokens: tokenService },
@@ -329,6 +331,7 @@ const app = createApiApp({
       repository: generalResources,
       cursorSigningKey: new Uint8Array(32).fill(7),
       isExpensesModuleEnabled: async () => true,
+      teamRepository,
     })
     installReportRoutes(api, reportReader)
   },

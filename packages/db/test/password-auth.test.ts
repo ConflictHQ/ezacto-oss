@@ -113,7 +113,7 @@ for (const [runtime, factory] of factories) {
       })
       expect(verification.token).toMatch(/^ezacto_verify_[A-Za-z0-9_-]{16}_[A-Za-z0-9_-]{43}$/)
       expect(await harness.rows(`SELECT modules FROM organizations WHERE id = 1`)).toEqual([
-        { modules: '{"approval":true,"expenses":true,"invoices":true}' },
+        { modules: '{"approval":true,"expenses":true,"invoices":true,"team":true}' },
       ])
 
       await expect(

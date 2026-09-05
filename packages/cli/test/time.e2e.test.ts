@@ -10,6 +10,7 @@ import { createApiApp, installGeneralResourceRoutes, installTrackedResourceRoute
 import {
   createContainerDatabase,
   createGeneralResourceRepository,
+  createTeamRepository,
   DrizzleTrackedResourceRepository,
   migrateContainer,
 } from '../../db/src/index.js'
@@ -83,6 +84,7 @@ describe('ez time commands against the native API', () => {
     `)
     const database = createContainerDatabase(sqlite)
     const general = createGeneralResourceRepository(database)
+    const team = createTeamRepository(database)
     const tracked = new DrizzleTrackedResourceRepository(database, {
       isLocked: async () => false,
     })
@@ -115,6 +117,7 @@ describe('ez time commands against the native API', () => {
           cursorSigningKey: new Uint8Array(32).fill(7),
           clock: () => instant,
           isExpensesModuleEnabled: async () => true,
+          teamRepository: team,
         })
         installTrackedResourceRoutes(api, {
           repository: tracked,

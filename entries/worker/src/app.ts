@@ -2,6 +2,7 @@ import {
   createApiApp,
   ApiError,
   assertValidCloudflareAccessConfig,
+  assertValidGitHubProviderConfig,
   assertValidOidcProviderConfig,
   generateOpenApiDocument,
   installAttachmentRoutes,
@@ -9,6 +10,7 @@ import {
   installEmailLogRoutes,
   installEmailConfigurationRoutes,
   installGeneralResourceRoutes,
+  installGitHubRoutes,
   installMoneyResourceRoutes,
   installOidcRoutes,
   installOutboxRoutes,
@@ -18,6 +20,7 @@ import {
   installTrackedResourceRoutes,
   installTimesheetApprovalRoutes,
   installTimesheetLockPolicyRoutes,
+  installTeamRoutes,
   readJsonBody,
   SESSION_COOKIE_NAME,
   validationError,
@@ -29,6 +32,7 @@ import {
   type ApiSessionService,
   type GeneralResourceRouteOptions,
   type EmailConfigurationRouteOptions,
+  type GitHubProviderConfig,
   type MoneyResourceRouteOptions,
   type OidcIdentityResolver,
   type OidcProviderConfig,
@@ -38,6 +42,7 @@ import {
   type TrackedResourceRepository,
   type TimesheetApprovalService,
   type TimesheetLockPolicyService,
+  type TeamRouteOptions,
 } from '@ezacto/api'
 import {
   InstanceBootstrapConflictError,
@@ -65,6 +70,8 @@ export type AppEnv = Env & {
   APP_BASE_URL?: string
   OIDC_GOOGLE_CLIENT_ID?: string
   OIDC_GOOGLE_CLIENT_SECRET?: string
+  GITHUB_CLIENT_ID?: string
+  GITHUB_CLIENT_SECRET?: string
   EZACTO_BOOTSTRAP_TOKEN?: string
   BRAND_NAME?: string
   BRAND_TAGLINE?: string
@@ -102,8 +109,10 @@ export interface RuntimeServices {
   ): Promise<InstanceOwnerPasswordResult>
   tokens: ApiTokenService
   generalResources: GeneralResourceRouteOptions['repository']
+  team: TeamRouteOptions['repository']
   trackedResources: TrackedResourceRepository
   isExpensesModuleEnabled(): Promise<boolean>
+  isTeamModuleEnabled(): Promise<boolean>
   timesheetApprovals: TimesheetApprovalService
   timesheetLockPolicy: TimesheetLockPolicyService
   moneyResources: MoneyResourceRouteOptions['service']
@@ -174,6 +183,13 @@ export const createApp = (services?: RuntimeServices) =>
               repository: services.generalResources,
               cursorSigningKey: services.cursorSigningKey,
               isExpensesModuleEnabled: services.isExpensesModuleEnabled,
+              isTeamModuleEnabled: services.isTeamModuleEnabled,
+              teamRepository: services.team,
+            })
+            installTeamRoutes(api, {
+              repository: services.team,
+              cursorSigningKey: services.cursorSigningKey,
+              isTeamModuleEnabled: services.isTeamModuleEnabled,
             })
             installTrackedResourceRoutes(api, {
               repository: services.trackedResources,
@@ -216,6 +232,14 @@ export const createApp = (services?: RuntimeServices) =>
           identities: services.identities,
           sessions: services.sessions,
           provider: oidcProvider,
+          clientKey: (request) =>
+            request.headers.get('cf-connecting-ip') ?? 'unknown-client',
+        })
+        installGitHubRoutes(app, {
+          transactions: services.oidcTransactions,
+          identities: services.identities,
+          sessions: services.sessions,
+          provider: (env) => githubProvider(env),
           clientKey: (request) =>
             request.headers.get('cf-connecting-ip') ?? 'unknown-client',
         })
@@ -535,6 +559,27 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
+      app.get('/team', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            activeSection: 'Team',
+            view: 'team-list',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
       app.get('/tasks', (context) =>
         context.html(
           renderAppShell({
@@ -683,6 +728,35 @@ export const createApp = (services?: RuntimeServices) =>
         )
       })
 
+      app.get('/team/:personId', (context) => {
+        const rawPersonId = context.req.param('personId')
+        const personId = Number(rawPersonId)
+        if (
+          !/^[1-9][0-9]*$/u.test(rawPersonId) ||
+          !Number.isSafeInteger(personId)
+        ) {
+          return context.notFound()
+        }
+        return context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            activeSection: 'Team',
+            view: 'team-person',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        )
+      })
+
       app.get('/clients/:clientId', (context) => {
         const rawClientId = context.req.param('clientId')
         const clientId = Number(rawClientId)
@@ -800,20 +874,48 @@ export const oidcProvider = (
   }
 }
 
+/** GitHub OAuth2 provider. Not OIDC; uses /user and /user/emails endpoints. */
+export const githubProvider = (
+  env: AppEnv,
+): GitHubProviderConfig | null => {
+  const clientId = configuredCredential(env.GITHUB_CLIENT_ID)
+  const clientSecret = configuredCredential(env.GITHUB_CLIENT_SECRET)
+  if (clientId === null && clientSecret === null) return null
+  if (clientId === null || clientSecret === null) {
+    throw new TypeError('GitHub client id and secret must be configured together')
+  }
+  return {
+    clientId,
+    clientSecret,
+    redirectOrigin: redirectOrigin(env),
+  }
+}
+
 /** Public shell availability contains provider keys only, never credentials. */
 export const configuredSignInProviders = (
   env: AppEnv,
 ): readonly SignInProvider[] => {
+  const providers: SignInProvider[] = []
   try {
     const google = oidcProvider('google', env)
-    if (google === null) return []
-    assertValidOidcProviderConfig(google)
-    return ['google']
+    if (google !== null) {
+      assertValidOidcProviderConfig(google)
+      providers.push('google')
+    }
   } catch {
     // A partial or invalid deployment configuration must not advertise a flow
     // that cannot start. The fixed provider route continues to fail closed.
-    return []
   }
+  try {
+    const github = githubProvider(env)
+    if (github !== null) {
+      assertValidGitHubProviderConfig(github)
+      providers.push('github')
+    }
+  } catch {
+    // Same fail-closed policy as Google above.
+  }
+  return providers
 }
 
 type BootstrapBody = Omit<InstanceBootstrapInput, 'token'>
