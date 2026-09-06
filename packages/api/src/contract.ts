@@ -1036,6 +1036,29 @@ const reportOperations: ApiContractOperation[] = [
   },
 ];
 
+const clientTreeOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/clients/:id/ancestors",
+    operationId: "listClientAncestors",
+    summary: "List ancestors of a client in the hierarchy",
+    tag: "client-tree",
+    responseStatus: 200,
+    responseSchema: "ClientHierarchyListEnvelope",
+    parameters: [path("id")],
+  },
+  {
+    method: "get",
+    path: "/api/v1/clients/:id/descendants",
+    operationId: "listClientDescendants",
+    summary: "List descendants of a client in the hierarchy",
+    tag: "client-tree",
+    responseStatus: 200,
+    responseSchema: "ClientHierarchyListEnvelope",
+    parameters: [path("id")],
+  },
+];
+
 const teamOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -1499,6 +1522,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...reportOperations,
   ...moduleSettingsOperations,
   ...teamOperations,
+  ...clientTreeOperations,
 ];
 
 const nullable = (schema: JsonSchema): JsonSchema => ({
@@ -4679,6 +4703,25 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   ProjectBudgetReportEnvelope: envelope("ProjectBudgetReport"),
+  ClientHierarchyNode: {
+    type: "object",
+    required: ["ancestor_id", "descendant_id", "depth"],
+    properties: {
+      ancestor_id: integerSchema,
+      descendant_id: integerSchema,
+      depth: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  ClientHierarchyListEnvelope: {
+    type: "object",
+    required: ["data", "links"],
+    properties: {
+      data: { type: "array", items: reference("ClientHierarchyNode") },
+      links: reference("Links"),
+    },
+    additionalProperties: false,
+  },
   ModuleState: {
     type: "object",
     required: ["module", "enabled"],

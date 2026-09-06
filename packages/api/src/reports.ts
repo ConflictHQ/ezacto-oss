@@ -61,6 +61,8 @@ export interface ClientRollupNodeRecord {
   name: string;
   parentClientId: number | null;
   depth: number;
+  nodeBudgetCents: number | null;
+  budgetBurnCents: number;
   direct: ClientRollupMetricsRecord;
   rollup: ClientRollupMetricsRecord;
 }
@@ -214,6 +216,12 @@ const serializeClientRollup = (
     name: node.name,
     parent_client_id: node.parentClientId,
     depth: node.depth,
+    ...(canViewMoneyField(viewer, "money_budget")
+      ? { node_budget_cents: node.nodeBudgetCents }
+      : {}),
+    ...(canViewMoneyField(viewer, "cost_rate")
+      ? { budget_burn_cents: node.budgetBurnCents }
+      : {}),
     direct: serializeRollupMetrics(node.direct, viewer),
     rollup: serializeRollupMetrics(node.rollup, viewer),
   })),

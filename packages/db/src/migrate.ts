@@ -36,6 +36,7 @@ import { teamPeopleMigration } from './migrations/0031_team_people.js'
 import { invoiceEmailDeliveryMigration } from './migrations/0032_invoice_email_delivery.js'
 import { contactPortalMigration } from './migrations/0033_contact_portal.js'
 import { backupRunsMigration } from './migrations/0035_backup_runs.js'
+import { clientBudgetsMigration } from './migrations/0036_client_budgets.js'
 import { recurringGenerateCommandMigration } from './migrations/0037_recurring_generate_command.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
@@ -1397,6 +1398,7 @@ const migrations = [
   { id: '0032_invoice_email_delivery', statements: invoiceEmailDeliveryMigration },
   { id: '0033_contact_portal', statements: contactPortalMigration },
   { id: '0035_backup_runs', statements: backupRunsMigration },
+  { id: '0036_client_budgets', statements: clientBudgetsMigration },
   { id: '0037_recurring_generate_command', statements: recurringGenerateCommandMigration },
 ] as const
 

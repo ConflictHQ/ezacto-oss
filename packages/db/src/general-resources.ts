@@ -52,6 +52,7 @@ const definitions: Readonly<Record<GeneralResourceKind, ResourceDefinition>> = {
       defaultTaxPct: 'default_tax_pct',
       defaultTax2Pct: 'default_tax2_pct',
       defaultDiscountPct: 'default_discount_pct',
+      budgetCents: 'budget_cents',
     },
     booleans: new Set(['isActive']),
     json: new Set(),

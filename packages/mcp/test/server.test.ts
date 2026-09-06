@@ -141,6 +141,8 @@ const reportReader: ReportReader = {
         name: 'North Peak',
         parentClientId: null,
         depth: 0,
+        nodeBudgetCents: 50_000,
+        budgetBurnCents: 30_000,
         direct: {
           timeEntryCount: 1,
           expenseCount: 1,
