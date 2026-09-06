@@ -3553,3 +3553,81 @@ export const timeEntryRateReprices = sqliteTable(
     ),
   ],
 )
+
+export const magicLinkTokens = sqliteTable(
+  'magic_link_tokens',
+  {
+    id: integer('id').primaryKey(),
+    jti: text('jti').notNull().unique(),
+    contactEmail: text('contact_email').notNull(),
+    contactId: integer('contact_id')
+      .notNull()
+      .references(() => contacts.id, { onDelete: 'cascade' }),
+    clientId: integer('client_id')
+      .notNull()
+      .references(() => clients.id, { onDelete: 'restrict' }),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: text('expires_at').notNull(),
+    usedAt: text('used_at'),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('magic_link_tokens_contact_created').on(table.contactId, table.createdAt),
+    index('magic_link_tokens_expiry')
+      .on(table.expiresAt)
+      .where(sql`${table.usedAt} is null`),
+    check(
+      'magic_link_tokens_email_canonical',
+      sql`${table.contactEmail} = lower(${table.contactEmail})
+        and length(${table.contactEmail}) between 3 and 254`,
+    ),
+    check(
+      'magic_link_tokens_jti_shape',
+      sql`length(${table.jti}) between 1 and 128
+        and ${table.jti} not glob '*[^A-Za-z0-9_-]*'`,
+    ),
+    check(
+      'magic_link_tokens_hash_shape',
+      sql`length(${table.tokenHash}) = 64
+        and ${table.tokenHash} not glob '*[^0-9a-f]*'`,
+    ),
+    check('magic_link_tokens_expires_at_canonical', canonicalTimestamp(table.expiresAt)),
+    check('magic_link_tokens_used_at_canonical', nullableCanonicalTimestamp(table.usedAt)),
+    check('magic_link_tokens_created_at_canonical', canonicalTimestamp(table.createdAt)),
+  ],
+)
+
+export const contactSessions = sqliteTable(
+  'contact_sessions',
+  {
+    id: integer('id').primaryKey(),
+    contactId: integer('contact_id')
+      .notNull()
+      .references(() => contacts.id, { onDelete: 'cascade' }),
+    clientId: integer('client_id')
+      .notNull()
+      .references(() => clients.id, { onDelete: 'restrict' }),
+    selector: text('selector').notNull().unique(),
+    secretHash: text('secret_hash').notNull(),
+    createdAt: text('created_at').notNull(),
+    lastSeenAt: text('last_seen_at').notNull(),
+    idleExpiresAt: text('idle_expires_at').notNull(),
+    absoluteExpiresAt: text('absolute_expires_at').notNull(),
+    revokedAt: text('revoked_at'),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    index('contact_sessions_contact_created').on(table.contactId, table.createdAt, table.id),
+    index('contact_sessions_active_expiry').on(table.idleExpiresAt, table.absoluteExpiresAt),
+    check(
+      'contact_sessions_selector_shape',
+      sql`length(${table.selector}) = 16
+        and ${table.selector} not glob '*[^A-Za-z0-9_-]*'`,
+    ),
+    check(
+      'contact_sessions_secret_hash_shape',
+      sql`length(${table.secretHash}) = 64
+        and ${table.secretHash} not glob '*[^0-9a-f]*'`,
+    ),
+  ],
+)

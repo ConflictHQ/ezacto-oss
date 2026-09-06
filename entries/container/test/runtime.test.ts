@@ -93,7 +93,7 @@ describe('container runtime composition', () => {
       first.database
         .prepare('SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1')
         .get(),
-    ).toEqual({ id: '0032_invoice_email_delivery' })
+    ).toEqual({ id: '0033_contact_portal' })
 
     await first.drainOutbox()
     const eventAt = '2026-01-02T03:04:05.000Z'

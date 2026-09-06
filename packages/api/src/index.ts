@@ -124,6 +124,22 @@ export {
   type OutboxMonitor,
 } from './outbox.js'
 export {
+  createCompositeSessionResolver,
+  createPortalSessionResolver,
+  createPortalSessionService,
+  installMagicLinkRoutes,
+  PORTAL_SESSION_COOKIE_NAME,
+  type ContactLookup,
+  type MagicLinkDelivery,
+  type MagicLinkMailer,
+  type MagicLinkRouteOptions,
+  type MagicLinkService,
+  type PortalInvoiceSummary,
+  type PortalSessionIssuer,
+  type PortalSessionStore,
+  type PortalStatementReader,
+} from './magic-link-auth.js'
+export {
   installPasswordAuthRoutes,
   type AuthDelivery,
   type AuthMailer,
