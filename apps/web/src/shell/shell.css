@@ -1177,38 +1177,21 @@
   background: var(--ez-status-bg);
   color: var(--ez-status-fg);
 }
-.client-tree {
-  display: grid;
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.client-tree-name {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
-.client-tree-row {
-  padding: 16px 18px;
-  border: 1px solid var(--ez-border);
-  border-inline-start: 3px solid var(--ez-data);
-  border-radius: var(--ez-radius);
-  background: var(--ez-surface);
+.client-tree-name a {
+  color: var(--ez-ink);
+  font-weight: 700;
+  text-underline-offset: 3px;
 }
-.client-tree-row > div,
 .client-contacts header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-}
-.client-tree-row a {
-  color: var(--ez-ink);
-  font-size: 17px;
-  font-weight: 700;
-  text-underline-offset: 3px;
-}
-.client-tree-row p {
-  margin: 7px 0 0;
-  color: var(--ez-muted);
-  font-size: 13px;
-  overflow-wrap: anywhere;
 }
 .client-status-pill,
 .client-recipient-pill {

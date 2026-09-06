@@ -990,7 +990,7 @@ test('[e2e:client-directory] persists hierarchy, bill-to, contacts, projects, an
   await expect(clientDialog).toBeHidden()
 
   const childRow = page
-    .locator('[data-client-tree] [data-client-id]')
+    .locator('[data-client-tree] tbody tr[data-row]')
     .filter({ hasText: 'Browser Worked-For Studio' })
   await expect(childRow).toContainText('Worked-for parent: Browser Parent Group')
   await expect(childRow).toContainText('Bill-to client: Browser Parent Group')

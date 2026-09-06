@@ -10,7 +10,7 @@ export const renderClientDirectoryPages = (view?: string): string => `
       <button type="button" data-client-filter="all" aria-pressed="false">All</button>
     </div>
     <p class="form-result client-page-status" data-client-list-status role="status" aria-live="polite">Loading clients…</p>
-    <ol class="client-tree" data-client-tree aria-label="Client hierarchy"></ol>
+    <div data-client-tree></div>
     <button type="button" data-client-list-retry hidden>Retry loading clients</button>
   </main>
   <main class="app-content client-workspace" data-client-detail-page${view === 'client-detail' ? '' : ' hidden'}>
