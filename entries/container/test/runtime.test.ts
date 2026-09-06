@@ -93,7 +93,7 @@ describe('container runtime composition', () => {
       first.database
         .prepare('SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1')
         .get(),
-    ).toEqual({ id: '0034_scheduled_reminders' })
+    ).toEqual({ id: '0037_recurring_generate_command' })
 
     await first.drainOutbox()
     const eventAt = '2026-01-02T03:04:05.000Z'

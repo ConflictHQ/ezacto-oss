@@ -593,6 +593,61 @@
         ]
       }
     },
+    "/api/v1/email-health": {
+      "get": {
+        "operationId": "getEmailHealth",
+        "summary": "Get email reputation health with bounce and complaint rates",
+        "tags": [
+          "email"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailHealthEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/email-health",
+        "x-ezacto-generate-client": true
+      }
+    },
     "/api/v1/email-template-variables": {
       "get": {
         "operationId": "listEmailTemplateVariables",
@@ -14025,6 +14080,144 @@
           }
         }
       }
+    },
+    "/api/v1/clients/{id}/ancestors": {
+      "get": {
+        "operationId": "listClientAncestors",
+        "summary": "List ancestors of a client in the hierarchy",
+        "tags": [
+          "client-tree"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientHierarchyListEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/clients/:id/ancestors",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/clients/{id}/descendants": {
+      "get": {
+        "operationId": "listClientDescendants",
+        "summary": "List descendants of a client in the hierarchy",
+        "tags": [
+          "client-tree"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientHierarchyListEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/clients/:id/descendants",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -14775,6 +14968,74 @@
             "items": {
               "$ref": "#/components/schemas/EmailLog"
             }
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EmailReputationSnapshot": {
+        "type": "object",
+        "required": [
+          "sent",
+          "bounced",
+          "complained",
+          "failed",
+          "bounce_rate_ppm",
+          "complaint_rate_ppm"
+        ],
+        "properties": {
+          "sent": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bounced": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "complained": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bounce_rate_ppm": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "complaint_rate_ppm": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          }
+        },
+        "additionalProperties": false
+      },
+      "EmailHealth": {
+        "type": "object",
+        "required": [
+          "reputation"
+        ],
+        "properties": {
+          "reputation": {
+            "$ref": "#/components/schemas/EmailReputationSnapshot"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EmailHealthEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/EmailHealth"
           },
           "links": {
             "$ref": "#/components/schemas/Links"
@@ -23294,6 +23555,48 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/ProjectBudgetReport"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientHierarchyNode": {
+        "type": "object",
+        "required": [
+          "ancestor_id",
+          "descendant_id",
+          "depth"
+        ],
+        "properties": {
+          "ancestor_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "descendant_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientHierarchyListEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientHierarchyNode"
+            }
           },
           "links": {
             "$ref": "#/components/schemas/Links"

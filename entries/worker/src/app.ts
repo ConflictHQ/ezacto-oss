@@ -6,6 +6,7 @@ import {
   assertValidOidcProviderConfig,
   generateOpenApiDocument,
   installAttachmentRoutes,
+  installEmailHealthRoutes,
   installEmailLogRoutes,
   installEmailConfigurationRoutes,
   installGeneralResourceRoutes,
@@ -20,6 +21,7 @@ import {
   installSessionRoutes,
   installTrackedResourceRoutes,
   installTimesheetApprovalRoutes,
+  installBackupStatusRoutes,
   installTimesheetLockPolicyRoutes,
   installTeamRoutes,
   readJsonBody,
@@ -41,6 +43,7 @@ import {
   type OidcProviderConfig,
   type OidcTransactionStorePort,
   type PasswordAuthService,
+  type BackupStatusReader,
   type ReportReader,
   type TrackedResourceRepository,
   type TimesheetApprovalService,
@@ -139,6 +142,7 @@ export interface RuntimeServices {
   attachments?: AttachmentRouteOptions
   /** Portal magic-link authentication for contacts. */
   portalAuth?: MagicLinkRouteOptions
+  backupStatus?: BackupStatusReader
 }
 
 export type Health = {
@@ -173,6 +177,7 @@ export const createApp = (services?: RuntimeServices) =>
           installApi: (api) => {
             installSessionRoutes(api, services.sessions)
             installEmailLogRoutes(api, services.emailLog)
+            installEmailHealthRoutes(api, services.emailLog)
             installEmailConfigurationRoutes(api, {
               service: services.emailConfiguration,
               ...(services.senderIdentityVerifier === undefined
@@ -228,6 +233,9 @@ export const createApp = (services?: RuntimeServices) =>
             })
             installAttachmentRoutes(api, services.attachments)
             installReportRoutes(api, services.reports)
+            if (services.backupStatus !== undefined) {
+              installBackupStatusRoutes(api, services.backupStatus)
+            }
             installModuleSettingsRoutes(api, {
               service: services.moduleSettings,
               clock: () => systemClock.now().instant,

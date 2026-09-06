@@ -126,6 +126,9 @@ for (const [runtime, factory] of factories) {
         { id: '0032_invoice_email_delivery' },
         { id: '0033_contact_portal' },
         { id: '0034_scheduled_reminders' },
+        { id: '0035_backup_runs' },
+        { id: '0036_client_budgets' },
+        { id: '0037_recurring_generate_command' },
       ])
     })
 
@@ -162,6 +165,9 @@ for (const [runtime, factory] of factories) {
         { id: '0032_invoice_email_delivery' },
         { id: '0033_contact_portal' },
         { id: '0034_scheduled_reminders' },
+        { id: '0035_backup_runs' },
+        { id: '0036_client_budgets' },
+        { id: '0037_recurring_generate_command' },
       ])
       expect(
         await current.rows<{ name: string }>(

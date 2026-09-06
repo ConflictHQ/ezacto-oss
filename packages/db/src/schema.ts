@@ -721,6 +721,7 @@ export const clients = sqliteTable(
     defaultTaxPct: real('default_tax_pct'),
     defaultTax2Pct: real('default_tax2_pct'),
     defaultDiscountPct: real('default_discount_pct'),
+    budgetCents: integer('budget_cents'),
     ...timestamps,
   },
   (table) => [
@@ -729,6 +730,10 @@ export const clients = sqliteTable(
     index('clients_parent_client_id').on(table.parentClientId),
     index('clients_bill_to_client_id').on(table.billToClientId),
     check('clients_is_active_boolean', sql`${table.isActive} in (0, 1)`),
+    check(
+      'clients_budget_cents_range',
+      sql`${table.budgetCents} is null or ${table.budgetCents} between 0 and 9000000000000`,
+    ),
   ],
 )
 

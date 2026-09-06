@@ -1036,6 +1036,29 @@ const reportOperations: ApiContractOperation[] = [
   },
 ];
 
+const clientTreeOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/clients/:id/ancestors",
+    operationId: "listClientAncestors",
+    summary: "List ancestors of a client in the hierarchy",
+    tag: "client-tree",
+    responseStatus: 200,
+    responseSchema: "ClientHierarchyListEnvelope",
+    parameters: [path("id")],
+  },
+  {
+    method: "get",
+    path: "/api/v1/clients/:id/descendants",
+    operationId: "listClientDescendants",
+    summary: "List descendants of a client in the hierarchy",
+    tag: "client-tree",
+    responseStatus: 200,
+    responseSchema: "ClientHierarchyListEnvelope",
+    parameters: [path("id")],
+  },
+];
+
 const teamOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -1243,6 +1266,16 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
       }),
       query("per_page", { type: "integer", minimum: 1, maximum: 200 }),
     ],
+  },
+  {
+    method: "get",
+    path: "/api/v1/email-health",
+    operationId: "getEmailHealth",
+    summary: "Get email reputation health with bounce and complaint rates",
+    tag: "email",
+    responseStatus: 200,
+    responseSchema: "EmailHealthEnvelope",
+    sessionOnly: true,
   },
   {
     method: "get",
@@ -1489,6 +1522,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...reportOperations,
   ...moduleSettingsOperations,
   ...teamOperations,
+  ...clientTreeOperations,
 ];
 
 const nullable = (schema: JsonSchema): JsonSchema => ({
@@ -1932,6 +1966,35 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  EmailReputationSnapshot: {
+    type: "object",
+    required: [
+      "sent",
+      "bounced",
+      "complained",
+      "failed",
+      "bounce_rate_ppm",
+      "complaint_rate_ppm",
+    ],
+    properties: {
+      sent: { type: "integer", minimum: 0 },
+      bounced: { type: "integer", minimum: 0 },
+      complained: { type: "integer", minimum: 0 },
+      failed: { type: "integer", minimum: 0 },
+      bounce_rate_ppm: { type: "integer", minimum: 0, maximum: 1_000_000 },
+      complaint_rate_ppm: { type: "integer", minimum: 0, maximum: 1_000_000 },
+    },
+    additionalProperties: false,
+  },
+  EmailHealth: {
+    type: "object",
+    required: ["reputation"],
+    properties: {
+      reputation: reference("EmailReputationSnapshot"),
+    },
+    additionalProperties: false,
+  },
+  EmailHealthEnvelope: envelope("EmailHealth"),
   EmailTemplateVariable: {
     type: "object",
     required: ["name", "token", "description", "compatibility"],
@@ -4640,6 +4703,25 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   ProjectBudgetReportEnvelope: envelope("ProjectBudgetReport"),
+  ClientHierarchyNode: {
+    type: "object",
+    required: ["ancestor_id", "descendant_id", "depth"],
+    properties: {
+      ancestor_id: integerSchema,
+      descendant_id: integerSchema,
+      depth: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  ClientHierarchyListEnvelope: {
+    type: "object",
+    required: ["data", "links"],
+    properties: {
+      data: { type: "array", items: reference("ClientHierarchyNode") },
+      links: reference("Links"),
+    },
+    additionalProperties: false,
+  },
   ModuleState: {
     type: "object",
     required: ["module", "enabled"],
