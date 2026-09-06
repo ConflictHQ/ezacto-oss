@@ -24,6 +24,7 @@ import {
   canonicalHarvestTime,
   hoursLiteralToSeconds,
   moneyLiteralToCents,
+  rateLiteralToCents,
   numberLexemes,
   percentLiteralToPpm,
 } from './transform.js'
@@ -280,6 +281,17 @@ const bool = (row: Record<string, unknown>, key: string, fallback = false): bool
   return value
 }
 
+/**
+ * Harvest emits an embedded reference as `{id: null, name: null}` when there is
+ * nothing to point at — a payment taken outside a gateway, an invoice whose
+ * creator has since been deleted — rather than omitting the object. A present
+ * object therefore does not imply a present reference. Narrow to the object
+ * only when it actually identifies something, so `nestedId` keeps meaning
+ * "this reference is required" everywhere else.
+ */
+const identifiedReference = (value: Record<string, unknown> | null): boolean =>
+  value !== null && value.id != null
+
 const nestedId = (row: Record<string, unknown>, key: string): number | null => {
   const nested = row[key]
   if (nested === null || nested === undefined) return null
@@ -347,6 +359,10 @@ export interface LoadAnomaly {
   source_id: number | string | null
   kind:
     | 'hours_residue'
+    | 'rate_residue'
+    | 'non_positive_payment'
+    | 'unresolved_estimate_reference'
+    | 'negative_time_entry'
     | 'billing_conflict'
     | 'payment_date_disagreement'
     | 'rate_chain_mismatch'
@@ -798,6 +814,44 @@ const requiredText = (row: Record<string, unknown>, key: string): string => {
 const money = (source: RawRow, path: string): number | null => {
   const literal = nullableNumberAt(source, path)
   return literal === null ? null : moneyLiteralToCents(literal, path)
+}
+
+const rate = (
+  source: RawRow,
+  path: string,
+  anomalies: LoadAnomaly[],
+  resource: string,
+): number => {
+  const transformed = rateLiteralToCents(numberAt(source, path), path)
+  if (transformed.residue !== null) {
+    anomalies.push({
+      resource,
+      source_id: source.numbers.get('/id') ?? null,
+      kind: 'rate_residue',
+      detail: `${path}=${transformed.residue}`,
+    })
+  }
+  return transformed.cents
+}
+
+const nullableRate = (
+  source: RawRow,
+  path: string,
+  anomalies: LoadAnomaly[],
+  resource: string,
+): number | null => {
+  const literal = nullableNumberAt(source, path)
+  if (literal === null) return null
+  const transformed = rateLiteralToCents(literal, path)
+  if (transformed.residue !== null) {
+    anomalies.push({
+      resource,
+      source_id: source.numbers.get('/id') ?? null,
+      kind: 'rate_residue',
+      detail: `${path}=${transformed.residue}`,
+    })
+  }
+  return transformed.cents
 }
 
 const seconds = (
@@ -2362,7 +2416,7 @@ const rowStatements = (
             harvestId,
             requiredText(row, 'name'),
             stringValue(row, 'unit_name'),
-            money(source, '/unit_price'),
+            nullableRate(source, '/unit_price', anomalies, 'expense_categories'),
             bool(row, 'is_active', true) ? 1 : 0,
             createdAt,
             updatedAt,
@@ -2543,6 +2597,21 @@ const rowStatements = (
         ),
       ]
     case 'time_entries': {
+      // Harvest corrects an over-logged timesheet with a negative entry that
+      // offsets an earlier one. `time_entries.seconds` is
+      // CHECK (… BETWEEN 0 AND …), so a correction cannot be represented as an
+      // entry. Skip it and say so; the reconciliation report carries the hour
+      // difference rather than the import hiding it.
+      const rawHours = nullableNumberAt(source, '/hours')
+      if (rawHours !== null && rawHours.startsWith('-')) {
+        anomalies.push({
+          resource,
+          source_id: harvestId,
+          kind: 'negative_time_entry',
+          detail: `hours=${rawHours} spent_date=${stringValue(row, 'spent_date') ?? '?'}`,
+        })
+        return []
+      }
       const rawSeconds = seconds(source, '/hours', anomalies, resource) ?? 0
       const secondsWithoutTimer =
         nullableNumberAt(source, '/hours_without_timer') === null
@@ -2660,6 +2729,25 @@ const nativeId = async (
   return row.id
 }
 
+/**
+ * Resolve a reference that may point at a resource the snapshot never swept.
+ * An account with the estimates module disabled still has invoices carrying an
+ * `estimate.id`; there is nothing to link to and nothing to recover, so the
+ * link is dropped rather than aborting an otherwise faithful invoice.
+ */
+const optionalNativeId = async (
+  database: RawDatabase,
+  table: string,
+  harvestId: number | string,
+): Promise<number | null> => {
+  const row = await first<{ id: number }>(
+    database,
+    `SELECT id FROM ${table} WHERE harvest_id = ?`,
+    [harvestId],
+  )
+  return row === null ? null : row.id
+}
+
 const nativeIds = async (
   database: RawDatabase,
   table: string,
@@ -2733,6 +2821,7 @@ const estimateStatements = (
   source: RawRow,
   messages: readonly RawRow[],
   messageLineage: readonly ChildLineage[],
+  anomalies: LoadAnomaly[],
   lineOffset = 0,
   lineLimit = Number.POSITIVE_INFINITY,
 ): PlannedStatement[] => {
@@ -2741,9 +2830,13 @@ const estimateStatements = (
   const clientId = nestedId(row, 'client')
   if (clientId === null) throw new Error(`estimate ${harvestId} has no client`)
   const creator = objectValue(row, 'creator')
-  const creatorId = creator === null ? null : nestedId({ creator }, 'creator')
+  const creatorId = identifiedReference(creator) ? nestedId({ creator }, 'creator') : null
   const creatorName = creator === null ? null : stringValue(creator, 'name')
-  if ((creatorId === null) !== (creatorName === null)) {
+  // Harvest scrubs the name of a deleted user but keeps the creator id, so
+  // `{id, name: null}` is real provenance, not a half-written record — one
+  // departed user raised 58 of CONFLICT's invoices this way. Keep the id; only
+  // a name with nothing to anchor it to is incoherent.
+  if (creatorId === null && creatorName !== null) {
     throw new Error(`estimate ${harvestId} creator provenance is incomplete`)
   }
   const createdAt = requiredText(row, 'created_at')
@@ -2829,9 +2922,11 @@ const estimateStatements = (
     const line = value as Record<string, unknown>
     const lineId = nestedId({ line }, 'line')
     if (lineId === null) throw new Error('estimate line id is required')
-    const unitPrice = moneyLiteralToCents(
-      numberAt(source, `/line_items/${position}/unit_price`),
-      'estimate.line.unit_price',
+    const unitPrice = rate(
+      source,
+      `/line_items/${position}/unit_price`,
+      anomalies,
+      'estimates',
     )
     const amount = moneyLiteralToCents(
       numberAt(source, `/line_items/${position}/amount`),
@@ -2960,6 +3055,24 @@ const childRowsForParent = async (
   }
 }
 
+const resolveOptionalEstimate = async (
+  database: ImportDatabase,
+  estimateHarvestId: number,
+  invoiceHarvestId: number,
+  anomalies: LoadAnomaly[],
+): Promise<number | null> => {
+  const resolved = await optionalNativeId(database.$client, 'estimates', estimateHarvestId)
+  if (resolved === null) {
+    anomalies.push({
+      resource: 'invoices',
+      source_id: invoiceHarvestId,
+      kind: 'unresolved_estimate_reference',
+      detail: `estimate=${estimateHarvestId} was not swept`,
+    })
+  }
+  return resolved
+}
+
 const invoiceInput = async (
   database: ImportDatabase,
   source: RawRow,
@@ -2967,6 +3080,7 @@ const invoiceInput = async (
   messageLineage: readonly ChildLineage[],
   payments: readonly RawRow[],
   paymentLineage: readonly ChildLineage[],
+  anomalies: LoadAnomaly[],
 ): Promise<{
   ensured: Awaited<ReturnType<typeof ensureImportedInvoiceHeader>>
   reconciliation: HarvestInvoiceReconciliation
@@ -2978,9 +3092,13 @@ const invoiceInput = async (
   const clientHarvestId = nestedId(row, 'client')
   if (clientHarvestId === null) throw new Error(`invoice ${harvestId} has no client`)
   const creator = objectValue(row, 'creator')
-  const sourceCreatorId = creator === null ? null : nestedId({ creator }, 'creator')
+  const sourceCreatorId = identifiedReference(creator) ? nestedId({ creator }, 'creator') : null
   const sourceCreatorName = creator === null ? null : stringValue(creator, 'name')
-  if ((sourceCreatorId === null) !== (sourceCreatorName === null)) {
+  // Harvest scrubs the name of a deleted user but keeps the creator id, so
+  // `{id, name: null}` is real provenance, not a half-written record — one
+  // departed user raised 58 of CONFLICT's invoices this way. Keep the id; only
+  // a name with nothing to anchor it to is incoherent.
+  if (sourceCreatorId === null && sourceCreatorName !== null) {
     throw new Error(`invoice ${harvestId} creator provenance is incomplete`)
   }
   const createdAt = requiredText(row, 'created_at')
@@ -3004,7 +3122,7 @@ const invoiceInput = async (
       throw new Error('invoice line must be an object')
     const lineProject = nestedId(value as Record<string, unknown>, 'project')
     if (lineProject !== null) lineProjectHarvestIds.push(lineProject)
-    moneyLiteralToCents(
+    rateLiteralToCents(
       numberAt(source, `/line_items/${position}/unit_price`),
       'invoice.line.unit_price',
     )
@@ -3046,7 +3164,7 @@ const invoiceInput = async (
     estimateId:
       estimateHarvestId === null
         ? null
-        : await nativeId(database.$client, 'estimates', estimateHarvestId),
+        : await resolveOptionalEstimate(database, estimateHarvestId, harvestId, anomalies),
     taxRatePpm:
       nullableNumberAt(source, '/tax') === null
         ? null
@@ -3077,9 +3195,11 @@ const invoiceInput = async (
       kind: requiredText(line, 'kind'),
       description: stringValue(line, 'description'),
       quantity: Number(line.quantity),
-      unitPriceCents: moneyLiteralToCents(
-        numberAt(source, `/line_items/${position}/unit_price`),
-        'invoice.line.unit_price',
+      unitPriceCents: rate(
+        source,
+        `/line_items/${position}/unit_price`,
+        anomalies,
+        'invoices',
       ),
       amountCents: moneyLiteralToCents(
         numberAt(source, `/line_items/${position}/amount`),
@@ -3136,15 +3256,34 @@ const invoiceInput = async (
     const paidAt = stringValue(p, 'paid_at')
     const paidDate = stringValue(p, 'paid_date')
     const gateway = objectValue(p, 'payment_gateway')
+    const gatewayIdentified = identifiedReference(gateway)
     const recordedByEmail = stringValue(p, 'recorded_by_email')
+    // ezacto invoice_payments are strictly positive receipts
+    // (CHECK amount_cents BETWEEN 1 AND ...). Harvest also records $0 payments
+    // that settle $0 invoices and negative payments that settle credit notes.
+    // Those rows cannot be represented, so skip them and say so rather than
+    // aborting the whole import or silently coercing a money value.
+    const paymentAmountCents = moneyLiteralToCents(
+      numberAt(payment, '/amount'),
+      'invoice_payment.amount',
+    )
+    if (paymentAmountCents <= 0) {
+      anomalies.push({
+        resource: 'invoice_payments',
+        source_id: paymentId,
+        kind: 'non_positive_payment',
+        detail: `invoice=${harvestId} amount=${numberAt(payment, '/amount')}`,
+      })
+      continue
+    }
     importedPayments.push({
       harvestId: paymentId,
-      amountCents: moneyLiteralToCents(numberAt(payment, '/amount'), 'invoice_payment.amount'),
+      amountCents: paymentAmountCents,
       sourcePaidAt: paidAt,
       sourcePaidDate: paidDate,
       sourceRecordedByName: stringValue(p, 'recorded_by'),
       sourceRecordedByEmail: recordedByEmail,
-      sourceGatewayId: gateway === null ? null : nestedId({ gateway }, 'gateway'),
+      sourceGatewayId: gatewayIdentified ? nestedId({ gateway }, 'gateway') : null,
       sourceGatewayName: gateway === null ? null : stringValue(gateway, 'name'),
       notes: stringValue(p, 'notes'),
       recordedByUserId:
@@ -3638,7 +3777,7 @@ const loadComplexRow = async (
       const hasMessages = (manifest.resources.estimate_messages?.count ?? 0) > 0
       const complete = linesComplete && !hasMessages
       const statements = [
-        ...estimateStatements(source, [], [], aggregateOffset, take),
+        ...estimateStatements(source, [], [], anomalies, aggregateOffset, take),
         complete
           ? deleteSubprogressStatement(resource, source.index)
           : subprogressStatement(resource, source.index, aggregateOffset + take, 0, 0),
@@ -3659,7 +3798,7 @@ const loadComplexRow = async (
           )
     if (record === null) {
       const statements = [
-        ...estimateStatements(source, [], [], 0, 0),
+        ...estimateStatements(source, [], [], anomalies, 0, 0),
         deleteSubprogressStatement(resource, source.index),
       ]
       await execute(options.database.$client, statements)
@@ -3701,7 +3840,7 @@ const loadComplexRow = async (
     }
     const complete = childOffset + take === record.count
     const statements = [
-      ...estimateStatements(source, childChunk.rows, childLineage.rows, 0, 0),
+      ...estimateStatements(source, childChunk.rows, childLineage.rows, anomalies, 0, 0),
       complete
         ? deleteSubprogressStatement(resource, source.index)
         : subprogressStatement(
@@ -3744,6 +3883,7 @@ const loadComplexRow = async (
     messages.lineage,
     payments.rows,
     payments.lineage,
+    anomalies,
   )
   if (input.retainerId !== null)
     await ensureHarvestRetainerStub(options.database, {
