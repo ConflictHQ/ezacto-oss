@@ -529,6 +529,13 @@ const sourceState = async (
     if (entryId === undefined || !/^\d+$/.test(entryId) || BigInt(entryId) < 1n) {
       throw new Error(`time_entries:${source.line}.id must be a positive integer`)
     }
+    // Mirror the loader: a Harvest correction entry with negative hours cannot
+    // be stored (time_entries.seconds is CHECK >= 0), so leave it out of the
+    // recomputed aggregates too. Comparing the database against totals that
+    // included it would manufacture a delta on every report it touches; the
+    // negative_time_entry load anomalies carry it as an explained difference
+    // against Harvest's own report figures instead.
+    if ((source.numbers.get('/hours') ?? '').startsWith('-')) continue
     const userId = idAt(source, '/user/id', `time_entries:${source.line}.user.id`)
     const projectId = idAt(source, '/project/id', `time_entries:${source.line}.project.id`)
     const taskId = idAt(source, '/task/id', `time_entries:${source.line}.task.id`)

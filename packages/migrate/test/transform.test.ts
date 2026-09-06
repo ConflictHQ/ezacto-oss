@@ -7,6 +7,7 @@ import {
   moneyLiteralToCents,
   numberLexemes,
   percentLiteralToPpm,
+  rateLiteralToCents,
 } from '../src/transform.js'
 
 describe('lossless snapshot transforms', () => {
@@ -16,6 +17,20 @@ describe('lossless snapshot transforms', () => {
     expect(() => moneyLiteralToCents('1e2')).toThrow('plain decimal')
     expect(() => moneyLiteralToCents('12.345')).toThrow('plain decimal')
     expect(() => moneyLiteralToCents('1.230e2')).toThrow('plain decimal')
+  })
+
+  it('rounds per-unit rates half-even and reports only inexact residues', () => {
+    // Harvest's mileage categories carry the IRS half-cent rate; it is a rate,
+    // not a money total, so it rounds with a residue instead of failing.
+    expect(rateLiteralToCents('0.485')).toEqual({ cents: 48, residue: '0.485' })
+    expect(rateLiteralToCents('0.475')).toEqual({ cents: 48, residue: '0.475' })
+    expect(rateLiteralToCents('67.1428571')).toEqual({ cents: 6714, residue: '67.1428571' })
+    expect(rateLiteralToCents('51.6666667')).toEqual({ cents: 5167, residue: '51.6666667' })
+    expect(rateLiteralToCents('-0.485')).toEqual({ cents: -48, residue: '-0.485' })
+    // Exact rates carry no residue, and two decimals stay byte-exact.
+    expect(rateLiteralToCents('175.00')).toEqual({ cents: 17_500, residue: null })
+    expect(rateLiteralToCents('-0.2')).toEqual({ cents: -20, residue: null })
+    expect(rateLiteralToCents('12.3400')).toEqual({ cents: 1234, residue: null })
   })
 
   it('rounds hour fractions half-even and reports only inexact residues', () => {

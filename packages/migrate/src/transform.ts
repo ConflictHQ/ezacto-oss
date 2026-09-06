@@ -25,6 +25,8 @@ const checkedNumber = (value: bigint, field: string, maximum = 9_007_199_254_740
   return Number(value)
 }
 
+const CENTS_MAXIMUM = 9_000_000_000_000n
+
 export const moneyLiteralToCents = (literal: string, field = 'money'): number => {
   if (!/^-?(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(literal)) {
     throw new Error(
@@ -33,7 +35,32 @@ export const moneyLiteralToCents = (literal: string, field = 'money'): number =>
   }
   const { numerator, scale } = decimalParts(literal, field)
   const cents = scale <= 2 ? numerator * 10n ** BigInt(2 - scale) : numerator
-  return checkedNumber(cents, field, 9_000_000_000_000n)
+  return checkedNumber(cents, field, CENTS_MAXIMUM)
+}
+
+export interface CentsTransform {
+  cents: number
+  residue: string | null
+}
+
+/**
+ * A per-unit rate, not a money total. Harvest stores rates at whatever
+ * precision the account set them — a mileage category at $0.485/mile is the
+ * IRS half-cent rate, not bad data — while ezacto money columns are integer
+ * cents. Round half-even and hand back the source literal as a residue so the
+ * load report can explain the difference, exactly as decimal hours do. The
+ * authoritative line `amount` is still parsed by `moneyLiteralToCents`, so a
+ * rounded rate can never move a total.
+ */
+export const rateLiteralToCents = (literal: string, field = 'rate'): CentsTransform => {
+  const { numerator, scale } = decimalParts(literal, field)
+  if (scale <= 2) {
+    return { cents: checkedNumber(numerator * 10n ** BigInt(2 - scale), field, CENTS_MAXIMUM), residue: null }
+  }
+  const denominator = 10n ** BigInt(scale - 2)
+  const cents = roundHalfEven(numerator, denominator)
+  const residue = numerator % denominator === 0n ? null : literal
+  return { cents: checkedNumber(cents, field, CENTS_MAXIMUM), residue }
 }
 
 const roundHalfEven = (numerator: bigint, denominator: bigint): bigint => {
