@@ -155,7 +155,13 @@ describe('Team browser controller', () => {
 
     expect(document.querySelector('[data-team-list]')?.textContent).toContain('Avery Owner')
     expect(document.querySelector('[data-team-list]')?.textContent).toContain('71.4%')
-    expect(document.querySelector('[data-team-list]')?.textContent).toContain('25h of 35h')
+    // Hours and capacity are their own columns now, not one line on a card.
+    expect(
+      document.querySelector('[data-team-list] td[data-column="hours"]')?.textContent,
+    ).toBe('25h')
+    expect(
+      document.querySelector('[data-team-list] td[data-column="capacity"]')?.textContent,
+    ).toBe('35h')
     expect(listTeamPeople.mock.calls[0]![0]).toMatchObject({ is_active: true })
 
     document.querySelector<HTMLButtonElement>('[data-team-week-previous]')!.click()

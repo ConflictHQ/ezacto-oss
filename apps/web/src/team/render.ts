@@ -31,7 +31,7 @@ export const renderTeamPages = (view?: string): string => `
     </div>
     <section class="team-summary" data-team-summary aria-label="Team utilization summary" hidden></section>
     <p class="form-result team-page-status" data-team-list-status role="status" aria-live="polite">Loading team…</p>
-    <ol class="team-card-list" data-team-list aria-label="People"></ol>
+    <div data-team-list></div>
     <button type="button" data-team-list-retry hidden>Retry loading team</button>
   </main>
 
