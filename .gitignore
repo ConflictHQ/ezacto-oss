@@ -8,3 +8,6 @@ test-results/
 *.sqlite
 *.db
 snapshot/
+
+# never track a local node_modules (a worktree symlink slipped in once)
+/node_modules
