@@ -823,7 +823,7 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   await noteDialog.getByRole('button', { name: 'Log time' }).click()
   expect((await created).ok()).toBe(true)
   await expect(noteDialog).toBeHidden()
-  await expect(page.locator('[data-week-total]')).toHaveText('1:00')
+  await expect(page.locator('[data-week-total]')).toHaveText('1.00')
   await expect(
     page.locator('[data-day-rows] .day-row').filter({ hasText: 'Browser Secondary Project' }),
   ).toContainText('Added row delivery note')
@@ -837,7 +837,7 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   // Both the D1 entry/note and the locally remembered row survive a full reload;
   // the rejected cross-product remains absent.
   await page.reload()
-  await expect(page.locator('[data-week-total]')).toHaveText('1:00')
+  await expect(page.locator('[data-week-total]')).toHaveText('1.00')
   await expect(page.locator('[data-entry-note="1"]')).toHaveText(
     'First line\nSecond line with delivery detail',
   )
@@ -2363,7 +2363,7 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
   await expect(page).toHaveTitle('ezacto — Approvals')
   const card = page.locator('[data-approval-queue] [data-submission-id]')
   await expect(card).toContainText('Browser Owner')
-  await expect(card).toContainText('1:00')
+  await expect(card).toContainText('1.00')
   await expect(card).toContainText('Browser Acceptance Project / Browser Acceptance Task')
   await expect(card).toContainText('Wed, Aug 19')
   await expect(card).toContainText('Ready for review')
