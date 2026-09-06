@@ -144,6 +144,24 @@ export type EmailLogPage = {
   "links": Links;
 };
 
+export type EmailReputationSnapshot = {
+  "sent": number;
+  "bounced": number;
+  "complained": number;
+  "failed": number;
+  "bounce_rate_ppm": number;
+  "complaint_rate_ppm": number;
+};
+
+export type EmailHealth = {
+  "reputation": EmailReputationSnapshot;
+};
+
+export type EmailHealthEnvelope = {
+  "data": EmailHealth;
+  "links": Links;
+};
+
 export type EmailTemplateVariable = {
   "name": string;
   "token": string;
@@ -1920,6 +1938,15 @@ export class EzactoClient {
 
     return this.request<EmailLogPage>("GET", "/api/v1/email-log", {
       query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getEmailHealth(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<EmailHealthEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<EmailHealthEnvelope>("GET", "/api/v1/email-health", {
       signal: args.signal,
       headers,
     });

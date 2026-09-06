@@ -16,7 +16,7 @@ describe('Worker outbox schedule', () => {
       new URL('../wrangler.jsonc', import.meta.url),
       'utf8',
     )
-    expect(configuration.match(/"triggers": \{ "crons": \["\* \* \* \* \*"\] \}/gu)).toHaveLength(2)
+    expect(configuration.match(/"triggers": \{ "crons": \["\* \* \* \* \*", "0 3 \* \* \*"\] \}/gu)).toHaveLength(2)
   })
 
   it('[integration] drains a committed D1 outbox row through a real scheduled Worker event', async () => {

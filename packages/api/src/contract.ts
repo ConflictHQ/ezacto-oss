@@ -1269,6 +1269,16 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   },
   {
     method: "get",
+    path: "/api/v1/email-health",
+    operationId: "getEmailHealth",
+    summary: "Get email reputation health with bounce and complaint rates",
+    tag: "email",
+    responseStatus: 200,
+    responseSchema: "EmailHealthEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "get",
     path: "/api/v1/email-template-variables",
     operationId: "listEmailTemplateVariables",
     summary: "List the closed email-template variable vocabulary",
@@ -1956,6 +1966,35 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  EmailReputationSnapshot: {
+    type: "object",
+    required: [
+      "sent",
+      "bounced",
+      "complained",
+      "failed",
+      "bounce_rate_ppm",
+      "complaint_rate_ppm",
+    ],
+    properties: {
+      sent: { type: "integer", minimum: 0 },
+      bounced: { type: "integer", minimum: 0 },
+      complained: { type: "integer", minimum: 0 },
+      failed: { type: "integer", minimum: 0 },
+      bounce_rate_ppm: { type: "integer", minimum: 0, maximum: 1_000_000 },
+      complaint_rate_ppm: { type: "integer", minimum: 0, maximum: 1_000_000 },
+    },
+    additionalProperties: false,
+  },
+  EmailHealth: {
+    type: "object",
+    required: ["reputation"],
+    properties: {
+      reputation: reference("EmailReputationSnapshot"),
+    },
+    additionalProperties: false,
+  },
+  EmailHealthEnvelope: envelope("EmailHealth"),
   EmailTemplateVariable: {
     type: "object",
     required: ["name", "token", "description", "compatibility"],

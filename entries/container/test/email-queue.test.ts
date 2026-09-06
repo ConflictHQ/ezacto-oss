@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type {
+  EmailDeliveryStatus,
   EmailLogRecord,
   EmailLogStore,
   HttpEmailProvider,
 } from '@ezacto/mailer'
 import { ContainerEmailQueue } from '../src/email-queue.js'
 
-const record = (attemptCount: number, status: 'queued' | 'failed'): EmailLogRecord => ({
+const record = (attemptCount: number, status: EmailDeliveryStatus): EmailLogRecord => ({
   id: 1,
   from: { email: 'billing@example.test', name: 'Billing' },
   replyTo: [],
@@ -52,6 +53,10 @@ describe('container in-process email queue', () => {
         return record(attempts, 'failed')
       },
       markQueueFailed: async () => record(attempts, 'failed'),
+      markBounced: async () => record(attempts, 'bounced'),
+      markComplained: async () => record(attempts, 'complained'),
+      getByProviderMessageId: async () => null,
+      countByStatus: async () => ({ queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0 }),
       list: async () => [],
     }
     const provider: HttpEmailProvider = {
@@ -117,6 +122,10 @@ describe('container in-process email queue', () => {
         return record(attempts, 'failed')
       },
       markQueueFailed: async () => record(attempts, 'failed'),
+      markBounced: async () => record(attempts, 'bounced'),
+      markComplained: async () => record(attempts, 'complained'),
+      getByProviderMessageId: async () => null,
+      countByStatus: async () => ({ queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0 }),
       list: async () => [],
     }
     const provider: HttpEmailProvider = {
@@ -168,6 +177,10 @@ describe('container in-process email queue', () => {
       markSent: async () => record(1, 'queued'),
       markProviderFailed: async () => record(1, 'failed'),
       markQueueFailed: async () => record(1, 'failed'),
+      markBounced: async () => record(1, 'bounced'),
+      markComplained: async () => record(1, 'complained'),
+      getByProviderMessageId: async () => null,
+      countByStatus: async () => ({ queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0 }),
       list: async () => [],
     }
     const provider: HttpEmailProvider = {

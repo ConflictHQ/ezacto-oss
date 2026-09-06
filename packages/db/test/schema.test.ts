@@ -879,6 +879,7 @@ for (const [runtime, factory] of factories) {
         { id: '0031_team_people' },
         { id: '0032_invoice_email_delivery' },
         { id: '0033_contact_portal' },
+        { id: '0035_backup_runs' },
         { id: '0036_client_budgets' },
       ])
       expect(
@@ -939,6 +940,7 @@ for (const [runtime, factory] of factories) {
         { id: '0031_team_people' },
         { id: '0032_invoice_email_delivery' },
         { id: '0033_contact_portal' },
+        { id: '0035_backup_runs' },
         { id: '0036_client_budgets' },
       ])
       expect(
@@ -1012,6 +1014,7 @@ for (const [runtime, factory] of factories) {
         { id: '0031_team_people' },
         { id: '0032_invoice_email_delivery' },
         { id: '0033_contact_portal' },
+        { id: '0035_backup_runs' },
         { id: '0036_client_budgets' },
       ])
       expect(
@@ -1061,6 +1064,7 @@ for (const [runtime, factory] of factories) {
         { id: '0031_team_people' },
         { id: '0032_invoice_email_delivery' },
         { id: '0033_contact_portal' },
+        { id: '0035_backup_runs' },
         { id: '0036_client_budgets' },
       ])
     })
@@ -1187,6 +1191,9 @@ describe('package contents', () => {
         'dist/migrations/0033_contact_portal.js',
         'dist/migrations/0032_invoice_email_delivery.d.ts',
         'dist/migrations/0033_contact_portal.d.ts',
+        'dist/migrations/0035_backup_runs.js',
+        'dist/migrations/0032_invoice_email_delivery.d.ts',
+        'dist/migrations/0035_backup_runs.d.ts',
         'dist/migrations/0036_client_budgets.js',
         'dist/migrations/0032_invoice_email_delivery.d.ts',
         'dist/migrations/0036_client_budgets.d.ts',

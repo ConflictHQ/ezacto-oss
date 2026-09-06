@@ -20,6 +20,7 @@ import {
   createD1PasswordAuthService,
   createD1SessionStore,
   DrizzleTrackedResourceRepository,
+  getLatestBackupRuns,
   migrateD1,
 } from "@ezacto/db/d1";
 import {
@@ -453,6 +454,9 @@ export const createRuntimeServices = async (
       ? { senderIdentityVerifier: createSesSenderIdentityVerifier(emailProvider) }
       : {}),
     outbox,
+    backupStatus: {
+      latestRuns: (limit: number) => getLatestBackupRuns(database, limit),
+    },
     identities,
     oidcTransactions: createD1OidcTransactionStore(database),
     ...(deploymentAuthMailer === undefined ? {} : { deploymentAuthMailer }),

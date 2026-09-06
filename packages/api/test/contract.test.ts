@@ -7,6 +7,7 @@ import {
   installAttachmentRoutes,
   installClientTreeRoutes,
   installEmailConfigurationRoutes,
+  installEmailHealthRoutes,
   installEmailLogRoutes,
   installGeneralResourceRoutes,
   installModuleSettingsRoutes,
@@ -72,7 +73,7 @@ const passwordAuth = new Proxy(
 ) as PasswordAuthService;
 const authMailer = new Proxy({}, { get: () => unavailable }) as AuthMailer;
 const sessions = new Proxy({}, { get: () => unavailable }) as ApiSessionService;
-const emailLog = { list: unavailable };
+const emailLog = { list: unavailable, countByStatus: unavailable };
 const emailConfiguration = new Proxy(
   {},
   { get: () => unavailable },
@@ -108,6 +109,7 @@ const documentedApp = () =>
     installApi: (api) => {
       installSessionRoutes(api, sessions);
       installEmailLogRoutes(api, emailLog);
+      installEmailHealthRoutes(api, emailLog);
       installEmailConfigurationRoutes(api, {
         service: emailConfiguration,
         clock: () => "2026-08-28T12:00:00.000Z",
