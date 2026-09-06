@@ -47,6 +47,12 @@ export interface RowAction {
    * card lists this replaced — they disabled the button itself.
    */
   readonly disabled?: boolean
+  /**
+   * Dataset keys to set on the rendered control. Callers that re-enable their
+   * own buttons by sweeping a marker attribute need the control to carry it,
+   * or it is disabled once and never restored.
+   */
+  readonly dataset?: Readonly<Record<string, string>>
   readonly onSelect: () => void
 }
 
@@ -74,6 +80,11 @@ const put = (cell: HTMLElement, content: CellContent): void => {
   else cell.append(content)
 }
 
+const applyDataset = (element: HTMLElement, action: RowAction): void => {
+  if (action.dataset === undefined) return
+  for (const [key, value] of Object.entries(action.dataset)) element.dataset[key] = value
+}
+
 const actionsCell = (actions: readonly RowAction[]): HTMLTableCellElement => {
   const cell = document.createElement('td')
   cell.className = 'data-table-actions'
@@ -85,6 +96,7 @@ const actionsCell = (actions: readonly RowAction[]): HTMLTableCellElement => {
     button.className = 'data-table-action'
     button.textContent = action.label
     button.disabled = action.disabled === true
+    applyDataset(button, action)
     button.addEventListener('click', action.onSelect)
     cell.append(button)
   }
@@ -101,6 +113,7 @@ const actionsCell = (actions: readonly RowAction[]): HTMLTableCellElement => {
       button.type = 'button'
       button.textContent = action.label
       button.disabled = action.disabled === true
+      applyDataset(button, action)
       button.addEventListener('click', () => {
         details.open = false
         action.onSelect()

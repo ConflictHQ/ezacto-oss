@@ -139,6 +139,19 @@ describe('data table', () => {
     ).toBe(true)
   })
 
+  it('[unit] carries caller dataset markers onto the controls', () => {
+    // Callers that re-enable their own buttons by sweeping a marker attribute
+    // need the control to carry it. Without this an action is disabled during
+    // a mutation and never restored, because the sweep cannot see it.
+    const element = table({
+      actions: () => [
+        { label: 'Edit', primary: true, dataset: { thingMutation: '' }, onSelect: () => {} },
+        { label: 'Archive', dataset: { thingMutation: '' }, onSelect: () => {} },
+      ],
+    })
+    expect(element.querySelectorAll('[data-thing-mutation]')).toHaveLength(6)
+  })
+
   it('[unit] keys every row so a re-render can be reconciled', () => {
     const keys = [...table().querySelectorAll('tbody tr[data-row]')].map(
       (row) => (row as HTMLElement).dataset.rowKey,
