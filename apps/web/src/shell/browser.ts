@@ -1577,7 +1577,6 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     grid = buildWeekGrid(snapshot, within, supplementalRows)
     required<HTMLElement>('[data-week-label]').textContent = weekLabel(grid.dates)
     required<HTMLElement>('[data-week-total]').textContent = formatSeconds(grid.totalSeconds)
-    setActiveTimeFormat(snapshot.timeEntrySettings.time_format)
     const handlers: GridHandlers = {
       cellStates,
       organizationMode: snapshot.timeEntrySettings.time_entry_mode,
@@ -1709,6 +1708,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     if (!isSessionCurrent(operation) || within !== requestedWithin) return false
     weekStartDay = loadedWeekStartDay
     snapshot = loaded
+    // Publish before anything renders: the week total, approval cards and the
+    // running-timer elapsed all format seconds, and all of them run ahead of
+    // the grid render where this used to be set.
+    setActiveTimeFormat(loaded.timeEntrySettings.time_format)
     supplementalRows = loadSupplementalRows(operation.userId!, within, weekStartDay)
     const loadedDates = weekDates(within, weekStartDay)
     const preservedIndex = selectedDate === undefined ? -1 : loadedDates.indexOf(selectedDate)
