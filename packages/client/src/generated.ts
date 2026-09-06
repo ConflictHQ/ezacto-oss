@@ -1761,6 +1761,17 @@ export type ProjectBudgetReportEnvelope = {
   "links": Links;
 };
 
+export type ClientHierarchyNode = {
+  "ancestor_id": number;
+  "descendant_id": number;
+  "depth": number;
+};
+
+export type ClientHierarchyListEnvelope = {
+  "data": Array<ClientHierarchyNode>;
+  "links": Links;
+};
+
 export type ModuleState = {
   "module": "approval" | "expenses";
   "enabled": boolean;
@@ -3535,6 +3546,24 @@ export class EzactoClient {
     if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
     return this.request<TeamCommandReceiptEnvelope>("POST", "/api/v1/team/people/:id/rates".replace(":id", encodeURIComponent(String(args["id"]))), {
       body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listClientAncestors(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<ClientHierarchyListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ClientHierarchyListEnvelope>("GET", "/api/v1/clients/:id/ancestors".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listClientDescendants(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<ClientHierarchyListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ClientHierarchyListEnvelope>("GET", "/api/v1/clients/:id/descendants".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });

@@ -5,6 +5,7 @@ import {
   createApiApp,
   generateOpenApiDocument,
   installAttachmentRoutes,
+  installClientTreeRoutes,
   installEmailConfigurationRoutes,
   installEmailHealthRoutes,
   installEmailLogRoutes,
@@ -21,6 +22,7 @@ import {
   installTimesheetApprovalRoutes,
   installTimesheetLockPolicyRoutes,
   type ApiSessionService,
+  type ClientTreeReader,
   type EmailConfigurationService,
   type AuthMailer,
   type ApiTokenService,
@@ -63,6 +65,7 @@ const moduleSettings = new Proxy(
   { get: () => unavailable },
 ) as ModuleSettingsService;
 const team = new Proxy({}, { get: () => unavailable }) as TeamRepository;
+const treeReader = new Proxy({}, { get: () => unavailable }) as ClientTreeReader;
 const tokens = new Proxy({}, { get: () => unavailable }) as ApiTokenService;
 const passwordAuth = new Proxy(
   {},
@@ -155,6 +158,7 @@ const documentedApp = () =>
         cursorSigningKey: new Uint8Array(32),
         isTeamModuleEnabled: async () => true,
       });
+      installClientTreeRoutes(api, treeReader);
     },
   });
 

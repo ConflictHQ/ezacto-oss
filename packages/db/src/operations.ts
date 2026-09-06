@@ -310,3 +310,30 @@ export const listClientDescendants = async (
     depth: row.depth,
   }))
 }
+
+export const listClientAncestors = async (
+  database: Database,
+  clientId: number,
+): Promise<ClientHierarchyNode[]> => {
+  const rows = await database.all<{
+    ancestor_id: number
+    descendant_id: number
+    depth: number
+  }>(sql`
+    WITH RECURSIVE ancestors(ancestor_id, descendant_id, depth) AS (
+      SELECT id, id, 0 FROM clients WHERE id = ${clientId}
+      UNION ALL
+      SELECT parent.id, ancestors.descendant_id, ancestors.depth + 1
+      FROM ancestors
+      JOIN clients child ON child.id = ancestors.ancestor_id
+      JOIN clients parent ON parent.id = child.parent_client_id
+      WHERE child.parent_client_id IS NOT NULL
+    )
+    SELECT ancestor_id, descendant_id, depth FROM ancestors ORDER BY depth
+  `)
+  return rows.map((row) => ({
+    ancestorId: row.ancestor_id,
+    descendantId: row.descendant_id,
+    depth: row.depth,
+  }))
+}
