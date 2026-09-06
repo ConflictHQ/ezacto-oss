@@ -1664,12 +1664,14 @@ const exerciseExpenseReceipt = async (page: Page): Promise<void> => {
   await filters.getByRole('button', { name: 'Apply filters' }).click()
   expect((await filtered).status()).toBe(200)
   await expect(page).toHaveURL(/\/expenses\?.*approval_status=unsubmitted/u)
-  const row = page.locator(`[data-expense-id="${expenseId}"]`)
+  const row = page.locator(`[data-expense-list] tbody tr[data-row-key="${expenseId}"]`)
   await expect(row).toBeVisible()
   await expect(row).toContainText('Airport shuttle receipt')
   await expect(row).toContainText('$18.75')
   await expect(row).toContainText('Reimbursement: None')
-  await expect(page.locator('.expense-week-heading')).toContainText('Week of Aug 24, 2026')
+  await expect(page.locator('[data-expense-list] .data-table-group')).toContainText(
+    'Week of Aug 24, 2026',
+  )
   await expectNoPageOverflow(page)
 
   await row.getByRole('link').click()
@@ -1712,9 +1714,9 @@ const exerciseExpenseReceipt = async (page: Page): Promise<void> => {
   await page.goto(
     '/expenses?from=2026-08-25&to=2026-08-25&client_id=1&project_id=1&expense_category_id=1&approval_status=unsubmitted&reimbursement_status=none',
   )
-  await expect(page.locator(`[data-expense-id="${expenseId}"]`)).toContainText(
-    'Reviewed detail',
-  )
+  await expect(
+    page.locator(`[data-expense-list] tbody tr[data-row-key="${expenseId}"]`),
+  ).toContainText('Reviewed detail')
 }
 
 test('[e2e:invoice-cycle] generates a real draft through the authenticated wizard', async ({

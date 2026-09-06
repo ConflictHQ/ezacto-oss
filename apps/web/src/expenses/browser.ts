@@ -1,3 +1,4 @@
+import { renderDataTable } from '../components/data-table.js'
 import {
   EzactoApiError,
   type Attachment,
@@ -24,7 +25,6 @@ import {
   expenseValueForForm,
   expenseValueInput,
   expenseWeekLabel,
-  expenseWeekStart,
   filtersFromSearch,
   type ExpenseFilters,
   type ExpensePage,
@@ -180,7 +180,7 @@ export const createExpenseWorkflowController = (
   const listPage = document.documentElement.dataset.appView === 'expense-list'
   const detailPage = document.documentElement.dataset.appView === 'expense-detail'
   const listStatus = required<HTMLElement>('[data-expense-list-status]')
-  const list = required<HTMLOListElement>('[data-expense-list]')
+  const list = required<HTMLElement>('[data-expense-list]')
   const loadMore = required<HTMLButtonElement>('[data-expense-load-more]')
   const listRetry = required<HTMLButtonElement>('[data-expense-list-retry]')
   const filterForm = required<HTMLFormElement>('[data-expense-filter-form]')
@@ -444,62 +444,86 @@ export const createExpenseWorkflowController = (
     globalThis.history.replaceState(null, '', `/expenses${search.size === 0 ? '' : `?${search.toString()}`}`)
   }
 
-  const renderExpense = (expense: Expense): HTMLLIElement => {
-    const row = document.createElement('li')
-    row.dataset.expenseId = String(expense.id)
-    row.className = 'expense-list-row'
-    const primary = document.createElement('div')
+  const expenseBilling = (expense: Expense): string =>
+    expense.invoice_id == null
+      ? expense.billable
+        ? 'Billable · not invoiced'
+        : 'Non-billable'
+      : `Invoice #${expense.invoice_id}`
+
+  const expenseDateLink = (expense: Expense): HTMLAnchorElement => {
     const link = document.createElement('a')
     link.href = `/expenses/${expense.id}`
-    link.textContent = `${expense.spent_date} · ${expenseCategoryLabel(expense.expense_category_id, catalog.categories)}`
-    const assignment = document.createElement('p')
-    assignment.textContent = `${expenseClientLabel(expense.project_id, catalog.projects, catalog.clients)} · ${expenseProjectLabel(expense.project_id, catalog.projects)}`
-    const notes = document.createElement('p')
-    notes.className = 'expense-notes'
-    notes.dataset.empty = String(expense.notes === null || expense.notes === undefined || expense.notes.trim() === '')
-    notes.textContent = expense.notes?.trim() || 'No notes'
-    primary.append(link, assignment, notes)
-    const summary = document.createElement('div')
-    const amount = document.createElement('strong')
-    amount.textContent = expenseMoney(expense.total_cost_cents, expenseCurrency(expense.project_id, catalog.projects, catalog.clients))
-    const approval = document.createElement('span')
-    approval.className = 'expense-status-pill'
-    approval.textContent = expenseStatusLabel(expense.approval_status)
-    const reimbursement = document.createElement('span')
-    reimbursement.textContent = expense.reimbursable
-      ? `Reimbursement: ${expenseStatusLabel(expense.reimbursement_status)}`
-      : 'Not reimbursable'
-    const billing = document.createElement('span')
-    billing.textContent = expense.invoice_id == null
-      ? expense.billable ? 'Billable · not invoiced' : 'Non-billable'
-      : `Invoice #${expense.invoice_id}`
-    const locked = document.createElement('span')
-    locked.textContent = expense.is_locked ? 'Locked' : 'Editable'
-    summary.append(amount, approval, reimbursement, billing, locked)
-    row.append(primary, summary)
-    return row
+    link.textContent = expense.spent_date
+    return link
+  }
+
+  const expenseStatusPill = (expense: Expense): HTMLSpanElement => {
+    const pill = document.createElement('span')
+    pill.className = 'expense-status-pill'
+    pill.textContent = expenseStatusLabel(expense.approval_status)
+    return pill
   }
 
   const renderList = (): void => {
-    list.replaceChildren()
     const expenses = [...listedExpenses].sort(
       (left, right) =>
         right.spent_date.localeCompare(left.spent_date) || right.id - left.id,
     )
-    for (const expense of expenses) {
-      const week = expenseWeekStart(expense.spent_date, weekStartDay)
-      const previous = list.lastElementChild
-      if (previous?.getAttribute('data-expense-week') !== week) {
-        const heading = document.createElement('li')
-        heading.className = 'expense-week-heading'
-        heading.dataset.expenseWeek = week
-        heading.textContent = expenseWeekLabel(expense.spent_date, weekStartDay)
-        list.append(heading)
-      }
-      const row = renderExpense(expense)
-      row.dataset.expenseWeek = week
-      list.append(row)
-    }
+    list.replaceChildren(
+      renderDataTable<Expense>({
+        caption: 'Expenses by week',
+        rows: expenses,
+        rowKey: (expense) => String(expense.id),
+        // The week is a band over its run of rows, which is how the old list
+        // read: one heading, then the days under it.
+        groupBy: (expense) => expenseWeekLabel(expense.spent_date, weekStartDay),
+        empty: 'No expenses match these filters.',
+        columns: [
+          { key: 'date', label: 'Date', render: expenseDateLink },
+          {
+            key: 'work',
+            label: 'Client / Project',
+            render: (expense) =>
+              `${expenseClientLabel(expense.project_id, catalog.projects, catalog.clients)} · ${expenseProjectLabel(expense.project_id, catalog.projects)}`,
+          },
+          {
+            key: 'category',
+            label: 'Category',
+            render: (expense) =>
+              expenseCategoryLabel(expense.expense_category_id, catalog.categories),
+          },
+          {
+            key: 'notes',
+            label: 'Notes',
+            render: (expense) => expense.notes?.trim() || 'No notes',
+          },
+          {
+            key: 'billing',
+            label: 'Billing',
+            render: (expense) =>
+              [
+                expenseBilling(expense),
+                expense.reimbursable
+                  ? `Reimbursement: ${expenseStatusLabel(expense.reimbursement_status)}`
+                  : 'Not reimbursable',
+                expense.is_locked ? 'Locked' : 'Editable',
+              ].join(' · '),
+          },
+          { key: 'status', label: 'Status', render: expenseStatusPill },
+          {
+            key: 'amount',
+            label: 'Amount',
+            numeric: true,
+            render: (expense) =>
+              expenseMoney(
+                expense.total_cost_cents,
+                expenseCurrency(expense.project_id, catalog.projects, catalog.clients),
+              ),
+          },
+        ],
+      }),
+    )
   }
 
   const loadList = async (append = false): Promise<void> => {
@@ -533,7 +557,7 @@ export const createExpenseWorkflowController = (
       renderList()
       nextCursor = page.page.next_cursor
       loadMore.hidden = nextCursor === null
-      const expenseCount = list.querySelectorAll('[data-expense-id]').length
+      const expenseCount = list.querySelectorAll('tbody tr[data-row]').length
       listStatus.textContent = expenseCount === 0
         ? 'No expenses match these filters.'
         : `${expenseCount} ${expenseCount === 1 ? 'expense' : 'expenses'} shown by week.`

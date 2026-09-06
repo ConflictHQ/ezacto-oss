@@ -1665,7 +1665,6 @@
   align-items: end;
   gap: 8px;
 }
-.expense-list,
 .expense-attachments ul {
   display: grid;
   gap: 10px;
@@ -1673,14 +1672,6 @@
   padding: 0;
   list-style: none;
 }
-.expense-week-heading {
-  margin-top: 12px;
-  color: var(--ez-muted);
-  font: 600 12px/1.4 var(--ez-font-mono), monospace;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-}
-.expense-list-row,
 .expense-attachments li {
   display: flex;
   align-items: center;
@@ -1691,39 +1682,10 @@
   border-radius: var(--ez-radius);
   background: var(--ez-surface);
 }
-.expense-list-row {
-  border-inline-start: 3px solid var(--ez-live);
-}
-.expense-list-row > div:first-child {
-  min-width: 0;
-}
-.expense-list-row > div:last-child {
-  display: grid;
-  justify-items: end;
-  gap: 6px;
-  flex: 0 0 auto;
-  color: var(--ez-muted);
-  font-size: 12px;
-}
-.expense-list-row a,
 .expense-attachments a {
   color: var(--ez-ink);
   font-weight: 700;
   text-underline-offset: 3px;
-}
-.expense-list-row p {
-  margin: 5px 0 0;
-  color: var(--ez-muted);
-  font-size: 13px;
-}
-.expense-list-row .expense-notes {
-  color: var(--ez-ink);
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-.expense-list-row .expense-notes[data-empty='true'] {
-  color: var(--ez-muted);
-  font-style: italic;
 }
 .expense-status-pill {
   padding: 4px 8px;
@@ -3511,7 +3473,6 @@ dialog textarea {
     grid-template-columns: 1fr;
   }
   .expense-filter-actions,
-  .expense-list-row,
   .expense-attachments li {
     align-items: stretch;
     flex-direction: column;
