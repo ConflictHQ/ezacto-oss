@@ -114,6 +114,47 @@ interface ActiveEntryEditor {
   readonly durationWasEditedBeforeOpen?: boolean
 }
 
+const IDENTITY_CACHE_KEY = 'ezacto.identity'
+
+/**
+ * Last known identity, so a document rendered without one still paints
+ * immediately. This is a rendering hint only: it grants nothing, because every
+ * protected request is still authorized by the worker against the real cookie.
+ */
+const readCachedIdentity = (): Whoami | undefined => {
+  try {
+    const raw = sessionStorage.getItem(IDENTITY_CACHE_KEY)
+    if (raw === null) return undefined
+    const parsed: unknown = JSON.parse(raw)
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      typeof (parsed as { user_id?: unknown }).user_id === 'number'
+    ) {
+      return parsed as Whoami
+    }
+  } catch {
+    // Private mode, disabled storage, or a stale shape. Ignore it.
+  }
+  return undefined
+}
+
+const rememberIdentity = (identity: Whoami): void => {
+  try {
+    sessionStorage.setItem(IDENTITY_CACHE_KEY, JSON.stringify(identity))
+  } catch {
+    // Caching is an optimization; never let it break sign-in.
+  }
+}
+
+const forgetIdentity = (): void => {
+  try {
+    sessionStorage.removeItem(IDENTITY_CACHE_KEY)
+  } catch {
+    // As above.
+  }
+}
+
 const required = <ElementType extends Element>(selector: string): ElementType => {
   const element = document.querySelector<ElementType>(selector)
   if (element === null) throw new Error(`shell element missing: ${selector}`)
@@ -1154,6 +1195,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     message = 'Sign in to load and edit your week.',
   ): void => {
     beginAuthGeneration(null)
+    // Signing out, or a session that ended, invalidates the cached identity.
+    // Account switching through an OAuth provider is cheap, so a survivor here
+    // would show the previous user on the next navigation.
+    forgetIdentity()
     currentIdentity = null
     signingIn = false
     signingOut = false
@@ -1801,9 +1846,37 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const loadAuthenticatedShell = async (
     operation: AuthOperation,
   ): Promise<void> => {
-    const identity = await api.whoami(operation.signal)
+    // Paint from the last known identity when there is one, and confirm it
+    // against the server without blocking; otherwise whoami is the gate, as
+    // before (issue 263).
+    const cached = readCachedIdentity()
+    const identity = cached ?? (await api.whoami(operation.signal))
     if (!isGenerationCurrent(operation)) return
+    rememberIdentity(identity)
     const authenticated = showAuthenticated(identity)
+    if (cached !== undefined) {
+      // Nothing is granted on the cache's say-so: every protected load below is
+      // authorized by the worker against the real cookie regardless of what was
+      // painted, so a stale cache can only be briefly wrong on screen.
+      void api
+        .whoami(authenticated.signal)
+        .then((fresh) => {
+          if (!isGenerationCurrent(operation)) return
+          rememberIdentity(fresh)
+          if (
+            fresh.user_id !== identity.user_id ||
+            fresh.profile !== identity.profile
+          ) {
+            // A different or re-scoped user. Everything already painted belongs
+            // to the wrong identity, so take the server's rendering of the page
+            // rather than trying to mutate this one into shape.
+            location.reload()
+          }
+        })
+        .catch((error: unknown) => {
+          handleSessionFailure(error, authenticated)
+        })
+    }
     void loadTeamNavigation(identity, authenticated)
     if (invoiceGenerationPage) {
       await Promise.all([loadInvoiceGeneration(authenticated), loadWeek(authenticated)])

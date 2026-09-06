@@ -1,5 +1,10 @@
 export { createApiApp } from './app.js'
 export {
+  installBackupStatusRoutes,
+  type BackupStatusReader,
+  type BackupStatusRecord,
+} from './backup-status.js'
+export {
   assertValidCloudflareAccessConfig,
   CLOUDFLARE_ACCESS_JWT_HEADER,
   createCloudflareAccessSessionResolver,
@@ -101,6 +106,10 @@ export {
   installEmailLogRoutes,
   type EmailLogReader,
 } from './email-log.js'
+export {
+  installEmailHealthRoutes,
+  type EmailHealthReader,
+} from './email-health.js'
 export {
   installEmailConfigurationRoutes,
   type EmailConfigurationRouteOptions,

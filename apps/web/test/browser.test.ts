@@ -373,7 +373,10 @@ const renderBrowserShell = (
     '',
     path,
   )
-  if (options.preserveStorage !== true) globalThis.localStorage.clear()
+  if (options.preserveStorage !== true) {
+    globalThis.localStorage.clear()
+    globalThis.sessionStorage.clear()
+  }
   document.open()
   document.write(
     renderAppShell({
@@ -1729,6 +1732,41 @@ describe('invoice browse browser behavior', () => {
 })
 
 describe('native browser authentication', () => {
+  it('[perf] paints from the cached identity instead of waiting on whoami', async () => {
+    renderBrowserShell({ sessionCookiePresent: true })
+    await mountShell(browserApi())
+
+    // Second navigation: the cache survives it, so nothing waits on whoami.
+    renderBrowserShell({ sessionCookiePresent: true, preserveStorage: true })
+    const api = browserApi()
+    const identityCheck = deferred<Whoami>()
+    const revalidating = { ...api, whoami: vi.fn(() => identityCheck.promise) }
+
+    const mounted = mountShell(revalidating)
+    await Promise.resolve()
+
+    // Painted before whoami settled, rather than waiting behind the overlay.
+    expect(
+      document.querySelector<HTMLElement>('[data-current-user-id]')!.textContent,
+    ).toBe(String(identity.user_id))
+
+    identityCheck.resolve(identity)
+    await mounted
+    // Still reconciled against the server.
+    expect(revalidating.whoami).toHaveBeenCalled()
+  })
+
+  it('[security] drops the cached identity on sign-out', async () => {
+    renderBrowserShell({ sessionCookiePresent: true })
+    await mountShell(browserApi())
+    expect(globalThis.sessionStorage.getItem('ezacto.identity')).not.toBeNull()
+
+    document.querySelector<HTMLButtonElement>('[data-logout]')!.click()
+    await vi.waitFor(() => {
+      expect(globalThis.sessionStorage.getItem('ezacto.identity')).toBeNull()
+    })
+  })
+
   it('[security] keeps the hinted shell inert under an overlay until whoami succeeds', async () => {
     renderBrowserShell({ sessionCookiePresent: true })
     const base = browserApi()
