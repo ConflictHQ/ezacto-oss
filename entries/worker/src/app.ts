@@ -106,6 +106,10 @@ export type WorkerEnv = AppEnv & {
   SES_REGION?: string
   SES_FROM?: string
   SES_CONFIGURATION_SET?: string
+  MAILGUN_API_KEY?: string
+  MAILGUN_DOMAIN?: string
+  MAILGUN_REGION?: 'us' | 'eu'
+  MAIL_FROM?: string
 }
 
 export interface RuntimeServices {

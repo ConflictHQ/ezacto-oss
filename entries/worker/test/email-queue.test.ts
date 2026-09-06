@@ -14,6 +14,8 @@ import {
 import {
   createSesSenderIdentityVerifier,
   createRuntimeServices,
+  createWorkerMailProvider,
+  createWorkerMailgunMailer,
   createWorkerSesMailer,
 } from '../src/runtime.js'
 
@@ -491,6 +493,44 @@ describe('Worker email queue composition', () => {
     } satisfies WorkerEnv
 
     expect(createWorkerSesMailer(base)).toBeNull()
+    expect(createWorkerMailgunMailer(base)).toBeNull()
+    expect(createWorkerMailProvider(base)).toBeNull()
+
+    // Mailgun needs both halves; one alone is a misconfiguration, not a
+    // no-transport deployment.
+    expect(() =>
+      createWorkerMailgunMailer({ ...base, MAILGUN_API_KEY: 'key-test' }),
+    ).toThrow('Mailgun requires MAILGUN_API_KEY and MAILGUN_DOMAIN together')
+    expect(() =>
+      createWorkerMailgunMailer({ ...base, MAILGUN_DOMAIN: 'mail.example.test' }),
+    ).toThrow('Mailgun requires MAILGUN_API_KEY and MAILGUN_DOMAIN together')
+    expect(() =>
+      createWorkerMailgunMailer({
+        ...base,
+        MAILGUN_API_KEY: 'key-test',
+        MAILGUN_DOMAIN: 'mail.example.test',
+        MAILGUN_REGION: 'apac' as 'us',
+      }),
+    ).toThrow("MAILGUN_REGION must be 'us' or 'eu'")
+
+    const mailgunEnv = {
+      ...base,
+      MAILGUN_API_KEY: 'key-test',
+      MAILGUN_DOMAIN: 'mail.example.test',
+    } satisfies WorkerEnv
+    expect(createWorkerMailProvider(mailgunEnv)).not.toBeNull()
+
+    // Two transports cannot share one sender; refuse rather than pick.
+    expect(() =>
+      createWorkerMailProvider({
+        ...mailgunEnv,
+        AWS_ACCESS_KEY_ID: 'TESTACCESSKEY',
+        AWS_SECRET_ACCESS_KEY: 'test-secret-key',
+        SES_REGION: 'us-west-2',
+        SES_FROM: 'notify@example.test',
+      }),
+    ).toThrow('Configure either Mailgun or SES, not both')
+
     expect(() =>
       createWorkerSesMailer({ ...base, SES_REGION: 'us-west-2' }),
     ).toThrow('SES requires AWS_ACCESS_KEY_ID')
