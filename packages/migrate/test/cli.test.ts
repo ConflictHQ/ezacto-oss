@@ -48,13 +48,18 @@ describe('ezacto-migrate CLI entrypoint', () => {
   let dir: string
 
   beforeAll(async () => {
-    // The shipped CLI loads @ezacto/db's shipped importer, so both have to be
-    // built for this to be the real entrypoint. Building only this package left
-    // the suite passing on whatever dist a previous build happened to leave
-    // behind, and failing on a clean checkout.
-    for (const cwd of [join(pkgDir, '..', 'db'), pkgDir]) {
-      await execFileAsync(process.execPath, [tscPath, '-p', 'tsconfig.build.json'], { cwd })
+    // The shipped CLI resolves its imports to its dependencies' shipped output,
+    // so this is only the real entrypoint if that output exists: migrate needs
+    // @ezacto/db and @ezacto/core, db needs core and @ezacto/mailer, mailer
+    // needs core. Built in that order. Building only this package left the
+    // suite passing on whatever dist an earlier build happened to leave behind,
+    // and failing on a clean checkout.
+    for (const name of ['core', 'mailer', 'db']) {
+      await execFileAsync(process.execPath, [tscPath, '-p', 'tsconfig.build.json'], {
+        cwd: join(pkgDir, '..', name),
+      })
     }
+    await execFileAsync(process.execPath, [tscPath, '-p', 'tsconfig.build.json'], { cwd: pkgDir })
   }, 240_000)
 
   beforeEach(async () => {
