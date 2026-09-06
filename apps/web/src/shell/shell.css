@@ -2,6 +2,17 @@
   box-sizing: border-box;
 }
 
+/*
+ * `hidden` is a presentational default, so any `display` rule beats it. Every
+ * component that sets `display` therefore un-hides itself, which is why nine
+ * separate `.thing[hidden]` rules had accumulated below — each one someone
+ * patching this locally. State one rule instead, and let `el.hidden` mean what
+ * it says.
+ */
+[hidden] {
+  display: none !important;
+}
+
 .team-workspace {
   width: min(1100px, 100%);
   margin-inline: auto;
