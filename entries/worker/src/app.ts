@@ -9,6 +9,7 @@ import {
   installEmailLogRoutes,
   installEmailConfigurationRoutes,
   installGeneralResourceRoutes,
+  installMagicLinkRoutes,
   installModuleSettingsRoutes,
   installGitHubRoutes,
   installMoneyResourceRoutes,
@@ -34,6 +35,7 @@ import {
   type GeneralResourceRouteOptions,
   type ModuleSettingsService,
   type EmailConfigurationRouteOptions,
+  type MagicLinkRouteOptions,
   type GitHubProviderConfig,
   type MoneyResourceRouteOptions,
   type OidcIdentityResolver,
@@ -137,6 +139,8 @@ export interface RuntimeServices {
   /** Deployment-brand sender for all authentication mail. */
   deploymentAuthMailer?: AuthMailer
   attachments?: AttachmentRouteOptions
+  /** Portal magic-link authentication for contacts. */
+  portalAuth?: MagicLinkRouteOptions
   backupStatus?: BackupStatusReader
 }
 
@@ -263,6 +267,9 @@ export const createApp = (services?: RuntimeServices) =>
           clientKey: (request) =>
             request.headers.get('cf-connecting-ip') ?? 'unknown-client',
         })
+        if (services.portalAuth !== undefined) {
+          installMagicLinkRoutes(app, services.portalAuth)
+        }
       }
 
       app.get('/healthz', (context) => {

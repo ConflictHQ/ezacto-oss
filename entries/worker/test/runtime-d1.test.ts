@@ -225,7 +225,7 @@ describe("Worker D1 runtime composition", () => {
     expect(migrations.results.at(-1)?.id).toBe(
       "0035_backup_runs",
     );
-    expect(migrations.results).toHaveLength(34);
+    expect(migrations.results).toHaveLength(35);
   });
 
   it("[security] keeps unverified session-like cookies fail-closed", async () => {

@@ -1,6 +1,7 @@
 export * from './adapters.js'
 export * from './backup.js'
 export * from './api-tokens.js'
+export * from './contact-sessions.js'
 export * from './attachments.js'
 export * from './expenses.js'
 export * from './email-log.js'
@@ -19,6 +20,7 @@ export {
   type HarvestPaymentDateEvidence,
   type InvoicePaymentOption,
 } from './invoice-payments.js'
+export * from './magic-link-state.js'
 export * from './migrate.js'
 export * from './module-settings.js'
 export * from './money-resources.js'
