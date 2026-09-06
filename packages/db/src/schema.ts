@@ -3636,3 +3636,47 @@ export const contactSessions = sqliteTable(
     ),
   ],
 )
+
+export const scheduledReminders = sqliteTable(
+  'scheduled_reminders',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    invoiceId: integer('invoice_id')
+      .notNull()
+      .references(() => invoices.id, { onDelete: 'cascade' }),
+    scheduledAt: text('scheduled_at').notNull(),
+    intervalDays: integer('interval_days').notNull(),
+    status: text('status', {
+      enum: ['pending', 'sent', 'cancelled'],
+    })
+      .notNull()
+      .default('pending'),
+    template: text('template').notNull().default('reminder'),
+    causationEventId: text('causation_event_id').notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    index('scheduled_reminders_pending_due')
+      .on(table.status, table.scheduledAt)
+      .where(sql`${table.status} = 'pending'`),
+    index('scheduled_reminders_invoice_status').on(table.invoiceId, table.status),
+    uniqueIndex('scheduled_reminders_causation_unique')
+      .on(table.causationEventId)
+      .where(sql`${table.status} = 'pending'`),
+    check(
+      'scheduled_reminders_interval_positive',
+      sql`${table.intervalDays} between 1 and 9007199254740991`,
+    ),
+    check(
+      'scheduled_reminders_template_nonempty',
+      sql`length(${table.template}) between 1 and 128`,
+    ),
+    check('scheduled_reminders_scheduled_at_canonical', canonicalTimestamp(table.scheduledAt)),
+    check('scheduled_reminders_created_at_canonical', canonicalTimestamp(table.createdAt)),
+    check('scheduled_reminders_updated_at_canonical', canonicalTimestamp(table.updatedAt)),
+    check(
+      'scheduled_reminders_timestamp_order',
+      sql`julianday(${table.updatedAt}) >= julianday(${table.createdAt})`,
+    ),
+  ],
+)
