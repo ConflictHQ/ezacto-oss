@@ -170,6 +170,26 @@ describe('Team browser controller', () => {
     )
   })
 
+  it('keeps the initials when an avatar fails to load', async () => {
+    // Imported avatar_urls point at Harvest's CDN and prod's CSP is
+    // img-src 'self' data:, so every one of them is blocked. The initials have
+    // to survive that, or the whole roster is empty circles.
+    writeDocument('team-list')
+    const listTeamPeople = vi.fn(async () =>
+      page([summary({ avatar_url: 'https://cdn.example.com/blocked.png' })]),
+    )
+    const controller = createTeamDirectoryController({ listTeamPeople })
+    await controller.activate(identity(), new AbortController().signal, () => false)
+
+    const avatar = document.querySelector<HTMLElement>('[data-team-list] .team-avatar')!
+    expect(avatar.querySelector('img')).not.toBeNull()
+    expect(avatar.textContent).toContain('AO')
+
+    avatar.querySelector('img')!.dispatchEvent(new Event('error'))
+    expect(avatar.querySelector('img')).toBeNull()
+    expect(avatar.textContent).toContain('AO')
+  })
+
   it('denies a session profile outside team:read without issuing a list request', async () => {
     writeDocument('team-list')
     const listTeamPeople = vi.fn(async () => page([]))

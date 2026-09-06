@@ -317,10 +317,19 @@ export const createTeamDirectoryController = (
     avatar.setAttribute('aria-hidden', 'true')
     avatar.textContent = `${value.first_name.charAt(0)}${value.last_name.charAt(0)}`.toLocaleUpperCase('en-US')
     if (value.avatar_url !== null) {
-      avatar.textContent = ''
+      // Keep the initials underneath. Imported avatar_urls point at Harvest's
+      // CDN and prod's CSP is img-src 'self' data:, so these are blocked
+      // outright — clearing the text first left an empty circle with nothing
+      // to fall back to.
       const image = document.createElement('img')
       image.src = value.avatar_url
       image.alt = ''
+      image.addEventListener('error', () => image.remove())
+      image.addEventListener('load', () => {
+        avatar.childNodes.forEach((node) => {
+          if (node.nodeType === Node.TEXT_NODE) node.textContent = ''
+        })
+      })
       avatar.append(image)
     }
     const identity = document.createElement('div')
