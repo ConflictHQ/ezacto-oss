@@ -671,6 +671,38 @@ describe('three-way reconciliation', () => {
     )
   })
 
+  it('[unit] leaves an archived project out of uninvoiced work, as Harvest does', async () => {
+    // Harvest's uninvoiced report lists active projects only. Recomputing over
+    // archived ones manufactured a delta on every archived project that still
+    // had uninvoiced work — three of CONFLICT's, four rows, and the runbook
+    // carried them as an accepted cost of the migration when they were a defect
+    // in the checker.
+    await rm(snapshotDir, { recursive: true, force: true })
+    await rm(databasePath, { force: true })
+    await buildSanitizedLoadSnapshot(snapshotDir)
+    await makeGoldenSlicesCoherent(snapshotDir)
+    const path = join(snapshotDir, 'raw', 'projects.jsonl')
+    const lines = (await readFile(path, 'utf8')).trimEnd().split('\n')
+    const project = JSON.parse(lines[0] ?? '') as Record<string, unknown>
+    project.is_active = false
+    lines[0] = JSON.stringify(project)
+    await writeFile(path, `${lines.join('\n')}\n`)
+    await writePassingChecksums(snapshotDir)
+    await rewriteChecksums(snapshotDir, (report) => {
+      // What Harvest reports for an archived project: nothing at all.
+      report.reports.uninvoiced = []
+      report.reports['project_budget/active']![0]!.is_active = false
+    })
+    await runLoad({ snapshotDir, databasePath })
+
+    const result = await runReconcile({ snapshotDir, databasePath })
+    expect(
+      result.report.unexplained.filter((check) =>
+        check.check.endsWith('uninvoiced_report') || check.check === 'snapshot_uninvoiced_parity',
+      ),
+    ).toEqual([])
+  })
+
   it('[unit] sees a settled invoice restated as open by a payment it cannot hold', async () => {
     // The seven CONFLICT invoices in #283: state is derived from the payments
     // that loaded, so a payment invoice_payments.amount_cents cannot represent

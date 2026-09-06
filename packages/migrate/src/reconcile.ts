@@ -641,7 +641,11 @@ const sourceState = async (
       )
     } else month.unpricedCost += 1
 
+    // Harvest's uninvoiced report lists active projects only. Recomputing over
+    // archived ones manufactured a delta on every archived project that still
+    // had uninvoiced work — three of CONFLICT's, four rows.
     if (
+      project.isActive &&
       project.billingMethod !== 'non_billable' &&
       date >= uninvoicedRange.from &&
       date <= uninvoicedRange.to
@@ -748,6 +752,7 @@ const sourceState = async (
     )
     month.expenseCents = add(month.expenseCents, cents, 'monthly expense cents')
     if (
+      project.isActive &&
       date >= uninvoicedRange.from &&
       date <= uninvoicedRange.to &&
       project.billingMethod !== 'non_billable' &&
@@ -846,7 +851,7 @@ const sourceState = async (
 
   const reportThrough = uninvoicedRange.to
   for (const project of projects.values()) {
-    if (project.billingMethod !== 'fixed_fee') continue
+    if (!project.isActive || project.billingMethod !== 'fixed_fee') continue
     const aggregate = getOrCreate(
       uninvoiced,
       groupKey(project.id, project.currency),
@@ -2011,6 +2016,7 @@ const databaseUninvoiced = (
        FROM time_entries entry JOIN projects project ON project.id = entry.project_id
        JOIN clients client ON client.id = project.client_id
        WHERE entry.harvest_id IS NOT NULL AND project.billing_method <> 'non_billable'
+         AND project.is_active = 1
          AND entry.spent_date BETWEEN ? AND ?
        ORDER BY project.harvest_id, entry.id`,
     )
@@ -2050,6 +2056,7 @@ const databaseUninvoiced = (
        FROM expenses expense JOIN projects project ON project.id = expense.project_id
        JOIN clients client ON client.id = project.client_id
        WHERE expense.harvest_id IS NOT NULL AND project.billing_method <> 'non_billable'
+         AND project.is_active = 1
          AND expense.invoice_id IS NULL
          AND expense.billable = 1 AND expense.spent_date BETWEEN ? AND ?
        ORDER BY project.harvest_id, expense.id`,
@@ -2087,6 +2094,7 @@ const databaseUninvoiced = (
             AND upper(invoice.currency) = upper(coalesce(project.billing_currency, client.currency))), 0) AS invoicedCents
        FROM projects project JOIN clients client ON client.id = project.client_id
        WHERE project.harvest_id IS NOT NULL AND project.billing_method = 'fixed_fee'
+         AND project.is_active = 1
        ORDER BY project.harvest_id`,
     )
     .all() as Array<{

@@ -671,19 +671,24 @@ recorded as an anomaly. Those skips are documented in
 [migration-spec §7](migration-spec.md#7-known-documented-gaps-from-research--decided-handling).
 The problem is the classifier: a skipped row's downstream delta has no way to be
 labelled as an accepted gap, so a correct load reports FAIL (#277). The
-rehearsal's 74 UNEXPLAINED deltas decompose as:
+rehearsal's UNEXPLAINED deltas decompose as:
 
 | Cause | Rows | Nature |
 | --- | --- | --- |
 | 5 negative time entries | 57 | expected — Harvest's own correction entries, which `time_entries.seconds` cannot hold |
 | 7 non-positive payments | 9 | expected — $0 and credit-note receipts, which `invoice_payments.amount_cents` cannot hold |
+| 7 invoices whose state those payments carried | 7 | the same cause, now visible: state is derived from the payments that loaded |
 | 3 sub-cent unit prices | 3 | expected — the IRS half-cent mileage rate and a repeating decimal, rounded half-even |
 | 1 unresolved estimate reference | 1 | expected — the estimates module is off; there is nothing to link to |
-| 4 archived-project uninvoiced rows | 4 | **a reconcile bug**, not a gap: archived projects are wrongly included in the recomputed aggregate |
+| ~~4 archived-project uninvoiced rows~~ | 0 | **fixed** — Harvest's uninvoiced report lists active projects only; reconcile recomputed over archived ones |
 
-The first four classes are the honest cost of the migration and the report
-naming them is the system working. The fifth is a defect in the checker, not in
-the data.
+Every remaining class is the honest cost of the migration and the report naming
+them is the system working.
+
+The rehearsal counted 74 before those last two rows changed. Excluding archived
+projects removed 4; comparing invoice state added 7; a fresh load adds an
+`invoice_state_disagreement` anomaly per invoice on top. Re-run the numbers
+against the load you intend to cut over rather than trusting this paragraph.
 
 Two consequences are worth stating plainly to whoever signs this off:
 
