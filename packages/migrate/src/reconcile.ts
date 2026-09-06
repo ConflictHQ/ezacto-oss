@@ -147,6 +147,7 @@ interface BudgetActivity {
 
 interface InvoiceSource {
   currency: string
+  state: string | null
   amountCents: number | null
   dueAmountCents: number | null
   taxAmountCents: number | null
@@ -824,6 +825,7 @@ const sourceState = async (
     }
     invoices.set(id, {
       currency: invoiceCurrency,
+      state: typeof source.row.state === 'string' ? source.row.state : null,
       amountCents: nullableMoney(source, '/amount', `invoices:${source.line}.amount`),
       dueAmountCents: nullableMoney(source, '/due_amount', `invoices:${source.line}.due_amount`),
       taxAmountCents: nullableMoney(source, '/tax_amount', `invoices:${source.line}.tax_amount`),
@@ -1634,6 +1636,7 @@ const invoiceSourceChecks = (
   const rows = database
     .prepare(
       `SELECT invoice.harvest_id AS harvestId, invoice.currency AS currency,
+        invoice.state AS state,
         invoice.source_amount_cents AS amountCents,
         invoice.source_due_amount_cents AS dueAmountCents,
         invoice.source_tax_amount_cents AS taxAmountCents,
@@ -1651,6 +1654,7 @@ const invoiceSourceChecks = (
     .all() as Array<{
     harvestId: number
     currency: string
+    state: string
     amountCents: number | null
     dueAmountCents: number | null
     taxAmountCents: number | null
@@ -1673,6 +1677,17 @@ const invoiceSourceChecks = (
       'currency',
       expected.currency,
       actual?.currency ?? null,
+    )
+    // Invoice state is derived from the payments that loaded, not carried over,
+    // so a payment the import could not represent restates a settled invoice as
+    // outstanding. Comparing nothing here is what let that pass unseen.
+    checks.compare(
+      'B',
+      'invoice_source_fidelity',
+      key,
+      'state',
+      expected.state,
+      actual?.state ?? null,
     )
     checks.compare(
       'B',

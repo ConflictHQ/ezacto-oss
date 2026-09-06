@@ -671,6 +671,67 @@ describe('three-way reconciliation', () => {
     )
   })
 
+  it('[unit] sees a settled invoice restated as open by a payment it cannot hold', async () => {
+    // The seven CONFLICT invoices in #283: state is derived from the payments
+    // that loaded, so a payment invoice_payments.amount_cents cannot represent
+    // leaves a paid invoice reading open. Reconcile compared no state field, so
+    // six of the seven were invisible to it.
+    await rm(snapshotDir, { recursive: true, force: true })
+    await rm(databasePath, { force: true })
+    await buildSanitizedLoadSnapshot(snapshotDir)
+    await makeGoldenSlicesCoherent(snapshotDir)
+
+    const paymentPath = join(snapshotDir, 'raw', 'invoice_payments.jsonl')
+    const payment = JSON.parse(await readFile(paymentPath, 'utf8')) as Record<string, unknown>
+    payment.amount = 0
+    await writeFile(paymentPath, `${JSON.stringify(payment)}\n`)
+
+    const invoicePath = join(snapshotDir, 'raw', 'invoices.jsonl')
+    const lines = (await readFile(invoicePath, 'utf8')).trimEnd().split('\n')
+    const invoice = JSON.parse(lines[0] ?? '') as Record<string, unknown>
+    invoice.state = 'paid'
+    invoice.due_amount = 2275
+    lines[0] = JSON.stringify(invoice)
+    await writeFile(invoicePath, `${lines.join('\n')}\n`)
+
+    await writePassingChecksums(snapshotDir)
+    await runLoad({ snapshotDir, databasePath })
+
+    const database = new BetterSqlite3(databasePath)
+    try {
+      const anomalies = database
+        .prepare(`SELECT resource, source_id AS sourceId, kind FROM _ezacto_load_anomalies`)
+        .all() as Array<{ resource: string; sourceId: string | null; kind: string }>
+      expect(anomalies).toContainEqual({
+        resource: 'invoice_payments',
+        sourceId: '50863457',
+        kind: 'non_positive_payment',
+      })
+      // The importer always knew; the loader used to drop this on the floor.
+      expect(anomalies).toContainEqual({
+        resource: 'invoices',
+        sourceId: '13150403',
+        kind: 'invoice_state_disagreement',
+      })
+      expect(
+        database.prepare(`SELECT state FROM invoices WHERE harvest_id = 13150403`).get(),
+      ).toEqual({ state: 'open' })
+    } finally {
+      database.close()
+    }
+
+    const result = await runReconcile({ snapshotDir, databasePath })
+    expect(result.report.unexplained).toContainEqual(
+      expect.objectContaining({
+        check: 'invoice_source_fidelity',
+        key: 'invoice:13150403',
+        metric: 'state',
+        expected: 'paid',
+        actual: 'open',
+      }),
+    )
+  })
+
   it('[unit] fails closed for an unknown loader anomaly', async () => {
     const checksum = JSON.parse(
       await readFile(join(snapshotDir, 'checksums.json'), 'utf8'),

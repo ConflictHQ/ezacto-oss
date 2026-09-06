@@ -685,16 +685,18 @@ The first four classes are the honest cost of the migration and the report
 naming them is the system working. The fifth is a defect in the checker, not in
 the data.
 
-Two consequences are worth stating plainly to whoever signs this off, because
-neither is visible in the reconcile summary:
+Two consequences are worth stating plainly to whoever signs this off:
 
 - **Seven invoices read `open` in ezacto that read `paid` in Harvest.** Invoice
   state is derived from imported payments, so dropping the seven non-positive
   payments left those invoices with none. Six are $0 invoices settled by $0
   payments — a label difference with no money attached. The seventh is a credit
-  note that carries a negative amount due of -$8,765. Reconcile compares no
-  state field, so six of the seven are invisible to it. The durable record is in
-  the database, and this query is the check to run and keep:
+  note that carries a negative amount due of -$8,765. Reconcile now compares
+  `state` and the loader records an `invoice_state_disagreement` anomaly per
+  invoice, so all seven appear in the report rather than six of them being
+  invisible to it — they read as UNEXPLAINED, which is what they are until the
+  payments themselves can load (#283). The durable record is also in the
+  database, and this query is the check to run and keep:
 
 ```sh
 sqlite3 ./cutover.db "
