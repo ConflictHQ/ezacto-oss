@@ -385,9 +385,17 @@ describe('Projects V1 browser controller', () => {
     const controller = createProjectDirectoryController(api)
     await controller.activate(identity('member'), new AbortController().signal, () => false)
 
-    expect(document.querySelectorAll('[data-project-list] .project-list-row')).toHaveLength(1)
+    expect(document.querySelectorAll('[data-project-list] tbody tr[data-row]')).toHaveLength(1)
     document.querySelector<HTMLButtonElement>('[data-project-filter="all"]')!.click()
-    expect(document.querySelectorAll('[data-project-list] .project-list-row')).toHaveLength(2)
+    expect(document.querySelectorAll('[data-project-list] tbody tr[data-row]')).toHaveLength(2)
+
+    // The client is a band above its run of rows, not a column repeated on
+    // every one of them.
+    const bands = [...document.querySelectorAll('[data-project-list] .data-table-group th')].map(
+      (cell) => cell.textContent,
+    )
+    expect(bands).toHaveLength(2)
+    expect(new Set(bands).size).toBe(2)
     const filter = document.querySelector<HTMLSelectElement>('[data-project-client-filter]')!
     filter.value = '4'
     filter.dispatchEvent(new Event('change'))

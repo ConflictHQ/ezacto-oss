@@ -1,4 +1,6 @@
 import { EzactoApiError, type Attachment, type GeneralResource, type Whoami } from '@ezacto/client'
+
+import { renderDataTable } from '../components/data-table.js'
 import {
   projectBoolean,
   projectCapabilities,
@@ -410,31 +412,61 @@ export const createProjectDirectoryController = (
         { sensitivity: 'base' },
       ),
     )
-    listElement.replaceChildren(
-      ...visible.map((project) => {
-        const item = document.createElement('li')
-        item.className = 'project-list-row'
-        const body = document.createElement('div')
-        const link = document.createElement('a')
-        link.href = `/projects/${project.id}`
-        link.textContent = projectDisplayName(project)
-        const client = document.createElement('p')
-        client.textContent = projectClientLabel(project, clients)
-        body.append(link, client)
-        const metadata = document.createElement('div')
-        const billing = document.createElement('span')
-        billing.textContent = projectEnumLabel(projectText(project, 'billing_method'))
-        metadata.append(billing)
-        if (!projectIsActive(project)) {
-          const archived = document.createElement('span')
-          archived.className = 'project-status-pill'
-          archived.textContent = 'Archived'
-          metadata.append(archived)
-        }
-        item.append(body, metadata)
-        return item
-      }),
-    )
+    // Budget reads from whichever field the project's budget_by selects. Spent
+    // and Remaining are deliberately absent: they need
+    // /api/v1/reports/project-budget/{id}, which is per-project, so putting
+    // them here would be one request per row. See #297.
+    const budgetLabel = (project: Readonly<GeneralResource>): string => {
+      const by = projectText(project, 'budget_by')
+      const currency = projectCurrency(project, clients)
+      if (by === 'project' || by === 'task' || by === 'person') {
+        return projectHours(projectNumber(project, 'budget_seconds'))
+      }
+      if (by === 'project_cost') {
+        return projectMoney(projectNumber(project, 'cost_budget_cents'), currency)
+      }
+      if (by === 'task_fees') return projectMoney(projectNumber(project, 'fee_cents'), currency)
+      return '—'
+    }
+
+    const table = renderDataTable<Readonly<GeneralResource>>({
+      caption: 'Projects',
+      rows: visible,
+      rowKey: (project) => String(project.id),
+      // The client is the band, so it stops repeating on every row.
+      groupBy: (project) => projectClientLabel(project, clients),
+      empty: 'No projects match this filter.',
+      columns: [
+        {
+          key: 'name',
+          label: 'Project',
+          render: (project) => {
+            const link = document.createElement('a')
+            link.href = `/projects/${project.id}`
+            link.textContent = projectDisplayName(project)
+            return link
+          },
+        },
+        {
+          key: 'billing',
+          label: 'Billing',
+          render: (project) => projectEnumLabel(projectText(project, 'billing_method')),
+        },
+        { key: 'budget', label: 'Budget', numeric: true, render: budgetLabel },
+        {
+          key: 'status',
+          label: 'Status',
+          render: (project) => {
+            if (projectIsActive(project)) return 'Active'
+            const pill = document.createElement('span')
+            pill.className = 'project-status-pill'
+            pill.textContent = 'Archived'
+            return pill
+          },
+        },
+      ],
+    })
+    listElement.replaceChildren(table)
     listStatus.textContent = `${visible.length} ${visible.length === 1 ? 'project' : 'projects'} shown.`
   }
 
