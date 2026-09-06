@@ -1905,11 +1905,11 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
 
   await page.getByRole('link', { name: 'Back to invoices' }).click()
   await expect(page).toHaveURL(/\/invoices$/u)
-  const generatedCard = page.locator(
-    `[data-invoice-id="${generatedPayload.data.id}"]`,
+  const generatedRow = page.locator(
+    `[data-invoice-list] tbody tr[data-row-key="${generatedPayload.data.id}"]`,
   )
-  await expect(generatedCard).toBeVisible()
-  await expect(generatedCard).toContainText('$75.00')
+  await expect(generatedRow).toBeVisible()
+  await expect(generatedRow).toContainText('$75.00')
 })
 
 test('[e2e:invoice-lines] adds, edits, and deletes exact lines through the real worker and D1', async ({

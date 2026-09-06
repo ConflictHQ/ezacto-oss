@@ -1,6 +1,7 @@
 import {
   EzactoApiError,
   type GeneralResource,
+  type Invoice,
   type InvoiceGenerationInput,
   type TimeEntryInput,
   type TimeEntryPatch,
@@ -932,6 +933,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   let invoiceGenerationPending = false
   let invoiceCommandId: string | null = null
   let invoiceNextCursor: string | null = null
+  let invoiceListRows: readonly Invoice[] = []
   let invoiceListCount = 0
   let approvalModuleAvailable = false
   let lockPolicyAvailable = false
@@ -1090,6 +1092,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     invoiceLoadMore.hidden = true
     invoiceLoadMore.disabled = false
     invoiceNextCursor = null
+    invoiceListRows = []
     invoiceListCount = 0
     invoiceDetailStatus.textContent = 'Loading invoice…'
     invoiceDocument.hidden = true
@@ -1821,10 +1824,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     try {
       const page = await listInvoices(cursor, operation.signal)
       if (!isSessionCurrent(operation)) return
-      invoiceListCount = append
-        ? invoiceListCount + page.data.length
-        : page.data.length
-      renderInvoiceListItems(page.data, append)
+      invoiceListRows = append ? [...invoiceListRows, ...page.data] : [...page.data]
+      invoiceListCount = renderInvoiceListItems(invoiceListRows)
       invoiceNextCursor = page.page.next_cursor
       invoiceLoadMore.hidden = invoiceNextCursor === null
       invoiceListStatus.textContent =

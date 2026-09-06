@@ -1,3 +1,4 @@
+import { renderDataTable } from '../components/data-table.js'
 import {
   type Attachment,
   EzactoApiError,
@@ -72,52 +73,75 @@ const instantLabel = (value: string): string => {
 const paymentDateLabel = (payment: Readonly<InvoicePayment>): string =>
   payment.paid_at === null ? dateLabel(payment.paid_date) : instantLabel(payment.paid_at)
 
-const listCard = (invoice: Readonly<Invoice>): HTMLElement => {
-  const card = document.createElement('article')
-  card.className = 'invoice-list-card'
-  card.dataset.invoiceId = String(invoice.id)
-  const heading = document.createElement('div')
-  heading.className = 'invoice-list-heading'
-  const title = document.createElement('h2')
-  const link = document.createElement('a')
-  link.href = `/invoices/${invoice.id}`
-  link.textContent = `Invoice ${invoice.number}`
-  title.append(link)
+const invoiceStatePill = (invoice: Readonly<Invoice>): HTMLSpanElement => {
   const state = document.createElement('span')
   state.className = 'invoice-state'
   state.dataset.state = invoice.state
   state.textContent = invoiceStateLabel(invoice)
-  heading.append(title, state)
-  const facts = document.createElement('p')
-  facts.className = 'invoice-list-facts'
-  facts.textContent = `Client #${invoice.client_id} · Issued ${dateLabel(invoice.issue_date)} · Due ${dateLabel(invoice.due_date)}`
-  const amounts = document.createElement('div')
-  amounts.className = 'invoice-list-amounts'
-  const total = document.createElement('strong')
-  total.textContent = money(invoice.amount_cents, invoice.currency)
-  const due = document.createElement('span')
-  due.textContent = `${money(invoice.due_amount_cents, invoice.currency)} due`
-  amounts.append(total, due)
-  card.append(heading, facts, amounts)
-  return card
+  return state
 }
 
-export const renderInvoiceListItems = (
+const invoiceNumberLink = (invoice: Readonly<Invoice>): HTMLAnchorElement => {
+  const link = document.createElement('a')
+  link.href = `/invoices/${invoice.id}`
+  link.textContent = `Invoice ${invoice.number}`
+  return link
+}
+
+// The old list closes with a bold Total. Summing across currencies would be a
+// wrong number rather than a missing one, so a mixed page shows none.
+const sharedCurrency = (invoices: readonly Invoice[]): string | null => {
+  const [first] = invoices
+  if (first === undefined) return null
+  return invoices.every((invoice) => invoice.currency === first.currency)
+    ? first.currency
+    : null
+}
+
+const columnTotal = (
   invoices: readonly Invoice[],
-  append: boolean,
-): number => {
+  amount: (invoice: Readonly<Invoice>) => number,
+): string => {
+  const currency = sharedCurrency(invoices)
+  if (currency === null) return '—'
+  return money(
+    invoices.reduce((sum, invoice) => sum + amount(invoice), 0),
+    currency,
+  )
+}
+
+export const renderInvoiceListItems = (invoices: readonly Invoice[]): number => {
   const list = required<HTMLElement>('[data-invoice-list]')
-  if (!append) list.replaceChildren()
-  if (invoices.length === 0 && list.childElementCount === 0) {
-    const empty = document.createElement('p')
-    empty.className = 'invoice-list-empty'
-    empty.textContent = 'No invoices have been created or imported yet.'
-    list.replaceChildren(empty)
-    return 0
-  }
-  if (list.querySelector('.invoice-list-empty') !== null) list.replaceChildren()
-  list.append(...invoices.map(listCard))
-  return list.querySelectorAll('[data-invoice-id]').length
+  list.replaceChildren(
+    renderDataTable<Readonly<Invoice>>({
+      caption: 'Invoices',
+      rows: invoices,
+      rowKey: (invoice) => String(invoice.id),
+      empty: 'No invoices have been created or imported yet.',
+      columns: [
+        { key: 'status', label: 'Status', render: invoiceStatePill },
+        { key: 'number', label: 'Invoice', render: invoiceNumberLink },
+        { key: 'client', label: 'Client', render: (invoice) => `Client #${invoice.client_id}` },
+        { key: 'issued', label: 'Issued', render: (invoice) => dateLabel(invoice.issue_date) },
+        { key: 'due-date', label: 'Due', render: (invoice) => dateLabel(invoice.due_date) },
+        {
+          key: 'amount',
+          label: 'Amount',
+          numeric: true,
+          render: (invoice) => money(invoice.amount_cents, invoice.currency),
+          total: (rows) => columnTotal(rows, (invoice) => invoice.amount_cents),
+        },
+        {
+          key: 'balance',
+          label: 'Balance',
+          numeric: true,
+          render: (invoice) => money(invoice.due_amount_cents, invoice.currency),
+          total: (rows) => columnTotal(rows, (invoice) => invoice.due_amount_cents),
+        },
+      ],
+    }),
+  )
+  return invoices.length
 }
 
 const emptyHistory = (message: string): HTMLLIElement => {
