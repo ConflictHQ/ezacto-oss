@@ -13,6 +13,12 @@ export const themeSlotNames = [
   'money',
   'status_bg',
   'status_fg',
+  'ink_2',
+  'orange_tint',
+  'blue_light',
+  'red',
+  'amber',
+  'amber_bg',
 ] as const
 
 export const themeFontNames = ['display', 'body', 'mono'] as const

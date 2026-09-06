@@ -13,6 +13,40 @@
   display: none !important;
 }
 
+/*
+ * Density and type scale. Old Harvest fitted a working week on one screen and
+ * gave every page one number big enough to read from across the room; §4 and §6
+ * of the old-UI analysis measure both. These are the tokens the list surfaces
+ * need before there is a table to apply them to.
+ */
+:root {
+  --ez-row-h: 40px;
+  --ez-row-h-lead: 48px;
+  --ez-display: 40px;
+  --ez-display-lead: 44px;
+  --ez-gutter: 32px;
+}
+
+[data-density='compact'] {
+  --ez-row-h: 32px;
+  --ez-row-h-lead: 40px;
+}
+
+/*
+ * Two page surfaces, not nine width caps. Grid surfaces (timesheet, lists,
+ * report tables) are full-bleed because rows earn the width; document surfaces
+ * (settings, forms) cap the measure because prose does not.
+ */
+.page--grid {
+  max-width: none;
+  padding-inline: var(--ez-gutter);
+}
+
+.page--document {
+  width: min(720px, 100%);
+  margin-inline: auto;
+}
+
 .team-workspace {
   width: min(1100px, 100%);
   margin-inline: auto;

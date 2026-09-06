@@ -21,6 +21,12 @@ const slots = [
   'money',
   'status_bg',
   'status_fg',
+  'ink_2',
+  'orange_tint',
+  'blue_light',
+  'red',
+  'amber',
+  'amber_bg',
 ]
 const fonts = ['display', 'body', 'mono']
 const scalars = ['radius']
