@@ -1166,10 +1166,14 @@ test('[e2e:project-directory] creates selectable work, edits assignments, upload
   expect((await created).status()).toBe(201)
   await expect(projectDialog).toBeHidden()
 
-  const row = page.locator('[data-project-list] li').filter({
+  const row = page.locator('[data-project-list] tbody tr[data-row]').filter({
     hasText: 'Browser UI Project',
   })
-  await expect(row).toContainText('Browser Acceptance Client')
+  // The client is a band above its run of rows, not a column repeated on each
+  // one, so it is asserted on the table rather than inside the row.
+  await expect(page.locator('[data-project-list] .data-table-group')).toContainText(
+    'Browser Acceptance Client',
+  )
   await row.getByRole('link', { name: '[BPROJ] Browser UI Project' }).click()
   await expect(page.locator('[data-project-facts]')).toContainText(
     'Browser delivery detail',
@@ -1282,7 +1286,7 @@ test('[e2e:project-directory] creates selectable work, edits assignments, upload
   await projectArchive.getByRole('button', { name: 'Archive project' }).click()
   await expect(page).toHaveURL(/\/projects$/u)
   await page.getByRole('button', { name: 'All', exact: true }).click()
-  const archivedRow = page.locator('[data-project-list] li').filter({
+  const archivedRow = page.locator('[data-project-list] tbody tr[data-row]').filter({
     has: page.locator(`a[href="/projects/${projectId}"]`),
   })
   await expect(archivedRow).toContainText('Archived')
