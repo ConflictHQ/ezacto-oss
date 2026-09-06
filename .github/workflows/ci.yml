@@ -1,39 +1,112 @@
 name: ci
 # Quality gates per PROCESS.md: lint, typecheck, test — green before merge.
-# Scaffolded before the first package on purpose: the pipeline is proven,
-# and expands automatically as workspaces land (scripts use --if-present).
+#
+# One serial `npm run verify` took 34 minutes, of which 29 were tests and 17
+# were @ezacto/db alone. The runner has two cores, so raising vitest's worker
+# count buys nothing; the only lever is more runners. The gates are therefore
+# split across jobs that run at once, and the two suites that dominate are
+# sharded further. Same work, a fraction of the wait.
 on:
   push:
     branches: [main]
   pull_request:
 permissions:
   contents: read
+concurrency:
+  # A second push supersedes the first on a branch. main still runs every commit
+  # — its history is what deploys.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
-  verify:
+  typecheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-        with:
-          # full history: the gitleaks step below scans commits, not just the
-          # working tree, so a secret added and later removed on the same branch
-          # is still caught
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-      - name: install
-        run: |
-          if [ -f package-lock.json ]; then npm ci; else npm install; fi
-      - name: install Chromium for browser acceptance
-        run: npx playwright install --with-deps --only-shell chromium
-      - name: verify (typecheck + lint + test)
-        run: npm run verify
+      - uses: ./.github/actions/node-workspace
+      - run: npm run typecheck
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/node-workspace
+      - run: npm run lint
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/node-workspace
+      - name: contract is what the code emits
+        run: npm run contract:check
+      - run: npm run build
       - name: publish versioned OpenAPI artifact
         uses: actions/upload-artifact@v4
         with:
           name: ezacto-openapi-v1-${{ github.sha }}
           path: openapi/ezacto-v1.openapi.json
           if-no-files-found: error
+
+  test:
+    name: test (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # @ezacto/db is over half the suite: 39 files, each replaying the
+          # migration ledger through a Miniflare D1. Sharded until no shard is
+          # the reason the run is slow.
+          - { name: db 1, workspaces: -w @ezacto/db, shard: 1/8 }
+          - { name: db 2, workspaces: -w @ezacto/db, shard: 2/8 }
+          - { name: db 3, workspaces: -w @ezacto/db, shard: 3/8 }
+          - { name: db 4, workspaces: -w @ezacto/db, shard: 4/8 }
+          - { name: db 5, workspaces: -w @ezacto/db, shard: 5/8 }
+          - { name: db 6, workspaces: -w @ezacto/db, shard: 6/8 }
+          - { name: db 7, workspaces: -w @ezacto/db, shard: 7/8 }
+          - { name: db 8, workspaces: -w @ezacto/db, shard: 8/8 }
+          - { name: api 1, workspaces: -w @ezacto/api, shard: 1/3 }
+          - { name: api 2, workspaces: -w @ezacto/api, shard: 2/3 }
+          - { name: api 3, workspaces: -w @ezacto/api, shard: 3/3 }
+          - { name: migrate, workspaces: -w ezacto-migrate }
+          - { name: worker, workspaces: -w ezacto-worker }
+          - {
+              name: packages,
+              workspaces: -w @ezacto/core -w @ezacto/client -w @ezacto/mailer -w @ezacto/cli -w @ezacto/mcp,
+            }
+          # The only suite that drives a browser, so the only one that pays for
+          # Chromium.
+          - { name: web, workspaces: -w @ezacto/web, playwright: 'true' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/node-workspace
+        with:
+          playwright: ${{ matrix.playwright || 'false' }}
+      - name: test
+        env:
+          WORKSPACES: ${{ matrix.workspaces }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          if [ -n "$SHARD" ]; then
+            npm test $WORKSPACES -- --shard="$SHARD"
+          else
+            npm test $WORKSPACES
+          fi
+
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # full history: the scan reads commits, not just the working tree, so
+          # a secret added and later removed on the same branch is still caught
+          fetch-depth: 0
+      - uses: ./.github/actions/node-workspace
       - name: gitleaks (E12 — secrets never in git)
         run: |
           curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz | tar -xz gitleaks
@@ -62,6 +135,7 @@ jobs:
           ./gitleaks git . --log-opts="--full-history --diff-merges=first-parent --diff-filter=tuxdb HEAD" --config .gitleaks.toml --redact --no-banner --verbose
         env:
           GITLEAKS_VERSION: 8.30.0
+
   container:
     runs-on: ubuntu-latest
     timeout-minutes: 20
