@@ -121,6 +121,24 @@ describe('data table', () => {
     expect(element.querySelectorAll('thead th')).toHaveLength(3)
   })
 
+  it('[unit] disables the control rather than silently ignoring the click', () => {
+    // Guarding inside onSelect would leave an enabled-looking button that does
+    // nothing, which is worse than the card lists this replaced.
+    const edit = vi.fn()
+    const archive = vi.fn()
+    const element = table({
+      actions: () => [
+        { label: 'Edit', primary: true, disabled: true, onSelect: edit },
+        { label: 'Archive', disabled: true, onSelect: archive },
+      ],
+    })
+    const first = element.querySelector('tbody tr[data-row]')!
+    expect(first.querySelector<HTMLButtonElement>('.data-table-action')?.disabled).toBe(true)
+    expect(
+      first.querySelector<HTMLButtonElement>('.data-table-menu button')?.disabled,
+    ).toBe(true)
+  })
+
   it('[unit] keys every row so a re-render can be reconciled', () => {
     const keys = [...table().querySelectorAll('tbody tr[data-row]')].map(
       (row) => (row as HTMLElement).dataset.rowKey,

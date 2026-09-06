@@ -1,3 +1,4 @@
+import { renderDataTable, type DataColumn } from '../components/data-table.js'
 import { EzactoApiError, type GeneralResource, type Whoami } from '@ezacto/client'
 import {
   formatTaskRate,
@@ -165,49 +166,64 @@ export const createTaskAdminController = (
       list.replaceChildren(empty)
       return
     }
+    const columns: DataColumn<Readonly<GeneralResource>>[] = [
+      { key: 'name', label: 'Task', render: (task) => taskName(task) },
+      { key: 'status', label: 'Status', render: (task) => (taskIsActive(task) ? 'Active' : 'Archived') },
+      {
+        key: 'billable',
+        label: 'Billable',
+        render: (task) => (taskBoolean(task, 'billable_by_default') ? 'By default' : 'No'),
+      },
+      {
+        key: 'default',
+        label: 'New projects',
+        render: (task) => (taskBoolean(task, 'is_default') ? 'Added' : 'Optional'),
+      },
+    ]
+    // The rate column is a permission, not a preference — it must not appear at
+    // all for someone who cannot view rates.
+    if (active.capabilities.canViewRate) {
+      columns.push({
+        key: 'rate',
+        label: 'Rate',
+        numeric: true,
+        render: (task) => formatTaskRate(taskRateCents(task)),
+      })
+    }
+
     list.replaceChildren(
-      ...tasks.map((task) => {
-        const item = document.createElement('li')
-        item.className = 'task-admin-card'
-        item.dataset.taskId = String(task.id)
-        const details = document.createElement('div')
-        const heading = document.createElement('strong')
-        heading.textContent = taskName(task)
-        const metadata = document.createElement('p')
-        const parts = [
-          taskIsActive(task) ? 'Active' : 'Archived',
-          taskBoolean(task, 'billable_by_default') ? 'Billable by default' : 'Non-billable by default',
-          taskBoolean(task, 'is_default') ? 'Added to new projects' : 'Optional for projects',
-          ...(active.capabilities.canViewRate ? [formatTaskRate(taskRateCents(task))] : []),
-        ]
-        metadata.textContent = parts.join(' · ')
-        details.append(heading, metadata)
-        item.append(details)
-        if (active.capabilities.canWrite) {
-          const actions = document.createElement('div')
-          actions.className = 'task-admin-card-actions'
-          const edit = document.createElement('button')
-          edit.type = 'button'
-          edit.textContent = taskIsActive(task) ? 'Edit' : 'Edit or reactivate'
-          edit.disabled = mutationPending
-          edit.addEventListener('click', () => openForm(task))
-          actions.append(edit)
-          if (taskIsActive(task)) {
-            const archive = document.createElement('button')
-            archive.type = 'button'
-            archive.textContent = 'Archive'
-            archive.disabled = mutationPending
-            archive.addEventListener('click', () => {
-              archivingTask = task
-              archiveResult.textContent = ''
-              archiveDialog.showModal()
-              syncMutationControls()
-            })
-            actions.append(archive)
-          }
-          item.append(actions)
-        }
-        return item
+      renderDataTable<Readonly<GeneralResource>>({
+        caption: 'Tasks',
+        rows: tasks,
+        rowKey: (task) => String(task.id),
+        columns,
+        empty: 'No tasks yet.',
+        ...(active.capabilities.canWrite
+          ? {
+              actions: (task) => [
+                {
+                  label: taskIsActive(task) ? 'Edit' : 'Edit or reactivate',
+                  primary: true,
+                  disabled: mutationPending,
+                  onSelect: () => openForm(task),
+                },
+                ...(taskIsActive(task)
+                  ? [
+                      {
+                        label: 'Archive',
+                        disabled: mutationPending,
+                        onSelect: () => {
+                          archivingTask = task
+                          archiveResult.textContent = ''
+                          archiveDialog.showModal()
+                          syncMutationControls()
+                        },
+                      },
+                    ]
+                  : []),
+              ],
+            }
+          : {}),
       }),
     )
   }

@@ -41,6 +41,12 @@ export interface RowAction {
   readonly label: string
   /** Rendered inline on hover. Others fall into the overflow menu. */
   readonly primary?: boolean
+  /**
+   * Renders the control disabled. Guarding inside `onSelect` instead leaves an
+   * enabled-looking button that silently does nothing, which is worse than the
+   * card lists this replaced — they disabled the button itself.
+   */
+  readonly disabled?: boolean
   readonly onSelect: () => void
 }
 
@@ -78,6 +84,7 @@ const actionsCell = (actions: readonly RowAction[]): HTMLTableCellElement => {
     button.type = 'button'
     button.className = 'data-table-action'
     button.textContent = action.label
+    button.disabled = action.disabled === true
     button.addEventListener('click', action.onSelect)
     cell.append(button)
   }
@@ -93,6 +100,7 @@ const actionsCell = (actions: readonly RowAction[]): HTMLTableCellElement => {
       const button = document.createElement('button')
       button.type = 'button'
       button.textContent = action.label
+      button.disabled = action.disabled === true
       button.addEventListener('click', () => {
         details.open = false
         action.onSelect()
