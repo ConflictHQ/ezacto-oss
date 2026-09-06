@@ -613,6 +613,7 @@
   min-width: 510px;
   border-collapse: collapse;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .report-table th,
 .report-table td {
@@ -620,6 +621,17 @@
   border-bottom: 1px solid var(--ez-border);
   text-align: right;
   white-space: nowrap;
+}
+/* The header band, the same one the data table carries. */
+.report-table thead th {
+  background: var(--ez-surface);
+  color: var(--ez-muted);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.report-table tbody tr:hover {
+  background: var(--ez-surface);
 }
 .report-table th:first-child,
 .report-table td:first-child {
