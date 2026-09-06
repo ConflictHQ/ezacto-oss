@@ -29,6 +29,15 @@
         "ENVIRONMENT": "prod",
         "RELEASE": "unknown",
         "APP_BASE_URL": "https://app.example.com",
+        // Deployment brand seam (#72). The install is CONFLICT's own, so the
+        // shell, the sign-in gateway and outbound mail carry its name instead of
+        // the product default. Wordmark and favicon are deliberately unset:
+        // they take URLs, and the brand assets are not hosted yet, so the text
+        // wordmark renders until they are.
+        "BRAND_NAME": "CONFLICT",
+        "BRAND_TAGLINE": "Time, exactly.",
+        "BRAND_DESCRIPTION": "Time tracking and invoicing for CONFLICT LLC.",
+        "BRAND_EMAIL_SENDER_NAME": "CONFLICT",
       },
       "d1_databases": [
         {
