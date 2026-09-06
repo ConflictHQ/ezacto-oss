@@ -34,6 +34,7 @@ import { outboxDeliveryMigration } from './migrations/0029_outbox_delivery.js'
 import { emailTemplatesMigration } from './migrations/0030_email_templates.js'
 import { teamPeopleMigration } from './migrations/0031_team_people.js'
 import { invoiceEmailDeliveryMigration } from './migrations/0032_invoice_email_delivery.js'
+import { contactPortalMigration } from './migrations/0033_contact_portal.js'
 import { clientBudgetsMigration } from './migrations/0036_client_budgets.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
@@ -1393,6 +1394,7 @@ const migrations = [
   { id: '0030_email_templates', statements: emailTemplatesMigration },
   { id: '0031_team_people', statements: teamPeopleMigration },
   { id: '0032_invoice_email_delivery', statements: invoiceEmailDeliveryMigration },
+  { id: '0033_contact_portal', statements: contactPortalMigration },
   { id: '0036_client_budgets', statements: clientBudgetsMigration },
 ] as const
 
