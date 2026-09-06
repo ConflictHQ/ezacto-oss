@@ -1033,14 +1033,14 @@ test('[e2e:client-directory] persists hierarchy, bill-to, contacts, projects, an
   await contactDialog.getByRole('button', { name: 'Add contact' }).click()
   await expect(contactDialog).toBeHidden()
 
-  const contactCard = page
-    .locator('[data-client-contacts] [data-contact-id]')
+  const contactRow = page
+    .locator('[data-client-contacts] tbody tr[data-row]')
     .filter({ hasText: 'Jordan Invoice' })
-  await expect(contactCard).toContainText('Invoice recipient')
-  await contactCard.getByRole('button', { name: 'Edit' }).click()
+  await expect(contactRow).toContainText('Invoice recipient')
+  await contactRow.getByRole('button', { name: 'Edit' }).click()
   await contactDialog.getByLabel('Invoice routing').selectOption('cc')
   await contactDialog.getByRole('button', { name: 'Save contact' }).click()
-  await expect(contactCard).toContainText('Invoice CC')
+  await expect(contactRow).toContainText('Invoice CC')
 
   const persisted = await page.evaluate(async (clientId) => {
     const [clientResponse, contactsResponse, projectsResponse] = await Promise.all([
@@ -1074,7 +1074,8 @@ test('[e2e:client-directory] persists hierarchy, bill-to, contacts, projects, an
     expect.objectContaining({ client_id: childId, code: 'CLIENT' }),
   ])
 
-  await contactCard.getByRole('button', { name: 'Delete' }).click()
+  await contactRow.locator('.data-table-overflow > summary').click()
+  await contactRow.getByRole('button', { name: 'Delete' }).click()
   const contactDelete = page.locator('[data-contact-delete-dialog]')
   await expect(contactDelete).toContainText('cannot be undone')
   await contactDelete.getByRole('button', { name: 'Delete contact' }).click()
@@ -1171,9 +1172,11 @@ test('[e2e:project-directory] creates selectable work, edits assignments, upload
   })
   // The client is a band above its run of rows, not a column repeated on each
   // one, so it is asserted on the table rather than inside the row.
-  await expect(page.locator('[data-project-list] .data-table-group')).toContainText(
-    'Browser Acceptance Client',
-  )
+  await expect(
+    page
+      .locator('[data-project-list] .data-table-group')
+      .filter({ hasText: 'Browser Acceptance Client' }),
+  ).toHaveCount(1)
   await row.getByRole('link', { name: '[BPROJ] Browser UI Project' }).click()
   await expect(page.locator('[data-project-facts]')).toContainText(
     'Browser delivery detail',
@@ -1334,11 +1337,11 @@ test('[e2e:task-admin] creates, edits, applies a default to a new project, and a
   const createdTask = (await createdResponse.json()).data as { id: number }
   await expect(formDialog).toBeHidden()
 
-  let row = page.locator('[data-task-list] [data-task-id]').filter({
+  let row = page.locator('[data-task-list] tbody tr[data-row]').filter({
     hasText: 'Browser Default Task',
   })
   await expect(row).toContainText('$123.45/hour')
-  await expect(row).toContainText('Added to new projects')
+  await expect(row).toContainText('Added')
   await row.getByRole('button', { name: 'Edit', exact: true }).click()
   await formDialog.getByLabel('Name').fill('Browser Default Task Updated')
   await formDialog.getByLabel('Default hourly rate').fill('150.05')
@@ -1350,11 +1353,12 @@ test('[e2e:task-admin] creates, edits, applies a default to a new project, and a
   )
   await formDialog.getByRole('button', { name: 'Save task' }).click()
   expect((await updated).status()).toBe(200)
-  row = page.locator('[data-task-list] [data-task-id]').filter({
+  row = page.locator('[data-task-list] tbody tr[data-row]').filter({
     hasText: 'Browser Default Task Updated',
   })
   await expect(row).toContainText('$150.05/hour')
-  await expect(row).toContainText('Non-billable by default')
+  // Billable reads as a column value now rather than a sentence on the card.
+  await expect(row.locator('td[data-column="billable"]')).toHaveText('No')
 
   const projectAssignment = await page.evaluate(async (taskId) => {
     const projectResponse = await fetch('/api/v1/projects', {
@@ -1397,17 +1401,20 @@ test('[e2e:task-admin] creates, edits, applies a default to a new project, and a
     ],
   })
 
+  await row.locator('.data-table-overflow > summary').click()
   await row.getByRole('button', { name: 'Archive' }).click()
   const archiveDialog = page.locator('[data-task-archive-dialog]')
   await archiveDialog.getByRole('button', { name: 'Cancel' }).click()
   await expect(archiveDialog).toBeHidden()
   expect(archiveRequests).toEqual([])
 
+  await row.locator('.data-table-overflow > summary').click()
   await row.getByRole('button', { name: 'Archive' }).click()
   await archiveDialog.getByRole('button', { name: 'Close' }).click()
   await expect(archiveDialog).toBeHidden()
   expect(archiveRequests).toEqual([])
 
+  await row.locator('.data-table-overflow > summary').click()
   await row.getByRole('button', { name: 'Archive' }).click()
   const archived = page.waitForResponse(
     (response) =>
@@ -1421,7 +1428,7 @@ test('[e2e:task-admin] creates, edits, applies a default to a new project, and a
   expect(archiveRequests).toHaveLength(1)
 
   await page.getByRole('button', { name: 'All', exact: true }).click()
-  const archivedRow = page.locator('[data-task-list] [data-task-id]').filter({
+  const archivedRow = page.locator('[data-task-list] tbody tr[data-row]').filter({
     hasText: 'Browser Default Task Updated',
   })
   await expect(archivedRow).toContainText('Archived')
@@ -1544,7 +1551,9 @@ test('[e2e:expense-categories] [e2e:expense-receipt] manages category availabili
   expect(categoryResponse.status()).toBe(201)
   const categoryId = Number((await categoryResponse.json()).data.id)
   expect(Number.isSafeInteger(categoryId)).toBe(true)
-  const categoryRow = page.locator(`[data-expense-category-id="${categoryId}"]`)
+  const categoryRow = page.locator(
+    `[data-expense-category-list] tbody tr[data-row-key="${categoryId}"]`,
+  )
   await expect(categoryRow).toContainText('42 cents per km')
   await expectNoPageOverflow(page)
 
@@ -1570,12 +1579,14 @@ test('[e2e:expense-categories] [e2e:expense-receipt] manages category availabili
 
   await page.goto('/expense-categories')
   await expect(categoryRow).toBeVisible()
+  await categoryRow.locator('.data-table-overflow > summary').click()
   await categoryRow.getByRole('button', { name: 'Archive' }).click()
   const archiveDialog = page.locator('[data-expense-category-archive-dialog]')
   await archiveDialog.getByRole('button', { name: 'Cancel' }).click()
   await expect(archiveDialog).toBeHidden()
   await expect(categoryRow).toContainText('Active')
 
+  await categoryRow.locator('.data-table-overflow > summary').click()
   await categoryRow.getByRole('button', { name: 'Archive' }).click()
   const archived = page.waitForResponse(
     (response) =>

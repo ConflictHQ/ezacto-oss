@@ -16,7 +16,7 @@ export const renderProjectDirectoryPages = (view?: string): string => `
       </label>
     </div>
     <p class="form-result project-page-status" data-project-list-status role="status" aria-live="polite">Loading projects…</p>
-    <ol class="project-list" data-project-list aria-label="Projects"></ol>
+    <div data-project-list></div>
     <button type="button" data-project-list-retry hidden>Retry loading projects</button>
   </main>
   <main class="app-content project-workspace" data-project-detail-page${view === 'project-detail' ? '' : ' hidden'}>

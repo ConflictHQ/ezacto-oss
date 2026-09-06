@@ -98,7 +98,7 @@ export const createExpenseCategoryDirectoryController = (
     '[data-expense-category-module-unavailable]',
   )
   const status = required<HTMLElement>('[data-expense-category-status]')
-  const list = required<HTMLOListElement>('[data-expense-category-list]')
+  const list = required<HTMLElement>('[data-expense-category-list]')
   const loadMore = required<HTMLButtonElement>('[data-expense-category-load-more]')
   const retry = required<HTMLButtonElement>('[data-expense-category-retry]')
   const createForm = required<HTMLFormElement>('[data-expense-category-create-form]')
@@ -237,7 +237,7 @@ export const createExpenseCategoryDirectoryController = (
 
   const renderList = (): void => {
     if (categories.length === 0) {
-      const empty = document.createElement('li')
+      const empty = document.createElement('p')
       empty.className = 'expense-category-empty'
       empty.textContent =
         filter === 'active'

@@ -1186,8 +1186,7 @@
 }
 .client-list-toolbar,
 .client-header-actions,
-.client-confirm-actions,
-.client-contact-actions {
+.client-confirm-actions {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1198,7 +1197,6 @@
 .client-list-toolbar button,
 .client-header-actions button,
 .client-contacts header button,
-.client-contact-actions button,
 .client-confirm-actions button,
 .client-workspace [data-client-create],
 [data-client-list-retry],
@@ -1215,9 +1213,7 @@
   background: var(--ez-status-bg);
   color: var(--ez-status-fg);
 }
-.client-tree,
-.client-projects ul,
-.client-contacts ul {
+.client-tree {
   display: grid;
   gap: 10px;
   margin: 0;
@@ -1232,8 +1228,6 @@
   background: var(--ez-surface);
 }
 .client-tree-row > div,
-.client-contact-card > div:first-child,
-.client-projects li,
 .client-contacts header {
   display: flex;
   align-items: center;
@@ -1246,8 +1240,7 @@
   font-weight: 700;
   text-underline-offset: 3px;
 }
-.client-tree-row p,
-.client-contact-card p {
+.client-tree-row p {
   margin: 7px 0 0;
   color: var(--ez-muted);
   font-size: 13px;
@@ -1321,22 +1314,6 @@
 .client-contacts header {
   margin-bottom: 14px;
 }
-.client-projects li,
-.client-contact-card {
-  padding: 12px;
-  border: 1px solid var(--ez-border);
-  border-radius: var(--ez-radius);
-  background: var(--ez-ground);
-}
-.client-projects li > span {
-  color: var(--ez-muted);
-  font-size: 12px;
-  text-transform: capitalize;
-}
-.client-contact-actions {
-  justify-content: flex-end;
-  margin-top: 12px;
-}
 .client-form-pair,
 .client-defaults {
   display: grid;
@@ -1406,7 +1383,6 @@
   background: var(--ez-status-bg);
   color: var(--ez-status-fg);
 }
-.project-list,
 .project-task-card,
 .project-tasks ul,
 .project-attachments ul {
@@ -1414,13 +1390,11 @@
   padding: 0;
   list-style: none;
 }
-.project-list,
 .project-tasks ul,
 .project-attachments ul {
   display: grid;
   gap: 10px;
 }
-.project-list-row,
 .project-task-card,
 .project-attachments li {
   display: flex;
@@ -1432,27 +1406,15 @@
   border-radius: var(--ez-radius);
   background: var(--ez-surface);
 }
-.project-list-row {
-  border-inline-start: 3px solid var(--ez-data);
-}
-.project-list-row a,
 .project-attachments a {
   color: var(--ez-ink);
   font-weight: 700;
   text-underline-offset: 3px;
 }
-.project-list-row p,
 .project-task-card p {
   margin: 5px 0 0;
   color: var(--ez-muted);
   font-size: 13px;
-}
-.project-list-row > div:last-child {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--ez-muted);
-  font-size: 12px;
 }
 .project-status-pill {
   padding: 4px 8px;
@@ -3203,8 +3165,6 @@ dialog textarea {
 }
 .task-admin-toolbar,
 .task-admin-toolbar fieldset,
-.task-admin-card,
-.task-admin-card-actions,
 .task-admin-confirm-actions {
   display: flex;
   align-items: center;
@@ -3215,8 +3175,7 @@ dialog textarea {
   margin-inline: auto;
 }
 .expense-category-intro,
-.expense-category-status,
-.expense-category-row p {
+.expense-category-status {
   color: var(--ez-muted);
 }
 .expense-category-create,
@@ -3259,7 +3218,6 @@ dialog textarea {
 .expense-category-form button,
 .expense-category-filter button,
 .expense-category-list-actions button,
-.expense-category-row-actions button,
 .expense-category-dialog-actions button,
 .expense-category-dialog [data-dialog-close] {
   min-height: 44px;
@@ -3280,8 +3238,7 @@ dialog textarea {
 }
 .expense-category-filter,
 .expense-category-list-actions,
-.expense-category-dialog-actions,
-.expense-category-row-actions {
+.expense-category-dialog-actions {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3295,7 +3252,6 @@ dialog textarea {
   border: 0;
 }
 .task-admin-toolbar button,
-.task-admin-card button,
 .task-admin-confirm-actions button,
 .task-admin-workspace [data-task-create],
 .task-admin-workspace [data-task-load-more],
@@ -3313,25 +3269,7 @@ dialog textarea {
   color: var(--ez-status-fg);
 }
 .task-admin-list {
-  display: grid;
-  gap: 10px;
   margin: 0 0 12px;
-  padding: 0;
-  list-style: none;
-}
-.task-admin-card {
-  justify-content: space-between;
-  padding: 16px 18px;
-  border: 1px solid var(--ez-border);
-  border-inline-start: 3px solid var(--ez-data);
-  border-radius: var(--ez-radius);
-  background: var(--ez-surface);
-}
-.task-admin-card p {
-  margin: 5px 0 0;
-  color: var(--ez-muted);
-  font-size: 13px;
-  overflow-wrap: anywhere;
 }
 .task-admin-empty {
   padding: 28px 18px;
@@ -3375,14 +3313,6 @@ dialog textarea {
   border-color: var(--ez-live);
   background: var(--ez-status-bg);
 }
-.expense-category-list {
-  display: grid;
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.expense-category-row,
 .expense-category-empty {
   display: flex;
   align-items: center;
@@ -3392,10 +3322,6 @@ dialog textarea {
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: var(--ez-ground);
-}
-.expense-category-row p {
-  margin: 5px 0 0;
-  font-size: 13px;
 }
 .expense-category-list-actions {
   margin-top: 14px;
@@ -3564,9 +3490,7 @@ dialog textarea {
   }
   .expense-category-header,
   .expense-category-directory-header,
-  .expense-category-row,
-  .expense-category-empty,
-  .expense-category-row-actions {
+  .expense-category-empty {
     align-items: stretch;
     flex-direction: column;
   }
@@ -3587,7 +3511,6 @@ dialog textarea {
   .expense-category-dialog-actions button {
     flex: 1;
   }
-  .project-list-row,
   .project-task-card,
   .project-attachments li {
     align-items: stretch;
@@ -3601,12 +3524,6 @@ dialog textarea {
   .task-admin-header {
     align-items: flex-start;
   }
-  .task-admin-card,
-  .task-admin-card-actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
-  .task-admin-card-actions button,
   .task-admin-workspace [data-task-create],
   .task-admin-workspace [data-task-load-more],
   .task-admin-workspace [data-task-list-retry] {
@@ -3671,6 +3588,12 @@ dialog textarea {
  * hover layer carry the row, which is what let the old UI fit a working week on
  * one screen without it feeling dense.
  */
+.data-table-scroll {
+  position: relative;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 .data-table {
   width: 100%;
   border-collapse: collapse;

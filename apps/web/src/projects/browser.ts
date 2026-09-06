@@ -227,7 +227,7 @@ export const createProjectDirectoryController = (
   const listPageElement = required<HTMLElement>('[data-project-list-page]')
   const detailPageElement = required<HTMLElement>('[data-project-detail-page]')
   const listStatus = required<HTMLElement>('[data-project-list-status]')
-  const listElement = required<HTMLOListElement>('[data-project-list]')
+  const listElement = required<HTMLElement>('[data-project-list]')
   const listRetry = required<HTMLButtonElement>('[data-project-list-retry]')
   const clientFilter = required<HTMLSelectElement>('[data-project-client-filter]')
   const detailStatus = required<HTMLElement>('[data-project-detail-status]')
@@ -395,7 +395,7 @@ export const createProjectDirectoryController = (
           projectNumber(project, 'client_id') === selectedClient),
     )
     if (visible.length === 0) {
-      const empty = document.createElement('li')
+      const empty = document.createElement('p')
       empty.className = 'project-list-empty'
       empty.textContent =
         projects.length === 0

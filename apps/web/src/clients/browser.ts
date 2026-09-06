@@ -144,8 +144,8 @@ export const createClientDirectoryController = (
   const listRetry = required<HTMLButtonElement>('[data-client-list-retry]')
   const detailRetry = required<HTMLButtonElement>('[data-client-detail-retry]')
   const detail = required<HTMLElement>('[data-client-detail]')
-  const projectsList = required<HTMLUListElement>('[data-client-projects]')
-  const contactsList = required<HTMLUListElement>('[data-client-contacts]')
+  const projectsList = required<HTMLElement>('[data-client-projects]')
+  const contactsList = required<HTMLElement>('[data-client-contacts]')
   const clientFormDialog = required<HTMLDialogElement>('[data-client-form-dialog]')
   const clientForm = required<HTMLFormElement>('[data-client-form]')
   const clientFormTitle = required<HTMLElement>('[data-client-form-title]')
@@ -370,56 +370,64 @@ export const createClientDirectoryController = (
       return
     }
     const canWrite = session !== null && clientProfileCanWrite(session.identity.profile)
+    const contactName = (contact: GeneralResource): string =>
+      [
+        clientText(contact, 'title'),
+        clientText(contact, 'first_name'),
+        clientText(contact, 'last_name'),
+      ]
+        .filter((value): value is string => value !== null)
+        .join(' ') || `Contact #${contact.id}`
+
     contactsList.replaceChildren(
-      ...contacts.map((contact) => {
-        const item = document.createElement('li')
-        item.className = 'client-contact-card'
-        item.dataset.contactId = String(contact.id)
-        const heading = document.createElement('div')
-        const name = document.createElement('strong')
-        const fullName = [
-          clientText(contact, 'title'),
-          clientText(contact, 'first_name'),
-          clientText(contact, 'last_name'),
-        ]
-          .filter((value): value is string => value !== null)
-          .join(' ')
-        name.textContent = fullName || `Contact #${contact.id}`
-        const recipient = document.createElement('span')
-        recipient.className = 'client-recipient-pill'
-        recipient.dataset.recipientStatus = clientText(contact, 'invoice_recipient_status') ?? 'none'
-        recipient.textContent = recipientLabel(clientText(contact, 'invoice_recipient_status'))
-        heading.append(name, recipient)
-        const details = document.createElement('p')
-        details.textContent = [
-          clientText(contact, 'email'),
-          clientText(contact, 'phone_office'),
-          clientText(contact, 'phone_mobile'),
-          clientText(contact, 'fax') === null ? null : `Fax ${clientText(contact, 'fax')}`,
-        ]
-          .filter((value): value is string => value !== null)
-          .join(' · ')
-        item.append(heading)
-        if (details.textContent !== '') item.append(details)
-        if (canWrite) {
-          const actions = document.createElement('div')
-          actions.className = 'client-contact-actions'
-          const edit = document.createElement('button')
-          edit.type = 'button'
-          edit.textContent = 'Edit'
-          edit.addEventListener('click', () => openContactForm(contact))
-          const remove = document.createElement('button')
-          remove.type = 'button'
-          remove.textContent = 'Delete'
-          remove.addEventListener('click', () => {
-            deletingContactId = contact.id
-            contactDeleteResult.textContent = ''
-            contactDeleteDialog.showModal()
-          })
-          actions.append(edit, remove)
-          item.append(actions)
-        }
-        return item
+      renderDataTable<GeneralResource>({
+        caption: 'Contacts for this client',
+        rows: contacts,
+        rowKey: (contact) => String(contact.id),
+        empty: 'No contacts have been added for this client.',
+        columns: [
+          { key: 'name', label: 'Contact', render: contactName },
+          { key: 'email', label: 'Email', render: (c) => clientText(c, 'email') ?? '—' },
+          {
+            key: 'phone',
+            label: 'Phone',
+            render: (c) =>
+              [clientText(c, 'phone_office'), clientText(c, 'phone_mobile')]
+                .filter((value): value is string => value !== null)
+                .join(' · ') || '—',
+          },
+          {
+            key: 'recipient',
+            label: 'Invoices',
+            render: (contact) => {
+              const pill = document.createElement('span')
+              pill.className = 'client-recipient-pill'
+              pill.dataset.recipientStatus =
+                clientText(contact, 'invoice_recipient_status') ?? 'none'
+              pill.textContent = recipientLabel(clientText(contact, 'invoice_recipient_status'))
+              return pill
+            },
+          },
+        ],
+        ...(canWrite
+          ? {
+              actions: (contact) => [
+                {
+                  label: 'Edit',
+                  primary: true,
+                  onSelect: () => openContactForm(contact),
+                },
+                {
+                  label: 'Delete',
+                  onSelect: () => {
+                    deletingContactId = contact.id
+                    contactDeleteResult.textContent = ''
+                    contactDeleteDialog.showModal()
+                  },
+                },
+              ],
+            }
+          : {}),
       }),
     )
   }

@@ -32,7 +32,7 @@ export const renderExpenseCategoriesPage = (view?: string): string => `
           </div>
         </header>
         <p class="form-result expense-category-status" data-expense-category-status role="status" aria-live="polite">Loading categories…</p>
-        <ol class="expense-category-list" data-expense-category-list aria-label="Expense categories"></ol>
+        <div data-expense-category-list></div>
         <div class="expense-category-list-actions">
           <button type="button" data-expense-category-load-more hidden>Load more categories</button>
           <button type="button" data-expense-category-retry hidden>Retry loading categories</button>

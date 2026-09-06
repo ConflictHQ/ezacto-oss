@@ -126,7 +126,7 @@ const actionsCell = (actions: readonly RowAction[]): HTMLTableCellElement => {
   return cell
 }
 
-export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLTableElement => {
+export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElement => {
   const { columns, rows, rowKey, groupBy, actions, caption, empty } = options
   const table = document.createElement('table')
   table.className = 'data-table'
@@ -221,5 +221,10 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLTableE
     table.append(foot)
   }
 
-  return table
+  // A table narrower than its columns scrolls inside its own container; the
+  // page itself must not scroll sideways on a phone.
+  const scroll = document.createElement('div')
+  scroll.className = 'data-table-scroll'
+  scroll.append(table)
+  return scroll
 }

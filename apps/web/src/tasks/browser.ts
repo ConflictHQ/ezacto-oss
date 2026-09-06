@@ -64,7 +64,7 @@ export const createTaskAdminController = (
 ): TaskAdminController => {
   const page = required<HTMLElement>('[data-task-admin-page]')
   const status = required<HTMLElement>('[data-task-list-status]')
-  const list = required<HTMLOListElement>('[data-task-list]')
+  const list = required<HTMLElement>('[data-task-list]')
   const createButton = required<HTMLButtonElement>('[data-task-create]')
   const loadMore = required<HTMLButtonElement>('[data-task-load-more]')
   const retry = required<HTMLButtonElement>('[data-task-list-retry]')
@@ -157,7 +157,7 @@ export const createTaskAdminController = (
     const active = currentSession()
     if (active === null) return
     if (tasks.length === 0) {
-      const empty = document.createElement('li')
+      const empty = document.createElement('p')
       empty.className = 'task-admin-empty'
       empty.textContent =
         filter === 'active'
