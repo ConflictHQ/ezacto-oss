@@ -124,7 +124,8 @@ Key mappings (details in domain-model §7):
 | ids | `harvest_id` columns | Native ids assigned fresh; every table keeps the Harvest id, unique-indexed — this is what makes `sync` upserts and the shim's id echo possible. |
 | decimal hours | `seconds` | ×3600, round half-even, record residue in load report if any. |
 | entry `rounded_hours` | `rounded_seconds` | Convert the imported value to seconds and store it verbatim; never apply native rounding during load. |
-| money decimals | cents | ×100 exact; **fail loudly** on >2 decimal places, never round silently. |
+| money amounts (totals, `amount`, payments) | cents | ×100 exact; **fail loudly** on >2 decimal places, never round silently. |
+| per-unit rates (`unit_price`) | cents | ×100, round half-even, record residue in load report if any. A Harvest mileage category at `0.485`/mile is the IRS half-cent rate, not bad data; the line `amount` stays exact, so a rounded rate never moves a total. |
 | invoice tax/discount percentages | `*_rate_ppm` | Parse decimal percentage text exactly into parts per million of one (`7.25% = 72_500`); fail beyond four fractional percentage digits, never pass through `REAL`. |
 | `started_time` "8:00am" | `HH:MM` | Parse per snapshot `company.clock`. |
 | `access_roles` array | `profile` + `manager_grants` | Per domain-model §2.2. |
@@ -208,11 +209,14 @@ the gate is zero UNEXPLAINED.
 | --- | --- |
 | **Retainers: no API.** Invoices reference dangling `retainer.id`s. | Create money-denominated stub `retainer` rows from the distinct ids found on invoices; balances are unknowable via API. `migrate finish-retainers` prints a worksheet (client, linked invoices) for manual balance entry from the Harvest UI. Ledger opens with a cents-denominated manual `adjustment` entry. |
 | **Recurring invoices: no API.** `recurring_invoice_id` dangles. | Same: stub rows + worksheet from the UI's 3 visible definitions (subject template, cadence, amount are all on screen — HRVST20/15). |
-| **Estimates/approval/activity-log modules disabled** on our account | Nothing to extract; extractor skips per company feature flags and says so. |
+| **Estimates/approval/activity-log modules disabled** on our account | Nothing to extract; extractor skips per company feature flags and says so. Invoices raised before the module was turned off can still carry an `estimate.id` (CONFLICT has one); the link is dropped and recorded as an `unresolved_estimate_reference` anomaly rather than failing the import, since there is nothing to link to and nothing to recover. |
 | Report-only fields (utilization) | Derived, not stored — recomputed by ezacto; reconciled in A. |
 | Forecast | Out of scope (research §14). |
 | `statement_key` / invoice and estimate `client_key` secrets | **Not imported.** Regenerated — importing another system's public-URL bearer tokens imports its leak surface. Old Harvest links die at cutover; release note item. |
 | Avatars | Best-effort download; failures cosmetic. |
+| **Negative time entries.** Harvest corrects an over-logged timesheet with a negative entry offsetting an earlier one (CONFLICT has five, totalling -6.52 h, one of them recent and unlocked). `time_entries.seconds` is `CHECK (… BETWEEN 0 AND …)`. | Skipped, each recorded as a `negative_time_entry` anomaly carrying the hours and spent date. Imported totals therefore run higher than Harvest's by the offset sum; reconciliation reports the difference rather than the import concealing it. |
+| **Non-positive invoice payments.** Harvest records $0 payments settling $0 invoices, and negative payments settling credit notes (CONFLICT has six of the former and one of -$8,765). `invoice_payments.amount_cents` is `CHECK (… BETWEEN 1 AND …)` — a strictly positive receipt. | Skipped, each recorded as a `non_positive_payment` anomaly carrying the invoice and source amount. The invoice itself still imports and keeps the `state` Harvest gave it, so paid invoices still read as paid; what is lost is the payment row's audit trail. Revisit by widening the CHECK if credit notes become first-class. |
+| **Per-unit rates finer than a cent.** Harvest accepts `unit_price` at arbitrary precision — mileage categories carry the IRS half-cent rate (`0.485`/mile), and Harvest's own computed lines can carry repeating decimals (`67.1428571`). | Rounded half-even into cents and recorded as a `rate_residue` anomaly carrying the source literal, the same handling decimal hours get. The line `amount` is still parsed exactly by the money rule, so a rounded rate can never move an invoice total — reconciliation proves this rather than assuming it. |
 
 ## 8. Milestones
 
