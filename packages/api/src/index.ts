@@ -1,5 +1,10 @@
 export { createApiApp } from './app.js'
 export {
+  installBackupStatusRoutes,
+  type BackupStatusReader,
+  type BackupStatusRecord,
+} from './backup-status.js'
+export {
   assertValidCloudflareAccessConfig,
   CLOUDFLARE_ACCESS_JWT_HEADER,
   createCloudflareAccessSessionResolver,

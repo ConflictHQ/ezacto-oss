@@ -1,6 +1,7 @@
 import type { QueuedEmailJob } from '@ezacto/mailer'
 import { createApp, type WorkerEnv } from './app.js'
 import { consumeCloudflareEmailBatch } from './email-queue.js'
+import { runNightlyExport } from './nightly-export.js'
 import {
   createRuntimeServices,
   createWorkerSesMailer,
@@ -66,8 +67,11 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
     })
     await consumeCloudflareEmailBatch(batch, services.emailLog, provider)
   },
-  async scheduled(_controller, env) {
+  async scheduled(controller, env) {
     const services = await createRuntimeServices(env)
+    if (controller.cron === '0 3 * * *' && env.ATTACHMENTS !== undefined) {
+      await runNightlyExport(env.DB, env.ATTACHMENTS)
+    }
     await services.outbox.drain()
   },
 }
