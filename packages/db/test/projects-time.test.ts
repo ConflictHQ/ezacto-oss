@@ -1059,6 +1059,7 @@ for (const [runtime, factory] of factories) {
         '0033_contact_portal',
         '0035_backup_runs',
         '0036_client_budgets',
+        '0037_recurring_generate_command',
       ])
       expect(firstLedger.slice(0, 2).map(({ applied_at: appliedAt }) => appliedAt)).toEqual([
         originalAppliedAt,
@@ -1155,6 +1156,7 @@ for (const [runtime, factory] of factories) {
         { id: '0033_contact_portal' },
         { id: '0035_backup_runs' },
         { id: '0036_client_budgets' },
+        { id: '0037_recurring_generate_command' },
       ])
       expect(
         await db.rows<{ name: string }>(
