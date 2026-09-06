@@ -48,8 +48,14 @@ describe('ezacto-migrate CLI entrypoint', () => {
   let dir: string
 
   beforeAll(async () => {
-    await execFileAsync(process.execPath, [tscPath, '-p', 'tsconfig.build.json'], { cwd: pkgDir })
-  }, 120_000)
+    // The shipped CLI loads @ezacto/db's shipped importer, so both have to be
+    // built for this to be the real entrypoint. Building only this package left
+    // the suite passing on whatever dist a previous build happened to leave
+    // behind, and failing on a clean checkout.
+    for (const cwd of [join(pkgDir, '..', 'db'), pkgDir]) {
+      await execFileAsync(process.execPath, [tscPath, '-p', 'tsconfig.build.json'], { cwd })
+    }
+  }, 240_000)
 
   beforeEach(async () => {
     // realpath: on macOS the child's process.cwd() reports /private/var/…,
