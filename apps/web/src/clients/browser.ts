@@ -1,3 +1,4 @@
+import { renderDataTable } from '../components/data-table.js'
 import { EzactoApiError, type GeneralResource, type Whoami } from '@ezacto/client'
 import {
   clientDisplayName,
@@ -297,17 +298,33 @@ export const createClientDirectoryController = (
       return
     }
     projectsList.replaceChildren(
-      ...projects.map((project) => {
-        const item = document.createElement('li')
-        const heading = document.createElement('strong')
-        const name = clientText(project, 'name') ?? `Project #${project.id}`
-        const code = clientText(project, 'code')
-        heading.textContent = code === null ? name : `[${code}] ${name}`
-        const facts = document.createElement('span')
-        const billing = clientText(project, 'billing_method')?.replaceAll('_', ' ')
-        facts.textContent = `${project['is_active'] === false ? 'Archived' : 'Active'}${billing === null || billing === undefined ? '' : ` · ${billing}`}`
-        item.append(heading, facts)
-        return item
+      renderDataTable<GeneralResource>({
+        caption: 'Projects for this client',
+        rows: projects,
+        rowKey: (project) => String(project.id),
+        empty: 'No projects for this client.',
+        columns: [
+          {
+            key: 'name',
+            label: 'Project',
+            render: (project) => {
+              const name = clientText(project, 'name') ?? `Project #${project.id}`
+              const code = clientText(project, 'code')
+              return code === null ? name : `[${code}] ${name}`
+            },
+          },
+          {
+            key: 'billing',
+            label: 'Billing',
+            render: (project) =>
+              clientText(project, 'billing_method')?.replaceAll('_', ' ') ?? '—',
+          },
+          {
+            key: 'status',
+            label: 'Status',
+            render: (project) => (project['is_active'] === false ? 'Archived' : 'Active'),
+          },
+        ],
       }),
     )
   }
