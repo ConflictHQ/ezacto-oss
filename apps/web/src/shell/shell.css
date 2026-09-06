@@ -3664,3 +3664,156 @@ dialog textarea {
     padding-inline: 16px;
   }
 }
+
+/*
+ * The data table. One system, nine sets of columns — see
+ * screens/HRVST10/OLD-UI-ANALYSIS.md §2 and §6. No zebra: hairline rules and a
+ * hover layer carry the row, which is what let the old UI fit a working week on
+ * one screen without it feeling dense.
+ */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.data-table thead th {
+  height: var(--ez-row-h);
+  padding: 0 12px;
+  background: var(--ez-surface);
+  border-bottom: 1px solid var(--ez-border);
+  color: var(--ez-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.data-table tbody td {
+  height: var(--ez-row-h);
+  padding: 0 12px;
+  border-bottom: 1px solid var(--ez-border);
+  color: var(--ez-ink);
+}
+
+.data-table .is-numeric {
+  text-align: right;
+}
+
+/* Grouping is a band, not an indent — the label owns the full width. */
+.data-table .data-table-group th {
+  height: var(--ez-row-h);
+  padding: 0 12px;
+  background: var(--ez-surface);
+  border-bottom: 1px solid var(--ez-border);
+  color: var(--ez-ink);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.data-table tbody tr[data-row]:hover,
+.data-table tbody tr[data-row]:focus-within {
+  background: var(--ez-surface);
+}
+
+/* Totals sit apart by weight, not by a rule above them. */
+.data-table tfoot td {
+  height: var(--ez-row-h-lead);
+  padding: 0 12px;
+  color: var(--ez-ink);
+  font-weight: 600;
+}
+
+.data-table-empty {
+  color: var(--ez-muted);
+}
+
+.data-table-actions {
+  text-align: right;
+  white-space: nowrap;
+  width: 1%;
+}
+
+/*
+ * Actions are present but quiet until the row is under the pointer, and always
+ * present to the keyboard — :focus-within is why they cannot be display:none.
+ */
+.data-table-action,
+.data-table-overflow > summary {
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--ez-radius);
+  background: none;
+  color: var(--ez-data);
+  cursor: pointer;
+  font: inherit;
+  opacity: 0;
+}
+
+.data-table tbody tr[data-row]:hover .data-table-action,
+.data-table tbody tr[data-row]:hover .data-table-overflow > summary,
+.data-table tbody tr[data-row]:focus-within .data-table-action,
+.data-table tbody tr[data-row]:focus-within .data-table-overflow > summary,
+.data-table-action:focus-visible,
+.data-table-overflow[open] > summary {
+  opacity: 1;
+}
+
+.data-table-action:hover,
+.data-table-overflow > summary:hover {
+  border-color: var(--ez-border);
+}
+
+.data-table-overflow {
+  display: inline-block;
+  position: relative;
+}
+
+.data-table-overflow > summary {
+  list-style: none;
+}
+
+.data-table-overflow > summary::-webkit-details-marker {
+  display: none;
+}
+
+.data-table-menu {
+  position: absolute;
+  right: 0;
+  z-index: 2;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  box-shadow: 0 8px 24px rgb(20 22 26 / 12%);
+  text-align: left;
+}
+
+.data-table-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: calc(var(--ez-radius) - 2px);
+  background: none;
+  color: var(--ez-ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.data-table-menu button:hover,
+.data-table-menu button:focus-visible {
+  background: var(--ez-surface);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .data-table-action,
+  .data-table-overflow > summary {
+    transition: opacity 120ms ease;
+  }
+}
