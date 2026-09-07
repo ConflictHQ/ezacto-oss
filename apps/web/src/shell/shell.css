@@ -2670,9 +2670,17 @@ button[data-auth-action]:disabled {
   color: var(--ez-action-fg);
   font-weight: 600;
 }
+/* The week's total is the one number the whole screen is for, and it read at
+   the same size as the buttons beside it. §6 of the old-UI analysis puts the
+   landmark figure at 40px; nothing in the app reached 20. It clamps so a
+   decimal account's wider figure still fits beside the controls. */
 .week-actions [data-week-total] {
   min-width: 72px;
-  padding-left: 10px;
+  padding-left: 14px;
+  font-size: clamp(24px, 3vw, 40px);
+  line-height: 1.05;
+  font-weight: 700;
+  letter-spacing: -0.01em;
   text-align: right;
 }
 /* The seven-day strip: the week's shape before you read a row. Seven equal

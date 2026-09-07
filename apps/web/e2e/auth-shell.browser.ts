@@ -891,6 +891,9 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
     name: 'Start timer',
     exact: true,
   })
+  // The picker offers what the command line made you type exactly. Tasks narrow
+  // to the project once it resolves.
+  await expect(page.locator('[data-entry-project-options] option')).not.toHaveCount(0)
   await timerProject.fill('SECONDARY')
   await timerTask.fill('Browser Secondary Task')
   await startTimer.click()
