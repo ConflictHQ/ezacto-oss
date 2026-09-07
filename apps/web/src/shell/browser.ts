@@ -31,6 +31,7 @@ import { createModuleSettingsController } from '../module-settings/browser.js'
 import {
   createInvoicePaymentController,
   renderInvoiceListItems,
+  setInvoiceClientNames,
 } from '../invoices/browser.js'
 import { invoiceIdentityCanRead } from '../invoices/model.js'
 import {
@@ -934,6 +935,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   let invoiceCommandId: string | null = null
   let invoiceNextCursor: string | null = null
   let invoiceListRows: readonly Invoice[] = []
+  let invoiceClientNamesLoaded = false
   let invoiceListCount = 0
   let approvalModuleAvailable = false
   let lockPolicyAvailable = false
@@ -1093,6 +1095,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     invoiceLoadMore.disabled = false
     invoiceNextCursor = null
     invoiceListRows = []
+    invoiceClientNamesLoaded = false
     invoiceListCount = 0
     invoiceDetailStatus.textContent = 'Loading invoice…'
     invoiceDocument.hidden = true
@@ -1754,6 +1757,32 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     )
   }
 
+  const publishInvoiceClientNames = (
+    clients: readonly Record<string, unknown>[],
+  ): void => {
+    setInvoiceClientNames(
+      clients.flatMap((client) =>
+        typeof client.id === 'number' ? [[client.id, resourceLabel(client)] as const] : [],
+      ),
+    )
+    invoiceClientNamesLoaded = true
+  }
+
+  // The invoice list and the invoice page both show a client, and either can be
+  // the first thing a session opens. Load the names once, for whichever gets
+  // there first.
+  const ensureInvoiceClientNames = async (operation: AuthOperation): Promise<void> => {
+    const listClients = api.listClients
+    if (invoiceClientNamesLoaded || listClients === undefined) return
+    try {
+      const clients = await collectResources(listClients, operation.signal)
+      if (!isSessionCurrent(operation)) return
+      publishInvoiceClientNames(clients)
+    } catch {
+      // A name is a nicety; the list still reads without it.
+    }
+  }
+
   const loadInvoiceGeneration = async (operation: AuthOperation): Promise<void> => {
     if (!isSessionCurrent(operation)) return
     if (api.listClients === undefined || api.generateInvoice === undefined) {
@@ -1771,6 +1800,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       ])
       if (!isSessionCurrent(operation)) return
       invoiceCatalog = { clients, projects }
+      publishInvoiceClientNames(clients)
       invoiceClient.replaceChildren(
         ...clients.map((client) => option(client.id, resourceLabel(client))),
       )
@@ -1822,7 +1852,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     invoiceLoadMore.disabled = true
     invoiceListStatus.textContent = append ? 'Loading more invoices…' : 'Loading invoices…'
     try {
-      const page = await listInvoices(cursor, operation.signal)
+      const [page] = await Promise.all([
+        listInvoices(cursor, operation.signal),
+        ensureInvoiceClientNames(operation),
+      ])
       if (!isSessionCurrent(operation)) return
       invoiceListRows = append ? [...invoiceListRows, ...page.data] : [...page.data]
       invoiceListCount = renderInvoiceListItems(invoiceListRows)
@@ -1885,6 +1918,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       await Promise.all([loadInvoiceList(authenticated), loadWeek(authenticated)])
     } else if (invoiceDetailPage) {
       await Promise.all([
+        ensureInvoiceClientNames(authenticated),
         invoicePayments.activate(
           identity,
           authenticated.signal,

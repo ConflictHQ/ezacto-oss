@@ -73,6 +73,21 @@ const instantLabel = (value: string): string => {
 const paymentDateLabel = (payment: Readonly<InvoicePayment>): string =>
   payment.paid_at === null ? dateLabel(payment.paid_date) : instantLabel(payment.paid_at)
 
+// The API returns client_id, not the client. "Client #12" is an internal
+// identifier on a page a client can be sent, so the shell hands over the names
+// it has already loaded and this falls back only when it has none.
+const clientNames = new Map<number, string>()
+
+export const setInvoiceClientNames = (
+  names: Iterable<readonly [number, string]>,
+): void => {
+  clientNames.clear()
+  for (const [id, name] of names) clientNames.set(id, name)
+}
+
+const clientLabel = (clientId: number): string =>
+  clientNames.get(clientId) ?? `Client #${clientId}`
+
 const invoiceStatePill = (invoice: Readonly<Invoice>): HTMLSpanElement => {
   const state = document.createElement('span')
   state.className = 'invoice-state'
@@ -121,7 +136,7 @@ export const renderInvoiceListItems = (invoices: readonly Invoice[]): number => 
       columns: [
         { key: 'status', label: 'Status', render: invoiceStatePill },
         { key: 'number', label: 'Invoice', render: invoiceNumberLink },
-        { key: 'client', label: 'Client', render: (invoice) => `Client #${invoice.client_id}` },
+        { key: 'client', label: 'Client', render: (invoice) => clientLabel(invoice.client_id) },
         { key: 'issued', label: 'Issued', render: (invoice) => dateLabel(invoice.issue_date) },
         { key: 'due-date', label: 'Due', render: (invoice) => dateLabel(invoice.due_date) },
         {
@@ -165,7 +180,9 @@ export const renderInvoiceDetail = (
 ): void => {
   required<HTMLElement>('[data-invoice-detail-number]').textContent = invoice.number
   required<HTMLElement>('[data-invoice-detail-state]').textContent = invoiceStateLabel(invoice)
-  required<HTMLElement>('[data-invoice-detail-client]').textContent = `Client #${invoice.client_id}`
+  required<HTMLElement>('[data-invoice-detail-client]').textContent = clientLabel(
+    invoice.client_id,
+  )
   required<HTMLElement>('[data-invoice-detail-issued]').textContent = dateLabel(invoice.issue_date)
   required<HTMLElement>('[data-invoice-detail-due-date]').textContent = dateLabel(invoice.due_date)
   required<HTMLElement>('[data-invoice-detail-period]').textContent = invoicePeriod(invoice) ?? '—'
