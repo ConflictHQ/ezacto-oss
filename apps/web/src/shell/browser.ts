@@ -562,7 +562,11 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers): void => {
  * in either version": the week's shape in one line, before you read a single
  * row. Day view had no totals at all.
  */
-const renderDayTotals = (grid: WeekGrid, selectedDay: number): void => {
+const renderDayTotals = (
+  grid: WeekGrid,
+  selectedDay: number,
+  selectDay: (index: number) => void,
+): void => {
   const strip = required<HTMLElement>('[data-day-totals]')
   const today = localDate()
   strip.replaceChildren(
@@ -571,6 +575,13 @@ const renderDayTotals = (grid: WeekGrid, selectedDay: number): void => {
       item.dataset.dayTotal = date
       if (date === today) item.dataset.today = ''
       if (index === selectedDay) item.dataset.selected = ''
+      // The strip already answers "which day am I short on"; making it the way
+      // to go there closes the loop, rather than reading the answer here and
+      // then hunting for it in a separate pair of arrows.
+      const control = document.createElement('button')
+      control.type = 'button'
+      control.dataset.daySelect = String(index)
+      control.setAttribute('aria-pressed', index === selectedDay ? 'true' : 'false')
       const label = document.createElement('span')
       label.textContent = dayLabel(date, true)
       const hours = document.createElement('strong')
@@ -579,7 +590,9 @@ const renderDayTotals = (grid: WeekGrid, selectedDay: number): void => {
       // A day with nothing on it should read as empty at a glance rather than
       // as a number you have to compare against the others.
       if (seconds === 0) hours.dataset.empty = ''
-      item.append(label, hours)
+      control.append(label, hours)
+      control.addEventListener('click', () => selectDay(index))
+      item.append(control)
       return item
     }),
   )
@@ -1704,7 +1717,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       openEntry,
       ...(api.restartTimeEntry === undefined ? {} : { restart: restartEntry }),
     }
-    renderDayTotals(grid, selectedDay)
+    renderDayTotals(grid, selectedDay, selectDay)
     renderDesktopGrid(grid, handlers)
     renderPhoneDay(grid, selectedDay, handlers)
     renderTimer(snapshot.running)
@@ -3153,6 +3166,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     setWeekUrl(within, weekStartDay)
     void loadWeek(operation)
   })
+  const selectDay = (index: number): void => {
+    if (currentIdentity === null || index < 0 || index > 6 || index === selectedDay) return
+    selectedDay = index
+    render()
+  }
   const moveDay = (offset: number): void => {
     if (currentIdentity === null) return
     // Walk the calendar. Wrapping modulo 7 made Sunday's "next" jump backwards

@@ -844,6 +844,30 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   await expect(
     dayTotals.filter({ hasNot: page.locator('[data-empty]') }).locator('strong'),
   ).toHaveText('1.00')
+
+  // The strip answers "which day am I short on", so it is also the way to go
+  // there. Reading the answer here and then hunting for the day in a separate
+  // pair of arrows is the gap this closes.
+  const stripDays = page.locator('[data-day-totals] button[data-day-select]')
+  await expect(stripDays).toHaveCount(7)
+  const selectedBefore = await page
+    .locator('[data-day-totals] li[data-selected] button')
+    .getAttribute('data-day-select')
+  const target = selectedBefore === '3' ? '5' : '3'
+  await stripDays.nth(Number(target)).click()
+  await expect(page.locator('[data-day-totals] li[data-selected] button')).toHaveAttribute(
+    'data-day-select',
+    target,
+  )
+  await expect(stripDays.nth(Number(target))).toHaveAttribute('aria-pressed', 'true')
+  await expect(stripDays.nth(Number(selectedBefore))).toHaveAttribute('aria-pressed', 'false')
+  // Put the day back: the assertions below read the day view, and this spec
+  // continues against the day it started on.
+  await stripDays.nth(Number(selectedBefore)).click()
+  await expect(page.locator('[data-day-totals] li[data-selected] button')).toHaveAttribute(
+    'data-day-select',
+    selectedBefore!,
+  )
   await expect(
     page.locator('[data-day-rows] .day-row').filter({ hasText: 'Browser Secondary Project' }),
   ).toContainText('Added row delivery note')
