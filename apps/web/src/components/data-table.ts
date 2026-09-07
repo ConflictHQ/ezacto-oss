@@ -68,6 +68,11 @@ export interface DataTableOptions<Row> {
    * bug rather than a silent one.
    */
   readonly groupBy?: (row: Row) => string
+  /**
+   * Fills the band. `groupBy` still decides where one starts, so a band that
+   * links to the thing it names does not change how rows are grouped.
+   */
+  readonly renderGroup?: (row: Row) => CellContent
   readonly actions?: (row: Row) => readonly RowAction[]
   /** Accessible name. */
   readonly caption: string
@@ -127,7 +132,7 @@ const actionsCell = (actions: readonly RowAction[]): HTMLTableCellElement => {
 }
 
 export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElement => {
-  const { columns, rows, rowKey, groupBy, actions, caption, empty } = options
+  const { columns, rows, rowKey, groupBy, renderGroup, actions, caption, empty } = options
   const table = document.createElement('table')
   table.className = 'data-table'
 
@@ -206,7 +211,7 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
         const bandCell = document.createElement('th')
         bandCell.scope = 'colgroup'
         bandCell.colSpan = span
-        bandCell.textContent = group
+        put(bandCell, renderGroup === undefined ? group : renderGroup(row))
         bandRow.append(bandCell)
         body.append(bandRow)
       }

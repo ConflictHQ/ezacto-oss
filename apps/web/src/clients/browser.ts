@@ -330,7 +330,10 @@ export const createClientDirectoryController = (
             render: (project) => {
               const name = clientText(project, 'name') ?? `Project #${project.id}`
               const code = clientText(project, 'code')
-              return code === null ? name : `[${code}] ${name}`
+              const link = document.createElement('a')
+              link.href = `/projects/${project.id}`
+              link.textContent = code === null ? name : `[${code}] ${name}`
+              return link
             },
           },
           {

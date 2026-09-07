@@ -89,6 +89,23 @@ const textElement = <Tag extends keyof HTMLElementTagNameMap>(
   return result
 }
 
+const linkElement = (href: string, text: string): HTMLAnchorElement => {
+  const anchor = element('a')
+  anchor.href = href
+  anchor.textContent = text
+  return anchor
+}
+
+/** Reports carry ids; the filter catalogs carry the names those ids stand for. */
+const catalogLabel = (
+  resources: readonly GeneralResource[],
+  id: number,
+  fallback: string,
+): string => {
+  const match = resources.find((resource) => resource.id === id)
+  return match === undefined ? fallback : reportResourceLabel(match)
+}
+
 const countLabel = (count: number, singular: string, plural = `${singular}s`): string =>
   `${count.toLocaleString('en-US')} ${count === 1 ? singular : plural}`
 
@@ -113,9 +130,14 @@ const localToday = (): string => {
   ].join('-')
 }
 
-const reportHeading = (title: string, detail: string): HTMLElement => {
+const reportHeading = (
+  title: string,
+  ...detail: readonly (string | Node)[]
+): HTMLElement => {
   const header = element('header', 'report-result-heading')
-  header.append(textElement('h2', title, 'report-result-title'), textElement('p', detail))
+  const description = element('p')
+  description.append(...detail)
+  header.append(textElement('h2', title, 'report-result-title'), description)
   return header
 }
 
@@ -222,31 +244,47 @@ const metricsSection = (
   return section
 }
 
-const renderClientRollup = (report: Readonly<ClientRollupReport>): DocumentFragment => {
+const renderClientRollup = (
+  report: Readonly<ClientRollupReport>,
+  clients: readonly GeneralResource[],
+): DocumentFragment => {
   const fragment = document.createDocumentFragment()
+  const names = new Map(report.nodes.map((node) => [node.client_id, node.name]))
+  // The report names every client it walked; the catalog covers a parent that
+  // sits outside that walk, and the root when the walk returned nothing.
+  const clientLabel = (id: number): string =>
+    names.get(id) ?? catalogLabel(clients, id, `Client #${id}`)
   fragment.append(
-    reportHeading('Client rollup', `${report.from} through ${report.to} · root client #${report.root_client_id}`),
+    reportHeading(
+      'Client rollup',
+      `${report.from} through ${report.to} · `,
+      linkElement(`/clients/${report.root_client_id}`, clientLabel(report.root_client_id)),
+    ),
   )
   if (report.nodes.length === 0) {
     fragment.append(textElement('p', 'No clients were found in this hierarchy.', 'report-empty'))
     return fragment
   }
-  const names = new Map(report.nodes.map((node) => [node.client_id, node.name]))
   const list = element('ol', 'report-client-tree')
   for (const node of report.nodes) {
     const item = element('li', 'report-client-node')
     item.style.setProperty('--report-depth', String(node.depth))
     const header = element('header')
     const identity = element('div')
-    identity.append(textElement('h3', node.name))
-    identity.append(
-      textElement(
-        'p',
-        node.parent_client_id === null
-          ? `Root client · client #${node.client_id}`
-          : `Child of ${names.get(node.parent_client_id) ?? `client #${node.parent_client_id}`} · client #${node.client_id}`,
-      ),
-    )
+    const name = element('h3')
+    name.append(linkElement(`/clients/${node.client_id}`, clientLabel(node.client_id)))
+    const lineage = element('p')
+    if (node.parent_client_id === null) lineage.textContent = 'Root client'
+    else {
+      lineage.append(
+        'Child of ',
+        linkElement(
+          `/clients/${node.parent_client_id}`,
+          clientLabel(node.parent_client_id),
+        ),
+      )
+    }
+    identity.append(name, lineage)
     header.append(identity)
     const comparison = element('div', 'report-rollup-comparison')
     comparison.append(
@@ -260,19 +298,27 @@ const renderClientRollup = (report: Readonly<ClientRollupReport>): DocumentFragm
   return fragment
 }
 
-const sourceLabel = (source: string, id: number): string => {
+/** Assignment ids stay raw: no loaded catalog resolves one to its task or person. */
+const sourceLabel = (source: string, id: number, projectLabel: string): string => {
   if (source === 'task_assignment') return `Task assignment #${id}`
   if (source === 'user_assignment') return `User assignment #${id}`
-  return `Project #${id}`
+  return projectLabel
 }
 
 const renderProjectBudget = (
   report: Readonly<ProjectBudgetReport>,
+  projects: readonly GeneralResource[],
 ): DocumentFragment => {
   const fragment = document.createDocumentFragment()
+  const projectLabel = catalogLabel(
+    projects,
+    report.project_id,
+    `Project #${report.project_id}`,
+  )
   const heading = reportHeading(
     'Project budget',
-    `${report.from} through ${report.to} · project #${report.project_id}`,
+    `${report.from} through ${report.to} · `,
+    linkElement(`/projects/${report.project_id}`, projectLabel),
   )
   const metadata = element('dl', 'report-metadata')
   metadata.append(
@@ -291,7 +337,7 @@ const renderProjectBudget = (
     const item = element('li', 'report-budget-card')
     const header = element('header')
     header.append(
-      textElement('h3', sourceLabel(grain.source, grain.source_id)),
+      textElement('h3', sourceLabel(grain.source, grain.source_id, projectLabel)),
       textElement(
         'span',
         `${grain.calculation} · ${grain.unit === 'seconds' ? 'time' : 'money in API cents'}`,
@@ -437,10 +483,10 @@ export const createReportsController = (
     if (filters.kind === 'uninvoiced') {
       results.replaceChildren(renderUninvoiced(report as UninvoicedReport))
     } else if (filters.kind === 'client-rollup') {
-      results.replaceChildren(renderClientRollup(report as ClientRollupReport))
+      results.replaceChildren(renderClientRollup(report as ClientRollupReport, clients))
     } else {
       results.replaceChildren(
-        renderProjectBudget(report as ProjectBudgetReport),
+        renderProjectBudget(report as ProjectBudgetReport, projects),
       )
     }
   }

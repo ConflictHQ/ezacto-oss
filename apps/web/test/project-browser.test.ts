@@ -129,6 +129,10 @@ describe('Projects V1 browser controller', () => {
 
     const facts = document.querySelector('[data-project-facts]')?.textContent ?? ''
     expect(facts).toContain('Acme')
+    // The client a project belongs to is the way back to the rest of its work.
+    const clientLink = document.querySelector<HTMLAnchorElement>('[data-project-facts] a')
+    expect(clientLink?.getAttribute('href')).toBe('/clients/3')
+    expect(clientLink?.textContent).toBe('Acme')
     expect(facts).toContain('Hours budget')
     expect(facts).not.toContain('$150.00')
     expect(facts).not.toContain('$2,000.00')
@@ -396,6 +400,12 @@ describe('Projects V1 browser controller', () => {
     )
     expect(bands).toHaveLength(2)
     expect(new Set(bands).size).toBe(2)
+    // The band names the client, so it is also the way into that client.
+    expect(
+      [...document.querySelectorAll<HTMLAnchorElement>(
+        '[data-project-list] .data-table-group th a',
+      )].map((link) => link.getAttribute('href')),
+    ).toEqual(['/clients/3', '/clients/4'])
     const filter = document.querySelector<HTMLSelectElement>('[data-project-client-filter]')!
     filter.value = '4'
     filter.dispatchEvent(new Event('change'))

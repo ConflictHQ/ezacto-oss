@@ -408,9 +408,14 @@ export const createProjectDirectoryController = (
       listStatus.textContent = empty.textContent
       return
     }
+    // Two clients may share a display name, so the id joins the sort key: it
+    // keeps same-named clients contiguous while still separating them, which is
+    // what the band below groups on.
+    const clientSortKey = (project: Readonly<GeneralResource>): string =>
+      `${projectClientLabel(project, clients)}\u0000${projectNumber(project, 'client_id') ?? ''}`
     visible.sort((left, right) =>
-      `${projectClientLabel(left, clients)}\u0000${projectDisplayName(left)}`.localeCompare(
-        `${projectClientLabel(right, clients)}\u0000${projectDisplayName(right)}`,
+      `${clientSortKey(left)}\u0000${projectDisplayName(left)}`.localeCompare(
+        `${clientSortKey(right)}\u0000${projectDisplayName(right)}`,
         'en-US',
         { sensitivity: 'base' },
       ),
@@ -464,8 +469,19 @@ export const createProjectDirectoryController = (
       caption: 'Projects',
       rows: visible,
       rowKey: (project) => String(project.id),
-      // The client is the band, so it stops repeating on every row.
-      groupBy: (project) => projectClientLabel(project, clients),
+      // The client is the band, so it stops repeating on every row. Grouped on
+      // the id rather than the name: the band carries a link, and two clients
+      // that share a name would otherwise share a band pointing at whichever of
+      // them happened to sort first.
+      groupBy: (project) => String(projectNumber(project, 'client_id') ?? projectClientLabel(project, clients)),
+      renderGroup: (project) => {
+        const clientId = projectNumber(project, 'client_id')
+        if (clientId === null) return projectClientLabel(project, clients)
+        const link = document.createElement('a')
+        link.href = `/clients/${clientId}`
+        link.textContent = projectClientLabel(project, clients)
+        return link
+      },
       empty: 'No projects match this filter.',
       columns: [
         {
@@ -504,14 +520,23 @@ export const createProjectDirectoryController = (
     listStatus.textContent = `${visible.length} ${visible.length === 1 ? 'project' : 'projects'} shown.`
   }
 
-  const fact = (term: string, description: string): HTMLDivElement => {
+  const fact = (term: string, description: string | Node): HTMLDivElement => {
     const row = document.createElement('div')
     const dt = document.createElement('dt')
     const dd = document.createElement('dd')
     dt.textContent = term
-    dd.textContent = description
+    dd.append(description)
     row.append(dt, dd)
     return row
+  }
+
+  const clientFact = (project: Readonly<GeneralResource>): HTMLDivElement => {
+    const clientId = projectNumber(project, 'client_id')
+    if (clientId === null) return fact('Client', projectClientLabel(project, clients))
+    const link = document.createElement('a')
+    link.href = `/clients/${clientId}`
+    link.textContent = projectClientLabel(project, clients)
+    return fact('Client', link)
   }
 
   const renderFacts = (): void => {
@@ -520,7 +545,7 @@ export const createProjectDirectoryController = (
     const currency = projectCurrency(currentProject, clients)
     const rows = [
       fact('Status', projectIsActive(currentProject) ? 'Active' : 'Archived'),
-      fact('Client', projectClientLabel(currentProject, clients)),
+      clientFact(currentProject),
       fact('Code', projectText(currentProject, 'code') ?? 'None'),
       fact('Billing method', projectEnumLabel(projectText(currentProject, 'billing_method'))),
       fact('Bill by', projectEnumLabel(projectText(currentProject, 'bill_by'))),
