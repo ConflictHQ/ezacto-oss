@@ -212,6 +212,26 @@ const dayLabel = (value: string, compact = false): string =>
     timeZone: 'UTC',
   }).format(parseDate(value))
 
+/**
+ * A column header is scanned down a row of seven, not read as a sentence.
+ * "Tue, Apr 1" makes the weekday and the date compete on one line; stacking
+ * them lets the eye run across the weekdays and drop to the date only when it
+ * needs to know which week it is looking at.
+ */
+const dayHeadingParts = (value: string): readonly [string, string] => {
+  const date = parseDate(value)
+  const weekday = new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    timeZone: 'UTC',
+  }).format(date)
+  const day = new Intl.DateTimeFormat('en-US', {
+    day: '2-digit',
+    month: 'short',
+    timeZone: 'UTC',
+  }).format(date)
+  return [weekday, day]
+}
+
 const weekLabel = (dates: readonly string[]): string => {
   const first = dayLabel(dates[0]!, true)
   const last = new Intl.DateTimeFormat('en-US', {
@@ -481,7 +501,14 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers): void => {
   for (const date of grid.dates) {
     const th = document.createElement('th')
     th.scope = 'col'
-    th.textContent = dayLabel(date, true)
+    const [weekday, day] = dayHeadingParts(date)
+    const weekdayLine = document.createElement('span')
+    weekdayLine.dataset.weekday = ''
+    weekdayLine.textContent = weekday
+    const dayLine = document.createElement('span')
+    dayLine.dataset.date = ''
+    dayLine.textContent = day
+    th.append(weekdayLine, dayLine)
     if (date === today) th.dataset.today = ''
     heading.append(th)
   }

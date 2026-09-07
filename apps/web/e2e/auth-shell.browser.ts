@@ -838,6 +838,16 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   // to agree with the grid it sits above — in both views, which is why it lives
   // outside them. It honours the organisation's time format for the same
   // reason the totals do: an hour is 1.00 on a decimal account, not 1:00.
+  // A column header is scanned down a row of seven, so the weekday and the date
+  // are stacked rather than competing on one line. The first column is the
+  // project/task heading and keeps its single line.
+  const dayHeadings = page.locator('.week-grid-table thead th:not(:first-child)')
+  await expect(dayHeadings.first().locator('[data-weekday]')).toHaveText(/^[A-Z][a-z]{2}$/u)
+  // The account formats dates en-US, so the date line is "Aug 24" rather than
+  // the "01 Apr" the issue sketches from the old UI. Every other date in the
+  // app reads month-first; one column reading day-first would be the odd one.
+  await expect(dayHeadings.first().locator('[data-date]')).toHaveText(/^[A-Z][a-z]{2} \d{2}$/u)
+
   const dayTotals = page.locator('[data-day-totals] li')
   await expect(dayTotals).toHaveCount(7)
   await expect(dayTotals.filter({ has: page.locator('[data-empty]') })).toHaveCount(6)
