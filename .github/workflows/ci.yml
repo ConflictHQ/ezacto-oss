@@ -1,154 +1,18 @@
 name: ci
-# Quality gates per PROCESS.md: lint, typecheck, test — green before merge.
+# The merge gate. The gates themselves live in verify.yml so that this and the
+# deploy run the identical definition.
 #
-# One serial `npm run verify` took 34 minutes, of which 29 were tests and 17
-# were @ezacto/db alone. The runner has two cores, so raising vitest's worker
-# count buys nothing; the only lever is more runners. The gates are therefore
-# split across jobs that run at once, and the two suites that dominate are
-# sharded further. Same work, a fraction of the wait.
+# No push trigger: on main the deploy runs the same verify.yml before it ships,
+# so a second copy here would only buy a duplicate 21-job run of work already
+# being done in the run that matters.
 on:
-  push:
-    branches: [main]
   pull_request:
 permissions:
   contents: read
 concurrency:
-  # A second push supersedes the first on a branch. main still runs every commit
-  # — its history is what deploys.
+  # A second push supersedes the first on a branch.
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 jobs:
-  typecheck:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/node-workspace
-      - run: npm run typecheck
-
-  lint:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/node-workspace
-      - run: npm run lint
-
-  build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/node-workspace
-      - name: contract is what the code emits
-        run: npm run contract:check
-      - run: npm run build
-      - name: publish versioned OpenAPI artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ezacto-openapi-v1-${{ github.sha }}
-          path: openapi/ezacto-v1.openapi.json
-          if-no-files-found: error
-
-  test:
-    name: test (${{ matrix.name }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # @ezacto/db is over half the suite: 39 files, each replaying the
-          # migration ledger through a Miniflare D1. Sharded until no shard is
-          # the reason the run is slow.
-          - { name: db 1, workspaces: -w @ezacto/db, shard: 1/8 }
-          - { name: db 2, workspaces: -w @ezacto/db, shard: 2/8 }
-          - { name: db 3, workspaces: -w @ezacto/db, shard: 3/8 }
-          - { name: db 4, workspaces: -w @ezacto/db, shard: 4/8 }
-          - { name: db 5, workspaces: -w @ezacto/db, shard: 5/8 }
-          - { name: db 6, workspaces: -w @ezacto/db, shard: 6/8 }
-          - { name: db 7, workspaces: -w @ezacto/db, shard: 7/8 }
-          - { name: db 8, workspaces: -w @ezacto/db, shard: 8/8 }
-          - { name: api 1, workspaces: -w @ezacto/api, shard: 1/3 }
-          - { name: api 2, workspaces: -w @ezacto/api, shard: 2/3 }
-          - { name: api 3, workspaces: -w @ezacto/api, shard: 3/3 }
-          - { name: migrate, workspaces: -w ezacto-migrate }
-          - { name: worker, workspaces: -w ezacto-worker }
-          # Six files that npm run verify has always covered and this matrix
-          # never did, so the merge gate was weaker than the deploy gate.
-          - { name: container, workspaces: -w ezacto-container }
-          - {
-              name: packages,
-              workspaces: -w @ezacto/core -w @ezacto/client -w @ezacto/mailer -w @ezacto/cli -w @ezacto/mcp,
-            }
-          # The only suite that drives a browser, so the only one that pays for
-          # Chromium.
-          - { name: web, workspaces: -w @ezacto/web, playwright: 'true' }
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/node-workspace
-        with:
-          playwright: ${{ matrix.playwright || 'false' }}
-      - name: test
-        env:
-          WORKSPACES: ${{ matrix.workspaces }}
-          SHARD: ${{ matrix.shard }}
-        run: |
-          # Two vCPUs on ubuntu-latest, so two workers. This belongs to the
-          # runner, not to a package.json: the same suite on a developer
-          # machine should use the cores it has.
-          if [ -n "$SHARD" ]; then
-            npm test $WORKSPACES -- --shard="$SHARD" --maxWorkers=2
-          else
-            npm test $WORKSPACES -- --maxWorkers=2
-          fi
-
-  secrets:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # full history: the scan reads commits, not just the working tree, so
-          # a secret added and later removed on the same branch is still caught
-          fetch-depth: 0
-      - uses: ./.github/actions/node-workspace
-      - name: gitleaks (E12 — secrets never in git)
-        run: |
-          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz | tar -xz gitleaks
-
-          # Self-test: a gate that cannot detect this repo's own secret shape is
-          # decoration. gitleaks' default ruleset has no keyword for "PAT", so
-          # HARVEST_PAT=<token> scans clean without .gitleaks.toml. The canary is
-          # generated here and never committed.
-          canary="${RUNNER_TEMP:-/tmp}/gitleaks-canary.env"
-          printf 'HARVEST_PAT=%s\n' "1234567.pt.$(head -c 96 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 64)" > "$canary"
-          if ./gitleaks dir "$canary" --config .gitleaks.toml --redact --no-banner; then
-            blind=1
-          else
-            blind=0
-          fi
-          rm -f "$canary"
-          if [ "$blind" = 1 ]; then
-            echo "::error::gitleaks no longer detects a Harvest PAT — the E12 gate is blind"
-            exit 1
-          fi
-
-          # Scan the complete ancestry of the checked-out PR merge or main HEAD,
-          # not unrelated remote branch tips that checkout also fetched. This
-          # still catches a secret added and later deleted anywhere in the
-          # history being proposed for merge.
-          ./gitleaks git . --log-opts="--full-history --diff-merges=first-parent --diff-filter=tuxdb HEAD" --config .gitleaks.toml --redact --no-banner --verbose
-        env:
-          GITLEAKS_VERSION: 8.30.0
-
-  container:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-      - name: exercise first-run and physical backup/restore
-        run: npm run test:container
+  verify:
+    uses: ./.github/workflows/verify.yml
