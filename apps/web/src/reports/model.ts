@@ -51,6 +51,9 @@ const reportKinds = new Set<ReportKind>([
   'project-budget',
 ])
 
+export const isReportKind = (value: string): value is ReportKind =>
+  reportKinds.has(value as ReportKind)
+
 export const canReadFinancialReports = (profile: Whoami['profile']): boolean =>
   profile === 'accounting' ||
   profile === 'executive_manager' ||

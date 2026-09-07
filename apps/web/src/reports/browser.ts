@@ -12,6 +12,7 @@ import {
   formatReportCents,
   formatReportHours,
   formatReportMoney,
+  isReportKind,
   reportFiltersFromUrl,
   reportFiltersUrl,
   reportResourceLabel,
@@ -391,7 +392,19 @@ export const createReportsController = (
   const reportsPage = document.documentElement.dataset.appView === 'reports'
   const page = required<HTMLElement>('[data-reports-page]')
   const form = required<HTMLFormElement>('[data-report-form]')
-  const kindInput = required<HTMLSelectElement>('[data-report-kind]')
+  // The strip is the shell's, rendered for the /reports route alone, so its
+  // links carry no reports markers of their own: a tab is identified by the
+  // kind in the address it points at, which is the address this controller
+  // pushes anyway. Every other page renders a strip that holds none of them,
+  // and the map is then empty -- this factory runs on every page.
+  const kindTabs = new Map<ReportKind, HTMLAnchorElement>()
+  for (const anchor of document.querySelectorAll<HTMLAnchorElement>('.tabstrip a')) {
+    const target = new URL(anchor.getAttribute('href') ?? '', globalThis.location.origin)
+    const tabKind = target.searchParams.get('report')
+    if (target.pathname !== '/reports' || tabKind === null || !isReportKind(tabKind)) continue
+    kindTabs.set(tabKind, anchor)
+  }
+  const kindStrip = [...kindTabs.values()][0]?.parentElement ?? null
   const fromInput = required<HTMLInputElement>('[data-report-from]')
   const toInput = required<HTMLInputElement>('[data-report-to]')
   const clientField = required<HTMLElement>('[data-report-client-field]')
@@ -406,6 +419,7 @@ export const createReportsController = (
   page.hidden = !reportsPage
 
   let session: ActiveSession | null = null
+  let kind: ReportKind = 'uninvoiced'
   let clients: readonly GeneralResource[] = []
   let projects: readonly GeneralResource[] = []
   let pending = false
@@ -418,7 +432,6 @@ export const createReportsController = (
   const setPending = (value: boolean): void => {
     pending = value
     run.disabled = value
-    kindInput.disabled = value
     fromInput.disabled = value
     toInput.disabled = value
     clientInput.disabled = value
@@ -440,15 +453,44 @@ export const createReportsController = (
   }
 
   const filtersFromForm = (): ReportFilters => ({
-    kind: kindInput.value as ReportKind,
+    kind,
     from: fromInput.value,
     to: toInput.value,
     clientId: selectedId(clientInput),
     projectId: selectedId(projectInput),
   })
 
+  /**
+   * The strip only carries the kinds this profile can read, so marking one it
+   * cannot leaves the marked tab about to be removed: a single visible tab with
+   * no aria-current, beside a filter card still dressed for a report that is no
+   * longer in the strip — the "which report am I looking at" failure #293 opens
+   * with. Presentation therefore falls back to the readable kind. loadReport
+   * still receives the kind the URL asked for, so the withheld API call and the
+   * message naming the denial are unchanged.
+   */
+  const presentedKind = (requested: ReportKind, financial: boolean): ReportKind =>
+    financial || requested === 'project-budget' ? requested : 'project-budget'
+
+  const setKind = (next: ReportKind): void => {
+    kind = next
+    for (const [tabKind, anchor] of kindTabs) {
+      if (tabKind === next) anchor.setAttribute('aria-current', 'page')
+      else anchor.removeAttribute('aria-current')
+    }
+  }
+
+  /**
+   * The tabs keep the range the user is looking at, so opening one in a new tab
+   * lands on the same window the dropdown used to carry across a change of kind.
+   */
+  const syncKindHrefs = (filters: Readonly<ReportFilters>): void => {
+    for (const [tabKind, anchor] of kindTabs) {
+      anchor.href = reportFiltersUrl({ ...filters, kind: tabKind })
+    }
+  }
+
   const updateVisibleFilters = (): void => {
-    const kind = kindInput.value as ReportKind
     clientField.hidden = kind === 'project-budget'
     projectField.hidden = kind === 'client-rollup'
     clientLabel.textContent = kind === 'client-rollup' ? 'Root client' : 'Client (optional)'
@@ -518,6 +560,7 @@ export const createReportsController = (
       status.textContent = 'Reports are unavailable in this build.'
       return
     }
+    syncKindHrefs(filters)
     if (updateUrl) globalThis.history.pushState(null, '', reportFiltersUrl(filters))
     setPending(true)
     retry.hidden = true
@@ -569,7 +612,7 @@ export const createReportsController = (
       localToday(),
       canReadFinancialReports(active.identity.profile),
     )
-    kindInput.value = filters.kind
+    setKind(presentedKind(filters.kind, canReadFinancialReports(active.identity.profile)))
     fromInput.value = filters.from
     toInput.value = filters.to
     populateCatalog(filters)
@@ -577,7 +620,20 @@ export const createReportsController = (
     void loadReport(filters, false)
   }
 
-  kindInput.addEventListener('change', updateVisibleFilters)
+  for (const [tabKind, anchor] of kindTabs) {
+    anchor.addEventListener('click', (event) => {
+      // A modified click still belongs to the browser: it opens the tab's own
+      // address, which syncKindHrefs keeps pointed at the visible range.
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      event.preventDefault()
+      // A run in flight disabled the dropdown this replaced. A link cannot be
+      // disabled, so it declines the click instead.
+      if (pending) return
+      setKind(tabKind)
+      updateVisibleFilters()
+      void loadReport(filtersFromForm(), true)
+    })
+  }
   form.addEventListener('submit', (event) => {
     event.preventDefault()
     void loadReport(filtersFromForm(), true)
@@ -594,7 +650,6 @@ export const createReportsController = (
       pending = false
       retryAction = null
       queuedLocationFilters = null
-      kindInput.disabled = false
       fromInput.disabled = false
       toInput.disabled = false
       clientInput.disabled = false
@@ -632,17 +687,20 @@ export const createReportsController = (
         localToday(),
         canReadFinancialReports(identity.profile),
       )
-      kindInput.value = initial.kind
+      const financial = canReadFinancialReports(identity.profile)
+      setKind(presentedKind(initial.kind, financial))
       fromInput.value = initial.from
       toInput.value = initial.to
       updateVisibleFilters()
-      const financialOptions = [
-        kindInput.querySelector<HTMLOptionElement>('option[value="uninvoiced"]'),
-        kindInput.querySelector<HTMLOptionElement>('option[value="client-rollup"]'),
-      ]
-      for (const item of financialOptions) {
-        if (item !== null) item.disabled = !canReadFinancialReports(identity.profile)
-      }
+      // A kind this profile cannot read leaves the strip rather than sitting in
+      // it refusing to work: a disabled control that gives no reason is worse
+      // than an absent one. The tabs are re-hung rather than destroyed so a
+      // second session in the same document gets the strip its profile earns.
+      kindStrip?.replaceChildren(
+        ...[...kindTabs]
+          .filter(([tabKind]) => financial || tabKind === 'project-budget')
+          .map(([, anchor]) => anchor),
+      )
       if (api.listReportClients === undefined || api.listReportProjects === undefined) {
         status.textContent = 'Report filters are unavailable in this build.'
         run.disabled = true
@@ -667,7 +725,7 @@ export const createReportsController = (
           projects = loadedProjects
           const next = queuedLocationFilters ?? initial
           queuedLocationFilters = null
-          kindInput.value = next.kind
+          setKind(presentedKind(next.kind, financial))
           fromInput.value = next.from
           toInput.value = next.to
           populateCatalog(next)

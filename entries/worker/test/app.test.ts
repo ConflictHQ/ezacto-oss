@@ -230,6 +230,13 @@ describe('worker entry', () => {
     expect(html).toContain('data-app-view="reports"')
     expect(html).toContain('data-reports-page')
     expect(html).toContain('href="/reports" aria-current="page"')
+    // The kinds are the section's own level-2 strip, not a dropdown, and the
+    // requested one is marked before a single byte of script has run.
+    expect(html).toContain('<a href="/reports?report=uninvoiced">Uninvoiced work</a>')
+    expect(html).toContain(
+      '<a href="/reports?report=project-budget" aria-current="page">Project budget</a>',
+    )
+    expect(html).not.toContain('data-time-views')
     expect(html).toContain('Each currency remains separate.')
     expect(html).not.toContain('Export')
     expect(html).not.toContain('Profit')

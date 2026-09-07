@@ -1591,8 +1591,13 @@ test('[e2e:reports-ui] runs uninvoiced, client rollup, and project budget report
       uninvoicedTotal / 100,
     ),
   )
+  const kindTabs = page.locator('.tabstrip')
+  await expect(kindTabs.getByRole('link', { name: 'Uninvoiced work' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  )
+  await expect(kindTabs.getByRole('link', { name: 'Client rollup' })).toBeVisible()
   for (const control of [
-    reports.getByLabel('Report', { exact: true }),
     reports.getByLabel('From'),
     reports.getByLabel('To'),
     reports.getByLabel('Client (optional)'),
@@ -1603,7 +1608,11 @@ test('[e2e:reports-ui] runs uninvoiced, client rollup, and project budget report
   }
   await expectNoPageOverflow(page)
 
-  await reports.getByLabel('Report', { exact: true }).selectOption('client-rollup')
+  await kindTabs.getByRole('link', { name: 'Client rollup' }).click()
+  await expect(kindTabs.getByRole('link', { name: 'Client rollup' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  )
   await reports.getByLabel('Root client').selectOption({
     label: 'Browser Acceptance Client',
   })
@@ -1626,7 +1635,7 @@ test('[e2e:reports-ui] runs uninvoiced, client rollup, and project budget report
   await expect(rollup).toContainText('Including descendants')
   await expectNoPageOverflow(page)
 
-  await reports.getByLabel('Report', { exact: true }).selectOption('project-budget')
+  await kindTabs.getByRole('link', { name: 'Project budget' }).click()
   await reports.getByLabel('Project').selectOption({
     label: '[BROWSER] Browser Acceptance Project',
   })

@@ -1,3 +1,26 @@
+import type { ShellTab } from '../shell/render.js'
+import type { ReportKind } from './model.js'
+
+const reportKindNames: readonly { readonly kind: ReportKind; readonly label: string }[] = [
+  { kind: 'uninvoiced', label: 'Uninvoiced work' },
+  { kind: 'client-rollup', label: 'Client rollup' },
+  { kind: 'project-budget', label: 'Project budget' },
+]
+
+/**
+ * The kinds as the section's level-2 strip. They were the first field of the
+ * filter card, so which report you were looking at was invisible until you
+ * opened the dropdown. Every tab is a real link because the kind is already the
+ * address the browser pushes; the browser re-marks the current tab, and drops
+ * the kinds a profile cannot read, once whoami has answered.
+ */
+export const reportKindTabs = (kind: string | null): readonly ShellTab[] =>
+  reportKindNames.map((entry) => ({
+    label: entry.label,
+    href: `/reports?report=${entry.kind}`,
+    current: entry.kind === (kind ?? 'uninvoiced'),
+  }))
+
 export const renderReportsPage = (view?: string): string => `
   <main class="app-content reports-workspace" data-reports-page${view === 'reports' ? '' : ' hidden'}>
     <header class="context-row">
@@ -5,13 +28,6 @@ export const renderReportsPage = (view?: string): string => `
     </header>
     <p class="reports-intro">Review live operational totals. Each currency remains separate.</p>
     <form class="report-filters" data-report-form>
-      <div class="report-filter-field"><label for="ez-report-kind">Report</label>
-        <select id="ez-report-kind" name="report" data-report-kind>
-          <option value="uninvoiced">Uninvoiced work</option>
-          <option value="client-rollup">Client rollup</option>
-          <option value="project-budget">Project budget</option>
-        </select>
-      </div>
       <div class="report-filter-field"><label for="ez-report-from">From</label><input id="ez-report-from" name="from" type="date" data-report-from required></div>
       <div class="report-filter-field"><label for="ez-report-to">To</label><input id="ez-report-to" name="to" type="date" data-report-to required></div>
       <div class="report-filter-field" data-report-client-field><label for="ez-report-client" data-report-client-label>Client</label>

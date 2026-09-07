@@ -4,7 +4,7 @@ import type { GeneralResource, Whoami } from '@ezacto/client'
 import { describe, expect, it, vi } from 'vitest'
 import { createReportsController } from '../src/reports/browser.js'
 import type { ReportWorkspaceApi } from '../src/reports/model.js'
-import { renderAppShell } from '../src/index.js'
+import { renderAppShell, reportKindTabs } from '../src/index.js'
 
 const timestamp = '2026-09-01T12:00:00.000Z'
 const client = (id: number, name: string, fields: Record<string, unknown> = {}): GeneralResource => ({
@@ -43,6 +43,9 @@ const writeDocument = (path: string): void => {
       release: 'report-browser-test',
       activeSection: 'Reports',
       view: 'reports',
+      // The strip the /reports route hands the shell: the controller reads the
+      // kinds off it, so a document without it is not the page under test.
+      tabs: reportKindTabs(new URL(path, 'https://example.test').searchParams.get('report')),
     })
       .replace(/ {2}<link[^>]+(?:fonts\.googleapis|fonts\.gstatic|\/assets\/ezacto\.css)[^>]*>\n/gu, '')
       .replace('  <script type="module" src="/assets/ezacto.js"></script>\n', ''),
@@ -609,7 +612,50 @@ describe('Reports Stage 1 browser controller', () => {
     expect(results.querySelectorAll('h4')[1]?.textContent).toBe('Including descendants')
   })
 
-  it('[security] lets an assigned member request project budget while financial choices stay disabled', async () => {
+  it('[browser] switches kind from the tab strip and keeps the range on screen', async () => {
+    writeDocument('/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31')
+    const getClientRollupReport = vi.fn(async () => ({
+      root_client_id: 1,
+      from: '2026-08-01',
+      to: '2026-08-31',
+      nodes: [],
+    }))
+    const session = new AbortController()
+    await createReportsController(baseApi({ getClientRollupReport })).activate(
+      identity('administrator'),
+      session.signal,
+      () => false,
+    )
+
+    const tabs = [...document.querySelectorAll<HTMLAnchorElement>('.tabstrip a[href^="/reports"]')]
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      'Uninvoiced work',
+      'Client rollup',
+      'Project budget',
+    ])
+    expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual(['page', null, null])
+    // Every tab is a real address, and it carries the range being looked at.
+    expect(tabs[1]?.getAttribute('href')).toBe(
+      '/reports?report=client-rollup&from=2026-08-01&to=2026-08-31',
+    )
+
+    document.querySelector<HTMLSelectElement>('[data-report-client]')!.value = '1'
+    tabs[1]?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(getClientRollupReport).toHaveBeenCalledTimes(1))
+    expect(getClientRollupReport).toHaveBeenCalledWith(
+      1,
+      { from: '2026-08-01', to: '2026-08-31' },
+      expect.anything(),
+    )
+    expect(`${window.location.pathname}${window.location.search}`).toBe(
+      '/reports?report=client-rollup&from=2026-08-01&to=2026-08-31&client_id=1',
+    )
+    expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual([null, 'page', null])
+    expect(document.querySelector<HTMLElement>('[data-report-project-field]')?.hidden).toBe(true)
+    session.abort()
+  })
+
+  it('[security] lets an assigned member request project budget while financial kinds leave the strip', async () => {
     writeDocument('/reports?report=project-budget&from=2026-08-01&to=2026-08-31&project_id=7')
     const getProjectBudgetReport = vi.fn(async () => ({
       project_id: 7,
@@ -648,9 +694,13 @@ describe('Reports Stage 1 browser controller', () => {
 
     expect(getProjectBudgetReport).toHaveBeenCalledTimes(1)
     expect(getUninvoicedReport).not.toHaveBeenCalled()
+    // Hidden, not disabled: a member is told nothing by a control that refuses
+    // to work, so the two financial kinds are simply not in the strip.
     expect(
-      document.querySelector<HTMLOptionElement>('option[value="uninvoiced"]')?.disabled,
-    ).toBe(true)
+      [...document.querySelectorAll('.tabstrip a[href^="/reports"]')].map(
+        (tab) => tab.textContent,
+      ),
+    ).toEqual(['Project budget'])
     const results = document.querySelector('[data-report-results]')!
     // No catalog resolves an assignment, so its id stays; the project has one.
     expect(results.textContent).toContain('Task assignment #22')
@@ -672,6 +722,41 @@ describe('Reports Stage 1 browser controller', () => {
     expect(document.querySelector('[data-report-retry]')?.hasAttribute('hidden')).toBe(
       true,
     )
+    expect(document.querySelector('[data-report-status]')?.textContent).toBe(
+      'Your profile does not have access to this financial report.',
+    )
+  })
+
+  it('[security] leaves the strip and the filters agreeing when a kind is denied', async () => {
+    // The bookmark case: a member opens a financial report they can no longer
+    // read. The denial itself is covered below; what this guards is that the
+    // page does not contradict itself while denying. Before the fix, setKind
+    // marked the Uninvoiced tab and the strip then removed it, leaving one
+    // visible tab with no aria-current beside a filter card laid out for
+    // uninvoiced — Client showing, Project optional — which is the exact
+    // "which report am I looking at is invisible" failure #293 opens with.
+    writeDocument('/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31')
+    const getUninvoicedReport = vi.fn()
+
+    await createReportsController(baseApi({ getUninvoicedReport })).activate(
+      identity('member'),
+      new AbortController().signal,
+      () => false,
+    )
+
+    const tabs = [...document.querySelectorAll('.tabstrip a[href^="/reports"]')]
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Project budget'])
+    // The surviving tab is the marked one, rather than nothing being marked.
+    expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual(['page'])
+    // ...and the filter card is dressed for that same report.
+    expect(document.querySelector<HTMLElement>('[data-report-client-field]')?.hidden).toBe(
+      true,
+    )
+    expect(document.querySelector('[data-report-project-label]')?.textContent).toBe(
+      'Project',
+    )
+    // The denial is unchanged: no request went out, and the reason is named.
+    expect(getUninvoicedReport).not.toHaveBeenCalled()
     expect(document.querySelector('[data-report-status]')?.textContent).toBe(
       'Your profile does not have access to this financial report.',
     )

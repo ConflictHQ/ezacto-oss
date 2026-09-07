@@ -63,6 +63,7 @@ import {
   brandFromEnv,
   invoiceTabs,
   renderAppShell,
+  reportKindTabs,
   webAssets,
   type SignInProvider,
 } from '@ezacto/web'
@@ -716,6 +717,7 @@ export const createApp = (services?: RuntimeServices) =>
             brand: brandFromEnv(context.env),
             activeSection: 'Reports',
             view: 'reports',
+            tabs: reportKindTabs(context.req.query('report') ?? null),
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
