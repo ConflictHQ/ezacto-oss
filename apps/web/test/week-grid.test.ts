@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   buildWeekGrid,
   formatCellHours,
+  formatDuration,
   loadShellSnapshot,
   parseCellSeconds,
   saveWeekCellWithRetry,
@@ -263,6 +264,21 @@ describe('timesheet week grid', () => {
     }
     expect(() => parseCellSeconds('1h30m')).toThrow(/decimal hours or H:MM/u)
     expect(() => parseCellSeconds('24:01')).toThrow(/24 hours/u)
+  })
+
+  it('[unit] renders a cell and a total from one rule', () => {
+    // #295: the totals had their own formatter, which floored to the minute and
+    // padded decimals to two places, so a cell and its own row total disagreed
+    // on every duration the two did not happen to round alike. Zero is the only
+    // difference left, and it is deliberate.
+    for (const seconds of [1, 90, 3_600, 8_100, 8_130, -1_800, 86_399]) {
+      for (const format of ['decimal', 'hours_minutes'] as const) {
+        expect(formatDuration(seconds, format)).toBe(formatCellHours(seconds, format))
+      }
+    }
+    expect(formatDuration(0)).toBe('0')
+    expect(formatDuration(0, 'hours_minutes')).toBe('0:00')
+    expect(formatCellHours(0)).toBe('')
   })
 
   it('[unit] renders an imported correction entry instead of refusing it', () => {

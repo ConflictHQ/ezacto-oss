@@ -849,11 +849,12 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   await noteDialog.getByRole('button', { name: 'Log time' }).click()
   expect((await created).ok()).toBe(true)
   await expect(noteDialog).toBeHidden()
-  await expect(page.locator('[data-week-total]')).toHaveText('1.00')
+  await expect(page.locator('[data-week-total]')).toHaveText('1')
   // The seven-day strip is the week's shape before you read a row, and it has
   // to agree with the grid it sits above — in both views, which is why it lives
   // outside them. It honours the organisation's time format for the same
-  // reason the totals do: an hour is 1.00 on a decimal account, not 1:00.
+  // reason the totals do: an hour is 1 on a decimal account, not 1:00. It is
+  // also the string the cell prints for those seconds — one formatter now.
   // A column header is scanned down a row of seven, so the weekday and the date
   // are stacked rather than competing on one line. The first column is the
   // project/task heading and keeps its single line.
@@ -869,7 +870,7 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   await expect(dayTotals.filter({ has: page.locator('[data-empty]') })).toHaveCount(6)
   await expect(
     dayTotals.filter({ hasNot: page.locator('[data-empty]') }).locator('strong'),
-  ).toHaveText('1.00')
+  ).toHaveText('1')
 
   // The strip answers "which day am I short on", so it is also the way to go
   // there. Reading the answer here and then hunting for the day in a separate
@@ -907,7 +908,7 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   // Both the D1 entry/note and the locally remembered row survive a full reload;
   // the rejected cross-product remains absent.
   await page.reload()
-  await expect(page.locator('[data-week-total]')).toHaveText('1.00')
+  await expect(page.locator('[data-week-total]')).toHaveText('1')
   await expect(page.locator('[data-entry-note="1"]')).toHaveText(
     'First line\nSecond line with delivery detail',
   )
@@ -2518,7 +2519,9 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
   await expect(page).toHaveTitle('ezacto — Approvals')
   const card = page.locator('[data-approval-queue] [data-submission-id]')
   await expect(card).toContainText('Browser Owner')
-  await expect(card).toContainText('1.00')
+  // The queue totals one hour through the same formatter the week grid uses, so
+  // a decimal account reads `1` here exactly as it does in the cell (issue 295).
+  await expect(card).toContainText('1 · 1 time entry')
   await expect(card).toContainText('Browser Acceptance Project / Browser Acceptance Task')
   await expect(card).toContainText('Wed, Aug 19')
   await expect(card).toContainText('Ready for review')

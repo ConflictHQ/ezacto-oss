@@ -900,6 +900,135 @@ describe('week-grid browser behavior', () => {
     expect(editor.dataset.entryContext).toBe('edit')
   })
 
+  const durationsOnScreen = (): {
+    readonly cell: string
+    readonly rowTotal: string
+    readonly footTotals: readonly string[]
+    readonly weekTotal: string
+    readonly dayStrip: string
+    readonly timerElapsed: string
+  } => {
+    const cell = document.querySelector<HTMLInputElement>(
+      '[data-week-grid] [data-cell-key="1:1:2026-08-28"] input',
+    )!
+    return {
+      cell: cell.value,
+      rowTotal: cell.closest('tr')!.querySelector('.row-total')!.textContent!,
+      footTotals: [...document.querySelectorAll('[data-week-grid-totals] td')].map(
+        (total) => total.textContent!,
+      ),
+      weekTotal: document.querySelector('[data-week-total]')!.textContent!,
+      dayStrip: document.querySelector(
+        '[data-day-totals] li[data-day-total="2026-08-28"] strong',
+      )!.textContent!,
+      timerElapsed: document.querySelector('[data-timer-elapsed]')!.textContent!,
+    }
+  }
+
+  it('[browser] renders every total in the decimal format the organisation chose', async () => {
+    // A cell rendered through formatCellHours and every total around it through
+    // a hardcoded H:MM, so 2.25 in a cell sat beside 2:15 in that cell's own row
+    // total. Every total around a cell has to agree with it, and with the rest.
+    //
+    // 8,130s (2h15m30s) rather than a round 8,100: at 8,100 the cell formatter
+    // and the totals formatter happened to print the same string, so the two
+    // could disagree in rounding and precision and this test would still pass.
+    // Stopping a timer produces seconds like these routinely.
+    renderBrowserShell()
+    const api = browserApi()
+    api.timeFormat = 'decimal'
+    api.entries.splice(
+      0,
+      api.entries.length,
+      timeEntry(1, { project_id: 1, task_id: 1, spent_date: '2026-08-28', seconds: 8_130 }),
+    )
+    await mountShell(api)
+
+    const durations = await vi.waitFor(() => {
+      const seen = durationsOnScreen()
+      expect(seen.weekTotal).not.toBe('—')
+      return seen
+    })
+    expect(durations.cell).toBe('2.2583')
+    expect(durations.rowTotal).toBe(durations.cell)
+    expect(durations.weekTotal).toBe(durations.cell)
+    expect(durations.dayStrip).toBe(durations.cell)
+    // Seven days and the grand total; only the Friday carries time.
+    expect(durations.footTotals).toEqual([
+      '0',
+      '0',
+      '0',
+      '0',
+      '2.2583',
+      '0',
+      '0',
+      '2.2583',
+    ])
+    // The idle chip is a duration in the same column of numbers as the rest, so
+    // its placeholder follows the setting rather than reading 0:00 beside 2.25.
+    expect(durations.timerElapsed).toBe('0')
+  })
+
+  it('[browser] agrees with itself on the roundest hour a timesheet carries', async () => {
+    // One hour exactly. The cell prints an integer as `1`; the totals used to
+    // pad it to `1.00`, so the commonest value on a timesheet was also a
+    // mismatch — no sub-minute remainder required.
+    renderBrowserShell()
+    const api = browserApi()
+    api.timeFormat = 'decimal'
+    api.entries.splice(
+      0,
+      api.entries.length,
+      timeEntry(1, { project_id: 1, task_id: 1, spent_date: '2026-08-28', seconds: 3_600 }),
+    )
+    await mountShell(api)
+
+    const durations = await vi.waitFor(() => {
+      const seen = durationsOnScreen()
+      expect(seen.weekTotal).not.toBe('—')
+      return seen
+    })
+    expect(durations.cell).toBe('1')
+    expect(durations.rowTotal).toBe(durations.cell)
+    expect(durations.weekTotal).toBe(durations.cell)
+    expect(durations.dayStrip).toBe(durations.cell)
+  })
+
+  it('[browser] renders those same totals as hours and minutes when that is the setting', async () => {
+    renderBrowserShell()
+    const api = browserApi()
+    api.timeFormat = 'hours_minutes'
+    api.entries.splice(
+      0,
+      api.entries.length,
+      timeEntry(1, { project_id: 1, task_id: 1, spent_date: '2026-08-28', seconds: 8_130 }),
+    )
+    await mountShell(api)
+
+    const durations = await vi.waitFor(() => {
+      const seen = durationsOnScreen()
+      expect(seen.weekTotal).not.toBe('—')
+      return seen
+    })
+    // 2h15m30s is nearer 2:16 than 2:15, and the cell has always said so. The
+    // totals floored the same seconds to 2:15 — the screenshot on issue 295.
+    expect(durations.cell).toBe('2:16')
+    expect(durations.rowTotal).toBe(durations.cell)
+    expect(durations.weekTotal).toBe(durations.cell)
+    expect(durations.dayStrip).toBe(durations.cell)
+    expect(durations.footTotals).toEqual([
+      '0:00',
+      '0:00',
+      '0:00',
+      '0:00',
+      '2:16',
+      '0:00',
+      '0:00',
+      '2:16',
+    ])
+    expect(durations.timerElapsed).toBe('0:00')
+  })
+
   it('[e2e:track-week] displays 12-hour times and submits canonical start/end values', async () => {
     renderBrowserShell()
     const api = browserApi()

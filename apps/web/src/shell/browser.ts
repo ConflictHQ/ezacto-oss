@@ -38,6 +38,7 @@ import { invoiceIdentityCanRead } from '../invoices/model.js'
 import {
   buildWeekGrid,
   formatCellHours,
+  formatDuration,
   parseCellSeconds,
   saveWeekCellWithRetry,
   seedsFromEntries,
@@ -181,20 +182,14 @@ const setActiveTimeFormat = (format: 'decimal' | 'hours_minutes'): void => {
 }
 
 /**
- * Unlike `formatCellHours`, this always renders a value — a total of zero is a
- * fact worth showing, whereas an empty cell means "nothing logged".
+ * Every total on this screen — row, tfoot, week, day strip, timer chip — reads
+ * beside a cell rendered from the same seconds, so it renders through the same
+ * function the cell does rather than a second one that rounded differently.
+ * Unlike `formatCellHours` a total of zero still prints: an empty cell means
+ * "nothing logged", but a day that totals zero is a fact worth showing.
  */
-const formatSeconds = (seconds: number): string => {
-  if (activeTimeFormat === 'decimal') {
-    return (seconds / 3_600).toFixed(2)
-  }
-  // Split the magnitude, then sign it. Flooring a negative total borrowed an
-  // hour and rendered -1800s as "-1:30" (issue 279).
-  const magnitude = Math.abs(seconds)
-  const hours = Math.floor(magnitude / 3_600)
-  const minutes = Math.floor((magnitude % 3_600) / 60)
-  return `${seconds < 0 ? '-' : ''}${hours}:${String(minutes).padStart(2, '0')}`
-}
+const formatSeconds = (seconds: number): string =>
+  formatDuration(seconds, activeTimeFormat)
 
 const formatMoney = (cents: number, currency: string): string =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100)
@@ -757,7 +752,10 @@ const renderTimer = (running: DisplayTimeEntry | null): void => {
   if (running === null) {
     chip.dataset.state = 'stopped'
     label.textContent = 'Start timer'
-    elapsed.textContent = '0:00'
+    // The idle placeholder sits in the same column of numbers as the totals, so
+    // it follows the setting too: a hardcoded 0:00 beside a 2.25 row total is
+    // the same mismatch, just at zero.
+    elapsed.textContent = formatSeconds(0)
     return
   }
   chip.dataset.state = 'running'

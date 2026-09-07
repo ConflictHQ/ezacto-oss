@@ -166,17 +166,30 @@ export const buildWeekGrid = (
 }
 
 /**
- * Renders a signed duration: an imported Harvest correction entry is negative
- * (issue 279), and a cell holding one has to show it rather than throw.
- * `parseCellSeconds` stays non-negative — reading a correction is not the same
- * as typing one.
+ * The one place seconds become a duration on screen. A cell, its own row total,
+ * the tfoot, the week total and the day strip all render the same seconds, so
+ * they have to round them the same way and to the same precision: 8130s
+ * reading `2:16` in a cell above `2:15` in that cell's own total is issue 295,
+ * and it survived the first fix because the two formatters only agreed on
+ * whole minutes.
+ *
+ * The rounding rule is the cell's, not the totals'. Rounding to the nearest
+ * minute is the honest reading of 2h15m30s, where flooring loses up to 59
+ * seconds of every duration; and decimal keeps four places because a cell is
+ * an input, so `parseCellSeconds` has to read back exactly the seconds the
+ * cell shows — at two places a one-second entry renders `0.00` and reparses to
+ * nothing.
+ *
+ * Signed, because an imported Harvest correction entry is negative (issue 279)
+ * and a cell holding one has to show it rather than throw. The magnitude is
+ * split and then signed: flooring a negative directly borrowed an hour and
+ * rendered -1800s as "-1:30". `parseCellSeconds` stays non-negative — reading a
+ * correction is not the same as typing one.
  */
-export const formatCellHours = (
+export const formatDuration = (
   seconds: number,
   timeFormat: 'decimal' | 'hours_minutes' = 'decimal',
 ): string => {
-  if (!Number.isSafeInteger(seconds)) throw new Error('invalid cell seconds')
-  if (seconds === 0) return ''
   const sign = seconds < 0 ? '-' : ''
   const magnitude = Math.abs(seconds)
   if (timeFormat === 'hours_minutes') {
@@ -188,6 +201,20 @@ export const formatCellHours = (
     ? String(hours)
     : hours.toFixed(4).replace(/0+$/u, '').replace(/\.$/u, '')
   return `${sign}${rendered}`
+}
+
+/**
+ * `formatDuration` for the editable cell, which is the one surface that leaves
+ * zero blank: an empty cell means "nothing logged", whereas a total of zero is
+ * a fact worth showing.
+ */
+export const formatCellHours = (
+  seconds: number,
+  timeFormat: 'decimal' | 'hours_minutes' = 'decimal',
+): string => {
+  if (!Number.isSafeInteger(seconds)) throw new Error('invalid cell seconds')
+  if (seconds === 0) return ''
+  return formatDuration(seconds, timeFormat)
 }
 
 export const parseCellSeconds = (rawValue: string): number => {
