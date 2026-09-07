@@ -1,6 +1,7 @@
 import type {
   Attachment,
   Invoice,
+  InvoiceEditInput,
   InvoiceEmailDeliveryInput,
   InvoiceLine,
   InvoiceLineInput,
@@ -26,6 +27,12 @@ export interface InvoicePaymentApi {
     body: FormData,
     signal?: AbortSignal,
   ): Promise<Attachment>
+  updateInvoice(
+    id: number,
+    commandId: string,
+    input: InvoiceEditInput,
+    signal?: AbortSignal,
+  ): Promise<Invoice>
   recordInvoicePayment(
     id: number,
     commandId: string,
@@ -228,6 +235,26 @@ export const invoiceLineUnitPriceForForm = (cents: number): string => {
 
 export const invoiceLineQuantityForForm = (line: Readonly<InvoiceLine>): string =>
   line.quantity.toString()
+
+const ratePercentPattern = /^(0|[1-9][0-9]*)(?:\.([0-9]{1,4}))?$/u
+
+// Rates are stored as integer parts-per-million and shown as a percentage.
+// Reading the digits keeps 8.25% at exactly 82500 ppm, which multiplying a
+// parsed float by 10_000 does not.
+export const invoiceRatePpm = (raw: string, label: string): number | null => {
+  const value = raw.trim()
+  if (value === '') return null
+  const match = ratePercentPattern.exec(value)
+  if (match === null) {
+    throw new Error(`${label} must be a percentage with no more than four decimal places.`)
+  }
+  const ppm = Number(`${match[1]}${(match[2] ?? '').padEnd(4, '0')}`)
+  if (ppm > 1_000_000) throw new Error(`${label} cannot exceed 100%.`)
+  return ppm
+}
+
+export const invoiceRatePercentForForm = (ppm: number | null): string =>
+  ppm === null ? '' : String(ppm / 10_000)
 
 const recipientEmailPattern = /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/u
 
