@@ -1761,6 +1761,25 @@ export type ProjectBudgetReportEnvelope = {
   "links": Links;
 };
 
+export type ProjectBudgetSummary = {
+  "project_id": number;
+  "budget_by": "project" | "project_cost" | "task" | "task_fees" | "person" | "none";
+  "unit": "seconds" | "cents" | null;
+  "unpriced_entry_count": number;
+  "budget_seconds"?: number | null;
+  "spent_seconds"?: number;
+  "remaining_seconds"?: number | null;
+  "budget_cents"?: number | null;
+  "spent_cents"?: number;
+  "remaining_cents"?: number | null;
+  "cost_cents"?: number;
+};
+
+export type ProjectBudgetSummaryListEnvelope = {
+  "data": Array<ProjectBudgetSummary>;
+  "links": Links;
+};
+
 export type ClientHierarchyNode = {
   "ancestor_id": number;
   "descendant_id": number;
@@ -3439,6 +3458,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<ClientRollupReportEnvelope>("GET", "/api/v1/reports/client-rollups/:clientId".replace(":clientId", encodeURIComponent(String(args["clientId"]))), {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listProjectBudgetSummaries(args: { query: { "from": string; "to": string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<ProjectBudgetSummaryListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ProjectBudgetSummaryListEnvelope>("GET", "/api/v1/reports/project-budgets", {
       query: args.query,
       signal: args.signal,
       headers,

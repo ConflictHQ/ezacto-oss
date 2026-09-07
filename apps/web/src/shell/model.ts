@@ -82,6 +82,7 @@ export interface ShellApi
   updateTimeEntry(id: number, patch: TimeEntryPatch, signal?: AbortSignal): Promise<TimeEntry>
   deleteTimeEntry(id: number, signal?: AbortSignal): Promise<void>
   stopTimeEntry(id: number, signal?: AbortSignal): Promise<TimeEntry>
+  restartTimeEntry?(id: number, signal?: AbortSignal): Promise<TimeEntry>
   listTimesheetSubmissions?(
     periodStart: string,
     periodEnd: string,
@@ -1007,6 +1008,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   },
   stopTimeEntry: async (id, signal) =>
     (await client.stopTimeEntry({ id, ...withSignal(signal) })).data,
+  restartTimeEntry: async (id, signal) =>
+    (await client.restartTimeEntry({ id, ...withSignal(signal) })).data,
   listTimesheetSubmissions: async (periodStart, periodEnd, signal) => {
     const submissions: TimesheetSubmission[] = []
     let cursor: string | undefined

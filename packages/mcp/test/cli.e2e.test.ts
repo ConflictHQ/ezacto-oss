@@ -65,6 +65,7 @@ const reports: ReportReader = {
     }
   },
   clientRollup: async () => null,
+  projectBudgetSummaries: async () => [],
   projectBudget: async () => null,
 }
 
