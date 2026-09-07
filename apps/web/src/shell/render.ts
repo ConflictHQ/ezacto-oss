@@ -51,6 +51,9 @@ export interface AppShellOptions {
     | 'invoice-list'
     | 'invoice-detail'
     | 'invoice-generation'
+    | 'invoice-recurring'
+    | 'invoice-retainers'
+    | 'invoice-configure'
     | 'client-list'
     | 'client-detail'
     | 'project-list'
@@ -130,6 +133,25 @@ const renderTabStrip = (options: AppShellOptions): string => {
     .join('')
   return `<nav class="tabstrip" aria-label="${escapeHtml(options.activeSection ?? 'Section')} views">${links}</nav>`
 }
+
+/**
+ * Invoices' four destinations. Four routes render the same strip, and a strip
+ * assembled separately at each of them is a strip whose tabs disagree about
+ * where they point; the only thing a route chooses is which one it is on.
+ */
+const invoiceDestinations = [
+  ['Overview', '/invoices', 'invoice-list'],
+  ['Recurring', '/invoices/recurring', 'invoice-recurring'],
+  ['Retainers', '/invoices/retainers', 'invoice-retainers'],
+  ['Configure', '/invoices/configure', 'invoice-configure'],
+] as const
+
+export const invoiceTabs = (view: AppShellOptions['view']): readonly ShellTab[] =>
+  invoiceDestinations.map(([label, href, destination]) => ({
+    label,
+    href,
+    ...(view === destination ? { current: true } : {}),
+  }))
 
 export const renderEmptyState = (title: string, detail: string): string =>
   `<section class="empty-state" data-empty-state>` +
@@ -501,6 +523,24 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
       <p>The draft is saved and ready to review.</p>
       <a data-generated-invoice-link href="/invoices" hidden>Open draft invoice</a>
     </section>
+  </main>
+  <main class="app-content invoice-workspace" data-invoice-recurring-page${view === 'invoice-recurring' ? '' : ' hidden'}>
+    <header class="context-row">
+      <div><p class="eyebrow">Money</p><h1>Recurring</h1></div>
+    </header>
+    ${renderEmptyState('Recurring invoices are not built yet', 'Schedules that raise an invoice on a cadence. /api/v1/recurring-invoices already serves them; this screen does not read it yet.')}
+  </main>
+  <main class="app-content invoice-workspace" data-invoice-retainers-page${view === 'invoice-retainers' ? '' : ' hidden'}>
+    <header class="context-row">
+      <div><p class="eyebrow">Money</p><h1>Retainers</h1></div>
+    </header>
+    ${renderEmptyState('Retainers are not built yet', 'Prepaid balances with a ledger and drawdowns. /api/v1/retainers already serves them; this screen does not read it yet.')}
+  </main>
+  <main class="app-content invoice-workspace" data-invoice-configure-page${view === 'invoice-configure' ? '' : ' hidden'}>
+    <header class="context-row">
+      <div><p class="eyebrow">Money</p><h1>Configure</h1></div>
+    </header>
+    ${renderEmptyState('Invoice configuration is not built yet', 'Sender identities and the email templates invoices go out under. /api/v1/sender-identities and /api/v1/email-templates already serve them; this screen does not read them yet.')}
   </main>
   ${renderClientDirectoryPages(view)}
   ${renderTeamPages(view)}

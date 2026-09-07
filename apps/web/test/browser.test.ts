@@ -19,7 +19,7 @@ import {
 } from '@ezacto/client'
 import { describe, expect, it, vi } from 'vitest'
 import { mountShell } from '../src/shell/browser.js'
-import { renderAppShell, type ShellApi } from '../src/index.js'
+import { renderAppShell, webAssets, type ShellApi } from '../src/index.js'
 
 const timestamp = '2026-08-28T12:00:00.000Z'
 
@@ -2570,5 +2570,58 @@ describe('native browser authentication', () => {
       .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
     expect(base.updateTimeEntry).not.toHaveBeenCalled()
     vi.unstubAllGlobals()
+  })
+})
+
+describe('shell chrome visibility', () => {
+  const renderStyledShell = (section?: 'client-list'): void => {
+    document.open()
+    document.write(
+      renderAppShell({
+        environment: 'test',
+        release: 'browser-test',
+        ...(section === undefined
+          ? {}
+          : { activeSection: 'Clients' as const, view: section }),
+        sessionCookiePresent: true,
+      })
+        .replace(
+          / {2}<link[^>]+(?:fonts\.googleapis|fonts\.gstatic|\/assets\/ezacto\.css)[^>]*>\n/gu,
+          '',
+        )
+        .replace('  <script type="module" src="/assets/ezacto.js"></script>\n', ''),
+    )
+    document.close()
+    const stylesheet = document.createElement('style')
+    stylesheet.textContent = webAssets.stylesheet
+    document.head.append(stylesheet)
+  }
+
+  it('[unit] serves a stylesheet in which the hidden attribute actually hides', () => {
+    // `hidden` is only a presentational default, so `.tabstrip { display: flex }`
+    // beat it and Time's Week/Day strip painted on Clients, Projects, Invoices
+    // and Reports, while `.primary-nav a { display: grid }` did the same to the
+    // Approvals and Team items module gating had switched off. Assert what a
+    // browser computes from the stylesheet the worker serves: a test that
+    // matched the text of the rule would pass on a rule the cascade ignores.
+    renderStyledShell('client-list')
+
+    const strip = document.querySelector<HTMLElement>('.tabstrip')!
+    const approvals = document.querySelector<HTMLElement>(
+      '.primary-nav [data-approvals-nav]',
+    )!
+    expect(strip.hidden).toBe(true)
+    expect(approvals.hidden).toBe(true)
+    expect(window.getComputedStyle(strip).display).toBe('none')
+    expect(window.getComputedStyle(approvals).display).toBe('none')
+
+    // And still lays both out when they are not hidden, so the assertions above
+    // are about `hidden` and not about a selector that matches nothing.
+    renderStyledShell()
+    const timeStrip = document.querySelector<HTMLElement>('.tabstrip')!
+    const timeNav = document.querySelector<HTMLElement>('.primary-nav a')!
+    expect(timeStrip.hidden).toBe(false)
+    expect(window.getComputedStyle(timeStrip).display).toBe('flex')
+    expect(window.getComputedStyle(timeNav).display).toBe('grid')
   })
 })

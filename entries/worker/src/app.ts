@@ -59,7 +59,13 @@ import {
   type InstanceOwnerPasswordResult,
   type OutboxService,
 } from '@ezacto/db/d1'
-import { brandFromEnv, renderAppShell, webAssets, type SignInProvider } from '@ezacto/web'
+import {
+  brandFromEnv,
+  invoiceTabs,
+  renderAppShell,
+  webAssets,
+  type SignInProvider,
+} from '@ezacto/web'
 import type {
   EmailLogStore,
   QueuedEmailJob,
@@ -525,6 +531,81 @@ export const createApp = (services?: RuntimeServices) =>
             brand: brandFromEnv(context.env),
             activeSection: 'Invoices',
             view: 'invoice-list',
+            tabs: invoiceTabs('invoice-list'),
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      // Invoices' other three destinations, ahead of /invoices/:invoiceId so a
+      // named tab is a tab and not an invoice number that failed to parse. The
+      // strip ships before the screens behind it: a labelled empty pane says
+      // where recurring invoices, retainers and sender configuration will live,
+      // and an absent section says nothing at all.
+      app.get('/invoices/recurring', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
+            activeSection: 'Invoices',
+            view: 'invoice-recurring',
+            tabs: invoiceTabs('invoice-recurring'),
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/invoices/retainers', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
+            activeSection: 'Invoices',
+            view: 'invoice-retainers',
+            tabs: invoiceTabs('invoice-retainers'),
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/invoices/configure', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
+            activeSection: 'Invoices',
+            view: 'invoice-configure',
+            tabs: invoiceTabs('invoice-configure'),
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),

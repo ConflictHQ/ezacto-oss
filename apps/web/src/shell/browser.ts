@@ -911,6 +911,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     document.documentElement.dataset.appView === 'invoice-generation'
   const invoiceListPage = document.documentElement.dataset.appView === 'invoice-list'
   const invoiceDetailPage = document.documentElement.dataset.appView === 'invoice-detail'
+  const invoiceRecurringPage =
+    document.documentElement.dataset.appView === 'invoice-recurring'
+  const invoiceRetainersPage =
+    document.documentElement.dataset.appView === 'invoice-retainers'
+  const invoiceConfigurePage =
+    document.documentElement.dataset.appView === 'invoice-configure'
   const clientListPage = document.documentElement.dataset.appView === 'client-list'
   const clientDetailPage = document.documentElement.dataset.appView === 'client-detail'
   const projectListPage = document.documentElement.dataset.appView === 'project-list'
@@ -938,6 +944,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         ? ' — Invoices'
         : invoiceDetailPage
           ? ' — Invoice detail'
+          : invoiceRecurringPage
+            ? ' — Recurring invoices'
+            : invoiceRetainersPage
+              ? ' — Retainers'
+              : invoiceConfigurePage
+                ? ' — Invoice configuration'
           : clientListPage
             ? ' — Clients'
             : clientDetailPage

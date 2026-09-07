@@ -47,6 +47,9 @@ describe('worker entry', () => {
       '/invoices',
       '/invoices/1',
       '/invoices/new',
+      '/invoices/recurring',
+      '/invoices/retainers',
+      '/invoices/configure',
       '/reports',
       '/settings/user',
       '/settings/company',
@@ -130,6 +133,25 @@ describe('worker entry', () => {
     '[security] rejects invalid invoice detail path %s',
     async (path) => {
       expect((await app.request(path, {}, env)).status).toBe(404)
+    },
+  )
+
+  it.each([
+    ['/invoices/recurring', 'invoice-recurring'],
+    ['/invoices/retainers', 'invoice-retainers'],
+    ['/invoices/configure', 'invoice-configure'],
+  ])(
+    '[acceptance] serves %s under the Invoices strip',
+    async (path, view) => {
+      // These three sit ahead of /invoices/:invoiceId in the route table. If
+      // that order ever slips they stop being tabs and start being invoice
+      // numbers that failed to parse, which is a 404.
+      const res = await app.request(path, {}, env)
+      expect(res.status).toBe(200)
+      const html = await res.text()
+      expect(html).toContain(`data-app-view="${view}"`)
+      expect(html).toContain(`<a href="${path}" aria-current="page">`)
+      expect(html).toContain('<a href="/invoices">Overview</a>')
     },
   )
 

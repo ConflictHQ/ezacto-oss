@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   createShellApi,
   hydratePendingTimesheetDetails,
+  invoiceTabs,
   loadShellSnapshot,
   maximumTimeEntryNoteLength,
   navigationDestination,
@@ -254,6 +255,66 @@ describe('S-1 through S-5 application shell', () => {
       tabs: [],
     })
     expect(noTabs).not.toContain('class="tabstrip"')
+  })
+
+  it('[acceptance] gives Invoices four destinations and a labelled pane behind each', () => {
+    // Invoices was one flat list while /api/v1/recurring-invoices,
+    // /api/v1/retainers and the sender-identity endpoints sat behind nothing at
+    // all. The strip ships ahead of the screens on purpose: a labelled empty
+    // pane says where that work will live, an absent section says nothing.
+    const stripOf = (html: string): string =>
+      /<nav class="tabstrip"[^>]*>(.*?)<\/nav>/su.exec(html)?.[1] ?? ''
+
+    const overview = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      activeSection: 'Invoices',
+      view: 'invoice-list',
+      tabs: invoiceTabs('invoice-list'),
+    })
+    expect(stripOf(overview)).toBe(
+      '<a href="/invoices" aria-current="page">Overview</a>' +
+        '<a href="/invoices/recurring">Recurring</a>' +
+        '<a href="/invoices/retainers">Retainers</a>' +
+        '<a href="/invoices/configure">Configure</a>',
+    )
+
+    const recurring = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      activeSection: 'Invoices',
+      view: 'invoice-recurring',
+      tabs: invoiceTabs('invoice-recurring'),
+    })
+    // One tab is current, and it is the one whose pane is showing.
+    expect(stripOf(recurring)).toContain(
+      '<a href="/invoices/recurring" aria-current="page">Recurring</a>',
+    )
+    expect(stripOf(recurring).match(/aria-current/gu)).toHaveLength(1)
+    expect(recurring).toContain('data-invoice-recurring-page>')
+    expect(recurring).toContain('Recurring invoices are not built yet')
+    expect(recurring).toContain('data-invoice-retainers-page hidden>')
+    expect(recurring).toContain('data-invoice-list-page hidden>')
+
+    const retainers = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      activeSection: 'Invoices',
+      view: 'invoice-retainers',
+      tabs: invoiceTabs('invoice-retainers'),
+    })
+    expect(retainers).toContain('data-invoice-retainers-page>')
+    expect(retainers).toContain('Retainers are not built yet')
+
+    const configure = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      activeSection: 'Invoices',
+      view: 'invoice-configure',
+      tabs: invoiceTabs('invoice-configure'),
+    })
+    expect(configure).toContain('data-invoice-configure-page>')
+    expect(configure).toContain('Invoice configuration is not built yet')
   })
 
   it('[e2e:track-week] keeps the global timer in desktop and phone shell CSS', () => {
