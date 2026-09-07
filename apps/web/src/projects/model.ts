@@ -5,7 +5,26 @@ export type ProjectDirectoryPage<T = GeneralResource> = {
   readonly page: { readonly next_cursor: string | null }
 }
 
+/** One project-level budget row, as GET /reports/project-budgets returns it. */
+export interface ProjectBudgetSummary {
+  project_id: number
+  unit: 'seconds' | 'cents' | null
+  budget_seconds?: number | null
+  spent_seconds?: number
+  remaining_seconds?: number | null
+  budget_cents?: number | null
+  spent_cents?: number
+  remaining_cents?: number | null
+  cost_cents?: number
+}
+
 export interface ProjectDirectoryApi {
+  // Optional: a build without the rollup shows the list without money columns
+  // rather than one call per project, which is what kept them off it.
+  listProjectBudgetSummaries?(
+    range: { from: string; to: string },
+    signal?: AbortSignal,
+  ): Promise<readonly ProjectBudgetSummary[]>
   listDirectoryProjects(
     cursor?: string,
     signal?: AbortSignal,
