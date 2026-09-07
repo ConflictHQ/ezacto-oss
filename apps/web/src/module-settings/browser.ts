@@ -1,9 +1,18 @@
-import { EzactoApiError, type SenderIdentity, type Whoami } from '@ezacto/client'
+import {
+  EzactoApiError,
+  type SenderIdentity,
+  type SsoDomain,
+  type Whoami,
+} from '@ezacto/client'
 import { renderDataTable } from '../components/data-table.js'
 import {
+  apiErrorMessage,
   noteSettingsPatch,
   ratePercentage,
   senderVerificationLabel,
+  ssoDomainStatus,
+  ssoLastCheckedLabel,
+  ssoVerificationMessage,
   timeTrackingFacts,
   type CompanySettingsApi,
 } from './model.js'
@@ -142,15 +151,54 @@ export const createModuleSettingsController = (
   const emailStatus = required<HTMLElement>('[data-settings-email-status]')
   const emailSenders = required<HTMLElement>('[data-settings-sender-identities]')
   const emailReputation = required<HTMLElement>('[data-settings-email-reputation]')
+  const ssoStatus = required<HTMLElement>('[data-settings-sso-status]')
+  const ssoDomains = required<HTMLElement>('[data-settings-sso-domains]')
+  const ssoForm = required<HTMLFormElement>('[data-sso-domain-form]')
+  const ssoInput = required<HTMLInputElement>('[data-sso-domain-input]')
+  const ssoSubmit = required<HTMLButtonElement>('[data-sso-domain-submit]')
+  const ssoResult = required<HTMLElement>('[data-sso-domain-result]')
+
+  // The list is held rather than re-fetched after every action: add, verify and
+  // remove all answer with what they changed, and a re-fetch would throw away
+  // the challenge token the operator is part way through publishing.
+  let ssoState: readonly SsoDomain[] = []
+  let ssoBusy = false
 
   // The form is wired once, not on every activation: a sign-out and a sign-in
   // back into the page would otherwise leave two listeners on it and send the
   // policy twice.
   let session: ActiveSession | null = null
 
+  /**
+   * The session an operation may start for, or null when there is none. A
+   * request begun for a session that has already ended is a request whose
+   * answer has nowhere to go.
+   */
+  const currentSession = (): ActiveSession | null =>
+    session === null || session.signal.aborted ? null : session
+
+  /**
+   * The only place an await's answer reaches the page. #372 fixed the sections
+   * that load on activation by clearing first and routing failures through
+   * onSessionFailure, but every in-flight write has the same problem: the page
+   * outlives the session, and by the time an add, a verify or a save answers,
+   * clearPrivatePresentation() may already have taken the previous
+   * administrator's data off the screen. Painting the answer then puts it back
+   * — challenge tokens and all — in front of whoever signed in next. One guard
+   * per handler is how the fourth handler misses it, so success, failure and
+   * finally alike name the session they are painting for and go through here.
+   */
+  const present = (active: ActiveSession, paint: () => void): void => {
+    // Two independent ways to stop being the session on screen: another
+    // activate() took the page (clearPrivatePresentation drops the claim), or
+    // the shell aborted this one on its way out. Neither implies the other.
+    if (session !== active || active.signal.aborted) return
+    paint()
+  }
+
   noteForm.addEventListener('submit', async (event) => {
     event.preventDefault()
-    const active = session
+    const active = currentSession()
     if (active === null || api.updateTimeEntryNoteSettings === undefined) return
     noteResult.textContent = 'Saving…'
     noteSubmit.disabled = true
@@ -162,18 +210,26 @@ export const createModuleSettingsController = (
         }),
         active.signal,
       )
-      noteRequired.checked = saved.required
-      noteMinimum.value = String(saved.minimum_length)
-      noteResult.textContent = 'Saved.'
+      present(active, () => {
+        noteRequired.checked = saved.required
+        noteMinimum.value = String(saved.minimum_length)
+        noteResult.textContent = 'Saved.'
+      })
     } catch (error) {
       if (active.onSessionFailure(error)) return
-      noteResult.textContent = messageFor(
-        error,
-        'Only executive managers and administrators can change the notes policy.',
-        'The notes policy could not be saved.',
-      )
+      present(active, () => {
+        noteResult.textContent = messageFor(
+          error,
+          'Only executive managers and administrators can change the notes policy.',
+          'The notes policy could not be saved.',
+        )
+      })
     } finally {
-      noteSubmit.disabled = false
+      // Re-enabling belongs to the session that disabled it. The next session
+      // gets its controls back from clearPrivatePresentation instead.
+      present(active, () => {
+        noteSubmit.disabled = false
+      })
     }
   })
 
@@ -201,6 +257,142 @@ export const createModuleSettingsController = (
     })
 
   /**
+   * The row's payload. A domain verifies only once this exact TXT record is in
+   * the zone, so the name and the value are on screen to be copied — the
+   * alternative, before this screen existed, was reading the challenge token
+   * out of D1 by hand.
+   */
+  const ssoRecordCell = (domain: SsoDomain): HTMLElement => {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'sso-record'
+    const name = document.createElement('code')
+    name.textContent = `${domain.record_name} ${domain.record_type}`
+    const value = document.createElement('code')
+    value.textContent = domain.record_value
+    wrapper.append(name, value)
+    return wrapper
+  }
+
+  const paintSsoDomains = (): void => {
+    ssoDomains.replaceChildren(
+      renderDataTable<SsoDomain>({
+        caption: 'SSO provisioning domains',
+        rows: ssoState,
+        rowKey: (domain) => String(domain.id),
+        empty:
+          'No domain is provisioned, so single sign-on creates nobody. Add the email domain your directory signs in with.',
+        columns: [
+          { key: 'domain', label: 'Domain', render: (domain) => domain.domain },
+          { key: 'status', label: 'Status', render: (domain) => ssoDomainStatus(domain) },
+          {
+            key: 'checked',
+            label: 'Last checked',
+            render: (domain) => ssoLastCheckedLabel(domain),
+          },
+          { key: 'record', label: 'DNS record', render: (domain) => ssoRecordCell(domain) },
+        ],
+        actions: (domain) => [
+          {
+            label: 'Verify',
+            primary: true,
+            disabled: ssoBusy,
+            onSelect: () => void verifySsoDomain(domain),
+          },
+          { label: 'Remove', disabled: ssoBusy, onSelect: () => void removeSsoDomain(domain) },
+        ],
+      }),
+    )
+    ssoDomains.hidden = false
+  }
+
+  const verifySsoDomain = async (domain: SsoDomain): Promise<void> => {
+    const active = currentSession()
+    if (active === null || api.verifySsoDomain === undefined) return
+    ssoBusy = true
+    paintSsoDomains()
+    ssoResult.textContent = `Checking ${domain.domain}…`
+    try {
+      const check = await api.verifySsoDomain(domain.id, active.signal)
+      present(active, () => {
+        ssoState = ssoState.map((row) => (row.id === check.id ? check : row))
+        ssoResult.textContent = ssoVerificationMessage(check)
+      })
+    } catch (error) {
+      if (active.onSessionFailure(error)) return
+      present(active, () => {
+        // A lookup that could not run is not a domain that failed the check: the
+        // record may be published and perfect. The API's own message says which
+        // happened, so an operator does not go and pull a correct record.
+        ssoResult.textContent = apiErrorMessage(error, 'The domain could not be checked.')
+      })
+    } finally {
+      ssoBusy = false
+      present(active, paintSsoDomains)
+    }
+  }
+
+  const removeSsoDomain = async (domain: SsoDomain): Promise<void> => {
+    const active = currentSession()
+    if (active === null || api.removeSsoDomain === undefined) return
+    ssoBusy = true
+    paintSsoDomains()
+    ssoResult.textContent = `Removing ${domain.domain}…`
+    try {
+      await api.removeSsoDomain(domain.id, active.signal)
+      present(active, () => {
+        ssoState = ssoState.filter((row) => row.id !== domain.id)
+        ssoResult.textContent = `${domain.domain} no longer provisions anyone.`
+      })
+    } catch (error) {
+      if (active.onSessionFailure(error)) return
+      present(active, () => {
+        ssoResult.textContent = apiErrorMessage(error, 'The domain could not be removed.')
+      })
+    } finally {
+      ssoBusy = false
+      present(active, paintSsoDomains)
+    }
+  }
+
+  ssoForm.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const active = currentSession()
+    if (active === null || api.addSsoDomain === undefined) return
+    const domain = ssoInput.value.trim()
+    if (domain === '') {
+      ssoResult.textContent = 'Enter the email domain to provision from, such as example.com.'
+      return
+    }
+    ssoResult.textContent = 'Adding…'
+    ssoSubmit.disabled = true
+    try {
+      const added = await api.addSsoDomain(domain, active.signal)
+      // The new domain reaches the held list here and not a line earlier: a
+      // domain added into a session that has ended is a challenge token
+      // waiting for the next paint to put it on someone else's screen.
+      present(active, () => {
+        ssoState = [...ssoState, added]
+        ssoInput.value = ''
+        paintSsoDomains()
+        // Added is not enabled: nothing is provisioned from it until the record
+        // published below verifies, and the next step has to be said out loud or
+        // a half-configured domain reads as a working one.
+        ssoResult.textContent =
+          `${added.domain} added. Publish the ${added.record_type} record shown, then verify it.`
+      })
+    } catch (error) {
+      if (active.onSessionFailure(error)) return
+      present(active, () => {
+        ssoResult.textContent = apiErrorMessage(error, 'The domain could not be added.')
+      })
+    } finally {
+      present(active, () => {
+        ssoSubmit.disabled = false
+      })
+    }
+  })
+
+  /**
    * Everything a signed-in session put on this page. activate() calls it before
    * it does anything else, because the page outlives the session: signing out
    * and back in as someone else happens in the same document, and the previous
@@ -210,13 +402,35 @@ export const createModuleSettingsController = (
    * above them.
    */
   const clearPrivatePresentation = (): void => {
+    // The previous session stops owning the page here, before anything is
+    // taken off it. Whatever it still has in flight then has nowhere to paint,
+    // whether or not the shell remembered to abort its signal on the way out.
+    session = null
+    // Its controls come back with the page rather than from the finally of an
+    // operation that is no longer allowed to touch anything.
+    noteSubmit.disabled = false
+    ssoSubmit.disabled = false
+    ssoBusy = false
     emailSenders.replaceChildren()
     emailSenders.hidden = true
     emailReputation.replaceChildren()
     emailReputation.hidden = true
     timeFacts.replaceChildren()
     noteForm.hidden = true
+    // The result line sits outside the form, so hiding the form leaves the
+    // previous session's "Saved." or its 403 on screen under the next
+    // person's notice.
+    noteResult.textContent = ''
     list.replaceChildren()
+    // The challenge tokens are the domains' proof of ownership as much as the
+    // record they name, so they go with the rest of the previous session's
+    // company data rather than sitting under a notice saying it is not yours.
+    ssoState = []
+    ssoDomains.replaceChildren()
+    ssoDomains.hidden = true
+    ssoForm.hidden = true
+    ssoInput.value = ''
+    ssoResult.textContent = ''
   }
 
   /**
@@ -224,37 +438,40 @@ export const createModuleSettingsController = (
    * still has a notes policy worth reading, so one section's 403 or 500 must
    * not take the other down with it.
    */
-  const loadTimeTracking = async (signal: AbortSignal): Promise<void> => {
+  const loadTimeTracking = async (active: ActiveSession): Promise<void> => {
     if (api.getTimeEntrySettings === undefined || api.getTimeEntryNoteSettings === undefined) {
       timeStatus.textContent = 'This build has no time tracking settings endpoint.'
       return
     }
     try {
       const [settings, notes] = await Promise.all([
-        api.getTimeEntrySettings(signal),
-        api.getTimeEntryNoteSettings(signal),
+        api.getTimeEntrySettings(active.signal),
+        api.getTimeEntryNoteSettings(active.signal),
       ])
-      facts(timeFacts, timeTrackingFacts(settings))
-      noteRequired.checked = notes.required
-      noteMinimum.value = String(notes.minimum_length)
-      noteForm.hidden = false
-      timeStatus.textContent = ''
+      present(active, () => {
+        facts(timeFacts, timeTrackingFacts(settings))
+        noteRequired.checked = notes.required
+        noteMinimum.value = String(notes.minimum_length)
+        noteForm.hidden = false
+        timeStatus.textContent = ''
+      })
     } catch (error) {
       // Every other controller in the shell answers a 401 by ending the
       // session rather than printing the transport error. Without it the shell
       // still presents a signed-out user as signed in, over a raw
       // "request failed with status 401".
-      if (session?.onSessionFailure(error) ?? false) return
-      if (signal.aborted) return
-      timeStatus.textContent = messageFor(
-        error,
-        'Only executive managers and administrators can read the time tracking settings.',
-        'Time tracking settings could not be loaded.',
-      )
+      if (active.onSessionFailure(error)) return
+      present(active, () => {
+        timeStatus.textContent = messageFor(
+          error,
+          'Only executive managers and administrators can read the time tracking settings.',
+          'Time tracking settings could not be loaded.',
+        )
+      })
     }
   }
 
-  const loadEmail = async (identity: Whoami, signal: AbortSignal): Promise<void> => {
+  const loadEmail = async (identity: Whoami, active: ActiveSession): Promise<void> => {
     // email-health and sender-identities are both administrator-only. Asking as
     // an executive manager buys two 403s and tells the operator nothing.
     if (identity.profile !== 'administrator') {
@@ -267,33 +484,68 @@ export const createModuleSettingsController = (
     }
     try {
       const [identities, health] = await Promise.all([
-        api.listSenderIdentities(signal),
-        api.getEmailHealth(signal),
+        api.listSenderIdentities(active.signal),
+        api.getEmailHealth(active.signal),
       ])
-      emailSenders.replaceChildren(senderTable(identities))
-      emailSenders.hidden = false
-      facts(emailReputation, [
-        // reputation.sent is counts.sent + bounced + complained -- the total
-        // accepted, and the denominator both rates are taken over. Labelling it
-        // Delivered overstated delivery and implied a total larger than the
-        // real one, since a reader adds the bounced and complained rows to it.
-        ['Accepted', String(health.reputation.sent)],
-        ['Bounced', `${health.reputation.bounced} (${ratePercentage(health.reputation.bounce_rate_ppm)})`],
-        [
-          'Complained',
-          `${health.reputation.complained} (${ratePercentage(health.reputation.complaint_rate_ppm)})`,
-        ],
-        ['Failed to send', String(health.reputation.failed)],
-      ])
-      emailStatus.textContent = ''
+      present(active, () => {
+        emailSenders.replaceChildren(senderTable(identities))
+        emailSenders.hidden = false
+        facts(emailReputation, [
+          // reputation.sent is counts.sent + bounced + complained — the total
+          // accepted, and the denominator both rates are taken over. Labelling it
+          // Delivered overstated delivery and implied a total larger than the
+          // real one, since a reader adds the bounced and complained rows to it.
+          ['Accepted', String(health.reputation.sent)],
+          ['Bounced', `${health.reputation.bounced} (${ratePercentage(health.reputation.bounce_rate_ppm)})`],
+          [
+            'Complained',
+            `${health.reputation.complained} (${ratePercentage(health.reputation.complaint_rate_ppm)})`,
+          ],
+          ['Failed to send', String(health.reputation.failed)],
+        ])
+        emailStatus.textContent = ''
+      })
     } catch (error) {
-      if (session?.onSessionFailure(error) ?? false) return
-      if (signal.aborted) return
-      emailStatus.textContent = messageFor(
-        error,
-        'Only administrators can view email delivery.',
-        'Email delivery could not be loaded.',
-      )
+      if (active.onSessionFailure(error)) return
+      present(active, () => {
+        emailStatus.textContent = messageFor(
+          error,
+          'Only administrators can view email delivery.',
+          'Email delivery could not be loaded.',
+        )
+      })
+    }
+  }
+
+  const loadSsoDomains = async (identity: Whoami, active: ActiveSession): Promise<void> => {
+    // Every sso-domains route is administrator-only. Asking as an executive
+    // manager buys a 403 and tells the operator nothing about why the section
+    // is empty.
+    if (identity.profile !== 'administrator') {
+      ssoStatus.textContent = 'SSO provisioning domains are visible to administrators only.'
+      return
+    }
+    if (api.listSsoDomains === undefined) {
+      ssoStatus.textContent = 'This build has no SSO provisioning domain endpoints.'
+      return
+    }
+    try {
+      const domains = await api.listSsoDomains(active.signal)
+      present(active, () => {
+        ssoState = domains
+        paintSsoDomains()
+        ssoForm.hidden = false
+        ssoStatus.textContent = ''
+      })
+    } catch (error) {
+      if (active.onSessionFailure(error)) return
+      present(active, () => {
+        ssoStatus.textContent = messageFor(
+          error,
+          'Only administrators can manage SSO provisioning domains.',
+          'SSO provisioning domains could not be loaded.',
+        )
+      })
     }
   }
 
@@ -304,53 +556,66 @@ export const createModuleSettingsController = (
         status.textContent = 'Only administrators can manage module settings.'
         timeStatus.textContent = ''
         emailStatus.textContent = ''
+        ssoStatus.textContent = ''
         return
       }
 
-      session = { signal, onSessionFailure }
+      const active: ActiveSession = { signal, onSessionFailure }
+      session = active
 
       const configuration = Promise.all([
-        loadTimeTracking(signal),
-        loadEmail(identity, signal),
+        loadTimeTracking(active),
+        loadEmail(identity, active),
+        loadSsoDomains(identity, active),
       ])
 
       try {
         const modules = await fetchModules(signal)
-        status.textContent = ''
-        list.innerHTML = modules.map(renderModuleCard).join('')
+        present(active, () => {
+          status.textContent = ''
+          list.innerHTML = modules.map(renderModuleCard).join('')
 
-        for (const toggle of list.querySelectorAll<HTMLInputElement>('[data-module-toggle]')) {
-          toggle.addEventListener('change', async () => {
-            const moduleName = toggle.dataset.moduleToggle!
-            const result = list.querySelector<HTMLElement>(`[data-module-result="${moduleName}"]`)
-            const span = toggle.parentElement?.querySelector('span')
-            toggle.disabled = true
-            if (result) result.textContent = 'Saving…'
+          for (const toggle of list.querySelectorAll<HTMLInputElement>('[data-module-toggle]')) {
+            toggle.addEventListener('change', async () => {
+              const moduleName = toggle.dataset.moduleToggle!
+              const result = list.querySelector<HTMLElement>(`[data-module-result="${moduleName}"]`)
+              const span = toggle.parentElement?.querySelector('span')
+              toggle.disabled = true
+              if (result) result.textContent = 'Saving…'
 
-            try {
-              const updated = await patchModule(moduleName, toggle.checked, signal)
-              const state = updated.find((m) => m.module === moduleName)
-              if (span) span.textContent = state?.enabled ? 'Enabled' : 'Disabled'
-              if (result) result.textContent = ''
-            } catch (error) {
-              if (onSessionFailure(error)) return
-              toggle.checked = !toggle.checked
-              if (span) span.textContent = toggle.checked ? 'Enabled' : 'Disabled'
-              if (result) {
-                result.textContent = error instanceof Error
-                  ? error.message
-                  : 'The module update could not be completed.'
+              try {
+                const updated = await patchModule(moduleName, toggle.checked, signal)
+                present(active, () => {
+                  const state = updated.find((m) => m.module === moduleName)
+                  if (span) span.textContent = state?.enabled ? 'Enabled' : 'Disabled'
+                  if (result) result.textContent = ''
+                })
+              } catch (error) {
+                if (active.onSessionFailure(error)) return
+                present(active, () => {
+                  toggle.checked = !toggle.checked
+                  if (span) span.textContent = toggle.checked ? 'Enabled' : 'Disabled'
+                  if (result) {
+                    result.textContent = error instanceof Error
+                      ? error.message
+                      : 'The module update could not be completed.'
+                  }
+                })
+              } finally {
+                present(active, () => {
+                  toggle.disabled = false
+                })
               }
-            } finally {
-              toggle.disabled = false
-            }
-          })
-        }
+            })
+          }
+        })
       } catch (error) {
-        if (onSessionFailure(error)) return
-        status.textContent = error instanceof Error
-          ? error.message
-          : 'Modules could not be loaded.'
+        if (active.onSessionFailure(error)) return
+        present(active, () => {
+          status.textContent = error instanceof Error
+            ? error.message
+            : 'Modules could not be loaded.'
+        })
       }
       await configuration
     },

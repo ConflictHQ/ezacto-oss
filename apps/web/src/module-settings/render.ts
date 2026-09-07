@@ -32,6 +32,19 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <div class="settings-table" data-settings-sender-identities hidden></div>
       <dl class="settings-facts" data-settings-email-reputation hidden></dl>
     </section>
+    <section class="settings-section" data-settings-section="sso" aria-labelledby="settings-sso-title">
+      <header><h2 id="settings-sso-title">SSO provisioning domains</h2>
+      <p>Email domains this instance will create an account from on first single sign-on. A domain provisions nobody until its DNS challenge verifies, which is what proves this instance is entitled to the domain.</p></header>
+      <p class="form-result" data-settings-sso-status role="status" aria-live="polite">Loading SSO provisioning domains…</p>
+      <div class="settings-table" data-settings-sso-domains hidden></div>
+      <form class="settings-form" data-sso-domain-form hidden>
+        <label>Domain
+          <input name="domain" type="text" autocomplete="off" spellcheck="false" placeholder="example.com" data-sso-domain-input required>
+        </label>
+        <button class="primary-action" type="submit" data-sso-domain-submit>Add domain</button>
+      </form>
+      <p class="form-result" data-sso-domain-result role="status" aria-live="polite"></p>
+    </section>
   </main>
   <main class="app-content module-settings-workspace" data-settings-user-page${view === 'settings-user' ? '' : ' hidden'}>
     <header class="context-row module-settings-header">

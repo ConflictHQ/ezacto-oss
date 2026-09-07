@@ -785,6 +785,14 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.getEmailHealth(withSignal(signal))).data,
   listSenderIdentities: async (signal) =>
     (await client.listSenderIdentities(withSignal(signal))).data,
+  listSsoDomains: async (signal) =>
+    (await client.listSsoProvisioningDomains(withSignal(signal))).data,
+  addSsoDomain: async (domain, signal) =>
+    (await client.addSsoProvisioningDomain({ body: { domain }, ...withSignal(signal) })).data,
+  verifySsoDomain: async (id, signal) =>
+    (await client.verifySsoProvisioningDomain({ id, ...withSignal(signal) })).data,
+  removeSsoDomain: (id, signal) =>
+    client.removeSsoProvisioningDomain({ id, ...withSignal(signal) }),
   getTeamStatus: async (signal) =>
     (await client.getTeamStatus(withSignal(signal))).data,
   getTeamWeekStartDay: async (signal) =>

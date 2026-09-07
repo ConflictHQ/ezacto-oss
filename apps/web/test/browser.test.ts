@@ -12,6 +12,7 @@ import {
   type InvoiceTransitionInput,
   type SenderIdentity,
   type Session,
+  type SsoDomain,
   type TimeEntry,
   type TimeEntryInput,
   type TimeEntryPatch,
@@ -3057,7 +3058,24 @@ describe('company settings', () => {
     ...overrides,
   })
 
-  const companyApi = (identities: readonly SenderIdentity[] = [senderIdentity()]) => ({
+  const ssoDomain = (overrides: Partial<SsoDomain> = {}): SsoDomain => ({
+    id: 11,
+    domain: 'northpeak.test',
+    verified: false,
+    verified_at: null,
+    last_checked_at: null,
+    record_name: '_ezacto-challenge.northpeak.test',
+    record_type: 'TXT',
+    record_value: 'ezacto-verification=zLp7c4Qk',
+    created_at: timestamp,
+    updated_at: timestamp,
+    ...overrides,
+  })
+
+  const companyApi = (
+    identities: readonly SenderIdentity[] = [senderIdentity()],
+    domains: readonly SsoDomain[] = [],
+  ) => ({
     ...browserApi(),
     getTimeEntryNoteSettings: vi.fn(async () => ({ required: true, minimum_length: 12 })),
     updateTimeEntryNoteSettings: vi.fn(async (patch: { required?: boolean; minimum_length?: number }) => ({
@@ -3065,6 +3083,20 @@ describe('company settings', () => {
       minimum_length: patch.minimum_length ?? 12,
     })),
     listSenderIdentities: vi.fn(async () => identities),
+    listSsoDomains: vi.fn(async () => domains),
+    addSsoDomain: vi.fn(async (domain: string) =>
+      ssoDomain({
+        id: 12,
+        domain,
+        record_name: `_ezacto-challenge.${domain}`,
+        record_value: 'ezacto-verification=8mQd2Rh1',
+      }),
+    ),
+    verifySsoDomain: vi.fn(async (id: number) => ({
+      ...ssoDomain({ id, verified: true, verified_at: timestamp, last_checked_at: timestamp }),
+      dnssec_validated: false,
+    })),
+    removeSsoDomain: vi.fn(async () => undefined),
     getEmailHealth: vi.fn(async () => ({
       reputation: {
         sent: 412,
@@ -3130,7 +3162,7 @@ describe('company settings', () => {
     // administrators-only.
     stubModulesEndpoint()
     renderBrowserShell({ view: 'settings-company' })
-    const api = companyApi()
+    const api = companyApi([senderIdentity()], [ssoDomain()])
     const controller = createModuleSettingsController(api as never)
 
     await controller.activate(identity, new AbortController().signal, () => false)
@@ -3149,6 +3181,12 @@ describe('company settings', () => {
     expect(
       document.querySelector<HTMLElement>('[data-settings-email-reputation]')!.textContent,
     ).toBe('')
+    // A challenge token is the instance's proof it owns the domain. Leaving it
+    // rendered hands the next person at the keyboard everything they need to
+    // claim the domain themselves.
+    expect(document.body.textContent).not.toContain('ezacto-verification=zLp7c4Qk')
+    expect(document.querySelector<HTMLElement>('[data-settings-sso-domains]')!.hidden).toBe(true)
+    expect(document.querySelector<HTMLFormElement>('[data-sso-domain-form]')!.hidden).toBe(true)
   })
 
   it('[unit] saves the notes policy the page loaded', async () => {
@@ -3225,6 +3263,391 @@ describe('company settings', () => {
     // The notes policy is theirs to set, so that half of the page still loads.
     await vi.waitFor(() =>
       expect(document.querySelector<HTMLElement>('[data-note-settings-form]')!.hidden).toBe(false),
+    )
+  })
+
+  const ssoTable = (): HTMLElement =>
+    document.querySelector<HTMLElement>('[data-settings-sso-domains]')!
+
+  const ssoStatuses = (): readonly (string | null)[] =>
+    [...ssoTable().querySelectorAll('tbody [data-row] [data-column="status"]')].map(
+      (cell) => cell.textContent,
+    )
+
+  const ssoAction = (row: number, label: string): HTMLButtonElement => {
+    const rows = ssoTable().querySelectorAll<HTMLElement>('tbody [data-row]')
+    const button = [...rows[row]!.querySelectorAll<HTMLButtonElement>('button')].find(
+      (candidate) => candidate.textContent === label,
+    )
+    if (button === undefined) throw new Error(`no ${label} action on row ${row}`)
+    return button
+  }
+
+  const ssoResult = (): string | null =>
+    document.querySelector<HTMLElement>('[data-sso-domain-result]')!.textContent
+
+  it('[unit] shows the challenge record, and never checked is not the same as not found', async () => {
+    // Migration 0039 creates the table empty and the provisioning gate is live,
+    // so before this screen an instance had no in-product path from off to on:
+    // recovery meant hand-writing a D1 row with a valid challenge token.
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const api = companyApi(
+      [senderIdentity()],
+      [
+        ssoDomain(),
+        ssoDomain({
+          id: 12,
+          domain: 'acme.test',
+          record_name: '_ezacto-challenge.acme.test',
+          last_checked_at: timestamp,
+        }),
+        ssoDomain({
+          id: 13,
+          domain: 'verified.test',
+          record_name: '_ezacto-challenge.verified.test',
+          verified: true,
+          verified_at: timestamp,
+          last_checked_at: timestamp,
+        }),
+      ],
+    )
+    await mountShell(api)
+
+    await vi.waitFor(() => expect(ssoTable().hidden).toBe(false))
+    // A domain nobody has looked up and a domain whose record was looked for
+    // and not found are both unverified, and one label for both is how an
+    // operator who has not published the record yet concludes SSO is broken.
+    expect(ssoStatuses()).toEqual(['Awaiting first check', 'Record not found', 'Verified'])
+    expect(ssoTable().textContent).toContain('_ezacto-challenge.northpeak.test')
+    expect(ssoTable().textContent).toContain('ezacto-verification=zLp7c4Qk')
+  })
+
+  it('[unit] adds a domain and says it provisions nobody until the record is published', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const api = companyApi()
+    await mountShell(api)
+
+    const form = document.querySelector<HTMLFormElement>('[data-sso-domain-form]')!
+    await vi.waitFor(() => expect(form.hidden).toBe(false))
+    document.querySelector<HTMLInputElement>('[data-sso-domain-input]')!.value = ' acme.test '
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() =>
+      expect(api.addSsoDomain).toHaveBeenCalledWith('acme.test', expect.any(AbortSignal)),
+    )
+    await vi.waitFor(() => expect(ssoResult()).toContain('Publish the TXT record shown'))
+    expect(ssoTable().textContent).toContain('_ezacto-challenge.acme.test')
+    expect(ssoTable().textContent).toContain('ezacto-verification=8mQd2Rh1')
+    expect(ssoStatuses()).toEqual(['Awaiting first check'])
+  })
+
+  it('[unit] reports a check that ran and found nothing as not verified yet', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const api = {
+      ...companyApi([senderIdentity()], [ssoDomain()]),
+      verifySsoDomain: vi.fn(async () => ({
+        ...ssoDomain({ last_checked_at: timestamp }),
+        dnssec_validated: false,
+      })),
+    }
+    await mountShell(api)
+    await vi.waitFor(() => expect(ssoTable().hidden).toBe(false))
+
+    ssoAction(0, 'Verify').click()
+
+    await vi.waitFor(() => expect(ssoResult()).toContain('is not verified yet'))
+    expect(ssoResult()).toContain('_ezacto-challenge.northpeak.test')
+    expect(ssoStatuses()).toEqual(['Record not found'])
+  })
+
+  it('[unit] separates a lookup that could not run from a record that is not there', async () => {
+    // 503 is the resolvers failing to answer, not the domain failing the check:
+    // the record may be published and perfect. A page that reads the two the
+    // same way sends an operator to pull a record that was never the problem.
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const api = {
+      ...companyApi([senderIdentity()], [ssoDomain()]),
+      verifySsoDomain: vi.fn(async () => {
+        throw new EzactoApiError(
+          503,
+          {
+            error: {
+              code: 'dns_lookup_failed',
+              message: 'The DNS challenge could not be looked up. Try again.',
+              fields: [],
+            },
+          },
+          null,
+        )
+      }),
+    }
+    await mountShell(api)
+    await vi.waitFor(() => expect(ssoTable().hidden).toBe(false))
+
+    ssoAction(0, 'Verify').click()
+
+    await vi.waitFor(() =>
+      expect(ssoResult()).toBe('The DNS challenge could not be looked up. Try again.'),
+    )
+    expect(ssoResult()).not.toContain('not verified yet')
+    // Nothing was checked, so the row must not claim the record is missing.
+    expect(ssoStatuses()).toEqual(['Awaiting first check'])
+  })
+
+  it('[unit] verifies a domain and says so', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const api = companyApi([senderIdentity()], [ssoDomain()])
+    await mountShell(api)
+    await vi.waitFor(() => expect(ssoTable().hidden).toBe(false))
+
+    ssoAction(0, 'Verify').click()
+
+    await vi.waitFor(() => expect(ssoResult()).toBe('northpeak.test is verified.'))
+    expect(api.verifySsoDomain).toHaveBeenCalledWith(11, expect.any(AbortSignal))
+    expect(ssoStatuses()).toEqual(['Verified'])
+  })
+
+  it('[unit] removes a domain from the list it provisions from', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const api = companyApi([senderIdentity()], [ssoDomain()])
+    await mountShell(api)
+    await vi.waitFor(() => expect(ssoTable().hidden).toBe(false))
+
+    ssoAction(0, 'Remove').click()
+
+    await vi.waitFor(() =>
+      expect(api.removeSsoDomain).toHaveBeenCalledWith(11, expect.any(AbortSignal)),
+    )
+    await vi.waitFor(() => expect(ssoResult()).toBe('northpeak.test no longer provisions anyone.'))
+    expect(ssoTable().querySelectorAll('tbody [data-row]')).toHaveLength(0)
+    expect(ssoTable().textContent).toContain('No domain is provisioned')
+  })
+
+  it('[security] does not ask for provisioning domains as an executive manager', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const api = {
+      ...companyApi([senderIdentity()], [ssoDomain()]),
+      whoami: vi.fn(async () => ({
+        ...identity,
+        user_id: 5,
+        profile: 'executive_manager' as const,
+      })),
+    }
+    await mountShell(api)
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-settings-sso-status]')?.textContent).toBe(
+        'SSO provisioning domains are visible to administrators only.',
+      ),
+    )
+    expect(api.listSsoDomains).not.toHaveBeenCalled()
+    expect(document.querySelector<HTMLFormElement>('[data-sso-domain-form]')!.hidden).toBe(true)
+  })
+
+  const settled = async (): Promise<void> => {
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 0))
+  }
+
+  const moduleStatus = (): string | null | undefined =>
+    document.querySelector<HTMLElement>('[data-module-settings-status]')?.textContent
+
+  // Each in-flight writer, driven the way the shell drives it: an operation
+  // started by an administrator, a sign-out and a sign-in by someone lesser in
+  // the same document, and only then the answer. #372 fixed the sections that
+  // load on activation; nothing stopped a request that was already out from
+  // painting into the page it came back to.
+  it('[security] does not paint an add that answers after the next person signs in', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const added = deferred<SsoDomain>()
+    const api = {
+      ...companyApi([senderIdentity()], []),
+      addSsoDomain: vi.fn(async () => added.promise),
+    }
+    const controller = createModuleSettingsController(api as never)
+
+    // No abort here: the guard cannot rest on the shell remembering to abort,
+    // and a session that was merely replaced has left the page just the same.
+    await controller.activate(identity, new AbortController().signal, () => false)
+    const form = document.querySelector<HTMLFormElement>('[data-sso-domain-form]')!
+    await vi.waitFor(() => expect(form.hidden).toBe(false))
+    document.querySelector<HTMLInputElement>('[data-sso-domain-input]')!.value = 'acme.test'
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(api.addSsoDomain).toHaveBeenCalled())
+
+    // The same tab, a different person, while the POST is still out.
+    await controller.activate(secondIdentity, new AbortController().signal, () => false)
+    added.resolve(
+      ssoDomain({
+        id: 12,
+        domain: 'acme.test',
+        record_name: '_ezacto-challenge.acme.test',
+        record_value: 'ezacto-verification=8mQd2Rh1',
+      }),
+    )
+    await settled()
+
+    // The challenge token is the instance's proof it owns the domain, and this
+    // is the one path that puts a brand new one on screen.
+    expect(document.body.textContent).not.toContain('ezacto-verification=8mQd2Rh1')
+    expect(document.body.textContent).not.toContain('_ezacto-challenge.acme.test')
+    expect(document.body.textContent).not.toContain('acme.test')
+    expect(ssoTable().hidden).toBe(true)
+    expect(ssoResult()).toBe('')
+    expect(moduleStatus()).toBe('Only administrators can manage module settings.')
+  })
+
+  it('[security] does not paint a verify that answers after the next person signs in', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const checked = deferred<SsoDomain>()
+    const api = {
+      ...companyApi([senderIdentity()], [ssoDomain()]),
+      verifySsoDomain: vi.fn(async () => checked.promise),
+    }
+    const controller = createModuleSettingsController(api as never)
+
+    // The shell aborts on every sign-in and sign-out, so this is the path a
+    // real verify takes. However the request ends, the finally that re-shows
+    // the table runs.
+    const first = new AbortController()
+    await controller.activate(identity, first.signal, () => false)
+    await vi.waitFor(() => expect(ssoTable().hidden).toBe(false))
+    ssoAction(0, 'Verify').click()
+    await vi.waitFor(() => expect(api.verifySsoDomain).toHaveBeenCalled())
+
+    first.abort()
+    await controller.activate(secondIdentity, new AbortController().signal, () => false)
+    checked.resolve(ssoDomain({ verified: true, verified_at: timestamp, last_checked_at: timestamp }))
+    await settled()
+
+    expect(document.body.textContent).not.toContain('northpeak.test')
+    expect(document.body.textContent).not.toContain('ezacto-verification=zLp7c4Qk')
+    expect(ssoTable().hidden).toBe(true)
+    expect(ssoResult()).toBe('')
+    expect(moduleStatus()).toBe('Only administrators can manage module settings.')
+  })
+
+  it('[security] does not answer a verify that lands after the operator signed out', async () => {
+    // Signing out does not activate the page again, so nothing clears it: all
+    // that stops the check from reporting on a session that has ended is the
+    // aborted signal the shell hands every controller on the way out.
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const checked = deferred<SsoDomain>()
+    const api = {
+      ...companyApi([senderIdentity()], [ssoDomain()]),
+      verifySsoDomain: vi.fn(async () => checked.promise),
+    }
+    const controller = createModuleSettingsController(api as never)
+
+    const operator = new AbortController()
+    await controller.activate(identity, operator.signal, () => false)
+    await vi.waitFor(() => expect(ssoTable().hidden).toBe(false))
+    ssoAction(0, 'Verify').click()
+    await vi.waitFor(() => expect(api.verifySsoDomain).toHaveBeenCalled())
+
+    operator.abort()
+    checked.resolve(ssoDomain({ verified: true, verified_at: timestamp, last_checked_at: timestamp }))
+    await settled()
+
+    expect(ssoResult()).not.toContain('is verified')
+    expect(ssoStatuses()).toEqual(['Awaiting first check'])
+  })
+
+  it('[security] does not paint a remove that answers after the next person signs in', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const removed = deferred<undefined>()
+    const api = {
+      ...companyApi([senderIdentity()], [ssoDomain()]),
+      removeSsoDomain: vi.fn(async () => removed.promise),
+    }
+    const controller = createModuleSettingsController(api as never)
+
+    await controller.activate(identity, new AbortController().signal, () => false)
+    await vi.waitFor(() => expect(ssoTable().hidden).toBe(false))
+    ssoAction(0, 'Remove').click()
+    await vi.waitFor(() => expect(api.removeSsoDomain).toHaveBeenCalled())
+
+    await controller.activate(secondIdentity, new AbortController().signal, () => false)
+    removed.resolve(undefined)
+    await settled()
+
+    // Even an empty table is the previous session's section: re-showing it
+    // under "administrators only" says the notice is about someone else.
+    expect(document.body.textContent).not.toContain('northpeak.test')
+    expect(ssoTable().hidden).toBe(true)
+    expect(ssoResult()).toBe('')
+    expect(moduleStatus()).toBe('Only administrators can manage module settings.')
+  })
+
+  it('[security] does not paint a notes policy that saves after the next person signs in', async () => {
+    // The notes form is the only writable setting on the page, and its handler
+    // was written with the same shape as the three SSO ones.
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const saved = deferred<{ required: boolean; minimum_length: number }>()
+    const api = {
+      ...companyApi(),
+      updateTimeEntryNoteSettings: vi.fn(async () => saved.promise),
+    }
+    const controller = createModuleSettingsController(api as never)
+
+    const noteForm = document.querySelector<HTMLFormElement>('[data-note-settings-form]')!
+    const noteMinimum = document.querySelector<HTMLInputElement>('[data-note-settings-minimum]')!
+    await controller.activate(identity, new AbortController().signal, () => false)
+    await vi.waitFor(() => expect(noteForm.hidden).toBe(false))
+    noteMinimum.value = '25'
+    noteForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(api.updateTimeEntryNoteSettings).toHaveBeenCalled())
+
+    await controller.activate(secondIdentity, new AbortController().signal, () => false)
+    saved.resolve({ required: false, minimum_length: 25 })
+    await settled()
+
+    expect(noteForm.hidden).toBe(true)
+    expect(document.querySelector('[data-note-settings-result]')?.textContent).toBe('')
+    expect(moduleStatus()).toBe('Only administrators can manage module settings.')
+  })
+
+  it('[unit] gives the next administrator controls that are not still disabled', async () => {
+    // The finally that re-enables a control belongs to the session that
+    // disabled it, so the reset has to happen where the next session's page is
+    // built. Without it, guarding the finally strands the button.
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const added = deferred<SsoDomain>()
+    const api = {
+      ...companyApi([senderIdentity()], []),
+      addSsoDomain: vi.fn(async () => added.promise),
+    }
+    const controller = createModuleSettingsController(api as never)
+
+    await controller.activate(identity, new AbortController().signal, () => false)
+    const form = document.querySelector<HTMLFormElement>('[data-sso-domain-form]')!
+    await vi.waitFor(() => expect(form.hidden).toBe(false))
+    document.querySelector<HTMLInputElement>('[data-sso-domain-input]')!.value = 'acme.test'
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLButtonElement>('[data-sso-domain-submit]')!.disabled).toBe(
+        true,
+      ),
+    )
+
+    await controller.activate(identity, new AbortController().signal, () => false)
+    added.resolve(ssoDomain({ id: 12, domain: 'acme.test' }))
+    await settled()
+
+    expect(document.querySelector<HTMLButtonElement>('[data-sso-domain-submit]')!.disabled).toBe(
+      false,
     )
   })
 })

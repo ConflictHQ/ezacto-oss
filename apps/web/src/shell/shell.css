@@ -2830,6 +2830,19 @@ dialog h2,
   overflow-x: auto;
 }
 
+/* The TXT challenge is what an operator copies into a zone file, so the record
+   name and its value stack rather than running together into one string. */
+.sso-record {
+  display: grid;
+  gap: 2px;
+}
+
+.sso-record code {
+  font-family: var(--ez-font-mono), monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
 .identity-signout {
   min-height: 28px;
   padding: 0 10px;
