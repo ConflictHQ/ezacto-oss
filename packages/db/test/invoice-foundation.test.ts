@@ -141,7 +141,7 @@ const factories = [
 const installThrough0003 = async (database: TestDatabase): Promise<void> => {
   await database.run(
     `CREATE TABLE _ezacto_migrations (
-      id TEXT PRIMARY KEY, applied_at TEXT NOT NULL
+      id TEXT PRIMARY KEY, applied_at TEXT NOT NULL, statements_sha256 TEXT
     ) STRICT`,
   )
   for (const [id, statements] of migrationsThrough0003) {

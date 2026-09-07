@@ -1,3 +1,5 @@
+import { sha256 } from '@noble/hashes/sha2.js'
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js'
 import type BetterSqlite3 from 'better-sqlite3'
 import { orgPeopleMigration } from './migrations/0000_org_people.js'
 import { clientsMigration } from './migrations/0001_clients.js'
@@ -42,8 +44,29 @@ import { recurringGenerateCommandMigration } from './migrations/0037_recurring_g
 import { timesheetBulkApprovalMigration } from './migrations/0038_timesheet_bulk_approval.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
-  id TEXT PRIMARY KEY, applied_at TEXT NOT NULL
+  id TEXT PRIMARY KEY, applied_at TEXT NOT NULL, statements_sha256 TEXT
 ) STRICT`
+
+// A database that ran before the checksum column existed keeps its ledger and
+// gains the column empty. The column is nullable on purpose and those rows are
+// left NULL forever: the contents that produced them were never recorded, and
+// backfilling from today's statements would assert an agreement nobody
+// verified — the exact belief this check exists to stop the runner from
+// holding. A NULL reads as "unverifiable", never as "verified", so such a row
+// is skipped by the comparison rather than passing it.
+const ledgerChecksumColumn = `ALTER TABLE _ezacto_migrations ADD COLUMN statements_sha256 TEXT`
+
+// A migration's identity as applied. Statements are joined on a NUL, which
+// cannot occur in the SQL, so that ['CREATE A', 'CREATE B'] cannot hash the
+// same as ['CREATE ACREATE B']: a separator that could appear in a statement
+// would let a split move between statements without moving the checksum.
+const statementsChecksum = (statements: readonly string[]): string =>
+  bytesToHex(sha256(utf8ToBytes(statements.join('\u0000'))))
+
+interface MigrationLedgerRow {
+  id: string
+  statements_sha256: string | null
+}
 
 const canonicalTimestamp = (column: string) => `unixepoch(${column}) IS NOT NULL
   AND substr(${column}, 1, 19) = strftime('%Y-%m-%dT%H:%M:%S', ${column})
@@ -1412,12 +1435,50 @@ const migrations = [
 // fixture derived from it in the same module graph.
 export const migrationIds: readonly string[] = Object.freeze(migrations.map(({ id }) => id))
 
+// The ledger records that an id ran, never what ran, so amending a shipped
+// migration reaches a fresh database and no other: two databases with identical
+// ledgers can carry different schemas and nothing says so. Comparing each
+// recorded checksum against the statements this build ships turns that silence
+// into a named failure before any query runs against a schema that is not the
+// one the ledger describes.
+const assertLedgerMatchesStatements = (rows: readonly MigrationLedgerRow[]): void => {
+  const applied = new Map<string, readonly string[]>(
+    migrations.map(({ id, statements }) => [id, statements]),
+  )
+  const diverged = rows.filter((row) => {
+    const statements = applied.get(row.id)
+    if (statements === undefined || row.statements_sha256 === null) return false
+    return statementsChecksum(statements) !== row.statements_sha256
+  })
+  if (diverged.length === 0) return
+  const shown = diverged
+    .slice(0, 10)
+    .map(({ id }) => id)
+    .join(',')
+  const more = diverged.length > 10 ? ',…' : ''
+  throw new Error(
+    `migration ledger diverged from this build: migration_ids=${shown}${more}. ` +
+      `This database applied an earlier text of ${diverged[0]!.id}, which was amended in ` +
+      `place afterwards, so its schema is not the one the ledger claims to describe and no ` +
+      `migration will correct it. Rebuild this database from empty.`,
+  )
+}
+
 const migrateContainerPlan = (
   database: BetterSqlite3.Database,
   through: (typeof migrations)[number]['id'] | null,
 ): void => {
   database.pragma('foreign_keys = ON')
   database.exec(ledger)
+  const columns = database.pragma('table_info(_ezacto_migrations)') as Array<{ name: string }>
+  if (!columns.some(({ name }) => name === 'statements_sha256')) {
+    database.exec(ledgerChecksumColumn)
+  }
+  assertLedgerMatchesStatements(
+    database
+      .prepare('SELECT id, statements_sha256 FROM _ezacto_migrations')
+      .all() as MigrationLedgerRow[],
+  )
   for (const migration of migrations) {
     database.exec('BEGIN IMMEDIATE')
     try {
@@ -1433,8 +1494,10 @@ const migrateContainerPlan = (
       }
       for (const statement of migration.statements) database.exec(statement)
       database
-        .prepare('INSERT INTO _ezacto_migrations (id, applied_at) VALUES (?, ?)')
-        .run(migration.id, new Date().toISOString())
+        .prepare(
+          'INSERT INTO _ezacto_migrations (id, applied_at, statements_sha256) VALUES (?, ?, ?)',
+        )
+        .run(migration.id, new Date().toISOString(), statementsChecksum(migration.statements))
       database.exec('COMMIT')
     } catch (error) {
       database.exec('ROLLBACK')
@@ -1453,6 +1516,11 @@ export const migrateContainerThrough = (
   through: (typeof migrations)[number]['id'],
 ): void => migrateContainerPlan(database, through)
 
+const ledgerRecordsChecksums = async (database: D1Database): Promise<boolean> =>
+  (
+    await database.prepare('PRAGMA table_info(_ezacto_migrations)').all<{ name: string }>()
+  ).results.some(({ name }) => name === 'statements_sha256')
+
 const migrateD1Plan = async (
   database: D1Database,
   through: (typeof migrations)[number]['id'] | null,
@@ -1465,6 +1533,24 @@ const migrateD1Plan = async (
   // fail-closed readiness check safe and idempotent.
   await database.exec('PRAGMA foreign_keys = ON')
   await database.prepare(ledger).run()
+  if (!(await ledgerRecordsChecksums(database))) {
+    try {
+      await database.prepare(ledgerChecksumColumn).run()
+    } catch (error) {
+      // The same race the batch below tolerates: two isolates can reach the
+      // ALTER together and the loser sees a duplicate column. The column being
+      // present is the whole requirement, so re-reading it distinguishes that
+      // from a real failure.
+      if (!(await ledgerRecordsChecksums(database))) throw error
+    }
+  }
+  assertLedgerMatchesStatements(
+    (
+      await database
+        .prepare('SELECT id, statements_sha256 FROM _ezacto_migrations')
+        .all<MigrationLedgerRow>()
+    ).results,
+  )
   for (const migration of migrations) {
     if (
       await database
@@ -1483,8 +1569,14 @@ const migrateD1Plan = async (
     try {
       await database.batch([
         database
-          .prepare('INSERT INTO _ezacto_migrations (id, applied_at) VALUES (?, ?)')
-          .bind(migration.id, new Date().toISOString()),
+          .prepare(
+            'INSERT INTO _ezacto_migrations (id, applied_at, statements_sha256) VALUES (?, ?, ?)',
+          )
+          .bind(
+            migration.id,
+            new Date().toISOString(),
+            statementsChecksum(migration.statements),
+          ),
         ...migration.statements.map((sql) => database.prepare(sql)),
       ])
     } catch (error) {
