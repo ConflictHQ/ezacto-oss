@@ -3650,6 +3650,13 @@ dialog textarea {
   background: var(--ez-surface);
 }
 
+/* A group's total closes its run: same weight as the footer, but it belongs to
+   the band above it rather than to the table. */
+.data-table tbody tr.data-table-group-total td {
+  border-bottom: 1px solid var(--ez-border);
+  font-weight: 700;
+}
+
 /* Totals sit apart by weight, not by a rule above them. */
 .data-table tfoot td {
   height: var(--ez-row-h-lead);
