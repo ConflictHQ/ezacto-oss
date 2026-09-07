@@ -12,6 +12,7 @@ import {
   createCloudflareEmailQueue,
 } from '../src/email-queue.js'
 import {
+  createMailgunSenderIdentityVerifier,
   createSesSenderIdentityVerifier,
   createRuntimeServices,
   createWorkerMailProvider,
@@ -621,6 +622,80 @@ describe('Worker email queue composition', () => {
       mailFromDomain: null,
       mailFromStatus: 'not_configured',
     })
+  })
+
+  it('[unit] attests the exact Mailgun address the deployment sends from', async () => {
+    const provider = createWorkerMailgunMailer({
+      DB: database,
+      API_CURSOR_SIGNING_KEY: cursorKey,
+      MAILGUN_API_KEY: 'key-test',
+      MAILGUN_DOMAIN: 'go.example.test',
+      ENVIRONMENT: 'test',
+      RELEASE: 'mailgun-evidence-test',
+    } satisfies WorkerEnv)!
+
+    await expect(
+      createMailgunSenderIdentityVerifier(provider, 'time@go.example.test').verify(
+        {
+          id: 1,
+          email: 'time@go.example.test',
+          displayName: 'Time',
+          replyToEmail: null,
+          provider: 'mailgun',
+          providerIdentity: 'time@go.example.test',
+          isDefault: false,
+          version: 0,
+          archivedAt: null,
+          createdByUserId: 1,
+          createdAt: '2026-09-02T00:00:00.000Z',
+          updatedAt: '2026-09-02T00:00:00.000Z',
+          evidence: null,
+        },
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({
+      source: 'deployment_config',
+      identityKind: 'email_address',
+      verificationStatus: 'operator_configured',
+      dkimStatus: 'not_applicable',
+      mailFromDomain: null,
+      mailFromStatus: 'not_configured',
+    })
+  })
+
+  it('[security] refuses a Mailgun address off the configured sending domain', async () => {
+    // The deployment's From and the identity agree with each other here, so the
+    // SMTP-shaped check alone would pass. Mailgun would still refuse the send:
+    // it accepts mail only for the domain it is configured with.
+    const provider = createWorkerMailgunMailer({
+      DB: database,
+      API_CURSOR_SIGNING_KEY: cursorKey,
+      MAILGUN_API_KEY: 'key-test',
+      MAILGUN_DOMAIN: 'go.example.test',
+      ENVIRONMENT: 'test',
+      RELEASE: 'mailgun-evidence-test',
+    } satisfies WorkerEnv)!
+
+    await expect(
+      createMailgunSenderIdentityVerifier(provider, 'time@elsewhere.test').verify(
+        {
+          id: 1,
+          email: 'time@elsewhere.test',
+          displayName: 'Time',
+          replyToEmail: null,
+          provider: 'mailgun',
+          providerIdentity: 'time@elsewhere.test',
+          isDefault: false,
+          version: 0,
+          archivedAt: null,
+          createdByUserId: 1,
+          createdAt: '2026-09-02T00:00:00.000Z',
+          updatedAt: '2026-09-02T00:00:00.000Z',
+          evidence: null,
+        },
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: 'sender_identity_binding_mismatch' })
   })
 
   it('[unit] records disabled email-address DKIM without inventing alignment', async () => {

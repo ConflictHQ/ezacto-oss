@@ -38,7 +38,9 @@ import type {
 } from "@ezacto/api";
 import {
   MailgunMailer,
+  SenderIdentityUnavailableError,
   SesMailer,
+  configuredEmailSender,
   type HttpEmailProvider,
   type MailgunOptions,
   type SesMailerOptions,
@@ -180,6 +182,54 @@ export const createWorkerMailProvider = (
  */
 export const resolveMailFrom = (env: WorkerEnv): string | undefined =>
   env.MAIL_FROM ?? env.SES_FROM;
+
+/**
+ * Attests only the exact address the deployment is configured to send from, on
+ * the domain Mailgun is configured to send it through. Mailgun verifies a
+ * sending domain rather than an individual mailbox, so there is no per-address
+ * status to fetch: the authority here is the deployment's own configuration,
+ * the same claim the SMTP verifier makes, and the DNS behind the domain stays
+ * the operator's to own.
+ */
+export const createMailgunSenderIdentityVerifier = (
+  emailProvider: MailgunMailer,
+  from: string,
+): NonNullable<RuntimeServices['senderIdentityVerifier']> => {
+  const configured = configuredEmailSender(from);
+  const sendingDomain = emailProvider.domain.normalize('NFC').trim().toLowerCase();
+  return {
+    provider: 'mailgun',
+    verify: async (identity) => {
+      if (identity.archivedAt !== null) {
+        throw new SenderIdentityUnavailableError('sender_identity_archived', identity.id);
+      }
+      if (identity.provider !== 'mailgun') {
+        throw new SenderIdentityUnavailableError('sender_provider_mismatch', identity.id);
+      }
+      const address = identity.email.normalize('NFC').trim().toLowerCase();
+      const providerIdentity = identity.providerIdentity.normalize('NFC').trim().toLowerCase();
+      // The address must be the one the deployment sends as, and its domain must
+      // be the one Mailgun accepts. Either half alone would attest something the
+      // transport will refuse at send time.
+      if (
+        address !== configured.email ||
+        providerIdentity !== configured.email ||
+        address.slice(address.lastIndexOf('@') + 1) !== sendingDomain
+      ) {
+        throw new SenderIdentityUnavailableError('sender_identity_binding_mismatch', identity.id);
+      }
+      return {
+        source: 'deployment_config',
+        identityKind: 'email_address',
+        verificationStatus: 'operator_configured',
+        dkimStatus: 'not_applicable',
+        mailFromDomain: null,
+        mailFromStatus: 'not_configured',
+        observedAt: new Date().toISOString(),
+      };
+    },
+  };
+};
 
 export const createSesSenderIdentityVerifier = (
   emailProvider: SesMailer,
@@ -520,7 +570,14 @@ export const createRuntimeServices = async (
     emailConfiguration,
     ...(emailProvider instanceof SesMailer
       ? { senderIdentityVerifier: createSesSenderIdentityVerifier(emailProvider) }
-      : {}),
+      : emailProvider instanceof MailgunMailer && mailFrom !== undefined
+        ? {
+            senderIdentityVerifier: createMailgunSenderIdentityVerifier(
+              emailProvider,
+              mailFrom,
+            ),
+          }
+        : {}),
     outbox,
     backupStatus: {
       latestRuns: (limit: number) => getLatestBackupRuns(database, limit),

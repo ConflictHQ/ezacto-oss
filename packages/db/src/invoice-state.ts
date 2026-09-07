@@ -1448,7 +1448,7 @@ const mutationStatements = (
           AND identity.version = ? AND identity.archived_at IS NULL
           AND (
             (
-              identity.provider = 'smtp'
+              identity.provider IN ('smtp','mailgun')
               AND evidence.source = 'deployment_config'
               AND evidence.verification_status = 'operator_configured'
               AND evidence.identity_kind = 'email_address'
