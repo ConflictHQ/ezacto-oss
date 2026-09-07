@@ -23620,6 +23620,7 @@
         "type": "object",
         "required": [
           "project_id",
+          "currency",
           "budget_by",
           "unit",
           "unpriced_entry_count"
@@ -23628,6 +23629,10 @@
           "project_id": {
             "type": "integer",
             "minimum": 1
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
           },
           "budget_by": {
             "type": "string",
