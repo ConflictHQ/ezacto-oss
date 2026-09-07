@@ -427,6 +427,28 @@ export const createTeamDirectoryController = (
             render: (value) => teamHours(value.nonbillable_seconds),
           },
         ],
+        // Every sibling list carries its row actions; this one did not, so the
+        // only way into a person was the name link. The old roster ends each
+        // row with an Actions menu.
+        actions: (value) => [
+          {
+            label: 'Open',
+            primary: true,
+            onSelect: () => {
+              globalThis.location.assign(`/team/${value.id}`)
+            },
+          },
+          ...(currentSession()?.capabilities.canManagePeople === true
+            ? [
+                {
+                  label: 'Edit profile',
+                  onSelect: () => {
+                    globalThis.location.assign(`/team/${value.id}#profile`)
+                  },
+                },
+              ]
+            : []),
+        ],
       }),
     )
   }
