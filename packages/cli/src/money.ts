@@ -387,9 +387,12 @@ export const runReport = async (
       const budget = grain.unit === 'seconds'
         ? String(grain.budget_seconds ?? '')
         : String(grain.budget_cents ?? '')
+      // An absent cost spend is withheld, not zero. The seconds branch keeps
+      // its 0 — a time grain always reports one — but printing 0 for a cents
+      // grain the filter emptied would state the very number we refuse to state.
       const spent = grain.unit === 'seconds'
         ? String(grain.spent_seconds ?? 0)
-        : String(grain.spent_cents ?? 0)
+        : String(grain.spent_cents ?? '')
       const remaining = grain.unit === 'seconds'
         ? String(grain.remaining_seconds ?? '')
         : String(grain.remaining_cents ?? '')
@@ -409,6 +412,259 @@ export const runReport = async (
   return { json: report, human: lines.join('\n'), csv: csvLines.join('\n') }
 }
 
+// --- export columns ---------------------------------------------------------
+
+/**
+ * One column an export knows how to emit. `confidential` marks the fields that
+ * price our own labour rather than describe the work: #310 hands these exports
+ * to an agency that subcontracted us and bills its own client under its own
+ * brand, and a cost rate that leaves that way leaves once and permanently.
+ */
+export interface ExportColumn<Row> {
+  readonly name: string
+  readonly confidential: boolean
+  readonly value: (row: Row) => string | number | boolean | null
+}
+
+/**
+ * The closed set of time-entry columns. The API hands an administrator
+ * `billable_rate_cents` and `cost_rate_cents` on every entry — canViewMoneyField
+ * in @ezacto/core gates them by who is asking, not by who will read the file —
+ * so they are enumerated here and marked confidential rather than simply left
+ * out. A column the enumeration does not mention is a column nobody has decided
+ * about, and this list is the one place that decision can be made once.
+ */
+export const timeExportColumns: readonly ExportColumn<TimeEntry>[] = [
+  { name: 'id', confidential: false, value: (entry) => entry.id },
+  { name: 'user_id', confidential: false, value: (entry) => entry.user_id },
+  { name: 'project_id', confidential: false, value: (entry) => entry.project_id },
+  { name: 'task_id', confidential: false, value: (entry) => entry.task_id },
+  { name: 'spent_date', confidential: false, value: (entry) => entry.spent_date },
+  { name: 'seconds', confidential: false, value: (entry) => entry.seconds },
+  { name: 'billable', confidential: false, value: (entry) => entry.billable },
+  { name: 'billed', confidential: false, value: (entry) => entry.invoice_id != null },
+  { name: 'notes', confidential: false, value: (entry) => entry.notes ?? '' },
+  {
+    name: 'billable_rate_cents',
+    confidential: true,
+    value: (entry) => entry.billable_rate_cents ?? null,
+  },
+  {
+    name: 'cost_rate_cents',
+    confidential: true,
+    value: (entry) => entry.cost_rate_cents ?? null,
+  },
+]
+
+/**
+ * Expenses carry no rate of ours: `total_cost_cents` is the third-party amount
+ * the client is asked to reimburse, which is precisely what a subcontracted
+ * export has to show. Nothing here is confidential today; the flag is still
+ * spelled out on every column so that adding one forces the question.
+ */
+export const expenseExportColumns: readonly ExportColumn<Expense>[] = [
+  { name: 'id', confidential: false, value: (expense) => expense.id },
+  { name: 'user_id', confidential: false, value: (expense) => expense.user_id },
+  { name: 'project_id', confidential: false, value: (expense) => expense.project_id },
+  {
+    name: 'expense_category_id',
+    confidential: false,
+    value: (expense) => expense.expense_category_id,
+  },
+  { name: 'spent_date', confidential: false, value: (expense) => expense.spent_date },
+  {
+    name: 'total_cost_cents',
+    confidential: false,
+    value: (expense) => expense.total_cost_cents,
+  },
+  { name: 'billable', confidential: false, value: (expense) => expense.billable },
+  {
+    name: 'billed',
+    confidential: false,
+    value: (expense) => expense.invoice_id != null,
+  },
+  { name: 'notes', confidential: false, value: (expense) => expense.notes ?? '' },
+]
+
+export type ExportKind = 'time' | 'expenses'
+
+const exportableNames = <Row>(
+  columns: readonly ExportColumn<Row>[],
+): readonly string[] =>
+  columns.filter((column) => !column.confidential).map((column) => column.name)
+
+export const validExportColumns = (kind: ExportKind): readonly string[] =>
+  kind === 'time'
+    ? exportableNames(timeExportColumns)
+    : exportableNames(expenseExportColumns)
+
+/**
+ * Resolve `--columns` against the enumeration. An unrecognised name is refused
+ * rather than dropped, because a silently ignored column produces a file that is
+ * missing data the operator believes is in it. A confidential name gets its own
+ * refusal: it is not a typo but a request we will not serve, and it stays
+ * refused until the client export profile of #310 exists to say who is asking.
+ */
+const selectExportColumns = <Row>(
+  kind: ExportKind,
+  columns: readonly ExportColumn<Row>[],
+  requested: string | undefined,
+): readonly ExportColumn<Row>[] => {
+  const exportable = columns.filter((column) => !column.confidential)
+  if (requested === undefined) return exportable
+
+  const names = requested.split(',').map((name) => name.trim())
+  if (names.some((name) => name === '')) {
+    throw new Error('--columns must be a comma-separated list of column names')
+  }
+
+  const chosen = new Set<string>()
+  return names.map((name) => {
+    const column = columns.find((candidate) => candidate.name === name)
+    if (column === undefined) {
+      throw new Error(
+        `unknown ${kind} export column: ${name}; available: ${exportable.map((c) => c.name).join(', ')}`,
+      )
+    }
+    if (column.confidential) {
+      throw new Error(
+        `${kind} export column is confidential and cannot be exported: ${name}`,
+      )
+    }
+    if (chosen.has(name)) throw new Error(`duplicate ${kind} export column: ${name}`)
+    chosen.add(name)
+    return column
+  })
+}
+
+const csvCell = (value: string | number | boolean | null): string =>
+  value === null ? '' : String(value)
+
+/**
+ * Both renderings go through the chosen columns, JSON included. `ez export time
+ * --json` used to print the raw API entries, which is where the rates actually
+ * reached a terminal; a redaction that only edits the CSV header would be the
+ * render-time hiding #310 asks us not to build.
+ */
+const renderExport = <Row>(
+  columns: readonly ExportColumn<Row>[],
+  rows: readonly Row[],
+): { json: unknown; csv: string } => ({
+  json: rows.map((row) =>
+    Object.fromEntries(columns.map((column) => [column.name, column.value(row)])),
+  ),
+  csv: [
+    csvRow(columns.map((column) => column.name)),
+    ...rows.map((row) => csvRow(columns.map((column) => csvCell(column.value(row))))),
+  ].join('\n'),
+})
+
+// --- confidentiality --------------------------------------------------------
+
+/**
+ * Every name the export enumeration already refuses to hand out, plus the two
+ * report fields the API derives from the same cost rates: `cost_cents` is what
+ * a client's work costs us, and `budget_burn_cents` is that cost measured
+ * against a budget. The enumeration is where the decision lives, so this reads
+ * it back rather than restating it — one list changes when a field's status does.
+ */
+const confidentialFieldNames: ReadonlySet<string> = new Set([
+  ...[...timeExportColumns, ...expenseExportColumns]
+    .filter((column) => column.confidential)
+    .map((column) => column.name),
+  'cost_cents',
+  'budget_burn_cents',
+])
+
+/**
+ * `spent_cents` and `remaining_cents` are our cost base only on a record the API
+ * priced from cost rates; where it priced them from billable rates the identical
+ * field is the amount the client is asked to pay, which is exactly what an
+ * export exists to show. So this pair is decided by the record it sits in, not
+ * by its name.
+ */
+const costCalculatedAmountNames: ReadonlySet<string> = new Set([
+  'spent_cents',
+  'remaining_cents',
+])
+
+/**
+ * Whether the record says the pair was priced at the client's rate. A budget
+ * grain says it in `calculation`; the budget summary beside it — the same report
+ * family, one row per project — carries no `calculation` at all and says the
+ * same thing in `budget_by`, where only `task_fees` bills at the client's rate.
+ * These are the two spellings the API's own `canViewMoneyField` gating reads.
+ *
+ * A record that spells neither has not said it, and the pair is withheld. The
+ * hole is a rule that lets our cost base through because its discriminator is
+ * absent, not the name of any one discriminator: this register is trusted to
+ * cover the next payload shape somebody adds, and a shape it does not recognise
+ * has to fail closed to deserve that.
+ */
+const isBillablePricedRecord = (
+  record: Readonly<Record<string, unknown>>,
+): boolean =>
+  record['calculation'] === 'billable' || record['budget_by'] === 'task_fees'
+
+const isConfidentialField = (
+  name: string,
+  record: Readonly<Record<string, unknown>>,
+): boolean =>
+  confidentialFieldNames.has(name) ||
+  (costCalculatedAmountNames.has(name) && !isBillablePricedRecord(record))
+
+/** Drop every confidential field from an API payload, at any depth. */
+export const withoutConfidentialFields = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(withoutConfidentialFields)
+  if (value === null || typeof value !== 'object') return value
+  const record = value as Record<string, unknown>
+  const kept: Record<string, unknown> = {}
+  for (const [name, nested] of Object.entries(record)) {
+    if (isConfidentialField(name, record)) continue
+    kept[name] = withoutConfidentialFields(nested)
+  }
+  return kept
+}
+
+/**
+ * A `fetch` that filters the API's JSON before the client ever parses it.
+ *
+ * The filter belongs on arrival rather than in each verb's output, because a
+ * verb is not one exit: `ez export time` projected its rows through the
+ * enumeration while `ez report run` and `ez week` still printed the payload
+ * verbatim, and a report's human and CSV renderings are built from that same
+ * payload. Filtering here leaves nothing for any rendering — those three, or
+ * the next verb somebody adds — to reach for.
+ */
+export const confidentialityFilteredFetch = (
+  inner: typeof globalThis.fetch = globalThis.fetch,
+): typeof globalThis.fetch =>
+  async (input, init) => {
+    const response = await inner(input, init)
+    const contentType = response.headers.get('content-type') ?? ''
+    if (!contentType.includes('application/json')) return response
+    const body = await response.text()
+    let filtered: string | null = null
+    if (body !== '') {
+      try {
+        filtered = JSON.stringify(withoutConfidentialFields(JSON.parse(body)))
+      } catch {
+        // Not JSON after all. Hand back what arrived: the client has its own
+        // parse guard, and inventing a body here would hide the server's fault.
+        filtered = body
+      }
+    }
+    const headers = new Headers(response.headers)
+    // The filtered body is a different length, and the client reads the text
+    // rather than the header, so keeping the original would only mislead.
+    headers.delete('content-length')
+    return new Response(filtered, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    })
+  }
+
 // --- export -----------------------------------------------------------------
 
 export const exportTimeEntries = async (
@@ -418,8 +674,13 @@ export const exportTimeEntries = async (
     to: string
     clientId?: number
     projectId?: number
+    columns?: string
   },
 ): Promise<MoneyCommandResult> => {
+  // Resolve the columns before the first request: a bad --columns should cost
+  // the operator nothing but the typo.
+  const columns = selectExportColumns('time', timeExportColumns, input.columns)
+
   const entries = await collectTimeEntries(client, {
     from: canonicalDate(input.from),
     to: canonicalDate(input.to),
@@ -427,27 +688,9 @@ export const exportTimeEntries = async (
     ...(input.projectId === undefined ? {} : { project_id: input.projectId }),
   })
 
-  const header = csvRow([
-    'id', 'user_id', 'project_id', 'task_id', 'spent_date',
-    'seconds', 'billable', 'billed', 'notes',
-  ])
-  const rows = entries.map((entry) =>
-    csvRow([
-      String(entry.id),
-      String(entry.user_id),
-      String(entry.project_id),
-      String(entry.task_id),
-      entry.spent_date,
-      String(entry.seconds),
-      String(entry.billable),
-      String(entry.invoice_id != null),
-      entry.notes ?? '',
-    ]),
-  )
-
-  const csv = [header, ...rows].join('\n')
+  const { json, csv } = renderExport(columns, entries)
   return {
-    json: entries,
+    json,
     human: entries.length === 0
       ? '(no time entries)'
       : `${entries.length} time entries exported`,
@@ -462,8 +705,11 @@ export const exportExpenses = async (
     to: string
     clientId?: number
     projectId?: number
+    columns?: string
   },
 ): Promise<MoneyCommandResult> => {
+  const columns = selectExportColumns('expenses', expenseExportColumns, input.columns)
+
   const expenses = await collectExpenses(client, {
     from: canonicalDate(input.from),
     to: canonicalDate(input.to),
@@ -471,27 +717,9 @@ export const exportExpenses = async (
     ...(input.projectId === undefined ? {} : { project_id: input.projectId }),
   })
 
-  const header = csvRow([
-    'id', 'user_id', 'project_id', 'expense_category_id', 'spent_date',
-    'total_cost_cents', 'billable', 'billed', 'notes',
-  ])
-  const rows = expenses.map((expense) =>
-    csvRow([
-      String(expense.id),
-      String(expense.user_id),
-      String(expense.project_id),
-      String(expense.expense_category_id),
-      expense.spent_date,
-      String(expense.total_cost_cents),
-      String(expense.billable),
-      String(expense.invoice_id != null),
-      expense.notes ?? '',
-    ]),
-  )
-
-  const csv = [header, ...rows].join('\n')
+  const { json, csv } = renderExport(columns, expenses)
   return {
-    json: expenses,
+    json,
     human: expenses.length === 0
       ? '(no expenses)'
       : `${expenses.length} expenses exported`,

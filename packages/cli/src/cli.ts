@@ -17,9 +17,9 @@ import {
   tokenHint,
   writeConfig,
   type CliConfig,
-  type OrganizationConfig,
 } from './config.js'
 import {
+  confidentialityFilteredFetch,
   exportExpenses,
   exportTimeEntries,
   generateInvoice,
@@ -74,6 +74,7 @@ Options:
   --client <name-or-id>     Client filter for reports and invoices
   --project <name-or-id>    Project filter (repeatable for invoice generate)
   --csv                     Emit CSV instead of human-readable output
+  --columns <a,b,c>         Export columns, in order (default: every exportable one)
   --time-summary <type>     Time summary type for invoice generate
   --expense-summary <type>  Expense summary type for invoice generate
   --database <path>         SQLite database path (or set EZACTO_DATA_DIR)
@@ -118,10 +119,17 @@ const identityOutput = (
   authentication: identity.authentication,
 })
 
-const clientFor = (organization: OrganizationConfig): EzactoClient =>
+/**
+ * Every client the CLI builds reads the API through the confidentiality filter,
+ * so a field the export enumeration marks confidential is gone before any
+ * rendering can reach it. One door: redacting per verb is how #310's leak
+ * survived in `ez report run` and `ez week` after `ez export` was closed.
+ */
+const clientFor = (credential: { base_url: string; token: string }): EzactoClient =>
   new EzactoClient({
-    baseUrl: organization.base_url,
-    token: organization.token,
+    baseUrl: credential.base_url,
+    token: credential.token,
+    fetch: confidentialityFilteredFetch(),
   })
 
 const requireConfig = async (path: string): Promise<CliConfig> => {
@@ -192,7 +200,7 @@ const login = async (
       DEFAULT_BASE_URL,
   )
   const identity = (
-    await new EzactoClient({ baseUrl, token }).getWhoami()
+    await clientFor({ base_url: baseUrl, token }).getWhoami()
   ).data
   if (identity.authentication.kind !== 'token') {
     throw new Error('login validation did not resolve an API-token credential')
@@ -335,6 +343,7 @@ export const runCli = async (
       client: { type: 'string' },
       project: { type: 'string', multiple: true },
       csv: { type: 'boolean', default: false },
+      columns: { type: 'string' },
       'time-summary': { type: 'string' },
       'expense-summary': { type: 'string' },
       database: { type: 'string' },
@@ -374,6 +383,9 @@ export const runCli = async (
   }
   if (values['base-url'] !== undefined || values.token !== undefined || values['token-stdin']) {
     throw new Error('--base-url and token options are valid only with ez login')
+  }
+  if (values.columns !== undefined && command !== 'export') {
+    throw new Error('--columns is valid only with ez export')
   }
   if (command === 'log') {
     if (commandArguments.length !== 3) {
@@ -609,6 +621,7 @@ export const runCli = async (
       ...range,
       ...(clientId === undefined ? {} : { clientId }),
       ...(projectId === undefined ? {} : { projectId }),
+      ...(values.columns === undefined ? {} : { columns: values.columns }),
     }
     const result = kind === 'time'
       ? await exportTimeEntries(selected.client, exportInput)
