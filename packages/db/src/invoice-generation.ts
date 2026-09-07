@@ -685,8 +685,8 @@ const validateSelection = async (
   })
   if (client === null) return invalid('the selected client does not exist')
   if (!/^[A-Z]{3}$/.test(client.currency)) invalid('the selected client currency is invalid')
-  const projects = await all<{ id: number; clientId: number }>(database, {
-    text: `SELECT id, client_id AS "clientId" FROM projects
+  const projects = await all<{ id: number; clientId: number; isActive: number }>(database, {
+    text: `SELECT id, client_id AS "clientId", is_active AS "isActive" FROM projects
       WHERE id IN (SELECT CAST(value AS INTEGER) FROM json_each(?)) ORDER BY id`,
     params: [JSON.stringify(request.projectIds)],
   })
@@ -695,6 +695,14 @@ const validateSelection = async (
     projects.some((project) => project.clientId !== request.clientId)
   ) {
     invalid('every selected project must belong to the selected client')
+  }
+  // Archived work is not billable, and the candidate read drops it. Refusing the
+  // selection outright is the difference between "we do not bill this" and an
+  // invoice that quietly came out short: a request naming one active and one
+  // archived project would otherwise return a document covering half of what was
+  // asked for, with nothing on it to say so.
+  if (projects.some((project) => project.isActive !== 1)) {
+    invalid('an archived project cannot be invoiced')
   }
   return client
 }

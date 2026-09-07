@@ -216,6 +216,12 @@ const clientFilter = (clientId: number | undefined) =>
         SELECT id FROM descendants
       )`
 
+/**
+ * Harvest's uninvoiced report covers active projects only, so an archived
+ * project's unbilled work is neither reported nor offered to generation.
+ * Including it overstated the receivables pipeline with work Harvest itself
+ * will not invoice.
+ */
 export const readUninvoicedCandidates = async (
   database: Database,
   filter: Readonly<UninvoicedCandidateFilter>,
@@ -255,7 +261,7 @@ export const readUninvoicedCandidates = async (
     JOIN tasks task ON task.id = entry.task_id
     JOIN users user ON user.id = entry.user_id
     WHERE entry.spent_date BETWEEN ${filter.from} AND ${filter.to}
-      AND entry.billable = 1 AND entry.invoice_id IS NULL
+      AND entry.billable = 1 AND entry.invoice_id IS NULL AND project.is_active = 1
       AND entry.timer_started_at IS NULL
       AND NOT (entry.started_time IS NOT NULL AND entry.ended_time IS NULL)
       AND ${projectWhere} AND ${clientWhere}
@@ -276,7 +282,7 @@ export const readUninvoicedCandidates = async (
     JOIN expense_categories category ON category.id = expense.expense_category_id
     JOIN users user ON user.id = expense.user_id
     WHERE expense.spent_date BETWEEN ${filter.from} AND ${filter.to}
-      AND expense.billable = 1 AND expense.invoice_id IS NULL
+      AND expense.billable = 1 AND expense.invoice_id IS NULL AND project.is_active = 1
       AND ${projectWhere} AND ${clientWhere}
     ORDER BY expense.id
   `)
@@ -311,6 +317,7 @@ interface ClientNodeRow {
 interface RollupTimeRow {
   id: number
   clientId: number
+  projectActive: number
   currency: string
   roundedSeconds: number
   billable: number
@@ -326,6 +333,7 @@ interface RollupTimeRow {
 interface RollupExpenseRow {
   id: number
   clientId: number
+  projectActive: number
   currency: string
   totalCostCents: number
   billable: number
@@ -478,6 +486,7 @@ const clientRollupReport = async (
   const [timeRows, expenseRows, projectRows, organizationRows] = await Promise.all([
     database.all<RollupTimeRow>(sql`
       SELECT entry.id AS "id", project.client_id AS "clientId",
+        project.is_active AS "projectActive",
         upper(coalesce(project.billing_currency, client.currency)) AS "currency",
         entry.rounded_seconds AS "roundedSeconds", entry.billable AS "billable",
         entry.budgeted AS "budgeted", entry.invoice_id AS "invoiceId",
@@ -492,6 +501,7 @@ const clientRollupReport = async (
     `),
     database.all<RollupExpenseRow>(sql`
       SELECT expense.id AS "id", project.client_id AS "clientId",
+        project.is_active AS "projectActive",
         upper(coalesce(project.billing_currency, client.currency)) AS "currency",
         expense.total_cost_cents AS "totalCostCents", expense.billable AS "billable",
         expense.invoice_id AS "invoiceId"
@@ -562,7 +572,10 @@ const clientRollupReport = async (
     }
     const stopped =
       row.timerStartedAt === null && !(row.startedTime !== null && row.endedTime === null)
-    if (row.billable === 1 && row.invoiceId === null && stopped) {
+    // Tracked and cost figures cover archived projects, because the work
+    // happened; the uninvoiced columns answer the same question as the
+    // uninvoiced report and carry its active-project predicate.
+    if (row.projectActive === 1 && row.billable === 1 && row.invoiceId === null && stopped) {
       if (row.billableRateCents === null) {
         addMetric(metrics, 'unpricedBillableEntryCount', 1)
       } else {
@@ -576,7 +589,7 @@ const clientRollupReport = async (
     const metrics = direct.get(row.clientId)!
     addMetric(metrics, 'expenseCount', 1)
     addCurrencyMetric(metrics, row.currency, 'expenseCents', row.totalCostCents)
-    if (row.billable === 1 && row.invoiceId === null) {
+    if (row.projectActive === 1 && row.billable === 1 && row.invoiceId === null) {
       addCurrencyMetric(metrics, row.currency, 'uninvoicedExpenseCents', row.totalCostCents)
       addCurrencyMetric(metrics, row.currency, 'uninvoicedTotalCents', row.totalCostCents)
     }

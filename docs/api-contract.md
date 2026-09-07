@@ -84,6 +84,9 @@ The native report slice requires an explicit inclusive `from`/`to` date range:
   its stored `rounded_seconds` and rate snapshot, then adds billable unlinked
   expenses. The shared integer-cents generation preview owns this arithmetic;
   null rates remain unpriced and are counted rather than converted to zero.
+  Archived projects are out of scope: their unbilled work leaves this report and
+  the generation candidates together, and naming one in a generation request is
+  refused rather than silently dropped from the resulting invoice.
 - `GET /api/v1/reports/client-rollups/:clientId` returns direct and descendant
   totals for every node in the selected client subtree. Monetary values remain
   grouped by currency.
