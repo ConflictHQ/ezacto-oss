@@ -91,10 +91,13 @@ jobs:
           WORKSPACES: ${{ matrix.workspaces }}
           SHARD: ${{ matrix.shard }}
         run: |
+          # Two vCPUs on ubuntu-latest, so two workers. This belongs to the
+          # runner, not to a package.json: the same suite on a developer
+          # machine should use the cores it has.
           if [ -n "$SHARD" ]; then
-            npm test $WORKSPACES -- --shard="$SHARD"
+            npm test $WORKSPACES -- --shard="$SHARD" --maxWorkers=2
           else
-            npm test $WORKSPACES
+            npm test $WORKSPACES -- --maxWorkers=2
           fi
 
   secrets:
