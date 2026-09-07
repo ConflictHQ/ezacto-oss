@@ -85,6 +85,8 @@ export interface ProjectBudgetGrainRecord {
 
 export interface ProjectBudgetSummaryRecord {
   projectId: number;
+  /** Resolved by the repository from the project, or its client. */
+  currency: string;
   budgetBy: "project" | "project_cost" | "task" | "task_fees" | "person" | "none";
   unit: "seconds" | "cents" | null;
   budgetAmount: number | null;
@@ -289,6 +291,7 @@ const serializeProjectBudgetSummary = (
 ) => {
   const base = {
     project_id: summary.projectId,
+    currency: summary.currency,
     budget_by: summary.budgetBy,
     unit: summary.unit,
     unpriced_entry_count: summary.unpricedEntryCount,

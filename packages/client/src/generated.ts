@@ -1763,6 +1763,7 @@ export type ProjectBudgetReportEnvelope = {
 
 export type ProjectBudgetSummary = {
   "project_id": number;
+  "currency": string;
   "budget_by": "project" | "project_cost" | "task" | "task_fees" | "person" | "none";
   "unit": "seconds" | "cents" | null;
   "unpriced_entry_count": number;

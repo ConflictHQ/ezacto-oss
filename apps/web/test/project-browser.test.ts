@@ -432,6 +432,32 @@ describe('Projects V1 browser controller', () => {
     expect(banner?.textContent).toContain('3 tracked entries have no rate')
   })
 
+  it('[browser] formats money in the currency the server resolved, not a guess', async () => {
+    // The list used to derive this from the client in its own payload and fall
+    // back to USD when the client was missing. A EUR project rendered as
+    // dollars, silently, with the right digits and the wrong meaning.
+    writeDocument('project-list', '/projects')
+    const controller = createProjectDirectoryController({
+      listDirectoryProjects: vi.fn(async () => page([project])),
+      // Deliberately empty: the client the project belongs to is absent, which
+      // is the case the old fallback got wrong.
+      listProjectClients: vi.fn(async () => page([])),
+      listProjectBudgetSummaries: vi.fn(async () => [
+        {
+          project_id: 7,
+          unit: 'cents' as const,
+          spent_cents: 5000,
+          currency: 'EUR',
+        },
+      ]),
+    })
+    await controller.activate(identity('administrator'), new AbortController().signal, () => false)
+
+    const spent = document.querySelector('[data-project-list] tbody tr[data-row]')?.textContent ?? ''
+    expect(spent).toContain('€50.00')
+    expect(spent).not.toContain('$50.00')
+  })
+
   it('[browser] filters projects by active state and client', async () => {
     writeDocument('project-list', '/projects')
     const secondClient = { ...client, id: 4, name: 'Beta' }

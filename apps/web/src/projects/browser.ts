@@ -429,7 +429,7 @@ export const createProjectDirectoryController = (
       if (summary === undefined) return '—'
       if (summary.unit === 'seconds') return projectHours(summary.spent_seconds ?? 0)
       if (summary.unit === 'cents' && summary.spent_cents !== undefined) {
-        return projectMoney(summary.spent_cents, projectCurrency(project, clients))
+        return projectMoney(summary.spent_cents, currencyFor(project))
       }
       return '—'
     }
@@ -444,8 +444,15 @@ export const createProjectDirectoryController = (
       }
       return summary.remaining_cents == null
         ? '—'
-        : projectMoney(summary.remaining_cents, projectCurrency(project, clients))
+        : projectMoney(summary.remaining_cents, currencyFor(project))
     }
+
+    // The server resolves this over a join where the client row is guaranteed
+    // present. Deriving it here fell back to USD when the client was missing
+    // from the payload, which renders another currency's money as dollars and
+    // says nothing about having guessed.
+    const currencyFor = (project: Readonly<GeneralResource>): string =>
+      budgets.get(project.id)?.currency ?? projectCurrency(project, clients)
 
     const costVisible = [...budgets.values()].some(
       (summary) => summary.cost_cents !== undefined,
@@ -455,12 +462,12 @@ export const createProjectDirectoryController = (
       const cents = budgets.get(project.id)?.cost_cents
       // Absent rather than zero when a single project has no cost recorded. The
       // whole column is dropped when no project does -- see the columns below.
-      return cents === undefined ? '—' : projectMoney(cents, projectCurrency(project, clients))
+      return cents === undefined ? '—' : projectMoney(cents, currencyFor(project))
     }
 
     const budgetLabel = (project: Readonly<GeneralResource>): string => {
       const by = projectText(project, 'budget_by')
-      const currency = projectCurrency(project, clients)
+      const currency = currencyFor(project)
       if (by === 'project' || by === 'task' || by === 'person') {
         return projectHours(projectNumber(project, 'budget_seconds'))
       }
