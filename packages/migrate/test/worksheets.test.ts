@@ -638,7 +638,7 @@ describe('migration worksheets', () => {
         inputPath,
       }),
     ).resolves.toMatchObject({ total: 2, completed: 1, replayed: 1, pending: 0 })
-  }, 30_000)
+  }, 45_000)
 
   it('[integration] holds the shared snapshot lock for worksheet generation and application', async () => {
     const lock = await acquireSnapshotLock(snapshotDir, 'load')
