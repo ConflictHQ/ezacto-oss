@@ -1895,6 +1895,107 @@ for (const [runtime, factory] of factories) {
       ])
     })
 
+    it('[unit] settles a zero invoice and a credit note with non-positive receipts', async () => {
+      // Harvest closes a $0 invoice with a $0 payment and a credit note with a
+      // negative one. invoice_payments.amount_cents was a strictly positive
+      // receipt, so both were unstorable, and because state is derived from the
+      // payments that load, the invoices they settled read open (#283). The
+      // column is signed now, like the invoice amount it settles.
+      database = await factory(false)
+      await installThrough0005(database)
+      await installFixture(database)
+      for (const [id, harvestId, number] of [
+        [3, 7003, 'INV-ZERO'],
+        [4, 7004, 'INV-CREDIT'],
+      ] as const) {
+        await database.run(
+          `INSERT INTO invoices
+            (id, harvest_id, client_id, number, currency, issue_date, due_date,
+             state, source_updated_at, created_at, updated_at)
+           VALUES (?, ?, 1, ?, 'USD', '2026-08-01', '2026-08-31',
+             'open', ?, ?, ?)`,
+          id,
+          harvestId,
+          number,
+          timestamp,
+          timestamp,
+          timestamp,
+        )
+      }
+      await database.migrateAgain()
+
+      const base = {
+        sourceBatchComplete: true as const,
+        expectedSourceUpdatedAt: timestamp,
+        sourceUpdatedAt: laterTimestamp,
+        sourceState: 'paid' as const,
+        sourceSentAt: timestamp,
+        sourcePaidAt: timestamp,
+        sourcePaidDate: null,
+        sourceClosedAt: null,
+        sourceDueAmountCents: 0,
+        sourceTaxAmountCents: 0,
+        sourceTax2AmountCents: 0,
+        sourceDiscountAmountCents: 0,
+        sourcePaymentOptions: [],
+        sourceWrittenOffCents: 0,
+        messages: [],
+      }
+      const line = (id: number, amountCents: number) => ({
+        id,
+        harvestId: 7300 + id,
+        position: 0,
+        kind: 'Service',
+        description: 'Imported service',
+        quantity: 1,
+        unitPriceCents: amountCents,
+        amountCents,
+        createdAt: timestamp,
+        updatedAt: laterTimestamp,
+      })
+      const receipt = (id: number, amountCents: number) => ({
+        id,
+        harvestId: 7600 + id,
+        amountCents,
+        sourcePaidAt: laterTimestamp,
+        sourcePaidDate: null,
+        createdAt: laterTimestamp,
+        updatedAt: laterTimestamp,
+      })
+
+      const zero = await reconcileImportedInvoice(database.orm, {
+        ...base,
+        invoiceId: 3,
+        sourceAmountCents: 0,
+        lines: [line(3, 0)],
+        payments: [receipt(601, 0)],
+      })
+      const credit = await reconcileImportedInvoice(database.orm, {
+        ...base,
+        invoiceId: 4,
+        sourceAmountCents: -876_500,
+        lines: [line(4, -876_500)],
+        payments: [receipt(602, -876_500)],
+      })
+
+      // Both keep the state Harvest gave them, so neither raises the
+      // source_state_disagrees diagnostic the loader reports as an anomaly.
+      expect([zero.state, credit.state]).toEqual(['paid', 'paid'])
+      expect([...zero.diagnostics, ...credit.diagnostics]).toEqual([])
+      expect(
+        await database.rows<Record<string, unknown>>(
+          `SELECT invoice.id, invoice.state, invoice.due_amount_cents AS due,
+             payment.amount_cents AS receipt
+           FROM invoices invoice
+           JOIN invoice_payments payment ON payment.invoice_id = invoice.id
+           WHERE invoice.id IN (3, 4) ORDER BY invoice.id`,
+        ),
+      ).toEqual([
+        { id: 3, state: 'paid', due: 0, receipt: 0 },
+        { id: 4, state: 'paid', due: 0, receipt: -876_500 },
+      ])
+    })
+
     it('[unit] reconciles a closed import through an immutable event-free receipt', async () => {
       database = await factory(false)
       await installThrough0005(database)

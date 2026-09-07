@@ -1254,8 +1254,9 @@ export const reconcileImportedInvoice = async (
       !Number.isSafeInteger(payment.amountCents) ||
       payment.id < (input.allocateNativeChildIds ? 0 : 1) ||
       payment.harvestId <= 0 ||
-      payment.amountCents <= 0 ||
-      payment.amountCents > 9_000_000_000_000 ||
+      // A receipt is signed: Harvest settles a $0 invoice with a $0 payment and
+      // a credit note with a negative one, and the column holds both.
+      Math.abs(payment.amountCents) > 9_000_000_000_000 ||
       seenHarvestIds.has(payment.harvestId)
     ) {
       throw new Error('imported payment identity or amount is invalid')
