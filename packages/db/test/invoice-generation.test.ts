@@ -403,12 +403,21 @@ for (const [runtime, factory] of factories) {
 
       expect(results.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
       const rejected = results.find(({ status }) => status === 'rejected')
-      expect(rejected).toMatchObject({
-        status: 'rejected',
-        reason: expect.objectContaining<Partial<InvoiceGenerationError>>({
-          code: 'generation_conflict',
-        }),
-      })
+      expect(rejected).toBeDefined()
+      // Which way the loser fails is decided by where it had got to when the
+      // winner committed, and both answers are correct. Read the candidates
+      // first and it commits against rows that have since been claimed, so the
+      // guard that re-reads on failure sees a changed signature and raises
+      // generation_conflict. Read them after and there is simply nothing left
+      // to bill, refused up front as invalid_command_input. Pinning one of the
+      // two asserts a scheduling order this test does not control, and on a
+      // loaded two-core runner the other one wins. What this test does control
+      // is asserted below: exactly one winner, and not a trace of the loser.
+      // The conflict guard itself is held to a real lock by the two-handle test
+      // at the bottom of this file, where the loser blocks on BEGIN IMMEDIATE
+      // and so has always read before the winner commits.
+      const reason = (rejected as PromiseRejectedResult).reason as InvoiceGenerationError
+      expect(['generation_conflict', 'invalid_command_input']).toContain(reason.code)
       expect(await database.rows('SELECT count(*) AS count FROM invoices')).toEqual([{ count: 1 }])
       expect(
         await database.rows('SELECT count(*) AS count FROM event_outbox'),
