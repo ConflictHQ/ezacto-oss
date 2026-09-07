@@ -17,10 +17,12 @@ import {
   installPasswordAuthRoutes,
   installReportRoutes,
   installSessionRoutes,
+  installSsoDomainRoutes,
   installTrackedResourceRoutes,
   installTeamRoutes,
   installTimesheetApprovalRoutes,
   installTimesheetLockPolicyRoutes,
+  installUserEmailRoutes,
   type ApiSessionService,
   type ClientTreeReader,
   type EmailConfigurationService,
@@ -33,7 +35,9 @@ import {
   type ModuleSettingsService,
   type MoneyResourceRouteOptions,
   type ReportReader,
+  type SsoProvisioningDomainService,
   type TrackedResourceRepository,
+  type UserEmailService,
   type TimesheetApprovalService,
   type TimesheetLockPolicyService,
 } from "../src/index.js";
@@ -64,6 +68,14 @@ const moduleSettings = new Proxy(
   {},
   { get: () => unavailable },
 ) as ModuleSettingsService;
+const ssoDomains = new Proxy(
+  {},
+  { get: () => unavailable },
+) as SsoProvisioningDomainService;
+const userEmails = new Proxy(
+  {},
+  { get: () => unavailable },
+) as UserEmailService;
 const team = new Proxy({}, { get: () => unavailable }) as TeamRepository;
 const treeReader = new Proxy({}, { get: () => unavailable }) as ClientTreeReader;
 const tokens = new Proxy({}, { get: () => unavailable }) as ApiTokenService;
@@ -152,6 +164,15 @@ const documentedApp = () =>
       installModuleSettingsRoutes(api, {
         service: moduleSettings,
         clock: () => "2026-08-28T12:00:00.000Z",
+      });
+      installSsoDomainRoutes(api, {
+        service: ssoDomains,
+        clock: () => "2026-08-28T12:00:00.000Z",
+      });
+      installUserEmailRoutes(api, {
+        service: userEmails,
+        deploymentMailer: authMailer,
+        clientKey: () => "contract-fixture",
       });
       installTeamRoutes(api, {
         repository: team,

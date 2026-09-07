@@ -9,6 +9,8 @@ import {
   createD1OutboxService,
   createGeneralResourceRepository,
   createMoneyResourceRepository,
+  listClientAncestors,
+  listClientDescendants,
   createInvoiceGenerationService,
   createReportRepository,
   createModuleSettingsRepository,
@@ -19,6 +21,7 @@ import {
   createD1EmailConfigurationStore,
   createD1PasswordAuthService,
   createD1SessionStore,
+  createD1SsoProvisioningDomainStore,
   DrizzleTrackedResourceRepository,
   getLatestBackupRuns,
   migrateD1,
@@ -521,6 +524,9 @@ export const createRuntimeServices = async (
           emailProvider.name,
           emailConfiguration,
         );
+  // One service behind two ports: the password routes take it whole, the
+  // add-an-address route takes only `addEmail`.
+  const passwordAuth = createD1PasswordAuthService(database);
   const moneyResources = createMoneyResourceRepository(drizzle);
   const outbox = createD1OutboxService(database, {
     additionalSubscribers: [
@@ -533,6 +539,10 @@ export const createRuntimeServices = async (
       enrollInstanceOwnerPasswordD1(database, input),
     tokens: createApiTokenStore(drizzle),
     generalResources: createGeneralResourceRepository(drizzle),
+    clientTree: {
+      ancestors: (clientId) => listClientAncestors(drizzle, clientId),
+      descendants: (clientId) => listClientDescendants(drizzle, clientId),
+    },
     team: createTeamRepository(drizzle),
     moneyResources,
     invoiceGeneration: createInvoiceGenerationService(drizzle),
@@ -550,6 +560,7 @@ export const createRuntimeServices = async (
       return row?.enabled === 1 || row?.enabled === true;
     },
     moduleSettings: createModuleSettingsRepository(drizzle),
+    ssoProvisioningDomains: createD1SsoProvisioningDomainStore(database),
     isTeamModuleEnabled: async () => {
       const row = await database
         .prepare(
@@ -563,7 +574,8 @@ export const createRuntimeServices = async (
     timesheetLockPolicy,
     reports: createReportRepository(drizzle),
     cursorSigningKey,
-    passwordAuth: createD1PasswordAuthService(database),
+    passwordAuth,
+    userEmails: passwordAuth,
     sessions,
     authenticationSessions,
     emailLog,

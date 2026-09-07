@@ -9,6 +9,7 @@ import {
   type ProviderIdentityResolution,
   type UserProfile,
 } from '@ezacto/core'
+import { verifiedProvisioningDomainQuery } from './sso-provisioning-domains.js'
 
 export interface IdentityStore {
   resolveProvider(assertion: ProviderIdentityAssertion): Promise<ProviderIdentityResolution>
@@ -88,6 +89,12 @@ const linkVerifiedEmail = (
   ],
 })
 
+/**
+ * Provisioning is the one step scoped to a domain. The guard is part of the
+ * INSERT rather than a read before it because the row it consults can be
+ * deleted or un-verified between the two, and a stranger who wins that race
+ * would otherwise get an account that no configuration permits.
+ */
 const createUser = (
   input: NormalizedProviderIdentityAssertion,
   userId: number,
@@ -109,6 +116,10 @@ const createUser = (
       SELECT 1 FROM user_identities identity
       WHERE identity.provider = ? AND identity.provider_subject = ?
     )
+      AND EXISTS (
+        SELECT 1 FROM sso_provisioning_domains domain
+        WHERE domain.domain = ? AND domain.verified_at IS NOT NULL
+      )
     RETURNING id AS userId`,
   bindings: [
     userId,
@@ -118,6 +129,7 @@ const createUser = (
     timestamp,
     input.provider,
     input.subject,
+    input.provisioningDomain,
   ],
   }
 }
@@ -178,7 +190,7 @@ const linkCreatedUser = (
 const parseIdentity = (
   row: IdentityRow | undefined,
   matchedBy: ProviderIdentityMatch,
-): ProviderIdentityResolution => {
+): Extract<ProviderIdentityResolution, { matchedBy: ProviderIdentityMatch }> => {
   if (row === undefined) throw new Error('provider identity resolution did not produce a user')
   if (
     !Number.isSafeInteger(row.userId) ||
@@ -223,6 +235,17 @@ const parseEmail = (row: IdentityRow | undefined): EmailSignInResolution => {
   }
 }
 
+/**
+ * The answer for an assertion that matched no subject and no verified address
+ * and came from a domain this instance has not proved it owns. Returning it —
+ * rather than creating a user — is #268: without the scope, anyone with a
+ * Google account who reaches the sign-in provisions themselves an account
+ * beside the real people.
+ */
+const provisioningNotPermitted: ProviderIdentityResolution = {
+  status: 'provisioning_not_permitted',
+}
+
 const nextUserIdQuery = `SELECT coalesce(max(id), 0) + 1 AS userId FROM users`
 
 const isUserIdCollision = (error: unknown): boolean =>
@@ -253,8 +276,18 @@ export const createContainerIdentityStore = (
           return parseIdentity(row, 'verified_email')
         }
 
+        const permitted = database
+          .prepare(verifiedProvisioningDomainQuery)
+          .get(input.provisioningDomain) as { permitted: number } | undefined
+        if (permitted === undefined) return provisioningNotPermitted
+
         const created = createUser(input, next.userId, timestamp)
-        database.prepare(created.query).get(...created.bindings)
+        const inserted = database.prepare(created.query).get(...created.bindings) as
+          { userId: number } | undefined
+        // The row read above can be gone by the time the INSERT runs its own
+        // guard. Nothing was created, so say so rather than resolving a user
+        // that does not exist.
+        if (inserted === undefined) return provisioningNotPermitted
         const email = createEmail(input, next.userId, timestamp)
         database.prepare(email.query).run(...email.bindings)
         const identity = linkCreatedUser(input, next.userId, timestamp)
@@ -310,6 +343,12 @@ export const createD1IdentityStore = (
       .first<IdentityRow>()
     if (concurrentlyLinked !== null) return parseIdentity(concurrentlyLinked, 'subject')
 
+    const permitted = await database
+      .prepare(verifiedProvisioningDomainQuery)
+      .bind(input.provisioningDomain)
+      .first<{ permitted: number }>()
+    if (permitted === null) return provisioningNotPermitted
+
     for (let attempt = 0; attempt < 4; attempt += 1) {
       const next = await database.prepare(nextUserIdQuery).first<{ userId: number }>()
       if (next === null) throw new Error('identity store could not allocate a user id')
@@ -327,8 +366,11 @@ export const createD1IdentityStore = (
           .prepare(identityQuery)
           .bind(input.provider, input.subject)
           .first<IdentityRow>()
+        // No identity and no insert means the INSERT's own domain guard
+        // refused: the row read before the batch stopped being verified.
+        if (row === null) return provisioningNotPermitted
         const matchedBy: ProviderIdentityMatch = created !== undefined ? 'created' : 'subject'
-        return parseIdentity(row ?? undefined, matchedBy)
+        return parseIdentity(row, matchedBy)
       } catch (error) {
         if (!isUserIdCollision(error) || attempt === 3) throw error
       }

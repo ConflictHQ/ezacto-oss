@@ -345,6 +345,25 @@ describe('OpenID Connect browser authentication', () => {
     )
   })
 
+  it('[security] issues no session when provisioning is not permitted for the domain', async () => {
+    const google = await fakeProvider('https://accounts.example.test')
+    const { app, identities, sessions } = await harness({ google })
+    identities.resolveProvider.mockResolvedValueOnce({
+      status: 'provisioning_not_permitted',
+    } as never)
+    const pending = await start(app, google)
+    const callback = await app.request(
+      `https://ezacto.io/auth/oidc/google/callback?code=test-authorization-code&state=${encodeURIComponent(pending.state)}`,
+      { headers: { cookie: pending.cookie } },
+    )
+    expect(callback.status).toBe(403)
+    expect(await callback.json()).toMatchObject({
+      error: { code: 'provisioning_not_permitted' },
+    })
+    expect(sessions.issue).not.toHaveBeenCalled()
+    expect(callback.headers.get('set-cookie') ?? '').not.toContain('__Host-ezacto_session')
+  })
+
   it('[security] consumes state before rejecting an ID token with an untrusted signature', async () => {
     const google = await fakeProvider('https://accounts.example.test')
     google.rejectSignature()

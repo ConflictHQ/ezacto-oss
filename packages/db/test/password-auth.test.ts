@@ -2,8 +2,10 @@ import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
+  EmailAddressUnavailableError,
   FirstRunSignupUnavailableError,
   InvalidAuthTokenError,
+  UnknownUserError,
   createContainerPasswordAuthService,
   createD1PasswordAuthService,
   type PasswordAuthService,
@@ -332,6 +334,92 @@ for (const [runtime, factory] of factories) {
       await expect(
         harness.service.verifyEmail('malformed-token', '203.0.113.75'),
       ).rejects.toMatchObject({ retryAfterSeconds: 900 })
+    })
+
+    it('[security] adds and verifies a work address without moving the primary', async () => {
+      harness.setNow('2026-08-31T09:00:00.000Z')
+      const delivery = await harness.service.addEmail({
+        userId: 1,
+        email: 'Owner@Work.test',
+        clientKey: '198.51.100.42',
+      })
+      expect(delivery).toMatchObject({
+        kind: 'verify_email',
+        to: 'owner@work.test',
+        expiresAt: '2026-09-01T09:00:00.000Z',
+      })
+      // Pending and non-primary the moment it is added. The personal address is
+      // how time entries match Deel and Wise, so it has to stay primary.
+      expect(
+        await harness.rows<{ address: string; verified_at: string | null; is_primary: number }>(
+          `SELECT address, verified_at, is_primary FROM user_emails
+           WHERE user_id = 1 ORDER BY id`,
+        ),
+      ).toEqual([
+        { address: 'owner@example.test', verified_at: expect.any(String), is_primary: 1 },
+        { address: 'owner@work.test', verified_at: null, is_primary: 0 },
+      ])
+
+      await expect(harness.service.verifyEmail(delivery.token, '198.51.100.42')).resolves.toMatchObject(
+        { userId: 1 },
+      )
+      expect(
+        await harness.rows<{ address: string; verified_at: string | null; is_primary: number }>(
+          `SELECT address, verified_at, is_primary FROM user_emails
+           WHERE user_id = 1 ORDER BY id`,
+        ),
+      ).toEqual([
+        { address: 'owner@example.test', verified_at: expect.any(String), is_primary: 1 },
+        {
+          address: 'owner@work.test',
+          verified_at: '2026-08-31T09:00:00.000Z',
+          is_primary: 0,
+        },
+      ])
+      // Both addresses now sign the same person in.
+      await expect(
+        harness.service.signIn({
+          email: 'owner@work.test',
+          password: replacementPassword,
+          clientKey: '198.51.100.42',
+        }),
+      ).resolves.toMatchObject({ status: 'authenticated', principal: { userId: 1 } })
+    })
+
+    it('[security] refuses an address another account already holds, and an unknown user', async () => {
+      harness.setNow('2026-08-31T10:00:00.000Z')
+      await harness.execute(
+        `INSERT INTO users (
+          id, first_name, last_name, profile, manager_grants, is_owner, created_at, updated_at
+        ) VALUES (2, 'Other', 'Person', 'member', '[]', 0, ?, ?)`,
+        '2026-08-31T10:00:00.000Z',
+        '2026-08-31T10:00:00.000Z',
+      )
+      await harness.execute(
+        `INSERT INTO user_emails (
+          user_id, address, verified_at, is_primary, created_at, updated_at
+        ) VALUES (2, 'other@example.test', ?, 1, ?, ?)`,
+        '2026-08-31T10:00:00.000Z',
+        '2026-08-31T10:00:00.000Z',
+        '2026-08-31T10:00:00.000Z',
+      )
+      await expect(
+        harness.service.addEmail({
+          userId: 1,
+          email: 'other@example.test',
+          clientKey: '198.51.100.43',
+        }),
+      ).rejects.toBeInstanceOf(EmailAddressUnavailableError)
+      await expect(
+        harness.service.addEmail({
+          userId: 404,
+          email: 'ghost@work.test',
+          clientKey: '198.51.100.44',
+        }),
+      ).rejects.toBeInstanceOf(UnknownUserError)
+      expect(
+        await harness.rows(`SELECT id FROM user_emails WHERE lower(address) = 'ghost@work.test'`),
+      ).toEqual([])
     })
   })
 }

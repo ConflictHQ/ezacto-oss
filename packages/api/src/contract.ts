@@ -1015,6 +1015,68 @@ const moduleSettingsOperations: ApiContractOperation[] = [
   },
 ];
 
+const ssoDomainOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/settings/sso-domains",
+    operationId: "listSsoProvisioningDomains",
+    summary: "List SSO provisioning domains and their DNS challenges",
+    tag: "sso-domains",
+    responseStatus: 200,
+    responseSchema: "SsoDomainListEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/settings/sso-domains",
+    operationId: "addSsoProvisioningDomain",
+    summary: "Claim a domain and issue its DNS challenge",
+    tag: "sso-domains",
+    responseStatus: 201,
+    responseSchema: "SsoDomainEnvelope",
+    requestSchema: "SsoDomainInput",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+  {
+    method: "delete",
+    path: "/api/v1/settings/sso-domains/:id",
+    operationId: "removeSsoProvisioningDomain",
+    summary: "Remove a provisioning domain",
+    tag: "sso-domains",
+    responseStatus: 204,
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "post",
+    path: "/api/v1/settings/sso-domains/:id/verify",
+    operationId: "verifySsoProvisioningDomain",
+    summary: "Check the DNS challenge and record the result",
+    tag: "sso-domains",
+    responseStatus: 200,
+    responseSchema: "SsoDomainCheckEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+];
+
+const userEmailOperations: ApiContractOperation[] = [
+  {
+    method: "post",
+    path: "/api/v1/users/:id/emails",
+    operationId: "addUserEmail",
+    summary: "Add a second email address and send its verification",
+    tag: "users",
+    responseStatus: 202,
+    responseSchema: "UserEmailAcceptedEnvelope",
+    requestSchema: "UserEmailInput",
+    requestRequired: true,
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+];
+
 const reportOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -1547,6 +1609,8 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...attachmentContractOperations,
   ...reportOperations,
   ...moduleSettingsOperations,
+  ...ssoDomainOperations,
+  ...userEmailOperations,
   ...teamOperations,
   ...clientTreeOperations,
 ];
@@ -4850,6 +4914,93 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: {
       data: { type: "array", items: reference("ModuleState") },
       links: reference("Links"),
+    },
+    additionalProperties: false,
+  },
+  SsoDomain: {
+    type: "object",
+    required: [
+      "id",
+      "domain",
+      "verified",
+      "verified_at",
+      "last_checked_at",
+      "record_name",
+      "record_type",
+      "record_value",
+      "created_at",
+      "updated_at",
+    ],
+    properties: {
+      id: integerSchema,
+      domain: stringSchema,
+      verified: booleanSchema,
+      verified_at: nullable(stringSchema),
+      last_checked_at: nullable(stringSchema),
+      record_name: stringSchema,
+      record_type: { const: "TXT" },
+      record_value: stringSchema,
+      created_at: stringSchema,
+      updated_at: stringSchema,
+    },
+    additionalProperties: false,
+  },
+  SsoDomainCheck: {
+    allOf: [
+      reference("SsoDomain"),
+      {
+        type: "object",
+        required: ["dnssec_validated"],
+        properties: { dnssec_validated: booleanSchema },
+      },
+    ],
+  },
+  SsoDomainListEnvelope: {
+    type: "object",
+    required: ["data", "links"],
+    properties: {
+      data: { type: "array", items: reference("SsoDomain") },
+      links: reference("Links"),
+    },
+    additionalProperties: false,
+  },
+  SsoDomainEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("SsoDomain") },
+    additionalProperties: false,
+  },
+  SsoDomainCheckEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("SsoDomainCheck") },
+    additionalProperties: false,
+  },
+  SsoDomainInput: {
+    type: "object",
+    required: ["domain"],
+    properties: { domain: stringSchema },
+    additionalProperties: false,
+  },
+  UserEmailInput: {
+    type: "object",
+    required: ["email"],
+    properties: { email: stringSchema },
+    additionalProperties: false,
+  },
+  UserEmailAcceptedEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["status", "email"],
+        properties: {
+          status: { const: "verification_sent" },
+          email: stringSchema,
+        },
+        additionalProperties: false,
+      },
     },
     additionalProperties: false,
   },

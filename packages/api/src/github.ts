@@ -497,6 +497,16 @@ export const installGitHubRoutes = <Bindings extends object>(
         }
         throw error
       }
+      // GitHub asserts no hosted domain, so provisioning is scoped by the
+      // domain of the verified address alone — and a personal address still
+      // links to whoever already verified it, it just cannot create anyone.
+      if (identity.status === 'provisioning_not_permitted') {
+        throw githubError(
+          403,
+          'provisioning_not_permitted',
+          'This GitHub account is not on a domain this instance provisions from.',
+        )
+      }
       if (identity.status === 'disabled') {
         throw githubError(403, 'account_disabled', 'This ezacto user is disabled.')
       }

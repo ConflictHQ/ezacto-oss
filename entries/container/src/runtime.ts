@@ -13,6 +13,7 @@ import {
   createContainerOutboxService,
   createContainerPasswordAuthService,
   createContainerSessionStore,
+  createContainerSsoProvisioningDomainStore,
   createGeneralResourceRepository,
   createInvoiceGenerationService,
   createMoneyResourceRepository,
@@ -23,6 +24,8 @@ import {
   createTeamRepository,
   DrizzleTrackedResourceRepository,
   enrollInstanceOwnerPasswordContainer,
+  listClientAncestors,
+  listClientDescendants,
   migrateContainer,
 } from '@ezacto/db'
 import {
@@ -269,6 +272,9 @@ export const createContainerRuntime = async (
     if (verify !== undefined) await verify()
     queue = new ContainerEmailQueue(emailLog, smtp)
     const queuedMailer = createQueuedMailer(emailLog, queue)
+    // One service behind two ports: the password routes take it whole, the
+    // add-an-address route takes only `addEmail`.
+    const passwordAuth = createContainerPasswordAuthService(database)
     const moneyResources = createMoneyResourceRepository(drizzle)
     const organizationMailer = createSenderBoundQueuedMailer(
       emailConfiguration,
@@ -298,6 +304,10 @@ export const createContainerRuntime = async (
         enrollInstanceOwnerPasswordContainer(database, input),
       tokens: createApiTokenStore(drizzle),
       generalResources: createGeneralResourceRepository(drizzle),
+      clientTree: {
+        ancestors: (clientId) => listClientAncestors(drizzle, clientId),
+        descendants: (clientId) => listClientDescendants(drizzle, clientId),
+      },
       team: createTeamRepository(drizzle),
       trackedResources: new DrizzleTrackedResourceRepository(
         drizzle,
@@ -325,10 +335,13 @@ export const createContainerRuntime = async (
       invoiceGeneration: createInvoiceGenerationService(drizzle),
       reports: createReportRepository(drizzle),
       moduleSettings: createModuleSettingsRepository(drizzle),
+      ssoProvisioningDomains:
+        createContainerSsoProvisioningDomainStore(database),
       timesheetApprovals: createTimesheetApprovalRepository(drizzle),
       timesheetLockPolicy,
       cursorSigningKey: config.cursorSigningKey,
-      passwordAuth: createContainerPasswordAuthService(database),
+      passwordAuth,
+      userEmails: passwordAuth,
       sessions,
       emailLog,
       emailConfiguration,

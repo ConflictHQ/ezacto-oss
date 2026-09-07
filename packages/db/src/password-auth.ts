@@ -48,8 +48,20 @@ export type PasswordSignInResult =
   | { status: 'invalid_credentials' }
   | { status: 'verification_required' }
 
+export interface AddUserEmailInput {
+  userId: number
+  email: string
+  clientKey: string
+}
+
 export interface PasswordAuthService {
   signup(input: FirstRunSignupInput): Promise<AuthDelivery>
+  /**
+   * Add a second address to an existing user and issue the verification token
+   * for it. The address lands pending and non-primary; nothing the user already
+   * has is touched.
+   */
+  addEmail(input: AddUserEmailInput): Promise<AuthDelivery>
   verifyEmail(token: string, clientKey: string): Promise<ResolvedUserIdentity>
   signIn(input: PasswordSignInInput): Promise<PasswordSignInResult>
   requestPasswordReset(email: string, clientKey: string): Promise<AuthDelivery | null>
@@ -74,6 +86,20 @@ export class FirstRunSignupUnavailableError extends Error {
   constructor() {
     super('first-run signup is unavailable after identity state exists')
     this.name = 'FirstRunSignupUnavailableError'
+  }
+}
+
+export class UnknownUserError extends Error {
+  constructor() {
+    super('the user does not exist or is not active')
+    this.name = 'UnknownUserError'
+  }
+}
+
+export class EmailAddressUnavailableError extends Error {
+  constructor() {
+    super('the email address is already on an account')
+    this.name = 'EmailAddressUnavailableError'
   }
 }
 
@@ -486,6 +512,87 @@ const createPasswordAuthService = (
     return { kind: 'verify_email', to: email, token: material.token, expiresAt }
   },
 
+  addEmail: async (input) => {
+    const timestamp = now()
+    assertCanonicalTimestamp(timestamp)
+    await rateLimit(
+      database,
+      'verify_email',
+      input.clientKey,
+      emailRateLimitSubject(input.email),
+      timestamp,
+    )
+    const email = normalizeIdentityEmail(input.email)
+    if (!Number.isSafeInteger(input.userId) || input.userId < 1) throw new UnknownUserError()
+    const material = await issueToken('verify_email')
+    const expiresAt = futureTimestamp(timestamp, verifyTokenTtlMs)
+    let rows: Record<string, unknown>[][]
+    try {
+      rows = await database.atomic([
+        {
+          // Pending and non-primary. #269: adding the work address must leave
+          // the personal one exactly as it was, because that is the address
+          // payroll reconciliation matches on. The NOT EXISTS is the friendly
+          // half of the verified-address unique index — it also refuses an
+          // address a second person is still in the middle of verifying.
+          query: `INSERT INTO user_emails (
+              user_id, address, verified_at, is_primary, invalidated_at, created_at, updated_at
+            )
+            SELECT user.id, ?, NULL, 0, NULL, ?, ?
+            FROM users user
+            WHERE user.id = ? AND user.is_active = 1
+              AND NOT EXISTS (
+                SELECT 1 FROM user_emails existing
+                WHERE lower(existing.address) = lower(?) AND existing.invalidated_at IS NULL
+              )
+            RETURNING id`,
+          bindings: [email, timestamp, timestamp, input.userId, email],
+        },
+        {
+          // The batch is one transaction in both runtimes, so this subquery
+          // sees the row above; naming it by address rather than by id is the
+          // only way to carry the identifier across a D1 batch.
+          query: `INSERT INTO auth_tokens (
+              selector, secret_hash, kind, user_email_id, expires_at,
+              used_at, used_nonce, created_at, updated_at
+            )
+            SELECT ?, ?, 'verify_email', email.id, ?, NULL, NULL, ?, ?
+            FROM user_emails email
+            WHERE email.user_id = ? AND lower(email.address) = lower(?)
+              AND email.verified_at IS NULL AND email.invalidated_at IS NULL
+            RETURNING id`,
+          bindings: [
+            material.selector,
+            material.secretHash,
+            expiresAt,
+            timestamp,
+            timestamp,
+            input.userId,
+            email,
+          ],
+        },
+      ])
+    } catch (error) {
+      if (error instanceof Error && /unique constraint failed/i.test(error.message)) {
+        throw new EmailAddressUnavailableError()
+      }
+      throw error
+    }
+    // A token was issued, so either the address was just added or the caller
+    // asked again for one this same user had already added and not yet
+    // verified. Both are the same answer to whoever is waiting for the mail.
+    if (rows[1]?.length === 1) {
+      return { kind: 'verify_email', to: email, token: material.token, expiresAt }
+    }
+    if (rows[0]?.length === 1) throw new Error('email verification token was not persisted')
+    const user = await database.first<{ id: number }>(
+      `SELECT id FROM users WHERE id = ? AND is_active = 1`,
+      [input.userId],
+    )
+    if (user === null) throw new UnknownUserError()
+    throw new EmailAddressUnavailableError()
+  },
+
   verifyEmail: async (token, presentedClientKey) => {
     const timestamp = now()
     assertCanonicalTimestamp(timestamp)
@@ -501,7 +608,18 @@ const createPasswordAuthService = (
         bindings: [timestamp, nonce, timestamp, prepared.selector, prepared.secretHash, timestamp],
       },
       {
-        query: `UPDATE user_emails SET verified_at = ?, is_primary = 1, updated_at = ?
+        // The address only becomes primary when the user has none. A second
+        // address must not displace the first: the personal address is what
+        // payroll reconciliation matches entries by, and promoting a newly
+        // verified work address would break that match. It would also collide
+        // with the one-primary-per-user index and fail the whole verification.
+        query: `UPDATE user_emails SET verified_at = ?, updated_at = ?,
+            is_primary = CASE WHEN EXISTS (
+              SELECT 1 FROM user_emails existing
+              WHERE existing.user_id = user_emails.user_id
+                AND existing.is_primary = 1 AND existing.invalidated_at IS NULL
+                AND existing.id <> user_emails.id
+            ) THEN 0 ELSE 1 END
           WHERE id = (
             SELECT user_email_id FROM auth_tokens
             WHERE selector = ? AND secret_hash = ? AND used_nonce = ?

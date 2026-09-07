@@ -107,10 +107,34 @@ for (const [runtime, factory] of factories) {
       )
     })
 
+    // Provisioning is scoped to domains the instance has proved it owns, so
+    // every case that expects a user to be created needs one. `example.test` is
+    // this instance's work domain; `unproven.test` is claimed but never
+    // verified, and stands for the settings row an operator filled in and has
+    // not published the TXT record for.
     beforeEach(async () => {
       await harness.run(`DELETE FROM user_identities`)
       await harness.run(`DELETE FROM user_emails WHERE user_id <> 1`)
       await harness.run(`DELETE FROM users WHERE id <> 1`)
+      await harness.run(`DELETE FROM sso_provisioning_domains`)
+      await harness.run(
+        `INSERT INTO sso_provisioning_domains (
+          id, domain, challenge_token, verified_at, last_checked_at, created_at, updated_at
+        ) VALUES (1, 'example.test', ?, ?, ?, ?, ?)`,
+        'A'.repeat(43),
+        timestamp,
+        timestamp,
+        timestamp,
+        timestamp,
+      )
+      await harness.run(
+        `INSERT INTO sso_provisioning_domains (
+          id, domain, challenge_token, verified_at, last_checked_at, created_at, updated_at
+        ) VALUES (2, 'unproven.test', ?, NULL, NULL, ?, ?)`,
+        'B'.repeat(43),
+        timestamp,
+        timestamp,
+      )
     })
 
     afterAll(async () => harness.close())
@@ -331,6 +355,72 @@ for (const [runtime, factory] of factories) {
       await expect(harness.store.resolveEmail('unknown@example.test')).resolves.toEqual({
         status: 'verification_required',
       })
+    })
+
+    const refusalCases = [
+      {
+        name: 'a domain that was claimed in settings but never proved',
+        assertion: () => assertion({ subject: 'claimant', email: 'new@unproven.test' }),
+      },
+      {
+        name: 'a domain nobody configured at all',
+        assertion: () => assertion({ subject: 'stranger', email: 'stranger@gmail.test' }),
+      },
+      {
+        name: 'a proven work address overridden by an unproven hosted domain',
+        assertion: () =>
+          assertion({
+            subject: 'wrong-tenant',
+            email: 'someone@example.test',
+            hostedDomain: 'unproven.test',
+          }),
+      },
+    ] as const
+
+    it.each(refusalCases)(
+      '[security] refuses to provision from $name',
+      async ({ assertion: build }) => {
+        const input = build()
+        await expect(harness.store.resolveProvider(input)).resolves.toEqual({
+          status: 'provisioning_not_permitted',
+        })
+        expect(await harness.rows(`SELECT id FROM users WHERE id <> 1`)).toEqual([])
+        expect(await harness.rows(`SELECT id FROM user_identities`)).toEqual([])
+        expect(await harness.rows(`SELECT id FROM user_emails WHERE user_id <> 1`)).toEqual([])
+      },
+    )
+
+    it('[security] stops provisioning the moment a domain loses its verification', async () => {
+      await harness.run(
+        `UPDATE sso_provisioning_domains SET verified_at = NULL WHERE domain = 'example.test'`,
+      )
+      await expect(
+        harness.store.resolveProvider(assertion({ subject: 'lapsed', email: 'new@example.test' })),
+      ).resolves.toEqual({ status: 'provisioning_not_permitted' })
+      expect(await harness.rows(`SELECT id FROM users WHERE id <> 1`)).toEqual([])
+    })
+
+    it('[security] links a personal address at an unscoped domain without provisioning one', async () => {
+      await insertUser(2)
+      await insertEmail(2, 2, 'person@gmail.test', true, true)
+      await expect(
+        harness.store.resolveProvider(
+          assertion({ subject: 'personal-subject', email: 'person@gmail.test' }),
+        ),
+      ).resolves.toMatchObject({ userId: 2, matchedBy: 'verified_email' })
+      expect(await harness.rows(`SELECT id FROM users WHERE id <> 1`)).toEqual([{ id: 2 }])
+    })
+
+    it('[unit] provisions on the hosted domain the provider asserts, not the address domain', async () => {
+      await expect(
+        harness.store.resolveProvider(
+          assertion({
+            subject: 'alias-subject',
+            email: 'person@alias.test',
+            hostedDomain: 'example.test',
+          }),
+        ),
+      ).resolves.toMatchObject({ userId: 2, matchedBy: 'created' })
     })
 
     it('[security] does not expose a disabled user through email sign-in', async () => {

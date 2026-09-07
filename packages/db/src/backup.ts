@@ -57,6 +57,7 @@ const BACKUP_TABLES = [
   'email_log',
   'event_outbox',
   'backup_runs',
+  'sso_provisioning_domains',
 ] as const
 
 export interface BackupObjectStore {

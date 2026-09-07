@@ -27,6 +27,11 @@ export {
   type CreateApiTokenStoreOptions,
 } from './api-tokens.js'
 export { createGeneralResourceRepository } from './general-resources.js'
+export {
+  listClientAncestors,
+  listClientDescendants,
+  type ClientHierarchyNode,
+} from './operations.js'
 export { createTeamRepository } from './team.js'
 export {
   createTimesheetApprovalRepository,
@@ -129,6 +134,14 @@ export {
   type SessionStore,
   type SessionStoreOptions,
 } from './sessions.js'
+export {
+  createD1SsoProvisioningDomainStore,
+  SsoProvisioningDomainError,
+  type SsoProvisioningDomainErrorCode,
+  type SsoProvisioningDomainRecord,
+  type SsoProvisioningDomainStore,
+  type SsoProvisioningDomainStoreOptions,
+} from './sso-provisioning-domains.js'
 export {
   bootstrapInstanceD1,
   enrollInstanceOwnerPasswordD1,

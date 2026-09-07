@@ -549,6 +549,10 @@ export const installOidcRoutes = <Bindings extends object>(
       const { email, emailVerified } = resolveEmailClaims(claims, userInfo)
       const firstName = optionalText(userInfo.given_name ?? claims.given_name)
       const lastName = optionalText(userInfo.family_name ?? claims.family_name)
+      // Google's `hd` says which Workspace domain administers the account.
+      // It is worth more than the address domain, which is only whatever
+      // follows the local part, so it is preferred where the provider sends it.
+      const hostedDomain = optionalText(claims.hd ?? userInfo.hd)
 
       let identity: ProviderIdentityResolution
       try {
@@ -557,6 +561,7 @@ export const installOidcRoutes = <Bindings extends object>(
           subject: claims.sub,
           email,
           emailVerified,
+          ...(hostedDomain === undefined ? {} : { hostedDomain }),
           ...(firstName === undefined ? {} : { firstName }),
           ...(lastName === undefined ? {} : { lastName }),
         })
@@ -569,6 +574,17 @@ export const installOidcRoutes = <Bindings extends object>(
           )
         }
         throw error
+      }
+      // #268: an assertion that matched nobody and came from a domain this
+      // instance has not proved it owns gets no account. Without this, anyone
+      // with a Google account who reaches the sign-in provisions themselves one
+      // beside the real people.
+      if (identity.status === 'provisioning_not_permitted') {
+        throw oidcError(
+          403,
+          'provisioning_not_permitted',
+          'This identity provider account is not on a domain this instance provisions from.',
+        )
       }
       if (identity.status === 'disabled') {
         throw oidcError(403, 'account_disabled', 'This ezacto user is disabled.')

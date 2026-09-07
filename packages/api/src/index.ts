@@ -227,4 +227,17 @@ export {
   type SessionRevocationReason,
   type SessionStorePort,
 } from './sessions.js'
+export {
+  installSsoDomainRoutes,
+  SSO_CHALLENGE_LABEL,
+  SSO_CHALLENGE_PREFIX,
+  type SsoDomainRouteOptions,
+  type SsoProvisioningDomain,
+  type SsoProvisioningDomainService,
+} from './sso-domains.js'
 export { installTeamRoutes, type TeamRouteOptions } from './team.js'
+export {
+  installUserEmailRoutes,
+  type UserEmailRouteOptions,
+  type UserEmailService,
+} from './user-emails.js'

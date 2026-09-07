@@ -1814,6 +1814,51 @@ export type ModuleListEnvelope = {
   "links": Links;
 };
 
+export type SsoDomain = {
+  "id": number;
+  "domain": string;
+  "verified": boolean;
+  "verified_at": string | null;
+  "last_checked_at": string | null;
+  "record_name": string;
+  "record_type": "TXT";
+  "record_value": string;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type SsoDomainCheck = (SsoDomain) & ({
+  "dnssec_validated": boolean;
+});
+
+export type SsoDomainListEnvelope = {
+  "data": Array<SsoDomain>;
+  "links": Links;
+};
+
+export type SsoDomainEnvelope = {
+  "data": SsoDomain;
+};
+
+export type SsoDomainCheckEnvelope = {
+  "data": SsoDomainCheck;
+};
+
+export type SsoDomainInput = {
+  "domain": string;
+};
+
+export type UserEmailInput = {
+  "email": string;
+};
+
+export type UserEmailAcceptedEnvelope = {
+  "data": {
+  "status": "verification_sent";
+  "email": string;
+};
+};
+
 export type ModulePatch = {
   "enabled": boolean;
 };
@@ -3520,6 +3565,53 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<ModuleListEnvelope>("PATCH", "/api/v1/admin/modules/:module".replace(":module", encodeURIComponent(String(args["module"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listSsoProvisioningDomains(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<SsoDomainListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<SsoDomainListEnvelope>("GET", "/api/v1/settings/sso-domains", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async addSsoProvisioningDomain(args: { body: SsoDomainInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<SsoDomainEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<SsoDomainEnvelope>("POST", "/api/v1/settings/sso-domains", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async removeSsoProvisioningDomain(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/settings/sso-domains/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async verifySsoProvisioningDomain(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<SsoDomainCheckEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<SsoDomainCheckEnvelope>("POST", "/api/v1/settings/sso-domains/:id/verify".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async addUserEmail(args: { "id": number; body: UserEmailInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<UserEmailAcceptedEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<UserEmailAcceptedEnvelope>("POST", "/api/v1/users/:id/emails".replace(":id", encodeURIComponent(String(args["id"]))), {
       body: args.body,
       signal: args.signal,
       headers,

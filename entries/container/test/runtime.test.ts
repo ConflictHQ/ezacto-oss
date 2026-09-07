@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
 import { migrationIds } from '@ezacto/db'
+import { apiContractOperations } from '@ezacto/api'
 import type { EmailMessage, HttpEmailProvider } from '@ezacto/mailer'
 import { createApp } from '../../worker/src/app.js'
 import type { ContainerConfig } from '../src/config.js'
@@ -411,6 +412,31 @@ describe('container runtime composition', () => {
     })
     await second.close()
   }, 30_000)
+
+  // The Worker entry has the same guard over its own composition. Both are
+  // needed: the app is shared but the services are not, and a service this
+  // runtime leaves out is a documented operation this deployment 404s.
+  it('[contract] answers every documented operation the container composes', async () => {
+    const root = await temporary()
+    const runtime = await createContainerRuntime(config(root), {
+      emailProvider: provider([]),
+    })
+    try {
+      const mounted = new Set(
+        createApp(runtime.services)
+          .routes.filter((route) => route.method !== 'ALL')
+          .map((route) => `${route.method.toLowerCase()} ${route.path}`),
+      )
+      const unreachable = apiContractOperations
+        .map((operation) => `${operation.method} ${operation.path}`)
+        .filter((operation) => !mounted.has(operation))
+        .sort()
+
+      expect(unreachable).toEqual([])
+    } finally {
+      await runtime.close()
+    }
+  })
 
   it('[security] refuses a db.sqlite symlink before opening it', async () => {
     const root = await temporary()

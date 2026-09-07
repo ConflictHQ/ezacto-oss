@@ -6,6 +6,7 @@ import {
   assertValidOidcProviderConfig,
   generateOpenApiDocument,
   installAttachmentRoutes,
+  installClientTreeRoutes,
   installEmailHealthRoutes,
   installEmailLogRoutes,
   installEmailConfigurationRoutes,
@@ -19,11 +20,13 @@ import {
   installPasswordAuthRoutes,
   installReportRoutes,
   installSessionRoutes,
+  installSsoDomainRoutes,
   installTrackedResourceRoutes,
   installTimesheetApprovalRoutes,
   installBackupStatusRoutes,
   installTimesheetLockPolicyRoutes,
   installTeamRoutes,
+  installUserEmailRoutes,
   readJsonBody,
   SESSION_COOKIE_NAME,
   validationError,
@@ -31,6 +34,7 @@ import {
   type ApiSessionResolver,
   type AttachmentRouteOptions,
   type AuthMailer,
+  type ClientTreeReader,
   type CloudflareAccessVerifierConfig,
   type ApiSessionService,
   type GeneralResourceRouteOptions,
@@ -45,6 +49,8 @@ import {
   type PasswordAuthService,
   type BackupStatusReader,
   type ReportReader,
+  type SsoProvisioningDomainService,
+  type UserEmailService,
   type TrackedResourceRepository,
   type TimesheetApprovalService,
   type TimesheetLockPolicyService,
@@ -126,10 +132,19 @@ export interface RuntimeServices {
   ): Promise<InstanceOwnerPasswordResult>
   tokens: ApiTokenService
   generalResources: GeneralResourceRouteOptions['repository']
+  /** Rooted reads of the client closure, behind the documented tree routes. */
+  clientTree: ClientTreeReader
   team: TeamRouteOptions['repository']
   trackedResources: TrackedResourceRepository
   isExpensesModuleEnabled(): Promise<boolean>
   moduleSettings: ModuleSettingsService
+  /** The domains SSO may provision a user for, and their DNS challenges (#270). */
+  ssoProvisioningDomains: SsoProvisioningDomainService
+  /**
+   * Adding a second address to an existing user (#269). The password service
+   * implements it; the port stays narrow so the route asks for the one thing.
+   */
+  userEmails: UserEmailService
   isTeamModuleEnabled(): Promise<boolean>
   timesheetApprovals: TimesheetApprovalService
   timesheetLockPolicy: TimesheetLockPolicyService
@@ -207,6 +222,7 @@ export const createApp = (services?: RuntimeServices) =>
               isTeamModuleEnabled: services.isTeamModuleEnabled,
               teamRepository: services.team,
             })
+            installClientTreeRoutes(api, services.clientTree)
             installTeamRoutes(api, {
               repository: services.team,
               cursorSigningKey: services.cursorSigningKey,
@@ -250,6 +266,24 @@ export const createApp = (services?: RuntimeServices) =>
             installModuleSettingsRoutes(api, {
               service: services.moduleSettings,
               clock: () => systemClock.now().instant,
+            })
+            // The provisioning gate is enforced inside the identity store, so
+            // this is the only way an instance gets from "provisions nothing"
+            // to "provisions from the work domain". Unmounted, migration 0039
+            // would leave every deployment closed with no way back open.
+            installSsoDomainRoutes(api, {
+              service: services.ssoProvisioningDomains,
+              clock: () => systemClock.now().instant,
+            })
+            // The mailer is optional the same way the password routes' is: a
+            // deployment without email answers 503 rather than not answering.
+            installUserEmailRoutes(api, {
+              service: services.userEmails,
+              ...(services.deploymentAuthMailer === undefined
+                ? {}
+                : { deploymentMailer: services.deploymentAuthMailer }),
+              clientKey: (request) =>
+                request.headers.get('cf-connecting-ip') ?? 'unknown-client',
             })
           },
         }),
