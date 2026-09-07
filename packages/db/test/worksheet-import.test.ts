@@ -13,6 +13,7 @@ import {
   migrateContainerThrough,
   migrateD1,
   migrateD1Through,
+  migrationIds,
 } from '../src/migrate.js'
 
 interface TestDatabase {
@@ -766,7 +767,7 @@ describe('worksheet completion migration boundary', () => {
         await database.rows<{ id: string }>(
           `SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`,
         ),
-      ).toEqual([{ id: '0037_recurring_generate_command' }])
+      ).toEqual([{ id: migrationIds.at(-1) }])
     } finally {
       await miniflare.dispose()
     }

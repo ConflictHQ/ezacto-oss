@@ -48,8 +48,7 @@
 }
 
 .team-workspace {
-  width: min(1100px, 100%);
-  margin-inline: auto;
+  width: 100%;
 }
 .team-period,
 .team-list-toolbar,
@@ -425,8 +424,7 @@
 }
 
 .reports-workspace {
-  width: min(1180px, 100%);
-  margin-inline: auto;
+  width: 100%;
 }
 .reports-intro {
   max-width: 64ch;
@@ -643,8 +641,7 @@
   margin-inline: auto;
 }
 .invoice-workspace {
-  width: min(1040px, 100%);
-  margin-inline: auto;
+  width: 100%;
 }
 .invoice-create-link {
   display: inline-flex;
@@ -1150,8 +1147,7 @@
 }
 
 .client-workspace {
-  width: min(1040px, 100%);
-  margin-inline: auto;
+  width: 100%;
 }
 .client-intro {
   max-width: 64ch;
@@ -1281,8 +1277,7 @@
 }
 
 .project-workspace {
-  width: min(1120px, 100%);
-  margin-inline: auto;
+  width: 100%;
 }
 .project-intro,
 .project-page-status,
@@ -1485,8 +1480,7 @@
   font-weight: 700;
 }
 .expense-workspace {
-  width: min(1120px, 100%);
-  margin-inline: auto;
+  width: 100%;
 }
 .expense-intro,
 .expense-page-status,
@@ -1681,8 +1675,7 @@
 }
 
 .timesheet-approvals {
-  width: min(960px, 100%);
-  margin-inline: auto;
+  width: 100%;
 }
 .approval-intro {
   max-width: 64ch;
@@ -3147,8 +3140,7 @@ dialog textarea {
     monospace;
 }
 .task-admin-workspace {
-  width: min(960px, 100%);
-  margin-inline: auto;
+  width: 100%;
 }
 .task-admin-intro,
 .task-admin-status {
@@ -3165,8 +3157,7 @@ dialog textarea {
   gap: 8px;
 }
 .expense-category-workspace {
-  width: min(960px, 100%);
-  margin-inline: auto;
+  width: 100%;
 }
 .expense-category-intro,
 .expense-category-status {

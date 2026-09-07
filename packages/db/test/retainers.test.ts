@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import * as publicDatabase from '../src/index.js'
 import { ensureHarvestRetainerStub } from '../src/internal/retainer-import.js'
-import { migrateContainer, migrateD1 } from '../src/migrate.js'
+import { migrateContainer, migrateD1, migrationIds } from '../src/migrate.js'
 import { orgPeopleMigration } from '../src/migrations/0000_org_people.js'
 import { clientsMigration } from '../src/migrations/0001_clients.js'
 import { projectsTimeMigration } from '../src/migrations/0002_projects_time.js'
@@ -222,7 +222,7 @@ for (const [runtime, factory] of factories) {
         await database.rows<{ id: string }>(
           `SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`,
         ),
-      ).toEqual([{ id: '0037_recurring_generate_command' }])
+      ).toEqual([{ id: migrationIds.at(-1) }])
       await database.close()
       database = await factory(false)
       await installThrough0005(database)

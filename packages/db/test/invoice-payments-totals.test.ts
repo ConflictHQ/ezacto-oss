@@ -14,7 +14,7 @@ import {
   executeInvoiceEdit,
   recordInvoicePayment,
 } from '../src/invoice-state.js'
-import { migrateContainer, migrateD1 } from '../src/migrate.js'
+import { migrateContainer, migrateD1, migrationIds } from '../src/migrate.js'
 import { orgPeopleMigration } from '../src/migrations/0000_org_people.js'
 import { clientsMigration } from '../src/migrations/0001_clients.js'
 import { projectsTimeMigration } from '../src/migrations/0002_projects_time.js'
@@ -429,7 +429,7 @@ for (const [runtime, factory] of factories) {
       const ledger = await db.rows<{ id: string; applied_at: string }>(
         `SELECT id, applied_at FROM _ezacto_migrations ORDER BY id`,
       )
-      expect(ledger.at(-1)?.id).toBe('0037_recurring_generate_command')
+      expect(ledger.at(-1)?.id).toBe(migrationIds.at(-1))
       await db.migrateAgain()
       expect(
         await db.rows<{ id: string; applied_at: string }>(

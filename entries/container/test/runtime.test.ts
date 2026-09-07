@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
+import { migrationIds } from '@ezacto/db'
 import type { EmailMessage, HttpEmailProvider } from '@ezacto/mailer'
 import { createApp } from '../../worker/src/app.js'
 import type { ContainerConfig } from '../src/config.js'
@@ -93,7 +94,7 @@ describe('container runtime composition', () => {
       first.database
         .prepare('SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1')
         .get(),
-    ).toEqual({ id: '0037_recurring_generate_command' })
+    ).toEqual({ id: migrationIds.at(-1) })
 
     await first.drainOutbox()
     const eventAt = '2026-01-02T03:04:05.000Z'

@@ -718,6 +718,7 @@ const authorizeMutationFields = (
   kind: GeneralResourceKind,
   input: Readonly<GeneralMutationInput>,
   principal: Readonly<UserPrincipal>,
+  create: boolean,
 ): void => {
   const fields = new Set(Object.keys(input));
   if (
@@ -725,6 +726,18 @@ const authorizeMutationFields = (
     ["profile", "managerGrants", "samlExempt"].some((field) =>
       fields.has(field),
     ) &&
+    principal.profile !== "administrator"
+  ) {
+    return profileForbidden();
+  }
+  // Replacing an address moves where an existing person signs in, and the
+  // repository stores the replacement already verified, so anyone who can write
+  // a user could sign in as them. Until an address can be added unverified and
+  // proven out of band, only an administrator may repoint one.
+  if (
+    kind === "users" &&
+    !create &&
+    fields.has("email") &&
     principal.profile !== "administrator"
   ) {
     return profileForbidden();
@@ -881,7 +894,7 @@ const installResource = <Bindings extends object>(
     const principal = requireResourceWrite(context, kind);
     await requireResourceModule(kind, options);
     const input = await parseMutation(context, definition, true);
-    authorizeMutationFields(kind, input, principal);
+    authorizeMutationFields(kind, input, principal, true);
     try {
       const record = await options.repository.create(
         kind,
@@ -917,7 +930,7 @@ const installResource = <Bindings extends object>(
     const principal = requireResourceWrite(context, kind);
     await requireResourceModule(kind, options);
     const input = await parseMutation(context, definition, false);
-    authorizeMutationFields(kind, input, principal);
+    authorizeMutationFields(kind, input, principal, false);
     try {
       const record = await options.repository.update(
         kind,

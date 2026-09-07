@@ -10,7 +10,7 @@ import {
   type QueuedEmailJob,
 } from '@ezacto/mailer'
 import { createContainerEmailLogStore, createD1EmailLogStore } from '../src/email-log.js'
-import { migrateContainer, migrateD1 } from '../src/migrate.js'
+import { migrateContainer, migrateD1, migrationIds } from '../src/migrate.js'
 
 interface Harness {
   store: EmailLogStore
@@ -104,32 +104,7 @@ for (const [runtime, factory] of factories) {
       const ledger = await current.rows<{ id: string }>(
         `SELECT id FROM _ezacto_migrations WHERE id >= '0014' ORDER BY id`,
       )
-      expect(ledger).toEqual([
-        { id: '0014_sessions' },
-        { id: '0015_oidc_transactions' },
-        { id: '0016_email_log' },
-        { id: '0017_email_delivery_details' },
-        { id: '0018_estimates' },
-        { id: '0019_attachments' },
-        { id: '0020_argon2_passwords' },
-        { id: '0021_estimate_commands' },
-        { id: '0022_resource_create_commands' },
-        { id: '0023_migration_import_authority' },
-        { id: '0024_migration_worksheet_completions' },
-        { id: '0025_time_entry_note_requirements' },
-        { id: '0026_invoice_generation' },
-        { id: '0027_timesheet_approvals' },
-        { id: '0028_timesheet_lock_policy' },
-        { id: '0029_outbox_delivery' },
-        { id: '0030_email_templates' },
-        { id: '0031_team_people' },
-        { id: '0032_invoice_email_delivery' },
-        { id: '0033_contact_portal' },
-        { id: '0034_scheduled_reminders' },
-        { id: '0035_backup_runs' },
-        { id: '0036_client_budgets' },
-        { id: '0037_recurring_generate_command' },
-      ])
+      expect(ledger).toEqual(migrationIds.filter((id) => id >= '0014').map((id) => ({ id })))
     })
 
     it('[unit] backfills 0015 when a database already registered sparse 0016', async () => {
@@ -144,31 +119,7 @@ for (const [runtime, factory] of factories) {
         await current.rows<{ id: string }>(
           `SELECT id FROM _ezacto_migrations WHERE id >= '0015' ORDER BY id`,
         ),
-      ).toEqual([
-        { id: '0015_oidc_transactions' },
-        { id: '0016_email_log' },
-        { id: '0017_email_delivery_details' },
-        { id: '0018_estimates' },
-        { id: '0019_attachments' },
-        { id: '0020_argon2_passwords' },
-        { id: '0021_estimate_commands' },
-        { id: '0022_resource_create_commands' },
-        { id: '0023_migration_import_authority' },
-        { id: '0024_migration_worksheet_completions' },
-        { id: '0025_time_entry_note_requirements' },
-        { id: '0026_invoice_generation' },
-        { id: '0027_timesheet_approvals' },
-        { id: '0028_timesheet_lock_policy' },
-        { id: '0029_outbox_delivery' },
-        { id: '0030_email_templates' },
-        { id: '0031_team_people' },
-        { id: '0032_invoice_email_delivery' },
-        { id: '0033_contact_portal' },
-        { id: '0034_scheduled_reminders' },
-        { id: '0035_backup_runs' },
-        { id: '0036_client_budgets' },
-        { id: '0037_recurring_generate_command' },
-      ])
+      ).toEqual(migrationIds.filter((id) => id >= '0015').map((id) => ({ id })))
       expect(
         await current.rows<{ name: string }>(
           `SELECT name FROM sqlite_master WHERE type = 'table'

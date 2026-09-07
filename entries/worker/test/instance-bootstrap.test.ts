@@ -1,3 +1,4 @@
+import { migrationIds } from "@ezacto/db/d1";
 import { build } from "esbuild";
 import { Miniflare } from "miniflare";
 import { afterEach, describe, expect, it } from "vitest";
@@ -326,7 +327,7 @@ describe("Worker operator bootstrap", () => {
       await database
         .prepare(`SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`)
         .first<{ id: string }>(),
-    ).toEqual({ id: "0037_recurring_generate_command" });
+    ).toEqual({ id: migrationIds.at(-1) });
   }, 40_000);
 
   it("[security] remains unavailable when the temporary Worker secret is absent", async () => {
