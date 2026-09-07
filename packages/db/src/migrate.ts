@@ -1404,6 +1404,12 @@ const migrations = [
   { id: '0037_recurring_generate_command', statements: recurringGenerateCommandMigration },
 ] as const
 
+// Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges
+// without conflict when two branches each add a migration, and goes stale in silence.
+// Frozen because it is exported: a consumer that sorted it in place would corrupt every
+// fixture derived from it in the same module graph.
+export const migrationIds: readonly string[] = Object.freeze(migrations.map(({ id }) => id))
+
 const migrateContainerPlan = (
   database: BetterSqlite3.Database,
   through: (typeof migrations)[number]['id'] | null,

@@ -153,7 +153,7 @@ export {
   type BackupObjectStore,
   type BackupRunRecord,
 } from './backup.js'
-export { migrateD1 } from './migrate.js'
+export { migrateD1, migrationIds } from './migrate.js'
 export {
   DrizzleTrackedResourceRepository,
   type PolicySubject,

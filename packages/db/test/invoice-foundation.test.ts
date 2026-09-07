@@ -2,7 +2,7 @@ import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { readFile } from 'node:fs/promises'
 import { afterEach, describe, expect, it } from 'vitest'
-import { migrateContainer, migrateD1 } from '../src/migrate.js'
+import { migrateContainer, migrateD1, migrationIds } from '../src/migrate.js'
 import { orgPeopleMigration } from '../src/migrations/0000_org_people.js'
 import { clientsMigration } from '../src/migrations/0001_clients.js'
 import { projectsTimeMigration } from '../src/migrations/0002_projects_time.js'
@@ -606,46 +606,7 @@ for (const [runtime, factory] of factories) {
       const firstLedger = await db.rows<{ id: string; applied_at: string }>(
         `SELECT id, applied_at FROM _ezacto_migrations ORDER BY id`,
       )
-      expect(firstLedger.map(({ id }) => id)).toEqual([
-        '0000_org_people',
-        '0001_clients',
-        '0002_projects_time',
-        '0003_rate_resolver',
-        '0004_invoice_foundation',
-        '0005_invoice_payments_totals',
-        '0006_invoice_state_events',
-        '0007_expenses',
-        '0008_retainer_ledger',
-        '0009_three_axis_state',
-        '0010_recurring_invoices',
-        '0011_api_tokens',
-        '0012_instance_bootstrap',
-        '0013_password_auth',
-        '0014_sessions',
-        '0015_oidc_transactions',
-        '0016_email_log',
-        '0017_email_delivery_details',
-        '0018_estimates',
-        '0019_attachments',
-        '0020_argon2_passwords',
-        '0021_estimate_commands',
-        '0022_resource_create_commands',
-        '0023_migration_import_authority',
-        '0024_migration_worksheet_completions',
-        '0025_time_entry_note_requirements',
-        '0026_invoice_generation',
-        '0027_timesheet_approvals',
-        '0028_timesheet_lock_policy',
-        '0029_outbox_delivery',
-        '0030_email_templates',
-        '0031_team_people',
-        '0032_invoice_email_delivery',
-        '0033_contact_portal',
-        '0034_scheduled_reminders',
-        '0035_backup_runs',
-        '0036_client_budgets',
-        '0037_recurring_generate_command',
-      ])
+      expect(firstLedger.map(({ id }) => id)).toEqual(migrationIds)
       expect(
         firstLedger.slice(0, 4).every(({ applied_at: appliedAt }) => appliedAt === timestamp),
       ).toBe(true)
