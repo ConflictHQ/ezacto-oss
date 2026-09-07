@@ -520,6 +520,23 @@ export const createExpenseWorkflowController = (
                 expense.total_cost_cents,
                 expenseCurrency(expense.project_id, catalog.projects, catalog.clients),
               ),
+            // The old list closes each week with a Total, which is what makes
+            // the band a section rather than a label. Rows can span currencies,
+            // so a mixed run shows none rather than a wrong sum — the same rule
+            // the invoices list follows.
+            total: (rows) => {
+              const currencies = new Set(
+                rows.map((expense) =>
+                  expenseCurrency(expense.project_id, catalog.projects, catalog.clients),
+                ),
+              )
+              const [currency] = [...currencies]
+              if (currencies.size !== 1 || currency === undefined) return '—'
+              return expenseMoney(
+                rows.reduce((sum, expense) => sum + expense.total_cost_cents, 0),
+                currency,
+              )
+            },
           },
         ],
       }),

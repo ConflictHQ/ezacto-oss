@@ -77,6 +77,31 @@ describe('data table', () => {
     expect(bands).toEqual(['Vantage IT', 'Halcyon Biolabs', 'Vantage IT'])
   })
 
+  it('[unit] closes each group with its own total, and the table with all of them', () => {
+    // The old expenses list ends every week with a right-aligned Total:, which
+    // is what makes a band a section rather than a label.
+    const element = table({ groupBy: (row) => row.client })
+    const groupTotals = [...element.querySelectorAll('.data-table-group-total')].map(
+      (row) => row.querySelector('[data-column="spent"]')?.textContent,
+    )
+    // Vantage IT holds rows 1 and 2; Halcyon Biolabs holds row 3.
+    expect(groupTotals).toEqual(['$3105.10', '$476.82'])
+    expect(
+      element.querySelector('tfoot [data-column="spent"]')?.textContent,
+    ).toBe('$3581.92')
+  })
+
+  it('[unit] adds no group totals when no column can total itself', () => {
+    const element = renderDataTable<Project>({
+      columns: [{ key: 'name', label: 'Project', render: (row) => row.name }],
+      rows,
+      rowKey: (row) => String(row.id),
+      groupBy: (row) => row.client,
+      caption: 'Projects',
+    })
+    expect(element.querySelectorAll('.data-table-group-total')).toHaveLength(0)
+  })
+
   it('[unit] renders no totals row when no column can total itself', () => {
     const element = renderDataTable<Project>({
       columns: [{ key: 'name', label: 'Project', render: (row) => row.name }],

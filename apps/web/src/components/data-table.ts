@@ -173,11 +173,33 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
     body.append(row)
   }
 
+  // A grouped table closes each run with the same totals its footer carries.
+  // The old expenses list ends every week with a right-aligned `Total:`, which
+  // is what makes a band a section rather than a label.
+  const totalled = columns.some((column) => column.total !== undefined)
+  const groupTotalRow = (members: Row[]): HTMLTableRowElement => {
+    const row = document.createElement('tr')
+    row.className = 'data-table-group-total'
+    for (const [index, column] of columns.entries()) {
+      const cell = document.createElement('td')
+      cell.dataset.column = column.key
+      if (column.numeric === true) cell.classList.add('is-numeric')
+      if (column.total !== undefined) put(cell, column.total(members))
+      else if (index === 0) cell.textContent = 'Total'
+      row.append(cell)
+    }
+    if (actions !== undefined) row.append(document.createElement('td'))
+    return row
+  }
+
   let currentGroup: string | undefined
+  let groupMembers: Row[] = []
   for (const row of rows) {
     if (groupBy !== undefined) {
       const group = groupBy(row)
       if (group !== currentGroup) {
+        if (totalled && groupMembers.length > 0) body.append(groupTotalRow(groupMembers))
+        groupMembers = []
         currentGroup = group
         const bandRow = document.createElement('tr')
         bandRow.className = 'data-table-group'
@@ -201,6 +223,10 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
     }
     if (actions !== undefined) element.append(actionsCell(actions(row)))
     body.append(element)
+    groupMembers.push(row)
+  }
+  if (groupBy !== undefined && totalled && groupMembers.length > 0) {
+    body.append(groupTotalRow(groupMembers))
   }
   table.append(body)
 
