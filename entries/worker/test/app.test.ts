@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   createApp,
+  type AppEnv,
   type Env,
   type Health,
   type WorkerEnv,
@@ -31,7 +32,7 @@ describe('worker entry', () => {
     // brandFromEnv, so a branded deployment served them as "ezacto". The
     // renderer was always tested; the routes were not, which is how they
     // drifted. Walk them all instead of naming the ones that were wrong.
-    const branded: Env = { ...env, BRAND_NAME: 'CONFLICT' }
+    const branded: AppEnv = { ...env, BRAND_NAME: 'CONFLICT' }
     const paths = [
       '/',
       '/approvals',
@@ -61,7 +62,11 @@ describe('worker entry', () => {
     // page you were on.
     const html = await (await app.request('/settings/modules', {}, env)).text()
     expect(html).toContain('data-app-view="module-settings"')
-    expect(html).not.toContain('aria-current="page"')
+    // The Week/Day strip marks itself; what must not be marked is a primary
+    // section, and Time is the one the default would have claimed.
+    expect(html).not.toContain('<a href="/" aria-current="page">Time</a>')
+    const nav = /<nav class="primary-nav"[^>]*>(.*?)<\/nav>/su.exec(html)?.[1] ?? ''
+    expect(nav).not.toContain('aria-current')
   })
 
   it('serves the responsive application shell with the deployment stamp', async () => {
