@@ -182,6 +182,30 @@ describe('Team browser controller', () => {
     )
   })
 
+  it('splits billable from non-billable and draws the team one bar', async () => {
+    // The band showed Billable and left Non-billable as arithmetic for the
+    // reader, with the two inputs a column apart. And every person had a bar
+    // while the team had none.
+    writeDocument('team-list')
+    const listTeamPeople = vi.fn(async () => page([summary()]))
+    const controller = createTeamDirectoryController({ listTeamPeople })
+
+    await controller.activate(identity(), new AbortController().signal, () => false)
+
+    const band = document.querySelector('[data-team-summary]')
+    expect(band?.textContent).toContain('Non-billable')
+    const bar = document.querySelector<HTMLElement>('[data-team-bar]')
+    expect(bar).not.toBeNull()
+    expect(bar?.getAttribute('aria-label')).toMatch(/billable .* of .* capacity/u)
+    // 25h tracked of which 20h billable, against 35h capacity.
+    expect(
+      bar?.querySelector<HTMLElement>('[data-part="billable"]')?.style.width,
+    ).toBe(`${(20 / 35) * 100}%`)
+    expect(
+      bar?.querySelector<HTMLElement>('[data-part="nonbillable"]')?.style.width,
+    ).toBe(`${(5 / 35) * 100}%`)
+  })
+
   it('keeps the initials when an avatar fails to load', async () => {
     // Imported avatar_urls point at Harvest's CDN and prod's CSP is
     // img-src 'self' data:, so every one of them is blocked. The initials have
