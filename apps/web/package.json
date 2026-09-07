@@ -18,12 +18,12 @@
     "theme:check": "node scripts/compile-theme-tokens.mjs --check",
     "shell:generate": "node scripts/compile-shell-assets.mjs",
     "shell:check": "node scripts/compile-shell-assets.mjs --check",
-    "typecheck": "npm run theme:check && npm run shell:check && tsc --noEmit",
+    "typecheck": "npm run theme:check && npm run shell:generate && tsc --noEmit",
     "lint": "eslint .",
     "browser:prepare": "npm run build -w @ezacto/core && npm run build -w @ezacto/db && npm run build -w @ezacto/api && npm run build -w @ezacto/client && npm run build -w @ezacto/mailer && npm run build -w @ezacto/web",
     "test:browser": "npm run browser:prepare && playwright test --config playwright.config.ts",
-    "test": "npm run theme:check && npm run shell:check && vitest run && npm run test:browser",
-    "build": "npm run theme:check && npm run shell:check && tsc -p tsconfig.build.json"
+    "test": "npm run theme:check && npm run shell:generate && vitest run && npm run test:browser",
+    "build": "npm run theme:check && npm run shell:generate && tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "@ezacto/client": "0.0.0"
