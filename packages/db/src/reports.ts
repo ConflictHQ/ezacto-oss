@@ -93,6 +93,13 @@ export interface ProjectBudgetReportRecord extends ReportDateRange {
  */
 export interface ProjectBudgetSummaryRecord {
   projectId: number
+  /**
+   * The project's billing currency, or its client's where the project sets no
+   * override -- resolved here rather than by the caller. A reader that has the
+   * amount and not the currency has to guess, and the only guess available is
+   * the account default, which is right until it is silently wrong.
+   */
+  currency: string
   budgetBy: 'project' | 'project_cost' | 'task' | 'task_fees' | 'person' | 'none'
   unit: 'seconds' | 'cents' | null
   budgetAmount: number | null
@@ -661,6 +668,7 @@ interface ProjectRow {
   budgetSeconds: number | null
   costBudgetCents: number | null
   costBudgetIncludeExpenses: number
+  currency: string
 }
 
 interface BudgetEntryRow {
@@ -694,10 +702,14 @@ const projectBudgetSummaryReport = async (
   // The same visibility predicate the per-project report applies, so the list
   // cannot become a way to read a budget the detail page would refuse.
   const projects = await database.all<ProjectRow>(sql`
-    SELECT id AS "id", budget_by AS "budgetBy", budget_seconds AS "budgetSeconds",
-      cost_budget_cents AS "costBudgetCents",
-      cost_budget_include_expenses AS "costBudgetIncludeExpenses"
-    FROM projects project WHERE (
+    SELECT project.id AS "id", project.budget_by AS "budgetBy",
+      project.budget_seconds AS "budgetSeconds",
+      project.cost_budget_cents AS "costBudgetCents",
+      project.cost_budget_include_expenses AS "costBudgetIncludeExpenses",
+      upper(coalesce(project.billing_currency, client.currency)) AS "currency"
+    FROM projects project
+    JOIN clients client ON client.id = project.client_id
+    WHERE (
       ${accountWide ? 1 : 0} = 1 OR EXISTS (
         SELECT 1 FROM user_assignments assignment
         WHERE assignment.project_id = project.id
@@ -796,6 +808,7 @@ const projectBudgetSummaryReport = async (
           : trackedSeconds
     return {
       projectId: project.id,
+      currency: project.currency,
       budgetBy: project.budgetBy,
       unit: project.budgetBy === 'none' ? null : monetary ? ('cents' as const) : ('seconds' as const),
       budgetAmount,

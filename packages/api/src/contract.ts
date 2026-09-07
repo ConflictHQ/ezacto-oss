@@ -4726,12 +4726,17 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object",
     required: [
       "project_id",
+      "currency",
       "budget_by",
       "unit",
       "unpriced_entry_count",
     ],
     properties: {
       project_id: integerSchema,
+      // The project's billing currency, or its client's. Required, because a
+      // reader holding the amount without it has to guess, and the only guess
+      // available is the account default.
+      currency: { type: "string", pattern: "^[A-Z]{3}$" },
       budget_by: {
         type: "string",
         enum: [

@@ -17,6 +17,12 @@ export interface ProjectBudgetSummary {
   remaining_cents?: number | null
   cost_cents?: number
   unpriced_entry_count?: number
+  /**
+   * Resolved server-side from the project, or its client. The list used to work
+   * this out itself and fell back to USD when the client was not in the payload,
+   * which renders another currency's money as dollars and says nothing.
+   */
+  currency?: string
 }
 
 export interface ProjectDirectoryApi {
