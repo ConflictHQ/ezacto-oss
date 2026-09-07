@@ -1,6 +1,7 @@
 import {
   EzactoApiError,
   type GeneralResource,
+  type Invoice,
   type InvoiceGenerationInput,
   type TimeEntryInput,
   type TimeEntryPatch,
@@ -30,6 +31,7 @@ import { createModuleSettingsController } from '../module-settings/browser.js'
 import {
   createInvoicePaymentController,
   renderInvoiceListItems,
+  setInvoiceClientNames,
 } from '../invoices/browser.js'
 import { invoiceIdentityCanRead } from '../invoices/model.js'
 import {
@@ -387,6 +389,11 @@ const renderCellControl = (
   note.ariaLabel = `${cell.entries.length === 0 ? 'Add time' : currentNotes === null ? 'Add note' : 'Edit note'} for ${noteContext} on ${dayLabel(cell.date)}${minimumNoteLength > 0 ? `; at least ${minimumNoteLength} characters required` : ''}`
   note.title = currentNotes ?? (minimumNoteLength > 0 ? noteHint(minimumNoteLength) : cell.entries.length === 0 ? 'Add time' : 'Add note')
   note.textContent = currentNotes === null ? '+' : '•'
+  // Every cell already has a tab stop: its input. Putting the note and retry
+  // affordances in the sequence made a week row fourteen stops to cross when
+  // seven is the whole point of a grid. Both stay reachable by click and by
+  // the row's own focus, and neither is the way anyone enters time.
+  note.tabIndex = -1
   note.disabled =
     cell.entries.length > 1 ||
     cell.isConflict ||
@@ -428,6 +435,7 @@ const renderCellControl = (
     const retry = document.createElement('button')
     retry.type = 'button'
     retry.className = 'cell-retry'
+    retry.tabIndex = -1
     retry.textContent = 'Retry'
     retry.addEventListener('click', () => void handlers.retry(cell, view))
     wrapper.append(retry)
@@ -442,10 +450,15 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers): void => {
   projectHeading.scope = 'col'
   projectHeading.textContent = 'Project / task'
   heading.append(projectHeading)
+  // Which column is today is the first thing you look for in a week grid, and
+  // nothing said. The cells carry it too, so the marker runs the column's
+  // height rather than sitting only in its header.
+  const today = localDate()
   for (const date of grid.dates) {
     const th = document.createElement('th')
     th.scope = 'col'
     th.textContent = dayLabel(date, true)
+    if (date === today) th.dataset.today = ''
     heading.append(th)
   }
   const totalHeading = document.createElement('th')
@@ -478,6 +491,7 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers): void => {
         tr.append(label)
         row.cells.forEach((cell, dayIndex) => {
           const td = document.createElement('td')
+          if (cell.date === today) td.dataset.today = ''
           const nextRow = grid.rows[rowIndex + 1] ?? grid.rows[0]
           const nextDay = rowIndex + 1 < grid.rows.length ? dayIndex : (dayIndex + 1) % 7
           const nextCell = nextRow?.cells[nextDay]
@@ -932,6 +946,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   let invoiceGenerationPending = false
   let invoiceCommandId: string | null = null
   let invoiceNextCursor: string | null = null
+  let invoiceListRows: readonly Invoice[] = []
+  let invoiceClientNamesLoaded = false
   let invoiceListCount = 0
   let approvalModuleAvailable = false
   let lockPolicyAvailable = false
@@ -1090,6 +1106,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     invoiceLoadMore.hidden = true
     invoiceLoadMore.disabled = false
     invoiceNextCursor = null
+    invoiceListRows = []
+    invoiceClientNamesLoaded = false
     invoiceListCount = 0
     invoiceDetailStatus.textContent = 'Loading invoice…'
     invoiceDocument.hidden = true
@@ -1751,6 +1769,32 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     )
   }
 
+  const publishInvoiceClientNames = (
+    clients: readonly Record<string, unknown>[],
+  ): void => {
+    setInvoiceClientNames(
+      clients.flatMap((client) =>
+        typeof client.id === 'number' ? [[client.id, resourceLabel(client)] as const] : [],
+      ),
+    )
+    invoiceClientNamesLoaded = true
+  }
+
+  // The invoice list and the invoice page both show a client, and either can be
+  // the first thing a session opens. Load the names once, for whichever gets
+  // there first.
+  const ensureInvoiceClientNames = async (operation: AuthOperation): Promise<void> => {
+    const listClients = api.listClients
+    if (invoiceClientNamesLoaded || listClients === undefined) return
+    try {
+      const clients = await collectResources(listClients, operation.signal)
+      if (!isSessionCurrent(operation)) return
+      publishInvoiceClientNames(clients)
+    } catch {
+      // A name is a nicety; the list still reads without it.
+    }
+  }
+
   const loadInvoiceGeneration = async (operation: AuthOperation): Promise<void> => {
     if (!isSessionCurrent(operation)) return
     if (api.listClients === undefined || api.generateInvoice === undefined) {
@@ -1768,6 +1812,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       ])
       if (!isSessionCurrent(operation)) return
       invoiceCatalog = { clients, projects }
+      publishInvoiceClientNames(clients)
       invoiceClient.replaceChildren(
         ...clients.map((client) => option(client.id, resourceLabel(client))),
       )
@@ -1819,12 +1864,13 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     invoiceLoadMore.disabled = true
     invoiceListStatus.textContent = append ? 'Loading more invoices…' : 'Loading invoices…'
     try {
-      const page = await listInvoices(cursor, operation.signal)
+      const [page] = await Promise.all([
+        listInvoices(cursor, operation.signal),
+        ensureInvoiceClientNames(operation),
+      ])
       if (!isSessionCurrent(operation)) return
-      invoiceListCount = append
-        ? invoiceListCount + page.data.length
-        : page.data.length
-      renderInvoiceListItems(page.data, append)
+      invoiceListRows = append ? [...invoiceListRows, ...page.data] : [...page.data]
+      invoiceListCount = renderInvoiceListItems(invoiceListRows)
       invoiceNextCursor = page.page.next_cursor
       invoiceLoadMore.hidden = invoiceNextCursor === null
       invoiceListStatus.textContent =
@@ -1884,6 +1930,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       await Promise.all([loadInvoiceList(authenticated), loadWeek(authenticated)])
     } else if (invoiceDetailPage) {
       await Promise.all([
+        ensureInvoiceClientNames(authenticated),
         invoicePayments.activate(
           identity,
           authenticated.signal,

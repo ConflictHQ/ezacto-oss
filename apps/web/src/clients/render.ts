@@ -10,7 +10,7 @@ export const renderClientDirectoryPages = (view?: string): string => `
       <button type="button" data-client-filter="all" aria-pressed="false">All</button>
     </div>
     <p class="form-result client-page-status" data-client-list-status role="status" aria-live="polite">Loading clients…</p>
-    <ol class="client-tree" data-client-tree aria-label="Client hierarchy"></ol>
+    <div data-client-tree></div>
     <button type="button" data-client-list-retry hidden>Retry loading clients</button>
   </main>
   <main class="app-content client-workspace" data-client-detail-page${view === 'client-detail' ? '' : ' hidden'}>
@@ -40,14 +40,14 @@ export const renderClientDirectoryPages = (view?: string): string => `
       </section>
       <section class="client-projects" aria-labelledby="client-projects-heading">
         <header><div><p class="eyebrow">Work</p><h2 id="client-projects-heading">Associated projects</h2></div></header>
-        <ul data-client-projects></ul>
+        <div data-client-projects></div>
       </section>
       <section class="client-contacts" aria-labelledby="client-contacts-heading">
         <header>
           <div><p class="eyebrow">People</p><h2 id="client-contacts-heading">Contacts</h2></div>
           <button type="button" data-contact-create data-client-write data-auth-action hidden disabled>Add contact</button>
         </header>
-        <ul data-client-contacts></ul>
+        <div data-client-contacts></div>
       </section>
     </article>
     <button type="button" data-client-detail-retry hidden>Retry loading client</button>

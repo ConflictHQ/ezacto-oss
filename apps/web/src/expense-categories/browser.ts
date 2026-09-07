@@ -1,3 +1,4 @@
+import { renderDataTable } from '../components/data-table.js'
 import { EzactoApiError, type ExpenseCategory, type Whoami } from '@ezacto/client'
 import {
   expenseCategoryCanWrite,
@@ -97,7 +98,7 @@ export const createExpenseCategoryDirectoryController = (
     '[data-expense-category-module-unavailable]',
   )
   const status = required<HTMLElement>('[data-expense-category-status]')
-  const list = required<HTMLOListElement>('[data-expense-category-list]')
+  const list = required<HTMLElement>('[data-expense-category-list]')
   const loadMore = required<HTMLButtonElement>('[data-expense-category-load-more]')
   const retry = required<HTMLButtonElement>('[data-expense-category-retry]')
   const createForm = required<HTMLFormElement>('[data-expense-category-create-form]')
@@ -236,7 +237,7 @@ export const createExpenseCategoryDirectoryController = (
 
   const renderList = (): void => {
     if (categories.length === 0) {
-      const empty = document.createElement('li')
+      const empty = document.createElement('p')
       empty.className = 'expense-category-empty'
       empty.textContent =
         filter === 'active'
@@ -247,46 +248,57 @@ export const createExpenseCategoryDirectoryController = (
       return
     }
     list.replaceChildren(
-      ...categories.map((category) => {
-        const item = document.createElement('li')
-        item.className = 'expense-category-row'
-        item.dataset.expenseCategoryId = String(category.id)
-        const details = document.createElement('div')
-        const heading = document.createElement('strong')
-        heading.textContent = category.name
-        const pricing = document.createElement('p')
-        pricing.textContent = expenseCategoryPricingLabel(category)
-        details.append(heading, pricing)
-        const metadata = document.createElement('div')
-        metadata.className = 'expense-category-row-actions'
-        const state = document.createElement('span')
-        state.className = 'expense-status-pill'
-        state.textContent = category.is_active ? 'Active' : 'Archived'
-        metadata.append(state)
-        if (canWrite()) {
-          const edit = document.createElement('button')
-          edit.type = 'button'
-          edit.textContent = 'Edit'
-          edit.dataset.expenseCategoryMutation = ''
-          edit.disabled = mutationPending
-          edit.addEventListener('click', () => openEdit(category))
-          metadata.append(edit)
-          if (category.is_active) {
-            const archive = document.createElement('button')
-            archive.type = 'button'
-            archive.textContent = 'Archive'
-            archive.dataset.expenseCategoryMutation = ''
-            archive.disabled = mutationPending
-            archive.addEventListener('click', () => {
-              archivingId = category.id
-              archiveResult.textContent = ''
-              archiveDialog.showModal()
-            })
-            metadata.append(archive)
-          }
-        }
-        item.append(details, metadata)
-        return item
+      renderDataTable<ExpenseCategory>({
+        caption: 'Expense categories',
+        rows: categories,
+        rowKey: (category) => String(category.id),
+        empty: 'No expense categories yet.',
+        columns: [
+          { key: 'name', label: 'Category', render: (category) => category.name },
+          {
+            key: 'pricing',
+            label: 'Pricing',
+            render: (category) => expenseCategoryPricingLabel(category),
+          },
+          {
+            key: 'status',
+            label: 'Status',
+            render: (category) => {
+              if (category.is_active) return 'Active'
+              const pill = document.createElement('span')
+              pill.className = 'expense-status-pill'
+              pill.textContent = 'Archived'
+              return pill
+            },
+          },
+        ],
+        ...(canWrite()
+          ? {
+              actions: (category) => [
+                {
+                  label: 'Edit',
+                  primary: true,
+                  disabled: mutationPending,
+                  dataset: { expenseCategoryMutation: '' },
+                  onSelect: () => openEdit(category),
+                },
+                ...(category.is_active
+                  ? [
+                      {
+                        label: 'Archive',
+                        disabled: mutationPending,
+                        dataset: { expenseCategoryMutation: '' },
+                        onSelect: () => {
+                          archivingId = category.id
+                          archiveResult.textContent = ''
+                          archiveDialog.showModal()
+                        },
+                      },
+                    ]
+                  : []),
+              ],
+            }
+          : {}),
       }),
     )
     status.textContent = `${categories.length} ${categories.length === 1 ? 'category' : 'categories'} loaded${nextCursor === null ? '.' : '; more are available.'}`

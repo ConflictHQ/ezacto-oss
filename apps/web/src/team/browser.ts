@@ -1,3 +1,4 @@
+import { renderDataTable } from '../components/data-table.js'
 import {
   EzactoApiError,
   type TeamCatalog,
@@ -116,7 +117,7 @@ export const createTeamDirectoryController = (
   const listPageElement = required<HTMLElement>('[data-team-list-page]')
   const personPageElement = required<HTMLElement>('[data-team-person-page]')
   const listStatus = required<HTMLElement>('[data-team-list-status]')
-  const list = required<HTMLOListElement>('[data-team-list]')
+  const list = required<HTMLElement>('[data-team-list]')
   const listRetry = required<HTMLButtonElement>('[data-team-list-retry]')
   const search = required<HTMLInputElement>('[data-team-search]')
   const summary = required<HTMLElement>('[data-team-summary]')
@@ -306,23 +307,33 @@ export const createTeamDirectoryController = (
     summary.hidden = false
   }
 
-  const personCard = (value: TeamPersonSummary): HTMLLIElement => {
-    const item = document.createElement('li')
-    item.className = 'team-person-card'
-    item.dataset.personId = String(value.id)
-    const heading = document.createElement('div')
-    heading.className = 'team-person-card-heading'
+  const personAvatar = (value: TeamPersonSummary): HTMLSpanElement => {
     const avatar = document.createElement('span')
     avatar.className = 'team-avatar'
     avatar.setAttribute('aria-hidden', 'true')
     avatar.textContent = `${value.first_name.charAt(0)}${value.last_name.charAt(0)}`.toLocaleUpperCase('en-US')
     if (value.avatar_url !== null) {
-      avatar.textContent = ''
+      // Keep the initials underneath. Imported avatar_urls point at Harvest's
+      // CDN and prod's CSP is img-src 'self' data:, so these are blocked
+      // outright — clearing the text first left an empty circle with nothing
+      // to fall back to.
       const image = document.createElement('img')
       image.src = value.avatar_url
       image.alt = ''
+      image.addEventListener('error', () => image.remove())
+      image.addEventListener('load', () => {
+        avatar.childNodes.forEach((node) => {
+          if (node.nodeType === Node.TEXT_NODE) node.textContent = ''
+        })
+      })
       avatar.append(image)
     }
+    return avatar
+  }
+
+  const personIdentity = (value: TeamPersonSummary): HTMLElement => {
+    const cell = document.createElement('div')
+    cell.className = 'team-person-name'
     const identity = document.createElement('div')
     const link = document.createElement('a')
     link.href = `/team/${value.id}`
@@ -330,21 +341,19 @@ export const createTeamDirectoryController = (
     const metadata = document.createElement('p')
     metadata.textContent = [
       value.is_owner ? 'Owner' : value.profile.replaceAll('_', ' '),
-      value.is_contractor ? 'Contractor' : 'Employee',
       value.is_active ? 'Active' : 'Inactive',
       ...(value.running ? ['Timer running'] : []),
     ].join(' · ')
     identity.append(link, metadata)
-    heading.append(avatar, identity)
+    cell.append(personAvatar(value), identity)
+    return cell
+  }
 
-    const utilization = document.createElement('div')
-    utilization.className = 'team-utilization'
-    const utilizationHeader = document.createElement('div')
-    const utilizationLabel = document.createElement('strong')
-    utilizationLabel.textContent = teamUtilization(value.utilization_ppm)
-    const capacity = document.createElement('span')
-    capacity.textContent = `${teamHours(value.total_seconds)} of ${teamHours(value.weekly_capacity)}`
-    utilizationHeader.append(utilizationLabel, capacity)
+  const personUtilization = (value: TeamPersonSummary): HTMLElement => {
+    const cell = document.createElement('div')
+    cell.className = 'team-utilization'
+    const figure = document.createElement('strong')
+    figure.textContent = teamUtilization(value.utilization_ppm)
     const bar = document.createElement('progress')
     bar.max = Math.max(1, value.weekly_capacity)
     bar.value = Math.min(value.total_seconds, bar.max)
@@ -352,22 +361,28 @@ export const createTeamDirectoryController = (
       'aria-label',
       `${value.first_name} ${value.last_name} utilization: ${teamUtilization(value.utilization_ppm)}`,
     )
-    const detail = document.createElement('p')
-    detail.textContent = `${teamHours(value.billable_seconds)} billable · ${teamHours(value.nonbillable_seconds)} non-billable`
-    utilization.append(utilizationHeader, bar, detail)
-    item.append(heading, utilization)
-    return item
+    cell.append(figure, bar)
+    return cell
   }
 
   const renderPeople = (): void => {
     const wanted = search.value.trim().toLocaleLowerCase('en-US')
-    const visible = people.filter((value) =>
-      `${value.first_name} ${value.last_name} ${value.email ?? ''}`
-        .toLocaleLowerCase('en-US')
-        .includes(wanted),
-    )
+    const visible = people
+      .filter((value) =>
+        `${value.first_name} ${value.last_name} ${value.email ?? ''}`
+          .toLocaleLowerCase('en-US')
+          .includes(wanted),
+      )
+      // Employees before contractors, so each band covers one run of rows.
+      .sort(
+        (left, right) =>
+          Number(left.is_contractor) - Number(right.is_contractor) ||
+          `${left.first_name} ${left.last_name}`.localeCompare(
+            `${right.first_name} ${right.last_name}`,
+          ),
+      )
     if (visible.length === 0) {
-      const empty = document.createElement('li')
+      const empty = document.createElement('p')
       empty.className = 'team-empty'
       empty.textContent =
         people.length === 0
@@ -378,7 +393,42 @@ export const createTeamDirectoryController = (
       list.replaceChildren(empty)
       return
     }
-    list.replaceChildren(...visible.map(personCard))
+    list.replaceChildren(
+      renderDataTable<TeamPersonSummary>({
+        caption: 'People',
+        rows: visible,
+        rowKey: (value) => String(value.id),
+        groupBy: (value) => (value.is_contractor ? 'Contractors' : 'Employees'),
+        columns: [
+          { key: 'name', label: 'Name', render: personIdentity },
+          {
+            key: 'hours',
+            label: 'Hours',
+            numeric: true,
+            render: (value) => teamHours(value.total_seconds),
+          },
+          { key: 'utilization', label: 'Utilization', numeric: true, render: personUtilization },
+          {
+            key: 'capacity',
+            label: 'Capacity',
+            numeric: true,
+            render: (value) => teamHours(value.weekly_capacity),
+          },
+          {
+            key: 'billable',
+            label: 'Billable',
+            numeric: true,
+            render: (value) => teamHours(value.billable_seconds),
+          },
+          {
+            key: 'nonbillable',
+            label: 'Non-billable',
+            numeric: true,
+            render: (value) => teamHours(value.nonbillable_seconds),
+          },
+        ],
+      }),
+    )
   }
 
   const loadPeople = async (active: ActiveSession): Promise<void> => {

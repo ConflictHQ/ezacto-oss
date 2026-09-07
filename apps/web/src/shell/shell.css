@@ -126,8 +126,7 @@
   gap: 4px;
 }
 .team-summary span,
-.team-person-card p,
-.team-utilization span {
+.team-person-name p {
   color: var(--ez-muted);
 }
 .team-summary strong {
@@ -137,32 +136,22 @@
   min-height: 24px;
   margin-block: 16px;
 }
-.team-card-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.team-person-card,
 .team-empty {
   padding: 18px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: var(--ez-surface);
 }
-.team-person-card-heading {
+.team-person-name {
   display: flex;
   align-items: center;
   gap: 12px;
 }
-.team-person-card-heading a {
+.team-person-name a {
   color: var(--ez-ink);
-  font-size: 18px;
   font-weight: 700;
 }
-.team-person-card p {
+.team-person-name p {
   margin: 4px 0 0;
   font-size: 13px;
 }
@@ -187,13 +176,9 @@
 }
 .team-utilization {
   display: grid;
-  gap: 7px;
-  margin-top: 18px;
-}
-.team-utilization > div {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 4px;
+  min-width: 120px;
+  justify-items: end;
 }
 .team-utilization progress {
   width: 100%;
@@ -410,7 +395,6 @@
     width: 100%;
   }
   .team-summary,
-  .team-card-list,
   .team-form-pair,
   .team-option-grid,
   .team-rate-columns,
@@ -629,6 +613,7 @@
   min-width: 510px;
   border-collapse: collapse;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .report-table th,
 .report-table td {
@@ -636,6 +621,17 @@
   border-bottom: 1px solid var(--ez-border);
   text-align: right;
   white-space: nowrap;
+}
+/* The header band, the same one the data table carries. */
+.report-table thead th {
+  background: var(--ez-surface);
+  color: var(--ez-muted);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.report-table tbody tr:hover {
+  background: var(--ez-surface);
 }
 .report-table th:first-child,
 .report-table td:first-child {
@@ -664,32 +660,7 @@
   min-height: 20px;
 }
 .invoice-list {
-  display: grid;
-  gap: 12px;
   margin-top: 24px;
-}
-.invoice-list-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px 24px;
-  padding: 18px 20px;
-  border: 1px solid var(--ez-border);
-  border-radius: var(--ez-radius);
-  background: var(--ez-surface);
-}
-.invoice-list-heading {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.invoice-list-heading h2 {
-  margin: 0;
-  font-size: 18px;
-}
-.invoice-list-heading a {
-  color: var(--ez-ink);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 3px;
 }
 .invoice-state {
   width: fit-content;
@@ -699,35 +670,6 @@
   color: var(--ez-status-fg);
   font: 600 11px/1.2 var(--ez-font-mono), monospace;
   text-transform: uppercase;
-}
-.invoice-list-facts {
-  margin: 0;
-  color: var(--ez-muted);
-  font-size: 13px;
-}
-.invoice-list-amounts {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  display: grid;
-  align-content: center;
-  justify-items: end;
-  gap: 4px;
-  font-variant-numeric: tabular-nums;
-}
-.invoice-list-amounts strong {
-  font: 600 18px/1.2 var(--ez-font-mono), monospace;
-}
-.invoice-list-amounts span {
-  color: var(--ez-muted);
-  font-size: 12px;
-}
-.invoice-list-empty {
-  margin: 0;
-  padding: 40px 20px;
-  border: 1px solid var(--ez-border);
-  border-radius: var(--ez-radius);
-  color: var(--ez-muted);
-  text-align: center;
 }
 .invoice-load-more {
   min-height: 44px;
@@ -1220,8 +1162,7 @@
 }
 .client-list-toolbar,
 .client-header-actions,
-.client-confirm-actions,
-.client-contact-actions {
+.client-confirm-actions {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1232,7 +1173,6 @@
 .client-list-toolbar button,
 .client-header-actions button,
 .client-contacts header button,
-.client-contact-actions button,
 .client-confirm-actions button,
 .client-workspace [data-client-create],
 [data-client-list-retry],
@@ -1249,43 +1189,21 @@
   background: var(--ez-status-bg);
   color: var(--ez-status-fg);
 }
-.client-tree,
-.client-projects ul,
-.client-contacts ul {
-  display: grid;
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.client-tree-name {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
-.client-tree-row {
-  padding: 16px 18px;
-  border: 1px solid var(--ez-border);
-  border-inline-start: 3px solid var(--ez-data);
-  border-radius: var(--ez-radius);
-  background: var(--ez-surface);
+.client-tree-name a {
+  color: var(--ez-ink);
+  font-weight: 700;
+  text-underline-offset: 3px;
 }
-.client-tree-row > div,
-.client-contact-card > div:first-child,
-.client-projects li,
 .client-contacts header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-}
-.client-tree-row a {
-  color: var(--ez-ink);
-  font-size: 17px;
-  font-weight: 700;
-  text-underline-offset: 3px;
-}
-.client-tree-row p,
-.client-contact-card p {
-  margin: 7px 0 0;
-  color: var(--ez-muted);
-  font-size: 13px;
-  overflow-wrap: anywhere;
 }
 .client-status-pill,
 .client-recipient-pill {
@@ -1354,22 +1272,6 @@
 .client-projects header,
 .client-contacts header {
   margin-bottom: 14px;
-}
-.client-projects li,
-.client-contact-card {
-  padding: 12px;
-  border: 1px solid var(--ez-border);
-  border-radius: var(--ez-radius);
-  background: var(--ez-ground);
-}
-.client-projects li > span {
-  color: var(--ez-muted);
-  font-size: 12px;
-  text-transform: capitalize;
-}
-.client-contact-actions {
-  justify-content: flex-end;
-  margin-top: 12px;
 }
 .client-form-pair,
 .client-defaults {
@@ -1440,7 +1342,6 @@
   background: var(--ez-status-bg);
   color: var(--ez-status-fg);
 }
-.project-list,
 .project-task-card,
 .project-tasks ul,
 .project-attachments ul {
@@ -1448,13 +1349,11 @@
   padding: 0;
   list-style: none;
 }
-.project-list,
 .project-tasks ul,
 .project-attachments ul {
   display: grid;
   gap: 10px;
 }
-.project-list-row,
 .project-task-card,
 .project-attachments li {
   display: flex;
@@ -1466,27 +1365,15 @@
   border-radius: var(--ez-radius);
   background: var(--ez-surface);
 }
-.project-list-row {
-  border-inline-start: 3px solid var(--ez-data);
-}
-.project-list-row a,
 .project-attachments a {
   color: var(--ez-ink);
   font-weight: 700;
   text-underline-offset: 3px;
 }
-.project-list-row p,
 .project-task-card p {
   margin: 5px 0 0;
   color: var(--ez-muted);
   font-size: 13px;
-}
-.project-list-row > div:last-child {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--ez-muted);
-  font-size: 12px;
 }
 .project-status-pill {
   padding: 4px 8px;
@@ -1703,7 +1590,6 @@
   align-items: end;
   gap: 8px;
 }
-.expense-list,
 .expense-attachments ul {
   display: grid;
   gap: 10px;
@@ -1711,14 +1597,6 @@
   padding: 0;
   list-style: none;
 }
-.expense-week-heading {
-  margin-top: 12px;
-  color: var(--ez-muted);
-  font: 600 12px/1.4 var(--ez-font-mono), monospace;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-}
-.expense-list-row,
 .expense-attachments li {
   display: flex;
   align-items: center;
@@ -1729,39 +1607,10 @@
   border-radius: var(--ez-radius);
   background: var(--ez-surface);
 }
-.expense-list-row {
-  border-inline-start: 3px solid var(--ez-live);
-}
-.expense-list-row > div:first-child {
-  min-width: 0;
-}
-.expense-list-row > div:last-child {
-  display: grid;
-  justify-items: end;
-  gap: 6px;
-  flex: 0 0 auto;
-  color: var(--ez-muted);
-  font-size: 12px;
-}
-.expense-list-row a,
 .expense-attachments a {
   color: var(--ez-ink);
   font-weight: 700;
   text-underline-offset: 3px;
-}
-.expense-list-row p {
-  margin: 5px 0 0;
-  color: var(--ez-muted);
-  font-size: 13px;
-}
-.expense-list-row .expense-notes {
-  color: var(--ez-ink);
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-.expense-list-row .expense-notes[data-empty='true'] {
-  color: var(--ez-muted);
-  font-style: italic;
 }
 .expense-status-pill {
   padding: 4px 8px;
@@ -2084,19 +1933,6 @@
 @media (max-width: 720px) {
   .invoice-period {
     grid-template-columns: 1fr;
-  }
-  .invoice-list-card {
-    grid-template-columns: 1fr;
-  }
-  .invoice-list-heading {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-  .invoice-list-amounts {
-    grid-column: 1;
-    grid-row: auto;
-    justify-items: start;
-    padding-top: 8px;
   }
   .invoice-facts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2937,11 +2773,25 @@ button[data-auth-action]:disabled {
   padding: 2px 4px 0;
   background: var(--ez-ground);
 }
+/* Today's column, marked its full height. The old grid used a rule under the
+   header; a tinted column reads at a glance without adding a line to a table
+   whose whole discipline is hairlines. */
+.week-grid-table th[data-today] {
+  box-shadow: inset 0 -3px var(--ez-live);
+}
+
+.week-grid-table td[data-today],
+.week-grid-table th[data-today] {
+  background: var(--ez-surface);
+}
+
 .week-cell input {
   width: 100%;
   height: 34px;
   padding: 0 7px;
-  border: 1px solid transparent;
+  /* A resting border: the old grid read as cells you could type into before you
+     touched it, rather than revealing itself one cell at a time on hover. */
+  border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: transparent;
   color: var(--ez-ink);
@@ -3237,8 +3087,6 @@ dialog textarea {
 }
 .task-admin-toolbar,
 .task-admin-toolbar fieldset,
-.task-admin-card,
-.task-admin-card-actions,
 .task-admin-confirm-actions {
   display: flex;
   align-items: center;
@@ -3249,8 +3097,7 @@ dialog textarea {
   margin-inline: auto;
 }
 .expense-category-intro,
-.expense-category-status,
-.expense-category-row p {
+.expense-category-status {
   color: var(--ez-muted);
 }
 .expense-category-create,
@@ -3293,7 +3140,6 @@ dialog textarea {
 .expense-category-form button,
 .expense-category-filter button,
 .expense-category-list-actions button,
-.expense-category-row-actions button,
 .expense-category-dialog-actions button,
 .expense-category-dialog [data-dialog-close] {
   min-height: 44px;
@@ -3314,8 +3160,7 @@ dialog textarea {
 }
 .expense-category-filter,
 .expense-category-list-actions,
-.expense-category-dialog-actions,
-.expense-category-row-actions {
+.expense-category-dialog-actions {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3329,7 +3174,6 @@ dialog textarea {
   border: 0;
 }
 .task-admin-toolbar button,
-.task-admin-card button,
 .task-admin-confirm-actions button,
 .task-admin-workspace [data-task-create],
 .task-admin-workspace [data-task-load-more],
@@ -3347,25 +3191,7 @@ dialog textarea {
   color: var(--ez-status-fg);
 }
 .task-admin-list {
-  display: grid;
-  gap: 10px;
   margin: 0 0 12px;
-  padding: 0;
-  list-style: none;
-}
-.task-admin-card {
-  justify-content: space-between;
-  padding: 16px 18px;
-  border: 1px solid var(--ez-border);
-  border-inline-start: 3px solid var(--ez-data);
-  border-radius: var(--ez-radius);
-  background: var(--ez-surface);
-}
-.task-admin-card p {
-  margin: 5px 0 0;
-  color: var(--ez-muted);
-  font-size: 13px;
-  overflow-wrap: anywhere;
 }
 .task-admin-empty {
   padding: 28px 18px;
@@ -3409,14 +3235,6 @@ dialog textarea {
   border-color: var(--ez-live);
   background: var(--ez-status-bg);
 }
-.expense-category-list {
-  display: grid;
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.expense-category-row,
 .expense-category-empty {
   display: flex;
   align-items: center;
@@ -3426,10 +3244,6 @@ dialog textarea {
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: var(--ez-ground);
-}
-.expense-category-row p {
-  margin: 5px 0 0;
-  font-size: 13px;
 }
 .expense-category-list-actions {
   margin-top: 14px;
@@ -3585,7 +3399,6 @@ dialog textarea {
     grid-template-columns: 1fr;
   }
   .expense-filter-actions,
-  .expense-list-row,
   .expense-attachments li {
     align-items: stretch;
     flex-direction: column;
@@ -3598,9 +3411,7 @@ dialog textarea {
   }
   .expense-category-header,
   .expense-category-directory-header,
-  .expense-category-row,
-  .expense-category-empty,
-  .expense-category-row-actions {
+  .expense-category-empty {
     align-items: stretch;
     flex-direction: column;
   }
@@ -3621,7 +3432,6 @@ dialog textarea {
   .expense-category-dialog-actions button {
     flex: 1;
   }
-  .project-list-row,
   .project-task-card,
   .project-attachments li {
     align-items: stretch;
@@ -3635,12 +3445,6 @@ dialog textarea {
   .task-admin-header {
     align-items: flex-start;
   }
-  .task-admin-card,
-  .task-admin-card-actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
-  .task-admin-card-actions button,
   .task-admin-workspace [data-task-create],
   .task-admin-workspace [data-task-load-more],
   .task-admin-workspace [data-task-list-retry] {
@@ -3696,5 +3500,164 @@ dialog textarea {
   }
   .build-stamp {
     padding-inline: 16px;
+  }
+}
+
+/*
+ * The data table. One system, nine sets of columns — see
+ * screens/HRVST10/OLD-UI-ANALYSIS.md §2 and §6. No zebra: hairline rules and a
+ * hover layer carry the row, which is what let the old UI fit a working week on
+ * one screen without it feeling dense.
+ */
+.data-table-scroll {
+  position: relative;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.data-table thead th {
+  height: var(--ez-row-h);
+  padding: 0 12px;
+  background: var(--ez-surface);
+  border-bottom: 1px solid var(--ez-border);
+  color: var(--ez-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.data-table tbody td {
+  height: var(--ez-row-h);
+  padding: 0 12px;
+  border-bottom: 1px solid var(--ez-border);
+  color: var(--ez-ink);
+}
+
+.data-table .is-numeric {
+  text-align: right;
+}
+
+/* Grouping is a band, not an indent — the label owns the full width. */
+.data-table .data-table-group th {
+  height: var(--ez-row-h);
+  padding: 0 12px;
+  background: var(--ez-surface);
+  border-bottom: 1px solid var(--ez-border);
+  color: var(--ez-ink);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.data-table tbody tr[data-row]:hover,
+.data-table tbody tr[data-row]:focus-within {
+  background: var(--ez-surface);
+}
+
+/* Totals sit apart by weight, not by a rule above them. */
+.data-table tfoot td {
+  height: var(--ez-row-h-lead);
+  padding: 0 12px;
+  color: var(--ez-ink);
+  font-weight: 600;
+}
+
+.data-table-empty {
+  color: var(--ez-muted);
+}
+
+.data-table-actions {
+  text-align: right;
+  white-space: nowrap;
+  width: 1%;
+}
+
+/*
+ * Actions are present but quiet until the row is under the pointer, and always
+ * present to the keyboard — :focus-within is why they cannot be display:none.
+ */
+.data-table-action,
+.data-table-overflow > summary {
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--ez-radius);
+  background: none;
+  color: var(--ez-data);
+  cursor: pointer;
+  font: inherit;
+  opacity: 0;
+}
+
+.data-table tbody tr[data-row]:hover .data-table-action,
+.data-table tbody tr[data-row]:hover .data-table-overflow > summary,
+.data-table tbody tr[data-row]:focus-within .data-table-action,
+.data-table tbody tr[data-row]:focus-within .data-table-overflow > summary,
+.data-table-action:focus-visible,
+.data-table-overflow[open] > summary {
+  opacity: 1;
+}
+
+.data-table-action:hover,
+.data-table-overflow > summary:hover {
+  border-color: var(--ez-border);
+}
+
+.data-table-overflow {
+  display: inline-block;
+  position: relative;
+}
+
+.data-table-overflow > summary {
+  list-style: none;
+}
+
+.data-table-overflow > summary::-webkit-details-marker {
+  display: none;
+}
+
+.data-table-menu {
+  position: absolute;
+  right: 0;
+  z-index: 2;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  box-shadow: 0 8px 24px rgb(20 22 26 / 12%);
+  text-align: left;
+}
+
+.data-table-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: calc(var(--ez-radius) - 2px);
+  background: none;
+  color: var(--ez-ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.data-table-menu button:hover,
+.data-table-menu button:focus-visible {
+  background: var(--ez-surface);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .data-table-action,
+  .data-table-overflow > summary {
+    transition: opacity 120ms ease;
   }
 }

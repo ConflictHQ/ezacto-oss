@@ -24,6 +24,11 @@ export interface AppShellOptions {
   readonly release: string
   readonly brand?: Partial<DeploymentBrand>
   readonly activeSection?:
+    // 'Settings' matches no nav item on purpose. Without it the default lands
+    // on 'Time', so the module settings page marked Time as the page you were
+    // on; naming a section outside the primary nav marks nothing, which is the
+    // truth.
+    | 'Settings'
     | 'Time'
     | 'Approvals'
     | 'Expenses'
@@ -235,7 +240,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
     </div>
   </header>
   <nav class="tabstrip" aria-label="Time views"${view === 'time' ? '' : ' hidden'}>
-    <a href="/" aria-current="page">Week</a><a href="/?view=day">Day</a><a href="/?view=calendar">Calendar</a>
+    <a href="/" aria-current="page">Week</a><a href="/?view=day">Day</a>
   </nav>
   <main class="app-content" data-app-content${view === 'time' ? '' : ' hidden'}>
     <header class="context-row">
