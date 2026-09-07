@@ -2723,6 +2723,22 @@ button[data-auth-action]:disabled {
   font-weight: 400;
 }
 
+.day-row-start {
+  justify-self: start;
+  min-height: 44px;
+  margin-top: 8px;
+  padding: 0 14px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+
+.day-row-start:hover:not(:disabled) {
+  border-color: var(--ez-action);
+  color: var(--ez-action);
+}
+
 .week-grid-wrap {
   overflow-x: auto;
 }

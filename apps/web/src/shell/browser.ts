@@ -97,6 +97,8 @@ interface GridHandlers {
   ): Promise<boolean>
   retry(cell: WeekGridCell, view: GridView): Promise<void>
   openEntry(cell: WeekGridCell, view: GridView): void
+  // Absent when the build has no restart endpoint; the row then shows no Start.
+  restart?(entryId: number): Promise<void>
 }
 
 interface ActiveEntryEditor {
@@ -613,6 +615,27 @@ const renderPhoneDay = (grid: WeekGrid, selectedDay: number, handlers: GridHandl
       note.textContent = cell.notes ?? 'No note'
       if (cell.notes === null) note.dataset.empty = 'true'
       label.append(note)
+      // Restarting yesterday's entry is how the old UI started today's work:
+      // one press on the row you already have, rather than retyping the project
+      // and task as exact strings into the command line. The endpoint has been
+      // shipped and unused.
+      const entryId = cell.entries[0]?.id
+      if (handlers.restart !== undefined && entryId !== undefined && !cell.isRunning) {
+        const start = document.createElement('button')
+        start.type = 'button'
+        start.className = 'day-row-start'
+        start.dataset.startEntry = String(entryId)
+        start.textContent = 'Start'
+        start.ariaLabel = `Start a timer on ${row.projectLabel} / ${row.taskLabel}`
+        start.disabled = cell.isLocked
+        start.addEventListener('click', () => {
+          start.disabled = true
+          void handlers.restart?.(entryId).finally(() => {
+            start.disabled = cell.isLocked
+          })
+        })
+        label.append(start)
+      }
       const nextCell = dayItems[(itemIndex + 1) % dayItems.length]?.cell
       item.append(
         label,
@@ -1612,6 +1635,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       commit: commitCell,
       retry: retryCell,
       openEntry,
+      ...(api.restartTimeEntry === undefined ? {} : { restart: restartEntry }),
     }
     renderDayTotals(grid, selectedDay)
     renderDesktopGrid(grid, handlers)
@@ -1714,6 +1738,20 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         return { available: false, policy: null, locks: [] }
       }
       throw error
+    }
+  }
+
+  const restartEntry = async (entryId: number): Promise<void> => {
+    const operation = sessionOperation()
+    const restart = api.restartTimeEntry
+    if (operation === null || restart === undefined) return
+    try {
+      await restart(entryId, operation.signal)
+      if (!isSessionCurrent(operation)) return
+      await refresh(operation)
+    } catch (error: unknown) {
+      if (handleSessionFailure(error, operation)) return
+      status.textContent = messageFor(error)
     }
   }
 

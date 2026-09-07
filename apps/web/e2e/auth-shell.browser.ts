@@ -913,6 +913,31 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   await expect(timerDialog).not.toBeVisible()
   expect(timeEntryWrites).toHaveLength(writesBeforeTimer + 1)
 
+  // Starting from the row you already have, rather than retyping the project
+  // and task into the command line. POST /time-entries/{id}/restart has been
+  // shipped and unused; this is its first consumer. The timer started above is
+  // stopped first, because restart starts one and two cannot run at once.
+  await page.locator('[data-timer-chip]').click()
+  const stopRunning = page.locator('[data-stop-timer]')
+  await expect(stopRunning).toBeVisible()
+  await stopRunning.click()
+  await expect(page.locator('[data-entry-dialog]')).toBeHidden()
+
+  const startRow = page.locator('[data-start-entry]').first()
+  await expect(startRow).toBeVisible()
+  const restarted = page.waitForResponse(
+    (response) =>
+      /\/api\/v1\/time-entries\/\d+\/restart$/u.test(new URL(response.url()).pathname) &&
+      response.request().method() === 'POST',
+  )
+  await startRow.click()
+  expect((await restarted).ok()).toBe(true)
+  // The row is running now, so it offers no second Start.
+  await expect(page.locator('[data-day-rows] .day-row[data-running="true"]')).toHaveCount(1)
+  await expect(
+    page.locator('[data-day-rows] .day-row[data-running="true"] [data-start-entry]'),
+  ).toHaveCount(0)
+
   const browserSession = (await context.cookies()).find(
     (cookie) => cookie.name === '__Host-ezacto_session',
   )
