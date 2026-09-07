@@ -532,6 +532,35 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers): void => {
   totals.replaceChildren(totalRow)
 }
 
+/**
+ * The seven-day strip, above the grid and shared by both views. §6 of the
+ * old-UI analysis calls it "the single best 'did I finish my week?' affordance
+ * in either version": the week's shape in one line, before you read a single
+ * row. Day view had no totals at all.
+ */
+const renderDayTotals = (grid: WeekGrid, selectedDay: number): void => {
+  const strip = required<HTMLElement>('[data-day-totals]')
+  const today = localDate()
+  strip.replaceChildren(
+    ...grid.dates.map((date, index) => {
+      const item = document.createElement('li')
+      item.dataset.dayTotal = date
+      if (date === today) item.dataset.today = ''
+      if (index === selectedDay) item.dataset.selected = ''
+      const label = document.createElement('span')
+      label.textContent = dayLabel(date, true)
+      const hours = document.createElement('strong')
+      const seconds = grid.dayTotals[index] ?? 0
+      hours.textContent = formatSeconds(seconds)
+      // A day with nothing on it should read as empty at a glance rather than
+      // as a number you have to compare against the others.
+      if (seconds === 0) hours.dataset.empty = ''
+      item.append(label, hours)
+      return item
+    }),
+  )
+}
+
 const renderPhoneDay = (grid: WeekGrid, selectedDay: number, handlers: GridHandlers): void => {
   const date = grid.dates[selectedDay]!
   required<HTMLElement>('[data-day-label]').textContent = dayLabel(date)
@@ -1584,6 +1613,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       retry: retryCell,
       openEntry,
     }
+    renderDayTotals(grid, selectedDay)
     renderDesktopGrid(grid, handlers)
     renderPhoneDay(grid, selectedDay, handlers)
     renderTimer(snapshot.running)

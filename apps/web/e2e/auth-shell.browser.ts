@@ -832,6 +832,15 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   expect((await created).ok()).toBe(true)
   await expect(noteDialog).toBeHidden()
   await expect(page.locator('[data-week-total]')).toHaveText('1:00')
+  // The seven-day strip is the week's shape before you read a row, and it has
+  // to agree with the grid it sits above — in both views, which is why it lives
+  // outside them.
+  const dayTotals = page.locator('[data-day-totals] li')
+  await expect(dayTotals).toHaveCount(7)
+  await expect(dayTotals.filter({ has: page.locator('[data-empty]') })).toHaveCount(6)
+  await expect(
+    dayTotals.filter({ hasNot: page.locator('[data-empty]') }).locator('strong'),
+  ).toHaveText('1:00')
   await expect(
     page.locator('[data-day-rows] .day-row').filter({ hasText: 'Browser Secondary Project' }),
   ).toContainText('Added row delivery note')
