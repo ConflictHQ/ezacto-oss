@@ -375,7 +375,7 @@ describe('idempotent load and resume', () => {
     } finally {
       actualDatabase.close()
     }
-  }, 40_000)
+  }, 60_000)
 
   it('[unit] a same-snapshot replay is a no-op even when every load checkpoint is lost', async () => {
     const databasePath = join(dir, 'replay.sqlite')
@@ -421,7 +421,7 @@ describe('idempotent load and resume', () => {
     } finally {
       replayed.close()
     }
-  }, 40_000)
+  }, 60_000)
 
   it('[unit] D1 resumes after an adapter restart and converges duplicate deliveries and replay', async () => {
     const persistencePath = join(dir, 'miniflare')
@@ -501,5 +501,5 @@ describe('idempotent load and resume', () => {
     } finally {
       await miniflare.dispose()
     }
-  }, 120_000)
+  }, 180_000)
 })

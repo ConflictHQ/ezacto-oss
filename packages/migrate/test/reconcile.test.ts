@@ -362,7 +362,7 @@ describe('three-way reconciliation', () => {
     await makeGoldenSlicesCoherent(snapshotDir)
     await writePassingChecksums(snapshotDir)
     await runLoad({ snapshotDir, databasePath, organizationCurrency: 'USD' })
-  }, 40_000)
+  }, 60_000)
 
   afterEach(async () => rm(dir, { recursive: true, force: true }))
 

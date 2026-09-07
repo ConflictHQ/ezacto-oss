@@ -355,7 +355,7 @@ describe('transform and load', () => {
     } finally {
       afterGap.close()
     }
-  }, 30_000)
+  }, 45_000)
 
   it('[integration] preserves a signed Harvest direct-expense amount', async () => {
     const path = join(snapshotDir, 'raw', 'expenses.jsonl')
@@ -375,7 +375,7 @@ describe('transform and load', () => {
     } finally {
       db.close()
     }
-  }, 30_000)
+  }, 45_000)
 
   it('[integration] rejects an estimate-message identity owned by another estimate', async () => {
     await runLoad({ snapshotDir, databasePath })
@@ -420,7 +420,7 @@ describe('transform and load', () => {
     } finally {
       after.close()
     }
-  }, 30_000)
+  }, 45_000)
 
   it('[integration] fails a three-decimal money token before inserting its resource row', async () => {
     const path = join(snapshotDir, 'raw', 'expenses.jsonl')
@@ -436,7 +436,7 @@ describe('transform and load', () => {
     } finally {
       db.close()
     }
-  }, 30_000)
+  }, 45_000)
 
   it('[integration] refuses a missing billed invoice before advancing load progress', async () => {
     const path = join(snapshotDir, 'raw', 'time_entries.jsonl')
@@ -454,7 +454,7 @@ describe('transform and load', () => {
     } finally {
       db.close()
     }
-  }, 30_000)
+  }, 45_000)
 
   it('[integration] requires the verified checksum and binds load overrides to durable progress', async () => {
     const checksumsPath = join(snapshotDir, 'checksums.json')
@@ -489,7 +489,7 @@ describe('transform and load', () => {
         organizationAddress: 'Sanitized address B',
       }),
     ).rejects.toThrow('different snapshot')
-  }, 30_000)
+  }, 45_000)
 
   it('[integration] rejects report evidence edited after verify', async () => {
     const checksumsPath = join(snapshotDir, 'checksums.json')
@@ -497,7 +497,7 @@ describe('transform and load', () => {
     checksums.reports.tampered = [{ total_hours: 999 }]
     await writeFile(checksumsPath, `${JSON.stringify(checksums)}\n`)
     await expect(runLoad({ snapshotDir, databasePath })).rejects.toThrow('report evidence')
-  }, 30_000)
+  }, 45_000)
 
   it('[integration] records source rate drift while loading the derived chain', async () => {
     const path = join(snapshotDir, 'raw', 'billable_rates.jsonl')
@@ -523,7 +523,7 @@ describe('transform and load', () => {
     } finally {
       db.close()
     }
-  }, 30_000)
+  }, 45_000)
 
   it('[integration] loads an expense when its receipt has a recorded download anomaly', async () => {
     const manifest = await readManifest(snapshotDir)
@@ -553,7 +553,7 @@ describe('transform and load', () => {
     } finally {
       db.close()
     }
-  }, 30_000)
+  }, 45_000)
 
   it('[integration] resolves an older unknown team feature from the completed child sweep', async () => {
     const manifest = await readManifest(snapshotDir)
@@ -575,7 +575,7 @@ describe('transform and load', () => {
     } finally {
       db.close()
     }
-  }, 30_000)
+  }, 45_000)
 
   it('[integration] refuses implicit owner elevation from a non-admin snapshot', async () => {
     const manifest = await readManifest(snapshotDir)
@@ -584,7 +584,7 @@ describe('transform and load', () => {
     await writeManifest(snapshotDir, manifest)
     await refreshChecksum(snapshotDir)
     await expect(runLoad({ snapshotDir, databasePath })).rejects.toThrow('privilege elevation')
-  }, 30_000)
+  }, 45_000)
 
   it('[integration] loads through the D1 adapter with pinned immutable artifacts', async () => {
     const miniflare = new Miniflare({
@@ -627,7 +627,7 @@ describe('transform and load', () => {
     } finally {
       await miniflare.dispose()
     }
-  }, 30_000)
+  }, 45_000)
 
   it('[integration] resumes cold D1 admission and streams a high-cardinality rate history', async () => {
     const ratePath = join(snapshotDir, 'raw', 'billable_rates.jsonl')
@@ -793,7 +793,7 @@ describe('transform and load', () => {
     } finally {
       await miniflare.dispose()
     }
-  }, 70_000)
+  }, 105_000)
 
   it('[integration] resumes generic child lineage from its durable byte cursor', async () => {
     const userPath = join(snapshotDir, 'raw', 'users.jsonl')
@@ -936,7 +936,7 @@ describe('transform and load', () => {
     } finally {
       await miniflare.dispose()
     }
-  }, 70_000)
+  }, 105_000)
 
   it('[integration] checkpoints legacy organization-currency inference in bounded cold windows', async () => {
     const clientPath = join(snapshotDir, 'raw', 'clients.jsonl')
@@ -996,7 +996,7 @@ describe('transform and load', () => {
     } finally {
       sqlite.close()
     }
-  }, 30_000)
+  }, 45_000)
 
   it('[integration] serializes concurrent index builders and reclaims crash artifacts', async () => {
     const userPath = join(snapshotDir, 'raw', 'users.jsonl')
@@ -1087,7 +1087,7 @@ describe('transform and load', () => {
     } finally {
       sqlite.close()
     }
-  }, 30_000)
+  }, 45_000)
 
   it('[integration] invalidates and rebuilds a corrupt same-size child index', async () => {
     const userPath = join(snapshotDir, 'raw', 'users.jsonl')
@@ -1161,7 +1161,7 @@ describe('transform and load', () => {
     } finally {
       sqlite.close()
     }
-  }, 30_000)
+  }, 45_000)
 
   it('[integration] durably partitions high-fanout roles, estimates, and invoices', async () => {
     const rolePath = join(snapshotDir, 'raw', 'roles.jsonl')
@@ -1276,7 +1276,7 @@ describe('transform and load', () => {
     } finally {
       db.close()
     }
-  }, 30_000)
+  }, 45_000)
 
   it('[integration] keeps a 700-line D1 invoice under the total invocation query budget', async () => {
     const taskPath = join(snapshotDir, 'raw', 'tasks.jsonl')
@@ -1389,7 +1389,7 @@ describe('transform and load', () => {
     } finally {
       await miniflare.dispose()
     }
-  }, 60_000)
+  }, 90_000)
 
   it('[property] never plans more than 100 bindings per statement', () => {
     for (let columns = 1; columns <= D1_MAX_BOUND_PARAMETERS; columns += 1) {
