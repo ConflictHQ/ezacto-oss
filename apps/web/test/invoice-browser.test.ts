@@ -3,6 +3,7 @@
 import {
   EzactoApiError,
   type Invoice,
+  type InvoiceEditInput,
   type InvoiceLine,
   type InvoiceLineInput,
   type InvoiceLineUpdateInput,
@@ -550,6 +551,187 @@ describe('invoice payment controller', () => {
     )
     expect(commandIds).toHaveLength(2)
     expect(commandIds[0]).not.toBe(commandIds[1])
+  })
+
+  it('[e2e:invoice-header] edits document facts and rates as two sequenced commands', async () => {
+    renderDetail()
+    let currentInvoice = invoice('HEADER', {
+      subject: 'Original subject',
+      purchase_order: 'PO-1',
+    })
+    const updateInvoice = vi.fn(
+      async (_invoiceId: number, _commandId: string, input: InvoiceEditInput) => {
+        currentInvoice = {
+          ...currentInvoice,
+          version: input.expected_version + 1,
+          ...(input.issue_date === undefined
+            ? {}
+            : {
+                subject: input.subject ?? null,
+                purchase_order: input.purchase_order ?? null,
+                issue_date: input.issue_date,
+                due_date: input.due_date!,
+                payment_terms: input.payment_terms!,
+              }),
+          ...(input.tax_rate_ppm === undefined
+            ? {}
+            : {
+                tax_rate_ppm: input.tax_rate_ppm,
+                tax2_rate_ppm: input.tax2_rate_ppm!,
+                discount_rate_ppm: input.discount_rate_ppm!,
+                tax_amount_cents: 83,
+              }),
+        }
+        return currentInvoice
+      },
+    )
+    const controller = createInvoicePaymentController({
+      getInvoice: vi.fn(async () => currentInvoice),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+      updateInvoice,
+    })
+    await controller.activate(identity(1), new AbortController().signal, () => false)
+
+    document.querySelector<HTMLButtonElement>('[data-invoice-edit]')!.click()
+    const subject = document.querySelector<HTMLInputElement>('[data-invoice-edit-subject]')!
+    const purchaseOrder = document.querySelector<HTMLInputElement>(
+      '[data-invoice-edit-purchase-order]',
+    )!
+    const dueDate = document.querySelector<HTMLInputElement>('[data-invoice-edit-due-date]')!
+    const terms = document.querySelector<HTMLSelectElement>('[data-invoice-edit-payment-terms]')!
+    const tax = document.querySelector<HTMLInputElement>('[data-invoice-edit-tax]')!
+    expect(subject.value).toBe('Original subject')
+    expect(purchaseOrder.value).toBe('PO-1')
+    expect(document.querySelector<HTMLInputElement>('[data-invoice-edit-issue-date]')?.value).toBe(
+      '2026-08-01',
+    )
+    expect(dueDate.value).toBe('2026-08-31')
+    expect(terms.value).toBe('net_30')
+    expect(tax.value).toBe('')
+
+    subject.value = 'Revised subject'
+    purchaseOrder.value = 'PO-77'
+    dueDate.value = '2026-09-15'
+    terms.value = 'net_45'
+    tax.value = '8.25'
+    tax.dispatchEvent(new Event('input', { bubbles: true }))
+    submit('[data-invoice-edit-form]')
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector<HTMLDialogElement>('[data-invoice-edit-dialog]')?.open,
+      ).toBe(false),
+    )
+
+    expect(updateInvoice).toHaveBeenCalledTimes(2)
+    expect(updateInvoice).toHaveBeenNthCalledWith(
+      1,
+      7,
+      expect.stringMatching(/^web\.invoice\.header:/u),
+      {
+        expected_version: 1,
+        subject: 'Revised subject',
+        purchase_order: 'PO-77',
+        issue_date: '2026-08-01',
+        due_date: '2026-09-15',
+        payment_terms: 'net_45',
+      },
+      expect.any(AbortSignal),
+    )
+    expect(updateInvoice).toHaveBeenNthCalledWith(
+      2,
+      7,
+      expect.stringMatching(/^web\.invoice\.financials:/u),
+      {
+        expected_version: 2,
+        tax_rate_ppm: 82_500,
+        tax2_rate_ppm: null,
+        discount_rate_ppm: null,
+      },
+      expect.any(AbortSignal),
+    )
+    expect(document.querySelector('[data-invoice-detail-purchase-order]')?.textContent).toBe(
+      'PO-77',
+    )
+    expect(document.querySelector('[data-invoice-detail-due-date]')?.textContent).toBe(
+      'Sep 15, 2026',
+    )
+    expect(document.querySelector('[data-invoice-detail-subject]')?.textContent).toBe(
+      'Revised subject',
+    )
+    expect(document.querySelector('[data-invoice-detail-tax]')?.textContent).toBe('$0.83')
+
+    document.querySelector<HTMLButtonElement>('[data-invoice-edit]')!.click()
+    expect(tax.value).toBe('8.25')
+    submit('[data-invoice-edit-form]')
+    expect(updateInvoice).toHaveBeenCalledTimes(2)
+    expect(document.querySelector('[data-invoice-edit-result]')?.textContent).toBe(
+      'Nothing changed.',
+    )
+  })
+
+  it('[reliability] keeps a committed header edit and retries only the failed rate command', async () => {
+    renderDetail()
+    let currentInvoice = invoice('PARTIAL')
+    const calls: InvoiceEditInput[] = []
+    let rateAttempts = 0
+    const updateInvoice = vi.fn(
+      async (_invoiceId: number, _commandId: string, input: InvoiceEditInput) => {
+        calls.push(input)
+        if (input.tax_rate_ppm !== undefined) {
+          rateAttempts += 1
+          if (rateAttempts === 1) throw new Error('rate service unavailable')
+          currentInvoice = {
+            ...currentInvoice,
+            version: input.expected_version + 1,
+            discount_rate_ppm: input.discount_rate_ppm!,
+          }
+          return currentInvoice
+        }
+        currentInvoice = {
+          ...currentInvoice,
+          version: input.expected_version + 1,
+          purchase_order: input.purchase_order ?? null,
+        }
+        return currentInvoice
+      },
+    )
+    const controller = createInvoicePaymentController({
+      getInvoice: vi.fn(async () => currentInvoice),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+      updateInvoice,
+    })
+    await controller.activate(identity(1), new AbortController().signal, () => false)
+
+    document.querySelector<HTMLButtonElement>('[data-invoice-edit]')!.click()
+    document.querySelector<HTMLInputElement>('[data-invoice-edit-purchase-order]')!.value = 'PO-9'
+    document.querySelector<HTMLInputElement>('[data-invoice-edit-discount]')!.value = '5'
+    submit('[data-invoice-edit-form]')
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-edit-result]')?.textContent).toBe(
+        'rate service unavailable',
+      ),
+    )
+    expect(calls).toHaveLength(2)
+
+    submit('[data-invoice-edit-form]')
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector<HTMLDialogElement>('[data-invoice-edit-dialog]')?.open,
+      ).toBe(false),
+    )
+    expect(calls).toHaveLength(3)
+    expect(calls[2]).toEqual({
+      expected_version: 2,
+      tax_rate_ppm: null,
+      tax2_rate_ppm: null,
+      discount_rate_ppm: 50_000,
+    })
+    expect(updateInvoice.mock.calls[1]?.[1]).toBe(updateInvoice.mock.calls[2]?.[1])
+    expect(document.querySelector('[data-invoice-detail-purchase-order]')?.textContent).toBe(
+      'PO-9',
+    )
   })
 
   it.each(['record', 'update', 'delete'] as const)(

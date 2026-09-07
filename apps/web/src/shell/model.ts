@@ -883,6 +883,15 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  updateInvoice: async (id, commandId, input, signal) =>
+    (
+      await client.updateInvoice({
+        id,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data.invoice,
   recordInvoicePayment: async (id, commandId, input, signal) =>
     (
       await client.recordInvoicePayment({

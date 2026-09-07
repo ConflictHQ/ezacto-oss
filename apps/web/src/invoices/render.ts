@@ -88,6 +88,42 @@ export const renderInvoiceLineDialogs = (): string => `
     </form>
   </dialog>`
 
+export const renderInvoiceEditDialog = (): string => `
+  <dialog class="invoice-line-dialog" data-invoice-edit-dialog aria-labelledby="invoice-edit-dialog-title">
+    <form data-invoice-edit-form novalidate>
+      <header><div><p class="eyebrow">Invoice</p><h2 id="invoice-edit-dialog-title">Edit invoice</h2></div><button type="button" data-dialog-close aria-label="Close invoice edit dialog">×</button></header>
+      <label for="ez-invoice-edit-subject">Subject
+        <input id="ez-invoice-edit-subject" name="subject" data-invoice-edit-subject maxlength="100000" autocomplete="off">
+      </label>
+      <label for="ez-invoice-edit-purchase-order">Purchase order
+        <input id="ez-invoice-edit-purchase-order" name="purchase_order" data-invoice-edit-purchase-order maxlength="100000" autocomplete="off">
+      </label>
+      <div class="invoice-line-number-fields">
+        <label for="ez-invoice-edit-issue-date">Issue date
+          <input id="ez-invoice-edit-issue-date" name="issue_date" data-invoice-edit-issue-date type="date" required>
+        </label>
+        <label for="ez-invoice-edit-due-date">Due date
+          <input id="ez-invoice-edit-due-date" name="due_date" data-invoice-edit-due-date type="date" required>
+        </label>
+      </div>
+      <label for="ez-invoice-edit-payment-terms">Payment terms
+        <select id="ez-invoice-edit-payment-terms" name="payment_terms" data-invoice-edit-payment-terms><option value="upon_receipt">Upon receipt</option><option value="net_15">Net 15</option><option value="net_30">Net 30</option><option value="net_45">Net 45</option><option value="net_60">Net 60</option><option value="custom">Custom</option></select>
+      </label>
+      <label for="ez-invoice-edit-tax">Tax 1 rate (%)
+        <input id="ez-invoice-edit-tax" name="tax_rate" data-invoice-edit-tax inputmode="decimal" autocomplete="off">
+      </label>
+      <label for="ez-invoice-edit-tax2">Tax 2 rate (%)
+        <input id="ez-invoice-edit-tax2" name="tax2_rate" data-invoice-edit-tax2 inputmode="decimal" autocomplete="off">
+      </label>
+      <label for="ez-invoice-edit-discount">Discount rate (%)
+        <input id="ez-invoice-edit-discount" name="discount_rate" data-invoice-edit-discount inputmode="decimal" autocomplete="off">
+      </label>
+      <p class="hint">Leave a rate blank for none. Rates apply to the lines already marked taxed and are saved as a separate command from the document fields.</p>
+      <p class="form-result" data-invoice-edit-result role="status" aria-live="polite"></p>
+      <div class="invoice-payment-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button class="primary-action" type="submit" data-invoice-edit-submit>Save invoice</button></div>
+    </form>
+  </dialog>`
+
 export const renderInvoiceAttachmentSection = (): string => `
       <section class="invoice-history invoice-attachment-section" aria-labelledby="invoice-attachment-heading">
         <header class="invoice-payment-heading">

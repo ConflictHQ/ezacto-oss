@@ -3,6 +3,7 @@ import {
   type Attachment,
   EzactoApiError,
   type Invoice,
+  type InvoiceEditInput,
   type InvoiceEmailDeliveryInput,
   type InvoiceLine,
   type InvoiceLineInput,
@@ -34,6 +35,8 @@ import {
   invoicePaymentProviderLabel,
   invoicePaymentTiming,
   invoicePeriod,
+  invoiceRatePercentForForm,
+  invoiceRatePpm,
   invoiceRecipients,
   invoiceReminderDate,
   invoicePlannedReminder,
@@ -477,6 +480,19 @@ export const createInvoicePaymentController = (
   const deliveryConfirm = required<HTMLInputElement>('[data-invoice-delivery-confirm]')
   const deliveryResult = required<HTMLElement>('[data-invoice-delivery-result]')
   const deliverySubmit = required<HTMLButtonElement>('[data-invoice-delivery-submit]')
+  const editInvoice = required<HTMLButtonElement>('[data-invoice-edit]')
+  const editDialog = required<HTMLDialogElement>('[data-invoice-edit-dialog]')
+  const editForm = required<HTMLFormElement>('[data-invoice-edit-form]')
+  const editSubject = required<HTMLInputElement>('[data-invoice-edit-subject]')
+  const editPurchaseOrder = required<HTMLInputElement>('[data-invoice-edit-purchase-order]')
+  const editIssueDate = required<HTMLInputElement>('[data-invoice-edit-issue-date]')
+  const editDueDate = required<HTMLInputElement>('[data-invoice-edit-due-date]')
+  const editPaymentTerms = required<HTMLSelectElement>('[data-invoice-edit-payment-terms]')
+  const editTax = required<HTMLInputElement>('[data-invoice-edit-tax]')
+  const editTax2 = required<HTMLInputElement>('[data-invoice-edit-tax2]')
+  const editDiscount = required<HTMLInputElement>('[data-invoice-edit-discount]')
+  const editResult = required<HTMLElement>('[data-invoice-edit-result]')
+  const editSubmit = required<HTMLButtonElement>('[data-invoice-edit-submit]')
   const addLine = required<HTMLButtonElement>('[data-invoice-line-add]')
   const lineReadonlyNotice = required<HTMLElement>('[data-invoice-line-readonly]')
   const lineWorkflowStatus = required<HTMLElement>('[data-invoice-line-status]')
@@ -523,6 +539,8 @@ export const createInvoicePaymentController = (
   let deliveryCommandId: string | null = null
   let lineCommandId: string | null = null
   let lineDeleteCommandId: string | null = null
+  let editHeaderCommandId: string | null = null
+  let editFinancialsCommandId: string | null = null
 
   const current = (): ActiveSession | null =>
     active !== null &&
@@ -599,6 +617,11 @@ export const createInvoicePaymentController = (
     addLine.title =
       canWrite && !canEditLines ? 'Line items cannot be changed on a closed invoice.' : ''
     lineReadonlyNotice.hidden = session === null || canWrite
+    // A closed invoice rejects every native edit, so the header shares the line gate.
+    editInvoice.hidden = !canWrite
+    editInvoice.disabled = controlsLocked || !canEditLines
+    editInvoice.title =
+      canWrite && !canEditLines ? 'A closed invoice can no longer be edited.' : ''
     for (const control of paymentForm.querySelectorAll<
       HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement
     >('input, select, textarea, button')) {
@@ -627,8 +650,14 @@ export const createInvoicePaymentController = (
     >('input, textarea, button')) {
       control.disabled = controlsLocked
     }
+    for (const control of editForm.querySelectorAll<
+      HTMLInputElement | HTMLSelectElement | HTMLButtonElement
+    >('input, select, button')) {
+      control.disabled = controlsLocked
+    }
     deliverySubmit.disabled = controlsLocked
     lineSubmit.disabled = controlsLocked
+    editSubmit.disabled = controlsLocked
     lineDeleteSubmit.disabled = controlsLocked
     syncReminder()
   }
@@ -640,6 +669,7 @@ export const createInvoicePaymentController = (
     if (deliveryDialog.open) deliveryDialog.close()
     if (lineDialog.open) lineDialog.close()
     if (lineDeleteDialog.open) lineDeleteDialog.close()
+    if (editDialog.open) editDialog.close()
   }
 
   const renderAttachments = (): void => {
@@ -709,6 +739,8 @@ export const createInvoicePaymentController = (
     deliveryCommandId = null
     lineCommandId = null
     lineDeleteCommandId = null
+    editHeaderCommandId = null
+    editFinancialsCommandId = null
     closeDialogs()
     paymentForm.reset()
     deleteForm.reset()
@@ -716,6 +748,7 @@ export const createInvoicePaymentController = (
     deliveryForm.reset()
     lineForm.reset()
     lineDeleteForm.reset()
+    editForm.reset()
     attachmentForm.reset()
     paymentResult.textContent = ''
     deleteResult.textContent = ''
@@ -723,6 +756,7 @@ export const createInvoicePaymentController = (
     deliveryResult.textContent = ''
     lineResult.textContent = ''
     lineDeleteResult.textContent = ''
+    editResult.textContent = ''
     lineWorkflowStatus.textContent = ''
     linePreview.textContent = '—'
     workflowStatus.textContent = ''
@@ -969,6 +1003,35 @@ export const createInvoicePaymentController = (
     lineDeleteSubmit.focus()
   }
 
+  const openEditDialog = (): void => {
+    const session = current()
+    if (
+      session === null ||
+      invoice === null ||
+      mutationPending ||
+      refreshRequired ||
+      !invoiceIdentityCanWrite(session.identity) ||
+      !invoiceCanEditLines(invoice)
+    ) {
+      return
+    }
+    editHeaderCommandId = null
+    editFinancialsCommandId = null
+    editForm.reset()
+    editSubject.value = invoice.subject ?? ''
+    editPurchaseOrder.value = invoice.purchase_order ?? ''
+    editIssueDate.value = invoice.issue_date
+    editDueDate.value = invoice.due_date
+    editPaymentTerms.value = invoice.payment_terms
+    editTax.value = invoiceRatePercentForForm(invoice.tax_rate_ppm)
+    editTax2.value = invoiceRatePercentForForm(invoice.tax2_rate_ppm)
+    editDiscount.value = invoiceRatePercentForForm(invoice.discount_rate_ppm)
+    editResult.textContent = ''
+    syncControls()
+    editDialog.showModal()
+    editSubject.focus()
+  }
+
   const openComposer = (): void => {
     const session = current()
     if (
@@ -1037,6 +1100,8 @@ export const createInvoicePaymentController = (
       deliveryCommandId = null
       lineCommandId = null
       lineDeleteCommandId = null
+      editHeaderCommandId = null
+      editFinancialsCommandId = null
       const loaded = await loadDetail(session, { hideDocument: false })
       if (current() !== session) return
       result.textContent = loaded
@@ -1063,6 +1128,9 @@ export const createInvoicePaymentController = (
       }
       if (deliveryDialog.open && (invoice === null || !invoiceCanMarkSent(invoice))) {
         deliveryDialog.close()
+      }
+      if (editDialog.open && (invoice === null || !invoiceCanEditLines(invoice))) {
+        editDialog.close()
       }
       return
     }
@@ -1229,6 +1297,145 @@ export const createInvoicePaymentController = (
           mutationPending = false
           syncControls()
         }
+      })
+  })
+  editInvoice.addEventListener('click', openEditDialog)
+  editForm.addEventListener('input', () => {
+    if (!mutationPending) {
+      editHeaderCommandId = null
+      editFinancialsCommandId = null
+    }
+    editResult.textContent = ''
+  })
+  editForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const session = current()
+    const selectedInvoice = invoice
+    const updateInvoice = api.updateInvoice
+    if (
+      session === null ||
+      selectedInvoice === null ||
+      updateInvoice === undefined ||
+      mutationPending ||
+      refreshRequired ||
+      !invoiceIdentityCanWrite(session.identity) ||
+      !invoiceCanEditLines(selectedInvoice)
+    ) {
+      return
+    }
+    const subject = editSubject.value.trim()
+    const purchaseOrder = editPurchaseOrder.value.trim()
+    let rates: Pick<InvoiceEditInput, 'tax_rate_ppm' | 'tax2_rate_ppm' | 'discount_rate_ppm'>
+    try {
+      if (editIssueDate.value === '' || editDueDate.value === '') {
+        throw new Error('Enter both an issue date and a due date.')
+      }
+      if (editDueDate.value < editIssueDate.value) {
+        throw new Error('Due date cannot precede the issue date.')
+      }
+      rates = {
+        tax_rate_ppm: invoiceRatePpm(editTax.value, 'Tax 1'),
+        tax2_rate_ppm: invoiceRatePpm(editTax2.value, 'Tax 2'),
+        discount_rate_ppm: invoiceRatePpm(editDiscount.value, 'Discount'),
+      }
+    } catch (error) {
+      editResult.textContent = apiMessage(error)
+      return
+    }
+    const header = {
+      subject: subject === '' ? null : subject,
+      purchase_order: purchaseOrder === '' ? null : purchaseOrder,
+      issue_date: editIssueDate.value,
+      due_date: editDueDate.value,
+      payment_terms: editPaymentTerms.value as Invoice['payment_terms'],
+    }
+    const headerChanged =
+      header.subject !== selectedInvoice.subject ||
+      header.purchase_order !== selectedInvoice.purchase_order ||
+      header.issue_date !== selectedInvoice.issue_date ||
+      header.due_date !== selectedInvoice.due_date ||
+      header.payment_terms !== selectedInvoice.payment_terms
+    const ratesChanged =
+      rates.tax_rate_ppm !== selectedInvoice.tax_rate_ppm ||
+      rates.tax2_rate_ppm !== selectedInvoice.tax2_rate_ppm ||
+      rates.discount_rate_ppm !== selectedInvoice.discount_rate_ppm
+    if (!headerChanged && !ratesChanged) {
+      editResult.textContent = 'Nothing changed.'
+      return
+    }
+    editHeaderCommandId ??= `web.invoice.header:${globalThis.crypto.randomUUID()}`
+    editFinancialsCommandId ??= `web.invoice.financials:${globalThis.crypto.randomUUID()}`
+    const headerCommand = editHeaderCommandId
+    const financialsCommand = editFinancialsCommandId
+    mutationPending = true
+    editResult.textContent = 'Saving invoice…'
+    syncControls()
+    // The API takes exactly one edit kind per request, so changing both the
+    // document and the rates is two commands on rising versions.
+    const request = (async (): Promise<Invoice> => {
+      let saved = selectedInvoice
+      if (headerChanged) {
+        saved = await updateInvoice(
+          selectedInvoice.id,
+          headerCommand,
+          { expected_version: saved.version, ...header },
+          session.signal,
+        )
+        // The document is committed even if the rates fail below. Adopting it
+        // now leaves a retry sending only the rates, at the version it returned.
+        // From here the rendered document is behind the server whatever happens
+        // next, so it is already stale: say so, rather than letting a rates
+        // failure leave the page showing a version nobody saved.
+        if (current() === session) {
+          invoice = saved
+          editHeaderCommandId = null
+          refreshRequired = true
+        }
+      }
+      if (ratesChanged) {
+        saved = await updateInvoice(
+          selectedInvoice.id,
+          financialsCommand,
+          { expected_version: saved.version, ...rates },
+          session.signal,
+        )
+      }
+      return saved
+    })()
+    void request
+      .then(async (updatedInvoice) => {
+        if (current() !== session) return
+        invoice = updatedInvoice
+        refreshRequired = true
+        editHeaderCommandId = null
+        editFinancialsCommandId = null
+        editResult.textContent = ''
+        editDialog.close()
+        workflowStatus.textContent = 'Invoice saved. Refreshing invoice…'
+        syncControls()
+        const loaded = await loadDetail(session, {
+          hideDocument: false,
+          successMessage: 'Invoice saved.',
+        })
+        if (!loaded && current() === session && refreshRequired) {
+          workflowStatus.textContent =
+            'Invoice saved, but the updated invoice could not be refreshed. Retry invoice; the change will not be submitted again.'
+        }
+      })
+      .catch(async (error: unknown) => {
+        await handleMutationFailure(error, session, editResult)
+        // A conflict already reloaded inside handleMutationFailure. Any other
+        // failure that arrives with the document half-saved has not, and the
+        // page would otherwise keep rendering the header the user typed as
+        // though the whole edit had failed.
+        if (current() === session && refreshRequired) {
+          await loadDetail(session, { hideDocument: false })
+        }
+      })
+      .finally(() => {
+        if (current() !== session) return
+        mutationPending = false
+        syncControls()
       })
   })
   addLine.addEventListener('click', () => openLineDialog(null))
@@ -1598,6 +1805,12 @@ export const createInvoicePaymentController = (
     editingLine = null
     lineCommandId = null
     lineResult.textContent = ''
+  })
+  editDialog.addEventListener('close', () => {
+    if (mutationPending) return
+    editHeaderCommandId = null
+    editFinancialsCommandId = null
+    editResult.textContent = ''
   })
   lineDeleteDialog.addEventListener('close', () => {
     if (mutationPending) return
