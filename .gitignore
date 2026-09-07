@@ -18,3 +18,9 @@ snapshot/
 # 150 merges on main resolved this one file by hand. The sibling generated files
 # stay tracked -- they are small, readable, and they merge.
 apps/web/src/generated/shell-assets.ts
+
+# The Harvest snapshot: real client records, contact addresses and statement
+# keys. The runbook builds it here by name (--snapshot-dir ./harvest-snapshot),
+# so ignoring only "snapshot/" left the documented path tracked.
+harvest-snapshot/
+cutover.db

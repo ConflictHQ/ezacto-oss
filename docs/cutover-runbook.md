@@ -322,20 +322,23 @@ Run it last, so the report you file describes the database you shipped. The
 order relative to the worksheets is otherwise free, because reconcile does not
 read them.
 
-**It will exit 1, and that is the expected result today.** The rehearsal run
-reported 25,333 matches, 0 rounding failures, 4 gaps and 74 UNEXPLAINED. Zero
-UNEXPLAINED is not reachable with the current tool: the classifier cannot
-express an accepted delta (#277), so the deltas caused by rows the loader
-deliberately skipped have nowhere to go but UNEXPLAINED.
+**It exits 0.** That was not always true, and the history matters if you are
+reading an older copy of this page: the first rehearsal reported 25,333 matches,
+0 rounding failures, 4 gaps and 74 UNEXPLAINED, because the classifier could not
+express an accepted delta (#277) and every deliberate loader skip landed in
+UNEXPLAINED with nowhere else to go. This page used to say a nonzero exit was
+expected, and told you to read past it.
 
-The gate for this cutover is therefore not the exit code. It is:
+Do not read past it now. #277 gave accepted deltas a citation, and #279 removed
+the largest class of skip entirely, so the exit code is a real signal again:
 
-1. every UNEXPLAINED row falls into one of the five known classes below;
-2. the count has not grown since the last rehearsal;
+1. `unexplained 0` — the gate, and a nonzero exit means it was not met;
+2. every gap carries a citation into migration-spec §7;
 3. nothing in the report is a delta you cannot name.
 
-Diff the new `reconciliation-report.json` against the rehearsal's. A row you
-have not seen before is an abort condition. See
+Diff the new `reconciliation-report.json` against the last rehearsal's anyway. A
+cited gap you have not seen before is still an abort condition — a citation says
+a delta was expected, not that it was expected *here*. See
 [What "flawless" means here](#what-flawless-means-here) for the breakdown.
 
 ## 6. Convert the dump for D1
@@ -692,12 +695,24 @@ cent. An approximate match is still UNEXPLAINED.
 **Fifty-seven of that run's 65 gaps were negative time entries** — 48 across the
 time reports, 3 across the uninvoiced report, 6 as anomalies and a row count.
 They are gone: `time_entries.seconds` is signed now, so a correction loads and
-nets instead of being skipped and cited. Expect **8** cited gaps, the four rows
-above, and expect the match count to rise by whatever those 57 become.
+nets instead of being skipped and cited.
 
-The exact figures are deliberately not written here. They come from the next run
-against a live snapshot, and inventing them would give an operator a number to
-match rather than a gate to pass. The gate is `unexplained 0`.
+Measured on a fresh rehearsal against the live account, 2026-09-07, snapshot
+`bc074919`:
+
+```
+matches 26109   rounding 0   gaps 8   unexplained 0
+```
+
+The eight are the four rows above. All five corrections in the account loaded,
+carrying their cost — including the 2026-08-02 entry of -1.0h at a $60 cost
+rate, which every previous rehearsal skipped and every previous total therefore
+ran high by.
+
+That run **exited 0**. Earlier revisions of this page said reconcile would exit 1
+and that this was expected; that has not been true since the gate reached zero
+unexplained, and the exit code is now a real signal rather than a known failure
+to read past.
 
 Getting here took four fixes, and the numbers moved as follows:
 
@@ -708,7 +723,7 @@ Getting here took four fixes, and the numbers moved as follows:
 | Invoice state compared at all | 26,042 | 4 | 77 |
 | Documented skips cited rather than counted | 26,042 | 65 | 16 |
 | Non-positive receipts imported rather than skipped | 26,051 | 65 | **0** |
-| Corrections stored rather than skipped and cited | re-measure | 8 | **0** |
+| Corrections stored rather than skipped and cited | 26,109 | 8 | **0** |
 
 The third row goes **up**: comparing `state` surfaced seven invoices that had
 been reading `open` against Harvest's `paid` without anything noticing. The
