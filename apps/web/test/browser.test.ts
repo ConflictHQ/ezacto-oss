@@ -431,6 +431,43 @@ const submitSignIn = (email: string, password: string): void => {
 }
 
 describe('week-grid browser behavior', () => {
+  it('[browser] offers Start on a week-grid row, from its most recent entry', async () => {
+    // The day list has carried this since the timesheet work. On a desktop the
+    // grid is the screen you are actually on, and it offered nothing: the only
+    // way to start a timer was to retype the project and task into the top bar
+    // as exact strings.
+    renderBrowserShell()
+    window.history.replaceState(null, '', '/?week=2026-08-28')
+    const restarted: number[] = []
+    const api = browserApi()
+    const withRestart = {
+      ...api,
+      restartTimeEntry: async (id: number) => {
+        restarted.push(id)
+        return api.entries[0]!
+      },
+    }
+
+    await mountShell(withRestart)
+
+    const start = await vi.waitFor(() => {
+      const control = document.querySelector<HTMLButtonElement>(
+        '[data-week-grid-rows] tr th .grid-row-start',
+      )
+      expect(control).not.toBeNull()
+      return control!
+    })
+    // The most recent entry on the row, not the first: a new timer should
+    // inherit the notes and rate of the work last done, not of the week's
+    // opening row.
+    expect(start.dataset.startEntry).toBe('1')
+    expect(start.getAttribute('aria-label')).toContain('Start a timer on')
+
+    start.click()
+    await vi.waitFor(() => expect(restarted).toEqual([1]))
+  })
+
+
   it('[e2e:track-week] preserves keyboard edits, notes, retry, copy, and phone-day writes', async () => {
     renderBrowserShell()
     window.history.replaceState(null, '', '/?week=2026-08-28')

@@ -939,7 +939,9 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   await stopRunning.click()
   await expect(page.locator('[data-entry-dialog]')).toBeHidden()
 
-  const startRow = page.locator('[data-start-entry]').first()
+  // Scoped to the day list: the week grid carries the same control on its row
+  // labels now, and at 390px that table is not the one on screen.
+  const startRow = page.locator('[data-day-rows] [data-start-entry]').first()
   await expect(startRow).toBeVisible()
   const restarted = page.waitForResponse(
     (response) =>
