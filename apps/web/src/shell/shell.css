@@ -2773,11 +2773,25 @@ button[data-auth-action]:disabled {
   padding: 2px 4px 0;
   background: var(--ez-ground);
 }
+/* Today's column, marked its full height. The old grid used a rule under the
+   header; a tinted column reads at a glance without adding a line to a table
+   whose whole discipline is hairlines. */
+.week-grid-table th[data-today] {
+  box-shadow: inset 0 -3px var(--ez-live);
+}
+
+.week-grid-table td[data-today],
+.week-grid-table th[data-today] {
+  background: var(--ez-surface);
+}
+
 .week-cell input {
   width: 100%;
   height: 34px;
   padding: 0 7px;
-  border: 1px solid transparent;
+  /* A resting border: the old grid read as cells you could type into before you
+     touched it, rather than revealing itself one cell at a time on hover. */
+  border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: transparent;
   color: var(--ez-ink);

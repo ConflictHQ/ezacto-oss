@@ -389,6 +389,11 @@ const renderCellControl = (
   note.ariaLabel = `${cell.entries.length === 0 ? 'Add time' : currentNotes === null ? 'Add note' : 'Edit note'} for ${noteContext} on ${dayLabel(cell.date)}${minimumNoteLength > 0 ? `; at least ${minimumNoteLength} characters required` : ''}`
   note.title = currentNotes ?? (minimumNoteLength > 0 ? noteHint(minimumNoteLength) : cell.entries.length === 0 ? 'Add time' : 'Add note')
   note.textContent = currentNotes === null ? '+' : '•'
+  // Every cell already has a tab stop: its input. Putting the note and retry
+  // affordances in the sequence made a week row fourteen stops to cross when
+  // seven is the whole point of a grid. Both stay reachable by click and by
+  // the row's own focus, and neither is the way anyone enters time.
+  note.tabIndex = -1
   note.disabled =
     cell.entries.length > 1 ||
     cell.isConflict ||
@@ -430,6 +435,7 @@ const renderCellControl = (
     const retry = document.createElement('button')
     retry.type = 'button'
     retry.className = 'cell-retry'
+    retry.tabIndex = -1
     retry.textContent = 'Retry'
     retry.addEventListener('click', () => void handlers.retry(cell, view))
     wrapper.append(retry)
@@ -444,10 +450,15 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers): void => {
   projectHeading.scope = 'col'
   projectHeading.textContent = 'Project / task'
   heading.append(projectHeading)
+  // Which column is today is the first thing you look for in a week grid, and
+  // nothing said. The cells carry it too, so the marker runs the column's
+  // height rather than sitting only in its header.
+  const today = localDate()
   for (const date of grid.dates) {
     const th = document.createElement('th')
     th.scope = 'col'
     th.textContent = dayLabel(date, true)
+    if (date === today) th.dataset.today = ''
     heading.append(th)
   }
   const totalHeading = document.createElement('th')
@@ -480,6 +491,7 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers): void => {
         tr.append(label)
         row.cells.forEach((cell, dayIndex) => {
           const td = document.createElement('td')
+          if (cell.date === today) td.dataset.today = ''
           const nextRow = grid.rows[rowIndex + 1] ?? grid.rows[0]
           const nextDay = rowIndex + 1 < grid.rows.length ? dayIndex : (dayIndex + 1) % 7
           const nextCell = nextRow?.cells[nextDay]

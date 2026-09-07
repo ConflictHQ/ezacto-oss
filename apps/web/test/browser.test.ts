@@ -1122,11 +1122,11 @@ describe('invoice browse browser behavior', () => {
         page: { next_cursor: null },
       })
     // "Client #11" is an internal identifier on a page a client can be sent.
-    const listClients = vi.fn(async () => ({
-      data: [{ id: 11, name: 'Vantage IT' }],
+    const listClients: ShellApi['listClients'] = async () => ({
+      data: [resource(11, 'Vantage IT')],
       page: { next_cursor: null },
-    }))
-    const api: ShellApi = { ...base, listInvoices, listClients } as ShellApi
+    })
+    const api: ShellApi = { ...base, listInvoices, listClients }
 
     await mountShell(api)
 

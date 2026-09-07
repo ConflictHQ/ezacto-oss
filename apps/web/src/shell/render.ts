@@ -235,7 +235,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
     </div>
   </header>
   <nav class="tabstrip" aria-label="Time views"${view === 'time' ? '' : ' hidden'}>
-    <a href="/" aria-current="page">Week</a><a href="/?view=day">Day</a><a href="/?view=calendar">Calendar</a>
+    <a href="/" aria-current="page">Week</a><a href="/?view=day">Day</a>
   </nav>
   <main class="app-content" data-app-content${view === 'time' ? '' : ' hidden'}>
     <header class="context-row">
