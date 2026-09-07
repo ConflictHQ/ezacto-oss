@@ -19,6 +19,7 @@
     "pretypecheck": "npm run generated",
     "pretest": "npm run generated",
     "prebuild": "npm run generated",
+    "check": "npm run typecheck && npm run lint",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
