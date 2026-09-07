@@ -178,7 +178,13 @@ export const invoicePaymentsTotalsMigration = [
       length(currency) = 3 AND currency = upper(currency)
       AND currency NOT GLOB '*[^A-Z]*'
     ),
-    amount_cents INTEGER NOT NULL CHECK (amount_cents BETWEEN 1 AND ${centsLimit}),
+    -- A receipt is signed, like the invoice amount it settles. Harvest closes a
+    -- $0 invoice with a $0 payment and a credit note with a negative one, and a
+    -- strictly positive CHECK here forced the importer to skip both — which
+    -- restated seven settled invoices as open, since state is derived from the
+    -- payments that load (#283). bank_deposits keeps BETWEEN 1: a bank credit
+    -- really is positive.
+    amount_cents INTEGER NOT NULL CHECK (${centsCheck('amount_cents')}),
     paid_at TEXT,
     paid_date TEXT,
     source_paid_at TEXT,

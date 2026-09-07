@@ -360,7 +360,6 @@ export interface LoadAnomaly {
   kind:
     | 'hours_residue'
     | 'rate_residue'
-    | 'non_positive_payment'
     | 'unresolved_estimate_reference'
     | 'negative_time_entry'
     | 'billing_conflict'
@@ -3259,24 +3258,14 @@ const invoiceInput = async (
     const gateway = objectValue(p, 'payment_gateway')
     const gatewayIdentified = identifiedReference(gateway)
     const recordedByEmail = stringValue(p, 'recorded_by_email')
-    // ezacto invoice_payments are strictly positive receipts
-    // (CHECK amount_cents BETWEEN 1 AND ...). Harvest also records $0 payments
-    // that settle $0 invoices and negative payments that settle credit notes.
-    // Those rows cannot be represented, so skip them and say so rather than
-    // aborting the whole import or silently coercing a money value.
+    // A receipt is signed. Harvest closes a $0 invoice with a $0 payment and a
+    // credit note with a negative one, and invoice_payments.amount_cents now
+    // holds both — skipping them restated the seven invoices they settled as
+    // open, because state is derived from the payments that load (#283).
     const paymentAmountCents = moneyLiteralToCents(
       numberAt(payment, '/amount'),
       'invoice_payment.amount',
     )
-    if (paymentAmountCents <= 0) {
-      anomalies.push({
-        resource: 'invoice_payments',
-        source_id: paymentId,
-        kind: 'non_positive_payment',
-        detail: `invoice=${harvestId} amount=${numberAt(payment, '/amount')}`,
-      })
-      continue
-    }
     importedPayments.push({
       harvestId: paymentId,
       amountCents: paymentAmountCents,

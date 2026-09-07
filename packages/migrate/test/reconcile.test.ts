@@ -794,11 +794,12 @@ describe('three-way reconciliation', () => {
     ).toEqual([])
   })
 
-  it('[unit] sees a settled invoice restated as open by a payment it cannot hold', async () => {
-    // The seven CONFLICT invoices in #283: state is derived from the payments
-    // that loaded, so a payment invoice_payments.amount_cents cannot represent
-    // leaves a paid invoice reading open. Reconcile compared no state field, so
-    // six of the seven were invisible to it.
+  it('[unit] imports a non-positive receipt instead of skipping it', async () => {
+    // The seven CONFLICT invoices in #283. State is derived from the payments
+    // that load, so while invoice_payments.amount_cents was a strictly positive
+    // receipt, a $0 or credit-note payment was skipped and the invoice it
+    // settled read open. The column is signed now, like the invoice amount it
+    // settles, so the payment lands and the state holds.
     await rm(snapshotDir, { recursive: true, force: true })
     await rm(databasePath, { force: true })
     await buildSanitizedLoadSnapshot(snapshotDir)
@@ -809,10 +810,13 @@ describe('three-way reconciliation', () => {
     payment.amount = 0
     await writeFile(paymentPath, `${JSON.stringify(payment)}\n`)
 
+    // The golden invoice totals $2,275, so a $0 receipt leaves it open — which
+    // is the arithmetic working. What this proves is that the row survives the
+    // import at all; whether a settled invoice keeps its state is asserted
+    // against a $0 invoice in packages/db/test/invoice-state.test.ts.
     const invoicePath = join(snapshotDir, 'raw', 'invoices.jsonl')
     const lines = (await readFile(invoicePath, 'utf8')).trimEnd().split('\n')
     const invoice = JSON.parse(lines[0] ?? '') as Record<string, unknown>
-    invoice.state = 'paid'
     invoice.due_amount = 2275
     lines[0] = JSON.stringify(invoice)
     await writeFile(invoicePath, `${lines.join('\n')}\n`)
@@ -822,36 +826,37 @@ describe('three-way reconciliation', () => {
 
     const database = new BetterSqlite3(databasePath)
     try {
-      const anomalies = database
-        .prepare(`SELECT resource, source_id AS sourceId, kind FROM _ezacto_load_anomalies`)
-        .all() as Array<{ resource: string; sourceId: string | null; kind: string }>
-      expect(anomalies).toContainEqual({
-        resource: 'invoice_payments',
-        sourceId: '50863457',
-        kind: 'non_positive_payment',
-      })
-      // The importer always knew; the loader used to drop this on the floor.
-      expect(anomalies).toContainEqual({
-        resource: 'invoices',
-        sourceId: '13150403',
-        kind: 'invoice_state_disagreement',
-      })
       expect(
-        database.prepare(`SELECT state FROM invoices WHERE harvest_id = 13150403`).get(),
-      ).toEqual({ state: 'open' })
+        database
+          .prepare(`SELECT amount_cents AS cents FROM invoice_payments WHERE harvest_id = 50863457`)
+          .get(),
+      ).toEqual({ cents: 0 })
+      // Nothing was skipped, so nothing is recorded as skipped — no
+      // non_positive_payment anomaly, and no state disagreement behind it.
+      expect(
+        database
+          .prepare(
+            `SELECT count(*) AS n FROM _ezacto_load_anomalies
+             WHERE kind IN ('non_positive_payment', 'invoice_state_disagreement')`,
+          )
+          .get(),
+      ).toEqual({ n: 0 })
     } finally {
       database.close()
     }
 
     const result = await runReconcile({ snapshotDir, databasePath })
-    expect(result.report.unexplained).toContainEqual(
-      expect.objectContaining({
-        check: 'invoice_source_fidelity',
-        key: 'invoice:13150403',
-        metric: 'state',
-        expected: 'paid',
-        actual: 'open',
-      }),
+    expect(result.report.unexplained).toEqual([])
+    expect(result.report.matches).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          check: 'resource_row_count',
+          key: 'invoice_payments',
+          metric: 'rows',
+          expected: 1,
+          actual: 1,
+        }),
+      ]),
     )
   })
 
