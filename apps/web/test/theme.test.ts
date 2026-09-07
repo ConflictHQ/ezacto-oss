@@ -49,6 +49,7 @@ describe('D16 theme token contract', () => {
         --ez-red: #C92A2A;
         --ez-amber: #F1B34A;
         --ez-amber-bg: #FEF6E4;
+        --ez-live-text: #BA470A;
         --ez-font-display: "IBM Plex Sans";
         --ez-font-body: "IBM Plex Sans";
         --ez-font-mono: "IBM Plex Mono";

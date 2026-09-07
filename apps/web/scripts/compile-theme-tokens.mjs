@@ -27,6 +27,7 @@ const slots = [
   'red',
   'amber',
   'amber_bg',
+  'live_text',
 ]
 const fonts = ['display', 'body', 'mono']
 const scalars = ['radius']

@@ -19,6 +19,7 @@ export const themeSlotNames = [
   'red',
   'amber',
   'amber_bg',
+  'live_text',
 ] as const
 
 export const themeFontNames = ['display', 'body', 'mono'] as const

@@ -16,6 +16,7 @@
   "scripts": {
     "theme:generate": "node scripts/compile-theme-tokens.mjs",
     "theme:check": "node scripts/compile-theme-tokens.mjs --check",
+    "theme:contrast": "node scripts/check-theme-contrast.mjs",
     "shell:generate": "node scripts/compile-shell-assets.mjs",
     "shell:check": "node scripts/compile-shell-assets.mjs --check",
     "typecheck": "npm run theme:check && npm run shell:generate && tsc --noEmit",

@@ -20,7 +20,8 @@
       "blue_light",
       "red",
       "amber",
-      "amber_bg"
+      "amber_bg",
+      "live_text"
     ],
     "fonts": [
       "display",
@@ -53,6 +54,7 @@
       "red": "#C92A2A",
       "amber": "#F1B34A",
       "amber_bg": "#FEF6E4",
+      "live_text": "#BA470A",
       "display": "IBM Plex Sans",
       "body": "IBM Plex Sans",
       "mono": "IBM Plex Mono",

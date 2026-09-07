@@ -1761,9 +1761,14 @@
 .client-confirm-actions {
   justify-content: flex-end;
 }
+/* A filled button, so its label is body text over the fill and owes 4.5:1 — not
+   the 3:1 an indicator owes. `live` gives white only 3.58:1; `live-text` is the
+   same hue stepped down until it clears, at 5.26:1. The destructive weight here
+   is carried by the fill being the loudest thing on the row, not by the fill
+   being the brightest orange available. */
 .danger-action {
-  border-color: var(--ez-live) !important;
-  background: var(--ez-live) !important;
+  border-color: var(--ez-live-text) !important;
+  background: var(--ez-live-text) !important;
   color: var(--ez-ground) !important;
 }
 
@@ -2873,8 +2878,12 @@ button[data-auth-action]:disabled {
 .timesheet-status p {
   margin: 4px 0 0;
 }
+/* The reason an approver typed is prose to be read, not a state marker, and it
+   sits on the status band's tint. `live` clears only the 3:1 non-text bar
+   against that tint, so the reading colour is `live-text`: the same hue taken
+   down to where it clears the 4.5:1 body-text bar. */
 .timesheet-status [data-timesheet-rejection-reason] {
-  color: var(--ez-live);
+  color: var(--ez-live-text);
   white-space: pre-wrap;
 }
 .timesheet-status button {
@@ -3209,8 +3218,10 @@ button[data-auth-action]:disabled {
 .week-cell[data-cell-state="conflict"] input {
   border-color: var(--ez-live);
 }
+/* The inset rule beside the input is the indicator; this is the word next to
+   it, so it reads as body text and takes `live-text` rather than `live`. */
 .week-cell[data-cell-state="running"] .cell-status {
-  color: var(--ez-live);
+  color: var(--ez-live-text);
 }
 .cell-note {
   width: 24px;
@@ -3248,7 +3259,7 @@ button[data-auth-action]:disabled {
 }
 .week-cell[data-cell-state="retry"] .cell-status,
 .week-cell[data-cell-state="conflict"] .cell-status {
-  color: var(--ez-live);
+  color: var(--ez-live-text);
 }
 .cell-retry {
   grid-column: 2;

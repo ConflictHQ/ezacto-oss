@@ -21,7 +21,8 @@ export const generatedThemes = {
       "blue_light": "#A8BCF5",
       "red": "#C92A2A",
       "amber": "#F1B34A",
-      "amber_bg": "#FEF6E4"
+      "amber_bg": "#FEF6E4",
+      "live_text": "#BA470A"
     },
     fonts: {
       "display": "IBM Plex Sans",

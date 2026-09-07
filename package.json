@@ -27,7 +27,7 @@
     "test": "npm run test --workspaces --if-present",
     "test:container": "node entries/container/test/first-run.docker.mjs",
     "build": "npm run build --workspaces --if-present",
-    "verify": "npm run contract:check && npm run typecheck && npm run lint && npm run test && npm run build"
+    "verify": "npm run contract:check && npm run typecheck && npm run lint && npm run theme:contrast -w @ezacto/web && npm run test && npm run build"
   },
   "dependencies": {
     "esbuild": "^0.28.2"

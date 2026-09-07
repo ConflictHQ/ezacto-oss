@@ -89,11 +89,19 @@ describe('D16 Precision preference policy', () => {
       { name: 'ink/ground text', minimum: 4.5, passes: true },
       { name: 'action/action-fg text', minimum: 4.5, passes: true },
       { name: 'live/ground indicator', minimum: 3, passes: true },
+      { name: 'live/ink text', minimum: 4.5, passes: true },
+      { name: 'ground/live-text button label', minimum: 4.5, passes: true },
+      { name: 'live-text/ground text', minimum: 4.5, passes: true },
+      { name: 'live-text/status-bg text', minimum: 4.5, passes: true },
     ])
     expect(results.map((result) => result.ratio)).toEqual([
       expect.closeTo(18.11, 2),
       expect.closeTo(5.43, 2),
       expect.closeTo(3.58, 2),
+      expect.closeTo(5.06, 2),
+      expect.closeTo(5.26, 2),
+      expect.closeTo(5.26, 2),
+      expect.closeTo(4.63, 2),
     ])
     expect(() => assertThemeContrast(themeManifest.precision)).not.toThrow()
   })
