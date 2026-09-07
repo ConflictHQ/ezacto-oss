@@ -1,6 +1,8 @@
 {
   "name": "ezacto-oss",
   "private": true,
+  "license": "AGPL-3.0-only",
+  "author": "CONFLICT LLC",
   "version": "0.0.0",
   "description": "ezacto — open-source time tracking & invoicing. Pre-build: knowledge, specs, and pipeline scaffolding.",
   "engines": {
