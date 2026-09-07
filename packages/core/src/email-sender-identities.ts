@@ -79,7 +79,7 @@ const unavailableMessages: Readonly<Record<SenderIdentityUnavailableCode, string
   sender_alignment_missing:
     'Enable verified DKIM or configure a verified custom MAIL FROM domain aligned with the From domain, then refresh this sender.',
   sender_deployment_configuration_missing:
-    'Refresh this SMTP sender to attest its exact address against the deployment SMTP_FROM configuration before sending.',
+    'Refresh this sender to attest its exact address against the deployment From configuration before sending.',
 }
 
 export const senderIdentityUnavailableMessage = (
@@ -96,16 +96,24 @@ const mailFromAligns = (mailFromDomain: string | null, fromDomain: string): bool
 }
 
 /**
+ * Providers with no API that can speak to an individual From address. Mailgun
+ * verifies sending domains only, and SMTP has nothing to ask at all, so both
+ * attest the exact address the deployment already configured and leave DNS
+ * alignment explicitly operator-owned.
+ */
+export const deploymentAttestedProviders: readonly string[] = ['smtp', 'mailgun']
+
+/**
  * Provider-specific eligibility shared by persistence and send-time enforcement.
- * SES requires authoritative aligned DNS evidence; SMTP requires an exact deployment
- * configuration attestation and leaves DNS alignment explicitly operator-owned.
+ * SES requires authoritative aligned DNS evidence; a deployment-attested provider
+ * requires an exact deployment configuration attestation instead.
  */
 export const senderIdentityEligibilityFailure = (
   identity: ResolvedSenderIdentity,
 ): SenderIdentityUnavailableCode | null => {
   if (identity.archivedAt !== null) return 'sender_identity_archived'
   const evidence = identity.evidence
-  if (identity.provider === 'smtp') {
+  if (deploymentAttestedProviders.includes(identity.provider)) {
     if (evidence === null) return 'sender_deployment_configuration_missing'
     if (
       evidence.source !== 'deployment_config' ||

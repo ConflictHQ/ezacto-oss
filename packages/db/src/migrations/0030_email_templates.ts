@@ -373,7 +373,7 @@ export const emailTemplatesMigration = [
         AND (
           (identity.provider = 'ses' AND NEW.source = 'provider_api')
           OR (
-            identity.provider = 'smtp'
+            identity.provider IN ('smtp','mailgun')
             AND NEW.source = 'deployment_config'
             AND lower(trim(identity.provider_identity)) = identity.email
           )
@@ -445,7 +445,7 @@ export const emailTemplatesMigration = [
             )
           )
           OR (
-            NEW.provider = 'smtp'
+            NEW.provider IN ('smtp','mailgun')
             AND evidence.source = 'deployment_config'
             AND evidence.verification_status = 'operator_configured'
             AND evidence.identity_kind = 'email_address'

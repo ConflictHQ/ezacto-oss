@@ -77,6 +77,42 @@ describe('sender identity eligibility', () => {
     }))).toBeNull()
   })
 
+  it('[unit] accepts exact operator-configured Mailgun evidence', () => {
+    expect(senderIdentityEligibilityFailure(identity({
+      provider: 'mailgun',
+      providerIdentity: 'billing@example.test',
+      evidence: {
+        source: 'deployment_config',
+        identityKind: 'email_address',
+        verificationStatus: 'operator_configured',
+        dkimStatus: 'not_applicable',
+        mailFromDomain: null,
+        mailFromStatus: 'not_configured',
+        observedAt: '2026-09-02T00:00:00.000Z',
+      },
+    }))).toBeNull()
+  })
+
+  it('[security] rejects Mailgun evidence that is provider-sourced or mismatched', () => {
+    expect(senderIdentityEligibilityFailure(identity({
+      provider: 'mailgun',
+      providerIdentity: 'billing@example.test',
+    }))).toBe('sender_evidence_untrusted')
+    expect(senderIdentityEligibilityFailure(identity({
+      provider: 'mailgun',
+      providerIdentity: 'other@example.test',
+      evidence: {
+        source: 'deployment_config',
+        identityKind: 'email_address',
+        verificationStatus: 'operator_configured',
+        dkimStatus: 'not_applicable',
+        mailFromDomain: null,
+        mailFromStatus: 'not_configured',
+        observedAt: '2026-09-02T00:00:00.000Z',
+      },
+    }))).toBe('sender_identity_binding_mismatch')
+  })
+
   it('[security] rejects SMTP evidence that is absent, provider-sourced, or mismatched', () => {
     expect(senderIdentityEligibilityFailure(identity({
       provider: 'smtp',

@@ -1,5 +1,6 @@
 import type BetterSqlite3 from 'better-sqlite3'
 import {
+  deploymentAttestedProviders,
   emailTemplateKinds,
   inspectEmailTemplateVariables,
   senderIdentityEligibilityFailure,
@@ -799,7 +800,7 @@ const createStore = (database: NativeClient): EmailConfigurationStore => {
           ? rawProviderIdentity.includes('@')
             ? email(rawProviderIdentity, 'providerIdentity')
             : domain(rawProviderIdentity, 'providerIdentity')
-          : providerName === 'smtp'
+          : deploymentAttestedProviders.includes(providerName)
             ? email(rawProviderIdentity, 'providerIdentity')
           : rawProviderIdentity
       const inputFingerprint = await fingerprint({
@@ -1037,11 +1038,12 @@ const createStore = (database: NativeClient): EmailConfigurationStore => {
       if (identity === null || identity.archivedAt !== null) {
         throw new EmailConfigurationError('not_found', 'Sender identity not found.')
       }
+      const deploymentAttested = deploymentAttestedProviders.includes(identity.provider)
       if (
         (identity.provider === 'ses' && evidence.source !== 'provider_api') ||
-        (identity.provider === 'smtp' && evidence.source !== 'deployment_config') ||
-        (identity.provider !== 'ses' && identity.provider !== 'smtp') ||
-        (identity.provider === 'smtp' &&
+        (deploymentAttested && evidence.source !== 'deployment_config') ||
+        (identity.provider !== 'ses' && !deploymentAttested) ||
+        (deploymentAttested &&
           identity.providerIdentity.normalize('NFC').trim().toLowerCase() !==
             identity.email.normalize('NFC').trim().toLowerCase())
       ) {

@@ -408,6 +408,75 @@ for (const [runtime, factory] of factories) {
       )).rejects.toThrow(/source does not match provider binding/)
     })
 
+    it('[security] attests Mailgun senders from deployment configuration only', async () => {
+      harness = await factory()
+      await expect(harness.store.createSenderIdentity({
+        id: 47,
+        email: 'billing@example.test',
+        displayName: 'Mailgun Billing',
+        provider: 'mailgun',
+        providerIdentity: 'example.test',
+        actorUserId: 1,
+        commandId: 'mailgun-domain-sender-create',
+        occurredAt: initial,
+      })).rejects.toMatchObject({ code: 'invalid_input' })
+      await harness.store.createSenderIdentity({
+        id: 47,
+        email: 'billing@example.test',
+        displayName: 'Mailgun Billing',
+        provider: 'mailgun',
+        providerIdentity: 'billing@example.test',
+        actorUserId: 1,
+        commandId: 'mailgun-sender-create',
+        occurredAt: initial,
+      })
+      await expect(harness.store.recordSenderEvidence({
+        id: 47,
+        expectedEvidenceVersion: 0,
+        evidence: {
+          source: 'provider_api',
+          identityKind: 'domain',
+          verificationStatus: 'verified',
+          dkimStatus: 'verified',
+          mailFromDomain: null,
+          mailFromStatus: 'not_configured',
+          observedAt: later,
+        },
+        actorUserId: 1,
+        commandId: 'mailgun-forged-provider-evidence',
+        occurredAt: later,
+      })).rejects.toMatchObject({ code: 'invalid_input' })
+
+      const attested = await harness.store.recordSenderEvidence({
+        id: 47,
+        expectedEvidenceVersion: 0,
+        evidence: {
+          source: 'deployment_config',
+          identityKind: 'email_address',
+          verificationStatus: 'operator_configured',
+          dkimStatus: 'not_applicable',
+          mailFromDomain: null,
+          mailFromStatus: 'not_configured',
+          observedAt: later,
+        },
+        actorUserId: 1,
+        commandId: 'mailgun-deployment-attestation',
+        occurredAt: later,
+      })
+      expect(attested.evidence).toMatchObject({
+        version: 1,
+        source: 'deployment_config',
+        verificationStatus: 'operator_configured',
+      })
+      await expect(harness.store.setDefaultSenderIdentity({
+        id: 47,
+        expectedVersion: 0,
+        actorUserId: 1,
+        commandId: 'mailgun-default-attested',
+        occurredAt: latest,
+      })).resolves.toMatchObject({ id: 47, isDefault: true })
+    })
+
     it('[concurrency] reserves and replays persisted organization test-send commands', async () => {
       harness = await factory()
       await expect(harness.store.getVerifiedUserEmail(1)).resolves.toBe(

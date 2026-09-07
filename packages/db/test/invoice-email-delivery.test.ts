@@ -44,7 +44,7 @@ const d1 = async (): Promise<Harness> => {
   }
 }
 
-const seed = async (database: Harness): Promise<void> => {
+const seed = async (database: Harness, mailgun = false): Promise<void> => {
   await database.run(
     `INSERT INTO organizations (name, modules, created_at, updated_at)
      VALUES ('Delivery Org', '{"invoices":true}', ?, ?)`, at, at,
@@ -67,14 +67,24 @@ const seed = async (database: Harness): Promise<void> => {
     `INSERT INTO sender_identities
        (id, email, display_name, provider, provider_identity, is_default, version,
         created_by_user_id, created_at, updated_at)
-     VALUES (10, 'billing@example.com', 'Delivery Org', 'ses', 'example.com', 0, 0, 1, ?, ?)`,
+     VALUES (10, 'billing@example.com', 'Delivery Org', ?, ?, 0, 0, 1, ?, ?)`,
+    mailgun ? 'mailgun' : 'ses',
+    mailgun ? 'billing@example.com' : 'example.com',
     at, at,
   )
   await database.run(
-    `INSERT INTO sender_identity_evidence
-       (sender_identity_id, evidence_version, source, identity_kind, verification_status,
-        dkim_status, mail_from_domain, mail_from_status, observed_at)
-     VALUES (10, 1, 'provider_api', 'domain', 'verified', 'verified', NULL, 'not_configured', ?)`, at,
+    mailgun
+      ? `INSERT INTO sender_identity_evidence
+           (sender_identity_id, evidence_version, source, identity_kind, verification_status,
+            dkim_status, mail_from_domain, mail_from_status, observed_at)
+         VALUES (10, 1, 'deployment_config', 'email_address', 'operator_configured',
+           'not_applicable', NULL, 'not_configured', ?)`
+      : `INSERT INTO sender_identity_evidence
+           (sender_identity_id, evidence_version, source, identity_kind, verification_status,
+            dkim_status, mail_from_domain, mail_from_status, observed_at)
+         VALUES (10, 1, 'provider_api', 'domain', 'verified', 'verified', NULL,
+           'not_configured', ?)`,
+    at,
   )
 }
 
@@ -138,6 +148,15 @@ for (const [name, factory] of [['SQLite', container], ['real D1', d1]] as const)
       await expect(repository.listInvoiceDeliveryJobs('evt-delivery-1')).resolves.toEqual([
         expect.objectContaining({ deliveryId: 700, templateVersion: 1 }),
       ])
+    })
+
+    it('persists the intent for a deployment-attested Mailgun sender', async () => {
+      database = await factory()
+      await seed(database, true)
+      await expect(command(database)).resolves.toMatchObject({ event_count: 1 })
+      expect(await database.rows(
+        `SELECT sender_identity_id, sender_evidence_version FROM invoice_email_intents`,
+      )).toEqual([{ sender_identity_id: 10, sender_evidence_version: 1 }])
     })
 
     it('rolls back the message, state, event, and log if exact evidence is absent', async () => {
