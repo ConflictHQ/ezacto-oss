@@ -165,7 +165,26 @@ const required = <ElementType extends Element>(selector: string): ElementType =>
   return element
 }
 
+/**
+ * The organisation's chosen time format, published once the shell has a
+ * snapshot. Totals are rendered from several places that have no snapshot in
+ * scope, and a decimal account showing `2.25` in a cell beside `2:15` in that
+ * cell's own row total is worse than either format alone.
+ */
+let activeTimeFormat: 'decimal' | 'hours_minutes' = 'hours_minutes'
+
+const setActiveTimeFormat = (format: 'decimal' | 'hours_minutes'): void => {
+  activeTimeFormat = format
+}
+
+/**
+ * Unlike `formatCellHours`, this always renders a value — a total of zero is a
+ * fact worth showing, whereas an empty cell means "nothing logged".
+ */
 const formatSeconds = (seconds: number): string => {
+  if (activeTimeFormat === 'decimal') {
+    return (seconds / 3_600).toFixed(2)
+  }
   const hours = Math.floor(seconds / 3_600)
   const minutes = Math.floor((seconds % 3_600) / 60)
   return `${hours}:${String(minutes).padStart(2, '0')}`
@@ -1775,6 +1794,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     if (!isSessionCurrent(operation) || within !== requestedWithin) return false
     weekStartDay = loadedWeekStartDay
     snapshot = loaded
+    // Publish before anything renders: the week total, approval cards and the
+    // running-timer elapsed all format seconds, and all of them run ahead of
+    // the grid render where this used to be set.
+    setActiveTimeFormat(loaded.timeEntrySettings.time_format)
     supplementalRows = loadSupplementalRows(operation.userId!, within, weekStartDay)
     const loadedDates = weekDates(within, weekStartDay)
     const preservedIndex = selectedDate === undefined ? -1 : loadedDates.indexOf(selectedDate)
@@ -3084,7 +3107,16 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   })
   const moveDay = (offset: number): void => {
     if (currentIdentity === null) return
-    selectedDay = (selectedDay + offset + 7) % 7
+    // Walk the calendar. Wrapping modulo 7 made Sunday's "next" jump backwards
+    // to Monday of the same week, so a day-by-day review could never leave it.
+    const next = selectedDay + offset
+    if (next < 0 || next > 6) {
+      const landing = next < 0 ? 6 : 0
+      moveWeek(offset * 7)
+      selectedDay = landing
+      return
+    }
+    selectedDay = next
     render()
   }
   required<HTMLButtonElement>('[data-day-previous]').addEventListener('click', () => moveDay(-1))

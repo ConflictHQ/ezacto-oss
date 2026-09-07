@@ -711,7 +711,9 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   await expect(page.locator('[data-day-rows]')).toContainText('Browser Acceptance Project')
   await expect(page.locator('[data-day-rows]')).toContainText('Browser Acceptance Task')
   await expect(page.locator('[data-day-label]')).toHaveText('Sunday, Aug 30')
-  await expect(page.locator('[data-week-total]')).toHaveText('0:45')
+  // The fixture organisation is decimal, and the week total honours that now
+  // rather than always printing H:MM. 45 minutes is 0.75, not 0:45.
+  await expect(page.locator('[data-week-total]')).toHaveText('0.75')
   await expect(page.locator('[data-entry-note="1"]')).toHaveText(
     'First line\nSecond line with delivery detail',
   )
@@ -831,16 +833,17 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   await noteDialog.getByRole('button', { name: 'Log time' }).click()
   expect((await created).ok()).toBe(true)
   await expect(noteDialog).toBeHidden()
-  await expect(page.locator('[data-week-total]')).toHaveText('1:00')
+  await expect(page.locator('[data-week-total]')).toHaveText('1.00')
   // The seven-day strip is the week's shape before you read a row, and it has
   // to agree with the grid it sits above — in both views, which is why it lives
-  // outside them.
+  // outside them. It honours the organisation's time format for the same
+  // reason the totals do: an hour is 1.00 on a decimal account, not 1:00.
   const dayTotals = page.locator('[data-day-totals] li')
   await expect(dayTotals).toHaveCount(7)
   await expect(dayTotals.filter({ has: page.locator('[data-empty]') })).toHaveCount(6)
   await expect(
     dayTotals.filter({ hasNot: page.locator('[data-empty]') }).locator('strong'),
-  ).toHaveText('1:00')
+  ).toHaveText('1.00')
   await expect(
     page.locator('[data-day-rows] .day-row').filter({ hasText: 'Browser Secondary Project' }),
   ).toContainText('Added row delivery note')
@@ -854,7 +857,7 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   // Both the D1 entry/note and the locally remembered row survive a full reload;
   // the rejected cross-product remains absent.
   await page.reload()
-  await expect(page.locator('[data-week-total]')).toHaveText('1:00')
+  await expect(page.locator('[data-week-total]')).toHaveText('1.00')
   await expect(page.locator('[data-entry-note="1"]')).toHaveText(
     'First line\nSecond line with delivery detail',
   )
@@ -2422,7 +2425,7 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
   await expect(page).toHaveTitle('ezacto — Approvals')
   const card = page.locator('[data-approval-queue] [data-submission-id]')
   await expect(card).toContainText('Browser Owner')
-  await expect(card).toContainText('1:00')
+  await expect(card).toContainText('1.00')
   await expect(card).toContainText('Browser Acceptance Project / Browser Acceptance Task')
   await expect(card).toContainText('Wed, Aug 19')
   await expect(card).toContainText('Ready for review')
