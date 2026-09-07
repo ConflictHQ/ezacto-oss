@@ -83,6 +83,33 @@ export const clientIsActive = (resource: Readonly<GeneralResource>): boolean =>
 export const clientDisplayName = (resource: Readonly<GeneralResource>): string =>
   clientText(resource, 'name') ?? `Client #${resource.id}`
 
+/**
+ * The rows a search leaves standing. A match keeps its ancestors even when they
+ * do not match themselves: the list is a tree, and dropping a parent because the
+ * query only names its child reparents the child to the root and quietly says
+ * the wrong thing about who is worked for by whom.
+ */
+export const clientSearchMatches = (
+  clients: readonly GeneralResource[],
+  query: string,
+): readonly GeneralResource[] => {
+  const wanted = query.trim().toLocaleLowerCase('en-US')
+  if (wanted === '') return clients
+  const byId = new Map(clients.map((client) => [client.id, client]))
+  const kept = new Set<number>()
+  for (const client of clients) {
+    if (!clientDisplayName(client).toLocaleLowerCase('en-US').includes(wanted)) continue
+    let ancestor: GeneralResource | undefined = client
+    // The same bound the hierarchy uses: a corrupt parent cycle must not spin.
+    while (ancestor !== undefined && !kept.has(ancestor.id)) {
+      kept.add(ancestor.id)
+      const parent = clientNumber(ancestor, 'parent_client_id')
+      ancestor = parent === null ? undefined : byId.get(parent)
+    }
+  }
+  return clients.filter((client) => kept.has(client.id))
+}
+
 const compareClients = (left: GeneralResource, right: GeneralResource): number => {
   const byName = clientDisplayName(left).localeCompare(
     clientDisplayName(right),

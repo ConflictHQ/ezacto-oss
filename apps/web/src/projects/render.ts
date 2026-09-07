@@ -14,6 +14,9 @@ export const renderProjectDirectoryPages = (view?: string): string => `
       <label for="ez-project-client-filter">Client
         <select id="ez-project-client-filter" data-project-client-filter><option value="">All clients</option></select>
       </label>
+      <label for="ez-project-search">Search by project or client
+        <input id="ez-project-search" type="search" data-project-search autocomplete="off" placeholder="Name or code">
+      </label>
     </div>
     <p class="form-result project-page-status" data-project-list-status role="status" aria-live="polite">Loading projects…</p>
     <div data-project-quality hidden></div>

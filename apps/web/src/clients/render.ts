@@ -5,9 +5,15 @@ export const renderClientDirectoryPages = (view?: string): string => `
       <button class="primary-action" type="button" data-client-create data-client-write data-auth-action hidden disabled>Add client</button>
     </header>
     <p class="client-intro">Browse the organizations you work for and the entities that receive their invoices.</p>
-    <div class="client-list-toolbar" role="group" aria-label="Client status">
-      <button type="button" data-client-filter="active" aria-pressed="true">Active</button>
-      <button type="button" data-client-filter="all" aria-pressed="false">All</button>
+    <div class="client-list-toolbar">
+      <fieldset aria-label="Client status">
+        <legend class="visually-hidden">Client status</legend>
+        <button type="button" data-client-filter="active" aria-pressed="true">Active</button>
+        <button type="button" data-client-filter="all" aria-pressed="false">All</button>
+      </fieldset>
+      <label for="ez-client-search">Filter by client
+        <input id="ez-client-search" type="search" data-client-search autocomplete="off" placeholder="Client name">
+      </label>
     </div>
     <p class="form-result client-page-status" data-client-list-status role="status" aria-live="polite">Loading clients…</p>
     <div data-client-tree></div>

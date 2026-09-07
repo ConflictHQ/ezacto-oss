@@ -1287,6 +1287,55 @@ describe('invoice browse browser behavior', () => {
     )
   })
 
+
+  it('[acceptance] searches the loaded invoices by number and by client', async () => {
+    renderBrowserShell({ view: 'invoice-list' })
+    const base = browserApi()
+    const listInvoices = vi.fn(async () => ({
+      data: [invoice(7), invoice(8, { number: 'INV-2048', client_id: 12 })],
+      page: { next_cursor: null },
+    }))
+    const listClients: ShellApi['listClients'] = async () => ({
+      data: [resource(11, 'Northwind Freight'), resource(12, 'Acme Supply')],
+      page: { next_cursor: null },
+    })
+    const api: ShellApi = { ...base, listInvoices, listClients }
+
+    await mountShell(api)
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector('tbody tr[data-row-key="7"] td[data-column="client"]')
+          ?.textContent,
+      ).toBe('Northwind Freight'),
+    )
+
+    const rows = (): string[] =>
+      [...document.querySelectorAll<HTMLElement>('tbody tr[data-row-key]')].map(
+        (row) => row.dataset.rowKey ?? '',
+      )
+    const search = document.querySelector<HTMLInputElement>('[data-invoice-search]')!
+    expect(rows()).toEqual(['7', '8'])
+
+    search.value = '2048'
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(rows()).toEqual(['8'])
+    expect(document.querySelector('[data-invoice-list-status]')?.textContent).toBe(
+      '1 of 2 loaded invoices match.',
+    )
+
+    // The client name is the column a reader is looking at, so it is the one
+    // the search reads too.
+    search.value = 'northwind'
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(rows()).toEqual(['7'])
+
+    search.value = 'no such invoice'
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(rows()).toEqual([])
+    expect(document.querySelector('[data-invoice-list]')?.textContent).toContain(
+      'No loaded invoices match that search.',
+    )
+  })
   it('[security] blocks a member before requesting invoice data', async () => {
     renderBrowserShell({ view: 'invoice-list' })
     const base = browserApi()
@@ -2761,5 +2810,125 @@ describe('shell chrome visibility', () => {
     expect(timeStrip.hidden).toBe(false)
     expect(window.getComputedStyle(timeStrip).display).toBe('flex')
     expect(window.getComputedStyle(timeNav).display).toBe('grid')
+  })
+})
+
+describe('command palette browser behavior', () => {
+  // Approvals answers only when the module is there and the profile may review;
+  // Team only when the module reports itself enabled. Both APIs are present for
+  // every mount below, so what separates the two people in these tests is the
+  // profile alone.
+  const paletteApi = (whoami: Whoami): ShellApi => ({
+    ...browserApi(),
+    whoami: vi.fn(async () => whoami),
+    listTimesheetSubmissions: vi.fn(async () => []),
+    listPendingTimesheetSubmissions: vi.fn(async () => ({
+      submissions: [],
+      nextCursor: null,
+    })),
+    getTeamStatus: vi.fn(async () => ({ enabled: true })),
+  })
+
+  const openPalette = (): HTMLInputElement => {
+    document.querySelector<HTMLButtonElement>('[data-command-trigger]')!.click()
+    return document.querySelector<HTMLInputElement>('[name="command"]')!
+  }
+
+  const paletteLabels = (): string[] =>
+    [...document.querySelectorAll<HTMLAnchorElement>('[data-command-option]')].map(
+      (option) => option.textContent ?? '',
+    )
+
+  const navHidden = (href: string): boolean =>
+    document.querySelector<HTMLElement>(`.primary-nav a[href="${href}"]`)!.hidden
+
+  it('[e2e] groups every destination the nav offers an administrator', async () => {
+    renderBrowserShell()
+    await mountShell(paletteApi(identity))
+    await vi.waitFor(() => expect(navHidden('/approvals')).toBe(false))
+    await vi.waitFor(() => expect(navHidden('/team')).toBe(false))
+
+    const command = openPalette()
+    expect(paletteLabels()).toContain('Approvals')
+    expect(paletteLabels()).toContain('Team')
+    expect(paletteLabels()).toContain('Company settings')
+    // Grouped by what you came to do, and only groups with results are drawn.
+    expect(
+      [...document.querySelectorAll<HTMLElement>('.command-group')].map((group) =>
+        group.getAttribute('aria-label'),
+      ),
+    ).toEqual(['Track', 'Organize', 'Bill', 'Review'])
+    // Nothing is highlighted before the query says something, so Enter still
+    // belongs to the form.
+    expect(document.querySelector('[data-command-option][aria-selected="true"]')).toBeNull()
+
+    edit(command, 'invo')
+    expect(paletteLabels()).toEqual(['Invoices', 'Generate invoice'])
+    expect(
+      document.querySelector<HTMLElement>('[data-command-option][aria-selected="true"]')
+        ?.textContent,
+    ).toBe('Invoices')
+
+    command.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }),
+    )
+    expect(
+      document.querySelector<HTMLElement>('[data-command-option][aria-selected="true"]')
+        ?.textContent,
+    ).toBe('Generate invoice')
+    expect(command.getAttribute('aria-activedescendant')).toBe(
+      document.querySelector<HTMLElement>('[data-command-option][aria-selected="true"]')?.id,
+    )
+
+    const assign = vi.spyOn(globalThis.location, 'assign').mockImplementation(() => {})
+    try {
+      command.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      )
+      expect(assign).toHaveBeenCalledWith('/invoices/new')
+    } finally {
+      assign.mockRestore()
+    }
+  })
+
+  it('[security] withholds from a member the destinations the nav hides', async () => {
+    renderBrowserShell()
+    await mountShell(paletteApi(secondIdentity))
+    // The premise: the same three guards that hide these from the nav are what
+    // the palette is being asked about. Without this the test could pass on a
+    // palette that lists nothing at all.
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-current-profile]')?.textContent).toBe('member'),
+    )
+    expect(navHidden('/approvals')).toBe(true)
+    expect(navHidden('/team')).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-settings-company-tab]')!.hidden).toBe(true)
+
+    openPalette()
+    const labels = paletteLabels()
+    expect(labels).not.toContain('Approvals')
+    expect(labels).not.toContain('Team')
+    expect(labels).not.toContain('Company settings')
+    // And it is a filtered list rather than an empty one.
+    expect(labels).toContain('Projects')
+    expect(labels).toContain('Your settings')
+  })
+
+  it('[unit] leaves log and go to the command grammar they had', async () => {
+    renderBrowserShell()
+    const api = paletteApi(identity)
+    await mountShell(api)
+
+    const command = openPalette()
+    edit(command, 'log 1h northpeak development')
+    expect(paletteLabels()).toEqual([])
+    expect(document.querySelector('[data-command-empty]')).not.toBeNull()
+
+    document
+      .querySelector<HTMLFormElement>('[data-command-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    const entryDialog = document.querySelector<HTMLDialogElement>('[data-entry-dialog]')!
+    await vi.waitFor(() => expect(entryDialog.open).toBe(true))
+    expect(entryDialog.dataset.entryContext).toBe('quick-add')
   })
 })

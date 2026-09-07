@@ -11,6 +11,9 @@ export const renderTaskAdminPage = (view?: string): string => `
         <button type="button" data-task-filter="active" aria-pressed="true">Active</button>
         <button type="button" data-task-filter="all" aria-pressed="false">All</button>
       </fieldset>
+      <label for="ez-task-search">Filter by task
+        <input id="ez-task-search" type="search" data-task-search autocomplete="off" placeholder="Task name">
+      </label>
     </div>
     <p class="form-result task-admin-status" data-task-list-status role="status" aria-live="polite">Loading tasks…</p>
     <div class="task-admin-list" data-task-list></div>

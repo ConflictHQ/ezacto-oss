@@ -397,6 +397,44 @@ describe('Projects V1 browser controller', () => {
     expect(headers).toContain('Spent')
   })
 
+
+  it('[browser] finds a project by its own name and by its client', async () => {
+    // Both arrays are already resident before the first row is drawn, which is
+    // what makes this a filter rather than a request.
+    writeDocument('project-list', '/projects')
+    const northpeak: GeneralResource = { ...client, id: 4, name: 'Northpeak' }
+    const rebrand: GeneralResource = { ...project, id: 8, name: 'Rebrand', code: null, client_id: 4 }
+    const controller = createProjectDirectoryController({
+      listDirectoryProjects: vi.fn(async () => page([project, rebrand])),
+      listProjectClients: vi.fn(async () => page([client, northpeak])),
+    })
+    await controller.activate(identity('administrator'), new AbortController().signal, () => false)
+
+    const names = (): string[] =>
+      [
+        ...document.querySelectorAll<HTMLAnchorElement>(
+          '[data-project-list] a[href^="/projects/"]',
+        ),
+      ].map((link) => link.textContent ?? '')
+    const search = document.querySelector<HTMLInputElement>('[data-project-search]')!
+    expect(names()).toEqual(['[WEB] Launch', 'Rebrand'])
+
+    search.value = 'rebr'
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(names()).toEqual(['Rebrand'])
+
+    // The client band is as often what you remember of a project as its name.
+    search.value = 'acme'
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(names()).toEqual(['[WEB] Launch'])
+
+    search.value = 'nothing here'
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(names()).toEqual([])
+    expect(document.querySelector('[data-project-list-status]')?.textContent).toBe(
+      'No projects match these filters.',
+    )
+  })
   it('[browser] keeps the Costs column when a viewer can see cost', async () => {
     writeDocument('project-list', '/projects')
     const controller = createProjectDirectoryController({

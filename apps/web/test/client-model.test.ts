@@ -4,6 +4,7 @@ import {
   clientHierarchy,
   clientIdFromPathname,
   clientProfileCanWrite,
+  clientSearchMatches,
   createShellApi,
   relationLabel,
   renderClientDirectoryPages,
@@ -115,6 +116,39 @@ describe('Clients V1 model', () => {
     expect(relationLabel(1, rows.map(({ client: item }) => item))).toBe('Parent')
   })
 
+
+  it('[unit] keeps the ancestors of a match so the tree still says who owns whom', () => {
+    const clients = [
+      client(1, 'Parent Holding'),
+      client(2, 'Worked-For Studio', 1),
+      client(3, 'Grandchild Unit', 2),
+      client(4, 'Unrelated'),
+    ]
+
+    expect(clientSearchMatches(clients, 'grandchild').map((row) => row.name)).toEqual([
+      'Parent Holding',
+      'Worked-For Studio',
+      'Grandchild Unit',
+    ])
+    // A parent that matches does not drag its children in with it: the query
+    // named the parent, not the work under it.
+    expect(clientSearchMatches(clients, 'parent').map((row) => row.name)).toEqual([
+      'Parent Holding',
+    ])
+    expect(clientSearchMatches(clients, '  ').map((row) => row.id)).toEqual([1, 2, 3, 4])
+    expect(clientSearchMatches(clients, 'nothing')).toEqual([])
+  })
+
+  it('[unit] bounds a parent cycle rather than climbing it forever', () => {
+    // clientHierarchy already treats a cycle as roots; the search must survive
+    // the same corrupt data rather than hanging the list that renders it.
+    const cycle = [
+      { ...client(1, 'One'), parent_client_id: 2 },
+      { ...client(2, 'Two'), parent_client_id: 1 },
+    ]
+
+    expect(clientSearchMatches(cycle, 'one').map((row) => row.id)).toEqual([1, 2])
+  })
   it.each([
     ['member', false],
     ['people_admin', false],

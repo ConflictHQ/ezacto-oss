@@ -30,6 +30,7 @@ import { createExpenseCategoryDirectoryController } from '../expense-categories/
 import { createModuleSettingsController } from '../module-settings/browser.js'
 import {
   createInvoicePaymentController,
+  invoiceMatchesSearch,
   renderInvoiceListItems,
   setInvoiceClientNames,
 } from '../invoices/browser.js'
@@ -52,11 +53,13 @@ import {
   loadShellSnapshot,
   localDate,
   navigationDestination,
+  palettePlan,
   prepareQuickAdd,
   runningElapsedSeconds,
   timeEntryNoteLength,
   weekRange,
   type DisplayTimeEntry,
+  type PaletteDestination,
   type ApprovalQueueFilters,
   type ShellApi,
   type ShellSnapshot,
@@ -1001,6 +1004,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const rejectionDialog = required<HTMLDialogElement>('[data-rejection-dialog]')
   const withdrawalDialog = required<HTMLDialogElement>('[data-withdrawal-dialog]')
   const commandForm = required<HTMLFormElement>('[data-command-form]')
+  const commandInput = required<HTMLInputElement>('[name="command"]')
+  const commandResults = required<HTMLElement>('[data-command-results]')
   const entryForm = required<HTMLFormElement>('[data-entry-form]')
   const rowForm = required<HTMLFormElement>('[data-row-form]')
   const rejectionForm = required<HTMLFormElement>('[data-rejection-form]')
@@ -1039,6 +1044,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const invoiceList = required<HTMLElement>('[data-invoice-list]')
   const invoiceListStatus = required<HTMLElement>('[data-invoice-list-status]')
   const invoiceLoadMore = required<HTMLButtonElement>('[data-invoice-load-more]')
+  const invoiceSearch = required<HTMLInputElement>('[data-invoice-search]')
   const invoiceDetailStatus = required<HTMLElement>('[data-invoice-detail-status]')
   const invoiceDocument = required<HTMLElement>('[data-invoice-document]')
   const timesheetStatus = required<HTMLElement>('[data-timesheet-status]')
@@ -1276,6 +1282,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     invoiceListRows = []
     invoiceClientNamesLoaded = false
     invoiceListCount = 0
+    invoiceSearch.value = ''
     invoiceDetailStatus.textContent = 'Loading invoice…'
     invoiceDocument.hidden = true
     timesheetStatus.hidden = true
@@ -1422,6 +1429,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     for (const link of document.querySelectorAll<HTMLElement>('[data-team-nav]')) {
       link.hidden = true
     }
+    // Settled on every page, not only the two that show the strip: the company
+    // tab is the standing answer to "may this person open company settings",
+    // and ⌘K asks it from wherever it is opened.
+    revealCompanySettings(identity)
     signInResult.textContent = ''
     logoutResult.textContent = ''
     setApplicationAvailability(true)
@@ -2176,6 +2187,29 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
   }
 
+  /**
+   * The rows, then what the search leaves of them. The count in the status line
+   * is the number on screen and says which of the two it is: an invoice that has
+   * not been loaded yet is not absent from the account, and "load more" is what
+   * the reader can do about it.
+   */
+  const renderInvoiceList = (): void => {
+    const searching = invoiceSearch.value.trim() !== ''
+    const matching = invoiceListRows.filter((invoice) =>
+      invoiceMatchesSearch(invoice, invoiceSearch.value),
+    )
+    invoiceListCount = renderInvoiceListItems(
+      matching,
+      searching ? 'No loaded invoices match that search.' : undefined,
+    )
+    const complete = invoiceNextCursor === null
+    invoiceListStatus.textContent = searching
+      ? `${invoiceListCount} of ${invoiceListRows.length} loaded ${invoiceListRows.length === 1 ? 'invoice matches' : 'invoices match'}${complete ? '.' : '; load more to search the rest.'}`
+      : invoiceListCount === 0
+        ? 'No invoices found.'
+        : `${invoiceListCount} ${invoiceListCount === 1 ? 'invoice' : 'invoices'} loaded${complete ? '.' : '; more are available.'}`
+  }
+
   const loadInvoiceList = async (
     operation: AuthOperation,
     cursor?: string,
@@ -2207,13 +2241,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       ])
       if (!isSessionCurrent(operation)) return
       invoiceListRows = append ? [...invoiceListRows, ...page.data] : [...page.data]
-      invoiceListCount = renderInvoiceListItems(invoiceListRows)
       invoiceNextCursor = page.page.next_cursor
       invoiceLoadMore.hidden = invoiceNextCursor === null
-      invoiceListStatus.textContent =
-        invoiceListCount === 0
-          ? 'No invoices found.'
-          : `${invoiceListCount} ${invoiceListCount === 1 ? 'invoice' : 'invoices'} loaded${invoiceNextCursor === null ? '.' : '; more are available.'}`
+      renderInvoiceList()
     } catch (error) {
       if (handleSessionFailure(error, operation)) return
       invoiceListStatus.textContent = messageFor(error)
@@ -2778,7 +2808,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
 
   for (const trigger of document.querySelectorAll<HTMLElement>('[data-command-trigger]')) {
     trigger.addEventListener('click', () => {
-      if (currentIdentity !== null) open(commandDialog)
+      if (currentIdentity !== null) openCommandPalette()
     })
   }
   required<HTMLButtonElement>('[data-timer-chip]').addEventListener('click', () => {
@@ -2843,7 +2873,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const modified = event.metaKey || event.ctrlKey
     if (modified && event.key.toLocaleLowerCase('en-US') === 'k') {
       event.preventDefault()
-      open(commandDialog)
+      openCommandPalette()
       return
     }
     // Adding a row is the one action you take mid-typing, so it keeps a
@@ -2866,6 +2896,104 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
   })
 
+  /**
+   * A destination is offered only when the element the nav already gates it
+   * behind is present and showing. Reading that element rather than the profile
+   * keeps one rule in one place: the moment module state or a permission hides
+   * the Approvals link, the palette stops offering Approvals with it.
+   */
+  const paletteOffers = (destination: PaletteDestination): boolean => {
+    if (destination.gate === undefined) return true
+    const gate = document.querySelector<HTMLElement>(destination.gate)
+    return gate !== null && !gate.hidden
+  }
+
+  let paletteOptions: readonly PaletteDestination[] = []
+  let paletteIndex = -1
+
+  const paletteOptionId = (index: number): string => `ez-command-option-${index}`
+
+  const renderPalette = (): void => {
+    const query = commandInput.value
+    const sections = palettePlan(query, paletteOffers)
+    paletteOptions = sections.flatMap((section) => section.destinations)
+    // Nothing is highlighted until the query says something. Enter on an
+    // unhighlighted palette belongs to the form, which is what leaves
+    // `log 2h project task` -- a query that matches no destination -- reaching
+    // the quick-add parser exactly as it did before.
+    paletteIndex =
+      query.trim() === '' || paletteOptions.length === 0
+        ? -1
+        : Math.min(Math.max(paletteIndex, 0), paletteOptions.length - 1)
+    let index = 0
+    const groups = sections.map((section) => {
+      const group = document.createElement('div')
+      group.className = 'command-group'
+      group.setAttribute('role', 'group')
+      group.setAttribute('aria-label', section.group)
+      const heading = document.createElement('p')
+      heading.className = 'eyebrow'
+      heading.textContent = section.group
+      group.append(heading)
+      for (const destination of section.destinations) {
+        const option = document.createElement('a')
+        option.id = paletteOptionId(index)
+        option.className = 'command-option'
+        option.href = destination.href
+        option.textContent = destination.label
+        option.setAttribute('role', 'option')
+        option.setAttribute('aria-selected', String(index === paletteIndex))
+        option.dataset.commandOption = destination.href
+        group.append(option)
+        index += 1
+      }
+      return group
+    })
+    if (paletteOptions.length === 0) {
+      const empty = document.createElement('p')
+      empty.className = 'command-empty'
+      empty.dataset.commandEmpty = 'true'
+      empty.textContent = 'No destination matches that.'
+      commandResults.replaceChildren(empty)
+    } else {
+      commandResults.replaceChildren(...groups)
+    }
+    if (paletteIndex === -1) {
+      commandInput.removeAttribute('aria-activedescendant')
+    } else {
+      commandInput.setAttribute('aria-activedescendant', paletteOptionId(paletteIndex))
+    }
+  }
+
+  const openCommandPalette = (): void => {
+    open(commandDialog)
+    renderPalette()
+  }
+
+  const movePaletteHighlight = (step: number): void => {
+    if (paletteOptions.length === 0) return
+    paletteIndex =
+      paletteIndex === -1
+        ? step > 0
+          ? 0
+          : paletteOptions.length - 1
+        : (paletteIndex + step + paletteOptions.length) % paletteOptions.length
+    renderPalette()
+  }
+
+  commandInput.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      movePaletteHighlight(event.key === 'ArrowDown' ? 1 : -1)
+      return
+    }
+    if (event.key !== 'Enter') return
+    const highlighted = paletteOptions[paletteIndex]
+    if (highlighted === undefined) return
+    event.preventDefault()
+    globalThis.location.assign(highlighted.href)
+  })
+
   commandForm.addEventListener('submit', (event) => {
     event.preventDefault()
     const operation = sessionOperation()
@@ -2873,7 +3001,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const result = required<HTMLElement>('[data-command-result]')
     const command = new FormData(commandForm).get('command')
     if (typeof command !== 'string') return
-    const destination = navigationDestination(command)
+    const destination = navigationDestination(command, paletteOffers)
     if (destination !== null) {
       globalThis.location.assign(destination)
       return
@@ -2907,8 +3035,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       })
   })
 
-  required<HTMLInputElement>('[name="command"]').addEventListener('input', () => {
+  commandInput.addEventListener('input', () => {
     required<HTMLElement>('[data-command-result]').textContent = ''
+    // A new query starts on its first match, so Enter after typing goes where
+    // the list says it will rather than to whatever was highlighted before.
+    paletteIndex = 0
+    renderPalette()
   })
 
   entryForm.addEventListener('submit', (event) => {
@@ -3516,6 +3648,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const operation = sessionOperation()
     if (operation === null || invoiceNextCursor === null) return
     void loadInvoiceList(operation, invoiceNextCursor)
+  })
+  invoiceSearch.addEventListener('input', () => {
+    if (invoiceListPage) renderInvoiceList()
   })
   invoiceForm.addEventListener('submit', (event) => {
     event.preventDefault()

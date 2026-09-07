@@ -216,17 +216,6 @@ export interface ShellSnapshot {
   }
 }
 
-const navigation = new Map([
-  ['time', '/'],
-  ['team', '/team'],
-  ['expenses', '/expenses'],
-  ['projects', '/projects'],
-  ['tasks', '/tasks'],
-  ['clients', '/clients'],
-  ['invoices', '/invoices'],
-  ['reports', '/reports'],
-])
-
 const resourceText = (
   resource: GeneralResource,
   field: string,
@@ -253,6 +242,139 @@ const normalized = (value: string): string =>
     .toLocaleLowerCase('en-US')
     .replace(/[^\p{Letter}\p{Number}]+/gu, '')
 
+/**
+ * Every place ⌘K can take you, grouped by what you came to do rather than by
+ * which table the page reads: Track is where the day goes in, Organize is the
+ * shape of the work, Bill is the money out, Review is the checking. Settings
+ * sits under Organize because setting the account up is that kind of errand.
+ */
+export type PaletteGroup = 'Track' | 'Organize' | 'Bill' | 'Review'
+
+export interface PaletteDestination {
+  readonly label: string
+  readonly href: string
+  readonly group: PaletteGroup
+  /** Words that should find this destination but do not belong in its name. */
+  readonly keywords?: string
+  /**
+   * The element already on the page whose visibility decides whether this
+   * destination is this person's to reach -- the nav link the profile and
+   * module gates hide, not a second copy of the rule they apply. A second copy
+   * is free to drift from the one the nav uses, and the drift is silent: it
+   * hands a member a link the product spent three guards hiding.
+   */
+  readonly gate?: string
+}
+
+const primaryNav = (href: string): string => `.primary-nav a[href="${href}"]`
+
+export const paletteDestinations: readonly PaletteDestination[] = [
+  {
+    label: 'Time',
+    href: '/',
+    group: 'Track',
+    keywords: 'week day timesheet hours',
+    gate: primaryNav('/'),
+  },
+  {
+    label: 'Expenses',
+    href: '/expenses',
+    group: 'Track',
+    keywords: 'receipts',
+    gate: primaryNav('/expenses'),
+  },
+  { label: 'Projects', href: '/projects', group: 'Organize', gate: primaryNav('/projects') },
+  { label: 'Tasks', href: '/tasks', group: 'Organize', gate: primaryNav('/tasks') },
+  {
+    label: 'Clients',
+    href: '/clients',
+    group: 'Organize',
+    keywords: 'contacts',
+    gate: primaryNav('/clients'),
+  },
+  { label: 'Team', href: '/team', group: 'Organize', keywords: 'people', gate: primaryNav('/team') },
+  // Reached from Expenses and gated with it: the categories page is that
+  // section's own administration rather than a destination of its own.
+  {
+    label: 'Expense categories',
+    href: '/expense-categories',
+    group: 'Organize',
+    gate: primaryNav('/expenses'),
+  },
+  {
+    label: 'Your settings',
+    href: '/settings/user',
+    group: 'Organize',
+    keywords: 'account you profile',
+  },
+  {
+    label: 'Company settings',
+    href: '/settings/company',
+    group: 'Organize',
+    keywords: 'modules organization',
+    gate: '[data-settings-company-tab]',
+  },
+  {
+    label: 'Invoices',
+    href: '/invoices',
+    group: 'Bill',
+    keywords: 'money billing',
+    gate: primaryNav('/invoices'),
+  },
+  {
+    label: 'Generate invoice',
+    href: '/invoices/new',
+    group: 'Bill',
+    keywords: 'new draft',
+    gate: primaryNav('/invoices'),
+  },
+  {
+    label: 'Approvals',
+    href: '/approvals',
+    group: 'Review',
+    keywords: 'timesheets submitted',
+    gate: primaryNav('/approvals'),
+  },
+  { label: 'Reports', href: '/reports', group: 'Review', gate: primaryNav('/reports') },
+]
+
+const paletteGroups: readonly PaletteGroup[] = ['Track', 'Organize', 'Bill', 'Review']
+
+export interface PaletteSection {
+  readonly group: PaletteGroup
+  readonly destinations: readonly PaletteDestination[]
+}
+
+const paletteHaystack = (destination: PaletteDestination): string =>
+  normalized(`${destination.label} ${destination.keywords ?? ''}`)
+
+/**
+ * The results under the input, in group order. `offered` is the caller's read of
+ * each destination's gate; a destination it rejects is absent rather than
+ * disabled, because the point of the gate is that the page is never advertised.
+ */
+export const palettePlan = (
+  query: string,
+  offered: (destination: PaletteDestination) => boolean,
+): readonly PaletteSection[] => {
+  // Normalizing both sides drops the spaces, so "expense cat" still finds
+  // Expense categories.
+  const needle = normalized(query)
+  const matched = paletteDestinations.filter(
+    (destination) =>
+      offered(destination) &&
+      (needle === '' || paletteHaystack(destination).includes(needle)),
+  )
+  return paletteGroups
+    .map((group) => ({
+      group,
+      destinations: matched.filter((destination) => destination.group === group),
+    }))
+    .filter((section) => section.destinations.length > 0)
+}
+
+// `go <name>` predates the palette and still works. Its map is the palette's own
+// catalog, so a route added to one can never be the one missing from the other.
 const collect = async (
   load: (cursor?: string) => Promise<CursorPage<GeneralResource>>,
   signal?: AbortSignal,
@@ -370,9 +492,22 @@ export const parseQuickAdd = (value: string): QuickAddCommand => {
   }
 }
 
-export const navigationDestination = (value: string): string | null => {
+export const navigationDestination = (
+  value: string,
+  offered: (destination: PaletteDestination) => boolean,
+): string | null => {
   const match = /^go\s+(.+)$/iu.exec(value.trim())
-  return match === null ? null : (navigation.get(normalized(match[1]!)) ?? null)
+  if (match === null) return null
+  // The typed `go` grammar and the results list are the same dialog reaching
+  // the same table, so they answer to the same gate. Without it the list
+  // correctly withholds Approvals from a member while `go approvals` in that
+  // very input still takes them there. `offered` is required rather than
+  // defaulted: a gate a caller can forget is one that will be forgotten.
+  const wanted = normalized(match[1]!)
+  const destination = paletteDestinations.find(
+    (candidate) => normalized(candidate.label) === wanted && offered(candidate),
+  )
+  return destination?.href ?? null
 }
 
 export const localDate = (now = new Date()): string => {

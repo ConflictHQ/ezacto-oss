@@ -67,6 +67,7 @@ export const createTaskAdminController = (
   const list = required<HTMLElement>('[data-task-list]')
   const createButton = required<HTMLButtonElement>('[data-task-create]')
   const loadMore = required<HTMLButtonElement>('[data-task-load-more]')
+  const search = required<HTMLInputElement>('[data-task-search]')
   const retry = required<HTMLButtonElement>('[data-task-list-retry]')
   const formDialog = required<HTMLDialogElement>('[data-task-form-dialog]')
   const form = required<HTMLFormElement>('[data-task-form]')
@@ -144,6 +145,7 @@ export const createTaskAdminController = (
     form.reset()
     formResult.textContent = ''
     archiveResult.textContent = ''
+    search.value = ''
     status.textContent = 'Loading tasks…'
     retry.hidden = true
     loadMore.hidden = true
@@ -153,16 +155,49 @@ export const createTaskAdminController = (
     syncMutationControls()
   }
 
+  /**
+   * What the status line says when no filter is narrowing the list. Both the
+   * render path and the fetch path need it, and two copies of a sentence like
+   * this drift the moment one of them is edited.
+   */
+  const loadedSummary = (): string =>
+    tasks.length === 0
+      ? filter === 'active'
+        ? 'No active tasks found.'
+        : 'No tasks found.'
+      : `${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'} loaded${nextCursor === null ? '.' : '; more are available.'}`
+
   const renderList = (): void => {
     const active = currentSession()
     if (active === null) return
-    if (tasks.length === 0) {
+    // Tasks arrive a page at a time, so this searches what has been loaded and
+    // the status line says so: a name on page two is not missing, it is not here
+    // yet, and "load more" is the honest instruction.
+    const wanted = search.value.trim().toLocaleLowerCase('en-US')
+    const visible = tasks.filter((task) =>
+      taskName(task).toLocaleLowerCase('en-US').includes(wanted),
+    )
+    if (wanted !== '') {
+      status.textContent =
+        `${visible.length} of ${tasks.length} loaded ${tasks.length === 1 ? 'task matches' : 'tasks match'}` +
+        `${nextCursor === null ? '.' : '; load more to search the rest.'}`
+    } else {
+      // Clearing the box is not a fetch, so loadList never runs and nothing
+      // else rewrites this. Without it the live region kept the match count
+      // from the search just cleared -- a screen reader hearing "0 of 2 match"
+      // while both rows are on screen. Projects and clients rewrite their
+      // status on every render; tasks was the one that did not.
+      status.textContent = loadedSummary()
+    }
+    if (visible.length === 0) {
       const empty = document.createElement('p')
       empty.className = 'task-admin-empty'
       empty.textContent =
-        filter === 'active'
-          ? 'No active tasks have been created or imported yet.'
-          : 'No tasks have been created or imported yet.'
+        wanted !== ''
+          ? 'No loaded tasks match that filter.'
+          : filter === 'active'
+            ? 'No active tasks have been created or imported yet.'
+            : 'No tasks have been created or imported yet.'
       list.replaceChildren(empty)
       return
     }
@@ -194,7 +229,7 @@ export const createTaskAdminController = (
     list.replaceChildren(
       renderDataTable<Readonly<GeneralResource>>({
         caption: 'Tasks',
-        rows: tasks,
+        rows: visible,
         rowKey: (task) => String(task.id),
         columns,
         empty: 'No tasks yet.',
@@ -264,13 +299,11 @@ export const createTaskAdminController = (
       nextCursor = result.page.next_cursor
       renderList()
       loadMore.hidden = nextCursor === null
-      status.textContent =
-        successMessage ??
-        (tasks.length === 0
-          ? filter === 'active'
-            ? 'No active tasks found.'
-            : 'No tasks found.'
-          : `${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'} loaded${nextCursor === null ? '.' : '; more are available.'}`)
+      // An active filter owns the status line -- renderList has just written how
+      // much of what is loaded matches -- unless a mutation has its own news.
+      if (successMessage !== undefined || search.value.trim() === '') {
+        status.textContent = successMessage ?? loadedSummary()
+      }
     } catch (error) {
       if (handleFailure(error, active)) return
       if (
@@ -368,6 +401,8 @@ export const createTaskAdminController = (
       if (active !== null) void loadList(active)
     })
   }
+  search.addEventListener('input', renderList)
+
   loadMore.addEventListener('click', () => {
     const active = currentSession()
     if (active !== null && listPendingGeneration === null) void loadList(active, true)

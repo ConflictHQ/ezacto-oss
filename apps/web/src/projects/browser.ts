@@ -233,6 +233,7 @@ export const createProjectDirectoryController = (
   const listElement = required<HTMLElement>('[data-project-list]')
   const listRetry = required<HTMLButtonElement>('[data-project-list-retry]')
   const clientFilter = required<HTMLSelectElement>('[data-project-client-filter]')
+  const search = required<HTMLInputElement>('[data-project-search]')
   const detailStatus = required<HTMLElement>('[data-project-detail-status]')
   const detail = required<HTMLElement>('[data-project-detail]')
   const facts = required<HTMLElement>('[data-project-facts]')
@@ -344,6 +345,7 @@ export const createProjectDirectoryController = (
     allClients.value = ''
     allClients.textContent = 'All clients'
     clientFilter.replaceChildren(allClients)
+    search.value = ''
     detail.hidden = true
     listStatus.textContent = 'Loading projects…'
     detailStatus.textContent = 'Loading project…'
@@ -392,11 +394,19 @@ export const createProjectDirectoryController = (
 
   const renderList = (): void => {
     const selectedClient = Number(clientFilter.value)
+    // Every project and its client are already resident -- the list collects
+    // both before it renders -- so finding one is a match over what is in hand
+    // rather than a request. The name carries the code, and the client band is
+    // as often what you remember, so both are searched.
+    const wanted = search.value.trim().toLocaleLowerCase('en-US')
     const visible = projects.filter(
       (project) =>
         (projectFilter === 'all' || projectIsActive(project)) &&
         (!Number.isSafeInteger(selectedClient) || selectedClient < 1 ||
-          projectNumber(project, 'client_id') === selectedClient),
+          projectNumber(project, 'client_id') === selectedClient) &&
+        `${projectDisplayName(project)} ${projectClientLabel(project, clients)}`
+          .toLocaleLowerCase('en-US')
+          .includes(wanted),
     )
     if (visible.length === 0) {
       const empty = document.createElement('p')
@@ -1131,6 +1141,7 @@ export const createProjectDirectoryController = (
     })
   }
   clientFilter.addEventListener('change', renderList)
+  search.addEventListener('input', renderList)
   listRetry.addEventListener('click', () => {
     const active = currentSession()
     if (active !== null) void loadList(active)

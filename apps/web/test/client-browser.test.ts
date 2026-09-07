@@ -131,6 +131,43 @@ describe('Clients V1 browser controller', () => {
     expect(api.archiveDirectoryClient).not.toHaveBeenCalled()
   })
 
+
+  it('[browser] filters the tree without orphaning a matched child', async () => {
+    writeDocument('client-list', '/clients')
+    const other: GeneralResource = { ...parent, id: 12, name: 'Unrelated Group' }
+    const api: Partial<ClientDirectoryApi> = {
+      listDirectoryClients: vi.fn(async () => page([parent, child, other])),
+    }
+    const identity: Whoami = {
+      user_id: 1,
+      profile: 'member',
+      manager_grants: [],
+      authentication: { kind: 'session' },
+    }
+    const controller = createClientDirectoryController(api)
+    await controller.activate(identity, new AbortController().signal, () => false)
+
+    const names = (): string[] =>
+      [...document.querySelectorAll<HTMLAnchorElement>('[data-client-tree] a')].map(
+        (link) => link.textContent ?? '',
+      )
+    const search = document.querySelector<HTMLInputElement>('[data-client-search]')!
+    expect(names()).toEqual(['Parent Holding', 'Worked-For Studio', 'Unrelated Group'])
+
+    search.value = 'worked-for'
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+    // The parent is kept although it does not match: the child is shown under
+    // it, indented, exactly where it lives.
+    expect(names()).toEqual(['Parent Holding', 'Worked-For Studio'])
+    expect(document.querySelector('[data-client-list-status]')?.textContent).toBe('2 clients shown.')
+
+    search.value = 'nothing'
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(names()).toEqual([])
+    expect(document.querySelector('[data-client-list-status]')?.textContent).toBe(
+      'No clients match that search.',
+    )
+  })
   it('[browser] clears pending mutations after a shared 401 so reauthentication restores CRUD', async () => {
     writeDocument('client-list', '/clients')
     const createDirectoryClient = vi

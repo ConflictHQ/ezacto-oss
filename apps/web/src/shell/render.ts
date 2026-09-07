@@ -416,6 +416,11 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
       <a class="primary-action invoice-create-link" href="/invoices/new">Generate invoice</a>
     </header>
     <p class="invoice-intro">Browse generated and imported invoices. Amounts are shown in each invoice's own currency.</p>
+    <div class="invoice-list-toolbar">
+      <label for="ez-invoice-search">Search by invoice number or client
+        <input id="ez-invoice-search" type="search" data-invoice-search autocomplete="off" placeholder="INV-1024 or client">
+      </label>
+    </div>
     <p class="form-result invoice-page-status" data-invoice-list-status role="status" aria-live="polite">Loading invoices…</p>
     <section class="invoice-list" data-invoice-list aria-label="Invoices"></section>
     <button class="invoice-load-more" type="button" data-invoice-load-more hidden>Load more invoices</button>
@@ -559,8 +564,9 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
     <form data-command-form>
       <header><div><p class="eyebrow">Command bar</p><h2 id="command-title">Go or log time</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
       <label for="ez-command">Command</label>
-      <input id="ez-command" name="command" autocomplete="off" placeholder="log 2h northpeak devops" required>
-      <p class="hint">Try “log 2h project task”. Press Esc to close.</p>
+      <input id="ez-command" name="command" autocomplete="off" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="ez-command-results" placeholder="Search, or log 2h northpeak devops" required>
+      <p class="hint">Type to find a destination; ↑↓ to choose, Enter to go. Or “log 2h project task”. Esc to close.</p>
+      <div class="command-results" id="ez-command-results" data-command-results role="listbox" aria-label="Destinations"></div>
       <p class="form-result" data-command-result role="status"></p>
       <button class="primary-action" type="submit">Run command</button>
     </form>

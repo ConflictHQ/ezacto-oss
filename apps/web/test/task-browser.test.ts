@@ -120,6 +120,50 @@ describe('Tasks administration browser controller', () => {
     expect(document.querySelector('[data-task-list]')?.textContent).not.toContain('$')
   })
 
+
+  it('[browser] filters the loaded tasks and says what is still unloaded', async () => {
+    // The list route pages, so the filter can only speak for what is in hand.
+    // Saying "3 of 3 loaded" next to a Load more button is the difference
+    // between a name that is absent and a name that has not arrived.
+    writeDocument()
+    const api = apiFor([task(7, 'Implementation'), task(8, 'Quality assurance')], {
+      listAdminTasks: vi.fn(async () =>
+        page([task(7, 'Implementation'), task(8, 'Quality assurance')], 'cursor-2'),
+      ),
+    })
+    const controller = createTaskAdminController(api)
+    await controller.activate(identity('administrator'), new AbortController().signal, () => false)
+
+    const rows = (): number =>
+      document.querySelectorAll('[data-task-list] tbody tr[data-row]').length
+    const status = (): string =>
+      document.querySelector('[data-task-list-status]')?.textContent ?? ''
+    const search = document.querySelector<HTMLInputElement>('[data-task-search]')!
+    expect(rows()).toBe(2)
+    expect(status()).toBe('2 tasks loaded; more are available.')
+
+    search.value = 'quality'
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(rows()).toBe(1)
+    expect(status()).toBe('1 of 2 loaded tasks match; load more to search the rest.')
+
+    search.value = 'nothing'
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(rows()).toBe(0)
+    expect(document.querySelector('[data-task-list]')?.textContent).toBe(
+      'No loaded tasks match that filter.',
+    )
+    expect(status()).toBe('0 of 2 loaded tasks match; load more to search the rest.')
+
+    // Clearing the box is not a fetch, so nothing else rewrites the live
+    // region. Leaving the last match count there tells a screen reader that no
+    // tasks match while every row is back on screen.
+    search.value = ''
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+
+    expect(document.querySelectorAll('[data-task-list] tbody tr')).toHaveLength(2)
+    expect(status()).toBe('2 tasks loaded; more are available.')
+  })
   it('[browser] creates and minimally edits exact-cent task defaults', async () => {
     writeDocument()
     const original = task(7, 'Implementation')

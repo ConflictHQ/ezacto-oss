@@ -7,6 +7,7 @@ import {
   clientIsActive,
   clientNumber,
   clientProfileCanWrite,
+  clientSearchMatches,
   clientText,
   relationLabel,
   type ClientDirectoryApi,
@@ -141,6 +142,7 @@ export const createClientDirectoryController = (
   const listStatus = required<HTMLElement>('[data-client-list-status]')
   const detailStatus = required<HTMLElement>('[data-client-detail-status]')
   const tree = required<HTMLElement>('[data-client-tree]')
+  const search = required<HTMLInputElement>('[data-client-search]')
   const listRetry = required<HTMLButtonElement>('[data-client-list-retry]')
   const detailRetry = required<HTMLButtonElement>('[data-client-detail-retry]')
   const detail = required<HTMLElement>('[data-client-detail]')
@@ -193,6 +195,7 @@ export const createClientDirectoryController = (
     contacts = []
     projects = []
     currentClient = null
+    search.value = ''
     tree.replaceChildren()
     projectsList.replaceChildren()
     contactsList.replaceChildren()
@@ -242,15 +245,18 @@ export const createClientDirectoryController = (
   }
 
   const renderTree = (): void => {
-    const visible =
+    const listed =
       clientFilter === 'active' ? clients.filter((client) => clientIsActive(client)) : clients
+    const visible = clientSearchMatches(listed, search.value)
     if (visible.length === 0) {
       const empty = document.createElement('p')
       empty.className = 'client-tree-empty'
       empty.textContent =
-        clientFilter === 'active'
-          ? 'No active clients yet.'
-          : 'No clients have been created or imported yet.'
+        search.value.trim() !== ''
+          ? 'No clients match that search.'
+          : clientFilter === 'active'
+            ? 'No active clients yet.'
+            : 'No clients have been created or imported yet.'
       tree.replaceChildren(empty)
       listStatus.textContent = empty.textContent
       return
@@ -617,6 +623,7 @@ export const createClientDirectoryController = (
       renderTree()
     })
   }
+  search.addEventListener('input', renderTree)
 
   clientForm.addEventListener('submit', (event) => {
     event.preventDefault()

@@ -91,6 +91,20 @@ export const setInvoiceClientNames = (
 const clientLabel = (clientId: number): string =>
   clientNames.get(clientId) ?? `Client #${clientId}`
 
+/**
+ * The list route takes cursor and per_page and nothing else, so the search is
+ * over what has been loaded. It lives here rather than at the call site because
+ * the client name it matches on is this module's private map -- the same one the
+ * Client column reads, so what you type is what you can see.
+ */
+export const invoiceMatchesSearch = (invoice: Readonly<Invoice>, query: string): boolean => {
+  const wanted = query.trim().toLocaleLowerCase('en-US')
+  if (wanted === '') return true
+  return `${invoice.number} ${clientLabel(invoice.client_id)}`
+    .toLocaleLowerCase('en-US')
+    .includes(wanted)
+}
+
 const invoiceStatePill = (invoice: Readonly<Invoice>): HTMLSpanElement => {
   const state = document.createElement('span')
   state.className = 'invoice-state'
@@ -128,14 +142,19 @@ const columnTotal = (
   )
 }
 
-export const renderInvoiceListItems = (invoices: readonly Invoice[]): number => {
+export const renderInvoiceListItems = (
+  invoices: readonly Invoice[],
+  // A filtered list that empties is not an account with no invoices in it, and
+  // the table is the only thing that says so to someone mid-search.
+  empty = 'No invoices have been created or imported yet.',
+): number => {
   const list = required<HTMLElement>('[data-invoice-list]')
   list.replaceChildren(
     renderDataTable<Readonly<Invoice>>({
       caption: 'Invoices',
       rows: invoices,
       rowKey: (invoice) => String(invoice.id),
-      empty: 'No invoices have been created or imported yet.',
+      empty,
       columns: [
         { key: 'status', label: 'Status', render: invoiceStatePill },
         { key: 'number', label: 'Invoice', render: invoiceNumberLink },

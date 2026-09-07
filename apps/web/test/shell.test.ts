@@ -421,12 +421,30 @@ describe('S-1 through S-5 application shell', () => {
   })
 
   it('[unit] resolves K-bar navigation and computes a live timer counter', () => {
-    expect(navigationDestination('go reports')).toBe('/reports')
-    expect(navigationDestination('go tasks')).toBe('/tasks')
-    expect(navigationDestination('GO time')).toBe('/')
-    expect(navigationDestination('log 2h northpeak devops')).toBeNull()
+    const everything = () => true
+    expect(navigationDestination('go reports', everything)).toBe('/reports')
+    expect(navigationDestination('go tasks', everything)).toBe('/tasks')
+    expect(navigationDestination('GO time', everything)).toBe('/')
+    expect(navigationDestination('log 2h northpeak devops', everything)).toBeNull()
     const running = entry({ project_id: 1, task_id: 1 }, 1)
     expect(runningElapsedSeconds(running, new Date('2026-08-28T12:01:30.000Z'))).toBe(90)
+  })
+
+  it('[security] the go grammar reaches only what the palette offers', () => {
+    // The results list and the typed `go` grammar are one dialog over one
+    // table. Gating only the list left a member shown no Approvals entry who
+    // could still type "go approvals" into the same input and land there.
+    const withheld = new Set(['Approvals', 'Team', 'Company settings'])
+    const offered = (destination: { label: string }): boolean =>
+      !withheld.has(destination.label)
+
+    expect(navigationDestination('go approvals', offered)).toBeNull()
+    expect(navigationDestination('go team', offered)).toBeNull()
+    expect(navigationDestination('go company settings', offered)).toBeNull()
+    // What the profile may reach is unaffected, so this is a gate and not a
+    // blanket refusal.
+    expect(navigationDestination('go reports', offered)).toBe('/reports')
+    expect(navigationDestination('go time', offered)).toBe('/')
   })
 
   it('[unit] creates an entry and the refreshed week snapshot reflects it', async () => {
