@@ -361,7 +361,6 @@ export interface LoadAnomaly {
     | 'hours_residue'
     | 'rate_residue'
     | 'unresolved_estimate_reference'
-    | 'negative_time_entry'
     | 'billing_conflict'
     | 'payment_date_disagreement'
     | 'invoice_state_disagreement'
@@ -2597,21 +2596,6 @@ const rowStatements = (
         ),
       ]
     case 'time_entries': {
-      // Harvest corrects an over-logged timesheet with a negative entry that
-      // offsets an earlier one. `time_entries.seconds` is
-      // CHECK (… BETWEEN 0 AND …), so a correction cannot be represented as an
-      // entry. Skip it and say so; the reconciliation report carries the hour
-      // difference rather than the import hiding it.
-      const rawHours = nullableNumberAt(source, '/hours')
-      if (rawHours !== null && rawHours.startsWith('-')) {
-        anomalies.push({
-          resource,
-          source_id: harvestId,
-          kind: 'negative_time_entry',
-          detail: `hours=${rawHours} spent_date=${stringValue(row, 'spent_date') ?? '?'}`,
-        })
-        return []
-      }
       const rawSeconds = seconds(source, '/hours', anomalies, resource) ?? 0
       const secondsWithoutTimer =
         nullableNumberAt(source, '/hours_without_timer') === null

@@ -6,8 +6,12 @@ const assertNonnegativeSafeInteger = (value: number, field: string): void => {
   }
 }
 
+const assertSafeInteger = (value: number, field: string): void => {
+  if (!Number.isSafeInteger(value)) throw new RangeError(`${field} must be a safe integer`)
+}
+
 const checkedCents = (value: bigint, field: string): number => {
-  if (value < 0n || value > BigInt(centsLimit)) {
+  if (value < -BigInt(centsLimit) || value > BigInt(centsLimit)) {
     throw new RangeError(`${field} exceeds the supported cents range`)
   }
   return Number(value)
@@ -16,13 +20,20 @@ const checkedCents = (value: bigint, field: string): number => {
 /**
  * Canonical tracked-time pricing shared by reports and invoice generation.
  * Stored rounded seconds are multiplied using integer arithmetic and the final
- * fractional cent is rounded half-up. Both inputs are non-negative by model.
+ * fractional cent is rounded half-up.
+ *
+ * Seconds are signed: a Harvest correction entry offsets an earlier one, so its
+ * contribution to every total it touches is negative by construction. Price the
+ * magnitude and carry the sign back, so the half-cent rounds away from zero on
+ * both sides and a correction cancels exactly the amount it was written to
+ * cancel. The rate is a magnitude and stays non-negative.
  */
 export const trackedAmountCents = (roundedSeconds: number, hourlyRateCents: number): number => {
-  assertNonnegativeSafeInteger(roundedSeconds, 'rounded seconds')
+  assertSafeInteger(roundedSeconds, 'rounded seconds')
   assertNonnegativeSafeInteger(hourlyRateCents, 'hourly rate cents')
-  const numerator = BigInt(roundedSeconds) * BigInt(hourlyRateCents)
-  return checkedCents((numerator + 1_800n) / 3_600n, 'tracked amount')
+  const magnitude = BigInt(Math.abs(roundedSeconds)) * BigInt(hourlyRateCents)
+  const cents = (magnitude + 1_800n) / 3_600n
+  return checkedCents(roundedSeconds < 0 ? -cents : cents, 'tracked amount')
 }
 
 export interface UninvoicedTimeCandidate {
@@ -61,7 +72,7 @@ const currencyCode = (value: string): string => {
 
 const checkedAdd = (left: number, right: number, field: string): number => {
   const sum = BigInt(left) + BigInt(right)
-  if (sum > BigInt(Number.MAX_SAFE_INTEGER)) {
+  if (sum > BigInt(Number.MAX_SAFE_INTEGER) || sum < -BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new RangeError(`${field} exceeds the supported aggregate range`)
   }
   return Number(sum)
@@ -97,7 +108,7 @@ export const uninvoicedGenerationPreview = (input: {
 
   for (const entry of input.timeEntries) {
     assertNonnegativeSafeInteger(entry.id, 'time entry id')
-    assertNonnegativeSafeInteger(entry.roundedSeconds, 'rounded seconds')
+    assertSafeInteger(entry.roundedSeconds, 'rounded seconds')
     const total = totalFor(entry.currency)
     total.roundedSeconds = checkedAdd(total.roundedSeconds, entry.roundedSeconds, 'rounded seconds')
     total.timeEntryCount += 1

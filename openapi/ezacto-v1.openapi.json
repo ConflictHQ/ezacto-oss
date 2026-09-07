@@ -16629,16 +16629,13 @@
             "minimum": 0
           },
           "total_seconds": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "billable_seconds": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "nonbillable_seconds": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "utilization_ppm": {
             "anyOf": [
@@ -17662,16 +17659,13 @@
             "format": "date"
           },
           "seconds": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "seconds_without_timer": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "rounded_seconds": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "is_running": {
             "type": "boolean"
@@ -18303,16 +18297,13 @@
             "minimum": 0
           },
           "total_seconds": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "billable_seconds": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "nonbillable_seconds": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "created_at": {
             "type": "string",
@@ -18379,8 +18370,7 @@
             "type": "string"
           },
           "seconds": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "notes": {
             "anyOf": [
@@ -18609,16 +18599,13 @@
             "minimum": 0
           },
           "total_seconds": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "billable_seconds": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "nonbillable_seconds": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "created_at": {
             "type": "string",
@@ -23209,8 +23196,7 @@
             "type": "string"
           },
           "rounded_seconds": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "time_entry_count": {
             "type": "integer",
@@ -23225,16 +23211,14 @@
             "minimum": 0
           },
           "time_cents": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "expense_cents": {
             "type": "integer",
             "minimum": 0
           },
           "total_cents": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           }
         },
         "additionalProperties": false
@@ -23319,24 +23303,21 @@
             "minimum": 0
           },
           "uninvoiced_time_cents": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "uninvoiced_expense_cents": {
             "type": "integer",
             "minimum": 0
           },
           "uninvoiced_total_cents": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "money_budget_cents": {
             "type": "integer",
             "minimum": 0
           },
           "cost_cents": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           }
         },
         "additionalProperties": false
@@ -23364,16 +23345,13 @@
             "minimum": 0
           },
           "rounded_seconds": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "billable_seconds": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "budgeted_seconds": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "time_budget_seconds": {
             "type": "integer",
@@ -23537,8 +23515,7 @@
             ]
           },
           "spent_seconds": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "remaining_seconds": {
             "anyOf": [
@@ -23562,8 +23539,7 @@
             ]
           },
           "spent_cents": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "remaining_cents": {
             "anyOf": [
@@ -23691,8 +23667,7 @@
             ]
           },
           "spent_seconds": {
-            "type": "integer",
-            "minimum": 1
+            "type": "integer"
           },
           "remaining_seconds": {
             "anyOf": [
@@ -23717,8 +23692,7 @@
             ]
           },
           "spent_cents": {
-            "type": "integer",
-            "minimum": 1
+            "type": "integer"
           },
           "remaining_cents": {
             "anyOf": [
@@ -23732,8 +23706,7 @@
             ]
           },
           "cost_cents": {
-            "type": "integer",
-            "minimum": 1
+            "type": "integer"
           }
         },
         "additionalProperties": false

@@ -185,9 +185,12 @@ const formatSeconds = (seconds: number): string => {
   if (activeTimeFormat === 'decimal') {
     return (seconds / 3_600).toFixed(2)
   }
-  const hours = Math.floor(seconds / 3_600)
-  const minutes = Math.floor((seconds % 3_600) / 60)
-  return `${hours}:${String(minutes).padStart(2, '0')}`
+  // Split the magnitude, then sign it. Flooring a negative total borrowed an
+  // hour and rendered -1800s as "-1:30" (issue 279).
+  const magnitude = Math.abs(seconds)
+  const hours = Math.floor(magnitude / 3_600)
+  const minutes = Math.floor((magnitude % 3_600) / 60)
+  return `${seconds < 0 ? '-' : ''}${hours}:${String(minutes).padStart(2, '0')}`
 }
 
 const formatMoney = (cents: number, currency: string): string =>

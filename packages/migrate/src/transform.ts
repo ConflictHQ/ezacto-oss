@@ -81,12 +81,18 @@ export interface SecondsTransform {
   residue: string | null
 }
 
+/**
+ * Hours are signed. Harvest records a correction as a negative entry offsetting
+ * an earlier one, and refusing the literal here is what forced the loader to
+ * skip those rows and overstate a payroll period (#279). Columns that really
+ * are magnitudes — budgets, retainer balances — keep their own non-negative
+ * CHECK, so nothing needs this parse to enforce the sign on their behalf.
+ */
 export const hoursLiteralToSeconds = (literal: string, field = 'hours'): SecondsTransform => {
   const { numerator, scale } = decimalParts(literal, field)
   const scaled = numerator * 3600n
   const denominator = scale > 0 ? 10n ** BigInt(scale) : 1n
   const whole = scale > 0 ? roundHalfEven(scaled, denominator) : scaled * 10n ** BigInt(-scale)
-  if (whole < 0n) throw new Error(`${field} cannot be negative`)
   const exactNumerator = scale > 0 ? scaled : whole
   const residue = scale > 0 && exactNumerator % denominator !== 0n ? literal : null
   return { seconds: checkedNumber(whole, field), residue }

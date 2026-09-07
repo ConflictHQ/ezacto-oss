@@ -3451,12 +3451,12 @@ export const timeEntries = sqliteTable(
       foreignColumns: [taskAssignments.id, taskAssignments.projectId, taskAssignments.taskId],
       name: 'time_entries_task_assignment_fk',
     }).onDelete('restrict'),
-    check('time_entries_seconds_safe', sql`${table.seconds} between 0 and 9007199254740991`),
+    check('time_entries_seconds_safe', sql`abs(${table.seconds}) <= 9007199254740991`),
     check(
       'time_entries_checkpoint_safe',
-      sql`${table.secondsWithoutTimer} between 0 and 9007199254740991`,
+      sql`abs(${table.secondsWithoutTimer}) <= 9007199254740991`,
     ),
-    check('time_entries_rounded_safe', sql`${table.roundedSeconds} between 0 and 9007199254740991`),
+    check('time_entries_rounded_safe', sql`abs(${table.roundedSeconds}) <= 9007199254740991`),
     check('time_entries_billable_boolean', sql`${table.billable} in (0, 1)`),
     check('time_entries_budgeted_boolean', sql`${table.budgeted} in (0, 1)`),
     check(

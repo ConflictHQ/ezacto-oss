@@ -50,11 +50,17 @@ export const parseDuration = (raw: string): number => {
 }
 
 export const formatDuration = (seconds: number): string => {
-  if (!Number.isSafeInteger(seconds) || seconds < 0) return '—'
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
-  const remainder = seconds % 60
-  const base = `${hours}:${String(minutes).padStart(2, '0')}`
+  if (!Number.isSafeInteger(seconds)) return '—'
+  // A correction entry is negative, and rendering it as an em dash reads as
+  // "no value" when the value is the whole point. Format the magnitude and put
+  // the sign back: Math.floor on a negative would carry the borrow the wrong
+  // way, turning -1800 into -1:30 rather than -0:30.
+  const sign = seconds < 0 ? '-' : ''
+  const magnitude = Math.abs(seconds)
+  const hours = Math.floor(magnitude / 3600)
+  const minutes = Math.floor((magnitude % 3600) / 60)
+  const remainder = magnitude % 60
+  const base = `${sign}${hours}:${String(minutes).padStart(2, '0')}`
   return remainder === 0 ? base : `${base}:${String(remainder).padStart(2, '0')}`
 }
 

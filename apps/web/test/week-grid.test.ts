@@ -265,6 +265,16 @@ describe('timesheet week grid', () => {
     expect(() => parseCellSeconds('24:01')).toThrow(/24 hours/u)
   })
 
+  it('[unit] renders an imported correction entry instead of refusing it', () => {
+    // #279: a Harvest correction is stored as a negative duration, so a cell
+    // holding one has to show it. Typing one stays refused — the entry that
+    // was wrong is the thing to edit.
+    expect(formatCellHours(-5_400)).toBe('-1.5')
+    expect(formatCellHours(-1_800, 'hours_minutes')).toBe('-0:30')
+    expect(formatCellHours(-3_600, 'hours_minutes')).toBe('-1:00')
+    expect(() => parseCellSeconds('-1.5')).toThrow(/decimal hours or H:MM/u)
+  })
+
   it('[unit] creates, updates, and clears one safe canonical cell', async () => {
     const entries: TimeEntry[] = []
     const api = apiFor(entries)

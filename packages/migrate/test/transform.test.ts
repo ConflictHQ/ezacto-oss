@@ -43,6 +43,14 @@ describe('lossless snapshot transforms', () => {
     expect(hoursLiteralToSeconds('1.25')).toEqual({ seconds: 4500, residue: null })
   })
 
+  it('carries the sign of a correction entry through to seconds', () => {
+    // #279: a Harvest correction offsets an earlier entry, so refusing the
+    // literal here made the loader skip it and overstate the period.
+    expect(hoursLiteralToSeconds('-1.0')).toEqual({ seconds: -3600, residue: null })
+    expect(hoursLiteralToSeconds('-0.25')).toEqual({ seconds: -900, residue: null })
+    expect(hoursLiteralToSeconds('-0.00125')).toEqual({ seconds: -4, residue: '-0.00125' })
+  })
+
   it('converts percentages without passing through floating point', () => {
     expect(percentLiteralToPpm('7.25')).toBe(72_500)
     expect(() => percentLiteralToPpm('7.25001')).toThrow('more than four decimal places')

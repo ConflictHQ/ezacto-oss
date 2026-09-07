@@ -671,11 +671,11 @@ describe('three-way reconciliation', () => {
     )
   })
 
-  it('[unit] cites a correction entry as a documented gap instead of an unexplained delta', async () => {
-    // #277: Harvest nets its negative correction entries into every report
-    // total; time_entries.seconds is CHECK >= 0, so the loader skips them and
-    // the recomputation runs higher. That is the documented cost of the
-    // migration, but it landed as UNEXPLAINED, so a correct load reported FAIL.
+  it('[unit] loads a correction entry so every total nets it out, as Harvest does', async () => {
+    // #279: Harvest nets its negative correction entries into every report
+    // total. time_entries.seconds was CHECK >= 0, so the loader skipped them
+    // and the recomputation ran higher — CONFLICT's August read $REDACTED
+    // against Harvest's $REDACTED, a $60 overpayment to one contractor.
     await rm(snapshotDir, { recursive: true, force: true })
     await rm(databasePath, { force: true })
     await buildSanitizedLoadSnapshot(snapshotDir)
@@ -720,46 +720,37 @@ describe('three-way reconciliation', () => {
       uninvoiced.total_hours -= 0.25
       uninvoiced.uninvoiced_hours -= 0.25
       uninvoiced.uninvoiced_amount -= 43.75
+      const budget = report.reports['project_budget/active']![0] as Record<string, number>
+      budget.budget_spent -= 43.75
+      budget.budget_remaining += 43.75
     })
     await runLoad({ snapshotDir, databasePath })
 
+    const database = new BetterSqlite3(databasePath, { readonly: true })
+    const stored = database
+      .prepare('SELECT seconds, rounded_seconds FROM time_entries WHERE harvest_id = ?')
+      .get('3003833999') as { seconds: number; rounded_seconds: number } | undefined
+    database.close()
+    expect(stored).toEqual({ seconds: -900, rounded_seconds: -900 })
+
     const result = await runReconcile({ snapshotDir, databasePath })
     expect(result.report.unexplained).toEqual([])
-
-    const cited = result.report.gaps.filter(
-      (check) => check.gap_citation?.id === 'migration-spec-7-negative-time-entries',
-    )
-    // Three time-report grains plus the person, three metrics each; three
-    // uninvoiced metrics; the row count; and the anomaly itself.
-    expect(cited.length).toBeGreaterThan(0)
-    expect(cited).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          check: 'harvest_time_report',
-          key: 'time/projects/2026|14308069|USD',
-          metric: 'billable_amount_cents',
-          delta: 4375,
-        }),
-        expect.objectContaining({
-          check: 'harvest_uninvoiced_report',
-          metric: 'uninvoiced_seconds',
-          delta: 900,
-        }),
-        expect.objectContaining({
-          check: 'resource_row_count',
-          key: 'time_entries',
-          metric: 'rows',
-          delta: -1,
-        }),
-        expect.objectContaining({
-          check: 'load_anomaly',
-          key: 'time_entries:3003833999:negative_time_entry',
-        }),
-      ]),
-    )
-    for (const check of cited) {
-      expect(check.gap_citation?.reference).toContain('migration-spec.md §7')
-    }
+    // Nothing is skipped any more, so nothing needs citing: the recomputation
+    // equals Harvest's own netted totals outright, which the assertions below
+    // check directly. There is deliberately no assertion that the old
+    // negative-time-entry citation is absent -- the id no longer exists, so
+    // such a filter would pass whether or not corrections were handled.
+    expect(
+      [...result.report.matches, ...result.report.gaps].filter(
+        (check) =>
+          check.check === 'harvest_time_report' &&
+          check.key === 'time/projects/2026|14308069|USD' &&
+          check.metric === 'billable_amount_cents',
+      ),
+    ).toEqual([
+      // 481.25 - 43.75 = 437.50, exactly what Harvest reports.
+      expect.objectContaining({ delta: 0, expected: 43_750, actual: 43_750 }),
+    ])
   })
 
   it('[unit] leaves an archived project out of uninvoiced work, as Harvest does', async () => {
