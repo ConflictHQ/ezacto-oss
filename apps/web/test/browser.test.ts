@@ -1209,7 +1209,7 @@ describe('invoice browse browser behavior', () => {
       })
     // "Client #11" is an internal identifier on a page a client can be sent.
     const listClients: ShellApi['listClients'] = async () => ({
-      data: [resource(11, 'Vantage IT')],
+      data: [resource(11, 'Northwind Freight')],
       page: { next_cursor: null },
     })
     const api: ShellApi = { ...base, listInvoices, listClients }
@@ -1222,7 +1222,7 @@ describe('invoice browse browser behavior', () => {
       expect(
         document.querySelector('tbody tr[data-row-key="7"] td[data-column="client"]')
           ?.textContent,
-      ).toBe('Vantage IT'),
+      ).toBe('Northwind Freight'),
     )
     expect(first.textContent).toContain('$82.50')
     expect(first.querySelector<HTMLAnchorElement>('a')?.getAttribute('href')).toBe(

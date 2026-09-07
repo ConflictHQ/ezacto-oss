@@ -34,9 +34,9 @@ const usedAt = '2026-08-28T15:01:00.000Z'
 const token = `ezacto_abcdefghijklmnop_${'A'.repeat(43)}`
 const input: InstanceBootstrapInput = {
   organizationName: 'Conflict',
-  ownerFirstName: 'Luis',
-  ownerLastName: 'Herrera',
-  ownerEmail: 'luis@example.com',
+  ownerFirstName: 'Rowan',
+  ownerLastName: 'Adeyemi',
+  ownerEmail: 'rowan@example.com',
   token,
 }
 const options: InstanceBootstrapOptions = { now: () => timestamp }
@@ -212,7 +212,7 @@ for (const [runtime, factory] of factories) {
           id: 1,
           profile: 'administrator',
           is_owner: 1,
-          address: 'luis@example.com',
+          address: 'rowan@example.com',
           is_primary: 1,
           verified_at: timestamp,
         },
@@ -259,7 +259,7 @@ for (const [runtime, factory] of factories) {
 
       for (const mismatch of [
         { ...input, organizationName: 'Different Organization' },
-        { ...input, ownerFirstName: 'Rosalind' },
+        { ...input, ownerFirstName: 'Mira' },
         { ...input, ownerEmail: 'different@example.com' },
         { ...input, token: `ezacto_abcdefghijklmnop_${'B'.repeat(43)}` },
       ]) {

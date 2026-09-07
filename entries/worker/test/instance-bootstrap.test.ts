@@ -9,9 +9,9 @@ const ownerPassword = "correct horse battery staple";
 const cursorSecret = encodeBase64Url(new Uint8Array(32).fill(0x42));
 const identity = {
   organization_name: "Conflict",
-  owner_first_name: "Luis",
-  owner_last_name: "Herrera",
-  owner_email: "luis@example.com",
+  owner_first_name: "Rowan",
+  owner_last_name: "Adeyemi",
+  owner_email: "rowan@example.com",
 };
 
 const miniflares: Miniflare[] = [];

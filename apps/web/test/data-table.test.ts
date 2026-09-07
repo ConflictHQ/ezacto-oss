@@ -11,9 +11,9 @@ interface Project {
 }
 
 const rows: Project[] = [
-  { id: 1, client: 'Vantage IT', name: 'Silverpine', spentCents: 105_760 },
-  { id: 2, client: 'Vantage IT', name: 'Larkspur Skincare', spentCents: 204_750 },
-  { id: 3, client: 'Halcyon Biolabs', name: 'Atlas Phase 1a', spentCents: 47_682 },
+  { id: 1, client: 'Northwind Freight', name: 'Freight Portal Rebuild', spentCents: 105_760 },
+  { id: 2, client: 'Northwind Freight', name: 'Route Optimisation', spentCents: 204_750 },
+  { id: 3, client: 'Halcyon Biolabs', name: 'LIMS Integration', spentCents: 47_682 },
 ]
 
 const money = (cents: number): string => `$${(cents / 100).toFixed(2)}`
@@ -57,7 +57,7 @@ describe('data table', () => {
     const bands = [...element.querySelectorAll('.data-table-group th')].map(
       (cell) => cell.textContent,
     )
-    expect(bands).toEqual(['Vantage IT', 'Halcyon Biolabs'])
+    expect(bands).toEqual(['Northwind Freight', 'Halcyon Biolabs'])
     expect(element.querySelectorAll('tbody tr[data-row]')).toHaveLength(3)
   })
 
@@ -74,7 +74,7 @@ describe('data table', () => {
     const bands = [...element.querySelectorAll('.data-table-group th')].map(
       (cell) => cell.textContent,
     )
-    expect(bands).toEqual(['Vantage IT', 'Halcyon Biolabs', 'Vantage IT'])
+    expect(bands).toEqual(['Northwind Freight', 'Halcyon Biolabs', 'Northwind Freight'])
   })
 
   it('[unit] closes each group with its own total, and the table with all of them', () => {
@@ -84,7 +84,7 @@ describe('data table', () => {
     const groupTotals = [...element.querySelectorAll('.data-table-group-total')].map(
       (row) => row.querySelector('[data-column="spent"]')?.textContent,
     )
-    // Vantage IT holds rows 1 and 2; Halcyon Biolabs holds row 3.
+    // Northwind Freight holds rows 1 and 2; Halcyon Biolabs holds row 3.
     expect(groupTotals).toEqual(['$3105.10', '$476.82'])
     expect(
       element.querySelector('tfoot [data-column="spent"]')?.textContent,
