@@ -163,6 +163,13 @@ describe('Expenses V1 browser controller', () => {
     expect(document.querySelector('[data-expense-list]')?.textContent).toContain('Billable · not invoiced')
     expect(document.querySelector('[data-expense-list]')?.textContent).toContain('Editable')
     expect(document.querySelectorAll('.data-table-group')).toHaveLength(2)
+    // Each week closes with its own Total, which is what makes the band a
+    // section rather than a label.
+    expect(
+      [...document.querySelectorAll('.data-table-group-total [data-column="amount"]')].map(
+        (cell) => cell.textContent,
+      ),
+    ).toHaveLength(2)
     expect(
       [...document.querySelectorAll<HTMLElement>('tbody tr[data-row]')].map(
         (row) => row.dataset.rowKey,
