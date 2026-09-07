@@ -1,7 +1,6 @@
-// AC #3: a full extract of the live account. Skipped, never mocked and never
-// faked, when credentials are absent — CI holds no Harvest secrets, so this is a
-// skip there rather than a red gate, and the counts it prints are the evidence
-// the acceptance box is closed with.
+// AC #3: a full extract of the live account. Run on request only, never mocked
+// and never faked — see live-gate.ts for why the request has to be explicit —
+// and the counts it prints are the evidence the acceptance box is closed with.
 
 import { readFile } from 'node:fs/promises'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -14,11 +13,16 @@ import { runExtract } from '../src/extract.js'
 import { readManifest } from '../src/manifest.js'
 import { minElapsedMs } from '../src/rate-limiter.js'
 import { RESOURCES } from '../src/resources.js'
+import { announceSkip, liveHarvestGate, readLiveHarvestEnv } from './live-gate.js'
 
-loadDevVars()
-const hasLiveCreds = Boolean(process.env.HARVEST_PAT && process.env.HARVEST_ACCOUNT_ID)
+const SUITE = 'runExtract [api] against the live CONFLICT account'
+const gate = liveHarvestGate()
+announceSkip(SUITE, gate)
+// The CLI loads .dev.vars itself; a test process does not. Only an opted-in run
+// needs the credentials, so only an opted-in run goes looking for them.
+if (gate.enabled) loadDevVars()
 
-describe.skipIf(!hasLiveCreds)('runExtract [api] against the live CONFLICT account', () => {
+describe.skipIf(!gate.enabled)(SUITE, () => {
   let dir: string
 
   beforeEach(async () => {
@@ -30,11 +34,7 @@ describe.skipIf(!hasLiveCreds)('runExtract [api] against the live CONFLICT accou
 
   it('completes a full extract and records per-resource counts in manifest.json', async () => {
     const logs: string[] = []
-    const env = {
-      pat: process.env.HARVEST_PAT as string,
-      accountId: process.env.HARVEST_ACCOUNT_ID,
-      userAgentEmail: process.env.HARVEST_USER_AGENT_EMAIL || 'hello@ezacto.com',
-    }
+    const env = readLiveHarvestEnv()
     await runAuth({ env, toolVersion: '0.0.0', snapshotDir: dir })
 
     const result = await runExtract({ env, snapshotDir: dir, log: (line) => logs.push(line) })

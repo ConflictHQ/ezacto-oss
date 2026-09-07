@@ -33,6 +33,23 @@ code arrives with its stories (each Acceptance box carries its mechanism tag).
 - **The real snapshot** (CONFLICT extract) is used ONLY for shim golden files and
   reconciliation tests, gitignored, never in fixtures.
 
+## The live Harvest suites
+
+`packages/migrate/test/*.live.test.ts` sweep the real CONFLICT Harvest account —
+they are the evidence the `[manual]`/`[api]` acceptance boxes are closed with, and
+they are never mocked. They run only when asked:
+
+```
+EZACTO_LIVE_HARVEST=1 npm test -w ezacto-migrate
+```
+
+Nothing else turns them on. Credentials being present is not the same signal —
+`.dev.vars` is the documented setup for ordinary CLI work, and `env.loadDevVars`
+finds one anywhere above the checkout, so gating on the PAT put a plain `npm test`
+into Harvest's 429 backoff against production. Asking for the sweep *without*
+credentials still fails loudly rather than skipping, and a skipped live suite
+prints the reason it skipped.
+
 ## Standing rules
 
 Red gate = fix, never bypass (PROCESS.md). A bug fix ships with the test that

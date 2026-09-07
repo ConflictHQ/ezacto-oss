@@ -1,7 +1,7 @@
 // The parallel-run proof cannot be faked. The frozen-server unit test proves a
 // strict second-sync no-op; this live test additionally proves that any row delta
 // on the actively used account carries evidence of a newer upstream version.
-// CI has no credentials, so it stays credential-gated like extract.
+// It stays opt-in gated like extract.
 
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -13,9 +13,15 @@ import { loadDevVars } from '../src/env.js'
 import { readManifest } from '../src/manifest.js'
 import { RESOURCES } from '../src/resources.js'
 import { runSync } from '../src/sync.js'
+import { announceSkip, liveHarvestGate, readLiveHarvestEnv } from './live-gate.js'
 
-loadDevVars()
-const hasLiveCreds = Boolean(process.env.HARVEST_PAT && process.env.HARVEST_ACCOUNT_ID)
+const SUITE = 'runSync [e2e:migrate-reconcile] against the live CONFLICT account'
+const gate = liveHarvestGate()
+announceSkip(SUITE, gate)
+// The CLI loads .dev.vars itself; a test process does not. Only an opted-in run
+// needs the credentials, so only an opted-in run goes looking for them.
+if (gate.enabled) loadDevVars()
+
 // The live account currently has hundreds of invoices. Each sync deliberately
 // visits every invoice message/payment endpoint twice (extract + ID witness),
 // and this acceptance test runs two syncs under Harvest's 100 req / 15 s budget.
@@ -188,7 +194,7 @@ describe('live raw difference classification', () => {
   })
 })
 
-describe.skipIf(!hasLiveCreds)('runSync [e2e:migrate-reconcile] against the live CONFLICT account', () => {
+describe.skipIf(!gate.enabled)(SUITE, () => {
   let dir: string
 
   beforeEach(async () => {
@@ -199,11 +205,7 @@ describe.skipIf(!hasLiveCreds)('runSync [e2e:migrate-reconcile] against the live
   })
 
   it('makes a second sync stable except for newer upstream row versions', async () => {
-    const env = {
-      pat: process.env.HARVEST_PAT as string,
-      accountId: process.env.HARVEST_ACCOUNT_ID,
-      userAgentEmail: process.env.HARVEST_USER_AGENT_EMAIL || 'hello@ezacto.com',
-    }
+    const env = readLiveHarvestEnv()
     await runAuth({ env, toolVersion: '0.0.0', snapshotDir: dir })
     const liveWindowStartedAt = new Date().toISOString()
     const first = await runSync({ env, snapshotDir: dir })

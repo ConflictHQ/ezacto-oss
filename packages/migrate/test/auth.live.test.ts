@@ -4,15 +4,16 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { runAuth } from '../src/auth.js'
 import { loadDevVars } from '../src/env.js'
+import { announceSkip, liveHarvestGate, readLiveHarvestEnv } from './live-gate.js'
 
-// The CLI loads .dev.vars itself; a test process does not. Without this the
-// documented setup — copy .dev.vars.example, fill it in — leaves this suite
-// skipping forever, and a [manual] acceptance box that silently never runs is
-// worse than one that fails.
-loadDevVars()
-const hasLiveCreds = Boolean(process.env.HARVEST_PAT && process.env.HARVEST_ACCOUNT_ID)
+const SUITE = 'runAuth [manual/api] against the live CONFLICT account'
+const gate = liveHarvestGate()
+announceSkip(SUITE, gate)
+// The CLI loads .dev.vars itself; a test process does not. Only an opted-in run
+// needs the credentials, so only an opted-in run goes looking for them.
+if (gate.enabled) loadDevVars()
 
-describe.skipIf(!hasLiveCreds)('runAuth [manual/api] against the live CONFLICT account', () => {
+describe.skipIf(!gate.enabled)(SUITE, () => {
   let dir: string
 
   beforeEach(async () => {
@@ -23,17 +24,10 @@ describe.skipIf(!hasLiveCreds)('runAuth [manual/api] against the live CONFLICT a
   })
 
   it('resolves the configured account and confirms administrator access', async () => {
-    const result = await runAuth({
-      env: {
-        pat: process.env.HARVEST_PAT as string,
-        accountId: process.env.HARVEST_ACCOUNT_ID,
-        userAgentEmail: process.env.HARVEST_USER_AGENT_EMAIL || 'hello@ezacto.com',
-      },
-      toolVersion: '0.0.0',
-      snapshotDir: dir,
-    })
+    const env = readLiveHarvestEnv()
+    const result = await runAuth({ env, toolVersion: '0.0.0', snapshotDir: dir })
 
-    expect(result.account.id).toBe(process.env.HARVEST_ACCOUNT_ID)
+    expect(result.account.id).toBe(env.accountId)
     expect(result.isAdministrator).toBe(true)
   })
 })
