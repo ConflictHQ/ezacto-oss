@@ -417,6 +417,73 @@ describe('three-way reconciliation', () => {
     expect(await readFile(second.markdownPath, 'utf8')).toBe(firstMarkdown)
   })
 
+  it('[integration] accounts for a squashed duplicate instead of reporting it as loss', async () => {
+    const aliasedPath = join(dir, 'aliased.sqlite')
+    await runLoad({
+      snapshotDir,
+      databasePath: aliasedPath,
+      organizationCurrency: 'USD',
+      userIdentity: { aliases: [{ duplicate: 1782960, canonical: 1782959 }] },
+    })
+
+    const result = await runReconcile({ snapshotDir, databasePath: aliasedPath })
+
+    // Nothing was lost, so nothing may read as lost: the duplicate's month is
+    // grouped where its rows were loaded rather than against an id that no
+    // longer holds any of them.
+    expect(result.report.unexplained).toEqual([])
+    expect(result.report.summary.complete).toBe(true)
+    expect(reconciliationExitCode(result.report)).toBe(0)
+    expect(
+      result.report.matches.filter((row) => row.check === 'inv-14' && row.metric === 'seconds'),
+    ).toEqual([
+      expect.objectContaining({ key: '1782959|14308069|2026-08', expected: 9000, actual: 9000 }),
+    ])
+    expect(
+      result.report.matches.filter(
+        (row) => row.check === 'monthly_money' && row.metric === 'billable_cents',
+      ),
+    ).toEqual([expect.objectContaining({ key: '1782959|14308069|2026-08|USD', expected: 48_125 })])
+    // The rows the squash really did cost are cited one for one, so a
+    // sixty-first user going missing is still a delta nothing explains.
+    const citation = {
+      id: 'migration-spec-7-duplicate-harvest-accounts',
+      reference: 'docs/migration-spec.md §7: Two Harvest accounts for one person.',
+    }
+    expect(result.report.gaps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          check: 'resource_row_count',
+          key: 'users',
+          delta: -1,
+          gap_citation: citation,
+        }),
+        expect.objectContaining({
+          check: 'resource_row_count',
+          key: 'user_assignments',
+          delta: -1,
+          gap_citation: citation,
+        }),
+        expect.objectContaining({
+          check: 'resource_row_count',
+          key: 'teammates',
+          delta: -1,
+          gap_citation: citation,
+        }),
+        expect.objectContaining({
+          check: 'load_anomaly',
+          key: 'users:1782960:duplicate_user_squashed',
+          gap_citation: citation,
+        }),
+        expect.objectContaining({
+          check: 'load_anomaly',
+          key: 'user_assignments:54002:duplicate_row_merged',
+          gap_citation: citation,
+        }),
+      ]),
+    )
+  }, 60_000)
+
   it('[unit] turns an injected one-cent discrepancy into UNEXPLAINED and failure', async () => {
     await rewriteChecksums(snapshotDir, (report) => {
       const project = report.reports['time/projects/2026']?.[0]

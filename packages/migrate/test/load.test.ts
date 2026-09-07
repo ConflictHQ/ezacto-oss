@@ -1391,6 +1391,506 @@ describe('transform and load', () => {
     }
   }, 90_000)
 
+  const appendUser = async (user: Record<string, unknown>): Promise<void> => {
+    const path = join(snapshotDir, 'raw', 'users.jsonl')
+    await writeFile(path, `${await readFile(path, 'utf8')}${JSON.stringify(user)}\n`)
+    const manifest = await readManifest(snapshotDir)
+    const users = manifest.resources.users
+    if (!users) throw new Error('fixture has no users resource')
+    manifest.resources.users = { ...users, count: users.count + 1 }
+    await writeManifest(snapshotDir, manifest)
+  }
+
+  /** The same person's second Harvest account, and the one that survives. */
+  const survivingMemberAccount = {
+    id: 1782961,
+    first_name: 'Sanitized',
+    last_name: 'Member',
+    email: 'member.work@example.invalid',
+    telephone: null,
+    timezone: 'UTC',
+    is_contractor: false,
+    is_active: true,
+    has_access_to_all_future_projects: false,
+    weekly_capacity: 126000,
+    access_roles: ['member'],
+    avatar_url: null,
+    saml_exempt: false,
+    created_at: '2026-08-27T15:30:00Z',
+    updated_at: '2026-08-27T15:30:00Z',
+  }
+
+  it('[integration] squashes an aliased duplicate user and repoints every reference', async () => {
+    // The survivor is listed after the duplicate, so nothing here depends on
+    // the order Harvest happened to return the pair in.
+    await appendUser(survivingMemberAccount)
+    const invoicesPath = join(snapshotDir, 'raw', 'invoices.jsonl')
+    const invoices = await readFile(invoicesPath, 'utf8')
+    const withMemberCreator = invoices.replace(
+      '"creator":{"id":1782959,"name":"Sanitized Creator"},"number":"INV-EXPENSE"',
+      '"creator":{"id":1782960,"name":"Sanitized Member"},"number":"INV-EXPENSE"',
+    )
+    expect(withMemberCreator).not.toEqual(invoices)
+    await writeFile(invoicesPath, withMemberCreator)
+    await refreshChecksum(snapshotDir)
+
+    const result = await runLoad({
+      snapshotDir,
+      databasePath,
+      userIdentity: { aliases: [{ duplicate: 1782960, canonical: 1782961 }] },
+    })
+    expect(result.anomalies).toContainEqual({
+      resource: 'users',
+      source_id: '1782960',
+      kind: 'duplicate_user_squashed',
+      detail: 'squashed into harvest user 1782961',
+    })
+
+    const db = new BetterSqlite3(databasePath, { readonly: true })
+    try {
+      expect(db.prepare('SELECT harvest_id FROM users ORDER BY harvest_id').pluck().all()).toEqual([
+        1782959, 1782961,
+      ])
+      const survivor = db
+        .prepare('SELECT id FROM users WHERE harvest_id = 1782961')
+        .pluck()
+        .get() as number
+      // The squashed account's address is adopted, and the survivor's own
+      // Harvest address stays primary.
+      expect(
+        db
+          .prepare(
+            `SELECT address, is_primary, verified_at IS NOT NULL AS verified
+             FROM user_emails WHERE user_id = ? ORDER BY address`,
+          )
+          .all(survivor),
+      ).toEqual([
+        { address: 'member.work@example.invalid', is_primary: 1, verified: 1 },
+        { address: 'recorder@example.invalid', is_primary: 0, verified: 1 },
+      ])
+      expect(
+        db
+          .prepare(`SELECT user_id FROM time_entries WHERE harvest_id = '9007199254740994'`)
+          .pluck()
+          .get(),
+      ).toBe(survivor)
+      expect(
+        db.prepare('SELECT user_id FROM user_assignments WHERE harvest_id = 54002').pluck().get(),
+      ).toBe(survivor)
+      expect(
+        db.prepare('SELECT count(*) FROM user_roles WHERE user_id = ?').pluck().get(survivor),
+      ).toBe(1)
+      expect(
+        db
+          .prepare('SELECT count(*) FROM teammate_assignments WHERE user_id = ?')
+          .pluck()
+          .get(survivor),
+      ).toBe(1)
+      // Provenance keeps the source id it was raised under; only the foreign
+      // key moves.
+      expect(
+        db
+          .prepare(
+            'SELECT created_by_user_id, source_creator_id FROM invoices WHERE harvest_id = 12000001',
+          )
+          .get(),
+      ).toEqual({ created_by_user_id: survivor, source_creator_id: 1782960 })
+      // The payment recorder resolves by address, so it follows the merge only
+      // because the squashed address came with it.
+      expect(
+        db
+          .prepare('SELECT recorded_by_user_id FROM invoice_payments WHERE harvest_id = 50863457')
+          .pluck()
+          .get(),
+      ).toBe(survivor)
+      expect(db.pragma('foreign_key_check')).toEqual([])
+    } finally {
+      db.close()
+    }
+  }, 45_000)
+
+  it('[integration] seeds a work address beside the personal Harvest primary', async () => {
+    const result = await runLoad({
+      snapshotDir,
+      databasePath,
+      userIdentity: {
+        workEmails: [{ user: 1782960, address: 'member.work@example.invalid' }],
+      },
+    })
+    expect(result.anomalies).not.toContainEqual(
+      expect.objectContaining({ kind: 'duplicate_user_squashed' }),
+    )
+    const db = new BetterSqlite3(databasePath, { readonly: true })
+    try {
+      expect(
+        db
+          .prepare(
+            `SELECT address, is_primary, verified_at IS NOT NULL AS verified
+             FROM user_emails email JOIN users user ON user.id = email.user_id
+             WHERE user.harvest_id = 1782960 ORDER BY address`,
+          )
+          .all(),
+      ).toEqual([
+        { address: 'member.work@example.invalid', is_primary: 0, verified: 1 },
+        { address: 'recorder@example.invalid', is_primary: 1, verified: 1 },
+      ])
+    } finally {
+      db.close()
+    }
+  }, 45_000)
+
+  it('[integration] refuses an incoherent identity map and a resume that changes it', async () => {
+    await expect(
+      runLoad({
+        snapshotDir,
+        databasePath,
+        userIdentity: { aliases: [{ duplicate: 1782960, canonical: 1782960 }] },
+      }),
+    ).rejects.toThrow('cannot alias itself')
+    await expect(
+      runLoad({
+        snapshotDir,
+        databasePath,
+        userIdentity: {
+          aliases: [
+            { duplicate: 1782960, canonical: 1782961 },
+            { duplicate: 1782961, canonical: 1782959 },
+          ],
+        },
+      }),
+    ).rejects.toThrow('both a squashed duplicate and a survivor')
+    await expect(
+      runLoad({
+        snapshotDir,
+        databasePath,
+        userIdentity: {
+          workEmails: [
+            { user: 1782959, address: 'shared@example.invalid' },
+            { user: 1782960, address: 'shared@example.invalid' },
+          ],
+        },
+      }),
+    ).rejects.toThrow('is claimed by harvest users')
+    // This one gets as far as admitting the snapshot, so it needs a database of
+    // its own; the resume assertions below want a clean one.
+    await expect(
+      runLoad({
+        snapshotDir,
+        databasePath: join(dir, 'owner-squash.sqlite'),
+        userIdentity: { aliases: [{ duplicate: 1782959, canonical: 1782960 }] },
+      }),
+    ).rejects.toThrow('cannot be squashed into another account')
+
+    await runLoad({
+      snapshotDir,
+      databasePath,
+      userIdentity: { workEmails: [{ user: 1782960, address: 'member.work@example.invalid' }] },
+    })
+    await expect(
+      runLoad({
+        snapshotDir,
+        databasePath,
+        userIdentity: { workEmails: [{ user: 1782960, address: 'other.work@example.invalid' }] },
+      }),
+    ).rejects.toThrow('different snapshot load options')
+    await expect(runLoad({ snapshotDir, databasePath })).rejects.toThrow(
+      'different snapshot load options',
+    )
+  }, 60_000)
+
+  it('[integration] refuses an identity map naming a Harvest user the snapshot lacks', async () => {
+    // The alias side said so already; the seeded address side inserted zero
+    // rows and said nothing, which is the one failure #273 cannot survive.
+    await expect(
+      runLoad({
+        snapshotDir,
+        databasePath,
+        userIdentity: { workEmails: [{ user: 999999, address: 'ghost@example.invalid' }] },
+      }),
+    ).rejects.toThrow('harvest user 999999 is absent from users')
+    const db = new BetterSqlite3(databasePath, { readonly: true })
+    try {
+      // Asked before the snapshot is admitted, so a wrong list costs no rows.
+      expect(db.prepare('SELECT count(*) FROM users').pluck().get()).toBe(0)
+      expect(db.prepare('SELECT count(*) FROM user_emails').pluck().get()).toBe(0)
+    } finally {
+      db.close()
+    }
+    await expect(
+      runLoad({
+        snapshotDir,
+        databasePath: join(dir, 'ghost-canonical.sqlite'),
+        userIdentity: { aliases: [{ duplicate: 1782960, canonical: 999999 }] },
+      }),
+    ).rejects.toThrow('harvest user 999999 is absent from users')
+    await expect(
+      runLoad({
+        snapshotDir,
+        databasePath: join(dir, 'ghost-duplicate.sqlite'),
+        userIdentity: { aliases: [{ duplicate: 999999, canonical: 1782959 }] },
+      }),
+    ).rejects.toThrow('harvest user 999999 is absent from users')
+    // A verified address is unique across the instance, so seeding one Harvest
+    // already holds for someone else would abort the load on the index.
+    await expect(
+      runLoad({
+        snapshotDir,
+        databasePath: join(dir, 'taken-address.sqlite'),
+        userIdentity: { workEmails: [{ user: 1782960, address: 'Creator@example.invalid' }] },
+      }),
+    ).rejects.toThrow(
+      'work email Creator@example.invalid is the Harvest address of harvest user 1782959',
+    )
+  }, 60_000)
+
+  it('[integration] squashes a pair that shares a project and its assignment', async () => {
+    const result = await runLoad({
+      snapshotDir,
+      databasePath,
+      userIdentity: { aliases: [{ duplicate: 1782960, canonical: 1782959 }] },
+    })
+    expect(result.anomalies).toContainEqual({
+      resource: 'user_assignments',
+      source_id: '54002',
+      kind: 'duplicate_row_merged',
+      detail: 'merged into the assignment harvest user 1782959 holds on project 14308069',
+    })
+    expect(result.anomalies).toContainEqual({
+      resource: 'teammates',
+      source_id: '1782960',
+      kind: 'duplicate_row_merged',
+      detail:
+        "teammate of harvest user 1782959 merged into harvest user 1782959's teammate 1782959",
+    })
+
+    const db = new BetterSqlite3(databasePath, { readonly: true })
+    try {
+      const survivor = db
+        .prepare('SELECT id FROM users WHERE harvest_id = 1782959')
+        .pluck()
+        .get() as number
+      // One person, one assignment on the project they shared.
+      expect(
+        db.prepare('SELECT harvest_id, user_id FROM user_assignments ORDER BY harvest_id').all(),
+      ).toEqual([{ harvest_id: 54001, user_id: survivor }])
+      const assignment = db
+        .prepare('SELECT id FROM user_assignments WHERE harvest_id = 54001')
+        .pluck()
+        .get() as number
+      // Including the squashed account's entry, whose own assignment yielded.
+      expect(
+        db
+          .prepare(
+            `SELECT harvest_id, user_id, user_assignment_id FROM time_entries
+             ORDER BY harvest_id`,
+          )
+          .all(),
+      ).toEqual([
+        {
+          harvest_id: '9007199254740993',
+          user_id: survivor,
+          user_assignment_id: assignment,
+        },
+        {
+          harvest_id: '9007199254740994',
+          user_id: survivor,
+          user_assignment_id: assignment,
+        },
+      ])
+      expect(db.pragma('foreign_key_check')).toEqual([])
+    } finally {
+      db.close()
+    }
+
+    // The load that aborted here left a database no resume could get past.
+    const resumed = await runLoad({
+      snapshotDir,
+      databasePath,
+      userIdentity: { aliases: [{ duplicate: 1782960, canonical: 1782959 }] },
+    })
+    expect(resumed.snapshotSha256).toBe(result.snapshotSha256)
+  }, 60_000)
+
+  /**
+   * A second running timer, on the account the squash keeps. Harvest holds at
+   * most one per account, so one person's two accounts hold two of them.
+   */
+  const appendRunningEntry = async (startedTime: string): Promise<void> => {
+    const path = join(snapshotDir, 'raw', 'time_entries.jsonl')
+    await writeFile(
+      path,
+      `${await readFile(path, 'utf8')}` +
+        `{"id":9007199254740995,"user":{"id":1782959},"project":{"id":14308069},` +
+        `"task":{"id":51001},"user_assignment":{"id":54001},"task_assignment":{"id":53001},` +
+        `"spent_date":"2026-08-27","hours":1.25,"hours_without_timer":1.00,"rounded_hours":1.25,` +
+        `"timer_started_at":null,"started_time":"${startedTime}","ended_time":null,` +
+        `"notes":"Sanitized second running time","billable":true,"budgeted":true,` +
+        `"billable_rate":175.00,"cost_rate":80.50,"external_reference":null,` +
+        `"calendar_event":null,"invoice":null,"approval_status":"unsubmitted",` +
+        `"created_at":"2026-08-27T15:30:00Z","updated_at":"2026-08-27T15:30:00Z"}\n`,
+    )
+    const manifest = await readManifest(snapshotDir)
+    const entries = manifest.resources.time_entries
+    if (!entries) throw new Error('fixture has no time_entries resource')
+    manifest.resources.time_entries = { ...entries, count: entries.count + 1 }
+    await writeManifest(snapshotDir, manifest)
+    await refreshChecksum(snapshotDir)
+  }
+
+  it('[integration] refuses a squash that would run two timers for one person', async () => {
+    // A timer left running on the account being retired is an ordinary thing
+    // to find in an account being decommissioned, and the survivor may be
+    // running one of its own: `time_entries_one_running_per_user` gives the
+    // merged person exactly one. The incoming timer starts before the one
+    // already loaded, so the stop-previous trigger aborts the insert — mid
+    // load, with no identity map that gets a resume past it.
+    await appendRunningEntry('1:00pm')
+    await expect(
+      runLoad({
+        snapshotDir,
+        databasePath,
+        userIdentity: { aliases: [{ duplicate: 1782960, canonical: 1782959 }] },
+      }),
+    ).rejects.toThrow(
+      'harvest users 1782960 and 1782959 hold running time entries 9007199254740994 and ' +
+        '9007199254740995; harvest user 1782959 can keep only one running',
+    )
+    const db = new BetterSqlite3(databasePath, { readonly: true })
+    try {
+      // Asked before the snapshot is admitted, so the collision costs no rows
+      // and leaves no half-loaded database to resume into.
+      expect(db.prepare('SELECT count(*) FROM users').pluck().get()).toBe(0)
+      expect(db.prepare('SELECT count(*) FROM time_entries').pluck().get()).toBe(0)
+      expect(db.prepare('SELECT count(*) FROM _ezacto_load_progress').pluck().get()).toBe(0)
+    } finally {
+      db.close()
+    }
+  }, 60_000)
+
+  it('[integration] refuses the pair whose later timer would rewrite the earlier one', async () => {
+    // The same collision from the other side, and the worse of the two: this
+    // one does not abort. The stop-previous trigger closes the entry already
+    // loaded at the incoming timer's start, inventing hours for the merged
+    // person on the payroll grain, and no anomaly cites it — reconciliation
+    // would report it as a delta nothing explains.
+    await appendRunningEntry('11:00pm')
+    await expect(
+      runLoad({
+        snapshotDir,
+        databasePath,
+        userIdentity: { aliases: [{ duplicate: 1782960, canonical: 1782959 }] },
+      }),
+    ).rejects.toThrow('can keep only one running')
+    const db = new BetterSqlite3(databasePath, { readonly: true })
+    try {
+      expect(db.prepare('SELECT count(*) FROM time_entries').pluck().get()).toBe(0)
+    } finally {
+      db.close()
+    }
+  }, 60_000)
+
+  it('[integration] squashes a pair when only one of them holds a running timer', async () => {
+    // The fixture's running entry belongs to the squashed account alone, so
+    // the ordinary case goes through, and it goes through with the hours the
+    // source recorded rather than any the trigger would compute.
+    const result = await runLoad({
+      snapshotDir,
+      databasePath,
+      userIdentity: { aliases: [{ duplicate: 1782960, canonical: 1782959 }] },
+    })
+    expect(result.anomalies).not.toContainEqual(
+      expect.objectContaining({ resource: 'time_entries', kind: 'duplicate_row_merged' }),
+    )
+    const db = new BetterSqlite3(databasePath, { readonly: true })
+    try {
+      expect(
+        db
+          .prepare(
+            `SELECT harvest_id, seconds, seconds_without_timer, rounded_seconds, started_time,
+               ended_time FROM time_entries WHERE ended_time IS NULL`,
+          )
+          .all(),
+      ).toEqual([
+        {
+          harvest_id: '9007199254740994',
+          seconds: 4500,
+          seconds_without_timer: 3600,
+          rounded_seconds: 4500,
+          started_time: '15:30',
+          ended_time: null,
+        },
+      ])
+    } finally {
+      db.close()
+    }
+  }, 60_000)
+
+  it('[integration] keeps one rate chain when a squashed pair shares a start date', async () => {
+    // Children are indexed in their parents' source order, and the fixture
+    // lists the squashed account first.
+    const path = join(snapshotDir, 'raw', 'billable_rates.jsonl')
+    await writeFile(
+      path,
+      `${JSON.stringify({
+        id: 81004,
+        amount: 200.0,
+        start_date: '2026-01-01',
+        end_date: null,
+        created_at: '2026-08-27T15:30:00Z',
+        updated_at: '2026-08-27T15:30:00Z',
+      })}\n${await readFile(path, 'utf8')}`,
+    )
+    const lineagePath = join(snapshotDir, 'raw', 'billable_rates.lineage.jsonl')
+    await writeFile(
+      lineagePath,
+      `${JSON.stringify({ source_id: 81004, parent_id: 1782960 })}\n${await readFile(lineagePath, 'utf8')}`,
+    )
+    const manifest = await readManifest(snapshotDir)
+    const rates = manifest.resources.billable_rates
+    if (!rates) throw new Error('fixture has no billable_rates resource')
+    manifest.resources.billable_rates = { ...rates, count: rates.count + 1 }
+    await writeManifest(snapshotDir, manifest)
+    await refreshChecksum(snapshotDir)
+
+    const result = await runLoad({
+      snapshotDir,
+      databasePath,
+      userIdentity: { aliases: [{ duplicate: 1782960, canonical: 1782959 }] },
+    })
+    expect(result.anomalies).toContainEqual({
+      resource: 'billable_rates',
+      source_id: '81004',
+      kind: 'duplicate_row_merged',
+      detail: 'harvest user 1782959 already starts a rate on 2026-01-01; 20000 cents dropped',
+    })
+    // The rate that keeps the date still ends where the next one begins, not
+    // where the dropped one would have put it.
+    expect(result.anomalies).not.toContainEqual(
+      expect.objectContaining({ kind: 'rate_chain_mismatch' }),
+    )
+    const db = new BetterSqlite3(databasePath, { readonly: true })
+    try {
+      expect(
+        db
+          .prepare(
+            `SELECT harvest_id, amount_cents, start_date, end_date
+             FROM user_billable_rates ORDER BY harvest_id`,
+          )
+          .all(),
+      ).toEqual([
+        {
+          harvest_id: 81001,
+          amount_cents: 17_500,
+          start_date: '2026-01-01',
+          end_date: '2026-06-30',
+        },
+        { harvest_id: 81003, amount_cents: 18_000, start_date: '2026-07-01', end_date: null },
+      ])
+    } finally {
+      db.close()
+    }
+  }, 60_000)
+
   it('[property] never plans more than 100 bindings per statement', () => {
     for (let columns = 1; columns <= D1_MAX_BOUND_PARAMETERS; columns += 1) {
       const rows = Array.from({ length: 233 }, (_, index) => index)

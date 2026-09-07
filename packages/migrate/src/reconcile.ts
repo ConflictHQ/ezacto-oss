@@ -27,6 +27,7 @@ export type ReconciliationGapId =
   | 'migration-spec-7-recurring-invoices-no-api'
   | 'migration-spec-7-sub-cent-unit-prices'
   | 'migration-spec-7-estimates-module-disabled'
+  | 'migration-spec-7-duplicate-harvest-accounts'
 
 export interface ReconciliationGapCitation {
   id: ReconciliationGapId
@@ -63,17 +64,25 @@ const MIGRATION_SPEC_GAP_CITATIONS = {
     id: 'migration-spec-7-estimates-module-disabled',
     reference: 'docs/migration-spec.md §7: Estimates/approval/activity-log modules disabled.',
   },
+  duplicateHarvestAccounts: {
+    id: 'migration-spec-7-duplicate-harvest-accounts',
+    reference: 'docs/migration-spec.md §7: Two Harvest accounts for one person.',
+  },
 } as const satisfies Record<string, ReconciliationGapCitation>
 
 /**
  * Which load anomaly kinds §7 accepts as the cost of the migration. A skip that
  * is not on this list has no citation, so it stays unexplained — which is the
  * point: `non_positive_payment` is deliberately absent, because §7 says
- * skipping is not a safe handling for that class.
+ * skipping is not a safe handling for that class. The two squash kinds are the
+ * operator's own decision rather than an API limit, and they are cited for the
+ * same reason the others are: an accounted-for row must not read as a lost one.
  */
 const ACCEPTED_ANOMALY_CITATIONS: Readonly<Record<string, ReconciliationGapCitation>> = {
   rate_residue: MIGRATION_SPEC_GAP_CITATIONS.subCentUnitPrices,
   unresolved_estimate_reference: MIGRATION_SPEC_GAP_CITATIONS.estimatesModuleDisabled,
+  duplicate_user_squashed: MIGRATION_SPEC_GAP_CITATIONS.duplicateHarvestAccounts,
+  duplicate_row_merged: MIGRATION_SPEC_GAP_CITATIONS.duplicateHarvestAccounts,
 }
 
 export interface ReconciliationReport {
@@ -1413,6 +1422,50 @@ const scalar = <T>(database: BetterSqlite3.Database, sql: string, bindings: unkn
     throw new Error('query returned no row')
   })()
 
+/**
+ * The alias map the load was admitted with, read back from the durable load
+ * options rather than passed in: the report describes the database in front of
+ * it, and that database says which duplicate went into which survivor.
+ */
+const loadedUserAliases = (database: BetterSqlite3.Database): Map<number, number> => {
+  const admission = database
+    .prepare(
+      `SELECT load_options_json AS loadOptionsJson
+       FROM _ezacto_load_admission WHERE singleton = 1`,
+    )
+    .get() as { loadOptionsJson: string } | undefined
+  if (admission === undefined) return new Map()
+  const options = JSON.parse(admission.loadOptionsJson) as {
+    user_identity?: { aliases?: Array<{ duplicate: number; canonical: number }> }
+  }
+  return new Map(
+    (options.user_identity?.aliases ?? []).map((alias) => [alias.duplicate, alias.canonical]),
+  )
+}
+
+/**
+ * How many source rows each resource lost to a squash, counted from the
+ * evidence the loader wrote at the moment it dropped one. The row-count check
+ * cites that number rather than netting it out silently: a real loss of one row
+ * more is then still a delta that nothing explains.
+ */
+const squashedRowCounts = (
+  database: BetterSqlite3.Database,
+  snapshotSha256: string,
+): Map<string, number> =>
+  new Map(
+    (
+      database
+        .prepare(
+          `SELECT resource, count(*) AS rows FROM _ezacto_load_anomalies
+           WHERE snapshot_sha256 = ?
+             AND kind IN ('duplicate_user_squashed', 'duplicate_row_merged')
+           GROUP BY resource`,
+        )
+        .all(snapshotSha256) as Array<{ resource: string; rows: number }>
+    ).map((row) => [row.resource, row.rows]),
+  )
+
 const databasePreflight = (
   checks: Checks,
   database: BetterSqlite3.Database,
@@ -1488,6 +1541,7 @@ const databasePreflight = (
       row?.completed === 1 && row.rows_loaded === row.total_rows ? 1 : 0,
     )
   }
+  const squashed = squashedRowCounts(database, checksum.snapshot_sha256)
   for (const [resource, progress] of Object.entries(manifest.resources)) {
     const mapping = RESOURCE_TABLES[resource]
     if (mapping === undefined) continue
@@ -1495,7 +1549,20 @@ const databasePreflight = (
       database,
       `SELECT count(*) FROM ${mapping.table}${mapping.importedOnly ? ' WHERE harvest_id IS NOT NULL' : ''}`,
     )
-    checks.compare('B', 'resource_row_count', resource, 'rows', progress.count, actual)
+    const merged = squashed.get(resource)
+    checks.compare(
+      'B',
+      'resource_row_count',
+      resource,
+      'rows',
+      progress.count,
+      actual,
+      'UNEXPLAINED',
+      null,
+      merged === undefined
+        ? undefined
+        : { delta: -merged, citation: MIGRATION_SPEC_GAP_CITATIONS.duplicateHarvestAccounts },
+    )
   }
   const expectedReceipts = Object.keys(manifest.binaries?.receipts ?? {}).length
   const actualReceipts = scalar<number>(database, 'SELECT count(*) FROM harvest_expense_receipts')
@@ -1583,15 +1650,56 @@ const databaseMonthly = (database: BetterSqlite3.Database): Map<string, MonthlyA
   return result
 }
 
+/**
+ * A squashed account's rows are loaded under the survivor's Harvest id, so the
+ * source has to be grouped the same way. Left ungrouped, every (user, project,
+ * month) the duplicate touched reads as lost under one id and invented under
+ * the other — a pair of unexplained deltas per metric for data that never
+ * moved, and the operator loses the ability to tell a real loss from the
+ * merge's own shadow.
+ */
+const foldSquashedUsers = (
+  monthly: ReadonlyMap<string, MonthlyAggregate>,
+  aliases: ReadonlyMap<number, number>,
+): Map<string, MonthlyAggregate> => {
+  if (aliases.size === 0) return new Map(monthly)
+  const folded = new Map<string, MonthlyAggregate>()
+  for (const [key, value] of monthly) {
+    const [user, ...rest] = key.split('|')
+    const canonical = aliases.get(Number(user))
+    const target = getOrCreate(
+      folded,
+      canonical === undefined ? key : [canonical, ...rest].join('|'),
+      monthlyAggregate,
+    )
+    target.seconds = add(target.seconds, value.seconds, 'squashed monthly seconds')
+    target.billableCents = add(
+      target.billableCents,
+      value.billableCents,
+      'squashed monthly billable cents',
+    )
+    target.costCents = add(target.costCents, value.costCents, 'squashed monthly cost cents')
+    target.expenseCents = add(
+      target.expenseCents,
+      value.expenseCents,
+      'squashed monthly expense cents',
+    )
+    target.unpricedBillable += value.unpricedBillable
+    target.unpricedCost += value.unpricedCost
+  }
+  return folded
+}
+
 const monthlyChecks = (
   checks: Checks,
   source: SourceState,
   database: BetterSqlite3.Database,
 ): void => {
   const loaded = databaseMonthly(database)
+  const expected = foldSquashedUsers(source.monthly, loadedUserAliases(database))
   const sourceSeconds = new Map<string, number>()
   const loadedSeconds = new Map<string, number>()
-  for (const [key, value] of source.monthly) {
+  for (const [key, value] of expected) {
     const base = monthlySecondsKey(key)
     sourceSeconds.set(
       base,
@@ -1615,24 +1723,24 @@ const monthlyChecks = (
       loadedSeconds.get(key) ?? 0,
     )
   }
-  for (const key of new Set([...source.monthly.keys(), ...loaded.keys()])) {
-    const expected = source.monthly.get(key) ?? monthlyAggregate()
+  for (const key of new Set([...expected.keys(), ...loaded.keys()])) {
+    const month = expected.get(key) ?? monthlyAggregate()
     const actual = loaded.get(key) ?? monthlyAggregate()
     checks.compare(
       'B',
       'monthly_money',
       key,
       'billable_cents',
-      expected.billableCents,
+      month.billableCents,
       actual.billableCents,
     )
-    checks.compare('B', 'monthly_money', key, 'cost_cents', expected.costCents, actual.costCents)
+    checks.compare('B', 'monthly_money', key, 'cost_cents', month.costCents, actual.costCents)
     checks.compare(
       'B',
       'monthly_money',
       key,
       'expense_cents',
-      expected.expenseCents,
+      month.expenseCents,
       actual.expenseCents,
     )
     checks.compare(
@@ -1640,7 +1748,7 @@ const monthlyChecks = (
       'monthly_money',
       key,
       'unpriced_billable_rows',
-      expected.unpricedBillable,
+      month.unpricedBillable,
       actual.unpricedBillable,
     )
     checks.compare(
@@ -1648,7 +1756,7 @@ const monthlyChecks = (
       'monthly_money',
       key,
       'unpriced_cost_rows',
-      expected.unpricedCost,
+      month.unpricedCost,
       actual.unpricedCost,
     )
   }

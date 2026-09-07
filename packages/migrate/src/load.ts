@@ -274,6 +274,19 @@ const stringValue = (
   return value
 }
 
+/**
+ * The source shape of a timer still going: either Harvest is holding the start
+ * instant, or the entry opened at a wall-clock time and never closed. It is the
+ * `time_entries_one_running_per_user` predicate read off the source row, and
+ * one definition serves both the pre-flight and the insert so the two cannot
+ * come to disagree about which rows the index counts. Canonicalizing a Harvest
+ * time never turns a value into null or back, so asking the raw strings is the
+ * same question the loaded columns answer.
+ */
+const isRunningEntry = (row: Record<string, unknown>): boolean =>
+  stringValue(row, 'timer_started_at') !== null ||
+  (stringValue(row, 'started_time') !== null && stringValue(row, 'ended_time') === null)
+
 const bool = (row: Record<string, unknown>, key: string, fallback = false): boolean => {
   const value = row[key]
   if (value === undefined) return fallback
@@ -348,6 +361,18 @@ const insertByHarvestId = (
   }
 }
 
+/**
+ * A row that cannot ride in a batched insert with its neighbours: either it
+ * carries a guard of its own, or it binds one parameter more than it has
+ * columns and the batcher sizes a batch by column count alone — four
+ * twenty-six-binding time entries would ask D1 for a hundred and four. Dropping
+ * the batch metadata leaves the statement standing on its own.
+ */
+const standalone = (statement: PlannedStatement, guard?: string): PlannedStatement => ({
+  sql: guard === undefined ? statement.sql : `${statement.sql}\n      AND ${guard}`,
+  bindings: statement.bindings,
+})
+
 const idFrom = (table: string, harvestId: number | string): SqlExpression =>
   expression(`(SELECT id FROM ${table} WHERE harvest_id = ?)`, harvestId)
 
@@ -366,7 +391,46 @@ export interface LoadAnomaly {
     | 'invoice_state_disagreement'
     | 'rate_chain_mismatch'
     | 'receipt_download_missing'
+    | 'duplicate_user_squashed'
+    | 'duplicate_row_merged'
   detail: string
+}
+
+/**
+ * One person, two Harvest accounts. Harvest happily creates a second user for
+ * someone who already exists — CONFLICT's account holds sixty users for
+ * fifty-eight people — and nothing in the source marks the pair. So the pairs
+ * are handed to the loader rather than inferred by it: a name-and-time
+ * heuristic over the same account produced ninety-eight candidates of pure
+ * noise, which is precisely why guessing has no place at load time.
+ */
+export interface UserAlias {
+  /** The Harvest user squashed away; no record of it survives the load. */
+  duplicate: number
+  /** The Harvest user that survives and adopts every reference to the duplicate. */
+  canonical: number
+}
+
+/**
+ * A second address for someone who already exists. Harvest holds exactly one
+ * address per person and for nearly every active person here it is a personal
+ * one, so SSO — which binds by verified address alone — would mint a new empty
+ * account the first time they signed in with work credentials. The Harvest
+ * address stays primary because it is what reconciles against the payroll and
+ * payment accounts; this one rides beside it, verified. The addresses are
+ * input for the same reason the pairs are: the first-initial-plus-surname
+ * convention that generates the list has real exceptions, and a convention
+ * with exceptions is a list, not a rule.
+ */
+export interface UserWorkEmail {
+  /** The surviving Harvest user, never a squashed duplicate. */
+  user: number
+  address: string
+}
+
+export interface UserIdentityInput {
+  aliases?: readonly UserAlias[]
+  workEmails?: readonly UserWorkEmail[]
 }
 
 export interface LoadNextChunkOptions {
@@ -376,8 +440,271 @@ export interface LoadNextChunkOptions {
   organizationAddress?: string | null
   maxStatements?: number
   maxRows?: number
+  /** Duplicate accounts to squash and work addresses to seed; see {@link UserIdentityInput}. */
+  userIdentity?: UserIdentityInput
   /** Required for D1: the executor promises these artifacts are immutable and pinned to this digest. */
   immutableSnapshotSha256?: string
+}
+
+interface ResolvedUserIdentity {
+  /** Duplicate Harvest id to the Harvest id that survives in its place. */
+  canonicalOf: ReadonlyMap<number, number>
+  /** Surviving Harvest id to every duplicate whose address it adopts. */
+  duplicatesOf: ReadonlyMap<number, readonly number[]>
+  workEmails: ReadonlyMap<number, readonly string[]>
+  /** Canonical serialization, folded into the durable load options; null when empty. */
+  json: string | null
+}
+
+const EMPTY_USER_IDENTITY: ResolvedUserIdentity = {
+  canonicalOf: new Map(),
+  duplicatesOf: new Map(),
+  workEmails: new Map(),
+  json: null,
+}
+
+const resolvedIdentities = new WeakMap<UserIdentityInput, ResolvedUserIdentity>()
+
+const identityHarvestId = (value: unknown, field: string): number => {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1)
+    throw new Error(`user identity ${field} must be a positive Harvest user id`)
+  return value
+}
+
+const resolveUserIdentity = (input?: UserIdentityInput): ResolvedUserIdentity => {
+  if (input === undefined) return EMPTY_USER_IDENTITY
+  const cached = resolvedIdentities.get(input)
+  if (cached !== undefined) return cached
+  const canonicalOf = new Map<number, number>()
+  const duplicatesOf = new Map<number, number[]>()
+  for (const alias of input.aliases ?? []) {
+    const duplicate = identityHarvestId(alias.duplicate, 'duplicate')
+    const canonical = identityHarvestId(alias.canonical, 'canonical')
+    if (duplicate === canonical) throw new Error(`harvest user ${duplicate} cannot alias itself`)
+    if (canonicalOf.has(duplicate)) throw new Error(`harvest user ${duplicate} is aliased twice`)
+    canonicalOf.set(duplicate, canonical)
+    duplicatesOf.set(canonical, [...(duplicatesOf.get(canonical) ?? []), duplicate])
+  }
+  // A chain would make the survivor depend on the order the pairs happen to be
+  // applied in, which is not something an input list promises. Every canonical
+  // must be a record that survives the load in its own right.
+  for (const canonical of duplicatesOf.keys()) {
+    if (canonicalOf.has(canonical))
+      throw new Error(`harvest user ${canonical} is both a squashed duplicate and a survivor`)
+  }
+  const workEmails = new Map<number, string[]>()
+  const claimants = new Map<string, number>()
+  for (const entry of input.workEmails ?? []) {
+    const user = identityHarvestId(entry.user, 'user')
+    const address = typeof entry.address === 'string' ? entry.address.trim() : ''
+    if (address === '') throw new Error(`harvest user ${user} work email must be an address`)
+    if (canonicalOf.has(user))
+      throw new Error(`harvest user ${user} is squashed away; seed its work email on the survivor`)
+    const key = address.toLowerCase()
+    const claimant = claimants.get(key)
+    // Two people cannot hold one verified address, and asserting it here would
+    // surface as an opaque unique-index failure a thousand rows into the load.
+    if (claimant !== undefined && claimant !== user)
+      throw new Error(`work email ${address} is claimed by harvest users ${claimant} and ${user}`)
+    claimants.set(key, user)
+    const addresses = workEmails.get(user) ?? []
+    if (!addresses.some((existing) => existing.toLowerCase() === key)) addresses.push(address)
+    workEmails.set(user, addresses)
+  }
+  const aliases = [...canonicalOf]
+    .sort(([left], [right]) => left - right)
+    .map(([duplicate, canonical]) => ({ duplicate, canonical }))
+  const seeds = [...workEmails]
+    .sort(([left], [right]) => left - right)
+    .flatMap(([user, addresses]) =>
+      [...addresses]
+        .sort((left, right) => (left.toLowerCase() < right.toLowerCase() ? -1 : 1))
+        .map((address) => ({ user, address })),
+    )
+  const resolved: ResolvedUserIdentity = {
+    canonicalOf,
+    duplicatesOf,
+    workEmails,
+    json:
+      aliases.length === 0 && seeds.length === 0
+        ? null
+        : JSON.stringify({ aliases, work_emails: seeds }),
+  }
+  resolvedIdentities.set(input, resolved)
+  return resolved
+}
+
+/** Every foreign key to a user resolves through here, so a squash moves all of them. */
+const canonicalUser = (identity: ResolvedUserIdentity, harvestId: number): number =>
+  identity.canonicalOf.get(harvestId) ?? harvestId
+
+/**
+ * True when this reference lands on an account that absorbed another. Two
+ * accounts for one person are ordinarily assigned to the same project and paid
+ * at the same rate from the same date, so anything the schema allows a user
+ * only one of has to be planned differently for these — and only for these,
+ * because every other row must keep the statement it has always been loaded by.
+ */
+const mergedUser = (identity: ResolvedUserIdentity, harvestId: number): boolean =>
+  identity.duplicatesOf.has(canonicalUser(identity, harvestId))
+
+const userEmailStatement = (
+  userHarvestId: number,
+  address: string,
+  isPrimary: boolean,
+  createdAt: string,
+  updatedAt: string,
+): PlannedStatement => ({
+  sql: `INSERT INTO user_emails
+    (user_id, address, verified_at, is_primary, created_at, updated_at)
+    SELECT user.id, ?, ?, ?, ?, ? FROM users user WHERE user.harvest_id = ?
+      AND NOT EXISTS (SELECT 1 FROM user_emails existing
+        WHERE existing.user_id = user.id AND lower(existing.address) = lower(?))`,
+  bindings: [address, createdAt, isPrimary ? 1 : 0, createdAt, updatedAt, userHarvestId, address],
+})
+
+/**
+ * The squashed account's address is the point of the merge, not a casualty of
+ * it: whoever signs in or is invoiced under it must land on the survivor. It is
+ * emitted while planning the *survivor's* row, so it never depends on which of
+ * the pair the source file happens to list first.
+ */
+const squashedEmailStatements = async (
+  snapshotDir: string,
+  manifest: Manifest,
+  identity: ResolvedUserIdentity,
+  canonicalHarvestId: number,
+): Promise<PlannedStatement[]> => {
+  const duplicates = identity.duplicatesOf.get(canonicalHarvestId)
+  if (duplicates === undefined) return []
+  const statements: PlannedStatement[] = []
+  for (const duplicate of duplicates) {
+    const source = await findRawRowById(
+      snapshotDir,
+      'users',
+      manifest.resources.users?.count ?? 0,
+      duplicate,
+    )
+    if (source === null) throw new Error(`squashed harvest user ${duplicate} is absent from users`)
+    statements.push(
+      userEmailStatement(
+        canonicalHarvestId,
+        requiredText(source.row, 'email'),
+        false,
+        requiredText(source.row, 'created_at'),
+        requiredText(source.row, 'updated_at'),
+      ),
+    )
+  }
+  return statements
+}
+
+/**
+ * Every account the map names must be one the snapshot holds. The alias side
+ * said so already, but a seeded address did not: its insert selects from
+ * `users WHERE harvest_id = ?`, and a Harvest id the snapshot has never heard
+ * of simply matches nothing — no error, no anomaly, no count. #273's list is
+ * thirteen hand-built pairs, so one stale id would leave that person unseeded
+ * under a green load, and SSO would mint them the empty account the seeding
+ * exists to prevent. A seeded address that already belongs to somebody else is
+ * checked in the same pass, because the unique index on a verified address
+ * would otherwise abort the load a thousand rows in. Both are asked before the
+ * snapshot is admitted: an identity map is wrong from the first row or not at
+ * all, and the only failure this load cannot recover from is the one that
+ * stops halfway.
+ */
+const assertIdentityInSnapshot = async (
+  snapshotDir: string,
+  manifest: Manifest,
+  identity: ResolvedUserIdentity,
+): Promise<void> => {
+  if (identity.json === null) return
+  const named = new Set<number>([
+    ...identity.canonicalOf.keys(),
+    ...identity.duplicatesOf.keys(),
+    ...identity.workEmails.keys(),
+  ])
+  const present = new Set<number>()
+  const holders = new Map<string, number>()
+  const total = manifest.resources.users?.count ?? 0
+  let rowOffset = 0
+  let byteOffset = 0
+  while (rowOffset < total) {
+    const chunk = await rawChunkFrom(snapshotDir, 'users', byteOffset, rowOffset, 100)
+    if (chunk.rows.length === 0) break
+    for (const source of chunk.rows) {
+      const harvestId = safeIntegerAt(source, '/id', 'users.id')
+      if (named.has(harvestId)) present.add(harvestId)
+      holders.set(requiredText(source.row, 'email').toLowerCase(), harvestId)
+    }
+    rowOffset += chunk.rows.length
+    byteOffset = chunk.nextByteOffset
+  }
+  for (const harvestId of named) {
+    if (!present.has(harvestId)) throw new Error(`harvest user ${harvestId} is absent from users`)
+  }
+  for (const [user, addresses] of identity.workEmails) {
+    for (const address of addresses) {
+      const holder = holders.get(address.toLowerCase())
+      if (holder !== undefined && canonicalUser(identity, holder) !== user) {
+        throw new Error(`work email ${address} is the Harvest address of harvest user ${holder}`)
+      }
+    }
+  }
+  await assertOneRunningTimer(snapshotDir, manifest, identity)
+}
+
+/**
+ * A running timer is per account in Harvest and per person here — `UNIQUE
+ * (user_id) WHERE running`, under the trigger that stops whatever the arriving
+ * timer displaces. Two accounts for one person can each hold one, and a timer
+ * left going on the account being retired is an ordinary thing to find in an
+ * account being decommissioned, so the squash walks into that pair the way it
+ * walked into the shared assignment and the shared rate date.
+ *
+ * It is refused rather than merged, and refused here, because neither outcome
+ * at the insert is one this load may choose. Whichever entry the source lists
+ * second either aborts on the trigger's backward-boundary guard — mid load,
+ * and no identity map gets a resume past it — or is accepted, and the trigger
+ * closes the entry already loaded at the incoming start, inventing hours for
+ * the merged person on the payroll grain that no anomaly can honestly account
+ * for. Nor can the loader land the second one stopped: this account keeps
+ * timestamps, so a stopped entry needs an `ended_time` the source never gave
+ * it. Which of two live timers is the real one is a question for whoever runs
+ * the cutover, answered in Harvest by stopping one, and asking it before the
+ * snapshot is admitted costs a re-extract rather than a half-loaded database.
+ */
+const assertOneRunningTimer = async (
+  snapshotDir: string,
+  manifest: Manifest,
+  identity: ResolvedUserIdentity,
+): Promise<void> => {
+  if (identity.canonicalOf.size === 0) return
+  const running = new Map<number, { user: number; entry: string }>()
+  const total = manifest.resources.time_entries?.count ?? 0
+  let rowOffset = 0
+  let byteOffset = 0
+  while (rowOffset < total) {
+    const chunk = await rawChunkFrom(snapshotDir, 'time_entries', byteOffset, rowOffset, 100)
+    if (chunk.rows.length === 0) break
+    for (const source of chunk.rows) {
+      if (!isRunningEntry(source.row)) continue
+      const user = nestedId(source.row, 'user')!
+      if (!mergedUser(identity, user)) continue
+      const survivor = canonicalUser(identity, user)
+      const entry = numberAt(source, '/id', 'time_entries.id')
+      const held = running.get(survivor)
+      if (held !== undefined) {
+        throw new Error(
+          `harvest users ${held.user} and ${user} hold running time entries ${held.entry} and ` +
+            `${entry}; harvest user ${survivor} can keep only one running`,
+        )
+      }
+      running.set(survivor, { user, entry })
+    }
+    rowOffset += chunk.rows.length
+    byteOffset = chunk.nextByteOffset
+  }
 }
 
 export interface LoadChunkResult {
@@ -797,6 +1124,45 @@ const anomalyStatements = (digest: string, anomalies: readonly LoadAnomaly[]): P
       anomaly.detail,
     ],
   }))
+
+/**
+ * An anomaly whose truth only the statement stream knows. Whether a squashed
+ * account's row was merged away or loaded in its own right depends on what the
+ * rows before it left behind, and the anomaly list is assembled while planning,
+ * before any of them run — so the condition travels into SQL and is answered
+ * where it can be. The digest comes off the admission row rather than a binding
+ * because it is the same value the planner would bind, and asking for it there
+ * keeps this out of every signature between here and the chunk loop.
+ */
+const conditionalAnomalyStatement = (
+  anomaly: LoadAnomaly,
+  condition: SqlExpression,
+): PlannedStatement => {
+  const sourceId = anomaly.source_id === null ? null : String(anomaly.source_id)
+  return {
+    sql: `INSERT INTO _ezacto_load_anomalies
+        (snapshot_sha256, resource, source_id, kind, detail)
+      SELECT admission.snapshot_sha256, ?, ?, ?, ?
+      FROM _ezacto_load_admission admission WHERE admission.singleton = 1
+        AND ${condition.sql}
+        AND NOT EXISTS (
+          SELECT 1 FROM _ezacto_load_anomalies existing
+          WHERE existing.snapshot_sha256 = admission.snapshot_sha256 AND existing.resource = ?
+            AND existing.source_id IS ? AND existing.kind = ? AND existing.detail = ?
+        )`,
+    bindings: [
+      anomaly.resource,
+      sourceId,
+      anomaly.kind,
+      anomaly.detail,
+      ...condition.bindings,
+      anomaly.resource,
+      sourceId,
+      anomaly.kind,
+      anomaly.detail,
+    ],
+  }
+}
 
 const sourceTimestamp = (manifest: Manifest): string => {
   if (manifest.finished_at === null)
@@ -1963,6 +2329,7 @@ const loadRateChunk = async (
   total: number,
   maxStatements: number,
 ): Promise<LoadChunkResult> => {
+  const identity = resolveUserIdentity(options.userIdentity)
   const prior = await rateStageProgress(options.database.$client, resource)
   if (prior !== null && prior.snapshotSha256 !== digest) {
     throw new Error(`${resource} staging progress belongs to a different snapshot`)
@@ -2022,7 +2389,10 @@ const loadRateChunk = async (
         [
           harvestId,
           source.index,
-          witness.parent_id,
+          // Staged under the survivor so a squashed pair's histories interleave
+          // into one chain here, rather than two chains that each derive an
+          // open-ended end date for the same person.
+          canonicalUser(identity, witness.parent_id),
           moneyLiteralToCents(numberAt(source, '/amount'), `${resource}.amount`),
           startDate,
           startDate ?? '',
@@ -2123,15 +2493,50 @@ const loadRateChunk = async (
   const capacity = Math.floor((maxStatements - 3) / 2)
   if (capacity < 1) throw new Error(`${resource} has no load statement budget`)
   const take = Math.min(options.maxRows ?? 100, capacity, total - stage.loadedRows)
-  const ordered = await stagedRates(options.database.$client, resource, stage, take + 1)
+  // A merged pair can hold two rates that start on the same day, which one
+  // chain cannot: `UNIQUE (user_id, start_date)` refuses the second and the
+  // chronological trigger refuses it again. Read far enough past the window to
+  // see such a run whole, so the rate that keeps the date still derives its end
+  // from the next real one.
+  const runLength = Math.max(0, ...[...identity.duplicatesOf.values()].map((of) => of.length))
+  const ordered = await stagedRates(options.database.$client, resource, stage, take + 1 + runLength)
   const selected = ordered.slice(0, take)
   if (selected.length === 0) {
     throw new Error(`${resource} staging ended before manifest count ${total}`)
   }
   const anomalies: LoadAnomaly[] = []
   const target = rateTargetTable(resource)
-  const statements: PlannedStatement[] = selected.map((rate, index) => {
-    const next = ordered[index + 1]
+  const statements: PlannedStatement[] = []
+  let previous: Pick<StagedRate, 'userHarvestId' | 'sortStartDate'> | null =
+    stage.lastUserHarvestId === null
+      ? null
+      : { userHarvestId: stage.lastUserHarvestId, sortStartDate: stage.lastSortStartDate ?? '' }
+  for (const [index, rate] of selected.entries()) {
+    const sharesDate =
+      previous !== null &&
+      previous.userHarvestId === rate.userHarvestId &&
+      previous.sortStartDate === rate.sortStartDate
+    previous = rate
+    // Only a survivor can reach this, and only because two accounts were paid
+    // from the same date. The keyset order puts the older Harvest record first
+    // and it keeps the date; the other is recorded rather than loaded, because
+    // inserting it aborts the load and every resume re-plans the same abort.
+    if (sharesDate && identity.duplicatesOf.has(rate.userHarvestId)) {
+      anomalies.push({
+        resource,
+        source_id: rate.harvestId,
+        kind: 'duplicate_row_merged',
+        detail: `harvest user ${rate.userHarvestId} already starts a rate on ${rate.startDate ?? 'no date'}; ${rate.amountCents} cents dropped`,
+      })
+      continue
+    }
+    const next = ordered
+      .slice(index + 1)
+      .find(
+        (candidate) =>
+          candidate.userHarvestId !== rate.userHarvestId ||
+          candidate.sortStartDate !== rate.sortStartDate,
+      )
     const expectedEndDate =
       next?.userHarvestId === rate.userHarvestId && next.startDate !== null
         ? dayBefore(next.startDate)
@@ -2144,20 +2549,22 @@ const loadRateChunk = async (
         detail: `source end_date=${rate.sourceEndDate ?? 'null'}; derived end_date=${expectedEndDate ?? 'null'}`,
       })
     }
-    return insertByHarvestId(
-      target,
-      ['harvest_id', 'user_id', 'amount_cents', 'start_date', 'created_at', 'updated_at'],
-      [
+    statements.push(
+      insertByHarvestId(
+        target,
+        ['harvest_id', 'user_id', 'amount_cents', 'start_date', 'created_at', 'updated_at'],
+        [
+          rate.harvestId,
+          idFrom('users', rate.userHarvestId),
+          rate.amountCents,
+          rate.startDate,
+          rate.createdAt,
+          rate.updatedAt,
+        ],
         rate.harvestId,
-        idFrom('users', rate.userHarvestId),
-        rate.amountCents,
-        rate.startDate,
-        rate.createdAt,
-        rate.updatedAt,
-      ],
-      rate.harvestId,
+      ),
     )
-  })
+  }
   const last = selected[selected.length - 1]!
   const loaded = stage.loadedRows + selected.length
   statements.push(...anomalyStatements(digest, anomalies))
@@ -2205,6 +2612,7 @@ const rowStatements = (
   >,
   source: RawRow,
   manifest: Manifest,
+  identity: ResolvedUserIdentity,
   anomalies: LoadAnomaly[],
   lineage?: ChildLineage,
   taskBudgetBy?: string,
@@ -2220,6 +2628,21 @@ const rowStatements = (
   const updatedAt = requiredText(row, 'updated_at')
   switch (resource) {
     case 'users': {
+      const userHarvestId = safeIntegerAt(source, '/id', 'users.id')
+      const survivor = identity.canonicalOf.get(userHarvestId)
+      if (survivor !== undefined) {
+        // The duplicate leaves no record behind: every reference to it was
+        // redirected at resolution, and its address is adopted by the survivor
+        // while that row is planned. Sixty source users become fifty-eight,
+        // which the reconciliation report has to be able to account for.
+        anomalies.push({
+          resource: 'users',
+          source_id: harvestId,
+          kind: 'duplicate_user_squashed',
+          detail: `squashed into harvest user ${survivor}`,
+        })
+        return []
+      }
       const sourceRoles = row.access_roles
       if (!Array.isArray(sourceRoles) || sourceRoles.some((role) => typeof role !== 'string')) {
         throw new Error('users.access_roles must be an array of strings')
@@ -2268,14 +2691,13 @@ const rowStatements = (
       const email = requiredText(row, 'email')
       return [
         user,
-        {
-          sql: `INSERT INTO user_emails
-            (user_id, address, verified_at, is_primary, created_at, updated_at)
-            SELECT user.id, ?, ?, 1, ?, ? FROM users user WHERE user.harvest_id = ?
-              AND NOT EXISTS (SELECT 1 FROM user_emails existing
-                WHERE existing.user_id = user.id AND lower(existing.address) = lower(?))`,
-          bindings: [email, createdAt, createdAt, updatedAt, harvestId, email],
-        },
+        // The Harvest address stays primary. It is the one that matches the
+        // payroll and payment accounts, so a seeded work address joins it
+        // rather than replacing it.
+        userEmailStatement(userHarvestId, email, true, createdAt, updatedAt),
+        ...(identity.workEmails.get(userHarvestId) ?? []).map((address) =>
+          userEmailStatement(userHarvestId, address, false, createdAt, updatedAt),
+        ),
       ]
     }
     case 'roles': {
@@ -2299,7 +2721,7 @@ const rowStatements = (
               WHERE user.harvest_id = ? AND role.harvest_id = ?
                 AND NOT EXISTS (SELECT 1 FROM user_roles existing
                   WHERE existing.user_id = user.id AND existing.role_id = role.id)`,
-            bindings: [createdAt, updatedAt, userId, harvestId],
+            bindings: [createdAt, updatedAt, canonicalUser(identity, userId), harvestId],
           })
         }
       }
@@ -2308,14 +2730,44 @@ const rowStatements = (
     case 'teammates': {
       if (!lineage || lineage.source_id !== harvestId)
         throw new Error('teammates lineage is misaligned')
+      const manager = canonicalUser(identity, lineage.parent_id)
+      const teammate = canonicalUser(identity, lineage.source_id)
       return [
+        // A manager who lists both halves of a squashed pair, or who is one
+        // half of it, loses a row here to the guards below. Say which, or the
+        // reconciliation report reads a source teammate row as unaccounted for.
+        ...(mergedUser(identity, lineage.parent_id) || mergedUser(identity, lineage.source_id)
+          ? [
+              conditionalAnomalyStatement(
+                {
+                  resource: 'teammates',
+                  source_id: lineage.source_id,
+                  kind: 'duplicate_row_merged',
+                  detail: `teammate of harvest user ${lineage.parent_id} merged into harvest user ${manager}'s teammate ${teammate}`,
+                },
+                expression(
+                  `EXISTS (SELECT 1 FROM users manager, users teammate
+                    WHERE manager.harvest_id = ? AND teammate.harvest_id = ?
+                      AND (manager.id = teammate.id
+                        OR EXISTS (SELECT 1 FROM teammate_assignments existing
+                          WHERE existing.manager_id = manager.id
+                            AND existing.user_id = teammate.id)))`,
+                  manager,
+                  teammate,
+                ),
+              ),
+            ]
+          : []),
         {
           sql: `INSERT INTO teammate_assignments (manager_id, user_id, created_at, updated_at)
           SELECT manager.id, teammate.id, ?, ? FROM users manager, users teammate
           WHERE manager.harvest_id = ? AND teammate.harvest_id = ?
+            AND manager.id <> teammate.id
             AND NOT EXISTS (SELECT 1 FROM teammate_assignments existing
               WHERE existing.manager_id = manager.id AND existing.user_id = teammate.id)`,
-          bindings: [createdAt, updatedAt, lineage.parent_id, harvestId],
+          // Squashing a manager's second account into the manager would make
+          // them their own teammate, which the table forbids outright.
+          bindings: [createdAt, updatedAt, manager, teammate],
         },
       ]
     }
@@ -2564,37 +3016,62 @@ const rowStatements = (
         ),
       ]
     }
-    case 'user_assignments':
-      return [
-        insertByHarvestId(
-          'user_assignments',
-          [
-            'harvest_id',
-            'project_id',
-            'user_id',
-            'is_active',
-            'is_project_manager',
-            'use_default_rates',
-            'hourly_rate_cents',
-            'budget_seconds',
-            'created_at',
-            'updated_at',
-          ],
-          [
-            harvestId,
-            idFrom('projects', nestedId(row, 'project')!),
-            idFrom('users', nestedId(row, 'user')!),
-            bool(row, 'is_active', true) ? 1 : 0,
-            bool(row, 'is_project_manager') ? 1 : 0,
-            bool(row, 'use_default_rates', true) ? 1 : 0,
-            money(source, '/hourly_rate'),
-            seconds(source, '/budget', anomalies, resource),
-            createdAt,
-            updatedAt,
-          ],
+    case 'user_assignments': {
+      const projectHarvestId = nestedId(row, 'project')!
+      const userHarvestId = nestedId(row, 'user')!
+      const insert = insertByHarvestId(
+        'user_assignments',
+        [
+          'harvest_id',
+          'project_id',
+          'user_id',
+          'is_active',
+          'is_project_manager',
+          'use_default_rates',
+          'hourly_rate_cents',
+          'budget_seconds',
+          'created_at',
+          'updated_at',
+        ],
+        [
           harvestId,
+          idFrom('projects', projectHarvestId),
+          idFrom('users', canonicalUser(identity, userHarvestId)),
+          bool(row, 'is_active', true) ? 1 : 0,
+          bool(row, 'is_project_manager') ? 1 : 0,
+          bool(row, 'use_default_rates', true) ? 1 : 0,
+          money(source, '/hourly_rate'),
+          seconds(source, '/budget', anomalies, resource),
+          createdAt,
+          updatedAt,
+        ],
+        harvestId,
+      )
+      if (!mergedUser(identity, userHarvestId)) return [insert]
+      // Both halves of a pair are ordinarily assigned to the same project, and
+      // the survivor can hold one assignment there — `UNIQUE (project_id,
+      // user_id)`. Two accounts, one assignment: the first the source lists
+      // wins and the second merges into it, decided here rather than in the
+      // planner because only the statement stream knows what has landed. The
+      // alternative is the abort that leaves a half-loaded database no resume
+      // can get past, since every retry re-plans the same colliding insert.
+      return [
+        standalone(
+          insert,
+          `NOT EXISTS (SELECT 1 FROM user_assignments held
+        WHERE held.project_id = incoming.column2 AND held.user_id = incoming.column3)`,
+        ),
+        conditionalAnomalyStatement(
+          {
+            resource: 'user_assignments',
+            source_id: harvestId,
+            kind: 'duplicate_row_merged',
+            detail: `merged into the assignment harvest user ${canonicalUser(identity, userHarvestId)} holds on project ${projectHarvestId}`,
+          },
+          expression(`NOT EXISTS (SELECT 1 FROM user_assignments WHERE harvest_id = ?)`, harvestId),
         ),
       ]
+    }
     case 'time_entries': {
       const rawSeconds = seconds(source, '/hours', anomalies, resource) ?? 0
       const secondsWithoutTimer =
@@ -2611,72 +3088,85 @@ const rowStatements = (
         stringValue(row, 'ended_time'),
         manifest.preflight.clock,
       )
-      const running = timerStartedAt !== null || (startedTime !== null && endedTime === null)
-      if (!running && secondsWithoutTimer !== rawSeconds) {
+      if (!isRunningEntry(row) && secondsWithoutTimer !== rawSeconds) {
         throw new Error('stopped time entry hours_without_timer must equal hours')
       }
-      return [
-        insertByHarvestId(
-          'time_entries',
-          [
-            'harvest_id',
-            'user_id',
-            'project_id',
-            'task_id',
-            'user_assignment_id',
-            'task_assignment_id',
-            'spent_date',
-            'seconds',
-            'seconds_without_timer',
-            'rounded_seconds',
-            'timer_started_at',
-            'started_time',
-            'ended_time',
-            'notes',
-            'billable',
-            'budgeted',
-            'billable_rate_cents',
-            'cost_rate_cents',
-            'external_ref',
-            'calendar_event_ref',
-            'created_at',
-            'updated_at',
-            'invoice_id',
-            'approval_status',
-            'source_approval_status',
-          ],
-          [
-            harvestId,
-            idFrom('users', nestedId(row, 'user')!),
-            idFrom('projects', nestedId(row, 'project')!),
-            idFrom('tasks', nestedId(row, 'task')!),
-            idFrom('user_assignments', nestedId(row, 'user_assignment')!),
-            idFrom('task_assignments', nestedId(row, 'task_assignment')!),
-            requiredText(row, 'spent_date'),
-            rawSeconds,
-            secondsWithoutTimer,
-            roundedSeconds,
-            timerStartedAt,
-            startedTime,
-            endedTime,
-            stringValue(row, 'notes'),
-            bool(row, 'billable') ? 1 : 0,
-            bool(row, 'budgeted') ? 1 : 0,
-            money(source, '/billable_rate'),
-            money(source, '/cost_rate'),
-            canonicalJson(row.external_reference),
-            canonicalJson(row.calendar_event),
-            createdAt,
-            updatedAt,
-            nestedId(row, 'invoice') === null
-              ? null
-              : idFrom('invoices', nestedId(row, 'invoice')!),
-            'unsubmitted',
-            stringValue(row, 'approval_status', 'unsubmitted'),
-          ],
+      const entryProjectId = nestedId(row, 'project')!
+      const entryUserId = nestedId(row, 'user')!
+      const merged = mergedUser(identity, entryUserId)
+      // Where a pair merged, which of their two assignment ids survives on a
+      // shared project depends on the order the source lists them in, and the
+      // composite foreign key wants the assignment for *this* entry's project
+      // and user anyway. Ask for that instead of for an id that may have
+      // yielded; `UNIQUE (project_id, user_id)` makes it the same row.
+      const userAssignment = merged
+        ? expression(
+            `(SELECT held.id FROM user_assignments held
+            WHERE held.project_id = (SELECT id FROM projects WHERE harvest_id = ?)
+              AND held.user_id = (SELECT id FROM users WHERE harvest_id = ?))`,
+            entryProjectId,
+            canonicalUser(identity, entryUserId),
+          )
+        : idFrom('user_assignments', nestedId(row, 'user_assignment')!)
+      const entry = insertByHarvestId(
+        'time_entries',
+        [
+          'harvest_id',
+          'user_id',
+          'project_id',
+          'task_id',
+          'user_assignment_id',
+          'task_assignment_id',
+          'spent_date',
+          'seconds',
+          'seconds_without_timer',
+          'rounded_seconds',
+          'timer_started_at',
+          'started_time',
+          'ended_time',
+          'notes',
+          'billable',
+          'budgeted',
+          'billable_rate_cents',
+          'cost_rate_cents',
+          'external_ref',
+          'calendar_event_ref',
+          'created_at',
+          'updated_at',
+          'invoice_id',
+          'approval_status',
+          'source_approval_status',
+        ],
+        [
           harvestId,
-        ),
-      ]
+          idFrom('users', canonicalUser(identity, entryUserId)),
+          idFrom('projects', entryProjectId),
+          idFrom('tasks', nestedId(row, 'task')!),
+          userAssignment,
+          idFrom('task_assignments', nestedId(row, 'task_assignment')!),
+          requiredText(row, 'spent_date'),
+          rawSeconds,
+          secondsWithoutTimer,
+          roundedSeconds,
+          timerStartedAt,
+          startedTime,
+          endedTime,
+          stringValue(row, 'notes'),
+          bool(row, 'billable') ? 1 : 0,
+          bool(row, 'budgeted') ? 1 : 0,
+          money(source, '/billable_rate'),
+          money(source, '/cost_rate'),
+          canonicalJson(row.external_reference),
+          canonicalJson(row.calendar_event),
+          createdAt,
+          updatedAt,
+          nestedId(row, 'invoice') === null ? null : idFrom('invoices', nestedId(row, 'invoice')!),
+          'unsubmitted',
+          stringValue(row, 'approval_status', 'unsubmitted'),
+        ],
+        harvestId,
+      )
+      return [merged ? standalone(entry) : entry]
     }
   }
 }
@@ -2805,6 +3295,7 @@ const estimateStatements = (
   source: RawRow,
   messages: readonly RawRow[],
   messageLineage: readonly ChildLineage[],
+  identity: ResolvedUserIdentity,
   anomalies: LoadAnomaly[],
   lineOffset = 0,
   lineLimit = Number.POSITIVE_INFINITY,
@@ -2856,7 +3347,7 @@ const estimateStatements = (
   ] as const
   const cells: Cell[] = [
     idFrom('clients', clientId),
-    creatorId === null ? null : idFrom('users', creatorId),
+    creatorId === null ? null : idFrom('users', canonicalUser(identity, creatorId)),
     creatorId,
     creatorName,
     requiredText(row, 'number'),
@@ -3064,6 +3555,7 @@ const invoiceInput = async (
   messageLineage: readonly ChildLineage[],
   payments: readonly RawRow[],
   paymentLineage: readonly ChildLineage[],
+  identity: ResolvedUserIdentity,
   anomalies: LoadAnomaly[],
 ): Promise<{
   ensured: Awaited<ReturnType<typeof ensureImportedInvoiceHeader>>
@@ -3094,7 +3586,7 @@ const invoiceInput = async (
     sourceCreatorId === null
       ? null
       : await first<{ id: number }>(database.$client, 'SELECT id FROM users WHERE harvest_id = ?', [
-          sourceCreatorId,
+          canonicalUser(identity, sourceCreatorId),
         ])
   const lineItems = row.line_items
   if (!Array.isArray(lineItems)) throw new Error(`invoice ${harvestId} line_items must be an array`)
@@ -3635,6 +4127,7 @@ const loadExpense = async (
   anomalies: LoadAnomaly[],
 ): Promise<number> => {
   const { database, snapshotDir } = options
+  const identity = resolveUserIdentity(options.userIdentity)
   const row = source.row
   const harvestId = safeIntegerAt(source, '/id', 'expenses.id')
   const units = row.units == null ? null : Number(row.units)
@@ -3662,7 +4155,7 @@ const loadExpense = async (
       ],
       [
         harvestId,
-        idFrom('users', nestedId(row, 'user')!),
+        idFrom('users', canonicalUser(identity, nestedId(row, 'user')!)),
         idFrom('projects', nestedId(row, 'project')!),
         idFrom('expense_categories', nestedId(row, 'expense_category')!),
         requiredText(row, 'spent_date'),
@@ -3732,6 +4225,7 @@ const loadComplexRow = async (
   maxStatements: number,
   digest: string,
 ): Promise<{ statements: number; complete: boolean }> => {
+  const identity = resolveUserIdentity(options.userIdentity)
   const parentId = safeIntegerAt(source, '/id', `${resource}.id`)
   if (resource === 'expenses') {
     if (maxStatements < 10) throw new Error('expense row exceeds the invocation statement budget')
@@ -3751,7 +4245,7 @@ const loadComplexRow = async (
       const hasMessages = (manifest.resources.estimate_messages?.count ?? 0) > 0
       const complete = linesComplete && !hasMessages
       const statements = [
-        ...estimateStatements(source, [], [], anomalies, aggregateOffset, take),
+        ...estimateStatements(source, [], [], identity, anomalies, aggregateOffset, take),
         complete
           ? deleteSubprogressStatement(resource, source.index)
           : subprogressStatement(resource, source.index, aggregateOffset + take, 0, 0),
@@ -3772,7 +4266,7 @@ const loadComplexRow = async (
           )
     if (record === null) {
       const statements = [
-        ...estimateStatements(source, [], [], anomalies, 0, 0),
+        ...estimateStatements(source, [], [], identity, anomalies, 0, 0),
         deleteSubprogressStatement(resource, source.index),
       ]
       await execute(options.database.$client, statements)
@@ -3814,7 +4308,7 @@ const loadComplexRow = async (
     }
     const complete = childOffset + take === record.count
     const statements = [
-      ...estimateStatements(source, childChunk.rows, childLineage.rows, anomalies, 0, 0),
+      ...estimateStatements(source, childChunk.rows, childLineage.rows, identity, anomalies, 0, 0),
       complete
         ? deleteSubprogressStatement(resource, source.index)
         : subprogressStatement(
@@ -3857,6 +4351,7 @@ const loadComplexRow = async (
     messages.lineage,
     payments.rows,
     payments.lineage,
+    identity,
     anomalies,
   )
   if (input.retainerId !== null)
@@ -3933,6 +4428,7 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
       `maxStatements must be between 2 and ${maximumStatements}; D1 reserves query overhead`,
     )
   }
+  const identity = resolveUserIdentity(options.userIdentity)
   const priorAdmission = await first<{ loadOptionsJson: string }>(
     options.database.$client,
     `SELECT load_options_json AS loadOptionsJson FROM _ezacto_load_admission WHERE singleton = 1`,
@@ -3942,19 +4438,24 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
     const persisted = JSON.parse(priorAdmission.loadOptionsJson) as {
       organization_currency: string
       organization_address: string | null
+      user_identity?: unknown
     }
     const requestedCurrency =
       options.organizationCurrency?.toUpperCase() ??
       manifest.preflight.organization_currency?.toUpperCase()
     const requestedAddress = options.organizationAddress ?? manifest.preflight.organization_address
+    // Resuming with a different identity map would leave the rows loaded so far
+    // pointing at accounts the rest of the load has squashed away.
     if (
       (requestedCurrency !== undefined && requestedCurrency !== persisted.organization_currency) ||
-      requestedAddress !== persisted.organization_address
+      requestedAddress !== persisted.organization_address ||
+      canonicalJson(persisted.user_identity) !== identity.json
     ) {
       throw new Error('load admission belongs to different snapshot load options')
     }
     loadOptionsJson = priorAdmission.loadOptionsJson
   } else {
+    await assertIdentityInSnapshot(options.snapshotDir, manifest, identity)
     const expectedDigest = await checksumDigest(options.snapshotDir)
     if (isD1(options.database.$client) && options.immutableSnapshotSha256 !== expectedDigest) {
       throw new Error('D1 load requires immutableSnapshotSha256 matching checksums.json')
@@ -3979,6 +4480,9 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
     loadOptionsJson = JSON.stringify({
       organization_currency: organizationCurrency,
       organization_address: options.organizationAddress ?? manifest.preflight.organization_address,
+      ...(identity.json === null
+        ? {}
+        : { user_identity: JSON.parse(identity.json) as UserIdentityInput }),
     })
   }
   const admission = await admitSnapshot(options, manifest, loadOptionsJson, timestamp)
@@ -4065,7 +4569,23 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
         throw new Error(
           `authenticated Harvest user ${manifest.preflight.user.id} is absent from users`,
         )
-      const ownerStatements = rowStatements('users', owner, manifest, anomalies)
+      // The owner row anchors the organization, so it cannot be the half of a
+      // pair that gets squashed away; say so here rather than fail on the
+      // owner foreign key several resources later.
+      if (identity.canonicalOf.has(manifest.preflight.user.id)) {
+        throw new Error(
+          `authenticated Harvest user ${manifest.preflight.user.id} cannot be squashed into another account`,
+        )
+      }
+      const ownerStatements = [
+        ...rowStatements('users', owner, manifest, identity, anomalies),
+        ...(await squashedEmailStatements(
+          options.snapshotDir,
+          manifest,
+          identity,
+          manifest.preflight.user.id,
+        )),
+      ]
       const statements = [
         statement,
         ...ownerStatements,
@@ -4150,6 +4670,7 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
         resource,
         row,
         manifest,
+        identity,
         anomalies,
         undefined,
         undefined,
@@ -4273,10 +4794,21 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
         resource,
         row,
         manifest,
+        identity,
         anomalies,
         lineage?.rows[index],
         taskBudgetBy,
       )
+      if (resource === 'users') {
+        planned.push(
+          ...(await squashedEmailStatements(
+            options.snapshotDir,
+            manifest,
+            identity,
+            safeIntegerAt(row, '/id', 'users.id'),
+          )),
+        )
+      }
       if (
         statements.length + planned.length + anomalies.length + checkpointStatements >
         maxStatements
