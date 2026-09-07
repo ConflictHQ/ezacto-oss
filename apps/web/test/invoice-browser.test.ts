@@ -8,6 +8,7 @@ import {
   type InvoiceLineInput,
   type InvoiceLineUpdateInput,
   type InvoicePayment,
+  type InvoiceTransitionInput,
   type Whoami,
 } from '@ezacto/client'
 import { describe, expect, it, vi } from 'vitest'
@@ -988,5 +989,81 @@ describe('invoice payment controller', () => {
       false,
     )
     expect(document.querySelector('[data-invoice-detail-payments]')?.textContent).toBe('')
+  })
+
+  it('[e2e:invoice-state] issues write off from the overflow and gates every other verb', async () => {
+    renderDetail()
+    let currentInvoice = invoice('STATE', { state: 'open', due_amount_cents: 1_000 })
+    const recorded = [payment()]
+    const transitionInvoice = vi.fn(
+      async (_invoiceId: number, _commandId: string, input: InvoiceTransitionInput) => {
+        currentInvoice = {
+          ...currentInvoice,
+          state: 'closed',
+          close_reason: 'written_off',
+          close_write_off_cents: currentInvoice.due_amount_cents,
+          written_off_cents: currentInvoice.due_amount_cents,
+          due_amount_cents: 0,
+          version: input.expected_version + 1,
+        }
+        return currentInvoice
+      },
+    )
+    const controller = createInvoicePaymentController({
+      getInvoice: vi.fn(async () => currentInvoice),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => recorded),
+      transitionInvoice,
+    })
+    await controller.activate(identity(1), new AbortController().signal, () => false)
+
+    const toggle = document.querySelector<HTMLButtonElement>('[data-invoice-overflow-toggle]')!
+    const menu = document.querySelector<HTMLElement>('[data-invoice-overflow-menu]')!
+    const item = (command: string): HTMLButtonElement =>
+      document.querySelector<HTMLButtonElement>(`[data-invoice-transition="${command}"]`)!
+    expect(toggle.hidden).toBe(false)
+    expect(menu.hidden).toBe(true)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    toggle.click()
+    expect(menu.hidden).toBe(false)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    // A payment is recorded, so returning to draft is illegal and is not shown.
+    expect(item('draft').hidden).toBe(true)
+    expect(item('reopen').hidden).toBe(true)
+    expect(item('write_off').hidden).toBe(false)
+    expect(item('cancel').hidden).toBe(false)
+    // Destructive is red text on the document ground, never a red fill.
+    expect(item('write_off').className).toContain('invoice-overflow-destructive')
+    expect(item('cancel').className).toContain('invoice-overflow-destructive')
+    expect(item('draft').className).not.toContain('invoice-overflow-destructive')
+
+    item('write_off').click()
+    const dialog = document.querySelector<HTMLDialogElement>('[data-invoice-transition-dialog]')!
+    expect(dialog.open).toBe(true)
+    expect(menu.hidden).toBe(true)
+    expect(document.querySelector('[data-invoice-transition-summary]')?.textContent).toContain(
+      'writes off the balance still due',
+    )
+    const confirm = document.querySelector<HTMLButtonElement>('[data-invoice-transition-submit]')!
+    expect(confirm.textContent).toBe('Write off balance')
+    expect(confirm.className).toBe('invoice-destructive-action')
+
+    submit('[data-invoice-transition-form]')
+    await vi.waitFor(() => expect(dialog.open).toBe(false))
+    expect(transitionInvoice).toHaveBeenCalledTimes(1)
+    expect(transitionInvoice).toHaveBeenCalledWith(
+      7,
+      expect.stringMatching(/^web\.invoice\.write_off:/u),
+      { command: 'write_off', expected_version: 1 },
+      expect.any(AbortSignal),
+    )
+    // The state the UI could always render and no operator could reach.
+    expect(document.querySelector('[data-invoice-detail-state]')?.textContent).toBe('Written off')
+    expect(document.querySelector('[data-invoice-payment-status]')?.textContent).toBe(
+      'Invoice is now written off.',
+    )
+    expect(item('reopen').hidden).toBe(false)
+    expect(item('write_off').hidden).toBe(true)
+    expect(item('cancel').hidden).toBe(true)
   })
 })

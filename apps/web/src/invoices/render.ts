@@ -1,3 +1,5 @@
+import { invoiceOverflowTransitions } from './model.js'
+
 export const renderInvoicePaymentSection = (): string => `
       <section class="invoice-history invoice-payment-history" aria-labelledby="invoice-payment-heading">
         <header class="invoice-payment-heading">
@@ -138,11 +140,34 @@ export const renderInvoiceAttachmentSection = (): string => `
         <ul data-invoice-attachments></ul>
       </section>`
 
+export const renderInvoiceOverflowMenu = (): string => `
+        <div class="invoice-overflow" data-invoice-overflow hidden>
+          <button class="invoice-overflow-toggle" type="button" data-invoice-overflow-toggle aria-haspopup="true" aria-expanded="false" aria-controls="ez-invoice-overflow-menu" aria-label="More invoice actions" disabled>…</button>
+          <div class="invoice-overflow-menu" id="ez-invoice-overflow-menu" data-invoice-overflow-menu role="menu" hidden>${invoiceOverflowTransitions
+            .map(
+              (transition) =>
+                `<button class="invoice-overflow-item${transition.destructive ? ' invoice-overflow-destructive' : ''}" type="button" role="menuitem" data-invoice-transition="${transition.command}" hidden>${transition.label}</button>`,
+            )
+            .join('')}</div>
+        </div>`
+
+export const renderInvoiceTransitionDialog = (): string => `
+  <dialog class="invoice-transition-dialog" data-invoice-transition-dialog aria-labelledby="invoice-transition-title">
+    <form data-invoice-transition-form>
+      <header><div><p class="eyebrow">Invoice state</p><h2 id="invoice-transition-title" data-invoice-transition-title>Change invoice state</h2></div><button type="button" data-dialog-close aria-label="Close invoice state dialog">×</button></header>
+      <p data-invoice-transition-summary></p>
+      <p class="hint">The command carries the version this page is showing. If the invoice moved elsewhere it is refused and the latest values are loaded.</p>
+      <p class="form-result" data-invoice-transition-result role="status" aria-live="polite"></p>
+      <div class="invoice-payment-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button class="primary-action" type="submit" data-invoice-transition-submit>Confirm</button></div>
+    </form>
+  </dialog>`
+
 export const renderInvoiceComposerDialog = (): string => `
   <dialog class="invoice-composer-dialog" data-invoice-composer-dialog aria-labelledby="invoice-composer-title">
     <form data-invoice-composer-form novalidate>
-      <header><div><p class="eyebrow">Invoice message</p><h2 id="invoice-composer-title" data-invoice-composer-title>Mark invoice sent</h2></div><button type="button" data-dialog-close aria-label="Close invoice message composer">×</button></header>
-      <p class="hint">This records the sent status and message details. It does not deliver email or a PDF.</p>
+      <header><div><p class="eyebrow">Invoice message</p><h2 id="invoice-composer-title" data-invoice-composer-title>Send invoice</h2></div><button type="button" data-dialog-close aria-label="Close invoice message composer">×</button></header>
+      <p class="hint">Recording the sent status and delivering the email are two different things, so this dialog does both in one order. The message below is always recorded on the invoice; ticking <strong>Also deliver by email</strong> queues the email after it.</p>
+      <p class="hint" data-invoice-composer-owed hidden>The sent status is already recorded for this invoice and only the email is left, so nothing here can record a second sent message. Submit to retry that email, or untick <strong>Also deliver by email</strong> to finish without it.</p>
       <div class="invoice-composer-layout">
         <section class="invoice-composer-fields">
           <label for="ez-invoice-recipients">Recipients
@@ -159,6 +184,9 @@ export const renderInvoiceComposerDialog = (): string => `
           <label for="ez-invoice-reminder-date" data-invoice-composer-reminder-date-label hidden>Planned reminder date
             <input id="ez-invoice-reminder-date" name="reminderDate" data-invoice-composer-reminder-date type="date">
           </label>
+          <label class="invoice-composer-check"><input name="deliver" data-invoice-composer-deliver-toggle type="checkbox" aria-describedby="invoice-deliver-hint"> Also deliver by email</label>
+          <p class="hint" id="invoice-deliver-hint">The email goes out from the verified organization sender on the configured invoice template, not the subject and message above. No PDF is attached.</p>
+          <label class="invoice-composer-check" data-invoice-composer-confirm-label hidden><input name="confirmed" data-invoice-composer-confirm type="checkbox"> I confirm these recipients and want to send this invoice.</label>
         </section>
         <aside class="invoice-variable-reference" aria-labelledby="invoice-variable-title">
           <h3 id="invoice-variable-title">Template variables</h3>
@@ -172,22 +200,6 @@ export const renderInvoiceComposerDialog = (): string => `
         </aside>
       </div>
       <p class="form-result" data-invoice-composer-result role="status" aria-live="polite"></p>
-      <div class="invoice-payment-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button class="primary-action" type="submit" data-invoice-composer-submit>Mark sent</button></div>
-    </form>
-  </dialog>`
-
-export const renderInvoiceDeliveryDialog = (): string => `
-  <dialog class="invoice-composer-dialog" data-invoice-delivery-dialog aria-labelledby="invoice-delivery-title">
-    <form data-invoice-delivery-form novalidate>
-      <header><div><p class="eyebrow">External delivery</p><h2 id="invoice-delivery-title">Send invoice?</h2></div><button type="button" data-dialog-close aria-label="Close delivery dialog">×</button></header>
-      <p>This will send the current invoice from the verified organization sender to every recipient below.</p>
-      <p class="hint">Delivery is queued after confirmation. No PDF is attached or claimed.</p>
-      <label for="ez-invoice-delivery-recipients">Recipients
-        <textarea id="ez-invoice-delivery-recipients" name="recipients" data-invoice-delivery-recipients rows="4" maxlength="321000" autocomplete="off" required aria-describedby="invoice-delivery-recipient-hint"></textarea>
-      </label>
-      <p class="hint" id="invoice-delivery-recipient-hint">One per line: email@example.com or Name &lt;email@example.com&gt;.</p>
-      <label class="invoice-composer-check"><input name="confirmed" data-invoice-delivery-confirm type="checkbox" required> I confirm these recipients and want to send this invoice.</label>
-      <p class="form-result" data-invoice-delivery-result role="status" aria-live="polite"></p>
-      <div class="invoice-payment-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button class="primary-action" type="submit" data-invoice-delivery-submit>Send invoice</button></div>
+      <div class="invoice-payment-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button class="primary-action" type="submit" data-invoice-composer-submit>Send invoice</button></div>
     </form>
   </dialog>`

@@ -151,6 +151,77 @@ export const invoiceCanMarkSent = (invoice: Readonly<Invoice>): boolean =>
 export const invoiceCanEditLines = (invoice: Readonly<Invoice>): boolean =>
   invoice.state !== 'closed'
 
+export type InvoiceOverflowCommand = 'draft' | 'cancel' | 'write_off' | 'reopen'
+
+export interface InvoiceOverflowTransition {
+  readonly command: InvoiceOverflowCommand
+  readonly label: string
+  /** Red *text*, never a red fill: a fill would owe the AA body-text bar. */
+  readonly destructive: boolean
+  readonly summary: string
+}
+
+/**
+ * The four lifecycle verbs beyond `send`. `invoiceStateLabel` has always been
+ * able to render `Written off` and `Cancelled`; until these were offered no
+ * operator could reach either state from the shell.
+ */
+export const invoiceOverflowTransitions: readonly InvoiceOverflowTransition[] = [
+  {
+    command: 'draft',
+    label: 'Return to draft',
+    destructive: false,
+    summary:
+      'This moves the invoice back to draft so it can be reworked before it goes out again.',
+  },
+  {
+    command: 'reopen',
+    label: 'Reopen invoice',
+    destructive: false,
+    summary:
+      'This reopens the closed invoice and restores whatever balance was written off when it closed.',
+  },
+  {
+    command: 'write_off',
+    label: 'Write off balance',
+    destructive: true,
+    summary:
+      'This closes the invoice and writes off the balance still due. Reopening restores it.',
+  },
+  {
+    command: 'cancel',
+    label: 'Cancel invoice',
+    destructive: true,
+    summary: 'This closes the invoice as cancelled. Reopening restores it.',
+  },
+]
+
+/**
+ * Mirrors the reducer in @ezacto/core rather than offering every verb and
+ * letting the server refuse: an illegal_invoice_transition is an error the
+ * operator cannot act on, and the menu is the only place the rule is visible.
+ * The payment count is passed in because the API's Invoice carries the money
+ * but not the count -- the detail page has already loaded the payments.
+ */
+export const invoiceCanIssueTransition = (
+  invoice: Readonly<Invoice>,
+  paymentCount: number,
+  command: InvoiceOverflowCommand,
+): boolean => {
+  switch (command) {
+    case 'draft':
+      return (
+        invoice.state === 'open' && paymentCount === 0 && invoice.written_off_cents === 0
+      )
+    case 'cancel':
+      return invoice.state === 'draft' || invoice.state === 'open'
+    case 'write_off':
+      return invoice.state === 'open' && invoice.due_amount_cents > 0
+    case 'reopen':
+      return invoice.state === 'closed'
+  }
+}
+
 const signedMoneyPattern = /^(-?)(?:0|[1-9][0-9]*)(?:\.([0-9]{1,2}))?$/u
 const decimalPattern = /^(-?)([0-9]+)(?:\.([0-9]+))?(?:e([+-]?[0-9]+))?$/iu
 const invoiceCentsLimit = 9_000_000_000_000n
@@ -262,7 +333,113 @@ export const invoiceRatePpm = (raw: string, label: string): number | null => {
 export const invoiceRatePercentForForm = (ppm: number | null): string =>
   ppm === null ? '' : String(ppm / 10_000)
 
+/**
+ * One Send, held as a single value: which invoice it belongs to, what it has
+ * already committed, and what it still owes. The `send` transition and the
+ * email are two commands, so a delivery that fails after the transition
+ * committed must retry the email alone -- and every path that used to reset a
+ * boolean for its own reasons (a conflict reload, a reopened dialog, an edited
+ * field) has to read this instead of forgetting it.
+ */
+export interface InvoiceSendAttempt {
+  readonly invoiceId: number
+  /**
+   * The idempotency key for `send`, kept for the whole life of the attempt. A
+   * command that never committed leaves no ledger row, so reusing the key costs
+   * nothing; one that did commit is replayed when the input matches and refused
+   * as `command_id_reused` when it does not. Minting a fresh key is the only
+   * way to record a second sent message, so the attempt never mints one twice.
+   */
+  readonly transitionCommandId: string
+  /** The version the committed `send` returned; null while `send` is still owed. */
+  readonly sentVersion: number | null
+  /** The email half, present only while it is asked for and not yet accepted. */
+  readonly delivery: InvoiceSendDelivery | null
+}
+
+export interface InvoiceSendDelivery {
+  /** Kept across retries so a retry is a retry, not a second email. */
+  readonly commandId: string
+  /** The recipients confirmed with the send this delivery belongs to. */
+  readonly recipients: readonly InvoiceRecipient[]
+}
+
+export const invoiceSendAttemptFor = (
+  attempt: InvoiceSendAttempt | null,
+  invoiceId: number,
+): InvoiceSendAttempt | null =>
+  attempt !== null && attempt.invoiceId === invoiceId ? attempt : null
+
+/**
+ * What a Send submission may still issue, read off the attempt rather than off
+ * the dialog's checkbox. `send` covers a first attempt and any retry of one
+ * that never committed; `delivery` is the email alone, owed by an attempt whose
+ * `send` did commit and which nothing may run a second time; `nothing` is the
+ * operator taking that owed email off the submit, which issues no request at
+ * all and so must never be reported as a send.
+ */
+export const invoiceSendWork = (
+  attempt: InvoiceSendAttempt | null,
+  invoiceId: number,
+  delivering: boolean,
+): 'send' | 'delivery' | 'nothing' => {
+  const live = invoiceSendAttemptFor(attempt, invoiceId)
+  if (live === null || live.sentVersion === null) return 'send'
+  return delivering && live.delivery !== null ? 'delivery' : 'nothing'
+}
+
+/** What a failed Send submission leaves behind: the attempt, and what to say. */
+export interface InvoiceSendFailure {
+  /** The attempt the next submit reads, or null once its key is spent. */
+  readonly attempt: InvoiceSendAttempt | null
+  /** The line the operator is owed, where the generic conflict line is wrong. */
+  readonly notice: string | null
+}
+
+/**
+ * When a key is retired. The ledger writes a row only for a command that
+ * committed, replays an identical retry off it, and refuses a changed one as
+ * `command_id_reused` -- so that code is the server reporting that this key's
+ * command *did* commit and the response was what went missing. The key is spent
+ * from that moment: held, it refuses every later submit under the same code,
+ * including a deliberate `Send invoice again`, and the shared conflict line
+ * describes an invoice somebody else moved, which is not what happened. So it
+ * is retired here, and the operator is told the invoice went out and what a
+ * further submit would do.
+ *
+ * Every other failure is the opposite case -- a version conflict, a dropped
+ * connection, a refusal -- and keeps the attempt, because holding the key is
+ * the only thing that makes a retry a retry rather than a second sent message.
+ */
+export const invoiceSendFailure = (
+  attempt: InvoiceSendAttempt | null,
+  invoiceId: number,
+  code: string | null,
+): InvoiceSendFailure => {
+  const live = invoiceSendAttemptFor(attempt, invoiceId)
+  if (live === null || code !== 'command_id_reused') return { attempt, notice: null }
+  return {
+    attempt: null,
+    // Which half the spent key belongs to is the same question `invoiceSendWork`
+    // asks: a `send` that has not returned its version is what was refused,
+    // otherwise the email was. Neither line claims anything about the reload
+    // that follows -- it can itself fail, and the document says which.
+    notice:
+      live.sentVersion === null
+        ? 'This invoice was already recorded as sent under this attempt; its response was lost, not refused. Submitting again records a second sent message.'
+        : 'The email for this send was already queued under this attempt; its response was lost, not refused. Submitting again records a second sent message and a second email.',
+  }
+}
+
 const recipientEmailPattern = /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/u
+
+/**
+ * The inverse of `invoiceRecipients` for one recipient, so a resumed send shows
+ * the addresses it will actually deliver to rather than the empty box a form
+ * reset leaves behind.
+ */
+export const invoiceRecipientLine = (recipient: Readonly<InvoiceRecipient>): string =>
+  recipient.name.trim() === '' ? recipient.email : `${recipient.name} <${recipient.email}>`
 
 export const invoiceRecipients = (raw: string): InvoiceRecipient[] => {
   const lines = raw

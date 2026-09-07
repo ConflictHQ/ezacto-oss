@@ -1991,23 +1991,29 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   expect((await attachUpload2).status()).toBe(201)
   await expect(page.locator('[data-invoice-attachment-status]')).toContainText('2 files attached')
 
-  await detail.getByRole('button', { name: 'Mark sent', exact: true }).click()
+  await detail.getByRole('button', { name: 'Send invoice', exact: true }).click()
   const composer = page.locator('[data-invoice-composer-dialog]')
   await expect(composer).toBeVisible()
   await expect(composer).toContainText('%invoice_number%')
   await expect(composer).toContainText('%invoice_amount%')
-  await composer.getByLabel('Recipients').fill('Accounts Payable <ap@example.test>')
-  await composer.getByLabel('Subject').fill('Invoice %invoice_number%')
+  // The dialog now also carries the delivery confirmation, whose label mentions
+  // recipients too, so the fields are addressed by their own data attributes.
+  await expect(composer).toContainText('Also deliver by email')
+  await expect(composer.locator('[data-invoice-composer-confirm-label]')).toBeHidden()
+  await composer
+    .locator('[data-invoice-composer-recipients]')
+    .fill('Accounts Payable <ap@example.test>')
+  await composer.locator('[data-invoice-composer-subject]').fill('Invoice %invoice_number%')
   await composer
     .locator('[data-invoice-composer-body]')
     .fill('Invoice #%invoice_id% totals %invoice_amount% and is due %invoice_due_date%.')
   await composer.getByLabel('Record a planned reminder date').check()
   await composer.locator('[data-invoice-composer-reminder-date]').fill('2099-09-30')
   for (const control of [
-    composer.getByLabel('Recipients'),
-    composer.getByLabel('Subject'),
+    composer.locator('[data-invoice-composer-recipients]'),
+    composer.locator('[data-invoice-composer-subject]'),
     composer.locator('[data-invoice-composer-body]'),
-    composer.getByRole('button', { name: 'Mark sent', exact: true }),
+    composer.getByRole('button', { name: 'Send invoice', exact: true }),
   ]) {
     await expectPhoneControl(control)
   }
@@ -2017,7 +2023,7 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
       new URL(response.url()).pathname.match(/^\/api\/v1\/invoices\/\d+\/transitions$/u) !==
         null && response.request().method() === 'POST',
   )
-  await composer.getByRole('button', { name: 'Mark sent', exact: true }).click()
+  await composer.getByRole('button', { name: 'Send invoice', exact: true }).click()
   const sentResponse = await sent
   expect(sentResponse.status()).toBe(201)
   expect(sentResponse.request().postDataJSON()).toMatchObject({

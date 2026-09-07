@@ -12,12 +12,14 @@ import {
   type InvoicePayment,
   type InvoicePaymentInput,
   type InvoicePaymentUpdateInput,
+  type InvoiceRecipient,
   type InvoiceTransitionInput,
   type Whoami,
 } from '@ezacto/client'
 import {
   interpolateInvoiceTemplate,
   invoiceCanEditLines,
+  invoiceCanIssueTransition,
   invoiceCanMarkSent,
   invoiceCanRecordPayment,
   invoiceIdFromPathname,
@@ -27,6 +29,7 @@ import {
   invoiceLineUnitPriceForForm,
   invoiceLineValues,
   invoiceMessageLabel,
+  invoiceOverflowTransitions,
   invoicePaymentAmountCents,
   invoicePaymentAmountForForm,
   invoicePaymentCanDelete,
@@ -37,11 +40,18 @@ import {
   invoicePeriod,
   invoiceRatePercentForForm,
   invoiceRatePpm,
+  invoiceRecipientLine,
   invoiceRecipients,
   invoiceReminderDate,
   invoicePlannedReminder,
+  invoiceSendAttemptFor,
+  invoiceSendFailure,
+  invoiceSendWork,
   invoiceStateLabel,
+  type InvoiceOverflowCommand,
   type InvoicePaymentApi,
+  type InvoiceSendAttempt,
+  type InvoiceSendDelivery,
 } from './model.js'
 
 const required = <ElementType extends Element>(selector: string): ElementType => {
@@ -481,7 +491,6 @@ export const createInvoicePaymentController = (
   const deleteResult = required<HTMLElement>('[data-invoice-payment-delete-result]')
   const deleteSubmit = required<HTMLButtonElement>('[data-invoice-payment-delete-submit]')
   const send = required<HTMLButtonElement>('[data-invoice-send]')
-  const deliver = required<HTMLButtonElement>('[data-invoice-deliver]')
   const composerDialog = required<HTMLDialogElement>('[data-invoice-composer-dialog]')
   const composerForm = required<HTMLFormElement>('[data-invoice-composer-form]')
   const composerTitle = required<HTMLElement>('[data-invoice-composer-title]')
@@ -491,14 +500,29 @@ export const createInvoicePaymentController = (
   const composerReminderToggle = required<HTMLInputElement>('[data-invoice-composer-reminder-toggle]')
   const composerReminderDateLabel = required<HTMLElement>('[data-invoice-composer-reminder-date-label]')
   const composerReminderDate = required<HTMLInputElement>('[data-invoice-composer-reminder-date]')
+  const composerDeliverToggle = required<HTMLInputElement>(
+    '[data-invoice-composer-deliver-toggle]',
+  )
+  const composerOwed = required<HTMLElement>('[data-invoice-composer-owed]')
+  const composerConfirmLabel = required<HTMLElement>('[data-invoice-composer-confirm-label]')
+  const composerConfirm = required<HTMLInputElement>('[data-invoice-composer-confirm]')
   const composerResult = required<HTMLElement>('[data-invoice-composer-result]')
   const composerSubmit = required<HTMLButtonElement>('[data-invoice-composer-submit]')
-  const deliveryDialog = required<HTMLDialogElement>('[data-invoice-delivery-dialog]')
-  const deliveryForm = required<HTMLFormElement>('[data-invoice-delivery-form]')
-  const deliveryRecipients = required<HTMLTextAreaElement>('[data-invoice-delivery-recipients]')
-  const deliveryConfirm = required<HTMLInputElement>('[data-invoice-delivery-confirm]')
-  const deliveryResult = required<HTMLElement>('[data-invoice-delivery-result]')
-  const deliverySubmit = required<HTMLButtonElement>('[data-invoice-delivery-submit]')
+  const overflow = required<HTMLElement>('[data-invoice-overflow]')
+  const overflowToggle = required<HTMLButtonElement>('[data-invoice-overflow-toggle]')
+  const overflowMenu = required<HTMLElement>('[data-invoice-overflow-menu]')
+  const overflowItems = new Map<InvoiceOverflowCommand, HTMLButtonElement>(
+    invoiceOverflowTransitions.map((transition) => [
+      transition.command,
+      required<HTMLButtonElement>(`[data-invoice-transition="${transition.command}"]`),
+    ]),
+  )
+  const transitionDialog = required<HTMLDialogElement>('[data-invoice-transition-dialog]')
+  const transitionForm = required<HTMLFormElement>('[data-invoice-transition-form]')
+  const transitionTitle = required<HTMLElement>('[data-invoice-transition-title]')
+  const transitionSummary = required<HTMLElement>('[data-invoice-transition-summary]')
+  const transitionResult = required<HTMLElement>('[data-invoice-transition-result]')
+  const transitionSubmit = required<HTMLButtonElement>('[data-invoice-transition-submit]')
   const editInvoice = required<HTMLButtonElement>('[data-invoice-edit]')
   const editDialog = required<HTMLDialogElement>('[data-invoice-edit-dialog]')
   const editForm = required<HTMLFormElement>('[data-invoice-edit-form]')
@@ -554,8 +578,14 @@ export const createInvoicePaymentController = (
   let refreshRequired = false
   let paymentCommandId: string | null = null
   let deleteCommandId: string | null = null
-  let invoiceCommandId: string | null = null
-  let deliveryCommandId: string | null = null
+  // The send transition and the email are two commands, so a delivery that
+  // fails after the transition committed must retry the email alone. What has
+  // been attempted, what is owed and at which version is one value rather than
+  // a pair of command ids and a flag: three code paths each had their own
+  // reason to reset the flag, and any one of them rearmed the transition.
+  let sendAttempt: InvoiceSendAttempt | null = null
+  let pendingTransition: InvoiceOverflowCommand | null = null
+  let transitionCommandId: string | null = null
   let lineCommandId: string | null = null
   let lineDeleteCommandId: string | null = null
   let editHeaderCommandId: string | null = null
@@ -600,11 +630,67 @@ export const createInvoicePaymentController = (
     paidAt.required = timestamp
   }
 
+  // The one question the composer asks of the attempt: does a committed send
+  // still owe its email, and to whom? Every place that used to keep its own
+  // copy of that answer -- the submit, the dialog's labels, the retry hint --
+  // asks here instead.
+  const owedDelivery = (): InvoiceSendDelivery | null => {
+    if (invoice === null) return null
+    const live = invoiceSendAttemptFor(sendAttempt, invoice.id)
+    return live !== null && invoiceSendWork(live, invoice.id, true) === 'delivery'
+      ? live.delivery
+      : null
+  }
+
+  const emailOwed = (): boolean => owedDelivery() !== null
+
+  // Nothing typed in the composer can change an email that is already owed: it
+  // leaves on the organization template, to the recipients the committed send
+  // confirmed, under the command id that makes the retry a retry. Freeze those
+  // fields rather than let an edit look like it will be honored.
+  const composerFrozen = (): boolean => emailOwed() || mutationPending || refreshRequired
+
   const syncReminder = (): void => {
     const scheduled = composerReminderToggle.checked
     composerReminderDateLabel.hidden = !scheduled
-    composerReminderDate.disabled = !scheduled || mutationPending || refreshRequired
+    composerReminderDate.disabled = !scheduled || composerFrozen()
     composerReminderDate.required = scheduled
+  }
+
+  // The confirmation is the gate on the email leaving the building, so it only
+  // exists while the email is being asked for. Recording the sent status is not
+  // the irreversible half and never carried one.
+  const syncComposer = (): void => {
+    const delivering = composerDeliverToggle.checked
+    const owed = emailOwed()
+    composerOwed.hidden = !owed
+    composerTitle.textContent = owed
+      ? 'Finish sending invoice'
+      : invoice?.state === 'open' && typeof invoice.sent_at === 'string'
+        ? 'Send invoice again'
+        : 'Send invoice'
+    composerConfirmLabel.hidden = !delivering
+    composerConfirm.disabled = !delivering || mutationPending || refreshRequired
+    // The button names the request this submit will make. With the send already
+    // recorded there is no send left to offer, and unticking the email is an
+    // operator abandoning it rather than a second thing to record.
+    composerSubmit.textContent = owed
+      ? delivering
+        ? 'Retry the email'
+        : 'Skip the email'
+      : delivering
+        ? 'Send and deliver'
+        : 'Send invoice'
+    const frozen = composerFrozen()
+    composerRecipients.disabled = frozen
+    composerSubject.disabled = frozen
+    composerBody.disabled = frozen
+    composerReminderToggle.disabled = frozen
+  }
+
+  const closeOverflow = (): void => {
+    overflowMenu.hidden = true
+    overflowToggle.setAttribute('aria-expanded', 'false')
   }
 
   const syncControls = (): void => {
@@ -626,9 +712,24 @@ export const createInvoicePaymentController = (
     const canSend = canWrite && invoice !== null && invoiceCanMarkSent(invoice)
     send.hidden = !canSend
     send.disabled = controlsLocked || !canSend
-    send.textContent = invoice?.state === 'open' ? 'Record another sent message' : 'Mark sent'
-    deliver.hidden = !canSend
-    deliver.disabled = controlsLocked || !canSend
+    send.textContent =
+      invoice?.state === 'open' && typeof invoice.sent_at === 'string'
+        ? 'Send invoice again'
+        : 'Send invoice'
+    let anyTransition = false
+    for (const transition of invoiceOverflowTransitions) {
+      const item = overflowItems.get(transition.command)!
+      const available =
+        canWrite &&
+        invoice !== null &&
+        invoiceCanIssueTransition(invoice, payments.length, transition.command)
+      item.hidden = !available
+      item.disabled = controlsLocked || !available
+      if (available) anyTransition = true
+    }
+    overflow.hidden = !anyTransition
+    overflowToggle.disabled = controlsLocked || !anyTransition
+    if (!anyTransition || controlsLocked) closeOverflow()
     readonlyNotice.hidden = session === null || canWrite
     const canEditLines = canWrite && invoice !== null && invoiceCanEditLines(invoice)
     addLine.hidden = !canWrite
@@ -659,11 +760,6 @@ export const createInvoicePaymentController = (
     >('input, textarea, button')) {
       control.disabled = controlsLocked
     }
-    for (const control of deliveryForm.querySelectorAll<
-      HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement
-    >('input, textarea, button')) {
-      control.disabled = controlsLocked
-    }
     for (const control of lineForm.querySelectorAll<
       HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement
     >('input, textarea, button')) {
@@ -674,21 +770,26 @@ export const createInvoicePaymentController = (
     >('input, select, button')) {
       control.disabled = controlsLocked
     }
-    deliverySubmit.disabled = controlsLocked
+    for (const control of transitionForm.querySelectorAll<HTMLButtonElement>('button')) {
+      control.disabled = controlsLocked
+    }
+    transitionSubmit.disabled = controlsLocked
     lineSubmit.disabled = controlsLocked
     editSubmit.disabled = controlsLocked
     lineDeleteSubmit.disabled = controlsLocked
     syncReminder()
+    syncComposer()
   }
 
   const closeDialogs = (): void => {
     if (paymentDialog.open) paymentDialog.close()
     if (deleteDialog.open) deleteDialog.close()
     if (composerDialog.open) composerDialog.close()
-    if (deliveryDialog.open) deliveryDialog.close()
     if (lineDialog.open) lineDialog.close()
     if (lineDeleteDialog.open) lineDeleteDialog.close()
     if (editDialog.open) editDialog.close()
+    if (transitionDialog.open) transitionDialog.close()
+    closeOverflow()
   }
 
   const renderAttachments = (): void => {
@@ -754,8 +855,9 @@ export const createInvoicePaymentController = (
     refreshRequired = false
     paymentCommandId = null
     deleteCommandId = null
-    invoiceCommandId = null
-    deliveryCommandId = null
+    sendAttempt = null
+    pendingTransition = null
+    transitionCommandId = null
     lineCommandId = null
     lineDeleteCommandId = null
     editHeaderCommandId = null
@@ -764,7 +866,6 @@ export const createInvoicePaymentController = (
     paymentForm.reset()
     deleteForm.reset()
     composerForm.reset()
-    deliveryForm.reset()
     lineForm.reset()
     lineDeleteForm.reset()
     editForm.reset()
@@ -772,7 +873,7 @@ export const createInvoicePaymentController = (
     paymentResult.textContent = ''
     deleteResult.textContent = ''
     composerResult.textContent = ''
-    deliveryResult.textContent = ''
+    transitionResult.textContent = ''
     lineResult.textContent = ''
     lineDeleteResult.textContent = ''
     editResult.textContent = ''
@@ -1063,35 +1164,70 @@ export const createInvoicePaymentController = (
     ) {
       return
     }
-    invoiceCommandId = null
+    // Reopening the dialog is not a fresh send. An attempt that already
+    // committed its `send` stays exactly as it is: the email it owes is what
+    // this dialog is now for, and discarding it here would rearm the transition
+    // -- a second sent message for one operator intent, reached by pressing
+    // Cancel and then Send again.
+    const owed = owedDelivery()
     composerForm.reset()
-    composerTitle.textContent =
-      invoice.state === 'open' ? 'Record another sent message' : 'Mark invoice sent'
-    composerSubmit.textContent = invoice.state === 'open' ? 'Record message' : 'Mark sent'
     composerSubject.value = 'Invoice %invoice_number%'
     composerBody.value =
       'Hello,\n\nPlease find invoice %invoice_number% for %invoice_amount%. Payment is due %invoice_due_date%.\n\nThank you.'
     const today = localDate()
-    composerReminderToggle.checked = invoice.due_date >= today
-    composerReminderDate.value = invoice.due_date >= today ? invoice.due_date : ''
+    if (owed !== null) {
+      // The recipients the committed send confirmed, not whatever the reset
+      // left behind: they are what the retry delivers to.
+      composerRecipients.value = owed.recipients.map(invoiceRecipientLine).join('\n')
+      composerDeliverToggle.checked = true
+      composerConfirm.checked = true
+      composerReminderToggle.checked = false
+      composerReminderDate.value = ''
+    } else {
+      composerReminderToggle.checked = invoice.due_date >= today
+      composerReminderDate.value = invoice.due_date >= today ? invoice.due_date : ''
+    }
     composerResult.textContent = ''
+    // syncControls titles the dialog, shows the owed notice and names the
+    // submit, all off the attempt, so no entry point sets them independently.
     syncControls()
     composerDialog.showModal()
-    composerRecipients.focus()
+    // The fields are frozen while the email is owed, so the retry is what the
+    // keyboard lands on.
+    if (owed !== null) composerSubmit.focus()
+    else composerRecipients.focus()
   }
 
-  const openDelivery = (): void => {
+  const openTransition = (command: InvoiceOverflowCommand): void => {
     const session = current()
     if (
-      session === null || invoice === null || mutationPending || refreshRequired ||
-      !invoiceIdentityCanWrite(session.identity) || !invoiceCanMarkSent(invoice)
-    ) return
-    deliveryCommandId = null
-    deliveryForm.reset()
-    deliveryResult.textContent = ''
+      session === null ||
+      invoice === null ||
+      mutationPending ||
+      refreshRequired ||
+      !invoiceIdentityCanWrite(session.identity) ||
+      !invoiceCanIssueTransition(invoice, payments.length, command)
+    ) {
+      return
+    }
+    const transition = invoiceOverflowTransitions.find(
+      (candidate) => candidate.command === command,
+    )!
+    closeOverflow()
+    pendingTransition = command
+    transitionCommandId = null
+    transitionTitle.textContent = transition.label
+    transitionSummary.textContent = transition.summary
+    transitionResult.textContent = ''
+    transitionSubmit.textContent = transition.label
+    // A destructive verb is red text, never a red fill: a filled label is body
+    // text over the fill and owes 4.5:1, and this one does not need the volume.
+    transitionSubmit.className = transition.destructive
+      ? 'invoice-destructive-action'
+      : 'primary-action'
     syncControls()
-    deliveryDialog.showModal()
-    deliveryRecipients.focus()
+    transitionDialog.showModal()
+    transitionSubmit.focus()
   }
 
   const conflictCodes = new Set([
@@ -1115,8 +1251,16 @@ export const createInvoicePaymentController = (
     if (code !== null && conflictCodes.has(code)) {
       paymentCommandId = null
       deleteCommandId = null
-      invoiceCommandId = null
-      deliveryCommandId = null
+      // `sendAttempt` is deliberately left standing. A conflict on the delivery
+      // half arrives after the `send` has committed -- it is the error class
+      // most likely to land between two sequential versioned writes, another
+      // operator or the cron writing in between -- and the reload below moves
+      // the page to a version the retried transition would be accepted at. The
+      // attempt is what makes that retry the email alone. The one conflict code
+      // that does retire it is `command_id_reused`, and the Send submission
+      // retires it there rather than here: it is the only caller that knows
+      // which command the spent key names.
+      transitionCommandId = null
       lineCommandId = null
       lineDeleteCommandId = null
       editHeaderCommandId = null
@@ -1145,8 +1289,14 @@ export const createInvoicePaymentController = (
       if (composerDialog.open && (invoice === null || !invoiceCanMarkSent(invoice))) {
         composerDialog.close()
       }
-      if (deliveryDialog.open && (invoice === null || !invoiceCanMarkSent(invoice))) {
-        deliveryDialog.close()
+      if (
+        transitionDialog.open &&
+        (invoice === null ||
+          pendingTransition === null ||
+          !invoiceCanIssueTransition(invoice, payments.length, pendingTransition))
+      ) {
+        pendingTransition = null
+        transitionDialog.close()
       }
       if (editDialog.open && (invoice === null || !invoiceCanEditLines(invoice))) {
         editDialog.close()
@@ -1161,64 +1311,77 @@ export const createInvoicePaymentController = (
     syncPrecision()
   })
   send.addEventListener('click', openComposer)
-  deliver.addEventListener('click', openDelivery)
-  deliveryForm.addEventListener('input', () => {
-    if (!mutationPending) deliveryCommandId = null
-    deliveryResult.textContent = ''
+  overflowToggle.addEventListener('click', () => {
+    if (overflowToggle.disabled) return
+    const opening = overflowMenu.hidden
+    overflowMenu.hidden = !opening
+    overflowToggle.setAttribute('aria-expanded', opening ? 'true' : 'false')
   })
-  deliveryForm.addEventListener('submit', (event) => {
+  // The menu is an overlay on a document surface, so anything outside it that
+  // takes a click closes it. Without this it survives navigation inside the page.
+  document.addEventListener('click', (event) => {
+    if (overflowMenu.hidden) return
+    const target = event.target
+    if (target instanceof Node && overflow.contains(target)) return
+    closeOverflow()
+  })
+  for (const [command, item] of overflowItems) {
+    item.addEventListener('click', () => {
+      openTransition(command)
+    })
+  }
+  transitionForm.addEventListener('submit', (event) => {
     event.preventDefault()
     const session = current()
     const selectedInvoice = invoice
-    const deliverInvoiceEmail = api.deliverInvoiceEmail
+    const command = pendingTransition
+    const transitionInvoice = api.transitionInvoice
     if (
-      session === null || selectedInvoice === null || deliverInvoiceEmail === undefined ||
-      mutationPending || refreshRequired || !invoiceIdentityCanWrite(session.identity) ||
-      !invoiceCanMarkSent(selectedInvoice)
-    ) return
-    let recipients: ReturnType<typeof invoiceRecipients>
-    try {
-      recipients = invoiceRecipients(deliveryRecipients.value)
-      if (!deliveryConfirm.checked) {
-        throw new Error('Confirm the recipients before sending this invoice email.')
-      }
-    } catch (error) {
-      deliveryResult.textContent = apiMessage(error)
+      session === null ||
+      selectedInvoice === null ||
+      command === null ||
+      transitionInvoice === undefined ||
+      mutationPending ||
+      refreshRequired ||
+      !invoiceIdentityCanWrite(session.identity) ||
+      !invoiceCanIssueTransition(selectedInvoice, payments.length, command)
+    ) {
       return
     }
-    const input: InvoiceEmailDeliveryInput = {
+    const input: InvoiceTransitionInput = {
+      command,
       expected_version: selectedInvoice.version,
-      recipients,
-      confirmed: true,
     }
-    deliveryCommandId ??= `web.invoice.delivery:${globalThis.crypto.randomUUID()}`
-    const activeCommand = deliveryCommandId
+    transitionCommandId ??= `web.invoice.${command}:${globalThis.crypto.randomUUID()}`
+    const activeCommand = transitionCommandId
     mutationPending = true
-    deliveryResult.textContent = 'Confirming and queueing invoice email…'
+    transitionResult.textContent = 'Applying the invoice command…'
     syncControls()
-    void deliverInvoiceEmail(selectedInvoice.id, activeCommand, input, session.signal)
+    void transitionInvoice(selectedInvoice.id, activeCommand, input, session.signal)
       .then(async (updatedInvoice) => {
         if (current() !== session) return
-        deliveryCommandId = null
+        transitionCommandId = null
+        pendingTransition = null
         invoice = updatedInvoice
         mutationPending = false
         refreshRequired = true
-        deliveryDialog.close()
-        workflowStatus.textContent = 'Invoice email queued. Refreshing its history…'
+        transitionResult.textContent = ''
+        transitionDialog.close()
+        workflowStatus.textContent = 'Invoice state changed. Refreshing invoice…'
         syncControls()
         const loaded = await loadDetail(session, {
           hideDocument: false,
-          successMessage: 'Invoice email queued for the confirmed recipients.',
+          successMessage: `Invoice is now ${invoiceStateLabel(updatedInvoice).toLocaleLowerCase('en-US')}.`,
         })
         if (!loaded && current() === session && refreshRequired) {
           workflowStatus.textContent =
-            'Invoice email was queued, but the updated invoice could not be refreshed. Retry invoice; the email will not be submitted again.'
+            'The invoice state changed, but the updated invoice could not be refreshed. Retry invoice; the command will not be submitted again.'
         }
       })
       .catch(async (error: unknown) => {
         if (current() !== session) return
         mutationPending = false
-        await handleMutationFailure(error, session, deliveryResult)
+        await handleMutationFailure(error, session, transitionResult)
       })
       .finally(() => {
         if (current() === session) {
@@ -1228,11 +1391,18 @@ export const createInvoicePaymentController = (
       })
   })
   composerReminderToggle.addEventListener('change', () => {
-    if (!mutationPending) invoiceCommandId = null
     syncReminder()
   })
+  composerDeliverToggle.addEventListener('change', () => {
+    syncComposer()
+  })
   composerForm.addEventListener('input', () => {
-    if (!mutationPending) invoiceCommandId = null
+    // No command id is minted or dropped here. Once a `send` has been issued its
+    // outcome may be unknown, and a fresh id on the next submit would record a
+    // second sent message rather than replay the first; the ledger replays an
+    // identical retry and refuses a changed one, which is an error the operator
+    // can see and act on. Editing the fields is not evidence that nothing was
+    // recorded, so it may not be treated as if it were.
     composerResult.textContent = ''
   })
   composerForm.addEventListener('submit', (event) => {
@@ -1240,6 +1410,7 @@ export const createInvoicePaymentController = (
     const session = current()
     const selectedInvoice = invoice
     const transitionInvoice = api.transitionInvoice
+    const deliverInvoiceEmail = api.deliverInvoiceEmail
     if (
       session === null ||
       selectedInvoice === null ||
@@ -1251,65 +1422,202 @@ export const createInvoicePaymentController = (
     ) {
       return
     }
-    let recipients: ReturnType<typeof invoiceRecipients>
-    let sendReminderOn: string | null
+    const delivering = composerDeliverToggle.checked
+    // What this submit may issue is read off the attempt, never off the
+    // checkbox alone: once the `send` has committed, nothing the dialog can be
+    // put into may run it a second time.
+    const work = invoiceSendWork(sendAttempt, selectedInvoice.id, delivering)
+    if (work === 'nothing') {
+      // The email was owed and the operator has taken it off the submit. There
+      // is no request left to make, so say what actually happened rather than
+      // closing on a success message for zero API calls.
+      sendAttempt = null
+      composerResult.textContent = ''
+      composerDialog.close()
+      workflowStatus.textContent =
+        'The sent status was already recorded. The email was not sent.'
+      syncControls()
+      return
+    }
+    if (delivering && deliverInvoiceEmail === undefined) {
+      composerResult.textContent = 'Invoice email delivery is unavailable in this build.'
+      return
+    }
+    let recipients: InvoiceRecipient[] = []
+    let sendReminderOn: string | null = null
+    let input: InvoiceTransitionInput | null = null
     const subject = composerSubject.value.trim()
     const body = composerBody.value.trim()
     try {
-      recipients = invoiceRecipients(composerRecipients.value)
-      if (subject === '') throw new Error('Enter a subject before recording.')
-      if (body === '') throw new Error('Enter a message before recording.')
-      sendReminderOn = composerReminderToggle.checked
-        ? invoiceReminderDate(composerReminderDate.value, localDate())
-        : null
+      if (work === 'send') {
+        recipients = invoiceRecipients(composerRecipients.value)
+        if (subject === '') throw new Error('Enter a subject before recording.')
+        if (body === '') throw new Error('Enter a message before recording.')
+        sendReminderOn = composerReminderToggle.checked
+          ? invoiceReminderDate(composerReminderDate.value, localDate())
+          : null
+        if (delivering && !composerConfirm.checked) {
+          throw new Error('Confirm the recipients before sending this invoice email.')
+        }
+        input = {
+          command: 'send',
+          expected_version: selectedInvoice.version,
+          recipients,
+          subject: interpolateInvoiceTemplate(subject, selectedInvoice),
+          body: interpolateInvoiceTemplate(body, selectedInvoice),
+          attach_pdf: false,
+          send_me_a_copy: false,
+          thank_you: false,
+          reminder: sendReminderOn !== null,
+          send_reminder_on: sendReminderOn,
+        }
+      } else if (!composerConfirm.checked) {
+        // The email is still the irreversible half on a retry, so it still
+        // owes the confirmation.
+        throw new Error('Confirm the recipients before sending this invoice email.')
+      }
     } catch (error) {
       composerResult.textContent = apiMessage(error)
       return
     }
-    const input: InvoiceTransitionInput = {
-      command: 'send',
-      expected_version: selectedInvoice.version,
-      recipients,
-      subject: interpolateInvoiceTemplate(subject, selectedInvoice),
-      body: interpolateInvoiceTemplate(body, selectedInvoice),
-      attach_pdf: false,
-      send_me_a_copy: false,
-      thank_you: false,
-      reminder: sendReminderOn !== null,
-      send_reminder_on: sendReminderOn,
-    }
-    invoiceCommandId ??= `web.invoice.send:${globalThis.crypto.randomUUID()}`
-    const activeCommand = invoiceCommandId
+    const live = invoiceSendAttemptFor(sendAttempt, selectedInvoice.id)
+    // A `send` that has been issued keeps its command id for the life of the
+    // attempt whatever happens in between. While it is still owed the email has
+    // not been issued at all, so the checkbox and the recipients on screen may
+    // still decide it; once it has been, `live` is the whole answer.
+    const attempt: InvoiceSendAttempt =
+      work === 'delivery'
+        ? live!
+        : {
+            invoiceId: selectedInvoice.id,
+            transitionCommandId:
+              live?.transitionCommandId ?? `web.invoice.send:${globalThis.crypto.randomUUID()}`,
+            sentVersion: null,
+            delivery: delivering
+              ? {
+                  commandId:
+                    live?.delivery?.commandId ??
+                    `web.invoice.delivery:${globalThis.crypto.randomUUID()}`,
+                  recipients,
+                }
+              : null,
+          }
+    sendAttempt = attempt
     mutationPending = true
-    composerResult.textContent = 'Recording sent status…'
+    composerResult.textContent =
+      work === 'delivery'
+        ? 'Queueing the email…'
+        : delivering
+          ? 'Recording sent status, then queueing the email…'
+          : 'Recording sent status…'
     syncControls()
-    void transitionInvoice(
-      selectedInvoice.id,
-      activeCommand,
-      input,
-      session.signal,
-    )
+    // Two commands on rising versions, in the order the operator would have had
+    // to guess at: the state change first, then the email. POST /deliveries
+    // issues its own send once the mail is accepted, so the history carries both
+    // the message written here and the one the organization template sent.
+    const request = (async (): Promise<Invoice> => {
+      let saved = selectedInvoice
+      if (input !== null) {
+        saved = await transitionInvoice(
+          saved.id,
+          attempt.transitionCommandId,
+          input,
+          session.signal,
+        )
+        if (current() === session) {
+          invoice = saved
+          refreshRequired = true
+          // The sent status is committed. What is left is written onto the
+          // attempt, which is the one thing every later path consults: a
+          // conflict reload, a reopened dialog and an edited field all leave it
+          // standing, so none of them can rearm the transition.
+          sendAttempt = { ...attempt, sentVersion: saved.version }
+        }
+      }
+      if (attempt.delivery !== null) {
+        const deliveryInput: InvoiceEmailDeliveryInput = {
+          expected_version: saved.version,
+          recipients: [...attempt.delivery.recipients],
+          confirmed: true,
+        }
+        saved = await deliverInvoiceEmail!(
+          saved.id,
+          attempt.delivery.commandId,
+          deliveryInput,
+          session.signal,
+        )
+        if (current() === session) sendAttempt = null
+      }
+      return saved
+    })()
+    void request
       .then(async (updatedInvoice) => {
         if (current() !== session) return
-        invoiceCommandId = null
+        sendAttempt = null
         invoice = updatedInvoice
         mutationPending = false
         refreshRequired = true
         composerDialog.close()
-        workflowStatus.textContent = 'Invoice marked sent. Refreshing its history…'
+        workflowStatus.textContent = delivering
+          ? 'Invoice marked sent and the email queued. Refreshing its history…'
+          : 'Invoice marked sent. Refreshing its history…'
         syncControls()
-        await loadDetail(session, {
+        const reminderNote =
+          sendReminderOn === null
+            ? ''
+            : ` Planned reminder date saved for ${dateLabel(sendReminderOn)}.`
+        const loaded = await loadDetail(session, {
           hideDocument: false,
-          successMessage:
-            sendReminderOn === null
-              ? 'Invoice marked sent. No email was delivered.'
-              : `Invoice marked sent. Planned reminder date saved for ${dateLabel(sendReminderOn)}; delivery is not scheduled.`,
+          successMessage: delivering
+            ? `Invoice marked sent and the email queued for the confirmed recipients.${reminderNote}`
+            : `Invoice marked sent. No email was delivered.${reminderNote}`,
         })
+        if (!loaded && current() === session && refreshRequired) {
+          workflowStatus.textContent =
+            'The invoice was sent, but the updated invoice could not be refreshed. Retry invoice; nothing will be submitted again.'
+        }
       })
       .catch(async (error: unknown) => {
         if (current() !== session) return
         mutationPending = false
+        // Holding the key is what keeps a retry from re-sending, and retiring
+        // it is what keeps a lost response from bricking the dialog. Both come
+        // off the failure: `command_id_reused` is the ledger reporting this
+        // key's command committed, so it is spent and the attempt goes; every
+        // other failure keeps it. Decided before the shared handler runs, so
+        // nothing renders the composer against an attempt already spent.
+        const failure = invoiceSendFailure(
+          sendAttempt,
+          selectedInvoice.id,
+          apiErrorCode(error),
+        )
+        sendAttempt = failure.attempt
         await handleMutationFailure(error, session, composerResult)
+        // A conflict already reloaded. A delivery that failed after the sent
+        // status committed has not, and the page would otherwise keep rendering
+        // a version nobody saved while the composer offers a retry.
+        if (current() === session && refreshRequired) {
+          await loadDetail(session, { hideDocument: false })
+        }
+        // A spent key is refused with a conflict code, so the shared handler has
+        // just written that somebody else moved the invoice. The operator moved
+        // it, and what they need to know is that it went out -- and that the
+        // dialog they are looking at would now send it a second time.
+        if (current() === session && failure.notice !== null) {
+          composerResult.textContent = failure.notice
+          // The reload can close the composer under it -- a closed invoice takes
+          // no send -- and the truth may not go with it.
+          if (!composerDialog.open) workflowStatus.textContent = failure.notice
+        }
+        // The attempt is what decides whether a retry is on offer, so it also
+        // writes the line saying so -- including after a conflict, which is
+        // exactly the case where the old flag was cleared out from under this
+        // message and the next submit re-sent the invoice.
+        if (current() === session && emailOwed()) {
+          const reported = composerResult.textContent?.trim() ?? ''
+          composerResult.textContent =
+            `${reported} The sent status was recorded; submit again to retry the email alone.`.trim()
+        }
       })
       .finally(() => {
         if (current() === session) {

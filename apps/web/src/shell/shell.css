@@ -801,6 +801,52 @@
   background: var(--ez-ink);
   color: var(--ez-ground);
 }
+.invoice-overflow {
+  position: relative;
+}
+.invoice-overflow-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  gap: 2px;
+  min-width: 230px;
+  padding: 6px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  box-shadow: 0 14px 36px color-mix(in srgb, var(--ez-ink) 14%, transparent);
+}
+/* The header's own buttons are filled ink blocks. A menu row is not a control
+   of that weight, so it drops the fill and reads as a list of verbs. */
+.invoice-document-actions .invoice-overflow-item {
+  min-height: 40px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--ez-ink);
+  text-align: left;
+}
+.invoice-document-actions .invoice-overflow-item:hover {
+  background: var(--ez-surface);
+}
+/* Destructive verbs are red *text*, never a red fill. A filled button's label
+   is body text over the fill and owes 4.5:1; `red` on the document ground
+   scores 5.46:1 and on the hover surface 5.04:1, so both are covered without
+   making cancelling an invoice the loudest thing on the page. */
+.invoice-document-actions .invoice-overflow-destructive,
+.invoice-payment-dialog-actions .invoice-destructive-action {
+  color: var(--ez-red);
+  font-weight: 600;
+}
+.invoice-payment-dialog-actions .invoice-destructive-action {
+  border-color: var(--ez-red);
+  background: transparent;
+}
+.invoice-transition-dialog p:not(.hint):not(.form-result) {
+  margin: 0;
+}
 .invoice-reminder-line {
   margin: 16px 0 0;
   padding: 10px 12px;
@@ -2111,6 +2157,18 @@
     width: 100%;
     justify-content: space-between;
     flex-wrap: wrap;
+  }
+  /* The actions row wraps here, so a menu anchored to the toggle can end up
+     anchored to the left edge of a line and run off the screen. On this
+     breakpoint it stops floating and takes a row of its own instead. */
+  .invoice-overflow {
+    position: static;
+    width: 100%;
+  }
+  .invoice-overflow-menu {
+    position: static;
+    min-width: 0;
+    margin-top: 8px;
   }
   .invoice-composer-layout {
     grid-template-columns: 1fr;

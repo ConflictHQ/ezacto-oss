@@ -2,6 +2,7 @@ import type { Invoice, InvoiceMessage, InvoicePayment, Whoami } from '@ezacto/cl
 import { describe, expect, it } from 'vitest'
 import {
   interpolateInvoiceTemplate,
+  invoiceCanIssueTransition,
   invoiceCanMarkSent,
   invoiceCanEditLines,
   invoiceCanRecordPayment,
@@ -9,6 +10,7 @@ import {
   invoiceIdentityCanRead,
   invoiceIdentityCanWrite,
   invoiceMessageLabel,
+  invoiceOverflowTransitions,
   invoiceLineQuantityForForm,
   invoiceLineUnitPriceCents,
   invoiceLineUnitPriceForForm,
@@ -25,9 +27,13 @@ import {
   invoicePeriod,
   invoiceProfileHasAccess,
   invoiceRecipients,
+  invoiceRecipientLine,
   invoiceReminderDate,
   invoicePlannedReminder,
+  invoiceSendFailure,
+  invoiceSendWork,
   invoiceStateLabel,
+  type InvoiceSendAttempt,
 } from '../src/invoices/model.js'
 
 const invoice = (overrides: Partial<Invoice> = {}): Invoice =>
@@ -282,5 +288,154 @@ describe('invoice workspace model', () => {
     expect(invoiceCanEditLines(invoice({ state: 'open' }))).toBe(true)
     expect(invoiceCanEditLines(invoice({ state: 'paid' }))).toBe(true)
     expect(invoiceCanEditLines(invoice({ state: 'closed' }))).toBe(false)
+  })
+
+  it('[unit] offers only the lifecycle verbs the reducer would accept', () => {
+    // Every combination the menu can be asked about, against the rules in
+    // @ezacto/core: a verb offered here that the reducer rejects is a round
+    // trip to an illegal_invoice_transition the operator cannot act on.
+    const draft = invoice({ state: 'draft', due_amount_cents: 1_000, written_off_cents: 0 })
+    const open = invoice({ state: 'open', due_amount_cents: 1_000, written_off_cents: 0 })
+    const settled = invoice({ state: 'open', due_amount_cents: 0, written_off_cents: 0 })
+    const closed = invoice({ state: 'closed', due_amount_cents: 0, written_off_cents: 1_000 })
+    const paid = invoice({ state: 'paid', due_amount_cents: 0, written_off_cents: 0 })
+
+    // draft is only reachable from open, and only while nothing is recorded
+    // against the invoice -- a payment or a write-off makes it illegal.
+    expect(invoiceCanIssueTransition(open, 0, 'draft')).toBe(true)
+    expect(invoiceCanIssueTransition(open, 1, 'draft')).toBe(false)
+    expect(
+      invoiceCanIssueTransition(invoice({ state: 'open', written_off_cents: 5 }), 0, 'draft'),
+    ).toBe(false)
+    expect(invoiceCanIssueTransition(draft, 0, 'draft')).toBe(false)
+    expect(invoiceCanIssueTransition(closed, 0, 'draft')).toBe(false)
+
+    expect(invoiceCanIssueTransition(draft, 0, 'cancel')).toBe(true)
+    expect(invoiceCanIssueTransition(open, 3, 'cancel')).toBe(true)
+    expect(invoiceCanIssueTransition(paid, 0, 'cancel')).toBe(false)
+    expect(invoiceCanIssueTransition(closed, 0, 'cancel')).toBe(false)
+
+    // write_off needs something left to write off.
+    expect(invoiceCanIssueTransition(open, 0, 'write_off')).toBe(true)
+    expect(invoiceCanIssueTransition(settled, 0, 'write_off')).toBe(false)
+    expect(invoiceCanIssueTransition(draft, 0, 'write_off')).toBe(false)
+
+    expect(invoiceCanIssueTransition(closed, 0, 'reopen')).toBe(true)
+    expect(invoiceCanIssueTransition(open, 0, 'reopen')).toBe(false)
+    expect(invoiceCanIssueTransition(paid, 0, 'reopen')).toBe(false)
+
+    // The two verbs that close an invoice are the two marked destructive, and
+    // destructive means red text -- never a red fill.
+    expect(
+      invoiceOverflowTransitions
+        .filter((transition) => transition.destructive)
+        .map((transition) => transition.command),
+    ).toEqual(['write_off', 'cancel'])
+    expect(invoiceOverflowTransitions.map((transition) => transition.command)).toEqual([
+      'draft',
+      'reopen',
+      'write_off',
+      'cancel',
+    ])
+    // Written off and Cancelled are the two labels invoiceStateLabel could
+    // already render; these are the verbs that finally produce them.
+    expect(invoiceStateLabel(invoice({ state: 'closed', close_reason: 'written_off' }))).toBe(
+      'Written off',
+    )
+    expect(invoiceStateLabel(invoice({ state: 'closed', close_reason: 'cancelled' }))).toBe(
+      'Cancelled',
+    )
+  })
+
+  it('never offers a second send once an attempt has committed one', () => {
+    const delivery = {
+      commandId: 'web.invoice.delivery:1',
+      recipients: [{ name: 'Accounts Payable', email: 'ap@example.test' }],
+    }
+    const attempting: InvoiceSendAttempt = {
+      invoiceId: 7,
+      transitionCommandId: 'web.invoice.send:1',
+      sentVersion: null,
+      delivery,
+    }
+    const sent: InvoiceSendAttempt = { ...attempting, sentVersion: 2 }
+
+    // Nothing attempted yet, and an attempt whose `send` never committed: the
+    // transition is what a submit owes, under the id it already minted.
+    expect(invoiceSendWork(null, 7, true)).toBe('send')
+    expect(invoiceSendWork(null, 7, false)).toBe('send')
+    expect(invoiceSendWork(attempting, 7, true)).toBe('send')
+    expect(invoiceSendWork(attempting, 7, false)).toBe('send')
+
+    // Committed: the email alone, or nothing at all. Neither is a send, and the
+    // checkbox cannot make it one.
+    expect(invoiceSendWork(sent, 7, true)).toBe('delivery')
+    expect(invoiceSendWork(sent, 7, false)).toBe('nothing')
+    // A committed send with no email left owes nothing either -- least of all
+    // another send.
+    expect(invoiceSendWork({ ...sent, delivery: null }, 7, true)).toBe('nothing')
+
+    // An attempt belongs to one invoice. Another invoice's send is untouched by
+    // it, and is a first attempt of its own.
+    expect(invoiceSendWork(sent, 8, true)).toBe('send')
+    expect(invoiceSendWork(sent, 8, false)).toBe('send')
+  })
+
+  it('retires a send key only on the code that says its command committed', () => {
+    const delivery = {
+      commandId: 'web.invoice.delivery:1',
+      recipients: [{ name: 'Accounts Payable', email: 'ap@example.test' }],
+    }
+    const attempting: InvoiceSendAttempt = {
+      invoiceId: 7,
+      transitionCommandId: 'web.invoice.send:1',
+      sentVersion: null,
+      delivery,
+    }
+    const sent: InvoiceSendAttempt = { ...attempting, sentVersion: 2 }
+
+    // The failures that say nothing about whether the command committed keep
+    // the key. Dropping it here is what re-sends the invoice.
+    for (const code of [null, 'invoice_version_conflict', 'trigger_row_conflict']) {
+      expect(invoiceSendFailure(attempting, 7, code)).toEqual({
+        attempt: attempting,
+        notice: null,
+      })
+      expect(invoiceSendFailure(sent, 7, code)).toEqual({ attempt: sent, notice: null })
+    }
+
+    // `command_id_reused` is the ledger refusing a key it already holds a row
+    // for, so the command committed and the key is spent. Holding it refuses
+    // every later submit, including a deliberate second send.
+    const refusedSend = invoiceSendFailure(attempting, 7, 'command_id_reused')
+    expect(refusedSend.attempt).toBeNull()
+    expect(refusedSend.notice).toContain('already recorded as sent')
+    expect(refusedSend.notice).toContain('records a second sent message')
+    // The same code on the email half names the email, not the sent status.
+    const refusedDelivery = invoiceSendFailure(sent, 7, 'command_id_reused')
+    expect(refusedDelivery.attempt).toBeNull()
+    expect(refusedDelivery.notice).toContain('already queued')
+    expect(refusedDelivery.notice).toContain('a second email')
+
+    // Another invoice's refusal is not this attempt's, and retiring the wrong
+    // key would rearm a send that has already committed.
+    expect(invoiceSendFailure(sent, 8, 'command_id_reused')).toEqual({
+      attempt: sent,
+      notice: null,
+    })
+    expect(invoiceSendFailure(null, 7, 'command_id_reused')).toEqual({
+      attempt: null,
+      notice: null,
+    })
+  })
+
+  it('renders a stored recipient back into the line that parses to it', () => {
+    const recipients = invoiceRecipients('Accounts Payable <AP@Example.Test>\nplain@example.test')
+    expect(recipients.map(invoiceRecipientLine)).toEqual([
+      'Accounts Payable <AP@Example.Test>',
+      'plain@example.test',
+    ])
+    // A resumed send round-trips: what the box shows is what was confirmed.
+    expect(invoiceRecipients(recipients.map(invoiceRecipientLine).join('\n'))).toEqual(recipients)
   })
 })

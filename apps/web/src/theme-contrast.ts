@@ -58,6 +58,13 @@ export const precisionContrastRequirements: readonly ThemeContrastRequirement[] 
     background: 'status_bg',
     minimum: 4.5,
   },
+  // The invoice header's destructive verbs -- cancel and write off -- are red
+  // text on the document ground and on the surface the menu row hovers to.
+  // They are words, not an indicator, so both owe the 4.5:1 body-text bar. The
+  // pairs are listed rather than reasoned about so a darker ground or a
+  // brighter red is caught here instead of in review.
+  { name: 'red/ground text', foreground: 'red', background: 'ground', minimum: 4.5 },
+  { name: 'red/surface text', foreground: 'red', background: 'surface', minimum: 4.5 },
   // An icon is a non-text graphic and AA asks 3:1 of it — but only while
   // something else names the control. The overflow mark in a table row and the
   // magnifier on the command trigger are the whole label of the control they

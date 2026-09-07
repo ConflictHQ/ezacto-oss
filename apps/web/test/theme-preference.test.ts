@@ -93,6 +93,8 @@ describe('D16 Precision preference policy', () => {
       { name: 'ground/live-text button label', minimum: 4.5, passes: true },
       { name: 'live-text/ground text', minimum: 4.5, passes: true },
       { name: 'live-text/status-bg text', minimum: 4.5, passes: true },
+      { name: 'red/ground text', minimum: 4.5, passes: true },
+      { name: 'red/surface text', minimum: 4.5, passes: true },
       { name: 'data/ground row action', minimum: 4.5, passes: true },
       { name: 'ink/surface control label', minimum: 4.5, passes: true },
     ])
@@ -104,6 +106,8 @@ describe('D16 Precision preference policy', () => {
       expect.closeTo(5.26, 2),
       expect.closeTo(5.26, 2),
       expect.closeTo(4.63, 2),
+      expect.closeTo(5.46, 2),
+      expect.closeTo(5.04, 2),
       expect.closeTo(5.74, 2),
       expect.closeTo(16.74, 2),
     ])

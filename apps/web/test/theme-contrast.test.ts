@@ -90,6 +90,8 @@ describe('D16 theme AA contrast gate', () => {
       ['ground/live-text button label', 5.26],
       ['live-text/ground text', 5.26],
       ['live-text/status-bg text', 4.63],
+      ['red/ground text', 5.46],
+      ['red/surface text', 5.04],
       ['data/ground row action', 5.74],
       ['ink/surface control label', 16.74],
     ])

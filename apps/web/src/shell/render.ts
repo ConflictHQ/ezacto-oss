@@ -13,12 +13,13 @@ import { renderModuleSettingsPage } from '../module-settings/render.js'
 import {
   renderInvoiceAttachmentSection,
   renderInvoiceComposerDialog,
-  renderInvoiceDeliveryDialog,
   renderInvoiceEditDialog,
   renderInvoicePaymentDialogs,
   renderInvoicePaymentSection,
   renderInvoiceLineDialogs,
   renderInvoiceLineEditor,
+  renderInvoiceOverflowMenu,
+  renderInvoiceTransitionDialog,
 } from '../invoices/render.js'
 
 export interface ShellTab {
@@ -446,7 +447,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
           <h2 data-invoice-detail-number>—</h2>
           <p data-invoice-detail-subject hidden></p>
         </div>
-        <div class="invoice-document-actions"><strong class="invoice-state" data-invoice-detail-state>—</strong><button type="button" data-invoice-edit disabled hidden>Edit invoice</button><button type="button" data-invoice-deliver disabled hidden>Send invoice</button><button type="button" data-invoice-send disabled hidden>Mark sent</button></div>
+        <div class="invoice-document-actions"><strong class="invoice-state" data-invoice-detail-state>—</strong><button type="button" data-invoice-edit disabled hidden>Edit invoice</button><button type="button" data-invoice-send disabled hidden>Send invoice</button>${renderInvoiceOverflowMenu()}</div>
       </header>
       <p class="invoice-reminder-line" data-invoice-reminder-line hidden></p>
       <dl class="invoice-facts">
@@ -563,10 +564,10 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
   ${renderExpenseCategoriesPage(view)}
   ${renderModuleSettingsPage(view)}
   ${renderInvoiceComposerDialog()}
-  ${renderInvoiceDeliveryDialog()}
   ${renderInvoiceEditDialog()}
   ${renderInvoiceLineDialogs()}
   ${renderInvoicePaymentDialogs()}
+  ${renderInvoiceTransitionDialog()}
   <dialog class="command-dialog" data-command-dialog aria-labelledby="command-title">
     <form data-command-form>
       <header><div><p class="eyebrow">Command bar</p><h2 id="command-title">Go or log time</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>

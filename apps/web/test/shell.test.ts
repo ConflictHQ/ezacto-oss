@@ -622,13 +622,32 @@ describe('S-1 through S-5 application shell', () => {
     expect(detail).toContain('data-invoice-payment-delete-dialog')
     expect(detail).toContain('No email or thank-you message will be sent.')
     expect(detail).toContain('data-invoice-detail-messages')
-    expect(detail).toContain('data-invoice-deliver')
-    expect(detail).toContain('data-invoice-delivery-dialog')
-    expect(detail).toContain('No PDF is attached')
+    // One Send dialog, not two: the state change and the email are the same
+    // control now, with the email behind a checkbox and its own confirmation.
+    expect(detail).not.toContain('data-invoice-deliver>')
+    expect(detail).not.toContain('data-invoice-delivery-dialog')
     expect(detail).toContain('data-invoice-send')
+    expect(detail).toContain('data-invoice-composer-deliver-toggle')
+    expect(detail).toContain('Also deliver by email')
+    expect(detail).toContain('data-invoice-composer-confirm')
+    expect(detail).toContain('No PDF is attached')
     expect(detail).toContain('data-invoice-reminder-line')
     expect(detail).toContain('data-invoice-composer-dialog')
     expect(detail).toContain('%invoice_number%')
+    // The verbs invoiceStateLabel could already render and no operator could
+    // reach: the overflow issues all four, destructive ones as red text.
+    expect(detail).toContain('data-invoice-overflow-toggle')
+    expect(detail).toContain('data-invoice-transition="write_off"')
+    expect(detail).toContain('data-invoice-transition="cancel"')
+    expect(detail).toContain('data-invoice-transition="draft"')
+    expect(detail).toContain('data-invoice-transition="reopen"')
+    expect(detail).toContain('data-invoice-transition-dialog')
+    expect(detail).toMatch(
+      /class="invoice-overflow-item invoice-overflow-destructive"[^>]*data-invoice-transition="write_off"/u,
+    )
+    expect(detail).toMatch(
+      /class="invoice-overflow-item invoice-overflow-destructive"[^>]*data-invoice-transition="cancel"/u,
+    )
     expect(generation).toContain('data-generated-invoice-link')
     expect(generation).toContain('The draft is saved and ready to review.')
     expect(detail).not.toMatch(/>Send<|Download PDF|Send reminder/u)
@@ -638,6 +657,12 @@ describe('S-1 through S-5 application shell', () => {
     expect(webAssets.stylesheet).toContain('.invoice-line-dialog {')
     expect(webAssets.stylesheet).toContain('.invoice-line-actions {')
     expect(webAssets.stylesheet).toContain('.invoice-load-more {')
+    // Red text, never a red fill: the destructive rules set a colour and no
+    // background, which is what keeps them off the AA filled-label bar.
+    expect(webAssets.stylesheet).toContain('.invoice-overflow-menu {')
+    expect(webAssets.stylesheet).toMatch(
+      /\.invoice-document-actions \.invoice-overflow-destructive,\n\.invoice-payment-dialog-actions \.invoice-destructive-action \{\n {2}color: var\(--ez-red\);/u,
+    )
   })
 
   it('[acceptance] renders project list and detail workspaces without server-side restricted fields', () => {

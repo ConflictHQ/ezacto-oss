@@ -1594,7 +1594,10 @@ describe('invoice browse browser behavior', () => {
     const dialog = document.querySelector<HTMLDialogElement>('[data-invoice-composer-dialog]')!
     const form = document.querySelector<HTMLFormElement>('[data-invoice-composer-form]')!
     expect(send.hidden).toBe(false)
-    expect(send.textContent).toBe('Mark sent')
+    expect(send.textContent).toBe('Send invoice')
+    // One Send control now, not a Send/Mark sent pair with contradictory hints.
+    expect(document.querySelector('[data-invoice-deliver]')).toBeNull()
+    expect(document.querySelector('[data-invoice-delivery-dialog]')).toBeNull()
 
     send.click()
     expect(dialog.open).toBe(true)
@@ -1649,88 +1652,325 @@ describe('invoice browse browser behavior', () => {
     expect(document.querySelector('[data-invoice-detail-messages]')?.textContent).toContain(
       'Invoice #7 totals $82.50',
     )
-    expect(send.textContent).toBe('Record another sent message')
+    expect(send.textContent).toBe('Send invoice again')
   })
 
-  it('[e2e:invoice-email] requires F13 confirmation and retries one durable delivery command', async () => {
+  it('[e2e:invoice-email] sends and delivers from one dialog and retries the email alone', async () => {
     renderBrowserShell({ view: 'invoice-detail' })
     const base = browserApi()
-    let currentInvoice = invoice(7)
-    let attempts = 0
-    const deliverInvoiceEmail = vi.fn(
-      async (_id: number, _commandId: string, input: { expected_version: number }) => {
-        attempts += 1
-        if (attempts === 1) throw new Error('network unavailable')
+    let currentInvoice = invoice(7, { due_date: '2099-09-30' })
+    let messages: InvoiceMessage[] = []
+    const transitionInvoice = vi.fn(
+      async (_id: number, _commandId: string, input: InvoiceTransitionInput) => {
         currentInvoice = {
           ...currentInvoice,
           state: 'open',
           version: input.expected_version + 1,
           sent_at: timestamp,
         }
+        messages = [
+          {
+            ...invoiceMessage(7),
+            event_type: 'send',
+            recipients: input.recipients ?? [],
+            subject: input.subject ?? null,
+            body: input.body ?? null,
+          },
+        ]
         return currentInvoice
       },
     )
-    const transitionInvoice = vi.fn()
+    let deliveries = 0
+    const deliverInvoiceEmail = vi.fn(
+      async (_id: number, _commandId: string, input: { expected_version: number }) => {
+        deliveries += 1
+        if (deliveries === 1) throw new Error('network unavailable')
+        currentInvoice = { ...currentInvoice, version: input.expected_version + 1 }
+        return currentInvoice
+      },
+    )
     const api: ShellApi = {
       ...base,
       getInvoice: vi.fn(async () => currentInvoice),
-      listInvoiceMessages: vi.fn(async () => []),
+      listInvoiceMessages: vi.fn(async () => messages),
       listInvoicePayments: vi.fn(async () => []),
       deliverInvoiceEmail,
       transitionInvoice,
     }
 
     await mountShell(api)
-    const deliver = document.querySelector<HTMLButtonElement>('[data-invoice-deliver]')!
-    const dialog = document.querySelector<HTMLDialogElement>('[data-invoice-delivery-dialog]')!
-    const form = document.querySelector<HTMLFormElement>('[data-invoice-delivery-form]')!
-    expect(deliver.hidden).toBe(false)
-    expect(deliver.textContent).toBe('Send invoice')
-
-    deliver.click()
+    const send = document.querySelector<HTMLButtonElement>('[data-invoice-send]')!
+    const dialog = document.querySelector<HTMLDialogElement>('[data-invoice-composer-dialog]')!
+    const form = document.querySelector<HTMLFormElement>('[data-invoice-composer-form]')!
+    send.click()
     expect(dialog.open).toBe(true)
+    // The dialog says the two things are separate and which order they run in.
+    expect(dialog.textContent).toContain('Also deliver by email')
     expect(dialog.textContent).toContain('No PDF is attached')
-    dialog.querySelector<HTMLButtonElement>('[data-dialog-close]:not([aria-label])')!.click()
-    expect(dialog.open).toBe(false)
-    expect(deliverInvoiceEmail).not.toHaveBeenCalled()
-    deliver.click()
-    dialog.querySelector<HTMLButtonElement>('[data-dialog-close][aria-label]')!.click()
-    expect(dialog.open).toBe(false)
-    expect(deliverInvoiceEmail).not.toHaveBeenCalled()
+    expect(dialog.textContent).toContain('%invoice_number%')
 
-    deliver.click()
     const recipients = document.querySelector<HTMLTextAreaElement>(
-      '[data-invoice-delivery-recipients]',
+      '[data-invoice-composer-recipients]',
     )!
-    recipients.value = 'Accounts Payable <AP@Example.Test>\nap@example.test'
+    recipients.value = 'Accounts Payable <AP@Example.Test>'
     recipients.dispatchEvent(new Event('input', { bubbles: true }))
+    const deliverToggle = document.querySelector<HTMLInputElement>(
+      '[data-invoice-composer-deliver-toggle]',
+    )!
+    const confirmLabel = document.querySelector<HTMLElement>(
+      '[data-invoice-composer-confirm-label]',
+    )!
+    // The confirmation only exists while the irreversible half is being asked for.
+    expect(confirmLabel.hidden).toBe(true)
+    deliverToggle.click()
+    expect(confirmLabel.hidden).toBe(false)
+    expect(document.querySelector('[data-invoice-composer-submit]')?.textContent).toBe(
+      'Send and deliver',
+    )
+
     form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
-    expect(document.querySelector('[data-invoice-delivery-result]')?.textContent).toBe(
+    expect(document.querySelector('[data-invoice-composer-result]')?.textContent).toBe(
       'Confirm the recipients before sending this invoice email.',
     )
+    expect(transitionInvoice).not.toHaveBeenCalled()
     expect(deliverInvoiceEmail).not.toHaveBeenCalled()
 
-    document.querySelector<HTMLInputElement>('[data-invoice-delivery-confirm]')!.click()
+    document.querySelector<HTMLInputElement>('[data-invoice-composer-confirm]')!.click()
     form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
     await vi.waitFor(() =>
-      expect(document.querySelector('[data-invoice-delivery-result]')?.textContent).toBe(
-        'network unavailable',
+      expect(document.querySelector('[data-invoice-composer-result]')?.textContent).toContain(
+        'submit again to retry the email alone',
       ),
     )
+    // The sent status committed before the email failed. Submitting again must
+    // retry the email at the version the transition returned -- not record a
+    // second sent message on an invoice that is already sent.
+    expect(transitionInvoice).toHaveBeenCalledTimes(1)
+    expect(transitionInvoice.mock.calls[0]?.[2]).toMatchObject({
+      command: 'send',
+      expected_version: 1,
+      recipients: [{ name: 'Accounts Payable', email: 'AP@Example.Test' }],
+    })
+
     form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
     await vi.waitFor(() => expect(dialog.open).toBe(false))
-
+    expect(transitionInvoice).toHaveBeenCalledTimes(1)
     expect(deliverInvoiceEmail).toHaveBeenCalledTimes(2)
     expect(deliverInvoiceEmail.mock.calls[0]?.[1]).toBe(deliverInvoiceEmail.mock.calls[1]?.[1])
+    // Both attempts carry the version the transition returned, not the one the
+    // page was showing when the dialog opened.
+    for (const call of deliverInvoiceEmail.mock.calls) {
+      expect(call[2]).toEqual({
+        expected_version: 2,
+        recipients: [{ name: 'Accounts Payable', email: 'AP@Example.Test' }],
+        confirmed: true,
+      })
+    }
+    expect(document.querySelector('[data-invoice-payment-status]')?.textContent).toContain(
+      'Invoice marked sent and the email queued for the confirmed recipients.',
+    )
+  })
+
+  /**
+   * The three ways back into a send that has already committed. Each one used
+   * to rearm the transition, and a second `send` is a second sent message in
+   * the client's inbox -- POST /deliveries issues its own send on top.
+   */
+  const sendAndFailTheEmail = async (
+    failure: unknown,
+  ): Promise<{
+    readonly dialog: HTMLDialogElement
+    readonly form: HTMLFormElement
+    readonly transitionInvoice: ReturnType<typeof vi.fn>
+    readonly deliverInvoiceEmail: ReturnType<typeof vi.fn>
+    readonly sentMessages: () => number
+  }> => {
+    renderBrowserShell({ view: 'invoice-detail' })
+    const base = browserApi()
+    let currentInvoice = invoice(7, { due_date: '2099-09-30' })
+    let messages: InvoiceMessage[] = []
+    const transitionInvoice = vi.fn(
+      async (_id: number, _commandId: string, input: InvoiceTransitionInput) => {
+        currentInvoice = {
+          ...currentInvoice,
+          state: 'open',
+          version: input.expected_version + 1,
+          sent_at: timestamp,
+        }
+        messages = [
+          ...messages,
+          {
+            ...invoiceMessage(7),
+            id: messages.length + 1,
+            event_type: 'send',
+            recipients: input.recipients ?? [],
+          },
+        ]
+        return currentInvoice
+      },
+    )
+    let deliveries = 0
+    const deliverInvoiceEmail = vi.fn(
+      async (_id: number, _commandId: string, input: { expected_version: number }) => {
+        deliveries += 1
+        if (deliveries === 1) throw failure
+        // The delivery route runs its own `send` once the mail is accepted.
+        currentInvoice = { ...currentInvoice, version: input.expected_version + 1 }
+        messages = [
+          ...messages,
+          { ...invoiceMessage(7), id: messages.length + 1, event_type: 'send' },
+        ]
+        return currentInvoice
+      },
+    )
+    const api: ShellApi = {
+      ...base,
+      getInvoice: vi.fn(async () => currentInvoice),
+      listInvoiceMessages: vi.fn(async () => messages),
+      listInvoicePayments: vi.fn(async () => []),
+      deliverInvoiceEmail,
+      transitionInvoice,
+    }
+
+    await mountShell(api)
+    document.querySelector<HTMLButtonElement>('[data-invoice-send]')!.click()
+    const dialog = document.querySelector<HTMLDialogElement>('[data-invoice-composer-dialog]')!
+    const form = document.querySelector<HTMLFormElement>('[data-invoice-composer-form]')!
+    const recipients = document.querySelector<HTMLTextAreaElement>(
+      '[data-invoice-composer-recipients]',
+    )!
+    recipients.value = 'Accounts Payable <AP@Example.Test>'
+    recipients.dispatchEvent(new Event('input', { bubbles: true }))
+    document.querySelector<HTMLInputElement>('[data-invoice-composer-deliver-toggle]')!.click()
+    document.querySelector<HTMLInputElement>('[data-invoice-composer-confirm]')!.click()
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    // Settle on the controls coming back, not on any particular wording: what
+    // each test is here to measure is the requests the next submit makes.
+    await vi.waitFor(() => {
+      expect(deliverInvoiceEmail).toHaveBeenCalledTimes(1)
+      expect(
+        document.querySelector<HTMLButtonElement>('[data-invoice-composer-submit]')?.disabled,
+      ).toBe(false)
+    })
+    expect(transitionInvoice).toHaveBeenCalledTimes(1)
+    return {
+      dialog,
+      form,
+      transitionInvoice,
+      deliverInvoiceEmail,
+      sentMessages: () => messages.filter((message) => message.event_type === 'send').length,
+    }
+  }
+
+  it('[reliability] retries the email alone after the delivery loses a version race', async () => {
+    // The one error class most likely to land between two sequential versioned
+    // writes: another operator, a payment, or the cron writing in between.
+    const { dialog, form, transitionInvoice, deliverInvoiceEmail, sentMessages } =
+      await sendAndFailTheEmail(
+        new EzactoApiError(
+          409,
+          { error: { code: 'invoice_version_conflict', message: 'server conflict', fields: [] } },
+          null,
+        ),
+      )
+    // The conflict reloaded the invoice, so the composer is back under the
+    // operator's hand with both boxes ticked -- and the sent status is on the
+    // invoice already.
+    expect(dialog.open).toBe(true)
+    expect(sentMessages()).toBe(1)
+    const reported = document.querySelector('[data-invoice-composer-result]')?.textContent
+
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(dialog.open).toBe(false))
+    // One operator intent, one `send` transition. The retry is the email alone,
+    // under the command id the first attempt used.
+    expect(transitionInvoice).toHaveBeenCalledTimes(1)
+    expect(transitionInvoice.mock.calls[0]?.[2]).toMatchObject({ expected_version: 1 })
+    expect(deliverInvoiceEmail).toHaveBeenCalledTimes(2)
+    expect(deliverInvoiceEmail.mock.calls[0]?.[1]).toBe(deliverInvoiceEmail.mock.calls[1]?.[1])
+    // The retry goes out at the version the reload found, not the stale one.
     expect(deliverInvoiceEmail.mock.calls[1]?.[2]).toEqual({
-      expected_version: 1,
+      expected_version: 2,
       recipients: [{ name: 'Accounts Payable', email: 'AP@Example.Test' }],
       confirmed: true,
     })
-    expect(transitionInvoice).not.toHaveBeenCalled()
-    expect(document.querySelector('[data-invoice-payment-status]')?.textContent).toBe(
-      'Invoice email queued for the confirmed recipients.',
-    )
+    // Two sent messages in the history is the whole budget: the operator's and
+    // the one POST /deliveries issues. A third would be the reissued transition.
+    expect(sentMessages()).toBe(2)
+    // The conflict's own message said the invoice moved; the attempt added what
+    // is left, which is the line the cleared flag used to swallow.
+    expect(reported).toContain('Latest values are loaded')
+    expect(reported).toContain('submit again to retry the email alone')
+  })
+
+  it('[reliability] reports an owed email taken off the submit instead of claiming a send', async () => {
+    const { dialog, form, transitionInvoice, deliverInvoiceEmail, sentMessages } =
+      await sendAndFailTheEmail(new Error('network unavailable'))
+    const deliverToggle = document.querySelector<HTMLInputElement>(
+      '[data-invoice-composer-deliver-toggle]',
+    )!
+    deliverToggle.click()
+    const submitLabel = document.querySelector('[data-invoice-composer-submit]')?.textContent
+
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(dialog.open).toBe(false))
+    expect(transitionInvoice).toHaveBeenCalledTimes(1)
+    expect(deliverInvoiceEmail).toHaveBeenCalledTimes(1)
+    expect(sentMessages()).toBe(1)
+    const status = document.querySelector('[data-invoice-payment-status]')?.textContent
+    expect(status).toBe('The sent status was already recorded. The email was not sent.')
+    // No success sentence for zero API calls, and no repeat of the previous
+    // attempt's reminder claim.
+    expect(status).not.toContain('Planned reminder date saved')
+    expect(status).not.toContain('marked sent and the email queued')
+    // The button named the request this submit would make, and with the send
+    // already recorded and the email taken off there was none.
+    expect(submitLabel).toBe('Skip the email')
+  })
+
+  it('[reliability] resumes the owed email when the composer is closed and reopened', async () => {
+    const { dialog, form, transitionInvoice, deliverInvoiceEmail, sentMessages } =
+      await sendAndFailTheEmail(new Error('network unavailable'))
+    // Cancel, the x and Escape are all offered and nothing warns against them.
+    dialog.querySelector<HTMLButtonElement>('[data-dialog-close]:not([aria-label])')!.click()
+    expect(dialog.open).toBe(false)
+    document.querySelector<HTMLButtonElement>('[data-invoice-send]')!.click()
+    expect(dialog.open).toBe(true)
+    const recipients = document.querySelector<HTMLTextAreaElement>(
+      '[data-invoice-composer-recipients]',
+    )!
+    const reopened = {
+      title: document.querySelector('[data-invoice-composer-title]')?.textContent,
+      notice: document.querySelector<HTMLElement>('[data-invoice-composer-owed]')?.hidden,
+      submit: document.querySelector('[data-invoice-composer-submit]')?.textContent,
+      recipients: recipients.value,
+      frozen: recipients.disabled,
+      delivering: document.querySelector<HTMLInputElement>(
+        '[data-invoice-composer-deliver-toggle]',
+      )?.checked,
+    }
+    // The operator fills the dialog in again the way a fresh send would need.
+    // Nothing typed here may turn the owed email back into a second send.
+    recipients.value = 'Accounts Payable <AP@Example.Test>'
+    recipients.dispatchEvent(new Event('input', { bubbles: true }))
+
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(dialog.open).toBe(false))
+    expect(transitionInvoice).toHaveBeenCalledTimes(1)
+    expect(deliverInvoiceEmail).toHaveBeenCalledTimes(2)
+    expect(deliverInvoiceEmail.mock.calls[0]?.[1]).toBe(deliverInvoiceEmail.mock.calls[1]?.[1])
+    expect(sentMessages()).toBe(2)
+    // Reopening resumed the attempt rather than arming a fresh send, and said
+    // so: the confirmed recipients restored past the form reset and frozen,
+    // because they are what the retry delivers to under the first command id.
+    expect(reopened).toEqual({
+      title: 'Finish sending invoice',
+      notice: false,
+      submit: 'Retry the email',
+      recipients: 'Accounts Payable <AP@Example.Test>',
+      frozen: true,
+      delivering: true,
+    })
   })
 
   it('[reliability] never reissues a committed send when its detail refresh fails', async () => {
@@ -1794,6 +2034,299 @@ describe('invoice browse browser behavior', () => {
       expect(document.querySelector('[data-invoice-detail-state]')?.textContent).toBe('Sent'),
     )
     expect(transitionInvoice).toHaveBeenCalledTimes(1)
+  })
+
+  it('[reliability] retires a send key the ledger says already committed', async () => {
+    renderBrowserShell({ view: 'invoice-detail' })
+    const base = browserApi()
+    let currentInvoice = invoice(7, { due_date: '2099-09-30' })
+    let messages: InvoiceMessage[] = []
+    // A command ledger, because the whole question is what a spent key does.
+    // A row is written only when the command commits, an identical retry is
+    // replayed off it, and a changed one is refused as `command_id_reused` --
+    // so that code is the server saying this key's command did commit.
+    const ledger = new Map<string, string>()
+    const transitionInvoice = vi.fn(
+      async (_id: number, commandId: string, input: InvoiceTransitionInput) => {
+        const fingerprint = JSON.stringify(input)
+        const recorded = ledger.get(commandId)
+        if (recorded !== undefined) {
+          if (recorded !== fingerprint) {
+            throw new EzactoApiError(
+              409,
+              {
+                error: {
+                  code: 'command_id_reused',
+                  message: 'the idempotency key was already used for different input',
+                  fields: [],
+                },
+              },
+              null,
+            )
+          }
+          return currentInvoice
+        }
+        ledger.set(commandId, fingerprint)
+        currentInvoice = {
+          ...currentInvoice,
+          state: 'open',
+          version: input.expected_version + 1,
+          sent_at: timestamp,
+        }
+        messages = [
+          ...messages,
+          {
+            ...invoiceMessage(7),
+            id: messages.length + 1,
+            event_type: 'send',
+            recipients: input.recipients ?? [],
+          },
+        ]
+        // The first send commits and its response never arrives.
+        if (ledger.size === 1) throw new Error('connection dropped')
+        return currentInvoice
+      },
+    )
+    const api: ShellApi = {
+      ...base,
+      getInvoice: vi.fn(async () => currentInvoice),
+      listInvoiceMessages: vi.fn(async () => messages),
+      listInvoicePayments: vi.fn(async () => []),
+      transitionInvoice,
+    }
+    const sentMessages = (): number =>
+      messages.filter((message) => message.event_type === 'send').length
+
+    await mountShell(api)
+    document.querySelector<HTMLButtonElement>('[data-invoice-send]')!.click()
+    const dialog = document.querySelector<HTMLDialogElement>('[data-invoice-composer-dialog]')!
+    const form = document.querySelector<HTMLFormElement>('[data-invoice-composer-form]')!
+    const recipients = document.querySelector<HTMLTextAreaElement>(
+      '[data-invoice-composer-recipients]',
+    )!
+    const subject = document.querySelector<HTMLInputElement>('[data-invoice-composer-subject]')!
+    recipients.value = 'Accounts Payable <AP@Example.Test>'
+    recipients.dispatchEvent(new Event('input', { bubbles: true }))
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-composer-result]')?.textContent).toBe(
+        'connection dropped',
+      ),
+    )
+    // Committed server-side, unknown to the page: it is still showing the draft.
+    expect(sentMessages()).toBe(1)
+    expect(document.querySelector('[data-invoice-detail-state]')?.textContent).toBe('Draft')
+
+    // The operator does the obvious thing and corrects the subject.
+    subject.value = 'Invoice %invoice_number% (corrected)'
+    subject.dispatchEvent(new Event('input', { bubbles: true }))
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-detail-state]')?.textContent).toBe('Sent'),
+    )
+    const refused = document.querySelector('[data-invoice-composer-result]')?.textContent ?? ''
+    // The spent key was refused, and the truth is that the invoice went out --
+    // not that somebody else moved it, which is what the conflict line claims.
+    expect(refused).toContain('already recorded as sent')
+    expect(refused).not.toContain('changed elsewhere')
+    expect(transitionInvoice).toHaveBeenCalledTimes(2)
+    expect(sentMessages()).toBe(1)
+    // The dialog is a working control again, not a repeat of the same refusal.
+    expect(dialog.open).toBe(true)
+    expect(document.querySelector('[data-invoice-composer-title]')?.textContent).toBe(
+      'Send invoice again',
+    )
+    expect(recipients.disabled).toBe(false)
+
+    // A deliberate second send is now reachable, under a key of its own.
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(dialog.open).toBe(false))
+    expect(transitionInvoice).toHaveBeenCalledTimes(3)
+    expect(transitionInvoice.mock.calls[2]?.[1]).not.toBe(transitionInvoice.mock.calls[0]?.[1])
+    expect(transitionInvoice.mock.calls[2]?.[2]).toMatchObject({
+      command: 'send',
+      expected_version: 2,
+      subject: 'Invoice INV-7 (corrected)',
+    })
+    expect(sentMessages()).toBe(2)
+  })
+
+  it('[reliability] retires a delivery key the ledger says already committed', async () => {
+    renderBrowserShell({ view: 'invoice-detail' })
+    const base = browserApi()
+    let currentInvoice = invoice(7, { due_date: '2099-09-30' })
+    let messages: InvoiceMessage[] = []
+    const transitionInvoice = vi.fn(
+      async (_id: number, _commandId: string, input: InvoiceTransitionInput) => {
+        currentInvoice = {
+          ...currentInvoice,
+          state: 'open',
+          version: input.expected_version + 1,
+          sent_at: timestamp,
+        }
+        messages = [
+          ...messages,
+          {
+            ...invoiceMessage(7),
+            id: messages.length + 1,
+            event_type: 'send',
+            recipients: input.recipients ?? [],
+          },
+        ]
+        return currentInvoice
+      },
+    )
+    const deliveryLedger = new Map<string, string>()
+    const deliverInvoiceEmail = vi.fn(
+      async (_id: number, commandId: string, input: { expected_version: number }) => {
+        const fingerprint = JSON.stringify(input)
+        const recorded = deliveryLedger.get(commandId)
+        if (recorded !== undefined) {
+          if (recorded !== fingerprint) {
+            throw new EzactoApiError(
+              409,
+              {
+                error: {
+                  code: 'command_id_reused',
+                  message: 'the idempotency key was already used for different input',
+                  fields: [],
+                },
+              },
+              null,
+            )
+          }
+          return currentInvoice
+        }
+        deliveryLedger.set(commandId, fingerprint)
+        // The delivery route runs its own `send` once the mail is accepted, so
+        // the invoice moves on -- and then the response is lost.
+        currentInvoice = { ...currentInvoice, version: input.expected_version + 1 }
+        messages = [
+          ...messages,
+          { ...invoiceMessage(7), id: messages.length + 1, event_type: 'send' },
+        ]
+        throw new Error('connection dropped')
+      },
+    )
+    const api: ShellApi = {
+      ...base,
+      getInvoice: vi.fn(async () => currentInvoice),
+      listInvoiceMessages: vi.fn(async () => messages),
+      listInvoicePayments: vi.fn(async () => []),
+      deliverInvoiceEmail,
+      transitionInvoice,
+    }
+    const sentMessages = (): number =>
+      messages.filter((message) => message.event_type === 'send').length
+
+    await mountShell(api)
+    document.querySelector<HTMLButtonElement>('[data-invoice-send]')!.click()
+    const dialog = document.querySelector<HTMLDialogElement>('[data-invoice-composer-dialog]')!
+    const form = document.querySelector<HTMLFormElement>('[data-invoice-composer-form]')!
+    const recipients = document.querySelector<HTMLTextAreaElement>(
+      '[data-invoice-composer-recipients]',
+    )!
+    recipients.value = 'Accounts Payable <AP@Example.Test>'
+    recipients.dispatchEvent(new Event('input', { bubbles: true }))
+    document.querySelector<HTMLInputElement>('[data-invoice-composer-deliver-toggle]')!.click()
+    document.querySelector<HTMLInputElement>('[data-invoice-composer-confirm]')!.click()
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-composer-result]')?.textContent).toContain(
+        'submit again to retry the email alone',
+      ),
+    )
+    // The email committed too; only its response went missing. The reload moved
+    // the page to the version the delivery's own send left behind, so the retry
+    // will not match the fingerprint the ledger holds.
+    expect(sentMessages()).toBe(2)
+
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-composer-result]')?.textContent).toContain(
+        'already queued',
+      ),
+    )
+    const refused = document.querySelector('[data-invoice-composer-result]')?.textContent ?? ''
+    expect(refused).not.toContain('changed elsewhere')
+    // Neither half runs again on the refusal, and the owed-email line is gone
+    // with the key it belonged to.
+    expect(transitionInvoice).toHaveBeenCalledTimes(1)
+    expect(deliverInvoiceEmail).toHaveBeenCalledTimes(2)
+    expect(deliverInvoiceEmail.mock.calls[0]?.[1]).toBe(deliverInvoiceEmail.mock.calls[1]?.[1])
+    expect(refused).not.toContain('retry the email alone')
+    expect(sentMessages()).toBe(2)
+    // The dialog is a send dialog again rather than a frozen retry of an email
+    // that already went.
+    expect(dialog.open).toBe(true)
+    expect(document.querySelector('[data-invoice-composer-title]')?.textContent).toBe(
+      'Send invoice again',
+    )
+    expect(document.querySelector('[data-invoice-composer-submit]')?.textContent).toBe(
+      'Send and deliver',
+    )
+    expect(recipients.disabled).toBe(false)
+  })
+
+  it('[reliability] keeps the spent key on the page when the reload closes the dialog', async () => {
+    renderBrowserShell({ view: 'invoice-detail' })
+    const base = browserApi()
+    let currentInvoice = invoice(7, { due_date: '2099-09-30' })
+    let messages: InvoiceMessage[] = []
+    let attempts = 0
+    const transitionInvoice = vi.fn(async () => {
+      attempts += 1
+      if (attempts > 1) {
+        throw new EzactoApiError(
+          409,
+          {
+            error: {
+              code: 'command_id_reused',
+              message: 'the idempotency key was already used for different input',
+              fields: [],
+            },
+          },
+          null,
+        )
+      }
+      // The send commits, and while its lost response is being retried the
+      // invoice is paid in full -- a state that takes no send at all.
+      currentInvoice = { ...currentInvoice, state: 'paid', version: 3, sent_at: timestamp }
+      messages = [{ ...invoiceMessage(7), event_type: 'send' }]
+      throw new Error('connection dropped')
+    })
+    const api: ShellApi = {
+      ...base,
+      getInvoice: vi.fn(async () => currentInvoice),
+      listInvoiceMessages: vi.fn(async () => messages),
+      listInvoicePayments: vi.fn(async () => []),
+      transitionInvoice,
+    }
+
+    await mountShell(api)
+    document.querySelector<HTMLButtonElement>('[data-invoice-send]')!.click()
+    const dialog = document.querySelector<HTMLDialogElement>('[data-invoice-composer-dialog]')!
+    const form = document.querySelector<HTMLFormElement>('[data-invoice-composer-form]')!
+    const recipients = document.querySelector<HTMLTextAreaElement>(
+      '[data-invoice-composer-recipients]',
+    )!
+    recipients.value = 'ap@example.test'
+    recipients.dispatchEvent(new Event('input', { bubbles: true }))
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-composer-result]')?.textContent).toBe(
+        'connection dropped',
+      ),
+    )
+
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(dialog.open).toBe(false))
+    // The dialog it was written into is gone; the sentence the operator has to
+    // read -- their invoice went out -- may not go with it.
+    expect(document.querySelector('[data-invoice-payment-status]')?.textContent).toContain(
+      'already recorded as sent',
+    )
+    expect(transitionInvoice).toHaveBeenCalledTimes(2)
   })
 
   it('[e2e:invoice-cycle] retries, records, edits, and deletes an exact manual payment', async () => {
