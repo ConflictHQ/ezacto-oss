@@ -193,7 +193,7 @@ describe('Expense category browser controller', () => {
       ),
     )
 
-    const row = document.querySelector<HTMLElement>('[data-expense-category-id="3"]')!
+    const row = document.querySelector<HTMLElement>('[data-row-key="3"]')!
     ;[...row.querySelectorAll('button')].find((button) => button.textContent === 'Edit')!.click()
     const edit = document.querySelector<HTMLFormElement>('[data-expense-category-edit-form]')!
     ;(edit.elements.namedItem('mode') as HTMLSelectElement).value = 'direct'
@@ -209,9 +209,9 @@ describe('Expense category browser controller', () => {
     })
 
     await vi.waitFor(() =>
-      expect(document.querySelector('[data-expense-category-id="3"]')).not.toBeNull(),
+      expect(document.querySelector('[data-row-key="3"]')).not.toBeNull(),
     )
-    const refreshedRow = document.querySelector<HTMLElement>('[data-expense-category-id="3"]')!
+    const refreshedRow = document.querySelector<HTMLElement>('[data-row-key="3"]')!
     ;[...refreshedRow.querySelectorAll('button')]
       .find((button) => button.textContent === 'Archive')!
       .click()
@@ -244,7 +244,7 @@ describe('Expense category browser controller', () => {
 
     document.querySelector<HTMLButtonElement>('[data-expense-category-filter="all"]')!.click()
     await vi.waitFor(() =>
-      expect(document.querySelector('[data-expense-category-id="3"]')?.textContent).toContain(
+      expect(document.querySelector('[data-row-key="3"]')?.textContent).toContain(
         'Archived',
       ),
     )

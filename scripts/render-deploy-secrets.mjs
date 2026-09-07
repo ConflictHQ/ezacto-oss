@@ -92,6 +92,18 @@ export const deploySecretPayload = (environment) => {
       'AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, SES_REGION, and SES_FROM must be configured together',
     )
   }
+  const mailgunApiKey = optionalSesCredential(
+    environment.MAILGUN_API_KEY,
+    'MAILGUN_API_KEY',
+    512,
+  )
+  // One transport per deployment. Two configured providers cannot share a
+  // sender, and picking one silently would decide where invoices come from.
+  if (mailgunApiKey !== null && sesConfigured) {
+    throw new TypeError(
+      'Configure either Mailgun or SES, not both',
+    )
+  }
   return {
     API_CURSOR_SIGNING_KEY: cursor,
     OIDC_GOOGLE_CLIENT_ID: clientId,
@@ -99,6 +111,7 @@ export const deploySecretPayload = (environment) => {
     AWS_ACCESS_KEY_ID: accessKeyId,
     AWS_SECRET_ACCESS_KEY: secretAccessKey,
     AWS_SESSION_TOKEN: sessionToken,
+    MAILGUN_API_KEY: mailgunApiKey,
   }
 }
 

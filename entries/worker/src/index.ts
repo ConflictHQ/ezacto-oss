@@ -4,7 +4,7 @@ import { consumeCloudflareEmailBatch } from './email-queue.js'
 import { runNightlyExport } from './nightly-export.js'
 import {
   createRuntimeServices,
-  createWorkerSesMailer,
+  createWorkerMailProvider,
 } from './runtime.js'
 
 const publicApp = createApp()
@@ -58,9 +58,9 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
     }
   },
   async queue(batch, env) {
-    const provider = createWorkerSesMailer(env)
+    const provider = createWorkerMailProvider(env)
     if (provider === null) {
-      throw new TypeError('SES provider is not configured')
+      throw new TypeError('no email provider is configured')
     }
     const services = await createRuntimeServices(env, {
       emailProvider: provider,

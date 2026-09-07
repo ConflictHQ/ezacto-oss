@@ -155,7 +155,13 @@ describe('Team browser controller', () => {
 
     expect(document.querySelector('[data-team-list]')?.textContent).toContain('Avery Owner')
     expect(document.querySelector('[data-team-list]')?.textContent).toContain('71.4%')
-    expect(document.querySelector('[data-team-list]')?.textContent).toContain('25h of 35h')
+    // Hours and capacity are their own columns now, not one line on a card.
+    expect(
+      document.querySelector('[data-team-list] td[data-column="hours"]')?.textContent,
+    ).toBe('25h')
+    expect(
+      document.querySelector('[data-team-list] td[data-column="capacity"]')?.textContent,
+    ).toBe('35h')
     expect(listTeamPeople.mock.calls[0]![0]).toMatchObject({ is_active: true })
 
     document.querySelector<HTMLButtonElement>('[data-team-week-previous]')!.click()
@@ -168,6 +174,26 @@ describe('Team browser controller', () => {
     await vi.waitFor(() =>
       expect(document.querySelector('[data-team-list]')?.textContent).toContain('Kai Archive'),
     )
+  })
+
+  it('keeps the initials when an avatar fails to load', async () => {
+    // Imported avatar_urls point at Harvest's CDN and prod's CSP is
+    // img-src 'self' data:, so every one of them is blocked. The initials have
+    // to survive that, or the whole roster is empty circles.
+    writeDocument('team-list')
+    const listTeamPeople = vi.fn(async () =>
+      page([summary({ avatar_url: 'https://cdn.example.com/blocked.png' })]),
+    )
+    const controller = createTeamDirectoryController({ listTeamPeople })
+    await controller.activate(identity(), new AbortController().signal, () => false)
+
+    const avatar = document.querySelector<HTMLElement>('[data-team-list] .team-avatar')!
+    expect(avatar.querySelector('img')).not.toBeNull()
+    expect(avatar.textContent).toContain('AO')
+
+    avatar.querySelector('img')!.dispatchEvent(new Event('error'))
+    expect(avatar.querySelector('img')).toBeNull()
+    expect(avatar.textContent).toContain('AO')
   })
 
   it('denies a session profile outside team:read without issuing a list request', async () => {

@@ -1121,12 +1121,23 @@ describe('invoice browse browser behavior', () => {
         data: [invoice(8, { state: 'open' })],
         page: { next_cursor: null },
       })
-    const api: ShellApi = { ...base, listInvoices }
+    // "Client #11" is an internal identifier on a page a client can be sent.
+    const listClients: ShellApi['listClients'] = async () => ({
+      data: [resource(11, 'Vantage IT')],
+      page: { next_cursor: null },
+    })
+    const api: ShellApi = { ...base, listInvoices, listClients }
 
     await mountShell(api)
 
-    const first = document.querySelector<HTMLElement>('[data-invoice-id="7"]')!
+    const first = document.querySelector<HTMLElement>('tbody tr[data-row-key="7"]')!
     expect(first.textContent).toContain('Invoice INV-7')
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector('tbody tr[data-row-key="7"] td[data-column="client"]')
+          ?.textContent,
+      ).toBe('Vantage IT'),
+    )
     expect(first.textContent).toContain('$82.50')
     expect(first.querySelector<HTMLAnchorElement>('a')?.getAttribute('href')).toBe(
       '/invoices/7',
@@ -1137,9 +1148,9 @@ describe('invoice browse browser behavior', () => {
 
     document.querySelector<HTMLButtonElement>('[data-invoice-load-more]')!.click()
     await vi.waitFor(() =>
-      expect(document.querySelector('[data-invoice-id="8"]')?.textContent).toContain(
-        'Invoice INV-8',
-      ),
+      expect(
+        document.querySelector('tbody tr[data-row-key="8"]')?.textContent,
+      ).toContain('Invoice INV-8'),
     )
     expect(listInvoices).toHaveBeenNthCalledWith(1, undefined, expect.anything())
     expect(listInvoices).toHaveBeenNthCalledWith(2, 'next-page', expect.anything())

@@ -671,6 +671,190 @@ describe('three-way reconciliation', () => {
     )
   })
 
+  it('[unit] cites a correction entry as a documented gap instead of an unexplained delta', async () => {
+    // #277: Harvest nets its negative correction entries into every report
+    // total; time_entries.seconds is CHECK >= 0, so the loader skips them and
+    // the recomputation runs higher. That is the documented cost of the
+    // migration, but it landed as UNEXPLAINED, so a correct load reported FAIL.
+    await rm(snapshotDir, { recursive: true, force: true })
+    await rm(databasePath, { force: true })
+    await buildSanitizedLoadSnapshot(snapshotDir)
+    await makeGoldenSlicesCoherent(snapshotDir)
+
+    // A -0.25h correction against the same client, project, task and person as
+    // the uninvoiced entry, at the same $175 rate: -$43.75.
+    const timePath = join(snapshotDir, 'raw', 'time_entries.jsonl')
+    const timeLines = (await readFile(timePath, 'utf8')).trimEnd().split('\n')
+    const correction = JSON.parse(timeLines[1] ?? '') as Record<string, unknown>
+    correction.id = 3003833999
+    correction.hours = -0.25
+    correction.hours_without_timer = -0.25
+    correction.rounded_hours = -0.25
+    correction.started_time = null
+    correction.ended_time = null
+    correction.notes = 'Sanitized correction'
+    timeLines.push(JSON.stringify(correction))
+    await writeFile(timePath, `${timeLines.join('\n')}\n`)
+    const manifest = await readManifest(snapshotDir)
+    manifest.resources.time_entries!.count = timeLines.length
+    await writeManifest(snapshotDir, manifest)
+
+    await writePassingChecksums(snapshotDir)
+    await rewriteChecksums(snapshotDir, (report) => {
+      // What Harvest reports: the correction netted into every total.
+      for (const key of [
+        'time/clients/2026',
+        'time/projects/2026',
+        'time/tasks/2026',
+      ] as const) {
+        const row = report.reports[key]![0] as Record<string, number>
+        row.total_hours -= 0.25
+        row.billable_hours -= 0.25
+        row.billable_amount -= 43.75
+      }
+      const person = report.reports['time/team/2026']![1] as Record<string, number>
+      person.total_hours -= 0.25
+      person.billable_hours -= 0.25
+      person.billable_amount -= 43.75
+      const uninvoiced = report.reports.uninvoiced![0] as Record<string, number>
+      uninvoiced.total_hours -= 0.25
+      uninvoiced.uninvoiced_hours -= 0.25
+      uninvoiced.uninvoiced_amount -= 43.75
+    })
+    await runLoad({ snapshotDir, databasePath })
+
+    const result = await runReconcile({ snapshotDir, databasePath })
+    expect(result.report.unexplained).toEqual([])
+
+    const cited = result.report.gaps.filter(
+      (check) => check.gap_citation?.id === 'migration-spec-7-negative-time-entries',
+    )
+    // Three time-report grains plus the person, three metrics each; three
+    // uninvoiced metrics; the row count; and the anomaly itself.
+    expect(cited.length).toBeGreaterThan(0)
+    expect(cited).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          check: 'harvest_time_report',
+          key: 'time/projects/2026|14308069|USD',
+          metric: 'billable_amount_cents',
+          delta: 4375,
+        }),
+        expect.objectContaining({
+          check: 'harvest_uninvoiced_report',
+          metric: 'uninvoiced_seconds',
+          delta: 900,
+        }),
+        expect.objectContaining({
+          check: 'resource_row_count',
+          key: 'time_entries',
+          metric: 'rows',
+          delta: -1,
+        }),
+        expect.objectContaining({
+          check: 'load_anomaly',
+          key: 'time_entries:3003833999:negative_time_entry',
+        }),
+      ]),
+    )
+    for (const check of cited) {
+      expect(check.gap_citation?.reference).toContain('migration-spec.md §7')
+    }
+  })
+
+  it('[unit] leaves an archived project out of uninvoiced work, as Harvest does', async () => {
+    // Harvest's uninvoiced report lists active projects only. Recomputing over
+    // archived ones manufactured a delta on every archived project that still
+    // had uninvoiced work — three of CONFLICT's, four rows, and the runbook
+    // carried them as an accepted cost of the migration when they were a defect
+    // in the checker.
+    await rm(snapshotDir, { recursive: true, force: true })
+    await rm(databasePath, { force: true })
+    await buildSanitizedLoadSnapshot(snapshotDir)
+    await makeGoldenSlicesCoherent(snapshotDir)
+    const path = join(snapshotDir, 'raw', 'projects.jsonl')
+    const lines = (await readFile(path, 'utf8')).trimEnd().split('\n')
+    const project = JSON.parse(lines[0] ?? '') as Record<string, unknown>
+    project.is_active = false
+    lines[0] = JSON.stringify(project)
+    await writeFile(path, `${lines.join('\n')}\n`)
+    await writePassingChecksums(snapshotDir)
+    await rewriteChecksums(snapshotDir, (report) => {
+      // What Harvest reports for an archived project: nothing at all.
+      report.reports.uninvoiced = []
+      report.reports['project_budget/active']![0]!.is_active = false
+    })
+    await runLoad({ snapshotDir, databasePath })
+
+    const result = await runReconcile({ snapshotDir, databasePath })
+    expect(
+      result.report.unexplained.filter((check) =>
+        check.check.endsWith('uninvoiced_report') || check.check === 'snapshot_uninvoiced_parity',
+      ),
+    ).toEqual([])
+  })
+
+  it('[unit] sees a settled invoice restated as open by a payment it cannot hold', async () => {
+    // The seven CONFLICT invoices in #283: state is derived from the payments
+    // that loaded, so a payment invoice_payments.amount_cents cannot represent
+    // leaves a paid invoice reading open. Reconcile compared no state field, so
+    // six of the seven were invisible to it.
+    await rm(snapshotDir, { recursive: true, force: true })
+    await rm(databasePath, { force: true })
+    await buildSanitizedLoadSnapshot(snapshotDir)
+    await makeGoldenSlicesCoherent(snapshotDir)
+
+    const paymentPath = join(snapshotDir, 'raw', 'invoice_payments.jsonl')
+    const payment = JSON.parse(await readFile(paymentPath, 'utf8')) as Record<string, unknown>
+    payment.amount = 0
+    await writeFile(paymentPath, `${JSON.stringify(payment)}\n`)
+
+    const invoicePath = join(snapshotDir, 'raw', 'invoices.jsonl')
+    const lines = (await readFile(invoicePath, 'utf8')).trimEnd().split('\n')
+    const invoice = JSON.parse(lines[0] ?? '') as Record<string, unknown>
+    invoice.state = 'paid'
+    invoice.due_amount = 2275
+    lines[0] = JSON.stringify(invoice)
+    await writeFile(invoicePath, `${lines.join('\n')}\n`)
+
+    await writePassingChecksums(snapshotDir)
+    await runLoad({ snapshotDir, databasePath })
+
+    const database = new BetterSqlite3(databasePath)
+    try {
+      const anomalies = database
+        .prepare(`SELECT resource, source_id AS sourceId, kind FROM _ezacto_load_anomalies`)
+        .all() as Array<{ resource: string; sourceId: string | null; kind: string }>
+      expect(anomalies).toContainEqual({
+        resource: 'invoice_payments',
+        sourceId: '50863457',
+        kind: 'non_positive_payment',
+      })
+      // The importer always knew; the loader used to drop this on the floor.
+      expect(anomalies).toContainEqual({
+        resource: 'invoices',
+        sourceId: '13150403',
+        kind: 'invoice_state_disagreement',
+      })
+      expect(
+        database.prepare(`SELECT state FROM invoices WHERE harvest_id = 13150403`).get(),
+      ).toEqual({ state: 'open' })
+    } finally {
+      database.close()
+    }
+
+    const result = await runReconcile({ snapshotDir, databasePath })
+    expect(result.report.unexplained).toContainEqual(
+      expect.objectContaining({
+        check: 'invoice_source_fidelity',
+        key: 'invoice:13150403',
+        metric: 'state',
+        expected: 'paid',
+        actual: 'open',
+      }),
+    )
+  })
+
   it('[unit] fails closed for an unknown loader anomaly', async () => {
     const checksum = JSON.parse(
       await readFile(join(snapshotDir, 'checksums.json'), 'utf8'),

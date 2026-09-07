@@ -567,14 +567,22 @@ test('[e2e:rate-change] adds a dated rate through the real worker and shows the 
       const seeded = await fixture('team-rate-seed')
       expect(seeded.status()).toBe(204)
       await page.goto('/team/1')
-      const signIn = page.locator('[data-sign-in-form]')
+      // The shell settles into one of two states — the sign-in form, or the
+      // person, if the previous iteration's session survived. isVisible()
+      // samples immediately and does not wait, so on a loaded runner it read
+      // false before the shell had rendered anything at all, skipped the
+      // sign-in, and then timed out waiting for a heading behind a form nobody
+      // filled in. Wait for whichever state the shell lands in first.
+      const signIn = page.locator('[data-sign-in-form]:not([hidden])')
+      const person = page.getByRole('heading', { name: 'Browser Owner' })
+      await expect(signIn.or(person).first()).toBeVisible()
       if (await signIn.isVisible()) {
         await signIn.getByLabel('Email').fill(fixtureEmail)
         await signIn.getByLabel('Password').fill(fixturePassword)
         await signIn.getByRole('button', { name: 'Sign in', exact: true }).click()
       }
 
-      await expect(page.getByRole('heading', { name: 'Browser Owner' })).toBeVisible()
+      await expect(person).toBeVisible()
       await expect(page.locator('[data-team-nav]:not([hidden])')).toHaveCount(2)
       await page.getByRole('tab', { name: 'Rates' }).click()
       const billable = page.locator('[data-team-billable-section]')
@@ -703,7 +711,9 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   await expect(page.locator('[data-day-rows]')).toContainText('Browser Acceptance Project')
   await expect(page.locator('[data-day-rows]')).toContainText('Browser Acceptance Task')
   await expect(page.locator('[data-day-label]')).toHaveText('Sunday, Aug 30')
-  await expect(page.locator('[data-week-total]')).toHaveText('0:45')
+  // The fixture organisation is decimal, and the week total honours that now
+  // rather than always printing H:MM. 45 minutes is 0.75, not 0:45.
+  await expect(page.locator('[data-week-total]')).toHaveText('0.75')
   await expect(page.locator('[data-entry-note="1"]')).toHaveText(
     'First line\nSecond line with delivery detail',
   )
@@ -990,7 +1000,7 @@ test('[e2e:client-directory] persists hierarchy, bill-to, contacts, projects, an
   await expect(clientDialog).toBeHidden()
 
   const childRow = page
-    .locator('[data-client-tree] [data-client-id]')
+    .locator('[data-client-tree] tbody tr[data-row]')
     .filter({ hasText: 'Browser Worked-For Studio' })
   await expect(childRow).toContainText('Worked-for parent: Browser Parent Group')
   await expect(childRow).toContainText('Bill-to client: Browser Parent Group')
@@ -1033,14 +1043,14 @@ test('[e2e:client-directory] persists hierarchy, bill-to, contacts, projects, an
   await contactDialog.getByRole('button', { name: 'Add contact' }).click()
   await expect(contactDialog).toBeHidden()
 
-  const contactCard = page
-    .locator('[data-client-contacts] [data-contact-id]')
+  const contactRow = page
+    .locator('[data-client-contacts] tbody tr[data-row]')
     .filter({ hasText: 'Jordan Invoice' })
-  await expect(contactCard).toContainText('Invoice recipient')
-  await contactCard.getByRole('button', { name: 'Edit' }).click()
+  await expect(contactRow).toContainText('Invoice recipient')
+  await contactRow.getByRole('button', { name: 'Edit' }).click()
   await contactDialog.getByLabel('Invoice routing').selectOption('cc')
   await contactDialog.getByRole('button', { name: 'Save contact' }).click()
-  await expect(contactCard).toContainText('Invoice CC')
+  await expect(contactRow).toContainText('Invoice CC')
 
   const persisted = await page.evaluate(async (clientId) => {
     const [clientResponse, contactsResponse, projectsResponse] = await Promise.all([
@@ -1074,7 +1084,8 @@ test('[e2e:client-directory] persists hierarchy, bill-to, contacts, projects, an
     expect.objectContaining({ client_id: childId, code: 'CLIENT' }),
   ])
 
-  await contactCard.getByRole('button', { name: 'Delete' }).click()
+  await contactRow.locator('.data-table-overflow > summary').click()
+  await contactRow.getByRole('button', { name: 'Delete' }).click()
   const contactDelete = page.locator('[data-contact-delete-dialog]')
   await expect(contactDelete).toContainText('cannot be undone')
   await contactDelete.getByRole('button', { name: 'Delete contact' }).click()
@@ -1166,10 +1177,16 @@ test('[e2e:project-directory] creates selectable work, edits assignments, upload
   expect((await created).status()).toBe(201)
   await expect(projectDialog).toBeHidden()
 
-  const row = page.locator('[data-project-list] li').filter({
+  const row = page.locator('[data-project-list] tbody tr[data-row]').filter({
     hasText: 'Browser UI Project',
   })
-  await expect(row).toContainText('Browser Acceptance Client')
+  // The client is a band above its run of rows, not a column repeated on each
+  // one, so it is asserted on the table rather than inside the row.
+  await expect(
+    page
+      .locator('[data-project-list] .data-table-group')
+      .filter({ hasText: 'Browser Acceptance Client' }),
+  ).toHaveCount(1)
   await row.getByRole('link', { name: '[BPROJ] Browser UI Project' }).click()
   await expect(page.locator('[data-project-facts]')).toContainText(
     'Browser delivery detail',
@@ -1282,7 +1299,7 @@ test('[e2e:project-directory] creates selectable work, edits assignments, upload
   await projectArchive.getByRole('button', { name: 'Archive project' }).click()
   await expect(page).toHaveURL(/\/projects$/u)
   await page.getByRole('button', { name: 'All', exact: true }).click()
-  const archivedRow = page.locator('[data-project-list] li').filter({
+  const archivedRow = page.locator('[data-project-list] tbody tr[data-row]').filter({
     has: page.locator(`a[href="/projects/${projectId}"]`),
   })
   await expect(archivedRow).toContainText('Archived')
@@ -1330,11 +1347,11 @@ test('[e2e:task-admin] creates, edits, applies a default to a new project, and a
   const createdTask = (await createdResponse.json()).data as { id: number }
   await expect(formDialog).toBeHidden()
 
-  let row = page.locator('[data-task-list] [data-task-id]').filter({
+  let row = page.locator('[data-task-list] tbody tr[data-row]').filter({
     hasText: 'Browser Default Task',
   })
   await expect(row).toContainText('$123.45/hour')
-  await expect(row).toContainText('Added to new projects')
+  await expect(row).toContainText('Added')
   await row.getByRole('button', { name: 'Edit', exact: true }).click()
   await formDialog.getByLabel('Name').fill('Browser Default Task Updated')
   await formDialog.getByLabel('Default hourly rate').fill('150.05')
@@ -1346,11 +1363,12 @@ test('[e2e:task-admin] creates, edits, applies a default to a new project, and a
   )
   await formDialog.getByRole('button', { name: 'Save task' }).click()
   expect((await updated).status()).toBe(200)
-  row = page.locator('[data-task-list] [data-task-id]').filter({
+  row = page.locator('[data-task-list] tbody tr[data-row]').filter({
     hasText: 'Browser Default Task Updated',
   })
   await expect(row).toContainText('$150.05/hour')
-  await expect(row).toContainText('Non-billable by default')
+  // Billable reads as a column value now rather than a sentence on the card.
+  await expect(row.locator('td[data-column="billable"]')).toHaveText('No')
 
   const projectAssignment = await page.evaluate(async (taskId) => {
     const projectResponse = await fetch('/api/v1/projects', {
@@ -1393,17 +1411,20 @@ test('[e2e:task-admin] creates, edits, applies a default to a new project, and a
     ],
   })
 
+  await row.locator('.data-table-overflow > summary').click()
   await row.getByRole('button', { name: 'Archive' }).click()
   const archiveDialog = page.locator('[data-task-archive-dialog]')
   await archiveDialog.getByRole('button', { name: 'Cancel' }).click()
   await expect(archiveDialog).toBeHidden()
   expect(archiveRequests).toEqual([])
 
+  await row.locator('.data-table-overflow > summary').click()
   await row.getByRole('button', { name: 'Archive' }).click()
   await archiveDialog.getByRole('button', { name: 'Close' }).click()
   await expect(archiveDialog).toBeHidden()
   expect(archiveRequests).toEqual([])
 
+  await row.locator('.data-table-overflow > summary').click()
   await row.getByRole('button', { name: 'Archive' }).click()
   const archived = page.waitForResponse(
     (response) =>
@@ -1417,7 +1438,7 @@ test('[e2e:task-admin] creates, edits, applies a default to a new project, and a
   expect(archiveRequests).toHaveLength(1)
 
   await page.getByRole('button', { name: 'All', exact: true }).click()
-  const archivedRow = page.locator('[data-task-list] [data-task-id]').filter({
+  const archivedRow = page.locator('[data-task-list] tbody tr[data-row]').filter({
     hasText: 'Browser Default Task Updated',
   })
   await expect(archivedRow).toContainText('Archived')
@@ -1540,7 +1561,9 @@ test('[e2e:expense-categories] [e2e:expense-receipt] manages category availabili
   expect(categoryResponse.status()).toBe(201)
   const categoryId = Number((await categoryResponse.json()).data.id)
   expect(Number.isSafeInteger(categoryId)).toBe(true)
-  const categoryRow = page.locator(`[data-expense-category-id="${categoryId}"]`)
+  const categoryRow = page.locator(
+    `[data-expense-category-list] tbody tr[data-row-key="${categoryId}"]`,
+  )
   await expect(categoryRow).toContainText('42 cents per km')
   await expectNoPageOverflow(page)
 
@@ -1566,12 +1589,14 @@ test('[e2e:expense-categories] [e2e:expense-receipt] manages category availabili
 
   await page.goto('/expense-categories')
   await expect(categoryRow).toBeVisible()
+  await categoryRow.locator('.data-table-overflow > summary').click()
   await categoryRow.getByRole('button', { name: 'Archive' }).click()
   const archiveDialog = page.locator('[data-expense-category-archive-dialog]')
   await archiveDialog.getByRole('button', { name: 'Cancel' }).click()
   await expect(archiveDialog).toBeHidden()
   await expect(categoryRow).toContainText('Active')
 
+  await categoryRow.locator('.data-table-overflow > summary').click()
   await categoryRow.getByRole('button', { name: 'Archive' }).click()
   const archived = page.waitForResponse(
     (response) =>
@@ -1649,12 +1674,14 @@ const exerciseExpenseReceipt = async (page: Page): Promise<void> => {
   await filters.getByRole('button', { name: 'Apply filters' }).click()
   expect((await filtered).status()).toBe(200)
   await expect(page).toHaveURL(/\/expenses\?.*approval_status=unsubmitted/u)
-  const row = page.locator(`[data-expense-id="${expenseId}"]`)
+  const row = page.locator(`[data-expense-list] tbody tr[data-row-key="${expenseId}"]`)
   await expect(row).toBeVisible()
   await expect(row).toContainText('Airport shuttle receipt')
   await expect(row).toContainText('$18.75')
   await expect(row).toContainText('Reimbursement: None')
-  await expect(page.locator('.expense-week-heading')).toContainText('Week of Aug 24, 2026')
+  await expect(page.locator('[data-expense-list] .data-table-group')).toContainText(
+    'Week of Aug 24, 2026',
+  )
   await expectNoPageOverflow(page)
 
   await row.getByRole('link').click()
@@ -1697,9 +1724,9 @@ const exerciseExpenseReceipt = async (page: Page): Promise<void> => {
   await page.goto(
     '/expenses?from=2026-08-25&to=2026-08-25&client_id=1&project_id=1&expense_category_id=1&approval_status=unsubmitted&reimbursement_status=none',
   )
-  await expect(page.locator(`[data-expense-id="${expenseId}"]`)).toContainText(
-    'Reviewed detail',
-  )
+  await expect(
+    page.locator(`[data-expense-list] tbody tr[data-row-key="${expenseId}"]`),
+  ).toContainText('Reviewed detail')
 }
 
 test('[e2e:invoice-cycle] generates a real draft through the authenticated wizard', async ({
@@ -1888,11 +1915,11 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
 
   await page.getByRole('link', { name: 'Back to invoices' }).click()
   await expect(page).toHaveURL(/\/invoices$/u)
-  const generatedCard = page.locator(
-    `[data-invoice-id="${generatedPayload.data.id}"]`,
+  const generatedRow = page.locator(
+    `[data-invoice-list] tbody tr[data-row-key="${generatedPayload.data.id}"]`,
   )
-  await expect(generatedCard).toBeVisible()
-  await expect(generatedCard).toContainText('$75.00')
+  await expect(generatedRow).toBeVisible()
+  await expect(generatedRow).toContainText('$75.00')
 })
 
 test('[e2e:invoice-lines] adds, edits, and deletes exact lines through the real worker and D1', async ({

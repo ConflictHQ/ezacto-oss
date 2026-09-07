@@ -365,6 +365,7 @@ export interface LoadAnomaly {
     | 'negative_time_entry'
     | 'billing_conflict'
     | 'payment_date_disagreement'
+    | 'invoice_state_disagreement'
     | 'rate_chain_mismatch'
     | 'receipt_download_missing'
   detail: string
@@ -3915,6 +3916,17 @@ const loadComplexRow = async (
         source_id: diagnostic.payment_harvest_id,
         kind: 'payment_date_disagreement',
         detail: `${diagnostic.source_paid_at} has UTC date different from ${diagnostic.source_paid_date}`,
+      })
+    // State is derived from the payments that loaded, so a payment this import
+    // could not represent silently restates a settled invoice as outstanding.
+    // The importer already raises this; dropping it here is what let seven of
+    // CONFLICT's invoices read `open` against Harvest's `paid` unnoticed.
+    if (diagnostic.code === 'source_state_disagrees')
+      anomalies.push({
+        resource: 'invoices',
+        source_id: parentId,
+        kind: 'invoice_state_disagreement',
+        detail: `Harvest state ${diagnostic.source_state} but ezacto derives ${diagnostic.derived_state}`,
       })
   }
   return {

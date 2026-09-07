@@ -34,7 +34,7 @@ export const renderExpenseWorkflowPages = (view?: string): string => `
       <div class="expense-filter-actions"><button class="primary-action" type="submit">Apply filters</button><button type="button" data-expense-filter-reset>Reset</button></div>
     </form>
     <p class="form-result expense-page-status" data-expense-list-status role="status" aria-live="polite">Loading expenses…</p>
-    <ol class="expense-list" data-expense-list aria-label="Expenses"></ol>
+    <div data-expense-list></div>
     <button type="button" data-expense-load-more hidden>Load more expenses</button>
     <button type="button" data-expense-list-retry hidden>Retry loading expenses</button>
   </main>

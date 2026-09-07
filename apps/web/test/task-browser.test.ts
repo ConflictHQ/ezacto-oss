@@ -94,6 +94,32 @@ const deferred = <T,>(): {
 }
 
 describe('Tasks administration browser controller', () => {
+  it('[browser] renders tasks as a table and gates the rate column on permission', async () => {
+    writeDocument()
+    const api = apiFor([task(7, 'Implementation'), task(8, 'Quality assurance')])
+    const controller = createTaskAdminController(api)
+    await controller.activate(identity('administrator'), new AbortController().signal, () => false)
+
+    const headers = [...document.querySelectorAll('[data-task-list] thead th')].map(
+      (cell) => cell.textContent,
+    )
+    expect(headers).toContain('Task')
+    expect(headers).toContain('Rate')
+    expect(document.querySelectorAll('[data-task-list] tbody tr[data-row]')).toHaveLength(2)
+
+    // A profile without rate visibility must not receive the column at all —
+    // not a blanked cell it could read out of the DOM.
+    writeDocument()
+    const withoutRates = createTaskAdminController(apiFor([task(7, 'Implementation')]))
+    await withoutRates.activate(identity('member'), new AbortController().signal, () => false)
+    const memberHeaders = [...document.querySelectorAll('[data-task-list] thead th')].map(
+      (cell) => cell.textContent,
+    )
+    expect(memberHeaders).toContain('Task')
+    expect(memberHeaders).not.toContain('Rate')
+    expect(document.querySelector('[data-task-list]')?.textContent).not.toContain('$')
+  })
+
   it('[browser] creates and minimally edits exact-cent task defaults', async () => {
     writeDocument()
     const original = task(7, 'Implementation')

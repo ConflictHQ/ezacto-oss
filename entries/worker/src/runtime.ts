@@ -37,8 +37,10 @@ import type {
   CloudflareAccessVerifierConfig,
 } from "@ezacto/api";
 import {
+  MailgunMailer,
   SesMailer,
   type HttpEmailProvider,
+  type MailgunOptions,
   type SesMailerOptions,
 } from "@ezacto/mailer";
 import type { RuntimeServices } from "./app.js";
@@ -118,6 +120,66 @@ export const createWorkerSesMailer = (
     options,
   );
 };
+
+/**
+ * Mailgun needs only an API key and a sending domain, so — unlike SES — a
+ * partial configuration is nearly impossible to write by accident. Keep the
+ * same all-or-nothing shape anyway: a half-set provider must fail closed here
+ * rather than boot a worker that silently cannot send.
+ */
+export const createWorkerMailgunMailer = (
+  env: WorkerEnv,
+  options: MailgunOptions = {},
+): MailgunMailer | null => {
+  const configured = [env.MAILGUN_API_KEY, env.MAILGUN_DOMAIN, env.MAILGUN_REGION];
+  if (configured.every((value) => value === undefined)) return null;
+  if (env.MAILGUN_API_KEY === undefined || env.MAILGUN_DOMAIN === undefined) {
+    throw new TypeError(
+      "Mailgun requires MAILGUN_API_KEY and MAILGUN_DOMAIN together",
+    );
+  }
+  if (
+    env.MAILGUN_REGION !== undefined &&
+    env.MAILGUN_REGION !== "us" &&
+    env.MAILGUN_REGION !== "eu"
+  ) {
+    throw new TypeError("MAILGUN_REGION must be 'us' or 'eu'");
+  }
+  return new MailgunMailer(
+    {
+      apiKey: env.MAILGUN_API_KEY,
+      domain: env.MAILGUN_DOMAIN,
+      ...(env.MAILGUN_REGION === undefined ? {} : { region: env.MAILGUN_REGION }),
+    },
+    options,
+  );
+};
+
+/**
+ * One transport per deployment. Configuring both is a mistake worth refusing
+ * loudly: whichever won silently would decide where every invoice came from.
+ */
+export const createWorkerMailProvider = (
+  env: WorkerEnv,
+  options: { ses?: SesMailerOptions; mailgun?: MailgunOptions } = {},
+): HttpEmailProvider | null => {
+  const mailgun = createWorkerMailgunMailer(env, options.mailgun);
+  const ses = createWorkerSesMailer(env, options.ses);
+  if (mailgun !== null && ses !== null) {
+    throw new TypeError(
+      "Configure either Mailgun or SES, not both; two transports cannot share one sender",
+    );
+  }
+  return mailgun ?? ses;
+};
+
+/**
+ * The address invitations, password resets and verification mail come from.
+ * MAIL_FROM is provider-neutral; SES_FROM is accepted so an SES deployment
+ * keeps working unchanged.
+ */
+export const resolveMailFrom = (env: WorkerEnv): string | undefined =>
+  env.MAIL_FROM ?? env.SES_FROM;
 
 export const createSesSenderIdentityVerifier = (
   emailProvider: SesMailer,
@@ -342,6 +404,7 @@ export const createRuntimeServices = async (
   options: {
     emailProvider?: HttpEmailProvider;
     ses?: SesMailerOptions;
+    mailgun?: MailgunOptions;
     cloudflareAccessFetch?: CloudflareAccessFetch;
   } = {},
 ): Promise<RuntimeServices> => {
@@ -370,7 +433,11 @@ export const createRuntimeServices = async (
   const emailLog = createD1EmailLogStore(database);
   const emailConfiguration = createD1EmailConfigurationStore(database);
   const emailProvider =
-    options.emailProvider ?? createWorkerSesMailer(env, options.ses);
+    options.emailProvider ??
+    createWorkerMailProvider(env, {
+      ...(options.ses === undefined ? {} : { ses: options.ses }),
+      ...(options.mailgun === undefined ? {} : { mailgun: options.mailgun }),
+    });
   const organizationName = async () => {
     const row = await database
       .prepare('SELECT name FROM organizations WHERE id = 1')
@@ -383,13 +450,14 @@ export const createRuntimeServices = async (
     emailProvider !== null;
   const emailQueueReady =
     emailTransportReady && env.APP_BASE_URL !== undefined;
+  const mailFrom = resolveMailFrom(env);
   const deploymentAuthMailer =
-    !emailQueueReady || env.SES_FROM === undefined
+    !emailQueueReady || mailFrom === undefined
       ? undefined
       : createWorkerDeploymentAuthMailer(
           env.EMAIL_QUEUE!,
           emailLog,
-          env.SES_FROM,
+          mailFrom,
           emailConfiguration,
           organizationName,
           env.APP_BASE_URL!,

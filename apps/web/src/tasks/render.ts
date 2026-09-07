@@ -13,7 +13,7 @@ export const renderTaskAdminPage = (view?: string): string => `
       </fieldset>
     </div>
     <p class="form-result task-admin-status" data-task-list-status role="status" aria-live="polite">Loading tasks…</p>
-    <ol class="task-admin-list" data-task-list aria-label="Tasks"></ol>
+    <div class="task-admin-list" data-task-list></div>
     <button type="button" data-task-load-more hidden>Load more tasks</button>
     <button type="button" data-task-list-retry hidden>Retry loading tasks</button>
   </main>

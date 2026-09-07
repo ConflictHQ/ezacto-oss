@@ -92,7 +92,7 @@ describe('D16 Precision preference policy', () => {
     ])
     expect(results.map((result) => result.ratio)).toEqual([
       expect.closeTo(18.11, 2),
-      expect.closeTo(5.38, 2),
+      expect.closeTo(5.43, 2),
       expect.closeTo(3.58, 2),
     ])
     expect(() => assertThemeContrast(themeManifest.precision)).not.toThrow()

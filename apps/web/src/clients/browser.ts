@@ -1,3 +1,4 @@
+import { renderDataTable } from '../components/data-table.js'
 import { EzactoApiError, type GeneralResource, type Whoami } from '@ezacto/client'
 import {
   clientDisplayName,
@@ -139,12 +140,12 @@ export const createClientDirectoryController = (
   const detailPageElement = required<HTMLElement>('[data-client-detail-page]')
   const listStatus = required<HTMLElement>('[data-client-list-status]')
   const detailStatus = required<HTMLElement>('[data-client-detail-status]')
-  const tree = required<HTMLOListElement>('[data-client-tree]')
+  const tree = required<HTMLElement>('[data-client-tree]')
   const listRetry = required<HTMLButtonElement>('[data-client-list-retry]')
   const detailRetry = required<HTMLButtonElement>('[data-client-detail-retry]')
   const detail = required<HTMLElement>('[data-client-detail]')
-  const projectsList = required<HTMLUListElement>('[data-client-projects]')
-  const contactsList = required<HTMLUListElement>('[data-client-contacts]')
+  const projectsList = required<HTMLElement>('[data-client-projects]')
+  const contactsList = required<HTMLElement>('[data-client-contacts]')
   const clientFormDialog = required<HTMLDialogElement>('[data-client-form-dialog]')
   const clientForm = required<HTMLFormElement>('[data-client-form]')
   const clientFormTitle = required<HTMLElement>('[data-client-form-title]')
@@ -244,7 +245,7 @@ export const createClientDirectoryController = (
     const visible =
       clientFilter === 'active' ? clients.filter((client) => clientIsActive(client)) : clients
     if (visible.length === 0) {
-      const empty = document.createElement('li')
+      const empty = document.createElement('p')
       empty.className = 'client-tree-empty'
       empty.textContent =
         clientFilter === 'active'
@@ -254,35 +255,55 @@ export const createClientDirectoryController = (
       listStatus.textContent = empty.textContent
       return
     }
+    const rows = clientHierarchy(visible)
     tree.replaceChildren(
-      ...clientHierarchy(visible).map(({ client, depth }) => {
-        const item = document.createElement('li')
-        item.className = 'client-tree-row'
-        item.dataset.clientId = String(client.id)
-        item.style.marginInlineStart = `${Math.min(depth, 4) * 16}px`
-        const heading = document.createElement('div')
-        const link = document.createElement('a')
-        link.href = `/clients/${client.id}`
-        link.textContent = clientDisplayName(client)
-        heading.append(link)
-        if (!clientIsActive(client)) {
-          const archived = document.createElement('span')
-          archived.className = 'client-status-pill'
-          archived.textContent = 'Archived'
-          heading.append(archived)
-        }
-        const relations = document.createElement('p')
-        const parentId = clientNumber(client, 'parent_client_id')
-        const billToId = clientNumber(client, 'bill_to_client_id')
-        relations.textContent = [
-          parentId === null ? null : `Worked-for parent: ${relationLabel(parentId, clients)}`,
-          billToId === null ? null : `Bill-to client: ${relationLabel(billToId, clients)}`,
-        ]
-          .filter((value): value is string => value !== null)
-          .join(' · ')
-        item.append(heading)
-        if (relations.textContent !== '') item.append(relations)
-        return item
+      renderDataTable<{ client: GeneralResource; depth: number }>({
+        caption: 'Clients',
+        rows,
+        rowKey: ({ client }) => String(client.id),
+        columns: [
+          {
+            key: 'client',
+            label: 'Client',
+            render: ({ client, depth }) => {
+              const cell = document.createElement('div')
+              cell.className = 'client-tree-name'
+              // A child sits under its parent, so the name carries the depth.
+              cell.style.paddingInlineStart = `${Math.min(depth, 4) * 16}px`
+              const link = document.createElement('a')
+              link.href = `/clients/${client.id}`
+              link.textContent = clientDisplayName(client)
+              cell.append(link)
+              if (!clientIsActive(client)) {
+                const archived = document.createElement('span')
+                archived.className = 'client-status-pill'
+                archived.textContent = 'Archived'
+                cell.append(archived)
+              }
+              return cell
+            },
+          },
+          {
+            key: 'parent',
+            label: 'Worked-for parent',
+            render: ({ client }) => {
+              const parentId = clientNumber(client, 'parent_client_id')
+              return parentId === null
+                ? '—'
+                : `Worked-for parent: ${relationLabel(parentId, clients)}`
+            },
+          },
+          {
+            key: 'bill-to',
+            label: 'Bill-to client',
+            render: ({ client }) => {
+              const billToId = clientNumber(client, 'bill_to_client_id')
+              return billToId === null
+                ? '—'
+                : `Bill-to client: ${relationLabel(billToId, clients)}`
+            },
+          },
+        ],
       }),
     )
     listStatus.textContent = `${visible.length} ${visible.length === 1 ? 'client' : 'clients'} shown.`
@@ -297,17 +318,33 @@ export const createClientDirectoryController = (
       return
     }
     projectsList.replaceChildren(
-      ...projects.map((project) => {
-        const item = document.createElement('li')
-        const heading = document.createElement('strong')
-        const name = clientText(project, 'name') ?? `Project #${project.id}`
-        const code = clientText(project, 'code')
-        heading.textContent = code === null ? name : `[${code}] ${name}`
-        const facts = document.createElement('span')
-        const billing = clientText(project, 'billing_method')?.replaceAll('_', ' ')
-        facts.textContent = `${project['is_active'] === false ? 'Archived' : 'Active'}${billing === null || billing === undefined ? '' : ` · ${billing}`}`
-        item.append(heading, facts)
-        return item
+      renderDataTable<GeneralResource>({
+        caption: 'Projects for this client',
+        rows: projects,
+        rowKey: (project) => String(project.id),
+        empty: 'No projects for this client.',
+        columns: [
+          {
+            key: 'name',
+            label: 'Project',
+            render: (project) => {
+              const name = clientText(project, 'name') ?? `Project #${project.id}`
+              const code = clientText(project, 'code')
+              return code === null ? name : `[${code}] ${name}`
+            },
+          },
+          {
+            key: 'billing',
+            label: 'Billing',
+            render: (project) =>
+              clientText(project, 'billing_method')?.replaceAll('_', ' ') ?? '—',
+          },
+          {
+            key: 'status',
+            label: 'Status',
+            render: (project) => (project['is_active'] === false ? 'Archived' : 'Active'),
+          },
+        ],
       }),
     )
   }
@@ -353,56 +390,64 @@ export const createClientDirectoryController = (
       return
     }
     const canWrite = session !== null && clientProfileCanWrite(session.identity.profile)
+    const contactName = (contact: GeneralResource): string =>
+      [
+        clientText(contact, 'title'),
+        clientText(contact, 'first_name'),
+        clientText(contact, 'last_name'),
+      ]
+        .filter((value): value is string => value !== null)
+        .join(' ') || `Contact #${contact.id}`
+
     contactsList.replaceChildren(
-      ...contacts.map((contact) => {
-        const item = document.createElement('li')
-        item.className = 'client-contact-card'
-        item.dataset.contactId = String(contact.id)
-        const heading = document.createElement('div')
-        const name = document.createElement('strong')
-        const fullName = [
-          clientText(contact, 'title'),
-          clientText(contact, 'first_name'),
-          clientText(contact, 'last_name'),
-        ]
-          .filter((value): value is string => value !== null)
-          .join(' ')
-        name.textContent = fullName || `Contact #${contact.id}`
-        const recipient = document.createElement('span')
-        recipient.className = 'client-recipient-pill'
-        recipient.dataset.recipientStatus = clientText(contact, 'invoice_recipient_status') ?? 'none'
-        recipient.textContent = recipientLabel(clientText(contact, 'invoice_recipient_status'))
-        heading.append(name, recipient)
-        const details = document.createElement('p')
-        details.textContent = [
-          clientText(contact, 'email'),
-          clientText(contact, 'phone_office'),
-          clientText(contact, 'phone_mobile'),
-          clientText(contact, 'fax') === null ? null : `Fax ${clientText(contact, 'fax')}`,
-        ]
-          .filter((value): value is string => value !== null)
-          .join(' · ')
-        item.append(heading)
-        if (details.textContent !== '') item.append(details)
-        if (canWrite) {
-          const actions = document.createElement('div')
-          actions.className = 'client-contact-actions'
-          const edit = document.createElement('button')
-          edit.type = 'button'
-          edit.textContent = 'Edit'
-          edit.addEventListener('click', () => openContactForm(contact))
-          const remove = document.createElement('button')
-          remove.type = 'button'
-          remove.textContent = 'Delete'
-          remove.addEventListener('click', () => {
-            deletingContactId = contact.id
-            contactDeleteResult.textContent = ''
-            contactDeleteDialog.showModal()
-          })
-          actions.append(edit, remove)
-          item.append(actions)
-        }
-        return item
+      renderDataTable<GeneralResource>({
+        caption: 'Contacts for this client',
+        rows: contacts,
+        rowKey: (contact) => String(contact.id),
+        empty: 'No contacts have been added for this client.',
+        columns: [
+          { key: 'name', label: 'Contact', render: contactName },
+          { key: 'email', label: 'Email', render: (c) => clientText(c, 'email') ?? '—' },
+          {
+            key: 'phone',
+            label: 'Phone',
+            render: (c) =>
+              [clientText(c, 'phone_office'), clientText(c, 'phone_mobile')]
+                .filter((value): value is string => value !== null)
+                .join(' · ') || '—',
+          },
+          {
+            key: 'recipient',
+            label: 'Invoices',
+            render: (contact) => {
+              const pill = document.createElement('span')
+              pill.className = 'client-recipient-pill'
+              pill.dataset.recipientStatus =
+                clientText(contact, 'invoice_recipient_status') ?? 'none'
+              pill.textContent = recipientLabel(clientText(contact, 'invoice_recipient_status'))
+              return pill
+            },
+          },
+        ],
+        ...(canWrite
+          ? {
+              actions: (contact) => [
+                {
+                  label: 'Edit',
+                  primary: true,
+                  onSelect: () => openContactForm(contact),
+                },
+                {
+                  label: 'Delete',
+                  onSelect: () => {
+                    deletingContactId = contact.id
+                    contactDeleteResult.textContent = ''
+                    contactDeleteDialog.showModal()
+                  },
+                },
+              ],
+            }
+          : {}),
       }),
     )
   }
