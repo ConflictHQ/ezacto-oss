@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import BetterSqlite3 from 'better-sqlite3'
@@ -21,7 +21,10 @@ const fixture = async (): Promise<{
   root: string
   attachment: string
 }> => {
-  const root = await mkdtemp(join(tmpdir(), 'ezacto-physical-snapshot-'))
+  // realpath because macOS puts $TMPDIR under /var, itself a symlink to
+  // /private/var. The code under test refuses a symlinked path on purpose, so
+  // the fixture has to hand it a canonical one rather than the check be relaxed.
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'ezacto-physical-snapshot-')))
   roots.push(root)
   const database = new BetterSqlite3(join(root, 'db.sqlite'))
   database.exec(

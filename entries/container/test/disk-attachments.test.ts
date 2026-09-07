@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, mkdir, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, mkdir, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -7,7 +7,10 @@ import { createDiskAttachmentObjectStore } from '../src/disk-attachments.js'
 
 const directories: string[] = []
 const temporary = async (): Promise<string> => {
-  const directory = await mkdtemp(join(tmpdir(), 'ezacto-objects-'))
+  // realpath because macOS puts $TMPDIR under /var, itself a symlink to
+  // /private/var. The code under test refuses a symlinked path on purpose, so
+  // the fixture has to hand it a canonical one rather than the check be relaxed.
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'ezacto-objects-')))
   directories.push(directory)
   return directory
 }

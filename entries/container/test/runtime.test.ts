@@ -1,4 +1,4 @@
-import { mkdtemp, rm, symlink } from 'node:fs/promises'
+import { mkdtemp, realpath, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import BetterSqlite3 from 'better-sqlite3'
@@ -11,7 +11,10 @@ import { createContainerRuntime } from '../src/runtime.js'
 
 const roots: string[] = []
 const temporary = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), 'ezacto-container-'))
+  // realpath because macOS puts $TMPDIR under /var, itself a symlink to
+  // /private/var. The code under test refuses a symlinked path on purpose, so
+  // the fixture has to hand it a canonical one rather than the check be relaxed.
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'ezacto-container-')))
   roots.push(root)
   return root
 }

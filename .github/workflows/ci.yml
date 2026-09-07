@@ -74,6 +74,9 @@ jobs:
           - { name: api 3, workspaces: -w @ezacto/api, shard: 3/3 }
           - { name: migrate, workspaces: -w ezacto-migrate }
           - { name: worker, workspaces: -w ezacto-worker }
+          # Six files that npm run verify has always covered and this matrix
+          # never did, so the merge gate was weaker than the deploy gate.
+          - { name: container, workspaces: -w ezacto-container }
           - {
               name: packages,
               workspaces: -w @ezacto/core -w @ezacto/client -w @ezacto/mailer -w @ezacto/cli -w @ezacto/mcp,
