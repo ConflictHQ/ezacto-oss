@@ -74,6 +74,12 @@ export interface TimesheetSubmissionDetailRecord extends TimesheetSubmissionReco
   expenses: readonly TimesheetSubmissionExpenseRecord[]
 }
 
+export interface TimesheetBulkApprovalSelection {
+  submissionId: number
+  /** The version the approver was looking at when they chose this submission. */
+  expectedVersion: number
+}
+
 export interface TimesheetSubmissionFilters {
   periodStart?: string
   periodEnd?: string
@@ -106,6 +112,12 @@ export class TimesheetApprovalError extends Error {
   constructor(
     readonly code: TimesheetApprovalErrorCode,
     message: string,
+    /**
+     * The selections a bulk approval refused, so the caller can hand them back
+     * to the approver rather than dropping them. Empty for single-submission
+     * failures, where the submission in the route is the one that failed.
+     */
+    readonly submissionIds: readonly number[] = [],
   ) {
     super(message)
     this.name = 'TimesheetApprovalError'
@@ -262,6 +274,33 @@ const atomicPair = async (
     >[],
     readRows: client.prepare(read.sql).all(...read.params) as RawSubmissionRow[],
   }))
+  return execute.immediate()
+}
+
+/**
+ * The N-statement form of `atomicPair`. Bulk approval needs every statement to
+ * land or none to, so the container path runs one immediate transaction and the
+ * D1 path uses `batch()`, which is itself one transaction that rolls back whole
+ * when any statement in it fails. Every statement must return rows -- the
+ * container driver refuses `all()` on one that does not -- so callers add
+ * RETURNING to their mutations.
+ */
+const atomicBatch = async (
+  client: NativeClient,
+  statements: readonly { sql: string; params: readonly unknown[] }[],
+): Promise<Record<string, unknown>[][]> => {
+  if (isD1Client(client)) {
+    const results = await client.batch(
+      statements.map((statement) => client.prepare(statement.sql).bind(...statement.params)),
+    )
+    return results.map((result) => (result.results ?? []) as Record<string, unknown>[])
+  }
+  const execute = client.transaction(() =>
+    statements.map(
+      (statement) =>
+        client.prepare(statement.sql).all(...statement.params) as Record<string, unknown>[],
+    ),
+  )
   return execute.immediate()
 }
 
@@ -719,6 +758,167 @@ export class TimesheetApprovalRepository {
     occurredAt: string,
   ): Promise<TimesheetSubmissionRecord> {
     return this.#review(actor, submissionId, occurredAt, reason)
+  }
+
+  /**
+   * Approves an explicit set of submissions as one command, all or none.
+   *
+   * Every selection is reauthorized here, at mutation time, against the same
+   * predicate the single-submission route uses -- the profile check the caller
+   * did before this is a courtesy, not the authority. The receipt row is what
+   * enforces it: `timesheet_bulk_approval_command_items.submission_id` is NOT
+   * NULL and is filled from a subquery that yields a row only for a submission
+   * that is still submitted, still at the version the approver saw, and still
+   * reviewable by this actor. An ineligible selection therefore fails its
+   * INSERT, which fails the transaction, which leaves every other selection
+   * exactly as it was.
+   */
+  async bulkApprove(
+    actor: Readonly<TimesheetApprovalActor>,
+    commandId: string,
+    selections: readonly TimesheetBulkApprovalSelection[],
+    occurredAt: string,
+  ): Promise<readonly TimesheetSubmissionRecord[]> {
+    const authorization = approverPredicate(actor)
+    const identifiers = selections.map((selection) => selection.submissionId)
+    try {
+      const results = await atomicBatch(this.#client, [
+        {
+          sql: `INSERT INTO timesheet_bulk_approval_commands (
+              command_id, actor_user_id, submission_count, occurred_at
+            ) VALUES (?, ?, ?, ?) RETURNING command_id`,
+          params: [commandId, actor.userId, selections.length, occurredAt],
+        },
+        ...selections.map((selection) => ({
+          sql: `INSERT INTO timesheet_bulk_approval_command_items (
+              command_id, submission_id, expected_version
+            ) VALUES (?, (
+              SELECT submission.id FROM timesheet_submissions submission
+              WHERE submission.id = ? AND submission.version = ?
+                AND submission.status = 'submitted'
+                AND ${approvalEnabledSql} AND ${authorization.sql}
+            ), ?) RETURNING submission_id`,
+          params: [
+            commandId,
+            selection.submissionId,
+            selection.expectedVersion,
+            ...authorization.params,
+            selection.expectedVersion,
+          ],
+        })),
+        ...selections.map((selection) => ({
+          sql: `UPDATE timesheet_submissions AS submission
+            SET status = 'approved', reviewed_by_user_id = ?, reviewed_at = ?,
+              rejection_reason = NULL, version = version + 1, updated_at = ?
+            WHERE submission.id = ? AND submission.version = ?
+              AND submission.status = 'submitted'
+            RETURNING id`,
+          params: [
+            actor.userId,
+            occurredAt,
+            occurredAt,
+            selection.submissionId,
+            selection.expectedVersion,
+          ],
+        })),
+        {
+          sql: `${submissionSelect}
+            WHERE submission.id IN (${identifiers.map(() => '?').join(', ')})
+            ORDER BY submission.id`,
+          params: identifiers,
+        },
+      ])
+      const rows = (results[results.length - 1] ?? []) as unknown as RawSubmissionRow[]
+      const approved = rows.filter((row) => row.status === 'approved')
+      if (approved.length === selections.length) return approved.map(record)
+    } catch (error) {
+      return this.#bulkFailure(actor, commandId, selections, error)
+    }
+    return this.#bulkFailure(actor, commandId, selections, null)
+  }
+
+  /**
+   * Says which selections were refused, after the fact. The mutation deals in a
+   * single failed statement, so this re-reads the set and names the offenders
+   * the way `#review` names a single one -- an approver retrying a batch needs
+   * to know which rows to look at, not that "something" was stale.
+   */
+  async #bulkFailure(
+    actor: Readonly<TimesheetApprovalActor>,
+    commandId: string,
+    selections: readonly TimesheetBulkApprovalSelection[],
+    cause: unknown,
+  ): Promise<never> {
+    await this.#assertEnabled()
+    const identifiers = selections.map((selection) => selection.submissionId)
+    // A surviving receipt can only be an earlier command: this one's rolled back
+    // with the rest of its batch. Checked first because a replayed identity
+    // explains the failure exactly, and the selections themselves may look fine.
+    const replayed = await first<{ command_id: string }>(
+      this.#client,
+      `SELECT command_id FROM timesheet_bulk_approval_commands WHERE command_id = ?`,
+      [commandId],
+    )
+    if (replayed !== null) {
+      throw new TimesheetApprovalError(
+        'state_conflict',
+        'This bulk approval command identity has already been used.',
+        identifiers,
+      )
+    }
+    const placeholders = identifiers.map(() => '?').join(', ')
+    const existing = await all<{ id: number; status: TimesheetSubmissionStatus; version: number }>(
+      this.#client,
+      `SELECT id, status, version FROM timesheet_submissions WHERE id IN (${placeholders})`,
+      identifiers,
+    )
+    const present = new Map(existing.map((row) => [row.id, row]))
+    const missing = identifiers.filter((id) => !present.has(id))
+    if (missing.length > 0) {
+      throw new TimesheetApprovalError(
+        'not_found',
+        'A selected timesheet submission does not exist.',
+        missing,
+      )
+    }
+    const authorization = approverPredicate(actor)
+    const reviewable = new Set(
+      (
+        await all<{ id: number }>(
+          this.#client,
+          `SELECT submission.id FROM timesheet_submissions submission
+           WHERE submission.id IN (${placeholders}) AND ${authorization.sql}`,
+          [...identifiers, ...authorization.params],
+        )
+      ).map((row) => row.id),
+    )
+    const forbidden = identifiers.filter((id) => !reviewable.has(id))
+    if (forbidden.length > 0) {
+      throw new TimesheetApprovalError(
+        'forbidden',
+        'The acting user cannot review every selected timesheet submission.',
+        forbidden,
+      )
+    }
+    const stale = selections
+      .filter((selection) => {
+        const row = present.get(selection.submissionId)!
+        return row.status !== 'submitted' || row.version !== selection.expectedVersion
+      })
+      .map((selection) => selection.submissionId)
+    if (stale.length > 0) {
+      throw new TimesheetApprovalError(
+        'state_conflict',
+        'A selected timesheet submission changed before it could be approved.',
+        stale,
+      )
+    }
+    if (cause !== null) translateMutationFailure(cause)
+    throw new TimesheetApprovalError(
+      'state_conflict',
+      'The selected timesheet submissions changed before they could be approved.',
+      identifiers,
+    )
   }
 
   async withdraw(

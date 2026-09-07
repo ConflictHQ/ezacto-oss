@@ -7799,6 +7799,84 @@
         ]
       }
     },
+    "/api/v1/timesheet-submissions/bulk-approve": {
+      "post": {
+        "operationId": "bulkApproveTimesheetSubmissions",
+        "summary": "Approve an explicit selection of submitted timesheet periods",
+        "tags": [
+          "timesheet-approvals"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimesheetBulkApprovalResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/timesheet-submissions/bulk-approve",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TimesheetBulkApprovalInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/timesheet-submissions/{id}/approve": {
       "post": {
         "operationId": "approveTimesheetSubmission",
@@ -18656,6 +18734,57 @@
             "minLength": 1,
             "maxLength": 10000,
             "pattern": "\\S"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TimesheetBulkApprovalInput": {
+        "type": "object",
+        "required": [
+          "submissions"
+        ],
+        "properties": {
+          "submissions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "expected_version"
+              ],
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "expected_version": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "TimesheetBulkApprovalResult": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimesheetSubmission"
+            }
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
           }
         },
         "additionalProperties": false

@@ -1,5 +1,5 @@
 import type { Hono } from 'hono'
-import { canReviewSubmissions } from '@ezacto/core'
+import { canReviewSubmissions, maximumBulkApprovalSelections } from '@ezacto/core'
 import { requireApiScope } from './auth.js'
 import type { ApiContext, UserPrincipal, UserProfile } from './context.js'
 import { ApiError, validationError, type FieldError } from './errors.js'
@@ -7,6 +7,7 @@ import { cursorPage, type CursorSource } from './pagination.js'
 import {
   assertFields,
   isCanonicalDate,
+  isJsonObject,
   queryDate,
   queryPositiveInteger,
   readObjectBody,
@@ -83,6 +84,11 @@ export interface TimesheetApprovalActor {
   profile: UserProfile
 }
 
+export interface TimesheetBulkApprovalSelection {
+  submissionId: number
+  expectedVersion: number
+}
+
 export interface TimesheetApprovalService {
   assertEnabled(): Promise<void>
   get(
@@ -112,6 +118,12 @@ export interface TimesheetApprovalService {
     submissionId: number,
     occurredAt: string,
   ): Promise<TimesheetSubmissionRecord>
+  bulkApprove(
+    actor: Readonly<TimesheetApprovalActor>,
+    commandId: string,
+    selections: readonly TimesheetBulkApprovalSelection[],
+    occurredAt: string,
+  ): Promise<readonly TimesheetSubmissionRecord[]>
   reject(
     actor: Readonly<TimesheetApprovalActor>,
     submissionId: number,
@@ -136,6 +148,8 @@ interface ServiceError {
     | 'period_overlap'
     | 'state_conflict'
   message: string
+  /** Present only on a refused bulk approval: the selections it refused. */
+  submissionIds?: readonly number[]
 }
 
 const serviceError = (error: unknown): error is ServiceError => {
@@ -173,6 +187,32 @@ const translate = (error: unknown): never => {
   }
   const field = error.code === 'running_entry' ? 'period' : 'period_start'
   throw validationError([{ field, code: error.code, message: error.message }])
+}
+
+/**
+ * A refused batch names the selections it refused. An approver told only that
+ * "something" was stale has to rebuild the whole selection; told which rows,
+ * the queue can keep them checked and they retry what actually failed.
+ */
+const translateBulk = (
+  error: unknown,
+  selections: readonly TimesheetBulkApprovalSelection[],
+): never => {
+  if (!serviceError(error) || error.submissionIds === undefined) return translate(error)
+  if (error.code !== 'forbidden' && error.code !== 'state_conflict') return translate(error)
+  const fields = error.submissionIds.map((submissionId) => ({
+    field: `submissions[${selections.findIndex(
+      (selection) => selection.submissionId === submissionId,
+    )}].id`,
+    code: error.code === 'forbidden' ? 'row_forbidden' : 'state_conflict',
+    message: error.message,
+  }))
+  throw new ApiError({
+    status: error.code === 'forbidden' ? 403 : 409,
+    code: error.code === 'forbidden' ? 'row_forbidden' : 'state_conflict',
+    message: error.message,
+    fields,
+  })
 }
 
 const assertAvailable = async (service: TimesheetApprovalService): Promise<void> => {
@@ -331,6 +371,105 @@ const rejectionReason = (body: Record<string, unknown>): string => {
   return normalized
 }
 
+const bulkApprovalKeys = new Set(['submissions'])
+const selectionKeys = new Set(['id', 'expected_version'])
+const commandIdPattern = /^[A-Za-z0-9._:-]{1,128}$/
+
+const selectionInteger = (
+  entry: Record<string, unknown>,
+  key: 'id' | 'expected_version',
+  index: number,
+  minimum: number,
+  errors: FieldError[],
+): number | undefined => {
+  const value = entry[key]
+  if (Number.isSafeInteger(value) && (value as number) >= minimum) return value as number
+  errors.push({
+    field: `submissions[${index}].${key}`,
+    code: value === undefined ? 'required' : 'invalid_integer',
+    message:
+      key === 'id'
+        ? 'id must be a positive safe integer'
+        : 'expected_version must be the nonnegative version the approver saw',
+  })
+  return undefined
+}
+
+/**
+ * The selection is explicit: ids the approver actually ticked, each with the
+ * version they were looking at. A filter is never re-run server side, because
+ * "approve everything matching this filter" would approve rows the approver
+ * never saw.
+ */
+const bulkApprovalInput = (
+  body: Record<string, unknown>,
+): TimesheetBulkApprovalSelection[] => {
+  const errors = unknownFieldErrors(body, bulkApprovalKeys)
+  const submissions = body.submissions
+  if (!Array.isArray(submissions)) {
+    errors.push({
+      field: 'submissions',
+      code: submissions === undefined ? 'required' : 'invalid_array',
+      message: 'submissions must be an array of selected timesheet submissions',
+    })
+    assertFields(errors)
+  }
+  const entries = submissions as readonly unknown[]
+  if (entries.length === 0 || entries.length > maximumBulkApprovalSelections) {
+    errors.push({
+      field: 'submissions',
+      code: 'invalid_length',
+      message: `submissions must contain between 1 and ${maximumBulkApprovalSelections} selections`,
+    })
+    assertFields(errors)
+  }
+  const selections: TimesheetBulkApprovalSelection[] = []
+  const seen = new Set<number>()
+  entries.forEach((entry, index) => {
+    if (!isJsonObject(entry)) {
+      errors.push({
+        field: `submissions[${index}]`,
+        code: 'invalid_object',
+        message: 'each selection must be an object with an id and an expected_version',
+      })
+      return
+    }
+    errors.push(
+      ...unknownFieldErrors(entry, selectionKeys).map((error) => ({
+        ...error,
+        field: `submissions[${index}].${error.field}`,
+      })),
+    )
+    const submissionId = selectionInteger(entry, 'id', index, 1, errors)
+    const expectedVersion = selectionInteger(entry, 'expected_version', index, 0, errors)
+    if (submissionId === undefined || expectedVersion === undefined) return
+    if (seen.has(submissionId)) {
+      errors.push({
+        field: `submissions[${index}].id`,
+        code: 'duplicate',
+        message: 'a timesheet submission may only be selected once',
+      })
+      return
+    }
+    seen.add(submissionId)
+    selections.push({ submissionId, expectedVersion })
+  })
+  assertFields(errors)
+  return selections
+}
+
+const commandIdentity = (raw: string | undefined): string => {
+  if (raw !== undefined && commandIdPattern.test(raw)) return raw
+  throw validationError([
+    {
+      field: 'Idempotency-Key',
+      code: raw === undefined ? 'required' : 'invalid_command_id',
+      message:
+        'Idempotency-Key must use 1-128 ASCII letters, digits, dot, underscore, colon, or dash.',
+    },
+  ])
+}
+
 const actor = (principal: Readonly<UserPrincipal>): TimesheetApprovalActor => ({
   userId: principal.userId,
   profile: principal.profile,
@@ -447,6 +586,34 @@ export const installTimesheetApprovalRoutes = <Bindings extends object>(
       )
     } catch (error) {
       return translate(error)
+    }
+  })
+
+  api.post('/timesheet-submissions/bulk-approve', async (context) => {
+    await assertAvailable(options.service)
+    requireApiScope(context, 'time_entries:write')
+    requireApiScope(context, 'expenses:write')
+    const principal = context.get('principal')
+    assertApproverProfile(principal)
+    const commandId = commandIdentity(context.req.header('idempotency-key'))
+    const selections = bulkApprovalInput(await readObjectBody(context))
+    try {
+      const approved = await options.service.bulkApprove(
+        actor(principal),
+        commandId,
+        selections,
+        options.clock(),
+      )
+      return context.json(
+        {
+          data: approved.map((submission) => serializeTimesheetSubmission(submission)),
+          links: { self: '/api/v1/timesheet-submissions/bulk-approve' },
+        },
+        200,
+        { 'cache-control': 'no-store' },
+      )
+    } catch (error) {
+      return translateBulk(error, selections)
     }
   })
 

@@ -233,6 +233,29 @@ const insertNativeExpense = async (
   )
 }
 
+/** Gives a further week something to submit, so a batch has more than one row. */
+const insertWeekEntry = async (
+  db: TestDatabase,
+  id: number,
+  userId: number,
+  spentDate: string,
+  userAssignmentId = 1,
+): Promise<void> => {
+  await db.run(
+    `INSERT INTO time_entries (
+      id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+      spent_date, seconds, seconds_without_timer, rounded_seconds, notes,
+      billable, created_at, updated_at
+    ) VALUES (?, ?, 1, 1, ?, 1, ?, 1800, 1800, 1800, 'Bulk work', 1, ?, ?)`,
+    id,
+    userId,
+    userAssignmentId,
+    spentDate,
+    t0,
+    t0,
+  )
+}
+
 const insertSourceExpense = async (
   db: TestDatabase,
   id: number,
@@ -1776,6 +1799,263 @@ for (const [runtime, factory] of factories) {
       expect(hwm).not.toBeNull()
       const results = await source.list({ afterId: null, throughId: hwm!, take: 50 })
       expect(results).toHaveLength(1)
+    })
+
+    it('[unit] approves an explicit selection under one command identity', async () => {
+      database = await factory()
+      await installFixture(database)
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      const first = await approvals.submit(1, periodStart, periodEnd, t1)
+      await insertWeekEntry(database, 21, 1, '2026-08-18')
+      const second = await approvals.submit(1, '2026-08-17', '2026-08-23', t1)
+      await insertWeekEntry(database, 22, 1, '2026-08-11')
+      const third = await approvals.submit(1, '2026-08-10', '2026-08-16', t1)
+      const identifiers = [first, second, third]
+        .map((submission) => submission.id)
+        .sort((left, right) => left - right)
+
+      const approved = await approvals.bulkApprove(
+        actor(10, 'administrator'),
+        'bulk-approve-1',
+        [first, second, third].map((submission) => ({
+          submissionId: submission.id,
+          expectedVersion: submission.version,
+        })),
+        t2,
+      )
+      expect(approved.map((submission) => submission.id)).toEqual(identifiers)
+      expect(
+        approved.map((submission) => ({
+          status: submission.status,
+          version: submission.version,
+          reviewedByUserId: submission.reviewedByUserId,
+          reviewedAt: submission.reviewedAt,
+        })),
+      ).toEqual(
+        identifiers.map(() => ({
+          status: 'approved',
+          version: 1,
+          reviewedByUserId: 10,
+          reviewedAt: t2,
+        })),
+      )
+
+      expect(
+        await database.rows<{
+          aggregate_id: number
+          command_id: string
+          event_index: number
+          payload_command: string
+          payload_actor: number
+        }>(
+          `SELECT aggregate_id, command_id, event_index,
+             json_extract(payload_json, '$.command.id') AS payload_command,
+             json_extract(payload_json, '$.actor.id') AS payload_actor
+           FROM event_outbox WHERE event_type = 'timesheet.approved'
+           ORDER BY aggregate_id`,
+        ),
+      ).toEqual(
+        identifiers.map((id) => ({
+          aggregate_id: id,
+          command_id: 'bulk-approve-1',
+          event_index: 0,
+          payload_command: 'bulk-approve-1',
+          payload_actor: 10,
+        })),
+      )
+      expect(
+        await database.rows<{ count: number }>(
+          `SELECT count(*) AS count FROM timesheet_bulk_approval_command_items
+           WHERE command_id = 'bulk-approve-1'`,
+        ),
+      ).toEqual([{ count: 3 }])
+      expect(
+        await database.rows<{ approval_status: string }>(
+          `SELECT DISTINCT approval_status FROM time_entries`,
+        ),
+      ).toEqual([{ approval_status: 'approved' }])
+
+      const [event] = await database.rows<{ id: string }>(
+        `SELECT id FROM event_outbox WHERE event_type = 'timesheet.approved' LIMIT 1`,
+      )
+      await expect(
+        database.run(`UPDATE event_outbox SET payload_json = '{}' WHERE id = ?`, event!.id),
+      ).rejects.toThrow(/immutable/)
+    })
+
+    it('[security] leaves every selection unchanged when one row is stale', async () => {
+      database = await factory()
+      await installFixture(database)
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      const first = await approvals.submit(1, periodStart, periodEnd, t1)
+      await insertWeekEntry(database, 21, 1, '2026-08-18')
+      const second = await approvals.submit(1, '2026-08-17', '2026-08-23', t1)
+      await insertWeekEntry(database, 22, 1, '2026-08-11')
+      const third = await approvals.submit(1, '2026-08-10', '2026-08-16', t1)
+
+      await expect(
+        approvals.bulkApprove(
+          actor(10, 'administrator'),
+          'bulk-approve-stale',
+          [
+            { submissionId: first.id, expectedVersion: first.version },
+            { submissionId: second.id, expectedVersion: second.version + 1 },
+            { submissionId: third.id, expectedVersion: third.version },
+          ],
+          t2,
+        ),
+      ).rejects.toMatchObject({ code: 'state_conflict', submissionIds: [second.id] })
+
+      expect(
+        await database.rows<{ id: number; status: string; version: number }>(
+          `SELECT id, status, version FROM timesheet_submissions ORDER BY id`,
+        ),
+      ).toEqual(
+        [first, second, third]
+          .map((submission) => ({ id: submission.id, status: 'submitted', version: 0 }))
+          .sort((left, right) => left.id - right.id),
+      )
+      expect(
+        await database.rows<{ count: number }>(
+          `SELECT count(*) AS count FROM event_outbox WHERE event_type = 'timesheet.approved'`,
+        ),
+      ).toEqual([{ count: 0 }])
+      expect(
+        await database.rows<{ count: number }>(
+          `SELECT count(*) AS count FROM timesheet_bulk_approval_commands`,
+        ),
+      ).toEqual([{ count: 0 }])
+      expect(
+        await database.rows<{ approval_status: string }>(
+          `SELECT DISTINCT approval_status FROM time_entries`,
+        ),
+      ).toEqual([{ approval_status: 'submitted' }])
+    })
+
+    it('[security] leaves every selection unchanged when one row is unreviewable', async () => {
+      database = await factory()
+      await installFixture(database)
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      await database.run(
+        `INSERT INTO teammate_assignments (manager_id, user_id, created_at, updated_at)
+         VALUES (2, 1, ?, ?)`,
+        t0,
+        t0,
+      )
+      await database.run(
+        `INSERT INTO user_assignments (id, project_id, user_id, created_at, updated_at)
+         VALUES (2, 1, 4, ?, ?)`,
+        t0,
+        t0,
+      )
+      const mine = await approvals.submit(1, periodStart, periodEnd, t1)
+      await insertWeekEntry(database, 23, 4, '2026-08-25', 2)
+      const theirs = await approvals.submit(4, periodStart, periodEnd, t1)
+
+      await expect(
+        approvals.bulkApprove(
+          actor(2, 'project_manager'),
+          'bulk-approve-forbidden',
+          [
+            { submissionId: mine.id, expectedVersion: mine.version },
+            { submissionId: theirs.id, expectedVersion: theirs.version },
+          ],
+          t2,
+        ),
+      ).rejects.toMatchObject({ code: 'forbidden', submissionIds: [theirs.id] })
+
+      expect(
+        await database.rows<{ id: number; status: string; version: number }>(
+          `SELECT id, status, version FROM timesheet_submissions ORDER BY id`,
+        ),
+      ).toEqual(
+        [mine, theirs]
+          .map((submission) => ({ id: submission.id, status: 'submitted', version: 0 }))
+          .sort((left, right) => left.id - right.id),
+      )
+      expect(
+        await database.rows<{ count: number }>(
+          `SELECT count(*) AS count FROM event_outbox WHERE event_type = 'timesheet.approved'`,
+        ),
+      ).toEqual([{ count: 0 }])
+    })
+
+    it('[concurrency] rolls the whole batch back when one period lost its work', async () => {
+      database = await factory()
+      await installFixture(database)
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      const first = await approvals.submit(1, periodStart, periodEnd, t1)
+      await insertWeekEntry(database, 21, 1, '2026-08-18')
+      const second = await approvals.submit(1, '2026-08-17', '2026-08-23', t1)
+      // The item moved out from under the approver. The submission is still
+      // submitted at the version they saw, so nothing but the approve guard
+      // catches it, and that guard fires from inside the batch.
+      await database.run(
+        `UPDATE time_entries SET approval_status = 'unsubmitted', timesheet_submission_id = NULL
+         WHERE id = 21`,
+      )
+
+      await expect(
+        approvals.bulkApprove(
+          actor(10, 'administrator'),
+          'bulk-approve-moved',
+          [
+            { submissionId: first.id, expectedVersion: first.version },
+            { submissionId: second.id, expectedVersion: second.version },
+          ],
+          t2,
+        ),
+      ).rejects.toMatchObject({ code: 'state_conflict' })
+
+      expect(
+        await database.rows<{ id: number; status: string; version: number }>(
+          `SELECT id, status, version FROM timesheet_submissions ORDER BY id`,
+        ),
+      ).toEqual(
+        [first, second]
+          .map((submission) => ({ id: submission.id, status: 'submitted', version: 0 }))
+          .sort((left, right) => left.id - right.id),
+      )
+      expect(
+        await database.rows<{ count: number }>(
+          `SELECT count(*) AS count FROM event_outbox WHERE event_type = 'timesheet.approved'`,
+        ),
+      ).toEqual([{ count: 0 }])
+      expect(
+        await database.rows<{ count: number }>(
+          `SELECT count(*) AS count FROM timesheet_bulk_approval_command_items`,
+        ),
+      ).toEqual([{ count: 0 }])
+    })
+
+    it('[api] refuses a command identity that has already approved work', async () => {
+      database = await factory()
+      await installFixture(database)
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      const first = await approvals.submit(1, periodStart, periodEnd, t1)
+      await insertWeekEntry(database, 21, 1, '2026-08-18')
+      const second = await approvals.submit(1, '2026-08-17', '2026-08-23', t1)
+
+      await approvals.bulkApprove(
+        actor(10, 'administrator'),
+        'bulk-approve-replay',
+        [{ submissionId: first.id, expectedVersion: first.version }],
+        t2,
+      )
+      await expect(
+        approvals.bulkApprove(
+          actor(10, 'administrator'),
+          'bulk-approve-replay',
+          [{ submissionId: second.id, expectedVersion: second.version }],
+          t3,
+        ),
+      ).rejects.toMatchObject({ code: 'state_conflict', submissionIds: [second.id] })
+      expect(
+        await database.rows<{ status: string; version: number }>(
+          `SELECT status, version FROM timesheet_submissions WHERE id = ?`,
+          second.id,
+        ),
+      ).toEqual([{ status: 'submitted', version: 0 }])
     })
   })
 }

@@ -75,6 +75,17 @@ export const canReviewSubmissions = (profile: UserProfile): boolean =>
   submissionReview.includes(profile)
 
 /**
+ * How many submissions one bulk approval may carry. A request parser and the
+ * approval ledger's own CHECK both need this number, and they sit in different
+ * packages, so it is stated once here rather than twice and left to drift.
+ *
+ * Fifty, not a page of the queue, because approving a week of someone's work is
+ * irreversible without an administrator: a full page should cost more than one
+ * confirmation.
+ */
+export const maximumBulkApprovalSelections = 50
+
+/**
  * The shared scope/profile ceiling. Resource handlers still enforce assignment,
  * row ownership, and serializer redaction; this policy can only deny earlier.
  */

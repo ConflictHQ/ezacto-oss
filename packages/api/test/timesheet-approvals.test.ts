@@ -663,4 +663,257 @@ describe('timesheet approval API', () => {
       error: { code: 'validation_failed', fields: [{ field: 'reason' }] },
     })
   })
+
+  /** Submits a second week for the same member, so a batch has more than one row. */
+  const submitSecondPeriod = async (): Promise<{ id: number; version: number }> => {
+    await harness.d1
+      .prepare(
+        `INSERT INTO time_entries (
+          id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+          spent_date, seconds, seconds_without_timer, rounded_seconds, notes,
+          billable, created_at, updated_at
+        ) VALUES (2, 1, 1, 1, 1, 1, '2026-08-18', 1800, 1800, 1800,
+          'Earlier work', 1, ?, ?)`,
+      )
+      .bind(now, now)
+      .run()
+    const response = await harness.request('/timesheet-submissions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ period_start: '2026-08-17', period_end: '2026-08-23' }),
+    })
+    return ((await response.json()) as { data: { id: number; version: number } }).data
+  }
+
+  const submitFirstPeriod = async (): Promise<{ id: number; version: number }> => {
+    const response = await harness.request('/timesheet-submissions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ period_start: '2026-08-24', period_end: '2026-08-30' }),
+    })
+    return ((await response.json()) as { data: { id: number; version: number } }).data
+  }
+
+  const bulkApprove = (
+    body: unknown,
+    { key = 'bulk-key-1', principal = { userId: 10, profile: 'administrator' as UserProfile } } = {},
+  ) =>
+    harness.request(
+      '/timesheet-submissions/bulk-approve',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'idempotency-key': key },
+        body: JSON.stringify(body),
+      },
+      principal,
+    )
+
+  it('[api] approves an explicit selection under one command over real D1', async () => {
+    const first = await submitFirstPeriod()
+    const second = await submitSecondPeriod()
+
+    const response = await bulkApprove({
+      submissions: [
+        { id: first.id, expected_version: first.version },
+        { id: second.id, expected_version: second.version },
+      ],
+    })
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { data: { id: number; status: string }[] }
+    expect(body.data).toHaveLength(2)
+    expect(body.data.every((submission) => submission.status === 'approved')).toBe(true)
+
+    expect(
+      (
+        await harness.d1
+          .prepare(
+            `SELECT command_id, count(*) AS count FROM event_outbox
+             WHERE event_type = 'timesheet.approved' GROUP BY command_id`,
+          )
+          .all()
+      ).results,
+    ).toEqual([{ command_id: 'bulk-key-1', count: 2 }])
+    expect(
+      (
+        await harness.d1
+          .prepare(`SELECT DISTINCT approval_status FROM time_entries`)
+          .all()
+      ).results,
+    ).toEqual([{ approval_status: 'approved' }])
+  })
+
+  it('[e2e] preserves the failed selection and approves nothing when one row is stale', async () => {
+    const first = await submitFirstPeriod()
+    const second = await submitSecondPeriod()
+
+    const response = await bulkApprove({
+      submissions: [
+        { id: first.id, expected_version: first.version },
+        { id: second.id, expected_version: second.version + 1 },
+      ],
+    })
+    expect(response.status).toBe(409)
+    expect((await response.json()) as object).toMatchObject({
+      error: {
+        code: 'state_conflict',
+        fields: [{ field: 'submissions[1].id', code: 'state_conflict' }],
+      },
+    })
+    expect(
+      (
+        await harness.d1
+          .prepare(`SELECT id, status, version FROM timesheet_submissions ORDER BY id`)
+          .all()
+      ).results,
+    ).toEqual([
+      { id: first.id, status: 'submitted', version: 0 },
+      { id: second.id, status: 'submitted', version: 0 },
+    ])
+    expect(
+      await harness.d1
+        .prepare(
+          `SELECT count(*) AS count FROM event_outbox WHERE event_type = 'timesheet.approved'`,
+        )
+        .first(),
+    ).toEqual({ count: 0 })
+  })
+
+  it('[security] refuses a selection reaching outside the approver, changing nothing', async () => {
+    await harness.d1
+      .prepare(
+        `INSERT INTO user_assignments (id, project_id, user_id, created_at, updated_at)
+         VALUES (2, 1, 3, ?, ?)`,
+      )
+      .bind(now, now)
+      .run()
+    await harness.d1
+      .prepare(
+        `INSERT INTO time_entries (
+          id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+          spent_date, seconds, seconds_without_timer, rounded_seconds, notes,
+          billable, created_at, updated_at
+        ) VALUES (3, 3, 1, 1, 2, 1, '2026-08-25', 900, 900, 900, 'Other work', 1, ?, ?)`,
+      )
+      .bind(now, now)
+      .run()
+    const mine = await submitFirstPeriod()
+    const theirs = ((await (
+      await harness.request(
+        '/timesheet-submissions',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ period_start: '2026-08-24', period_end: '2026-08-30' }),
+        },
+        { userId: 3, profile: 'people_admin' },
+      )
+    ).json()) as { data: { id: number; version: number } }).data
+
+    const response = await bulkApprove(
+      {
+        submissions: [
+          { id: mine.id, expected_version: mine.version },
+          { id: theirs.id, expected_version: theirs.version },
+        ],
+      },
+      { principal: { userId: 2, profile: 'project_manager' } },
+    )
+    expect(response.status).toBe(403)
+    expect((await response.json()) as object).toMatchObject({
+      error: {
+        code: 'row_forbidden',
+        fields: [{ field: 'submissions[1].id', code: 'row_forbidden' }],
+      },
+    })
+    expect(
+      (
+        await harness.d1
+          .prepare(`SELECT DISTINCT status FROM timesheet_submissions`)
+          .all()
+      ).results,
+    ).toEqual([{ status: 'submitted' }])
+  })
+
+  it('[api] refuses a bulk request without both write scopes or an approver profile', async () => {
+    const first = await submitFirstPeriod()
+    const selection = { submissions: [{ id: first.id, expected_version: first.version }] }
+    for (const token of ['time-write-only', 'expense-write-only']) {
+      const response = await harness.request('/timesheet-submissions/bulk-approve', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+          'idempotency-key': 'bulk-scope',
+        },
+        body: JSON.stringify(selection),
+      })
+      expect(response.status, token).toBe(403)
+      expect((await response.json()) as object).toMatchObject({
+        error: { code: 'insufficient_scope' },
+      })
+    }
+    for (const profile of ['member', 'people_admin', 'accounting'] as const) {
+      const response = await bulkApprove(selection, {
+        key: `bulk-${profile}`,
+        principal: { userId: profile === 'member' ? 1 : 3, profile },
+      })
+      expect(response.status, profile).toBe(403)
+      expect((await response.json()) as object).toMatchObject({
+        error: { code: 'profile_forbidden' },
+      })
+    }
+    expect(
+      await harness.d1
+        .prepare(`SELECT status FROM timesheet_submissions WHERE id = ?`)
+        .bind(first.id)
+        .first(),
+    ).toEqual({ status: 'submitted' })
+  })
+
+  it('[api] refuses an empty, oversized, duplicated, or unidentified selection', async () => {
+    const first = await submitFirstPeriod()
+    const selection = { id: first.id, expected_version: first.version }
+
+    const unidentified = await harness.request(
+      '/timesheet-submissions/bulk-approve',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ submissions: [selection] }),
+      },
+      { userId: 10, profile: 'administrator' },
+    )
+    expect(unidentified.status).toBe(422)
+    expect((await unidentified.json()) as object).toMatchObject({
+      error: { fields: [{ field: 'Idempotency-Key', code: 'required' }] },
+    })
+
+    for (const [label, body] of [
+      ['empty', { submissions: [] }],
+      [
+        'oversized',
+        {
+          submissions: Array.from({ length: 51 }, (_unused, index) => ({
+            id: index + 1,
+            expected_version: 0,
+          })),
+        },
+      ],
+      ['duplicated', { submissions: [selection, selection] }],
+      ['unversioned', { submissions: [{ id: first.id }] }],
+      ['unknown field', { submissions: [selection], filter: 'everything' }],
+    ] as const) {
+      const response = await bulkApprove(body, { key: `bulk-${label.replace(/\s/gu, '-')}` })
+      expect(response.status, label).toBe(422)
+      expect(((await response.json()) as { error: { code: string } }).error.code, label).toBe(
+        'validation_failed',
+      )
+    }
+    expect(
+      await harness.d1
+        .prepare(`SELECT status FROM timesheet_submissions WHERE id = ?`)
+        .bind(first.id)
+        .first(),
+    ).toEqual({ status: 'submitted' })
+  })
 })

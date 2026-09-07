@@ -17,6 +17,7 @@ import {
   type TimesheetLockPolicy,
   type TimesheetLockPolicyPatch,
   type TimesheetLockWindow,
+  type TimesheetBulkApprovalInput,
   type TimesheetManualLockInput,
   type TimesheetSubmission,
   type TimesheetSubmissionDetail,
@@ -103,6 +104,11 @@ export interface ShellApi
   ): Promise<ApprovalQueuePage>
   getTimesheetSubmission?(id: number, signal?: AbortSignal): Promise<TimesheetSubmissionDetail>
   approveTimesheetSubmission?(id: number, signal?: AbortSignal): Promise<TimesheetSubmission>
+  bulkApproveTimesheetSubmissions?(
+    commandId: string,
+    input: TimesheetBulkApprovalInput,
+    signal?: AbortSignal,
+  ): Promise<readonly TimesheetSubmission[]>
   rejectTimesheetSubmission?(
     id: number,
     input: TimesheetRejectionInput,
@@ -1077,6 +1083,14 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (
       await client.approveTimesheetSubmission({
         id,
+        ...withSignal(signal),
+      })
+    ).data,
+  bulkApproveTimesheetSubmissions: async (commandId, input, signal) =>
+    (
+      await client.bulkApproveTimesheetSubmissions({
+        'Idempotency-Key': commandId,
+        body: input,
         ...withSignal(signal),
       })
     ).data,

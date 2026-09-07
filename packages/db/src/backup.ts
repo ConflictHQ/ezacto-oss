@@ -51,6 +51,8 @@ const BACKUP_TABLES = [
   'file_objects',
   'resource_create_commands',
   'timesheet_submissions',
+  'timesheet_bulk_approval_commands',
+  'timesheet_bulk_approval_command_items',
   'timesheet_lock_windows',
   'email_log',
   'event_outbox',

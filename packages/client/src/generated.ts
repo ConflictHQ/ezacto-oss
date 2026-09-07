@@ -894,6 +894,18 @@ export type TimesheetWithdrawalInput = {
   "reason": string;
 };
 
+export type TimesheetBulkApprovalInput = {
+  "submissions": Array<{
+  "id": number;
+  "expected_version": number;
+}>;
+};
+
+export type TimesheetBulkApprovalResult = {
+  "data": Array<TimesheetSubmission>;
+  "links": Links;
+};
+
 export type TimesheetSubmissionEnvelope = {
   "data": TimesheetSubmission;
   "links": Links;
@@ -2799,6 +2811,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<TimesheetSubmissionDetailEnvelope>("GET", "/api/v1/timesheet-submissions/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async bulkApproveTimesheetSubmissions(args: { "Idempotency-Key": string; body: TimesheetBulkApprovalInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetBulkApprovalResult> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<TimesheetBulkApprovalResult>("POST", "/api/v1/timesheet-submissions/bulk-approve", {
+      body: args.body,
       signal: args.signal,
       headers,
     });

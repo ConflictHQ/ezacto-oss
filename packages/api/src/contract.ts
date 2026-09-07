@@ -1,3 +1,4 @@
+import { maximumBulkApprovalSelections } from "@ezacto/core";
 import {
   attachmentContractOperations,
   attachmentContractSchemas,
@@ -494,6 +495,18 @@ const timesheetApprovalOperations: ApiContractOperation[] = [
     responseStatus: 200,
     responseSchema: "TimesheetSubmissionDetailEnvelope",
     parameters: [path("id")],
+  },
+  {
+    method: "post",
+    path: "/api/v1/timesheet-submissions/bulk-approve",
+    operationId: "bulkApproveTimesheetSubmissions",
+    summary: "Approve an explicit selection of submitted timesheet periods",
+    tag: "timesheet-approvals",
+    responseStatus: 200,
+    responseSchema: "TimesheetBulkApprovalResult",
+    requestSchema: "TimesheetBulkApprovalInput",
+    requestRequired: true,
+    parameters: [header("Idempotency-Key")],
   },
   {
     method: "post",
@@ -3261,6 +3274,36 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         maxLength: 10000,
         pattern: "\\S",
       },
+    },
+    additionalProperties: false,
+  },
+  TimesheetBulkApprovalInput: {
+    type: "object",
+    required: ["submissions"],
+    properties: {
+      submissions: {
+        type: "array",
+        minItems: 1,
+        maxItems: maximumBulkApprovalSelections,
+        items: {
+          type: "object",
+          required: ["id", "expected_version"],
+          properties: {
+            id: integerSchema,
+            expected_version: { type: "integer", minimum: 0 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    additionalProperties: false,
+  },
+  TimesheetBulkApprovalResult: {
+    type: "object",
+    required: ["data", "links"],
+    properties: {
+      data: { type: "array", items: reference("TimesheetSubmission") },
+      links: reference("Links"),
     },
     additionalProperties: false,
   },

@@ -14,8 +14,8 @@
     "apps/*"
   ],
   "scripts": {
-    "contract:generate": "npm run build -w @ezacto/api && node scripts/generate-api-contract.mjs",
-    "contract:check": "npm run build -w @ezacto/api && node scripts/generate-api-contract.mjs --check",
+    "contract:generate": "npm run build -w @ezacto/core -w @ezacto/api && node scripts/generate-api-contract.mjs",
+    "contract:check": "npm run build -w @ezacto/core -w @ezacto/api && node scripts/generate-api-contract.mjs --check",
     "prepare": "npm run generated",
     "generated": "npm run theme:generate -w @ezacto/web && npm run shell:generate -w @ezacto/web",
     "pretypecheck": "npm run generated",

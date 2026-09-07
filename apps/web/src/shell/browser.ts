@@ -1119,6 +1119,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   let pendingNextCursor: string | null = null
   let approvedNextCursor: string | null = null
   let approvalQueueFilters: ApprovalQueueFilters = {}
+  // Ids only. The versions come from the rendered cards at the moment the
+  // approver confirms, so a queue that reloaded under them sends what they can
+  // actually see rather than what they saw a page ago.
+  let selectedSubmissionIds: ReadonlySet<number> = new Set()
+  let bulkApprovalCommandId: string | null = null
   let lockPolicy: TimesheetLockPolicy | null = null
   let activeTimesheetLocks: readonly TimesheetLockWindow[] = []
   let timesheetTransitionPending = false
@@ -1293,6 +1298,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     currentSubmission = null
     pendingSubmissions = []
     approvedSubmissions = []
+    selectedSubmissionIds = new Set()
+    bulkApprovalCommandId = null
     pendingNextCursor = null
     approvedNextCursor = null
     lockPolicy = null
@@ -1673,6 +1680,40 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     )
   }
 
+  /**
+   * The count is the whole point of this bar: bulk approval is all-or-none and
+   * irreversible without an administrator, so the approver confirms a number
+   * they can check against the rows they ticked before anything is sent.
+   */
+  const renderBulkApprovalBar = (): HTMLElement => {
+    const bar = document.createElement('div')
+    bar.className = 'approval-bulk'
+    bar.dataset.approvalBulk = 'true'
+    const count = document.createElement('p')
+    count.className = 'approval-bulk-count'
+    count.dataset.approvalBulkCount = String(selectedSubmissionIds.size)
+    count.textContent =
+      selectedSubmissionIds.size === 0
+        ? 'No timesheets selected.'
+        : `${selectedSubmissionIds.size} ${selectedSubmissionIds.size === 1 ? 'timesheet' : 'timesheets'} selected.`
+    const confirm = document.createElement('button')
+    confirm.type = 'button'
+    confirm.className = 'primary-action'
+    confirm.dataset.approvalBulkApprove = 'true'
+    confirm.textContent = `Approve ${selectedSubmissionIds.size} selected`
+    confirm.disabled = selectedSubmissionIds.size === 0 || timesheetTransitionPending
+    confirm.addEventListener('click', () => void bulkApproveSelection())
+    bar.append(count, confirm)
+    return bar
+  }
+
+  // Ticking a box only changes the bar. Re-rendering the whole queue would
+  // rebuild the checkbox that fired the event and take the focus with it,
+  // which makes the list unusable from the keyboard.
+  const refreshBulkApprovalBar = (): void => {
+    approvalQueue.querySelector('[data-approval-bulk]')?.replaceWith(renderBulkApprovalBar())
+  }
+
   const renderApprovalQueue = (): void => {
     renderApprovalNavigation()
     if (!timesheetApprovalsPage || !approvalModuleAvailable || !canReviewTimesheets()) {
@@ -1680,6 +1721,14 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       approvalHistory.replaceChildren()
       return
     }
+    // A selection only ever means rows the approver can see on this filtered
+    // page. Anything the queue no longer shows was approved, rejected, or
+    // filtered away, and confirming it would approve work nobody looked at.
+    selectedSubmissionIds = new Set(
+      pendingSubmissions
+        .filter((submission) => selectedSubmissionIds.has(submission.id))
+        .map((submission) => submission.id),
+    )
     if (pendingSubmissions.length === 0) {
       const empty = document.createElement('p')
       empty.className = 'approval-empty'
@@ -1687,6 +1736,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       approvalQueue.replaceChildren(empty)
     } else {
       approvalQueue.replaceChildren(
+        renderBulkApprovalBar(),
         ...pendingSubmissions.map((submission) => {
         const card = document.createElement('article')
         card.className = 'approval-card'
@@ -1747,9 +1797,27 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
             return item
           }),
         )
+        const select = document.createElement('input')
+        select.type = 'checkbox'
+        select.className = 'approval-select'
+        select.dataset.approvalSelect = String(submission.id)
+        select.checked = selectedSubmissionIds.has(submission.id)
+        select.disabled = timesheetTransitionPending
+        select.setAttribute(
+          'aria-label',
+          `Select ${submission.user_name} for bulk approval`,
+        )
+        select.addEventListener('change', () => {
+          const next = new Set(selectedSubmissionIds)
+          if (select.checked) next.add(submission.id)
+          else next.delete(submission.id)
+          selectedSubmissionIds = next
+          refreshBulkApprovalBar()
+        })
         summary.append(title, period, totals, entries, expenses)
         const actions = document.createElement('div')
         actions.className = 'approval-actions'
+        actions.append(select)
         const approve = document.createElement('button')
         approve.type = 'button'
         approve.className = 'primary-action'
@@ -2307,6 +2375,70 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     } catch (error) {
       if (handleSessionFailure(error, operation)) return
       approvalQueueResult.textContent = messageFor(error)
+    } finally {
+      if (isSessionCurrent(operation)) {
+        timesheetTransitionPending = false
+        renderApprovalQueue()
+      }
+    }
+  }
+
+  /**
+   * Reads the selections the server refused out of its field errors, so a
+   * failed batch leaves exactly those rows ticked. Dropping them would make the
+   * approver rebuild a selection whose good half was never in doubt.
+   */
+  const refusedSelections = (
+    error: unknown,
+    selections: readonly { id: number }[],
+  ): number[] => {
+    if (!(error instanceof EzactoApiError)) return []
+    if (typeof error.body !== 'object' || error.body === null) return []
+    const detail = Reflect.get(error.body, 'error')
+    if (typeof detail !== 'object' || detail === null) return []
+    const fields = Reflect.get(detail, 'fields')
+    if (!Array.isArray(fields)) return []
+    return fields.flatMap((field): number[] => {
+      if (typeof field !== 'object' || field === null) return []
+      const path = Reflect.get(field, 'field')
+      const matched = typeof path === 'string' ? /^submissions\[(\d+)\]\.id$/u.exec(path) : null
+      const selection = matched === null ? undefined : selections[Number(matched[1])]
+      return selection === undefined ? [] : [selection.id]
+    })
+  }
+
+  async function bulkApproveSelection(): Promise<void> {
+    const operation = sessionOperation()
+    const selections = pendingSubmissions
+      .filter((submission) => selectedSubmissionIds.has(submission.id))
+      .map((submission) => ({ id: submission.id, expected_version: submission.version }))
+    if (
+      operation === null ||
+      timesheetTransitionPending ||
+      selections.length === 0 ||
+      api.bulkApproveTimesheetSubmissions === undefined
+    ) {
+      return
+    }
+    timesheetTransitionPending = true
+    bulkApprovalCommandId ??= `web.timesheet.bulk-approve:${crypto.randomUUID()}`
+    const commandId = bulkApprovalCommandId
+    approvalQueueResult.textContent = `Approving ${selections.length} timesheets…`
+    renderApprovalQueue()
+    try {
+      await api.bulkApproveTimesheetSubmissions(commandId, { submissions: selections }, operation.signal)
+      bulkApprovalCommandId = null
+      selectedSubmissionIds = new Set()
+      if (!(await refresh(operation))) return
+      approvalQueueResult.textContent = `${selections.length} ${selections.length === 1 ? 'timesheet is' : 'timesheets are'} approved and their entries are now locked.`
+    } catch (error) {
+      if (handleSessionFailure(error, operation)) return
+      const refused = refusedSelections(error, selections)
+      if (refused.length > 0) selectedSubmissionIds = new Set(refused)
+      approvalQueueResult.textContent =
+        refused.length === 0
+          ? messageFor(error)
+          : `${messageFor(error)} Nothing was approved; ${refused.length} ${refused.length === 1 ? 'selection stays' : 'selections stay'} ticked for another try.`
     } finally {
       if (isSessionCurrent(operation)) {
         timesheetTransitionPending = false

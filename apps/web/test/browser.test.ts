@@ -15,6 +15,7 @@ import {
   type TimeEntryInput,
   type TimeEntryPatch,
   type TimesheetSubmission,
+  type TimesheetSubmissionDetail,
   type Whoami,
 } from '@ezacto/client'
 import { describe, expect, it, vi } from 'vitest'
@@ -335,6 +336,44 @@ const browserApi = (
   }
   return api
 }
+
+const pendingSubmission = (id: number, userName: string): TimesheetSubmissionDetail => ({
+  id,
+  user_id: id,
+  user_name: userName,
+  period_start: '2026-08-24',
+  period_end: '2026-08-30',
+  status: 'submitted',
+  origin: 'native',
+  source_status: null,
+  source_observed_at: null,
+  submitted_by_user_id: id,
+  submitted_at: timestamp,
+  reviewed_by_user_id: null,
+  reviewed_at: null,
+  rejection_reason: null,
+  version: 0,
+  entry_count: 1,
+  expense_count: 0,
+  total_seconds: 3_600,
+  billable_seconds: 3_600,
+  nonbillable_seconds: 0,
+  created_at: timestamp,
+  updated_at: timestamp,
+  entries: [
+    {
+      id,
+      spent_date: '2026-08-25',
+      project_id: 1,
+      project_name: 'Northpeak',
+      task_id: 1,
+      task_name: 'Development',
+      seconds: 3_600,
+      notes: 'Submitted work',
+    },
+  ],
+  expenses: [],
+})
 
 const desktopInputs = (): HTMLInputElement[] => [
   ...document.querySelectorAll<HTMLInputElement>('[data-week-grid] input[data-cell-key]'),
@@ -2570,6 +2609,105 @@ describe('native browser authentication', () => {
       .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
     expect(base.updateTimeEntry).not.toHaveBeenCalled()
     vi.unstubAllGlobals()
+  })
+
+  it('[e2e][approvals] confirms a bulk count and keeps a refused selection ticked', async () => {
+    renderBrowserShell({ view: 'timesheet-approvals' })
+    const base = browserApi()
+    let pending = [pendingSubmission(31, 'Maya Member'), pendingSubmission(32, 'Noor Newton')]
+    let attempts = 0
+    const bulkApproveTimesheetSubmissions = vi.fn(
+      async (_commandId: string, input: { submissions: readonly { id: number }[] }) => {
+        attempts += 1
+        if (attempts === 1) {
+          throw new EzactoApiError(
+            409,
+            {
+              error: {
+                code: 'state_conflict',
+                message: 'A selected timesheet submission changed before it could be approved.',
+                fields: [
+                  {
+                    field: 'submissions[1].id',
+                    code: 'state_conflict',
+                    message: 'A selected timesheet submission changed before it could be approved.',
+                  },
+                ],
+              },
+            },
+            null,
+          )
+        }
+        const approved = new Set(input.submissions.map((selection) => selection.id))
+        pending = pending.filter((submission) => !approved.has(submission.id))
+        return []
+      },
+    )
+    const api: ShellApi = {
+      ...base,
+      listTimesheetSubmissions: vi.fn(async () => []),
+      listPendingTimesheetSubmissions: vi.fn(async () => ({
+        submissions: pending,
+        nextCursor: null,
+      })),
+      getTimesheetSubmission: vi.fn(async (id: number) =>
+        pending.find((submission) => submission.id === id)!,
+      ),
+      bulkApproveTimesheetSubmissions,
+    }
+
+    await mountShell(api)
+    const bulkCount = () => document.querySelector<HTMLElement>('[data-approval-bulk-count]')!
+    const confirm = () =>
+      document.querySelector<HTMLButtonElement>('[data-approval-bulk-approve]')!
+    const select = (id: number) =>
+      document.querySelector<HTMLInputElement>(`[data-approval-select="${id}"]`)!
+
+    await vi.waitFor(() => expect(select(31)).not.toBeNull())
+    expect(bulkCount().dataset.approvalBulkCount).toBe('0')
+    expect(confirm().disabled).toBe(true)
+
+    select(31).click()
+    select(32).click()
+    expect(bulkCount().dataset.approvalBulkCount).toBe('2')
+    expect(confirm().textContent).toBe('Approve 2 selected')
+
+    confirm().click()
+    await vi.waitFor(() =>
+      expect(bulkApproveTimesheetSubmissions).toHaveBeenCalledWith(
+        expect.stringContaining('web.timesheet.bulk-approve:'),
+        {
+          submissions: [
+            { id: 31, expected_version: 0 },
+            { id: 32, expected_version: 0 },
+          ],
+        },
+        expect.any(AbortSignal),
+      ),
+    )
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-approval-queue-result]')?.textContent).toContain(
+        'Nothing was approved',
+      ),
+    )
+    expect(bulkCount().dataset.approvalBulkCount).toBe('1')
+    expect(select(31).checked).toBe(false)
+    expect(select(32).checked).toBe(true)
+
+    confirm().click()
+    await vi.waitFor(() =>
+      expect(bulkApproveTimesheetSubmissions).toHaveBeenLastCalledWith(
+        expect.any(String),
+        { submissions: [{ id: 32, expected_version: 0 }] },
+        expect.any(AbortSignal),
+      ),
+    )
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-approval-queue-result]')?.textContent).toContain(
+        '1 timesheet is approved',
+      ),
+    )
+    expect(document.querySelector('[data-approval-select="32"]')).toBeNull()
   })
 })
 

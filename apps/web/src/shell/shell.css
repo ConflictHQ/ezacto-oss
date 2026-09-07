@@ -1788,8 +1788,35 @@
   font-style: italic;
 }
 .approval-actions {
+  align-items: center;
   display: flex;
   gap: 8px;
+}
+.approval-select {
+  height: 20px;
+  width: 20px;
+}
+.approval-bulk {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+.approval-bulk-count {
+  color: var(--ez-muted);
+}
+.approval-bulk button {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--ez-action);
+  border-radius: var(--ez-radius);
+  background: var(--ez-action);
+  color: var(--ez-action-fg);
+}
+.approval-bulk button:disabled {
+  border-color: var(--ez-border);
+  background: var(--ez-ground);
+  color: var(--ez-muted);
 }
 .approval-actions button {
   min-height: 44px;
