@@ -278,6 +278,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
           <button class="primary-action" type="button" data-submit-timesheet data-auth-action disabled>Submit week</button>
         </div>
       </aside>
+      <ol class="day-totals" data-day-totals aria-label="Hours by day"></ol>
       <div class="week-grid-wrap" data-week-grid data-view="desktop">
         <table class="week-grid-table">
           <thead data-week-grid-head><tr><th>Project / task</th><th colspan="8">Loading week…</th></tr></thead>
