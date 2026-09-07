@@ -229,6 +229,7 @@ export const createProjectDirectoryController = (
   const listPageElement = required<HTMLElement>('[data-project-list-page]')
   const detailPageElement = required<HTMLElement>('[data-project-detail-page]')
   const listStatus = required<HTMLElement>('[data-project-list-status]')
+  const listQuality = required<HTMLElement>('[data-project-quality]')
   const listElement = required<HTMLElement>('[data-project-list]')
   const listRetry = required<HTMLButtonElement>('[data-project-list-retry]')
   const clientFilter = required<HTMLSelectElement>('[data-project-client-filter]')
@@ -446,9 +447,14 @@ export const createProjectDirectoryController = (
         : projectMoney(summary.remaining_cents, projectCurrency(project, clients))
     }
 
+    const costVisible = [...budgets.values()].some(
+      (summary) => summary.cost_cents !== undefined,
+    )
+
     const costLabel = (project: Readonly<GeneralResource>): string => {
       const cents = budgets.get(project.id)?.cost_cents
-      // Absent rather than zero when the viewer's profile cannot see cost.
+      // Absent rather than zero when a single project has no cost recorded. The
+      // whole column is dropped when no project does -- see the columns below.
       return cents === undefined ? '—' : projectMoney(cents, projectCurrency(project, clients))
     }
 
@@ -502,7 +508,13 @@ export const createProjectDirectoryController = (
         { key: 'budget', label: 'Budget', numeric: true, render: budgetLabel },
         { key: 'spent', label: 'Spent', numeric: true, render: spentLabel },
         { key: 'remaining', label: 'Remaining', numeric: true, render: remainingLabel },
-        { key: 'costs', label: 'Costs', numeric: true, render: costLabel },
+        // A viewer whose profile cannot see cost gets no cost_cents at all, on
+        // any row. Rendering the column anyway put an em dash in every cell of
+        // it, which reads as "no cost recorded" rather than "not yours to see"
+        // -- and it costs a column of width on a table that wants it.
+        ...(costVisible
+          ? [{ key: 'costs', label: 'Costs', numeric: true, render: costLabel } as const]
+          : []),
         {
           key: 'status',
           label: 'Status',
@@ -518,6 +530,25 @@ export const createProjectDirectoryController = (
     })
     listElement.replaceChildren(table)
     listStatus.textContent = `${visible.length} ${visible.length === 1 ? 'project' : 'projects'} shown.`
+    // Money on this list is a sum over tracked rows, and an entry with no rate
+    // contributes nothing to it. Saying how many were skipped is the difference
+    // between a total that is wrong and a total that is short by a stated
+    // amount -- the first is a bug report, the second is a task.
+    const unpriced = [...budgets.values()].reduce(
+      (total, summary) => total + (summary.unpriced_entry_count ?? 0),
+      0,
+    )
+    listQuality.replaceChildren()
+    listQuality.hidden = unpriced === 0
+    if (unpriced > 0) {
+      const note = document.createElement('p')
+      note.className = 'data-quality'
+      note.textContent =
+        unpriced === 1
+          ? '1 tracked entry has no rate, so it is missing from these money totals.'
+          : `${unpriced} tracked entries have no rate, so they are missing from these money totals.`
+      listQuality.append(note)
+    }
   }
 
   const fact = (term: string, description: string | Node): HTMLDivElement => {

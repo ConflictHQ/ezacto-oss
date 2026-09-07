@@ -16,6 +16,7 @@ export interface ProjectBudgetSummary {
   spent_cents?: number
   remaining_cents?: number | null
   cost_cents?: number
+  unpriced_entry_count?: number
 }
 
 export interface ProjectDirectoryApi {

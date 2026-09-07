@@ -376,6 +376,62 @@ describe('Projects V1 browser controller', () => {
     expect(archiveProjectTaskAssignment).not.toHaveBeenCalled()
   })
 
+  it('[browser] drops the Costs column rather than filling it with dashes', async () => {
+    // A viewer whose profile cannot see cost gets no cost_cents on any row, so
+    // the column would be an em dash in every cell -- which reads as "no cost
+    // recorded" rather than "not yours to see".
+    writeDocument('project-list', '/projects')
+    const controller = createProjectDirectoryController({
+      listDirectoryProjects: vi.fn(async () => page([project])),
+      listProjectClients: vi.fn(async () => page([client])),
+      listProjectBudgetSummaries: vi.fn(async () => [
+        { project_id: 7, unit: 'cents' as const, spent_cents: 5000 },
+      ]),
+    })
+    await controller.activate(identity('member'), new AbortController().signal, () => false)
+
+    const headers = [...document.querySelectorAll('[data-project-list] thead th')].map(
+      (cell) => cell.textContent,
+    )
+    expect(headers).not.toContain('Costs')
+    expect(headers).toContain('Spent')
+  })
+
+  it('[browser] keeps the Costs column when a viewer can see cost', async () => {
+    writeDocument('project-list', '/projects')
+    const controller = createProjectDirectoryController({
+      listDirectoryProjects: vi.fn(async () => page([project])),
+      listProjectClients: vi.fn(async () => page([client])),
+      listProjectBudgetSummaries: vi.fn(async () => [
+        { project_id: 7, unit: 'cents' as const, spent_cents: 5000, cost_cents: 2500 },
+      ]),
+    })
+    await controller.activate(identity('administrator'), new AbortController().signal, () => false)
+
+    const headers = [...document.querySelectorAll('[data-project-list] thead th')].map(
+      (cell) => cell.textContent,
+    )
+    expect(headers).toContain('Costs')
+  })
+
+  it('[browser] says how many tracked entries are missing from the money totals', async () => {
+    // A total that is short by a stated amount is a task. A total that is
+    // silently short is a bug report.
+    writeDocument('project-list', '/projects')
+    const controller = createProjectDirectoryController({
+      listDirectoryProjects: vi.fn(async () => page([project])),
+      listProjectClients: vi.fn(async () => page([client])),
+      listProjectBudgetSummaries: vi.fn(async () => [
+        { project_id: 7, unit: 'cents' as const, spent_cents: 5000, unpriced_entry_count: 3 },
+      ]),
+    })
+    await controller.activate(identity('administrator'), new AbortController().signal, () => false)
+
+    const banner = document.querySelector<HTMLElement>('[data-project-quality]')
+    expect(banner?.hidden).toBe(false)
+    expect(banner?.textContent).toContain('3 tracked entries have no rate')
+  })
+
   it('[browser] filters projects by active state and client', async () => {
     writeDocument('project-list', '/projects')
     const secondClient = { ...client, id: 4, name: 'Beta' }
