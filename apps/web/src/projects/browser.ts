@@ -1,6 +1,7 @@
 import { EzactoApiError, type Attachment, type GeneralResource, type Whoami } from '@ezacto/client'
 
 import { renderDataTable } from '../components/data-table.js'
+import { localDate } from '../shell/model.js'
 import {
   projectBoolean,
   projectCapabilities,
@@ -15,6 +16,7 @@ import {
   projectNumber,
   projectText,
   taskLabel,
+  type ProjectBudgetSummary,
   type ProjectCapabilities,
   type ProjectDirectoryApi,
   type ProjectDirectoryPage,
@@ -270,6 +272,7 @@ export const createProjectDirectoryController = (
 
   let session: ActiveSession | null = null
   let clients: readonly GeneralResource[] = []
+  let budgets = new Map<number, ProjectBudgetSummary>()
   let projects: readonly GeneralResource[] = []
   let tasks: readonly GeneralResource[] = []
   let assignments: readonly GeneralResource[] = []
@@ -412,10 +415,38 @@ export const createProjectDirectoryController = (
         { sensitivity: 'base' },
       ),
     )
-    // Budget reads from whichever field the project's budget_by selects. Spent
-    // and Remaining are deliberately absent: they need
-    // /api/v1/reports/project-budget/{id}, which is per-project, so putting
-    // them here would be one request per row. See #297.
+    // Spent, Remaining and Costs come from the list-scoped rollup — one request
+    // for the page rather than the one-per-row the per-project report would
+    // have cost, which is why they were absent.
+    const spentLabel = (project: Readonly<GeneralResource>): string => {
+      const summary = budgets.get(project.id)
+      if (summary === undefined) return '—'
+      if (summary.unit === 'seconds') return projectHours(summary.spent_seconds ?? 0)
+      if (summary.unit === 'cents' && summary.spent_cents !== undefined) {
+        return projectMoney(summary.spent_cents, projectCurrency(project, clients))
+      }
+      return '—'
+    }
+
+    const remainingLabel = (project: Readonly<GeneralResource>): string => {
+      const summary = budgets.get(project.id)
+      if (summary === undefined) return '—'
+      if (summary.unit === 'seconds') {
+        return summary.remaining_seconds == null
+          ? '—'
+          : projectHours(summary.remaining_seconds)
+      }
+      return summary.remaining_cents == null
+        ? '—'
+        : projectMoney(summary.remaining_cents, projectCurrency(project, clients))
+    }
+
+    const costLabel = (project: Readonly<GeneralResource>): string => {
+      const cents = budgets.get(project.id)?.cost_cents
+      // Absent rather than zero when the viewer's profile cannot see cost.
+      return cents === undefined ? '—' : projectMoney(cents, projectCurrency(project, clients))
+    }
+
     const budgetLabel = (project: Readonly<GeneralResource>): string => {
       const by = projectText(project, 'budget_by')
       const currency = projectCurrency(project, clients)
@@ -453,6 +484,9 @@ export const createProjectDirectoryController = (
           render: (project) => projectEnumLabel(projectText(project, 'billing_method')),
         },
         { key: 'budget', label: 'Budget', numeric: true, render: budgetLabel },
+        { key: 'spent', label: 'Spent', numeric: true, render: spentLabel },
+        { key: 'remaining', label: 'Remaining', numeric: true, render: remainingLabel },
+        { key: 'costs', label: 'Costs', numeric: true, render: costLabel },
         {
           key: 'status',
           label: 'Status',
@@ -927,10 +961,24 @@ export const createProjectDirectoryController = (
     listStatus.textContent = 'Loading projects…'
     listRetry.hidden = true
     try {
-      ;[projects, clients] = await Promise.all([
+      // A project's budget is consumed over its life, not over a period the
+      // list has no control to pick, so the rollup is asked for everything up
+      // to today. One request for the whole list, not one per row.
+      const summaries = api.listProjectBudgetSummaries
+      const [loadedProjects, loadedClients, loadedBudgets] = await Promise.all([
         collect((cursor) => api.listDirectoryProjects!(cursor, active.signal), active.signal),
         collect((cursor) => api.listProjectClients!(cursor, active.signal), active.signal),
+        summaries === undefined
+          ? Promise.resolve<readonly ProjectBudgetSummary[]>([])
+          : summaries({ from: '2000-01-01', to: localDate() }, active.signal).catch(
+              // Money columns are an enrichment; losing them must not lose the
+              // list.
+              () => [] as readonly ProjectBudgetSummary[],
+            ),
       ])
+      projects = loadedProjects
+      clients = loadedClients
+      budgets = new Map(loadedBudgets.map((summary) => [summary.project_id, summary]))
       if (currentSession() !== active) return
       populateClientFilter()
       renderList()
