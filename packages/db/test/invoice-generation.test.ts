@@ -251,6 +251,48 @@ for (const [runtime, factory] of factories) {
       ])
     })
 
+    it('[unit] rolls every visible project up in a fixed number of queries', async () => {
+      // The projects list needs Budget | Spent | Remaining | Costs for every
+      // row. One call per project would not survive the collect()-everything
+      // load, which is what kept these columns off the list; this is three
+      // queries whatever the project count.
+      const database = await setup()
+      await database.run(
+        `UPDATE projects SET budget_by = 'project', budget_seconds = 3600 WHERE id = 1`,
+      )
+      await database.run(`UPDATE time_entries SET budgeted = 1`)
+
+      const reports = createReportRepository(database.orm)
+      const summaries = await reports.projectBudgetSummaries(
+        { from: request.from, to: request.to },
+        { userId: 1, profile: 'administrator' },
+      )
+
+      // 1800 + 900 tracked against an hour, both at a 50.00 cost rate.
+      expect(summaries).toEqual([
+        expect.objectContaining({
+          projectId: 1,
+          budgetBy: 'project',
+          unit: 'seconds',
+          budgetAmount: 3600,
+          spentAmount: 2700,
+          remainingAmount: 900,
+          costCents: 3750,
+          unpricedEntryCount: 0,
+        }),
+      ])
+
+      // The list applies the same visibility predicate as the per-project
+      // report, so it cannot become a way to read a budget the detail page
+      // would refuse. This viewer holds no assignment on project 1.
+      expect(
+        await reports.projectBudgetSummaries(
+          { from: request.from, to: request.to },
+          { userId: 9, profile: 'member' },
+        ),
+      ).toEqual([])
+    })
+
     it('[unit] equals the uninvoiced report to the cent for the identical filter', async () => {
       const database = await setup()
       const preview = await createReportRepository(database.orm).uninvoiced({

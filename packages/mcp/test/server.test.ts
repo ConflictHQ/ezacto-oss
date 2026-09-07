@@ -188,6 +188,7 @@ const reportReader: ReportReader = {
       },
     ],
   }),
+  projectBudgetSummaries: async () => [],
   projectBudget: async (projectId, range) => ({
     projectId,
     budgetBy: 'project_cost',

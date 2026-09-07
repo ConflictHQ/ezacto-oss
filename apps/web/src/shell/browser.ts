@@ -1852,7 +1852,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   // the first thing a session opens. Load the names once, for whichever gets
   // there first.
   const ensureInvoiceClientNames = async (operation: AuthOperation): Promise<void> => {
-    const listClients = api.listClients
+    // listClients is filtered to is_active; an invoice outlives its client, and
+    // the historical ones the list mostly shows are exactly those whose client
+    // has since been archived. Those fell back to "Client #12" — the bug this
+    // was meant to fix. listDirectoryClients is the unfiltered one.
+    const listClients = api.listDirectoryClients ?? api.listClients
     if (invoiceClientNamesLoaded || listClients === undefined) return
     try {
       const clients = await collectResources(listClients, operation.signal)

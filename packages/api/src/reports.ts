@@ -83,6 +83,17 @@ export interface ProjectBudgetGrainRecord {
   unpricedEntryCount: number;
 }
 
+export interface ProjectBudgetSummaryRecord {
+  projectId: number;
+  budgetBy: "project" | "project_cost" | "task" | "task_fees" | "person" | "none";
+  unit: "seconds" | "cents" | null;
+  budgetAmount: number | null;
+  spentAmount: number;
+  remainingAmount: number | null;
+  costCents: number;
+  unpricedEntryCount: number;
+}
+
 export interface ProjectBudgetReportRecord extends ReportDateRange {
   projectId: number;
   budgetBy:
@@ -112,6 +123,10 @@ export interface ReportReader {
     range: Readonly<ReportDateRange>,
     viewer: Readonly<ProjectReportViewer>,
   ): Promise<ProjectBudgetReportRecord | null>;
+  projectBudgetSummaries(
+    range: Readonly<ReportDateRange>,
+    viewer: Readonly<ProjectReportViewer>,
+  ): Promise<readonly ProjectBudgetSummaryRecord[]>;
 }
 
 const reportKeys = new Set(["from", "to"]);
@@ -268,6 +283,49 @@ const serializeProjectBudget = (
   }),
 });
 
+const serializeProjectBudgetSummary = (
+  summary: Readonly<ProjectBudgetSummaryRecord>,
+  viewer: Readonly<UserPrincipal>,
+) => {
+  const base = {
+    project_id: summary.projectId,
+    budget_by: summary.budgetBy,
+    unit: summary.unit,
+    unpriced_entry_count: summary.unpricedEntryCount,
+  };
+  if (summary.unit === "seconds") {
+    return {
+      ...base,
+      budget_seconds: summary.budgetAmount,
+      spent_seconds: summary.spentAmount,
+      remaining_seconds: summary.remainingAmount,
+      // Cost is money whatever the budget is denominated in, so it is gated
+      // even on a time-budgeted project.
+      ...(canViewMoneyField(viewer, "cost_rate")
+        ? { cost_cents: summary.costCents }
+        : {}),
+    };
+  }
+  // The same per-field rule the per-project report applies: a list must not
+  // become a way to read a budget the detail page would hide.
+  const canSeeBudget = canViewMoneyField(viewer, "money_budget");
+  const canSeeSpent = canViewMoneyField(
+    viewer,
+    summary.budgetBy === "task_fees" ? "billable_rate" : "cost_rate",
+  );
+  return {
+    ...base,
+    ...(canSeeBudget ? { budget_cents: summary.budgetAmount } : {}),
+    ...(canSeeSpent ? { spent_cents: summary.spentAmount } : {}),
+    ...(canSeeBudget && canSeeSpent
+      ? { remaining_cents: summary.remainingAmount }
+      : {}),
+    ...(canViewMoneyField(viewer, "cost_rate")
+      ? { cost_cents: summary.costCents }
+      : {}),
+  };
+};
+
 export const installReportRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   reports: ReportReader,
@@ -325,6 +383,32 @@ export const installReportRoutes = <Bindings extends object>(
     );
   });
 
+  api.get("/reports/project-budgets", async (context) => {
+    // Visible wherever a project is visible, like the per-project report; the
+    // repository applies the same assignment predicate, and the serializer the
+    // same money gating.
+    requireApiScope(context, "projects:read");
+    const parsed = rangeFrom(new URL(context.req.url), reportKeys);
+    assertFields(parsed.errors);
+    const summaries = await reports.projectBudgetSummaries(
+      parsed.range,
+      context.get("principal"),
+    );
+    return context.json(
+      {
+        data: summaries.map((summary) =>
+          serializeProjectBudgetSummary(summary, context.get("principal")),
+        ),
+        links: {
+          self:
+            new URL(context.req.url).pathname + new URL(context.req.url).search,
+        },
+      },
+      200,
+      { "cache-control": "no-store" },
+    );
+  });
+
   api.get("/reports/project-budget/:projectId", async (context) => {
     // The project budget surface is visible wherever a project is visible; its
     // serializer removes money fields according to the acting-user profile.
@@ -352,4 +436,9 @@ export const installReportRoutes = <Bindings extends object>(
   });
 };
 
-export { serializeClientRollup, serializeProjectBudget, serializeUninvoiced };
+export {
+  serializeClientRollup,
+  serializeProjectBudget,
+  serializeProjectBudgetSummary,
+  serializeUninvoiced,
+};

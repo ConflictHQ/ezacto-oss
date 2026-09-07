@@ -3601,9 +3601,24 @@ dialog textarea {
 
 .data-table tbody td {
   height: var(--ez-row-h);
+  max-width: 0;
   padding: 0 12px;
+  overflow: hidden;
   border-bottom: 1px solid var(--ez-border);
   color: var(--ez-ink);
+  text-overflow: ellipsis;
+  /* One row is one line. A free-text column — an expense note, an invoice
+     subject — wrapped instead, pushing rows past --ez-row-h and losing the
+     density the row height exists to buy. max-width:0 lets the column widths
+     come from the table's own layout rather than from the longest note. */
+  white-space: nowrap;
+}
+
+/* The row's own actions are the exception: the overflow menu is a popup inside
+   this cell, and clipping the cell clips the menu. */
+.data-table tbody td.data-table-actions {
+  max-width: none;
+  overflow: visible;
 }
 
 .data-table .is-numeric {

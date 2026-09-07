@@ -1026,6 +1026,16 @@ const reportOperations: ApiContractOperation[] = [
   },
   {
     method: "get",
+    path: "/api/v1/reports/project-budgets",
+    operationId: "listProjectBudgetSummaries",
+    summary: "Report budget consumption for every visible project",
+    tag: "reports",
+    responseStatus: 200,
+    responseSchema: "ProjectBudgetSummaryListEnvelope",
+    parameters: [...requiredReportRange],
+  },
+  {
+    method: "get",
     path: "/api/v1/reports/project-budget/:projectId",
     operationId: "getProjectBudgetReport",
     summary: "Report project budget consumption",
@@ -4703,6 +4713,52 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   ProjectBudgetReportEnvelope: envelope("ProjectBudgetReport"),
+  ProjectBudgetSummary: {
+    type: "object",
+    required: [
+      "project_id",
+      "budget_by",
+      "unit",
+      "unpriced_entry_count",
+    ],
+    properties: {
+      project_id: integerSchema,
+      budget_by: {
+        type: "string",
+        enum: [
+          "project",
+          "project_cost",
+          "task",
+          "task_fees",
+          "person",
+          "none",
+        ],
+      },
+      // null where the project has no budget to denominate.
+      unit: { type: ["string", "null"], enum: ["seconds", "cents", null] },
+      unpriced_entry_count: integerSchema,
+      // Seconds are visible wherever the project is; the cents fields follow
+      // the same per-field money gating the per-project report applies, so a
+      // list cannot become a way to read a budget the detail page would hide.
+      budget_seconds: nullable(integerSchema),
+      spent_seconds: integerSchema,
+      remaining_seconds: nullable(integerSchema),
+      budget_cents: nullable(integerSchema),
+      spent_cents: integerSchema,
+      remaining_cents: nullable(integerSchema),
+      cost_cents: integerSchema,
+    },
+    additionalProperties: false,
+  },
+  ProjectBudgetSummaryListEnvelope: {
+    type: "object",
+    required: ["data", "links"],
+    properties: {
+      data: { type: "array", items: reference("ProjectBudgetSummary") },
+      links: reference("Links"),
+    },
+    additionalProperties: false,
+  },
   ClientHierarchyNode: {
     type: "object",
     required: ["ancestor_id", "descendant_id", "depth"],
