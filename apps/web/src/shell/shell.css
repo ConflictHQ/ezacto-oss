@@ -1252,6 +1252,58 @@
   font: 600 11px/1.2 var(--ez-font-mono), monospace;
   text-transform: uppercase;
 }
+/*
+ * Invoice routing is the whole reason the contact carries the field, so the
+ * four states the API enumerates have to read apart at a glance. Colour alone
+ * would not do it: a colourblind operator and a printed statement both see
+ * only the shape, so each state differs in border weight and pattern as well
+ * as hue. The recipient carries the heaviest border — it is the one that gets
+ * the invoice; CC is a hairline outline, the copy that is visible; BCC is a
+ * dashed outline, the copy that is not; and a contact with no invoice role
+ * carries no chrome at all, so a column of contacts shows the routing without
+ * being read word by word. The transparent border on the base rule keeps every
+ * pill the same box whichever state it is in.
+ */
+.client-recipient-pill {
+  border: 1px solid transparent;
+}
+/*
+ * A saturated fill would have been the obvious way to mark the recipient, and
+ * it is the one thing that cannot be used here. Browsers omit background-color
+ * when "Background graphics" is off — the print default — so a filled pill with
+ * --ez-action-fg ink printed as near-white text on white paper: the one contact
+ * who actually receives the invoice was the faintest row in the column while
+ * the contacts who receive nothing were the boldest. print-color-adjust would
+ * force the fill back in Chromium, but it would still be leaning on colour, and
+ * a greyscale printer or a colourblind operator would be no better off. So the
+ * emphasis is carried in ink instead: a doubled border and the dark action
+ * colour, both of which are painted whatever the print settings say. The tint
+ * only reinforces it on screen, and is weak enough (10% over the ground) that
+ * the action ink still clears 4.5:1 against it. Trading a pixel of padding for
+ * the extra border width keeps the pill the same box as its siblings.
+ */
+.client-recipient-pill[data-recipient-status='recipient'] {
+  padding: 3px 7px;
+  border-width: 2px;
+  border-color: var(--ez-action);
+  background-color: color-mix(in srgb, var(--ez-action) 10%, var(--ez-ground));
+  color: var(--ez-action);
+}
+.client-recipient-pill[data-recipient-status='cc'] {
+  border-color: var(--ez-data);
+  background-color: transparent;
+  color: var(--ez-data);
+}
+.client-recipient-pill[data-recipient-status='bcc'] {
+  border-style: dashed;
+  border-color: var(--ez-data);
+  background-color: transparent;
+  color: var(--ez-data);
+}
+.client-recipient-pill[data-recipient-status='none'] {
+  background-color: transparent;
+  color: var(--ez-muted);
+}
 .client-tree-empty,
 .client-related-empty {
   padding: 28px 18px;

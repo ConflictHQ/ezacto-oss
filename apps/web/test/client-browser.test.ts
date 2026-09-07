@@ -4,7 +4,13 @@ import { EzactoApiError, type GeneralResource, type Whoami } from '@ezacto/clien
 import { describe, expect, it, vi } from 'vitest'
 import { createClientDirectoryController } from '../src/clients/browser.js'
 import type { ClientDirectoryApi } from '../src/clients/model.js'
-import { renderAppShell } from '../src/index.js'
+import {
+  contrastRatio,
+  defaultTheme,
+  renderAppShell,
+  themeManifest,
+  webAssets,
+} from '../src/index.js'
 
 const timestamp = '2026-09-01T12:00:00.000Z'
 const parent: GeneralResource = {
@@ -131,6 +137,78 @@ describe('Clients V1 browser controller', () => {
     expect(api.archiveDirectoryClient).not.toHaveBeenCalled()
   })
 
+  it('[browser] gives each invoice routing state its own pill, shape included', async () => {
+    writeDocument()
+    const contacts = (['recipient', 'cc', 'bcc', 'none'] as const).map((status, index) => ({
+      ...contact,
+      id: 21 + index,
+      first_name: status,
+      invoice_recipient_status: status,
+    }))
+    const api: Partial<ClientDirectoryApi> = {
+      listDirectoryClients: vi.fn(async () => page([child, parent])),
+      getDirectoryClient: vi.fn(async () => child),
+      listClientContacts: vi.fn(async () => page(contacts)),
+      listClientProjects: vi.fn(async () => page([project])),
+    }
+    const identity: Whoami = {
+      user_id: 1,
+      profile: 'member',
+      manager_grants: [],
+      authentication: { kind: 'session' },
+    }
+    const controller = createClientDirectoryController(api)
+
+    await controller.activate(identity, new AbortController().signal, () => false)
+    // The pills are only worth anything under the stylesheet the worker serves,
+    // so read them through it rather than through the class name.
+    const stylesheet = document.createElement('style')
+    stylesheet.textContent = webAssets.stylesheet
+    document.head.append(stylesheet)
+
+    const pills = [
+      ...document.querySelectorAll<HTMLElement>(
+        '[data-client-contacts] .client-recipient-pill',
+      ),
+    ]
+    expect(pills.map((pill) => pill.dataset.recipientStatus)).toEqual([
+      'recipient',
+      'cc',
+      'bcc',
+      'none',
+    ])
+    const painted = pills.map((pill) => {
+      const style = window.getComputedStyle(pill)
+      return {
+        fill: style.backgroundColor,
+        ink: style.color,
+        border:
+          style.borderTopColor === 'transparent'
+            ? 'none'
+            : `${style.borderTopWidth} ${style.borderTopStyle}`,
+      }
+    })
+    // Four states, four appearances: nothing may render the same as anything else.
+    expect(new Set(painted.map((paint) => JSON.stringify(paint))).size).toBe(4)
+    // And none of it may depend on the fill, because a browser omits
+    // background-color when "Background graphics" is off — the default, and so
+    // the state a client's printed contact sheet is in. Every label has to
+    // stand on its own ink against bare paper; the recipient's did not, because
+    // --ez-action-fg is #FFFFFF and printed at 2.3:1, a ghost in the one row
+    // the operator opened the sheet to find.
+    const paper = themeManifest[defaultTheme].colors.ground
+    for (const paint of painted) {
+      expect(contrastRatio(paint.ink, paper)).toBeGreaterThanOrEqual(4.5)
+    }
+    // Hue goes with the fill for a colourblind operator or a greyscale printer,
+    // and --ez-action and --ez-data reduce to nearly the same grey, so the
+    // border alone has to separate all four states.
+    expect(new Set(painted.map((paint) => paint.border)).size).toBe(4)
+    // The recipient carries the heaviest of them rather than a fill that prints
+    // as nothing, so the row that gets the invoice is the boldest on the page
+    // instead of the faintest.
+    expect(painted[0]?.border).toBe('2px solid')
+  })
 
   it('[browser] filters the tree without orphaning a matched child', async () => {
     writeDocument('client-list', '/clients')
