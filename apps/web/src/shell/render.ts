@@ -60,7 +60,8 @@ export interface AppShellOptions {
     | 'expense-list'
     | 'expense-detail'
     | 'expense-categories'
-    | 'module-settings'
+    | 'settings-user'
+    | 'settings-company'
     | 'team-list'
     | 'team-person'
   /**
@@ -275,6 +276,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
           <span class="visually-hidden">Signed in as </span><span class="identity-name" data-current-profile>—</span>
           <span class="identity-meta">User #<span data-current-user-id>—</span></span>
         </span>
+        <a class="identity-settings" href="/settings/user" data-settings-link>Settings</a>
         <button type="button" class="identity-signout" data-logout>Sign out</button>
         <p class="auth-result visually-hidden" data-logout-result role="status" aria-live="polite"></p>
       </div>
