@@ -221,6 +221,41 @@ describe('S-1 through S-5 application shell', () => {
     expect(details.some((detail) => detail.id === 7)).toBe(false)
   })
 
+  it('[unit] lets a section supply its own tab strip, and leaves Time its own', () => {
+    // The strip was hardcoded into the shell, so exactly one section could have
+    // sub-navigation and no other could have any.
+    const withTabs = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      activeSection: 'Invoices',
+      view: 'invoice-list',
+      tabs: [
+        { label: 'Overview', href: '/invoices', current: true },
+        { label: 'Recurring', href: '/invoices/recurring' },
+      ],
+    })
+    expect(withTabs).toContain('<a href="/invoices" aria-current="page">Overview</a>')
+    expect(withTabs).toContain('<a href="/invoices/recurring">Recurring</a>')
+    // Not Time's strip: the browser rewrites aria-current on that one from the
+    // ?view= parameter, which would strip it off every tab here.
+    expect(withTabs).not.toContain('data-time-views')
+
+    const timeShell = renderAppShell({ environment: 'test', release: 'abcdef012345' })
+    expect(timeShell).toContain('data-time-views')
+    expect(timeShell).toContain('>Week</a>')
+
+    // A section that declares no tabs renders no strip at all rather than an
+    // empty bar.
+    const noTabs = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      activeSection: 'Clients',
+      view: 'client-list',
+      tabs: [],
+    })
+    expect(noTabs).not.toContain('class="tabstrip"')
+  })
+
   it('[e2e:track-week] keeps the global timer in desktop and phone shell CSS', () => {
     const html = renderAppShell({
       environment: 'test',

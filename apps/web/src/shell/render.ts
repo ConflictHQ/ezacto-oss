@@ -20,6 +20,12 @@ import {
   renderInvoiceLineEditor,
 } from '../invoices/render.js'
 
+export interface ShellTab {
+  readonly label: string
+  readonly href: string
+  readonly current?: boolean
+}
+
 export interface AppShellOptions {
   readonly environment: string
   readonly release: string
@@ -57,6 +63,13 @@ export interface AppShellOptions {
     | 'module-settings'
     | 'team-list'
     | 'team-person'
+  /**
+   * The level-2 strip under the header. Time supplies its own Week/Day pair
+   * when this is absent, which is what every page rendered before the strip was
+   * a parameter of anything: one section owned the only sub-navigation in the
+   * shell and no other could have any.
+   */
+  readonly tabs?: readonly ShellTab[]
   readonly signInProviders?: readonly SignInProvider[]
   /** Presentation hint only. The browser still validates the session before enabling the app. */
   readonly sessionCookiePresent?: boolean
@@ -89,6 +102,33 @@ export const renderDataQualityBanner = (options: DataQualityBannerOptions): stri
   `<span>${escapeHtml(options.message)}</span>` +
   `<a href="${escapeHtml(safePath(options.fixHref))}">${escapeHtml(options.fixLabel)}</a>` +
   `</aside>`
+
+/**
+ * Time's own strip is the fallback, not the definition. Its links are marked
+ * data-time-views because the browser rewrites aria-current on them from the
+ * ?view= parameter -- a rule that is right for Time and wrong for every other
+ * section, which does not navigate by that parameter and would have its current
+ * tab stripped on load.
+ */
+const renderTabStrip = (options: AppShellOptions): string => {
+  const view = options.view ?? 'time'
+  if (options.tabs === undefined) {
+    return (
+      `<nav class="tabstrip" aria-label="Time views" data-time-views${view === 'time' ? '' : ' hidden'}>` +
+      `<a href="/" aria-current="page">Week</a><a href="/?view=day">Day</a>` +
+      `</nav>`
+    )
+  }
+  if (options.tabs.length === 0) return ''
+  const links = options.tabs
+    .map(
+      (tab) =>
+        `<a href="${escapeHtml(safePath(tab.href))}"${tab.current === true ? ' aria-current="page"' : ''}>` +
+        `${escapeHtml(tab.label)}</a>`,
+    )
+    .join('')
+  return `<nav class="tabstrip" aria-label="${escapeHtml(options.activeSection ?? 'Section')} views">${links}</nav>`
+}
 
 export const renderEmptyState = (title: string, detail: string): string =>
   `<section class="empty-state" data-empty-state>` +
@@ -240,9 +280,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
       </div>
     </div>
   </header>
-  <nav class="tabstrip" aria-label="Time views"${view === 'time' ? '' : ' hidden'}>
-    <a href="/" aria-current="page">Week</a><a href="/?view=day">Day</a>
-  </nav>
+  ${renderTabStrip(options)}
   <main class="app-content" data-app-content${view === 'time' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">This week</p><h1>Time</h1></div>

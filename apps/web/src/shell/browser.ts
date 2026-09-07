@@ -1064,7 +1064,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const timesheetLockList = required<HTMLElement>('[data-timesheet-lock-list]')
   const requestedView = new URL(globalThis.location.href).searchParams.get('view')
   document.documentElement.dataset.timeView = requestedView === 'day' ? 'day' : 'week'
-  for (const link of document.querySelectorAll<HTMLAnchorElement>('.tabstrip a')) {
+  // Scoped to Time's own strip: this derives the current tab from the ?view=
+  // parameter, which no other section navigates by. Left on '.tabstrip a' it
+  // would strip aria-current off every tab in every other strip on load.
+  for (const link of document.querySelectorAll<HTMLAnchorElement>('[data-time-views] a')) {
     const linkView = new URL(link.href).searchParams.get('view') ?? 'week'
     if (linkView === document.documentElement.dataset.timeView)
       link.setAttribute('aria-current', 'page')
