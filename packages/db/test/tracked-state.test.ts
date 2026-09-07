@@ -3,7 +3,7 @@ import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
-import { migrateContainer, migrateD1 } from '../src/migrate.js'
+import { migrateContainer, migrateD1, migrationIds } from '../src/migrate.js'
 import { expenses } from '../src/schema.js'
 import { createTimesheetApprovalRepository } from '../src/timesheet-approvals.js'
 import {
@@ -276,7 +276,7 @@ for (const [runtime, factory] of factories) {
       const db = await setup()
       expect(
         await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`),
-      ).toEqual([{ id: '0037_recurring_generate_command' }])
+      ).toEqual([{ id: migrationIds.at(-1) }])
       for (const table of ['time_entries', 'expenses']) {
         const columns = await db.rows<{
           name: string

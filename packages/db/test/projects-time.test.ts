@@ -2,7 +2,7 @@ import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
-import { migrateContainer, migrateD1 } from '../src/migrate.js'
+import { migrateContainer, migrateD1, migrationIds } from '../src/migrate.js'
 import { orgPeopleMigration } from '../src/migrations/0000_org_people.js'
 import { clientsMigration } from '../src/migrations/0001_clients.js'
 import { projectsTimeMigration } from '../src/migrations/0002_projects_time.js'
@@ -1022,46 +1022,7 @@ for (const [runtime, factory] of factories) {
       const firstLedger = await db.rows<{ id: string; applied_at: string }>(
         `SELECT id, applied_at FROM _ezacto_migrations ORDER BY id`,
       )
-      expect(firstLedger.map(({ id }) => id)).toEqual([
-        '0000_org_people',
-        '0001_clients',
-        '0002_projects_time',
-        '0003_rate_resolver',
-        '0004_invoice_foundation',
-        '0005_invoice_payments_totals',
-        '0006_invoice_state_events',
-        '0007_expenses',
-        '0008_retainer_ledger',
-        '0009_three_axis_state',
-        '0010_recurring_invoices',
-        '0011_api_tokens',
-        '0012_instance_bootstrap',
-        '0013_password_auth',
-        '0014_sessions',
-        '0015_oidc_transactions',
-        '0016_email_log',
-        '0017_email_delivery_details',
-        '0018_estimates',
-        '0019_attachments',
-        '0020_argon2_passwords',
-        '0021_estimate_commands',
-        '0022_resource_create_commands',
-        '0023_migration_import_authority',
-        '0024_migration_worksheet_completions',
-        '0025_time_entry_note_requirements',
-        '0026_invoice_generation',
-        '0027_timesheet_approvals',
-        '0028_timesheet_lock_policy',
-        '0029_outbox_delivery',
-        '0030_email_templates',
-        '0031_team_people',
-        '0032_invoice_email_delivery',
-        '0033_contact_portal',
-        '0034_scheduled_reminders',
-        '0035_backup_runs',
-        '0036_client_budgets',
-        '0037_recurring_generate_command',
-      ])
+      expect(firstLedger.map(({ id }) => id)).toEqual(migrationIds)
       expect(firstLedger.slice(0, 2).map(({ applied_at: appliedAt }) => appliedAt)).toEqual([
         originalAppliedAt,
         originalAppliedAt,
@@ -1120,46 +1081,7 @@ for (const [runtime, factory] of factories) {
       await db.migrateAgain()
       expect(
         await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id`),
-      ).toEqual([
-        { id: '0000_org_people' },
-        { id: '0001_clients' },
-        { id: '0002_projects_time' },
-        { id: '0003_rate_resolver' },
-        { id: '0004_invoice_foundation' },
-        { id: '0005_invoice_payments_totals' },
-        { id: '0006_invoice_state_events' },
-        { id: '0007_expenses' },
-        { id: '0008_retainer_ledger' },
-        { id: '0009_three_axis_state' },
-        { id: '0010_recurring_invoices' },
-        { id: '0011_api_tokens' },
-        { id: '0012_instance_bootstrap' },
-        { id: '0013_password_auth' },
-        { id: '0014_sessions' },
-        { id: '0015_oidc_transactions' },
-        { id: '0016_email_log' },
-        { id: '0017_email_delivery_details' },
-        { id: '0018_estimates' },
-        { id: '0019_attachments' },
-        { id: '0020_argon2_passwords' },
-        { id: '0021_estimate_commands' },
-        { id: '0022_resource_create_commands' },
-        { id: '0023_migration_import_authority' },
-        { id: '0024_migration_worksheet_completions' },
-        { id: '0025_time_entry_note_requirements' },
-        { id: '0026_invoice_generation' },
-        { id: '0027_timesheet_approvals' },
-        { id: '0028_timesheet_lock_policy' },
-        { id: '0029_outbox_delivery' },
-        { id: '0030_email_templates' },
-        { id: '0031_team_people' },
-        { id: '0032_invoice_email_delivery' },
-        { id: '0033_contact_portal' },
-        { id: '0034_scheduled_reminders' },
-        { id: '0035_backup_runs' },
-        { id: '0036_client_budgets' },
-        { id: '0037_recurring_generate_command' },
-      ])
+      ).toEqual(migrationIds.map((id) => ({ id })))
       expect(
         await db.rows<{ name: string }>(
           `SELECT name FROM sqlite_master

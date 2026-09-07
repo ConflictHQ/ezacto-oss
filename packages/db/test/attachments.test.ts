@@ -10,7 +10,12 @@ import {
   type AttachmentMetadataInput,
 } from '../src/attachments.js'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
-import { invoiceLifecycleMigration, migrateContainer, migrateD1 } from '../src/migrate.js'
+import {
+  invoiceLifecycleMigration,
+  migrateContainer,
+  migrateD1,
+  migrationIds,
+} from '../src/migrate.js'
 import { orgPeopleMigration } from '../src/migrations/0000_org_people.js'
 import { clientsMigration } from '../src/migrations/0001_clients.js'
 import { projectsTimeMigration } from '../src/migrations/0002_projects_time.js'
@@ -243,7 +248,7 @@ for (const [runtime, factory] of factories) {
       database = await factory()
       const db = database
       const before = await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id`)
-      expect(before.at(-1)).toEqual({ id: '0037_recurring_generate_command' })
+      expect(before.at(-1)).toEqual({ id: migrationIds.at(-1) })
       await db.migrateAgain()
       expect(await db.rows(`SELECT id FROM _ezacto_migrations ORDER BY id`)).toEqual(before)
 
@@ -629,7 +634,7 @@ for (const [runtime, factory] of factories) {
       expect(await db.rows(`SELECT id, number FROM invoices`)).toEqual(before)
       expect(
         await db.rows<{ id: string }>(`SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`),
-      ).toEqual([{ id: '0037_recurring_generate_command' }])
+      ).toEqual([{ id: migrationIds.at(-1) }])
       await db.migrateAgain()
       expect(await db.rows(`SELECT id, number FROM invoices`)).toEqual(before)
       expect(await db.rows(`PRAGMA foreign_key_check`)).toEqual([])
