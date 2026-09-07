@@ -1039,7 +1039,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const reports = createReportsController(api)
   const expenseWorkflow = createExpenseWorkflowController(api)
   const expenseCategories = createExpenseCategoryDirectoryController(api)
-  const moduleSettings = createModuleSettingsController()
+  const moduleSettings = createModuleSettingsController(api)
   const invoicePayments = createInvoicePaymentController(api)
   const invoiceList = required<HTMLElement>('[data-invoice-list]')
   const invoiceListStatus = required<HTMLElement>('[data-invoice-list-status]')

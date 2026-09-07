@@ -35,6 +35,7 @@ import type { ExpenseCategoryDirectoryApi } from '../expense-categories/model.js
 import type { InvoicePaymentApi } from '../invoices/model.js'
 import type { TaskAdminApi } from '../tasks/model.js'
 import type { TeamDirectoryApi } from '../team/model.js'
+import type { CompanySettingsApi } from '../module-settings/model.js'
 
 interface CursorPage<T> {
   readonly data: readonly T[]
@@ -60,7 +61,8 @@ export interface ShellApi
     Partial<ExpenseCategoryDirectoryApi>,
     Partial<InvoicePaymentApi>,
     Partial<TaskAdminApi>,
-    Partial<TeamDirectoryApi> {
+    Partial<TeamDirectoryApi>,
+    Partial<CompanySettingsApi> {
   whoami(signal?: AbortSignal): Promise<Whoami>
   signIn(credentials: PasswordSignInInput, signal?: AbortSignal): Promise<AuthPrincipal>
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
@@ -775,6 +777,14 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     }),
+  getTimeEntryNoteSettings: async (signal) =>
+    (await client.getTimeEntryNoteSettings(withSignal(signal))).data,
+  updateTimeEntryNoteSettings: async (patch, signal) =>
+    (await client.updateTimeEntryNoteSettings({ body: patch, ...withSignal(signal) })).data,
+  getEmailHealth: async (signal) =>
+    (await client.getEmailHealth(withSignal(signal))).data,
+  listSenderIdentities: async (signal) =>
+    (await client.listSenderIdentities(withSignal(signal))).data,
   getTeamStatus: async (signal) =>
     (await client.getTeamStatus(withSignal(signal))).data,
   getTeamWeekStartDay: async (signal) =>

@@ -10,6 +10,7 @@ import {
   type InvoicePaymentInput,
   type InvoicePaymentUpdateInput,
   type InvoiceTransitionInput,
+  type SenderIdentity,
   type Session,
   type TimeEntry,
   type TimeEntryInput,
@@ -18,7 +19,8 @@ import {
   type TimesheetSubmissionDetail,
   type Whoami,
 } from '@ezacto/client'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createModuleSettingsController } from '../src/module-settings/browser.js'
 import { mountShell } from '../src/shell/browser.js'
 import { renderAppShell, webAssets, type ShellApi } from '../src/index.js'
 
@@ -394,6 +396,7 @@ const renderBrowserShell = (
       | 'invoice-generation'
       | 'invoice-list'
       | 'invoice-detail'
+      | 'settings-company'
     sessionCookiePresent?: boolean
   } = {},
 ): void => {
@@ -406,7 +409,9 @@ const renderBrowserShell = (
           ? '/invoices/7?week=2026-08-28'
           : options.view === 'timesheet-approvals'
             ? '/approvals?week=2026-08-28'
-            : '/?week=2026-08-28'
+            : options.view === 'settings-company'
+              ? '/settings/company'
+              : '/?week=2026-08-28'
   window.history.replaceState(
     null,
     '',
@@ -2810,6 +2815,220 @@ describe('shell chrome visibility', () => {
     expect(timeStrip.hidden).toBe(false)
     expect(window.getComputedStyle(timeStrip).display).toBe('flex')
     expect(window.getComputedStyle(timeNav).display).toBe('grid')
+  })
+})
+
+
+describe('company settings', () => {
+  // The modules list predates the shell api and still fetches for itself, so a
+  // company page that never resolves it leaves every section behind a spinner.
+  const stubModulesEndpoint = (): void => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [{ module: 'expenses', enabled: true }] }),
+        text: async () => '',
+      })),
+    )
+  }
+
+  const senderIdentity = (overrides: Partial<SenderIdentity> = {}): SenderIdentity => ({
+    id: 3,
+    email: 'billing@northpeak.test',
+    display_name: 'Northpeak Billing',
+    reply_to_email: null,
+    provider: 'mailgun',
+    provider_identity: 'billing@northpeak.test',
+    is_default: true,
+    version: 1,
+    archived_at: null,
+    evidence: {
+      version: 1,
+      source: 'deployment_config',
+      identity_kind: 'email_address',
+      verification_status: 'operator_configured',
+      dkim_status: 'not_applicable',
+      mail_from_domain: null,
+      mail_from_status: 'not_configured',
+      observed_at: timestamp,
+    },
+    created_by_user_id: 1,
+    created_at: timestamp,
+    updated_at: timestamp,
+    ...overrides,
+  })
+
+  const companyApi = (identities: readonly SenderIdentity[] = [senderIdentity()]) => ({
+    ...browserApi(),
+    getTimeEntryNoteSettings: vi.fn(async () => ({ required: true, minimum_length: 12 })),
+    updateTimeEntryNoteSettings: vi.fn(async (patch: { required?: boolean; minimum_length?: number }) => ({
+      required: patch.required ?? true,
+      minimum_length: patch.minimum_length ?? 12,
+    })),
+    listSenderIdentities: vi.fn(async () => identities),
+    getEmailHealth: vi.fn(async () => ({
+      reputation: {
+        sent: 412,
+        bounced: 3,
+        complained: 1,
+        failed: 0,
+        bounce_rate_ppm: 7_200,
+        complaint_rate_ppm: 2_400,
+      },
+    })),
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('[unit] shows the instance configuration the endpoints already served', async () => {
+    // Every setting on this page had an endpoint and no reader: the notes
+    // policy, the tracking mode, the address this instance sends as and how
+    // that mail lands were all reachable only with a token and a terminal.
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const api = companyApi([
+      senderIdentity(),
+      senderIdentity({ id: 4, email: 'noreply@northpeak.test', is_default: false, evidence: null }),
+    ])
+    await mountShell(api)
+
+    const facts = document.querySelector<HTMLElement>('[data-settings-time-facts]')!
+    await vi.waitFor(() => expect(facts.hidden).toBe(false))
+    expect(facts.textContent).toContain('Entry method')
+    expect(facts.textContent).toContain('Duration')
+    expect(facts.textContent).toContain('Monday')
+
+    const noteRequired = document.querySelector<HTMLInputElement>('[data-note-settings-required]')!
+    const noteMinimum = document.querySelector<HTMLInputElement>('[data-note-settings-minimum]')!
+    expect(noteRequired.checked).toBe(true)
+    expect(noteMinimum.value).toBe('12')
+    expect(document.querySelector<HTMLElement>('[data-note-settings-form]')!.hidden).toBe(false)
+
+    const senders = document.querySelector<HTMLElement>('[data-settings-sender-identities]')!
+    await vi.waitFor(() => expect(senders.hidden).toBe(false))
+    expect(senders.querySelectorAll('tbody [data-row]')).toHaveLength(2)
+    expect(senders.textContent).toContain('billing@northpeak.test')
+    expect(senders.textContent).toContain('Operator configured')
+    // A sender nothing has checked is not a verified one, and must not read as
+    // one: an empty verification cell would say the transport approved it.
+    expect(senders.textContent).toContain('Not verified yet')
+
+    const reputation = document.querySelector<HTMLElement>('[data-settings-email-reputation]')!
+    expect(reputation.textContent).toContain('412')
+    // The API reports parts per million; 7_200 ppm is 0.72% of mail bouncing,
+    // and an operator who reads it as 7,200 bounces panics for nothing.
+    expect(reputation.textContent).toContain('0.72%')
+    expect(reputation.textContent).toContain('0.24%')
+  })
+
+  it('[security] clears an administrator\'s email data when a lesser profile signs in', async () => {
+    // The page outlives the session: signing out and back in as someone else
+    // happens in the same document. The non-privileged branch only rewrote
+    // three status strings, so the previous administrator's sender identities
+    // and reputation figures stayed rendered above the notice saying they were
+    // administrators-only.
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const api = companyApi()
+    const controller = createModuleSettingsController(api as never)
+
+    await controller.activate(identity, new AbortController().signal, () => false)
+    const senders = document.querySelector<HTMLElement>('[data-settings-sender-identities]')!
+    await vi.waitFor(() => expect(senders.hidden).toBe(false))
+    expect(document.body.textContent).toContain('billing@northpeak.test')
+
+    // The same tab, a different person.
+    await controller.activate(secondIdentity, new AbortController().signal, () => false)
+
+    expect(
+      document.querySelector<HTMLElement>('[data-module-settings-status]')?.textContent,
+    ).toBe('Only administrators can manage module settings.')
+    expect(document.body.textContent).not.toContain('billing@northpeak.test')
+    expect(senders.hidden).toBe(true)
+    expect(
+      document.querySelector<HTMLElement>('[data-settings-email-reputation]')!.textContent,
+    ).toBe('')
+  })
+
+  it('[unit] saves the notes policy the page loaded', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const api = companyApi()
+    await mountShell(api)
+
+    const noteRequired = document.querySelector<HTMLInputElement>('[data-note-settings-required]')!
+    const noteMinimum = document.querySelector<HTMLInputElement>('[data-note-settings-minimum]')!
+    await vi.waitFor(() => expect(noteMinimum.value).toBe('12'))
+    noteRequired.checked = false
+    noteMinimum.value = '25'
+    document
+      .querySelector<HTMLFormElement>('[data-note-settings-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() =>
+      expect(api.updateTimeEntryNoteSettings).toHaveBeenCalledWith(
+        { required: false, minimum_length: 25 },
+        expect.any(AbortSignal),
+      ),
+    )
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-note-settings-result]')?.textContent).toBe('Saved.'),
+    )
+  })
+
+  it('[unit] refuses a minimum length that is not a whole number of characters', async () => {
+    // The API answers 422 for this. Spending a round trip to be told so leaves
+    // the form looking broken rather than wrong.
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const api = companyApi()
+    await mountShell(api)
+
+    const noteMinimum = document.querySelector<HTMLInputElement>('[data-note-settings-minimum]')!
+    await vi.waitFor(() => expect(noteMinimum.value).toBe('12'))
+    noteMinimum.value = '-4'
+    document
+      .querySelector<HTMLFormElement>('[data-note-settings-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-note-settings-result]')?.textContent).toContain(
+        'whole number of characters',
+      ),
+    )
+    expect(api.updateTimeEntryNoteSettings).not.toHaveBeenCalled()
+  })
+
+  it('[security] does not ask for email delivery as an executive manager', async () => {
+    // Both email endpoints are administrator-only. An executive manager who
+    // opens the page gets told so, rather than two 403s dressed as a failure.
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const api = {
+      ...companyApi(),
+      whoami: vi.fn(async () => ({
+        ...identity,
+        user_id: 5,
+        profile: 'executive_manager' as const,
+      })),
+    }
+    await mountShell(api)
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-settings-email-status]')?.textContent).toBe(
+        'Email delivery is visible to administrators only.',
+      ),
+    )
+    expect(api.listSenderIdentities).not.toHaveBeenCalled()
+    expect(api.getEmailHealth).not.toHaveBeenCalled()
+    // The notes policy is theirs to set, so that half of the page still loads.
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLElement>('[data-note-settings-form]')!.hidden).toBe(false),
+    )
   })
 })
 
