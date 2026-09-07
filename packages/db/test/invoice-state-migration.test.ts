@@ -225,7 +225,7 @@ for (const [runtime, factory] of factories) {
           `SELECT id, close_reason FROM invoices WHERE id = 4`,
         ),
       ).toEqual([{ id: 4, close_reason: 'source_closed' }])
-    }, 20_000)
+    })
 
     it('[unit] preserves history, rolls back a late failure, and retries cleanly', async () => {
       database = await factory()
@@ -275,7 +275,7 @@ for (const [runtime, factory] of factories) {
         await database.rows<{ count: number }>(`SELECT count(*) AS count FROM event_outbox`),
       ).toEqual([{ count: 1 }])
       expect(await database.rows(`PRAGMA foreign_key_check`)).toEqual([])
-    }, 20_000)
+    })
 
     it('[unit] preserves the narrow imported-payment recorder enrichment lane', async () => {
       database = await factory()

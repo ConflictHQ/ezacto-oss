@@ -629,7 +629,7 @@ for (const [runtime, factory] of factories) {
           `SELECT count(*) AS count FROM retainers WHERE harvest_id = 92000`,
         ),
       ).toEqual([{ count: 0 }])
-    }, 20_000)
+    })
 
     it('[unit] rolls back a conflicting Harvest stub link without partial rows', async () => {
       database = await factory()
@@ -668,6 +668,6 @@ for (const [runtime, factory] of factories) {
         await database.rows<{ id: number }>(`SELECT id FROM retainers WHERE harvest_id = 93000`),
       ).toEqual([{ id: 70_002 }])
       expect(await database.rows(`PRAGMA foreign_key_check`)).toEqual([])
-    }, 20_000)
+    })
   })
 }

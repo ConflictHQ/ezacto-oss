@@ -296,7 +296,7 @@ for (const [runtime, factory] of factories) {
       expect(await database.rows(`PRAGMA foreign_key_check`)).toEqual([])
       await database.migrateAgain()
       expect(await database.rows(`PRAGMA foreign_key_check`)).toEqual([])
-    }, 20_000)
+    })
 
     it('[unit] stores complete calendar anchors with exactly one physical amount model', async () => {
       database = await factory()
@@ -602,7 +602,7 @@ for (const [runtime, factory] of factories) {
           timestamp,
         ),
       ).rejects.toThrow(/identity already exists/)
-    }, 20_000)
+    })
 
     it('[unit] links an incremental source invoice to its already-completed definition', async () => {
       database = await factory()
