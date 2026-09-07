@@ -567,14 +567,22 @@ test('[e2e:rate-change] adds a dated rate through the real worker and shows the 
       const seeded = await fixture('team-rate-seed')
       expect(seeded.status()).toBe(204)
       await page.goto('/team/1')
-      const signIn = page.locator('[data-sign-in-form]')
+      // The shell settles into one of two states — the sign-in form, or the
+      // person, if the previous iteration's session survived. isVisible()
+      // samples immediately and does not wait, so on a loaded runner it read
+      // false before the shell had rendered anything at all, skipped the
+      // sign-in, and then timed out waiting for a heading behind a form nobody
+      // filled in. Wait for whichever state the shell lands in first.
+      const signIn = page.locator('[data-sign-in-form]:not([hidden])')
+      const person = page.getByRole('heading', { name: 'Browser Owner' })
+      await expect(signIn.or(person).first()).toBeVisible()
       if (await signIn.isVisible()) {
         await signIn.getByLabel('Email').fill(fixtureEmail)
         await signIn.getByLabel('Password').fill(fixturePassword)
         await signIn.getByRole('button', { name: 'Sign in', exact: true }).click()
       }
 
-      await expect(page.getByRole('heading', { name: 'Browser Owner' })).toBeVisible()
+      await expect(person).toBeVisible()
       await expect(page.locator('[data-team-nav]:not([hidden])')).toHaveCount(2)
       await page.getByRole('tab', { name: 'Rates' }).click()
       const billable = page.locator('[data-team-billable-section]')
