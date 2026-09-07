@@ -162,6 +162,12 @@ describe('Team browser controller', () => {
     expect(
       document.querySelector('[data-team-list] td[data-column="capacity"]')?.textContent,
     ).toBe('35h')
+    // Every sibling list carries its row actions; this one carried none, so the
+    // only way into a person was the name link.
+    expect(
+      document.querySelector('[data-team-list] tbody tr[data-row] .data-table-action')
+        ?.textContent,
+    ).toBe('Open')
     expect(listTeamPeople.mock.calls[0]![0]).toMatchObject({ is_active: true })
 
     document.querySelector<HTMLButtonElement>('[data-team-week-previous]')!.click()
