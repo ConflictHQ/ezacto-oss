@@ -1,4 +1,5 @@
 import type { Hono } from 'hono'
+import { canReviewSubmissions } from '@ezacto/core'
 import { requireApiScope } from './auth.js'
 import type { ApiContext, UserPrincipal, UserProfile } from './context.js'
 import { ApiError, validationError, type FieldError } from './errors.js'
@@ -336,13 +337,7 @@ const actor = (principal: Readonly<UserPrincipal>): TimesheetApprovalActor => ({
 })
 
 const assertApproverProfile = (principal: Readonly<UserPrincipal>): void => {
-  if (
-    principal.profile === 'administrator' ||
-    principal.profile === 'executive_manager' ||
-    principal.profile === 'project_manager'
-  ) {
-    return
-  }
+  if (canReviewSubmissions(principal.profile)) return
   throw new ApiError({
     status: 403,
     code: 'profile_forbidden',

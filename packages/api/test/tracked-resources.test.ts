@@ -1450,6 +1450,33 @@ for (const [runtime, factory] of factories) {
       expect(
         (await test.request('/api/v1/time-entries?user_id=2')).status,
       ).toBe(403)
+      // Expenses are the acting user's, unless the acting profile reviews other
+      // people's submitted work -- the same authority that approves a timesheet.
+      expect((await test.request('/api/v1/expenses?user_id=2')).status).toBe(403)
+      expect(
+        (await test.request('/api/v1/expenses?user_id=2', asProfile('member')))
+          .status,
+      ).toBe(403)
+      expect(
+        (
+          await test.request(
+            '/api/v1/expenses?user_id=2',
+            asProfile('people_admin'),
+          )
+        ).status,
+      ).toBe(403)
+      for (const reviewer of [
+        'project_manager',
+        'executive_manager',
+        'administrator',
+      ] as const) {
+        expect(
+          (
+            await test.request('/api/v1/expenses?user_id=2', asProfile(reviewer))
+          ).status,
+          `${reviewer} reviews submissions and may read another person's expenses`,
+        ).toBe(200)
+      }
       const unknownBody = await test.request(
         '/api/v1/time-entries',
         jsonRequest('POST', { project_id: 1, task_id: 1, invented: true }),
