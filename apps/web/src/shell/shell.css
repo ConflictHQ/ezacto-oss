@@ -2693,9 +2693,31 @@ button[data-auth-action]:disabled {
 
 .day-totals li {
   display: grid;
+  background: var(--ez-ground);
+}
+
+/* The padding moves onto the control so the whole tile is the hit target,
+   rather than a word inside a tile that also looks clickable. */
+.day-totals li > button {
+  display: grid;
   gap: 2px;
   padding: 8px 10px;
-  background: var(--ez-ground);
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.day-totals li > button:hover {
+  background: var(--ez-surface);
+}
+
+.day-totals li > button:focus-visible {
+  outline: 2px solid var(--ez-live);
+  outline-offset: -2px;
 }
 
 .day-totals li[data-today] {

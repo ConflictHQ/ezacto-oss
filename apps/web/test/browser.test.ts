@@ -467,6 +467,55 @@ describe('week-grid browser behavior', () => {
     await vi.waitFor(() => expect(restarted).toEqual([1]))
   })
 
+  it('[browser] moves the week with brackets, and never while a cell is being typed in', async () => {
+    // A grid is a keyboard surface, but the thing under the cursor is usually
+    // an input. An unmodified binding that fired there would be typed into a
+    // cell instead of acted on.
+    renderBrowserShell()
+    window.history.replaceState(null, '', '/?week=2026-08-28')
+    await mountShell(browserApi())
+
+    const press = (key: string): void => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+    }
+
+    const week = (): string => new URL(globalThis.location.href).searchParams.get('week')!
+    const days = (from: string, to: string): number =>
+      (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000
+
+    // The anchor is normalised to the week start on the first move, so measure
+    // from a moved position rather than from the raw URL this test set.
+    press(']')
+    await vi.waitFor(() => expect(week()).not.toBe('2026-08-28'))
+    const forward = week()
+    press('[')
+    await vi.waitFor(() => expect(week()).not.toBe(forward))
+    const back = week()
+    expect(days(back, forward)).toBe(7)
+
+    // A cell has focus, so the key belongs to the cell and not to the week.
+    desktopInputs()[0]!.focus()
+    press(']')
+    expect(week()).toBe(back)
+  })
+
+  it('[browser] opens the add-row dialog on Enter with a modifier, from inside a cell', async () => {
+    // Adding a row is the one action taken mid-typing, so it keeps a modifier
+    // and has to work while a cell has focus.
+    renderBrowserShell()
+    window.history.replaceState(null, '', '/?week=2026-08-28')
+    await mountShell(browserApi())
+
+    desktopInputs()[0]!.focus()
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true, cancelable: true }),
+    )
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-row-dialog]')?.hasAttribute('open')).toBe(true),
+    )
+  })
+
 
   it('[e2e:track-week] preserves keyboard edits, notes, retry, copy, and phone-day writes', async () => {
     renderBrowserShell()
