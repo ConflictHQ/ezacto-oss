@@ -2570,6 +2570,49 @@ dialog h2,
     500 12px/1.3 var(--ez-font-mono),
     monospace;
 }
+/* Settings sits beside Sign out because that is where a person looks for their
+   own account, and it is the only route into either half. */
+.identity-settings {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font-size: 13px;
+  line-height: 26px;
+  text-decoration: none;
+}
+
+.identity-settings:hover {
+  border-color: var(--ez-action);
+  color: var(--ez-action);
+}
+
+.settings-tabs {
+  margin-bottom: 16px;
+}
+
+.settings-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 24px;
+  margin: 0;
+  padding: 20px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+
+.settings-facts dt {
+  color: var(--ez-muted);
+}
+
+.settings-facts dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
 .identity-signout {
   min-height: 28px;
   padding: 0 10px;
@@ -2593,6 +2636,7 @@ dialog h2,
   .account-identity {
     min-height: 44px;
   }
+  .identity-settings,
   .identity-signout {
     min-height: 44px;
     margin-left: auto;

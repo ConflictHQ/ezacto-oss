@@ -693,14 +693,17 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
-      app.get('/settings/modules', (context) =>
+      // Two destinations, split the way the settings themselves are: yours, and
+      // everyone's. /settings/modules is kept because it shipped, and a URL
+      // someone has open should not start 404ing to tidy a route table.
+      app.get('/settings/user', (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
             brand: brandFromEnv(context.env),
             activeSection: 'Settings',
-            view: 'module-settings',
+            view: 'settings-user',
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -714,6 +717,31 @@ export const createApp = (services?: RuntimeServices) =>
           },
         ),
       )
+      app.get('/settings/company', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
+            activeSection: 'Settings',
+            view: 'settings-company',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      // The URL this page shipped under. Redirect rather than delete: someone
+      // has it bookmarked, and a 404 to tidy a route table is a poor trade.
+      app.get('/settings/modules', (context) => context.redirect('/settings/company', 301))
 
       app.get('/expenses/:expenseId', (context) => {
         const rawExpenseId = context.req.param('expenseId')

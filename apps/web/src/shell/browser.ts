@@ -924,7 +924,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const expenseCategoriesPage =
     document.documentElement.dataset.appView === 'expense-categories'
   const moduleSettingsPage =
-    document.documentElement.dataset.appView === 'module-settings'
+    document.documentElement.dataset.appView === 'settings-company'
+  const settingsUserPage = document.documentElement.dataset.appView === 'settings-user'
   const timesheetApprovalsPage =
     document.documentElement.dataset.appView === 'timesheet-approvals'
   const brandName = document.documentElement.dataset.brand ?? 'ezacto'
@@ -960,7 +961,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
                         : expenseCategoriesPage
                           ? ' — Expense categories'
                           : moduleSettingsPage
-                            ? ' — Module settings'
+                            ? ' — Company settings'
+                            : settingsUserPage
+                            ? ' — Your settings'
                             : timesheetApprovalsPage
                             ? ' — Approvals'
                             : ' — Time',
@@ -1405,6 +1408,44 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     setApplicationAvailability(true)
     showAuthenticatedShell()
     return operation
+  }
+
+  /**
+   * The company half is not everyone's, so the tab that leads there only appears
+   * for a profile that can open it. A tab you can see and cannot use is worse
+   * than one that is not there: it promises a destination and answers 403.
+   */
+  const revealCompanySettings = (identity: Readonly<Whoami>): void => {
+    const visible = identity.profile === 'administrator'
+    for (const tab of document.querySelectorAll<HTMLElement>('[data-settings-company-tab]')) {
+      tab.hidden = !visible
+    }
+  }
+
+  const renderUserSettings = (identity: Readonly<Whoami>): void => {
+    revealCompanySettings(identity)
+    const facts = document.querySelector<HTMLElement>('[data-settings-user-facts]')
+    const settingsStatus = document.querySelector<HTMLElement>('[data-settings-user-status]')
+    if (facts === null || settingsStatus === null) return
+    const rows: readonly (readonly [string, string])[] = [
+      ['Signed in as', `User #${identity.user_id}`],
+      ['Permission profile', profileLabel(identity.profile)],
+      [
+        'Sign-in method',
+        identity.authentication.kind === 'session' ? 'Session' : 'API token',
+      ],
+    ]
+    facts.replaceChildren(
+      ...rows.flatMap(([label, value]) => {
+        const term = document.createElement('dt')
+        term.textContent = label
+        const detail = document.createElement('dd')
+        detail.textContent = value
+        return [term, detail]
+      }),
+    )
+    facts.hidden = false
+    settingsStatus.textContent = ''
   }
 
   const handleSessionFailure = (
@@ -2218,6 +2259,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         loadWeek(authenticated),
       ])
     } else if (moduleSettingsPage) {
+      revealCompanySettings(identity)
       await Promise.all([
         moduleSettings.activate(
           identity,
@@ -2226,6 +2268,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         ),
         loadWeek(authenticated),
       ])
+    } else if (settingsUserPage) {
+      renderUserSettings(identity)
+      await loadWeek(authenticated)
     } else {
       await loadWeek(authenticated)
     }

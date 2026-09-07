@@ -48,7 +48,8 @@ describe('worker entry', () => {
       '/invoices/1',
       '/invoices/new',
       '/reports',
-      '/settings/modules',
+      '/settings/user',
+      '/settings/company',
     ]
     for (const path of paths) {
       const res = await app.request(path, {}, branded)
@@ -57,11 +58,19 @@ describe('worker entry', () => {
     }
   })
 
+  it('[unit] keeps the URL settings shipped under', async () => {
+    // Someone has /settings/modules bookmarked. Redirect rather than delete: a
+    // 404 to tidy a route table is a poor trade.
+    const moved = await app.request('/settings/modules', {}, env)
+    expect(moved.status).toBe(301)
+    expect(moved.headers.get('location')).toBe('/settings/company')
+  })
+
   it('[unit] marks no primary section on a page outside the primary nav', async () => {
-    // activeSection defaults to Time, so module settings marked Time as the
-    // page you were on.
-    const html = await (await app.request('/settings/modules', {}, env)).text()
-    expect(html).toContain('data-app-view="module-settings"')
+    // activeSection defaults to Time, so settings marked Time as the page you
+    // were on.
+    const html = await (await app.request('/settings/company', {}, env)).text()
+    expect(html).toContain('data-app-view="settings-company"')
     // The Week/Day strip marks itself; what must not be marked is a primary
     // section, and Time is the one the default would have claimed.
     expect(html).not.toContain('<a href="/" aria-current="page">Time</a>')
