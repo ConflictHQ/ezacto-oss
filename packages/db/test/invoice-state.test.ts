@@ -1895,7 +1895,7 @@ for (const [runtime, factory] of factories) {
       ])
     })
 
-    it('[unit] [inv-05] settles a zero invoice and a credit note with non-positive receipts', async () => {
+    it('[unit] settles a zero invoice and a credit note with non-positive receipts', async () => {
       // Harvest closes a $0 invoice with a $0 payment and a credit note with a
       // negative one. invoice_payments.amount_cents was a strictly positive
       // receipt, so both were unstorable, and because state is derived from the
