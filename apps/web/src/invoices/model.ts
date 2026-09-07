@@ -114,12 +114,18 @@ export const invoiceIdFromPathname = (pathname: string): number | null => {
 }
 
 export const invoiceStateLabel = (invoice: Readonly<Invoice>): string => {
-  if (invoice.state !== 'closed') {
-    return invoice.state[0]!.toLocaleUpperCase('en-US') + invoice.state.slice(1)
+  if (invoice.state === 'closed') {
+    if (invoice.close_reason === 'written_off') return 'Written off'
+    if (invoice.close_reason === 'cancelled') return 'Cancelled'
+    return 'Closed'
   }
-  if (invoice.close_reason === 'written_off') return 'Written off'
-  if (invoice.close_reason === 'cancelled') return 'Cancelled'
-  return 'Closed'
+  // Open means the invoice exists and is billable; sent means it has reached
+  // the client. Both were reading as "Open", which is the difference between an
+  // invoice you still have to send and one you are waiting on. Derived from
+  // sent_at rather than carried as a fifth state: an invoice can be paid
+  // without ever being sent, so sending is not a step in the sequence.
+  if (invoice.state === 'open' && typeof invoice.sent_at === 'string') return 'Sent'
+  return invoice.state[0]!.toLocaleUpperCase('en-US') + invoice.state.slice(1)
 }
 
 export const invoiceMessageLabel = (

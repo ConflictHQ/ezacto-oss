@@ -1417,7 +1417,9 @@ describe('invoice browse browser behavior', () => {
       reminder: true,
       send_reminder_on: '2099-09-30',
     })
-    expect(document.querySelector('[data-invoice-detail-state]')?.textContent).toBe('Open')
+    // sent_at is stamped, so the document says Sent rather than Open: the
+    // difference between an invoice still to send and one being waited on.
+    expect(document.querySelector('[data-invoice-detail-state]')?.textContent).toBe('Sent')
     expect(document.querySelector('[data-invoice-reminder-line]')?.textContent).toContain(
       'Sep 30, 2099',
     )
@@ -1566,7 +1568,7 @@ describe('invoice browse browser behavior', () => {
 
     retry.click()
     await vi.waitFor(() =>
-      expect(document.querySelector('[data-invoice-detail-state]')?.textContent).toBe('Open'),
+      expect(document.querySelector('[data-invoice-detail-state]')?.textContent).toBe('Sent'),
     )
     expect(transitionInvoice).toHaveBeenCalledTimes(1)
   })

@@ -34,6 +34,7 @@ const invoice = (overrides: Partial<Invoice> = {}): Invoice =>
   ({
     state: 'draft',
     close_reason: null,
+    sent_at: null,
     period_start: null,
     period_end: null,
     ...overrides,
@@ -101,6 +102,27 @@ describe('invoice workspace model', () => {
     expect(
       invoiceStateLabel(invoice({ state: 'closed', close_reason: 'written_off' })),
     ).toBe('Written off')
+    // Open means it exists and is billable; Sent means it reached the client.
+    // Both read as Open before, which is the difference between an invoice you
+    // still have to send and one you are waiting on.
+    expect(invoiceStateLabel(invoice({ state: 'open' }))).toBe('Open')
+    expect(
+      invoiceStateLabel(
+        invoice({ state: 'open', sent_at: '2026-09-01T10:00:00.000Z' }),
+      ),
+    ).toBe('Sent')
+    // Sending is not a step in the sequence -- an invoice can be paid without
+    // ever having been sent, and a paid one says Paid whatever its sent_at.
+    expect(
+      invoiceStateLabel(
+        invoice({ state: 'paid', sent_at: '2026-09-01T10:00:00.000Z' }),
+      ),
+    ).toBe('Paid')
+    expect(
+      invoiceStateLabel(
+        invoice({ state: 'closed', sent_at: '2026-09-01T10:00:00.000Z' }),
+      ),
+    ).toBe('Closed')
     expect(invoicePeriod(invoice())).toBeNull()
     expect(
       invoicePeriod(
