@@ -252,7 +252,7 @@ for (const [runtime, factory] of factories) {
         definition.id,
       )
       expect(updatedDef[0]!.next_issue_on).toBe('2026-09-30')
-    }, 20_000)
+    })
 
     it('[unit] month-end anchors (29/30/31) generate correctly across short months', async () => {
       database = await factory()
@@ -286,7 +286,7 @@ for (const [runtime, factory] of factories) {
       const mar = await engine.generate(definition.id, '2026-03-31', principal)
       expect(mar.period).toBe('2026-03-31')
       expect(mar.nextIssueOn).toBe('2026-04-30')
-    }, 20_000)
+    })
 
     it('[unit] generation is idempotent per (definition, period)', async () => {
       database = await factory()
@@ -311,7 +311,7 @@ for (const [runtime, factory] of factories) {
         definition.id,
       )
       expect(invoices[0]!.count).toBe(1)
-    }, 20_000)
+    })
 
     it('[api] recurring linked to retainer decrements ledger on generation', async () => {
       database = await factory()
@@ -347,7 +347,7 @@ for (const [runtime, factory] of factories) {
         `SELECT balance FROM retainer_balances WHERE retainer_id = 1`,
       )
       expect(balance[0]!.balance).toBe(375_000)
-    }, 20_000)
+    })
 
     it('[unit] generation consumes only schema-validated recurring config; unknown versions fail closed', async () => {
       database = await factory()
@@ -369,7 +369,7 @@ for (const [runtime, factory] of factories) {
           definition.id,
         ),
       ).rejects.toThrow(/recurring invoice amount config is invalid/)
-    }, 20_000)
+    })
 
     it('[unit] rejects generation when definition is not yet due', async () => {
       database = await factory()
@@ -385,7 +385,7 @@ for (const [runtime, factory] of factories) {
       await expect(
         engine.generate(definition.id, '2026-08-31', principal),
       ).rejects.toThrow(RecurringEngineError)
-    }, 20_000)
+    })
 
     it('[unit] rejects generation with wrong profile', async () => {
       database = await factory()
@@ -401,7 +401,7 @@ for (const [runtime, factory] of factories) {
       await expect(
         engine.generate(definition.id, '2026-08-31', { userId: 1, profile: 'member' }),
       ).rejects.toThrow(RecurringEngineError)
-    }, 20_000)
+    })
 
     it('[unit] rejects generation for nonexistent definition', async () => {
       database = await factory()
@@ -413,7 +413,7 @@ for (const [runtime, factory] of factories) {
       await expect(
         engine.generate(99999, '2026-08-31', principal),
       ).rejects.toThrow(RecurringEngineError)
-    }, 20_000)
+    })
 
     it('[unit] rejects generation with invalid attachment policy version', async () => {
       database = await factory()
@@ -431,7 +431,7 @@ for (const [runtime, factory] of factories) {
           definition.id,
         ),
       ).rejects.toThrow(/recurring attachment policy is invalid/)
-    }, 20_000)
+    })
 
     it('[unit] generates invoices with multi-line definitions', async () => {
       database = await factory()
@@ -481,6 +481,6 @@ for (const [runtime, factory] of factories) {
       expect(lineItems[0]!.amount_cents).toBe(600_000)
       expect(lineItems[1]!.description).toBe('Hosting')
       expect(lineItems[1]!.amount_cents).toBe(5_000)
-    }, 20_000)
+    })
   })
 }
