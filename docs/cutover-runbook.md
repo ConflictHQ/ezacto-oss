@@ -664,48 +664,44 @@ which one you are on; the answer changes what abort means.
 
 ## What "flawless" means here
 
-It does not mean the reconcile report is empty, and it cannot today.
+**Zero UNEXPLAINED.** The rehearsal meets it.
 
-The loader deliberately skips rows the domain model refuses to represent, each
-recorded as an anomaly. Those skips are documented in
-[migration-spec §7](migration-spec.md#7-known-documented-gaps-from-research--decided-handling).
-The problem is the classifier: a skipped row's downstream delta has no way to be
-labelled as an accepted gap, so a correct load reports FAIL (#277). The
-rehearsal's 74 UNEXPLAINED deltas decompose as:
-
-| Cause | Rows | Nature |
-| --- | --- | --- |
-| 5 negative time entries | 57 | expected — Harvest's own correction entries, which `time_entries.seconds` cannot hold |
-| 7 non-positive payments | 9 | expected — $0 and credit-note receipts, which `invoice_payments.amount_cents` cannot hold |
-| 3 sub-cent unit prices | 3 | expected — the IRS half-cent mileage rate and a repeating decimal, rounded half-even |
-| 1 unresolved estimate reference | 1 | expected — the estimates module is off; there is nothing to link to |
-| 4 archived-project uninvoiced rows | 4 | **a reconcile bug**, not a gap: archived projects are wrongly included in the recomputed aggregate |
-
-The first four classes are the honest cost of the migration and the report
-naming them is the system working. The fifth is a defect in the checker, not in
-the data.
-
-Two consequences are worth stating plainly to whoever signs this off, because
-neither is visible in the reconcile summary:
-
-- **Seven invoices read `open` in ezacto that read `paid` in Harvest.** Invoice
-  state is derived from imported payments, so dropping the seven non-positive
-  payments left those invoices with none. Six are $0 invoices settled by $0
-  payments — a label difference with no money attached. The seventh is a credit
-  note that carries a negative amount due of -$8,765. Reconcile compares no
-  state field, so six of the seven are invisible to it. The durable record is in
-  the database, and this query is the check to run and keep:
-
-```sh
-sqlite3 ./cutover.db "
-  SELECT source_state, target_state, count(*)
-  FROM invoice_import_reconciliations GROUP BY 1, 2;"
+```
+complete: true   matches 26051   rounding 0   gaps 65   unexplained 0
 ```
 
-  Expect `paid|open` rows equal to the non-positive payment count. Anything
-  else is unexplained. Note that migration-spec §7 currently asserts these
-  invoices keep the state Harvest gave them; that sentence is wrong and is being
-  corrected (#283).
+Every one of those 65 gaps carries a citation into
+[migration-spec §7](migration-spec.md#7-known-documented-gaps-from-research--decided-handling),
+and reconcile will not issue one on trust: a delta is a cited gap only where it
+equals what the documented skip would have contributed, to the second and to the
+cent. An approximate match is still UNEXPLAINED.
+
+| Cited gap | Rows |
+| --- | --- |
+| Negative time entries, across the time reports | 48 |
+| Negative time entries, across the uninvoiced report | 3 |
+| Negative time entries, as anomalies and a row count | 6 |
+| Sub-cent unit prices, rounded half-even | 3 |
+| The unresolved estimate reference | 1 |
+| Recurring invoice definitions with no API | 3 |
+| The retainer balance with no API | 1 |
+
+Getting here took four fixes, and the numbers moved as follows:
+
+| | matches | gaps | unexplained |
+| --- | --- | --- | --- |
+| The rehearsal as first run | 25,333 | 4 | 74 |
+| Archived projects out of uninvoiced work | 26,042 | 4 | 70 |
+| Invoice state compared at all | 26,042 | 4 | 77 |
+| Documented skips cited rather than counted | 26,042 | 65 | 16 |
+| Non-positive receipts imported rather than skipped | 26,051 | 65 | **0** |
+
+The third row goes **up**: comparing `state` surfaced seven invoices that had
+been reading `open` against Harvest's `paid` without anything noticing. The
+fourth row is the fix — `invoice_payments.amount_cents` is signed now, so the
+receipts that settled them load, and all seven read `paid` again.
+
+One consequence is worth stating plainly to whoever signs this off:
 
 - **The 739 archived invoice PDFs and 54 avatars are not imported.** They are
   archived in the snapshot as evidence, not loaded: there is no PDF renderer in
@@ -716,11 +712,10 @@ sqlite3 ./cutover.db "
 So the definition of done for this cutover, written honestly:
 
 1. `verify` clean, and the load's row counts match the snapshot;
-2. every reconcile UNEXPLAINED row falls into the five classes above, and the
-   count has not grown;
+2. reconcile reports **zero** UNEXPLAINED, and every gap carries a §7 citation;
 3. the worksheet gate query in §4 passes;
 4. the remote counts in §9 equal the local file;
 5. six objects in R2, one of them fetched through the app;
 6. `/api/v1/whoami` returns 401, not 503;
-7. the two known deltas above written down and acknowledged, not discovered
+7. the missing PDFs and avatars written down and acknowledged, not discovered
    later by someone reading the books.

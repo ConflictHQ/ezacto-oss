@@ -83,6 +83,25 @@ export interface ProjectBudgetReportRecord extends ReportDateRange {
   grains: readonly ProjectBudgetGrainRecord[]
 }
 
+/**
+ * One project's budget consumption at project level, for the projects list.
+ * The per-project report answers "where did this budget go" and returns a grain
+ * per task or person; a list needs "how is this project doing" for every
+ * project at once, which is a different question and a different number of
+ * queries — three here, whatever the project count, rather than one call per
+ * row.
+ */
+export interface ProjectBudgetSummaryRecord {
+  projectId: number
+  budgetBy: 'project' | 'project_cost' | 'task' | 'task_fees' | 'person' | 'none'
+  unit: 'seconds' | 'cents' | null
+  budgetAmount: number | null
+  spentAmount: number
+  remainingAmount: number | null
+  costCents: number
+  unpricedEntryCount: number
+}
+
 export interface ProjectReportViewer {
   userId: number
   profile: UserProfile
@@ -94,6 +113,10 @@ export interface ReportRepository {
     clientId: number,
     range: Readonly<ReportDateRange>,
   ): Promise<ClientRollupReportRecord | null>
+  projectBudgetSummaries(
+    range: Readonly<ReportDateRange>,
+    viewer: Readonly<ProjectReportViewer>,
+  ): Promise<readonly ProjectBudgetSummaryRecord[]>
   projectBudget(
     projectId: number,
     range: Readonly<ReportDateRange>,
@@ -638,6 +661,139 @@ interface BudgetEntryRow {
 const remaining = (budget: number | null, spent: number): number | null =>
   budget === null ? null : checkedAdd(budget, -spent, 'remaining budget')
 
+/**
+ * Three queries, whatever the project count: the visible projects, their
+ * budgeted time, and their expenses. A per-project call would be one round trip
+ * per row, which is what kept these columns off the list.
+ */
+const projectBudgetSummaryReport = async (
+  database: Database,
+  range: Readonly<ReportDateRange>,
+  viewer: Readonly<ProjectReportViewer>,
+): Promise<readonly ProjectBudgetSummaryRecord[]> => {
+  assertId(viewer.userId, 'report viewer user id')
+  assertRange(range)
+  const accountWide = new Set<UserProfile>([
+    'accounting',
+    'executive_manager',
+    'administrator',
+  ]).has(viewer.profile)
+  // The same visibility predicate the per-project report applies, so the list
+  // cannot become a way to read a budget the detail page would refuse.
+  const projects = await database.all<ProjectRow>(sql`
+    SELECT id AS "id", budget_by AS "budgetBy", budget_seconds AS "budgetSeconds",
+      cost_budget_cents AS "costBudgetCents",
+      cost_budget_include_expenses AS "costBudgetIncludeExpenses"
+    FROM projects project WHERE (
+      ${accountWide ? 1 : 0} = 1 OR EXISTS (
+        SELECT 1 FROM user_assignments assignment
+        WHERE assignment.project_id = project.id
+          AND assignment.user_id = ${viewer.userId}
+          AND assignment.is_active = 1
+          AND (
+            project.report_visibility = 'everyone'
+            OR (${viewer.profile} = 'project_manager' AND assignment.is_project_manager = 1)
+          )
+      )
+    )
+    ORDER BY id
+  `)
+  if (projects.length === 0) return []
+  const entries = await database.all<{
+    projectId: number
+    roundedSeconds: number
+    billableRateCents: number | null
+    costRateCents: number | null
+  }>(sql`
+    SELECT project_id AS "projectId", rounded_seconds AS "roundedSeconds",
+      billable_rate_cents AS "billableRateCents", cost_rate_cents AS "costRateCents"
+    FROM time_entries
+    WHERE budgeted = 1 AND spent_date BETWEEN ${range.from} AND ${range.to}
+    ORDER BY id
+  `)
+  const expenses = await database.all<{ projectId: number; cents: number }>(sql`
+    SELECT project_id AS "projectId", total_cost_cents AS "cents"
+    FROM expenses WHERE spent_date BETWEEN ${range.from} AND ${range.to}
+    ORDER BY id
+  `)
+
+  const seconds = new Map<number, number>()
+  const costs = new Map<number, number>()
+  const billable = new Map<number, number>()
+  const unpriced = new Map<number, number>()
+  for (const entry of entries) {
+    seconds.set(
+      entry.projectId,
+      checkedAdd(seconds.get(entry.projectId) ?? 0, entry.roundedSeconds, 'budget seconds'),
+    )
+    if (entry.costRateCents === null) {
+      unpriced.set(entry.projectId, (unpriced.get(entry.projectId) ?? 0) + 1)
+    } else {
+      costs.set(
+        entry.projectId,
+        checkedAdd(
+          costs.get(entry.projectId) ?? 0,
+          trackedAmountCents(entry.roundedSeconds, entry.costRateCents),
+          'project cost',
+        ),
+      )
+    }
+    if (entry.billableRateCents !== null) {
+      billable.set(
+        entry.projectId,
+        checkedAdd(
+          billable.get(entry.projectId) ?? 0,
+          trackedAmountCents(entry.roundedSeconds, entry.billableRateCents),
+          'project fees',
+        ),
+      )
+    }
+  }
+  const expenseCents = new Map<number, number>()
+  for (const expense of expenses) {
+    expenseCents.set(
+      expense.projectId,
+      checkedAdd(expenseCents.get(expense.projectId) ?? 0, expense.cents, 'project expenses'),
+    )
+  }
+
+  return projects.map((project) => {
+    const trackedSeconds = seconds.get(project.id) ?? 0
+    const cost = costs.get(project.id) ?? 0
+    const withExpenses =
+      project.costBudgetIncludeExpenses === 1
+        ? checkedAdd(cost, expenseCents.get(project.id) ?? 0, 'project cost')
+        : cost
+    // A project budgeted by task or person has no single project-level budget
+    // to report; the figure that means something on a list is what has been
+    // spent, so the budget reads null rather than a sum of parts the detail
+    // page would show differently.
+    const monetary = project.budgetBy === 'project_cost' || project.budgetBy === 'task_fees'
+    const budgetAmount =
+      project.budgetBy === 'project'
+        ? project.budgetSeconds
+        : project.budgetBy === 'project_cost'
+          ? project.costBudgetCents
+          : null
+    const spentAmount =
+      project.budgetBy === 'project_cost'
+        ? withExpenses
+        : project.budgetBy === 'task_fees'
+          ? (billable.get(project.id) ?? 0)
+          : trackedSeconds
+    return {
+      projectId: project.id,
+      budgetBy: project.budgetBy,
+      unit: project.budgetBy === 'none' ? null : monetary ? ('cents' as const) : ('seconds' as const),
+      budgetAmount,
+      spentAmount,
+      remainingAmount: remaining(budgetAmount, spentAmount),
+      costCents: withExpenses,
+      unpricedEntryCount: unpriced.get(project.id) ?? 0,
+    }
+  })
+}
+
 const projectBudgetReport = async (
   database: Database,
   projectId: number,
@@ -798,6 +954,8 @@ const projectBudgetReport = async (
 export const createReportRepository = (database: Database): ReportRepository => ({
   uninvoiced: (filter) => uninvoicedReport(database, filter),
   clientRollup: (clientId, range) => clientRollupReport(database, clientId, range),
+  projectBudgetSummaries: (range, viewer) =>
+    projectBudgetSummaryReport(database, range, viewer),
   projectBudget: (projectId, range, viewer) =>
     projectBudgetReport(database, projectId, range, viewer),
 })

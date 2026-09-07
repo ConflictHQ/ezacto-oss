@@ -360,11 +360,11 @@ export interface LoadAnomaly {
   kind:
     | 'hours_residue'
     | 'rate_residue'
-    | 'non_positive_payment'
     | 'unresolved_estimate_reference'
     | 'negative_time_entry'
     | 'billing_conflict'
     | 'payment_date_disagreement'
+    | 'invoice_state_disagreement'
     | 'rate_chain_mismatch'
     | 'receipt_download_missing'
   detail: string
@@ -3258,24 +3258,14 @@ const invoiceInput = async (
     const gateway = objectValue(p, 'payment_gateway')
     const gatewayIdentified = identifiedReference(gateway)
     const recordedByEmail = stringValue(p, 'recorded_by_email')
-    // ezacto invoice_payments are strictly positive receipts
-    // (CHECK amount_cents BETWEEN 1 AND ...). Harvest also records $0 payments
-    // that settle $0 invoices and negative payments that settle credit notes.
-    // Those rows cannot be represented, so skip them and say so rather than
-    // aborting the whole import or silently coercing a money value.
+    // A receipt is signed. Harvest closes a $0 invoice with a $0 payment and a
+    // credit note with a negative one, and invoice_payments.amount_cents now
+    // holds both — skipping them restated the seven invoices they settled as
+    // open, because state is derived from the payments that load (#283).
     const paymentAmountCents = moneyLiteralToCents(
       numberAt(payment, '/amount'),
       'invoice_payment.amount',
     )
-    if (paymentAmountCents <= 0) {
-      anomalies.push({
-        resource: 'invoice_payments',
-        source_id: paymentId,
-        kind: 'non_positive_payment',
-        detail: `invoice=${harvestId} amount=${numberAt(payment, '/amount')}`,
-      })
-      continue
-    }
     importedPayments.push({
       harvestId: paymentId,
       amountCents: paymentAmountCents,
@@ -3915,6 +3905,17 @@ const loadComplexRow = async (
         source_id: diagnostic.payment_harvest_id,
         kind: 'payment_date_disagreement',
         detail: `${diagnostic.source_paid_at} has UTC date different from ${diagnostic.source_paid_date}`,
+      })
+    // State is derived from the payments that loaded, so a payment this import
+    // could not represent silently restates a settled invoice as outstanding.
+    // The importer already raises this; dropping it here is what let seven of
+    // CONFLICT's invoices read `open` against Harvest's `paid` unnoticed.
+    if (diagnostic.code === 'source_state_disagrees')
+      anomalies.push({
+        resource: 'invoices',
+        source_id: parentId,
+        kind: 'invoice_state_disagreement',
+        detail: `Harvest state ${diagnostic.source_state} but ezacto derives ${diagnostic.derived_state}`,
       })
   }
   return {

@@ -1,0 +1,21 @@
+name: node workspace
+description: Node at the pinned version with the workspace installed. Assumes the repository is already checked out.
+inputs:
+  playwright:
+    description: Install the Chromium shell for browser acceptance.
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version-file: .nvmrc
+        cache: npm
+    - name: install
+      shell: bash
+      run: |
+        if [ -f package-lock.json ]; then npm ci; else npm install; fi
+    - name: install Chromium for browser acceptance
+      if: inputs.playwright == 'true'
+      shell: bash
+      run: npx playwright install --with-deps --only-shell chromium
