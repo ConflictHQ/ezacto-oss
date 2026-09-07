@@ -22,7 +22,7 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createModuleSettingsController } from '../src/module-settings/browser.js'
 import { mountShell } from '../src/shell/browser.js'
-import { renderAppShell, webAssets, type ShellApi } from '../src/index.js'
+import { invoiceTabs, renderAppShell, webAssets, type ShellApi } from '../src/index.js'
 
 const timestamp = '2026-08-28T12:00:00.000Z'
 
@@ -2815,6 +2815,74 @@ describe('shell chrome visibility', () => {
     expect(timeStrip.hidden).toBe(false)
     expect(window.getComputedStyle(timeStrip).display).toBe('flex')
     expect(window.getComputedStyle(timeNav).display).toBe('grid')
+  })
+})
+
+describe('level-2 signal', () => {
+  const renderStyled = (options: Parameters<typeof renderAppShell>[0]): void => {
+    document.open()
+    document.write(
+      renderAppShell(options)
+        .replace(
+          / {2}<link[^>]+(?:fonts\.googleapis|fonts\.gstatic|\/assets\/ezacto\.css)[^>]*>\n/gu,
+          '',
+        )
+        .replace('  <script type="module" src="/assets/ezacto.js"></script>\n', ''),
+    )
+    document.close()
+    const stylesheet = document.createElement('style')
+    stylesheet.textContent = webAssets.stylesheet
+    document.head.append(stylesheet)
+  }
+
+  it('[acceptance] paints Time\'s view modes as a segmented control and leaves the underline to real tabs', () => {
+    // Week and Day are two ways of looking at one screen; Invoices' four
+    // destinations are four parts of the app. Both wore the same 3px orange
+    // underline, so the strongest signal in the chrome said "section" in one
+    // place and "view mode" in the other. Assert what a browser computes from
+    // the stylesheet the worker serves, because the rule that has to lose here
+    // is `.tabstrip a[aria-current="page"]`, which still matches.
+    renderStyled({
+      environment: 'test',
+      release: 'browser-test',
+      sessionCookiePresent: true,
+    })
+    const strip = document.querySelector<HTMLElement>('[data-time-views]')!
+    const [week, day] = [...strip.querySelectorAll<HTMLAnchorElement>('a')]
+
+    // Still a tab strip, not a widget: a nav of real links, keyboard reachable,
+    // with aria-current on the view you are looking at.
+    expect(strip.tagName).toBe('NAV')
+    expect(strip.getAttribute('aria-label')).toBe('Time views')
+    expect(week!.getAttribute('href')).toBe('/')
+    expect(day!.getAttribute('href')).toBe('/?view=day')
+    expect(week!.getAttribute('aria-current')).toBe('page')
+    expect(day!.hasAttribute('aria-current')).toBe(false)
+
+    const activeMode = window.getComputedStyle(week!)
+    const idleMode = window.getComputedStyle(day!)
+    expect(activeMode.backgroundColor).toBe('#FDEDE3')
+    expect(activeMode.borderTopColor).toBe('#E8590C')
+    expect(activeMode.boxShadow).toBe('none')
+    expect(idleMode.backgroundColor).not.toBe('#FDEDE3')
+    expect(idleMode.borderTopColor).toBe('#E3E5E8')
+
+    // And the underline it gave up is still the mark of a level-2 tab.
+    renderStyled({
+      environment: 'test',
+      release: 'browser-test',
+      activeSection: 'Invoices',
+      view: 'invoice-list',
+      tabs: invoiceTabs('invoice-list'),
+      sessionCookiePresent: true,
+    })
+    const overview = document.querySelector<HTMLAnchorElement>(
+      '.tabstrip a[aria-current="page"]',
+    )!
+    expect(overview.textContent).toBe('Overview')
+    const currentTab = window.getComputedStyle(overview)
+    expect(currentTab.boxShadow).toBe('inset 0 -3px #E8590C')
+    expect(currentTab.backgroundColor).not.toBe('#FDEDE3')
   })
 })
 

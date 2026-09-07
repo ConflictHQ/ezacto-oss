@@ -2239,6 +2239,43 @@ a {
   color: var(--ez-ink);
   box-shadow: inset 0 -3px var(--ez-live);
 }
+/*
+ * Week and Day are view modes of one screen, not sections of the app. They wore
+ * the level-2 underline only because they were the one strip in the shell; now
+ * that Invoices and Reports have real level-2 tabs, that underline has to mean
+ * exactly one thing, so the view modes take §6's segmented control instead --
+ * a joined group, orange tint and an orange border on the mode you are in. The
+ * strip stays a strip: same nav, same links, same aria-current, different paint.
+ */
+.tabstrip.view-switch {
+  align-items: center;
+  gap: 0;
+}
+.tabstrip.view-switch a {
+  height: 28px;
+  padding: 0 16px;
+  border: 1px solid var(--ez-border);
+}
+/* The segments share their edge so the group reads as one control rather than
+   as two buttons that happen to touch. */
+.tabstrip.view-switch a + a {
+  margin-inline-start: -1px;
+}
+.tabstrip.view-switch a:first-child {
+  border-start-start-radius: var(--ez-radius);
+  border-end-start-radius: var(--ez-radius);
+}
+.tabstrip.view-switch a:last-child {
+  border-start-end-radius: var(--ez-radius);
+  border-end-end-radius: var(--ez-radius);
+}
+.tabstrip.view-switch a[aria-current="page"] {
+  /* Above its neighbour, so the shared edge is the orange one. */
+  position: relative;
+  background: var(--ez-orange-tint);
+  border-color: var(--ez-live);
+  box-shadow: none;
+}
 .app-content {
   padding: 28px 32px 48px;
 }

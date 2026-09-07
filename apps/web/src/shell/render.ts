@@ -113,12 +113,17 @@ export const renderDataQualityBanner = (options: DataQualityBannerOptions): stri
  * ?view= parameter -- a rule that is right for Time and wrong for every other
  * section, which does not navigate by that parameter and would have its current
  * tab stripped on load.
+ *
+ * It also carries view-switch, because Week and Day are two ways of looking at
+ * one screen rather than two sections of the app; the level-2 underline now
+ * says "you are in this part of ezacto" for Invoices and Reports, and a signal
+ * that means two things means neither.
  */
 const renderTabStrip = (options: AppShellOptions): string => {
   const view = options.view ?? 'time'
   if (options.tabs === undefined) {
     return (
-      `<nav class="tabstrip" aria-label="Time views" data-time-views${view === 'time' ? '' : ' hidden'}>` +
+      `<nav class="tabstrip view-switch" aria-label="Time views" data-time-views${view === 'time' ? '' : ' hidden'}>` +
       `<a href="/" aria-current="page">Week</a><a href="/?view=day">Day</a>` +
       `</nav>`
     )
