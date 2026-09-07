@@ -1,4 +1,5 @@
 import { renderDataTable } from '../components/data-table.js'
+import { icon } from '../components/icons.js'
 import {
   EzactoApiError,
   type Attachment,
@@ -458,6 +459,25 @@ export const createExpenseWorkflowController = (
     return link
   }
 
+  /**
+   * Locked is a state the row wears, not a sentence — `05-expenses-all.png`
+   * marks it with a padlock in the row rather than the word. Nothing beside the
+   * padlock says it, so this is the icon that carries the whole message and it
+   * is named for a reader instead of hidden from one.
+   */
+  const expenseBillingCell = (expense: Expense): string | DocumentFragment => {
+    const billing = [
+      expenseBilling(expense),
+      expense.reimbursable
+        ? `Reimbursement: ${expenseStatusLabel(expense.reimbursement_status)}`
+        : 'Not reimbursable',
+    ].join(' · ')
+    if (!expense.is_locked) return `${billing} · Editable`
+    const cell = document.createDocumentFragment()
+    cell.append(`${billing} · `, icon('padlock', { label: 'Locked' }))
+    return cell
+  }
+
   const expenseStatusPill = (expense: Expense): HTMLSpanElement => {
     const pill = document.createElement('span')
     pill.className = 'expense-status-pill'
@@ -501,14 +521,7 @@ export const createExpenseWorkflowController = (
           {
             key: 'billing',
             label: 'Billing',
-            render: (expense) =>
-              [
-                expenseBilling(expense),
-                expense.reimbursable
-                  ? `Reimbursement: ${expenseStatusLabel(expense.reimbursement_status)}`
-                  : 'Not reimbursable',
-                expense.is_locked ? 'Locked' : 'Editable',
-              ].join(' · '),
+            render: expenseBillingCell,
           },
           { key: 'status', label: 'Status', render: expenseStatusPill },
           {
@@ -609,6 +622,10 @@ export const createExpenseWorkflowController = (
       const link = document.createElement('a')
       link.href = `/api/v1/expenses/${expenseId}/attachments/${attachment.id}/content`
       link.textContent = attachment.name
+      // The clip belongs to the file name, so it goes inside the link rather
+      // than beside it — and the name is already the label, so it is hidden
+      // from the reader rather than announced a second time.
+      link.prepend(icon('paperclip'))
       link.setAttribute('download', attachment.name)
       const metadata = document.createElement('span')
       metadata.textContent = `${new Intl.NumberFormat('en-US').format(attachment.byte_size)} bytes`

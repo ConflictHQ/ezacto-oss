@@ -33,6 +33,52 @@
 }
 
 /*
+ * The icon set. Every icon is a 20px square drawn on a 20-unit grid in the
+ * colour of the text beside it, which is why an icon inside a control that
+ * changes colour on hover or on disable changes with it, and why none of them
+ * needs a second definition per theme. The chevron is drawn once pointing
+ * right and turned here; four paths would be four things to keep at one weight.
+ */
+.ez-icon {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ez-icon[data-direction='up'] {
+  transform: rotate(-90deg);
+}
+
+.ez-icon[data-direction='down'] {
+  transform: rotate(90deg);
+}
+
+.ez-icon[data-direction='left'] {
+  transform: rotate(180deg);
+}
+
+/*
+ * A control whose whole label is an icon has to centre it. The inline default
+ * puts the icon on the text baseline, leaving descender space under it and the
+ * glyph sitting a couple of pixels low inside a 36px button.
+ */
+.command-trigger,
+.week-actions button,
+.day-switcher button,
+.team-period button,
+.data-table-overflow > summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+/*
  * Two page surfaces, not nine width caps. Grid surfaces (timesheet, lists,
  * report tables) are full-bleed because rows earn the width; document surfaces
  * (settings, forms) cap the measure because prose does not.
@@ -1695,6 +1741,9 @@
   background: var(--ez-surface);
 }
 .expense-attachments a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   color: var(--ez-ink);
   font-weight: 700;
   text-underline-offset: 3px;
@@ -4054,6 +4103,12 @@ dialog textarea {
 .data-table tbody td.data-table-actions {
   max-width: none;
   overflow: visible;
+}
+
+/* An icon standing in for a word inside a cell rides the text baseline, which
+   leaves it sitting low against the words beside it. */
+.data-table tbody td .ez-icon {
+  vertical-align: -5px;
 }
 
 .data-table .is-numeric {

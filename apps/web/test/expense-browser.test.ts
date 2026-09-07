@@ -177,6 +177,36 @@ describe('Expenses V1 browser controller', () => {
     ).toEqual(['10', '8', '9'])
   })
 
+  it('[browser] marks a locked row with a padlock a reader can hear', async () => {
+    // `05-expenses-all.png` states the lock as a padlock in the row, not as a
+    // word in a sentence. Nothing beside the mark says it, so this is the case
+    // where the icon carries the whole message and has to be named — hiding it
+    // would delete the state for anyone not looking at the screen.
+    writeDocument('expense-list', '/expenses')
+    const controller = createExpenseWorkflowController({
+      ...catalogs(),
+      listWorkflowExpenses: vi.fn(async () =>
+        page([
+          { ...baseExpense, id: 11, is_locked: true, locked_reason: 'Approved timesheet' },
+          { ...baseExpense, id: 12, is_locked: false },
+        ]),
+      ),
+    })
+
+    await controller.activate(identity, new AbortController().signal, () => false)
+
+    const locked = document.querySelector('tr[data-row-key="11"] [data-column="billing"]')
+    const editable = document.querySelector('tr[data-row-key="12"] [data-column="billing"]')
+    const padlock = locked?.querySelector('svg.ez-icon')
+    expect(padlock?.getAttribute('data-icon')).toBe('padlock')
+    expect(padlock?.getAttribute('role')).toBe('img')
+    expect(padlock?.getAttribute('aria-label')).toBe('Locked')
+    expect(padlock?.hasAttribute('aria-hidden')).toBe(false)
+    // The row that is not locked says so in words and draws no mark at all.
+    expect(editable?.querySelector('svg.ez-icon')).toBeNull()
+    expect(editable?.textContent).toContain('Editable')
+  })
+
   it('[browser] creates direct amounts as cents and unit categories as units', async () => {
     writeDocument('expense-list', '/expenses')
     const createWorkflowExpense = vi.fn(async (input) => ({ ...baseExpense, ...input }))

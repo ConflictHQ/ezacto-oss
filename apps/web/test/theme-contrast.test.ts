@@ -90,6 +90,8 @@ describe('D16 theme AA contrast gate', () => {
       ['ground/live-text button label', 5.26],
       ['live-text/ground text', 5.26],
       ['live-text/status-bg text', 4.63],
+      ['data/ground row action', 5.74],
+      ['ink/surface control label', 16.74],
     ])
     expect(results.every((result) => result.passes)).toBe(true)
     expect(() => assertThemeContrast(themeManifest.precision)).not.toThrow()

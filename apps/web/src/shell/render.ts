@@ -1,4 +1,5 @@
 import { shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
+import { iconMarkup } from '../components/icons.js'
 import { themeManifest } from '../theme.js'
 import { type DeploymentBrand, resolveDeploymentBrand } from '../brand.js'
 import { renderClientDirectoryPages } from '../clients/render.js'
@@ -290,11 +291,12 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
     <a class="brand" href="/" aria-label="${escapeHtml(brand)} home">${escapeHtml(brand)}</a>
     <nav class="primary-nav" aria-label="Primary">${navigation}</nav>
     <button class="timer-chip" type="button" data-timer-chip data-state="loading" data-auth-action disabled aria-haspopup="dialog">
+      ${iconMarkup('clock')}
       <span class="live-dot" aria-hidden="true"></span>
       <span data-timer-label>Timer</span>
       <span data-timer-elapsed>—</span>
     </button>
-    <button class="command-trigger" type="button" data-command-trigger data-auth-action disabled aria-haspopup="dialog">⌘K</button>
+    <button class="command-trigger" type="button" data-command-trigger data-auth-action disabled aria-haspopup="dialog" aria-label="Search and commands (⌘K)">${iconMarkup('magnifier')}<span aria-hidden="true">⌘K</span></button>
     <button class="menu-trigger" type="button" data-menu-trigger aria-label="Open navigation" aria-haspopup="dialog">Menu</button>
     <div class="account" data-auth-shell data-state="loading">
       <div class="account-identity" data-current-identity hidden>
@@ -326,9 +328,9 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
           <h2 id="week-heading">Week of <span data-week-label>—</span></h2>
         </div>
         <div class="week-actions">
-          <button type="button" data-week-previous data-auth-action disabled aria-label="Previous week">←</button>
-          <button type="button" data-week-current data-auth-action disabled>This week</button>
-          <button type="button" data-week-next data-auth-action disabled aria-label="Next week">→</button>
+          <button type="button" data-week-previous data-auth-action disabled aria-label="Previous week">${iconMarkup('chevron', { direction: 'left' })}</button>
+          <button type="button" data-week-current data-auth-action disabled>${iconMarkup('calendar')}This week</button>
+          <button type="button" data-week-next data-auth-action disabled aria-label="Next week">${iconMarkup('chevron')}</button>
           <button type="button" data-copy-last-week data-auth-action disabled>Copy last week</button>
           <button type="button" data-add-row-trigger data-auth-action disabled>Add row</button>
           <strong data-week-total>—</strong>
@@ -356,9 +358,9 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
       </div>
       <div class="day-list" data-day-list data-view="phone">
         <header class="day-switcher">
-          <button type="button" data-day-previous data-auth-action disabled aria-label="Previous day">←</button>
+          <button type="button" data-day-previous data-auth-action disabled aria-label="Previous day">${iconMarkup('chevron', { direction: 'left' })}</button>
           <strong data-day-label>—</strong>
-          <button type="button" data-day-next data-auth-action disabled aria-label="Next day">→</button>
+          <button type="button" data-day-next data-auth-action disabled aria-label="Next day">${iconMarkup('chevron')}</button>
         </header>
         <div data-day-rows><p class="day-empty">Loading time entries…</p></div>
       </div>

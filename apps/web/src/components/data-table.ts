@@ -15,6 +15,8 @@
  * density) and §6 (rows and actions).
  */
 
+import { icon } from './icons.js'
+
 /** A cell's content. Strings are text; nodes are appended as given. */
 export type CellContent = string | Node
 
@@ -109,8 +111,10 @@ const actionsCell = (actions: readonly RowAction[]): HTMLTableCellElement => {
     const details = document.createElement('details')
     details.className = 'data-table-overflow'
     const summary = document.createElement('summary')
+    // The control names itself, so the mark inside it is hidden: a reader that
+    // announced both would say "More actions, image" on every row.
     summary.setAttribute('aria-label', 'More actions')
-    summary.textContent = '…'
+    summary.append(icon('overflow'))
     const menu = document.createElement('div')
     menu.className = 'data-table-menu'
     for (const action of overflow) {

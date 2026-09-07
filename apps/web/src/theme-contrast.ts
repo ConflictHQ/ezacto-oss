@@ -58,6 +58,13 @@ export const precisionContrastRequirements: readonly ThemeContrastRequirement[] 
     background: 'status_bg',
     minimum: 4.5,
   },
+  // An icon is a non-text graphic and AA asks 3:1 of it — but only while
+  // something else names the control. The overflow mark in a table row and the
+  // magnifier on the command trigger are the whole label of the control they
+  // sit in, and a label owes what text owes however it is drawn. These two are
+  // the surfaces those marks inherit their `currentColor` from.
+  { name: 'data/ground row action', foreground: 'data', background: 'ground', minimum: 4.5 },
+  { name: 'ink/surface control label', foreground: 'ink', background: 'surface', minimum: 4.5 },
 ]
 
 const channel = (value: number): number => {

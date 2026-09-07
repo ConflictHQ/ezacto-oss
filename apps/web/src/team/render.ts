@@ -1,3 +1,5 @@
+import { iconMarkup } from '../components/icons.js'
+
 const weekdays = [
   ['monday', 'Mon'],
   ['tuesday', 'Tue'],
@@ -14,10 +16,10 @@ export const renderTeamPages = (view?: string): string => `
       <div><p class="eyebrow">Organize</p><h1>Team</h1></div>
     </header>
     <section class="team-period" aria-label="Utilization period">
-      <button type="button" data-team-week-previous aria-label="Previous week">←</button>
+      <button type="button" data-team-week-previous aria-label="Previous week">${iconMarkup('chevron', { direction: 'left' })}</button>
       <strong data-team-week-label>—</strong>
-      <button type="button" data-team-week-next aria-label="Next week">→</button>
-      <button type="button" data-team-week-current>This week</button>
+      <button type="button" data-team-week-next aria-label="Next week">${iconMarkup('chevron')}</button>
+      <button type="button" data-team-week-current>${iconMarkup('calendar')}This week</button>
     </section>
     <div class="team-list-toolbar">
       <fieldset aria-label="People status">

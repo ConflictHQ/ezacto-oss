@@ -317,6 +317,36 @@ describe('S-1 through S-5 application shell', () => {
     expect(configure).toContain('Invoice configuration is not built yet')
   })
 
+  it('[unit] draws the shell marks as inline icons rather than as glyphs', () => {
+    const html = renderAppShell({ environment: 'test', release: 'abcdef012345' })
+    // The stepper was the literal `←`/`→` characters, which are whatever the
+    // reader's font decides they are and cannot be sized or coloured with the
+    // button around them.
+    expect(html).not.toContain('←')
+    expect(html).not.toContain('→')
+    expect(html).toContain('data-icon="chevron"')
+    expect(html).toContain('data-icon="magnifier"')
+    // No icon font and no second request: the geometry is in the document the
+    // worker already serves.
+    expect(html).not.toMatch(/<link[^>]+(?:icon|glyph)[^>]*>/u)
+    expect(html).not.toContain('@font-face')
+
+    // Every mark in the shell decorates a control that already names itself,
+    // so every one of them is hidden from the reader. A shell that announced
+    // "image" beside each stepper would be worse than the glyphs it replaced.
+    const marks = html.match(/<svg class="ez-icon"[^>]*>/gu) ?? []
+    expect(marks.length).toBeGreaterThanOrEqual(6)
+    expect(marks.filter((mark) => !mark.includes('aria-hidden="true"'))).toEqual([])
+    expect(marks.filter((mark) => mark.includes('role="img"'))).toEqual([])
+
+    // …which only holds while the controls really do name themselves.
+    expect(html).toContain('data-week-previous data-auth-action disabled aria-label="Previous week"')
+    expect(html).toContain('data-week-next data-auth-action disabled aria-label="Next week"')
+    expect(html).toContain('data-day-previous data-auth-action disabled aria-label="Previous day"')
+    expect(html).toContain('data-day-next data-auth-action disabled aria-label="Next day"')
+    expect(html).toContain('aria-label="Search and commands (⌘K)"')
+  })
+
   it('[e2e:track-week] keeps the global timer in desktop and phone shell CSS', () => {
     const html = renderAppShell({
       environment: 'test',

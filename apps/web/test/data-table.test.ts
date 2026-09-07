@@ -120,6 +120,19 @@ describe('data table', () => {
     expect(element.querySelector('tfoot')).toBeNull()
   })
 
+  it('[unit] draws the overflow as a mark the control names, not the mark', () => {
+    const element = table({ actions: () => [{ label: 'Archive', onSelect: () => {} }] })
+    const summary = element.querySelector('.data-table-overflow > summary')
+    const mark = summary?.querySelector('svg.ez-icon')
+    expect(summary?.getAttribute('aria-label')).toBe('More actions')
+    expect(mark?.getAttribute('data-icon')).toBe('overflow')
+    // The summary is already named `More actions`; naming the mark as well is
+    // how a reader ends up saying it twice on every row of the table.
+    expect(mark?.getAttribute('aria-hidden')).toBe('true')
+    expect(mark?.hasAttribute('aria-label')).toBe(false)
+    expect(summary?.textContent).toBe('')
+  })
+
   it('[unit] puts primary actions inline and the rest behind an overflow', () => {
     const edit = vi.fn()
     const archive = vi.fn()
