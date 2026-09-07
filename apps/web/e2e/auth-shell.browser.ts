@@ -1225,6 +1225,24 @@ test('[e2e:project-directory] creates selectable work, edits assignments, upload
       .locator('[data-project-list] .data-table-group')
       .filter({ hasText: 'Browser Acceptance Client' }),
   ).toHaveCount(1)
+  // Budget | Spent | Remaining | Costs come from the list-scoped rollup, one
+  // request for the page. The columns exist and carry figures rather than the
+  // em-dash placeholder a missing rollup would leave.
+  const budgetsLoaded = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/reports/project-budgets' &&
+      response.status() === 200,
+  )
+  await page.reload()
+  expect((await budgetsLoaded).ok()).toBe(true)
+  for (const column of ['budget', 'spent', 'remaining', 'costs']) {
+    await expect(
+      page.locator(`[data-project-list] thead th[data-column="${column}"]`),
+    ).toHaveCount(1)
+  }
+  await expect(row.locator('td[data-column="spent"]')).not.toHaveText('—')
+  await expectNoPageOverflow(page)
+
   await row.getByRole('link', { name: '[BPROJ] Browser UI Project' }).click()
   await expect(page.locator('[data-project-facts]')).toContainText(
     'Browser delivery detail',
