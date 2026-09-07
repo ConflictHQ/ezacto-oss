@@ -539,6 +539,36 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers): void => {
         const task = document.createElement('span')
         task.textContent = row.taskLabel
         label.append(project, task)
+        // The day list has had this since the timesheet work; the week grid
+        // never did, so on a desktop the only way to start a timer was to
+        // retype the project and task into the top bar as exact strings. Start
+        // from the most recent entry on the row, which is the one whose notes
+        // and rate the new timer should inherit.
+        const restartable = [...row.cells]
+          .reverse()
+          .find((cell) => cell.entries.length > 0 && !cell.isLocked)
+        const restartId = restartable?.entries[0]?.id
+        if (handlers.restart !== undefined && restartId !== undefined && !row.isRunning) {
+          const start = document.createElement('button')
+          start.type = 'button'
+          start.className = 'grid-row-start'
+          start.dataset.startEntry = String(restartId)
+          start.textContent = 'Start'
+          // setAttribute rather than the ariaLabel property: the property is an
+          // ARIA reflection jsdom does not mirror to the content attribute, so
+          // the label would be real in a browser and untestable here.
+          start.setAttribute(
+            'aria-label',
+            `Start a timer on ${row.projectLabel} / ${row.taskLabel}`,
+          )
+          start.addEventListener('click', () => {
+            start.disabled = true
+            void handlers.restart?.(restartId).finally(() => {
+              start.disabled = false
+            })
+          })
+          label.append(start)
+        }
         tr.append(label)
         row.cells.forEach((cell, dayIndex) => {
           const td = document.createElement('td')

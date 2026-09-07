@@ -2762,6 +2762,39 @@ button[data-auth-action]:disabled {
   color: var(--ez-action);
 }
 
+/* The row label is a sticky header cell in a dense grid, so Start sits inline
+   with the task and appears on hover or focus rather than adding a control to
+   every row at rest. Keyboard reaches it the same way: focus-within. */
+.grid-row-start {
+  min-height: 28px;
+  margin-left: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font-size: 12px;
+  opacity: 0;
+}
+
+.week-grid-table tbody tr:hover .grid-row-start,
+.week-grid-table tbody th:focus-within .grid-row-start,
+.grid-row-start:focus-visible {
+  opacity: 1;
+}
+
+.grid-row-start:hover:not(:disabled) {
+  border-color: var(--ez-action);
+  color: var(--ez-action);
+}
+
+@media (hover: none) {
+  /* No hover to reveal it, and the phone layout uses the day list anyway. */
+  .grid-row-start {
+    opacity: 1;
+  }
+}
+
 .week-grid-wrap {
   overflow-x: auto;
 }
