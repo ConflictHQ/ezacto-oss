@@ -735,6 +735,76 @@ describe('invoice payment controller', () => {
     )
   })
 
+  it('[conflict] keeps a header edit when the invoice moved on and retries at the new version', async () => {
+    renderDetail()
+    let currentInvoice = invoice('HEADER-CONFLICT', { subject: 'Original subject' })
+    const commandIds: string[] = []
+    let attempts = 0
+    const updateInvoice = vi.fn(
+      async (_invoiceId: number, commandId: string, input: InvoiceEditInput) => {
+        attempts += 1
+        commandIds.push(commandId)
+        if (attempts === 1) {
+          // Somebody else wrote the invoice between the render and the save.
+          currentInvoice = { ...currentInvoice, version: 2, due_amount_cents: 400 }
+          throw new EzactoApiError(
+            409,
+            {
+              error: {
+                code: 'invoice_version_conflict',
+                message: 'server conflict',
+                fields: [],
+              },
+            },
+            null,
+          )
+        }
+        expect(input.expected_version).toBe(2)
+        currentInvoice = { ...currentInvoice, version: 3, subject: input.subject ?? null }
+        return currentInvoice
+      },
+    )
+    const controller = createInvoicePaymentController({
+      getInvoice: vi.fn(async () => currentInvoice),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+      updateInvoice,
+    })
+    await controller.activate(identity(1), new AbortController().signal, () => false)
+
+    document.querySelector<HTMLButtonElement>('[data-invoice-edit]')!.click()
+    const subject = document.querySelector<HTMLInputElement>('[data-invoice-edit-subject]')!
+    subject.value = 'Revised subject'
+    subject.dispatchEvent(new Event('input', { bubbles: true }))
+    submit('[data-invoice-edit-form]')
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-edit-result]')?.textContent).toContain(
+        'Latest values are loaded',
+      ),
+    )
+    // A stale version is the one failure that must not cost the operator the
+    // edit: the dialog stays open, still carrying what they typed, over a
+    // document that now shows the concurrent write.
+    expect(
+      document.querySelector<HTMLDialogElement>('[data-invoice-edit-dialog]')?.open,
+    ).toBe(true)
+    expect(subject.value).toBe('Revised subject')
+    expect(subject.disabled).toBe(false)
+    expect(document.querySelector('[data-invoice-detail-due]')?.textContent).toBe('$4.00')
+
+    submit('[data-invoice-edit-form]')
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector<HTMLDialogElement>('[data-invoice-edit-dialog]')?.open,
+      ).toBe(false),
+    )
+    expect(commandIds).toHaveLength(2)
+    expect(commandIds[0]).not.toBe(commandIds[1])
+    expect(document.querySelector('[data-invoice-detail-subject]')?.textContent).toBe(
+      'Revised subject',
+    )
+  })
+
   it.each(['record', 'update', 'delete'] as const)(
     '[reliability] treats a successful %s as complete when its detail refresh fails',
     async (operation) => {
