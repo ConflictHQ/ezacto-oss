@@ -3065,6 +3065,40 @@ html[data-time-view="day"] .week-grid-wrap {
 html[data-time-view="day"] .day-list {
   display: block;
 }
+
+/* Day view on a desktop is a chosen view, not a fallback. Below 720px the
+   phone rules take over and this whole block is irrelevant; above it the same
+   markup was being rendered at phone density on a screen with room to spare --
+   a 52px switcher, 14px hours, and rows sized for a thumb. */
+@media (min-width: 721px) {
+  html[data-time-view="day"] .day-switcher {
+    min-height: 72px;
+    grid-template-columns: 44px 1fr 44px;
+    padding: 8px 20px;
+  }
+
+  html[data-time-view="day"] .day-switcher [data-day-label] {
+    font-size: 28px;
+    font-weight: 600;
+    line-height: 44px;
+  }
+
+  html[data-time-view="day"] .day-row {
+    min-height: 88px;
+    grid-template-columns: minmax(0, 1fr) 180px;
+    padding: 12px 20px;
+  }
+
+  /* The hours are the thing you came to read on this screen. */
+  html[data-time-view="day"] .day-row .week-cell input {
+    height: 48px;
+    font-size: 22px;
+  }
+
+  html[data-time-view="day"] .day-row-label strong {
+    font-size: 16px;
+  }
+}
 .data-quality {
   display: flex;
   justify-content: space-between;

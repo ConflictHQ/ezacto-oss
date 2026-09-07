@@ -442,6 +442,22 @@ test('[e2e:track-week] uses one editor and submits 12-hour UI times as canonical
   })
 
   await page.goto('/?view=day&week=2026-08-30')
+
+  // Day view on a desktop is a chosen view, not the phone fallback. The same
+  // markup was being rendered at phone density on a screen with room, so the
+  // hours -- the thing you came to this screen to read -- were 14px.
+  await page.setViewportSize({ width: 1280, height: 900 })
+  const dayLabelSize = await page
+    .locator('[data-day-label]')
+    .evaluate((node) => globalThis.getComputedStyle(node).fontSize)
+  expect(Number.parseFloat(dayLabelSize)).toBeGreaterThanOrEqual(24)
+  const dayHoursSize = await page
+    .locator('[data-day-rows] .week-cell input')
+    .first()
+    .evaluate((node) => globalThis.getComputedStyle(node).fontSize)
+  expect(Number.parseFloat(dayHoursSize)).toBeGreaterThanOrEqual(20)
+  await page.setViewportSize({ width: 390, height: 844 })
+
   const editor = page.locator('[data-entry-dialog]')
   await expect(editor).toHaveCount(1)
   await expect(page.locator('[data-entry-form]')).toHaveCount(1)
