@@ -1518,6 +1518,54 @@ for (const [runtime, createHarness] of factories) {
       ).toBe(403);
     }, 20_000);
 
+    it("[security] keeps sign-in address changes with the administrator", async () => {
+      const person = await data(
+        await harness.request(
+          "/users",
+          json({
+            first_name: "Sign",
+            last_name: "In",
+            email: "sign-in@example.test",
+          }),
+        ),
+      );
+      const path = `/users/${person.id as number}`;
+      const takeover = await harness.request(
+        path,
+        asProfile(
+          "people_admin",
+          json({ email: "attacker@example.test" }, "PATCH"),
+        ),
+      );
+      expect(takeover.status).toBe(403);
+      expect(await takeover.json()).toMatchObject({
+        error: { code: "profile_forbidden" },
+      });
+      expect((await data(await harness.request(path))).email).toBe(
+        "sign-in@example.test",
+      );
+      expect(
+        (
+          await data(
+            await harness.request(
+              path,
+              asProfile("people_admin", json({ telephone: "+506" }, "PATCH")),
+            )
+          )
+        ).telephone,
+      ).toBe("+506");
+      expect(
+        (
+          await data(
+            await harness.request(
+              path,
+              json({ email: "renamed@example.test" }, "PATCH"),
+            )
+          )
+        ).email,
+      ).toBe("renamed@example.test");
+    }, 20_000);
+
     it("[api] rolls back every multi-statement relationship mutation on failure", async () => {
       const originalUser = await data(
         await harness.request(
