@@ -217,7 +217,8 @@ describe('invoice payment controller', () => {
     await Promise.resolve()
     await Promise.resolve()
     expect(document.querySelector('[data-invoice-detail-number]')?.textContent).toBe('SECOND')
-    expect(document.querySelector('[data-invoice-detail-state]')?.textContent).toBe('Open')
+    // The fixture carries sent_at, so this reads Sent.
+    expect(document.querySelector('[data-invoice-detail-state]')?.textContent).toBe('Sent')
     expect(document.querySelector('[data-invoice-detail-notes]')?.textContent).toBe(
       'Only second user can see this',
     )

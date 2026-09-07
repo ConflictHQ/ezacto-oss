@@ -2022,7 +2022,9 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
     send_reminder_on: '2099-09-30',
   })
   await expect(composer).toBeHidden()
-  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Open')
+  // The invoice was sent through the real worker, so D1 carries sent_at and
+  // the document says Sent. Open would mean it still has to go out.
+  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Sent')
   await expect(detail.locator('[data-invoice-reminder-line]')).toContainText(
     'Sep 30, 2099',
   )
@@ -2215,7 +2217,7 @@ test('[e2e:invoice-lines] adds, edits, and deletes exact lines through the real 
   await expect(createdRow).toContainText('$0.11')
   await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$75.12')
   await expect(detail.locator('[data-invoice-detail-due]')).toHaveText('$0.12')
-  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Open')
+  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Sent')
   await expectNoPageOverflow(page)
 
   const persistedCreated = await page.evaluate(async (invoiceId) => {
@@ -2372,7 +2374,7 @@ test('[e2e:invoice-cycle] records a final payment and restores the open balance 
 
   const detail = page.locator('[data-invoice-document]')
   await expect(detail).toBeVisible()
-  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Open')
+  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Sent')
   await expect(detail.locator('[data-invoice-detail-due]')).toHaveText('$75.00')
   const record = detail.getByRole('button', { name: 'Record payment' })
   await expectPhoneControl(record)
@@ -2460,7 +2462,7 @@ test('[e2e:invoice-cycle] records a final payment and restores the open balance 
     .click()
   expect((await deleted).status()).toBe(200)
   await expect(confirmation).toBeHidden()
-  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Open')
+  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Sent')
   await expect(detail.locator('[data-invoice-detail-due]')).toHaveText('$75.00')
   await expect(detail.locator('[data-invoice-detail-payments]')).toContainText(
     'No payments recorded.',
