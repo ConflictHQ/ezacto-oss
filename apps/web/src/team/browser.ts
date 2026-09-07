@@ -75,6 +75,15 @@ const localDate = (): string => {
 
 const commandId = (): string => globalThis.crypto.randomUUID()
 
+/** Which band a person belongs to. Grouping and its count read the same source. */
+const cohort = (value: TeamPersonSummary): string =>
+  value.is_contractor ? 'Contractors' : 'Employees'
+
+const sumOf = (
+  rows: readonly TeamPersonSummary[],
+  pick: (value: TeamPersonSummary) => number,
+): number => rows.reduce((total, value) => total + pick(value), 0)
+
 const checkbox = (name: string, label: string, checked: boolean): HTMLLabelElement => {
   const wrapper = document.createElement('label')
   wrapper.className = 'team-check'
@@ -154,6 +163,9 @@ export const createTeamDirectoryController = (
   const deactivateDialog = required<HTMLDialogElement>('[data-team-deactivate-dialog]')
   const deactivateForm = required<HTMLFormElement>('[data-team-deactivate-form]')
   const deactivateResult = required<HTMLElement>('[data-team-deactivate-result]')
+  const deactivateHeading = required<HTMLElement>('[data-team-deactivate-heading]')
+  const deactivateConfirm = required<HTMLButtonElement>('[data-team-deactivate-confirm]')
+  const deactivateCancel = required<HTMLButtonElement>('[data-team-deactivate-cancel]')
 
   listPageElement.hidden = !listPage
   personPageElement.hidden = !personPage
@@ -168,6 +180,13 @@ export const createTeamDirectoryController = (
   let filter: 'active' | 'all' = 'active'
   let listGeneration = 0
   let mutationPending = false
+  // The roster's own in-flight status change. Separate from mutationPending,
+  // which belongs to the person editor and locks that page's forms.
+  let rosterStatusPending = false
+  // Set when the confirm dialog was opened from a roster row rather than from
+  // the person page's Account status section; the two confirm the same thing
+  // about different records.
+  let archiveTarget: TeamPersonSummary | null = null
   let selectedRateKind: TeamRateInput['kind'] | null = null
   const commandIds = new Map<string, string>()
 
@@ -240,6 +259,8 @@ export const createTeamDirectoryController = (
     person = null
     catalog = { roles: [], departments: [], projects: [] }
     mutationPending = false
+    rosterStatusPending = false
+    archiveTarget = null
     selectedRateKind = null
     commandIds.clear()
     infoForm.reset()
@@ -412,6 +433,13 @@ export const createTeamDirectoryController = (
             `${right.first_name} ${right.last_name}`,
           ),
       )
+    // The old roster's bands read `Employees (1)` and `Contractors (16)`. Ours
+    // named the cohort and left the size of it to be counted by eye, which on a
+    // seventeen-person list is the one thing the band is there to answer.
+    const bandCounts = new Map<string, number>()
+    for (const value of visible) {
+      bandCounts.set(cohort(value), (bandCounts.get(cohort(value)) ?? 0) + 1)
+    }
     if (visible.length === 0) {
       const empty = document.createElement('p')
       empty.className = 'team-empty'
@@ -429,14 +457,18 @@ export const createTeamDirectoryController = (
         caption: 'People',
         rows: visible,
         rowKey: (value) => String(value.id),
-        groupBy: (value) => (value.is_contractor ? 'Contractors' : 'Employees'),
+        groupBy: cohort,
+        renderGroup: (value) => `${cohort(value)} (${bandCounts.get(cohort(value)) ?? 0})`,
         columns: [
           { key: 'name', label: 'Name', render: personIdentity },
+          // Each band carries its own Hours, Capacity and Billable the way the
+          // old one did -- a cohort you cannot total is a label, not a section.
           {
             key: 'hours',
             label: 'Hours',
             numeric: true,
             render: (value) => teamHours(value.total_seconds),
+            total: (rows) => teamHours(sumOf(rows, (value) => value.total_seconds)),
           },
           { key: 'utilization', label: 'Utilization', numeric: true, render: personUtilization },
           {
@@ -444,18 +476,21 @@ export const createTeamDirectoryController = (
             label: 'Capacity',
             numeric: true,
             render: (value) => teamHours(value.weekly_capacity),
+            total: (rows) => teamHours(sumOf(rows, (value) => value.weekly_capacity)),
           },
           {
             key: 'billable',
             label: 'Billable',
             numeric: true,
             render: (value) => teamHours(value.billable_seconds),
+            total: (rows) => teamHours(sumOf(rows, (value) => value.billable_seconds)),
           },
           {
             key: 'nonbillable',
             label: 'Non-billable',
             numeric: true,
             render: (value) => teamHours(value.nonbillable_seconds),
+            total: (rows) => teamHours(sumOf(rows, (value) => value.nonbillable_seconds)),
           },
         ],
         // Every sibling list carries its row actions; this one did not, so the
@@ -475,6 +510,33 @@ export const createTeamDirectoryController = (
                   label: 'Edit profile',
                   onSelect: () => {
                     globalThis.location.assign(`/team/${value.id}#profile`)
+                  },
+                },
+              ]
+            : []),
+          // Archiving somebody was five steps -- open the person, Information,
+          // Account status, a modal, and type DEACTIVATE -- for a state the
+          // same menu can put back. The owner is excluded because the API
+          // refuses it, and a control that cannot work should not be offered.
+          ...(currentSession()?.capabilities.canManagePeople === true && !value.is_owner
+            ? [
+                {
+                  label: value.is_active ? 'Archive' : 'Restore',
+                  disabled: rosterStatusPending,
+                  onSelect: () => {
+                    const active = currentSession()
+                    if (active === null) return
+                    if (!value.is_active) {
+                      // Restoring takes nothing away, so it does not stop to ask.
+                      void setActiveFromRoster(active, value, true, listStatus)
+                      return
+                    }
+                    archiveTarget = value
+                    deactivateResult.textContent = ''
+                    openDeactivateDialog(
+                      `Archive ${value.first_name} ${value.last_name}?`,
+                      'Archive person',
+                    )
                   },
                 },
               ]
@@ -531,6 +593,73 @@ export const createTeamDirectoryController = (
         list.removeAttribute('aria-busy')
       }
     }
+  }
+
+  const openDeactivateDialog = (heading: string, confirmLabel: string): void => {
+    deactivateHeading.textContent = heading
+    deactivateConfirm.textContent = confirmLabel
+    deactivateDialog.showModal()
+    // Cancel takes the focus, not the destructive button. The typed-word gate
+    // that used to stand in front of this is gone, so nothing else separates a
+    // stray Enter from the archive.
+    deactivateCancel.focus()
+  }
+
+  // The roster's own status change. mutate() is the person editor's -- it locks
+  // that page's forms and reloads the person afterwards, neither of which a row
+  // on a list of seventeen wants. A summary row carries no version either, so
+  // the record is read for the one it is on rather than sending a write that
+  // the server cannot check against anything.
+  const setActiveFromRoster = async (
+    active: ActiveSession,
+    value: TeamPersonSummary,
+    next: boolean,
+    result: HTMLElement,
+  ): Promise<boolean> => {
+    if (rosterStatusPending) return false
+    if (api.getTeamPerson === undefined || api.updateTeamPerson === undefined) {
+      result.textContent = 'Changing a person\u2019s status is unavailable in this build.'
+      return false
+    }
+    const key = `roster-status-${value.id}`
+    const done = next ? 'Person restored.' : 'Person archived.'
+    rosterStatusPending = true
+    renderPeople()
+    result.textContent = next ? 'Restoring person…' : 'Archiving person…'
+    let changed = false
+    try {
+      const current = await api.getTeamPerson(value.id, active.signal)
+      if (currentSession() !== active) return false
+      await api.updateTeamPerson(
+        value.id,
+        commandFor(key),
+        { expected_version: current.version, is_active: next },
+        active.signal,
+      )
+      if (currentSession() !== active) return false
+      commandIds.delete(key)
+      changed = true
+    } catch (error) {
+      if (handleFailure(error, active)) return false
+      if (currentSession() !== active) return false
+      // A stale version or a replayed id means this attempt is spent and the
+      // next one has to be a fresh command; anything else -- a dropped
+      // connection above all -- is worth retrying under the same id, which is
+      // the whole point of having one.
+      const code = apiErrorCode(error)
+      if (code === 'state_conflict' || code === 'command_id_reused') commandIds.delete(key)
+      result.textContent = messageFor(error)
+    } finally {
+      if (currentSession() === active) rosterStatusPending = false
+    }
+    if (currentSession() !== active) return false
+    if (!changed) {
+      renderPeople()
+      return false
+    }
+    await loadPeople(active)
+    if (currentSession() === active) result.textContent = done
+    return true
   }
 
   const renderRelationOptions = (
@@ -1182,10 +1311,9 @@ export const createTeamDirectoryController = (
     const current = person
     if (active === null || current === null || current.is_owner || mutationPending) return
     if (current.is_active) {
-      deactivateForm.reset()
+      archiveTarget = null
       deactivateResult.textContent = ''
-      deactivateDialog.showModal()
-      formInput(deactivateForm, 'confirmation').focus()
+      openDeactivateDialog('Deactivate this person?', 'Deactivate person')
       return
     }
     if (api.updateTeamPerson === undefined) return
@@ -1204,22 +1332,29 @@ export const createTeamDirectoryController = (
         ),
     )
   })
-  deactivateForm.addEventListener('input', () => resetCommand('status'))
   deactivateForm.addEventListener('submit', (event) => {
     event.preventDefault()
     const active = currentSession()
+    if (active === null) return
+    // Opened from a roster row: that person, not whichever one the editor
+    // happens to be holding.
+    const target = archiveTarget
+    if (target !== null) {
+      void setActiveFromRoster(active, target, false, deactivateResult).then((archived) => {
+        if (archived) {
+          archiveTarget = null
+          deactivateDialog.close()
+        }
+      })
+      return
+    }
     const current = person
     if (
-      active === null ||
       current === null ||
       current.is_owner ||
       !current.is_active ||
       api.updateTeamPerson === undefined
     ) {
-      return
-    }
-    if (formInput(deactivateForm, 'confirmation').value !== 'DEACTIVATE') {
-      deactivateResult.textContent = 'Type DEACTIVATE exactly to confirm.'
       return
     }
     void mutate(
@@ -1241,7 +1376,9 @@ export const createTeamDirectoryController = (
   })
   for (const selector of ['[data-team-deactivate-close]', '[data-team-deactivate-cancel]']) {
     required<HTMLButtonElement>(selector).addEventListener('click', () => {
-      if (!mutationPending) deactivateDialog.close()
+      if (mutationPending || rosterStatusPending) return
+      archiveTarget = null
+      deactivateDialog.close()
     })
   }
 

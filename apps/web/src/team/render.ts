@@ -149,9 +149,8 @@ export const renderTeamPages = (view?: string): string => `
 
   <dialog class="team-deactivate-dialog" data-team-deactivate-dialog aria-labelledby="team-deactivate-title">
     <form data-team-deactivate-form>
-      <header><div><p class="eyebrow">Account status</p><h2 id="team-deactivate-title">Deactivate this person?</h2></div><button type="button" data-team-deactivate-close aria-label="Close">×</button></header>
-      <p>They will remain in historical records but cannot track new work.</p>
-      <label>Type <strong>DEACTIVATE</strong> to confirm<input name="confirmation" autocomplete="off" required></label>
+      <header><div><p class="eyebrow">Account status</p><h2 id="team-deactivate-title" data-team-deactivate-heading>Deactivate this person?</h2></div><button type="button" data-team-deactivate-close aria-label="Close">×</button></header>
+      <p>They will remain in historical records but cannot track new work, and the same menu puts them back.</p>
       <p class="form-result" data-team-deactivate-result role="status" aria-live="polite"></p>
       <div class="team-confirm-actions"><button type="button" data-team-deactivate-cancel>Cancel</button><button class="danger-action" type="submit" data-team-deactivate-confirm>Deactivate person</button></div>
     </form>

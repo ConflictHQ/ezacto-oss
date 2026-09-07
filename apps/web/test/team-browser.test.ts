@@ -206,6 +206,126 @@ describe('Team browser controller', () => {
     ).toBe(`${(5 / 35) * 100}%`)
   })
 
+  it('counts each band and totals its own columns', async () => {
+    // The band named the cohort and left its size to be counted by eye, and a
+    // cohort you cannot total is a label rather than a section. Old Harvest
+    // banded `Employees (1)` / `Contractors (16)`, each with its own numbers.
+    writeDocument('team-list')
+    const listTeamPeople = vi.fn(async () =>
+      page([
+        summary(),
+        summary({ id: 2, first_name: 'Blake', last_name: 'Reed', is_owner: false }),
+        summary({
+          id: 3,
+          first_name: 'Kai',
+          last_name: 'Chen',
+          is_owner: false,
+          is_contractor: true,
+        }),
+      ]),
+    )
+    const controller = createTeamDirectoryController({ listTeamPeople })
+
+    await controller.activate(identity(), new AbortController().signal, () => false)
+
+    expect(
+      [...document.querySelectorAll('[data-team-list] tr.data-table-group th')].map(
+        (band) => band.textContent,
+      ),
+    ).toEqual(['Employees (2)', 'Contractors (1)'])
+    const totals = [...document.querySelectorAll('[data-team-list] tr.data-table-group-total')]
+    expect(totals).toHaveLength(2)
+    expect(totals[0]!.querySelector('td[data-column="hours"]')?.textContent).toBe('50h')
+    expect(totals[0]!.querySelector('td[data-column="capacity"]')?.textContent).toBe('70h')
+    expect(totals[0]!.querySelector('td[data-column="billable"]')?.textContent).toBe('40h')
+    expect(totals[1]!.querySelector('td[data-column="hours"]')?.textContent).toBe('25h')
+  })
+
+  it('archives a person from the row menu behind a plain confirm', async () => {
+    // Archiving somebody was five steps and a typed literal, for a state the
+    // same menu puts back. The row carries no version, so the record is read
+    // for the one it is on rather than writing blind.
+    writeDocument('team-list')
+    const listTeamPeople = vi.fn(async () =>
+      page([summary({ id: 2, first_name: 'Blake', last_name: 'Reed', is_owner: false })]),
+    )
+    const getTeamPerson = vi.fn<TeamDirectoryApi['getTeamPerson']>(async () =>
+      person({ id: 2, first_name: 'Blake', last_name: 'Reed', version: 7 }),
+    )
+    const updateTeamPerson = vi.fn<TeamDirectoryApi['updateTeamPerson']>(async () => receipt(8))
+    const controller = createTeamDirectoryController({
+      listTeamPeople,
+      getTeamPerson,
+      updateTeamPerson,
+    })
+
+    await controller.activate(identity(), new AbortController().signal, () => false)
+
+    const row = document.querySelector<HTMLElement>('[data-team-list] [data-row-key="2"]')!
+    const archive = [...row.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Archive',
+    )!
+    expect(archive).toBeDefined()
+    archive.click()
+
+    const dialog = document.querySelector<HTMLDialogElement>('[data-team-deactivate-dialog]')!
+    expect(dialog.open).toBe(true)
+    expect(dialog.querySelector('[data-team-deactivate-heading]')?.textContent).toBe(
+      'Archive Blake Reed?',
+    )
+    // The typed-word gate is gone: there is no field left to fill in.
+    expect(dialog.querySelector('input[name="confirmation"]')).toBeNull()
+
+    submit(document.querySelector<HTMLFormElement>('[data-team-deactivate-form]')!)
+
+    await vi.waitFor(() => expect(updateTeamPerson).toHaveBeenCalledTimes(1))
+    expect(getTeamPerson.mock.calls[0]![0]).toBe(2)
+    expect(updateTeamPerson.mock.calls[0]![0]).toBe(2)
+    expect(updateTeamPerson.mock.calls[0]![2]).toEqual({ expected_version: 7, is_active: false })
+    await vi.waitFor(() => expect(listTeamPeople).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(dialog.open).toBe(false))
+  })
+
+  it('restores an archived person from the row menu without asking', async () => {
+    // Restoring takes nothing away, so it does not stop to confirm.
+    writeDocument('team-list')
+    const listTeamPeople = vi.fn(async () =>
+      page([
+        summary({ id: 2, first_name: 'Blake', last_name: 'Reed', is_owner: false, is_active: false }),
+      ]),
+    )
+    const getTeamPerson = vi.fn<TeamDirectoryApi['getTeamPerson']>(async () =>
+      person({ id: 2, first_name: 'Blake', last_name: 'Reed', is_active: false, version: 4 }),
+    )
+    const updateTeamPerson = vi.fn<TeamDirectoryApi['updateTeamPerson']>(async () => receipt(5))
+    const controller = createTeamDirectoryController({
+      listTeamPeople,
+      getTeamPerson,
+      updateTeamPerson,
+    })
+
+    await controller.activate(identity(), new AbortController().signal, () => false)
+
+    const row = document.querySelector<HTMLElement>('[data-team-list] [data-row-key="2"]')!
+    expect([...row.querySelectorAll('button')].map((button) => button.textContent)).toContain(
+      'Restore',
+    )
+    ;[...row.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Restore')!
+      .click()
+
+    await vi.waitFor(() => expect(updateTeamPerson).toHaveBeenCalledTimes(1))
+    expect(updateTeamPerson.mock.calls[0]![2]).toEqual({ expected_version: 4, is_active: true })
+    expect(document.querySelector<HTMLDialogElement>('[data-team-deactivate-dialog]')?.open).toBe(
+      false,
+    )
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-team-list-status]')?.textContent).toBe(
+        'Person restored.',
+      ),
+    )
+  })
+
   it('keeps the initials when an avatar fails to load', async () => {
     // Imported avatar_urls point at Harvest's CDN and prod's CSP is
     // img-src 'self' data:, so every one of them is blocked. The initials have
