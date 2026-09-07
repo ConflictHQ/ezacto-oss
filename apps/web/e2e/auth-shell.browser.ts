@@ -1562,9 +1562,16 @@ test('[e2e:reports-ui] runs uninvoiced, client rollup, and project budget report
     /\/reports\?report=client-rollup&from=2026-08-01&to=2026-08-30&client_id=1$/u,
   )
   await expect(reports.getByRole('heading', { name: 'Client rollup' })).toBeVisible()
-  await expect(reports).toContainText('Root client · client #1')
-  await expect(reports).toContainText('Direct activity')
-  await expect(reports).toContainText('Including descendants')
+  // Scoped to the results, not the page: the filter form carries its own
+  // "Root client" label and the selected client's name, so asserting either
+  // against the whole page passes whether or not a report rendered at all.
+  const rollup = reports.locator('[data-report-results]')
+  // The rollup names the client and is the way into it, rather than an id.
+  await expect(
+    rollup.getByRole('link', { name: 'Browser Acceptance Client' }).first(),
+  ).toHaveAttribute('href', '/clients/1')
+  await expect(rollup).toContainText('Direct activity')
+  await expect(rollup).toContainText('Including descendants')
   await expectNoPageOverflow(page)
 
   await reports.getByLabel('Report', { exact: true }).selectOption('project-budget')
@@ -1576,7 +1583,9 @@ test('[e2e:reports-ui] runs uninvoiced, client rollup, and project budget report
     /\/reports\?report=project-budget&from=2026-08-01&to=2026-08-30&project_id=1$/u,
   )
   await expect(reports.getByRole('heading', { name: 'Project budget' })).toBeVisible()
-  await expect(reports).toContainText('Project #1')
+  await expect(
+    reports.getByRole('link', { name: '[BROWSER] Browser Acceptance Project' }).first(),
+  ).toHaveAttribute('href', '/projects/1')
   await expect(reports).toContainText('Budget4 h')
   const budgetSpent = await page.evaluate(async () => {
     const response = await fetch(

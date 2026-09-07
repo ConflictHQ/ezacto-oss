@@ -589,8 +589,22 @@ describe('Reports Stage 1 browser controller', () => {
     )
 
     const results = document.querySelector('[data-report-results]')!
-    expect(results.textContent).toContain('Root client · client #1')
-    expect(results.textContent).toContain('Child of Parent · client #2')
+    expect(results.textContent).toContain('Root client')
+    expect(results.textContent).toContain('Child of Parent')
+    // Every client the rollup names is the name, and a way into that client.
+    expect(
+      [...results.querySelectorAll('a')].map((link) => [
+        link.getAttribute('href'),
+        link.textContent,
+      ]),
+    ).toEqual([
+      ['/clients/1', 'Parent'],
+      ['/clients/1', 'Parent'],
+      ['/clients/2', 'Studio'],
+      ['/clients/1', 'Parent'],
+    ])
+    expect(results.textContent).not.toContain('#1')
+    expect(results.textContent).not.toContain('#2')
     expect(results.querySelectorAll('h4')[0]?.textContent).toBe('Direct activity')
     expect(results.querySelectorAll('h4')[1]?.textContent).toBe('Including descendants')
   })
@@ -638,9 +652,12 @@ describe('Reports Stage 1 browser controller', () => {
       document.querySelector<HTMLOptionElement>('option[value="uninvoiced"]')?.disabled,
     ).toBe(true)
     const results = document.querySelector('[data-report-results]')!
+    // No catalog resolves an assignment, so its id stays; the project has one.
     expect(results.textContent).toContain('Task assignment #22')
     expect(results.textContent).toContain('—')
-    expect(results.textContent).toContain('Project #7')
+    expect(results.textContent).toContain('[WEB] Launch')
+    expect(results.textContent).not.toContain('project #7')
+    expect(results.querySelector('a')?.getAttribute('href')).toBe('/projects/7')
     expect(results.textContent).toContain('2 h')
     expect(results.textContent).toContain('2 entries cannot be priced')
 

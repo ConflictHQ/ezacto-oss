@@ -113,6 +113,12 @@ describe('Clients V1 browser controller', () => {
     expect(document.querySelector('[data-client-projects]')?.textContent).toContain(
       '[WEB] Launch',
     )
+    // A client is a hub: its projects are the way through to the work.
+    const projectLink = document.querySelector<HTMLAnchorElement>(
+      '[data-client-projects] a',
+    )
+    expect(projectLink?.getAttribute('href')).toBe('/projects/31')
+    expect(projectLink?.textContent).toBe('[WEB] Launch')
     expect(document.querySelector('[data-client-contacts]')?.textContent).toContain(
       'Invoice CC',
     )
