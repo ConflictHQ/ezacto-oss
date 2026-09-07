@@ -664,37 +664,47 @@ which one you are on; the answer changes what abort means.
 
 ## What "flawless" means here
 
-It does not mean the reconcile report is empty, and it cannot today.
+**Zero UNEXPLAINED.** That is an honest bar again, and it is not met yet.
 
 The loader deliberately skips rows the domain model refuses to represent, each
 recorded as an anomaly. Those skips are documented in
-[migration-spec §7](migration-spec.md#7-known-documented-gaps-from-research--decided-handling).
-The problem is the classifier: a skipped row's downstream delta has no way to be
-labelled as an accepted gap, so a correct load reports FAIL (#277). The
-rehearsal's 74 UNEXPLAINED deltas decompose as:
+[migration-spec §7](migration-spec.md#7-known-documented-gaps-from-research--decided-handling),
+and reconcile now classifies their downstream deltas as gaps citing that
+section — but only where the delta equals what the skipped rows would have
+contributed, to the second and to the cent. An approximate match is still
+UNEXPLAINED, which is what makes the citation worth anything.
+
+The rehearsal's 74 UNEXPLAINED deltas decompose as:
 
 | Cause | Rows | Nature |
 | --- | --- | --- |
-| 5 negative time entries | 57 | expected — Harvest's own correction entries, which `time_entries.seconds` cannot hold |
-| 7 non-positive payments | 9 | expected — $0 and credit-note receipts, which `invoice_payments.amount_cents` cannot hold |
-| 3 sub-cent unit prices | 3 | expected — the IRS half-cent mileage rate and a repeating decimal, rounded half-even |
-| 1 unresolved estimate reference | 1 | expected — the estimates module is off; there is nothing to link to |
-| 4 archived-project uninvoiced rows | 4 | **a reconcile bug**, not a gap: archived projects are wrongly included in the recomputed aggregate |
+| 5 negative time entries | 52 | **now cited gaps** — Harvest nets its own correction entries into every report total; `time_entries.seconds` is `CHECK >= 0` |
+| 3 sub-cent unit prices | 3 | **now cited gaps** — the IRS half-cent mileage rate and a repeating decimal, rounded half-even |
+| 1 unresolved estimate reference | 1 | **now a cited gap** — the estimates module is off; there is nothing to link to |
+| 4 archived-project uninvoiced rows | 0 | **not a gap at all** — Harvest's uninvoiced report lists active projects only; reconcile recomputed over archived ones |
+| **7 non-positive payments** | **16** | **the one real blocker** — $0 and credit-note receipts, which `invoice_payments.amount_cents` cannot hold |
 
-The first four classes are the honest cost of the migration and the report
-naming them is the system working. The fifth is a defect in the checker, not in
-the data.
+Sixteen remain, and all sixteen are the same cause: the seven skipped payments,
+their seven invoices' restated `state`, the credit note's due amount, and the
+`invoice_payments` row count. §7 says plainly that skipping is **not** a safe
+handling for this class. Widening that CHECK (#283) is what stands between this
+rehearsal and zero.
 
-Two consequences are worth stating plainly to whoever signs this off, because
-neither is visible in the reconcile summary:
+Re-run the numbers against the load you intend to cut over rather than trusting
+this table.
+
+Two consequences are worth stating plainly to whoever signs this off:
 
 - **Seven invoices read `open` in ezacto that read `paid` in Harvest.** Invoice
   state is derived from imported payments, so dropping the seven non-positive
   payments left those invoices with none. Six are $0 invoices settled by $0
   payments — a label difference with no money attached. The seventh is a credit
-  note that carries a negative amount due of -$8,765. Reconcile compares no
-  state field, so six of the seven are invisible to it. The durable record is in
-  the database, and this query is the check to run and keep:
+  note that carries a negative amount due of -$8,765. Reconcile now compares
+  `state` and the loader records an `invoice_state_disagreement` anomaly per
+  invoice, so all seven appear in the report rather than six of them being
+  invisible to it — they read as UNEXPLAINED, which is what they are until the
+  payments themselves can load (#283). The durable record is also in the
+  database, and this query is the check to run and keep:
 
 ```sh
 sqlite3 ./cutover.db "
