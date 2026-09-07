@@ -317,6 +317,67 @@ for (const [runtime, factory] of factories) {
       )
     })
 
+    it('[unit] leaves an archived project out of both the report and generation', async () => {
+      // Harvest's uninvoiced report covers active projects only, and the
+      // generation candidates are the same read, so archiving a project has to
+      // take its unbilled work off both sides at once.
+      const database = await setup()
+      const reports = createReportRepository(database.orm)
+      await database.run(`UPDATE projects SET is_active = 0 WHERE id = 1`)
+
+      await expect(
+        generator(database).generate(command('archived-project')),
+      ).rejects.toMatchObject({
+        code: 'invalid_command_input',
+        message: 'an archived project cannot be invoiced',
+      })
+      expect(
+        (
+          await reports.uninvoiced({
+            clientId: 1,
+            projectId: 1,
+            from: request.from,
+            to: request.to,
+          })
+        ).totals,
+      ).toEqual([])
+      expect(
+        await database.rows(
+          `SELECT
+             (SELECT count(*) FROM invoices) AS invoices,
+             (SELECT count(*) FROM time_entries WHERE invoice_id IS NOT NULL) AS timeEntries,
+             (SELECT count(*) FROM expenses WHERE invoice_id IS NOT NULL) AS expenses`,
+        ),
+      ).toEqual([{ invoices: 0, timeEntries: 0, expenses: 0 }])
+    })
+
+    it('[unit] refuses a selection mixing an active project with an archived one', async () => {
+      // The candidate read drops archived work, so without this the request
+      // would succeed and return a document covering only the active project --
+      // short by exactly the archived project's billable time, with nothing on
+      // the invoice to say anything was left off. Refusing is the only answer
+      // that cannot quietly under-bill.
+      const database = await setup()
+      await database.run(
+        `INSERT INTO projects (
+           id, client_id, name, code, hourly_rate_cents, is_active, created_at, updated_at
+         ) VALUES (2, 1, 'Archived sibling', 'ARCH', 10001, 0, ?, ?)`,
+        occurredAt,
+        occurredAt,
+      )
+
+      await expect(
+        generator(database).generate({
+          ...command('mixed-selection'),
+          request: { ...request, projectIds: [1, 2] },
+        }),
+      ).rejects.toMatchObject({
+        code: 'invalid_command_input',
+        message: 'an archived project cannot be invoiced',
+      })
+      expect(await database.rows('SELECT count(*) AS count FROM invoices')).toEqual([{ count: 0 }])
+    })
+
     it('[unit] [inv-11] reconciles every client report currency to generated invoices', async () => {
       const database = await setup()
       await database.run(

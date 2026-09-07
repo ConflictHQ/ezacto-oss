@@ -74,8 +74,9 @@ const seedStatements = [
       (id, name, currency, parent_client_id, created_at, updated_at) VALUES
       (1, 'Root', 'USD', NULL, ?, ?),
       (2, 'Child', 'USD', 1, ?, ?),
-      (3, 'Leaf', 'USD', 2, ?, ?)`,
-    params: [now, now, now, now, now, now],
+      (3, 'Leaf', 'USD', 2, ?, ?),
+      (4, 'Archived holder', 'USD', NULL, ?, ?)`,
+    params: [now, now, now, now, now, now, now, now],
   },
   {
     sql: `INSERT INTO projects
@@ -91,6 +92,15 @@ const seedStatements = [
     params: [now, now, now, now, now, now],
   },
   {
+    sql: `INSERT INTO projects
+      (id, client_id, name, code, billing_method, bill_by, hourly_rate_cents,
+       budget_by, budget_seconds, cost_budget_cents, cost_budget_include_expenses,
+       report_visibility, is_active, created_at, updated_at) VALUES
+      (4, 4, 'Archived project', 'ARCH', 'time_materials', 'project', 9000,
+       'project', 7200, NULL, 0, 'managers', 0, ?, ?)`,
+    params: [now, now],
+  },
+  {
     sql: `INSERT INTO tasks
       (id, name, created_at, updated_at) VALUES (1, 'Delivery', ?, ?)`,
     params: [now, now],
@@ -100,15 +110,17 @@ const seedStatements = [
       (id, project_id, task_id, billable, budget_cents, created_at, updated_at) VALUES
       (11, 1, 1, 1, NULL, ?, ?),
       (12, 2, 1, 1, 30000, ?, ?),
-      (13, 3, 1, 1, NULL, ?, ?)`,
-    params: [now, now, now, now, now, now],
+      (13, 3, 1, 1, NULL, ?, ?),
+      (14, 4, 1, 1, NULL, ?, ?)`,
+    params: [now, now, now, now, now, now, now, now],
   },
   {
     sql: `INSERT INTO user_assignments
       (id, project_id, user_id, is_active, is_project_manager, created_at, updated_at) VALUES
       (21, 1, 1, 1, 1, ?, ?), (22, 2, 1, 1, 0, ?, ?),
-      (23, 3, 1, 1, 0, ?, ?), (24, 2, 2, 0, 1, ?, ?)`,
-    params: [now, now, now, now, now, now, now, now],
+      (23, 3, 1, 1, 0, ?, ?), (24, 2, 2, 0, 1, ?, ?),
+      (25, 4, 1, 1, 0, ?, ?)`,
+    params: [now, now, now, now, now, now, now, now, now, now],
   },
   {
     sql: `INSERT INTO time_entries
@@ -117,8 +129,9 @@ const seedStatements = [
        billable_rate_cents, cost_rate_cents, created_at, updated_at) VALUES
       (101, 1, 1, 1, 21, 11, '2026-08-10', 3600, 3600, 3600, 1, 1, 10000, 4000, ?, ?),
       (102, 1, 2, 1, 22, 12, '2026-08-11', 1800, 1800, 1800, 1, 1, 12345, 5000, ?, ?),
-      (103, 1, 3, 1, 23, 13, '2026-08-12', 900, 900, 900, 1, 1, 8000, 6000, ?, ?)`,
-    params: [now, now, now, now, now, now],
+      (103, 1, 3, 1, 23, 13, '2026-08-12', 900, 900, 900, 1, 1, 8000, 6000, ?, ?),
+      (104, 1, 4, 1, 25, 14, '2026-08-13', 3600, 3600, 3600, 1, 1, 9000, 3000, ?, ?)`,
+    params: [now, now, now, now, now, now, now, now],
   },
   {
     sql: `INSERT INTO expense_categories
@@ -131,8 +144,9 @@ const seedStatements = [
        billable, created_at, updated_at) VALUES
       (201, 1, 1, 1, '2026-08-10', 2500, 1, ?, ?),
       (202, 1, 2, 1, '2026-08-11', 1000, 1, ?, ?),
-      (203, 1, 3, 1, '2026-08-12', 500, 1, ?, ?)`,
-    params: [now, now, now, now, now, now],
+      (203, 1, 3, 1, '2026-08-12', 500, 1, ?, ?),
+      (204, 1, 4, 1, '2026-08-13', 700, 1, ?, ?)`,
+    params: [now, now, now, now, now, now, now, now],
   },
 ] as const;
 
@@ -298,6 +312,53 @@ for (const [runtime, factory] of factories) {
             cost_cents: 8000,
           }),
         ],
+      });
+    });
+
+    it("[api] keeps archived-project work out of the uninvoiced figures only", async () => {
+      // Harvest reports uninvoiced work for active projects only, so an
+      // archived project contributes nothing there or to the rollup's
+      // uninvoiced columns — while the time it holds is still tracked, still
+      // costed, and still spent against its budget.
+      harness = await factory();
+      const range = "from=2026-08-01&to=2026-08-31";
+
+      const uninvoiced = await harness.request(
+        `/reports/uninvoiced?${range}&client_id=4`,
+      );
+      expect(uninvoiced.status, await uninvoiced.clone().text()).toBe(200);
+      const uninvoicedBody = (await uninvoiced.json()) as {
+        data: { totals: unknown[] };
+      };
+      expect(uninvoicedBody.data.totals).toEqual([]);
+
+      const rollup = await harness.request(`/reports/client-rollups/4?${range}`);
+      const rollupBody = (await rollup.json()) as {
+        data: { nodes: Array<{ direct: Record<string, unknown> }> };
+      };
+      expect(rollupBody.data.nodes[0]!.direct).toMatchObject({
+        rounded_seconds: 3600,
+        billable_seconds: 3600,
+        currencies: [
+          expect.objectContaining({
+            currency: "USD",
+            expense_cents: 700,
+            uninvoiced_time_cents: 0,
+            uninvoiced_expense_cents: 0,
+            uninvoiced_total_cents: 0,
+            cost_cents: 3000,
+          }),
+        ],
+      });
+
+      const budget = await harness.request(`/reports/project-budget/4?${range}`);
+      const budgetBody = (await budget.json()) as {
+        data: { grains: Array<Record<string, unknown>> };
+      };
+      expect(budgetBody.data.grains[0]).toMatchObject({
+        budget_seconds: 7200,
+        spent_seconds: 3600,
+        remaining_seconds: 3600,
       });
     });
 
