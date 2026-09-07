@@ -297,13 +297,44 @@ export const createTeamDirectoryController = (
       result.append(term, amount)
       return result
     }
+    // Billable and non-billable are the split the band exists to show, and only
+    // one half of it was on screen. The other was arithmetic the reader had to
+    // do -- with the two numbers a column apart.
+    const nonBillable = Math.max(0, tracked - billable)
+    const swatch = (label: string, value: string, kind: 'billable' | 'nonbillable'): HTMLElement => {
+      const element = item(label, value)
+      element.dataset.swatch = kind
+      return element
+    }
     summary.replaceChildren(
       item('People', String(people.length)),
       item('Capacity', teamHours(capacity)),
       item('Tracked', teamHours(tracked)),
-      item('Billable', teamHours(billable)),
+      swatch('Billable', teamHours(billable), 'billable'),
+      swatch('Non-billable', teamHours(nonBillable), 'nonbillable'),
       item('Utilization', teamUtilization(utilization)),
     )
+    // One bar for the team, the way each person already has one. Tracked against
+    // capacity, split by what was billable -- the shape of the week in a glance,
+    // which five numbers in a row do not give you.
+    if (capacity > 0) {
+      const bar = document.createElement('div')
+      bar.className = 'team-summary-bar'
+      bar.dataset.teamBar = ''
+      bar.setAttribute('role', 'img')
+      bar.setAttribute(
+        'aria-label',
+        `${teamHours(billable)} billable and ${teamHours(nonBillable)} non-billable of ${teamHours(capacity)} capacity`,
+      )
+      const billablePart = document.createElement('span')
+      billablePart.dataset.part = 'billable'
+      billablePart.style.width = `${Math.min(100, (billable / capacity) * 100)}%`
+      const nonBillablePart = document.createElement('span')
+      nonBillablePart.dataset.part = 'nonbillable'
+      nonBillablePart.style.width = `${Math.min(100, (nonBillable / capacity) * 100)}%`
+      bar.append(billablePart, nonBillablePart)
+      summary.append(bar)
+    }
     summary.hidden = false
   }
 
