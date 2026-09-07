@@ -610,6 +610,13 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     }),
+  listProjectBudgetSummaries: async (range, signal) =>
+    (
+      await client.listProjectBudgetSummaries({
+        query: { from: range.from, to: range.to },
+        ...withSignal(signal),
+      })
+    ).data,
   listDirectoryProjects: (cursor, signal) =>
     client.listProjects({
       query: {
