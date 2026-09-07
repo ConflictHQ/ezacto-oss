@@ -588,6 +588,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Team',
             view: 'team-list',
             signInProviders: configuredSignInProviders(context.env),
@@ -697,6 +698,8 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
+            activeSection: 'Settings',
             view: 'module-settings',
             signInProviders: configuredSignInProviders(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
@@ -785,6 +788,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
             activeSection: 'Team',
             view: 'team-person',
             signInProviders: configuredSignInProviders(context.env),

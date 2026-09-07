@@ -24,6 +24,11 @@ export interface AppShellOptions {
   readonly release: string
   readonly brand?: Partial<DeploymentBrand>
   readonly activeSection?:
+    // 'Settings' matches no nav item on purpose. Without it the default lands
+    // on 'Time', so the module settings page marked Time as the page you were
+    // on; naming a section outside the primary nav marks nothing, which is the
+    // truth.
+    | 'Settings'
     | 'Time'
     | 'Approvals'
     | 'Expenses'

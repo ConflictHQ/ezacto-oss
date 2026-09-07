@@ -26,6 +26,44 @@ describe('worker entry', () => {
     })
   })
 
+  it('[unit] brands every HTML route from the deployment, with no route left behind', async () => {
+    // Three routes — /team, /team/:id and /settings/modules — shipped without
+    // brandFromEnv, so a branded deployment served them as "ezacto". The
+    // renderer was always tested; the routes were not, which is how they
+    // drifted. Walk them all instead of naming the ones that were wrong.
+    const branded: Env = { ...env, BRAND_NAME: 'CONFLICT' }
+    const paths = [
+      '/',
+      '/approvals',
+      '/expenses',
+      '/expense-categories',
+      '/team',
+      '/team/1',
+      '/projects',
+      '/tasks',
+      '/clients',
+      '/clients/1',
+      '/invoices',
+      '/invoices/1',
+      '/invoices/new',
+      '/reports',
+      '/settings/modules',
+    ]
+    for (const path of paths) {
+      const res = await app.request(path, {}, branded)
+      expect(res.status, path).toBe(200)
+      expect(await res.text(), path).toContain('data-brand="CONFLICT"')
+    }
+  })
+
+  it('[unit] marks no primary section on a page outside the primary nav', async () => {
+    // activeSection defaults to Time, so module settings marked Time as the
+    // page you were on.
+    const html = await (await app.request('/settings/modules', {}, env)).text()
+    expect(html).toContain('data-app-view="module-settings"')
+    expect(html).not.toContain('aria-current="page"')
+  })
+
   it('serves the responsive application shell with the deployment stamp', async () => {
     const res = await app.request('/', {}, env)
 
