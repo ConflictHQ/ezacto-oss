@@ -1,5 +1,6 @@
 import type { ApprovalStatus } from '@ezacto/core'
 import type { Hono } from 'hono'
+import { canReviewSubmissions } from '@ezacto/core'
 import { requireApiScope } from '../auth.js'
 import type { ApiContext, UserPrincipal } from '../context.js'
 import { ApiError, type FieldError } from '../errors.js'
@@ -115,7 +116,7 @@ const listKeys = new Set([
 const expenseFilters = (
   url: URL,
   principal: Readonly<UserPrincipal>,
-): ExpenseFilters => {
+): { readonly filters: ExpenseFilters; readonly userId: number } => {
   const params = strictSearchParams(url, listKeys)
   const errors: FieldError[] = []
   const userId = queryPositiveInteger(params, 'user_id', errors)
@@ -161,14 +162,26 @@ const expenseFilters = (
     })
   }
   assertFields(errors)
-  if (userId !== undefined && userId !== principal.userId) {
+  // Someone else's expenses are visible to the people who review submitted work
+  // -- the same authority that approves a timesheet, answered in one place so
+  // the two cannot drift. Everyone else sees their own.
+  if (
+    userId !== undefined &&
+    userId !== principal.userId &&
+    !canReviewSubmissions(principal.profile)
+  ) {
     throw new ApiError({
       status: 403,
       code: 'row_forbidden',
-      message: 'Expenses are limited to the acting user.',
+      message: 'Expenses are limited to the acting user unless you review submissions.',
     })
   }
   return {
+    // Whose expenses to read. A reviewer has to name the person: omitting
+    // user_id still means "mine", so widening the profile does not quietly turn
+    // the unscoped list into everyone's.
+    userId: userId ?? principal.userId,
+    filters: {
     ...(clientId !== undefined ? { clientId } : {}),
     ...(projectId !== undefined ? { projectId } : {}),
     ...(expenseCategoryId !== undefined ? { expenseCategoryId } : {}),
@@ -182,6 +195,7 @@ const expenseFilters = (
     ...(reimbursable !== undefined ? { reimbursable } : {}),
     ...(reimbursementStatus !== undefined ? { reimbursementStatus } : {}),
     ...(updatedSince !== undefined ? { updatedSince } : {}),
+    },
   }
 }
 
@@ -315,10 +329,10 @@ export const installExpenseRoutes = <Bindings extends object>(
     try {
       await requireExpensesModule(options)
       const url = new URL(context.req.url)
-      const filters = expenseFilters(url, principal)
+      const scope = expenseFilters(url, principal)
       const envelope = await cursorPage({
         requestUrl: url,
-        source: options.repository.expenses(principal.userId, filters),
+        source: options.repository.expenses(scope.userId, scope.filters),
         viewer: principal,
         serializer: serializeExpense,
         cursorSigningKey: options.cursorSigningKey,

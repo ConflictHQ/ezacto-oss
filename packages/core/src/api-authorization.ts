@@ -58,6 +58,23 @@ const moneyRead: readonly UserProfile[] = [
 const reports: readonly UserProfile[] = ['accounting', 'executive_manager', 'administrator']
 
 /**
+ * The profiles that review other people's submitted work. It is one question --
+ * who supervises whom -- so timesheets and expenses answer it from here rather
+ * than each stating their own list and drifting apart.
+ *
+ * Deliberately not `people_admin` or `accounting`: administering people and
+ * seeing money are different authorities from approving someone's week.
+ */
+const submissionReview: readonly UserProfile[] = [
+  'project_manager',
+  'executive_manager',
+  'administrator',
+]
+
+export const canReviewSubmissions = (profile: UserProfile): boolean =>
+  submissionReview.includes(profile)
+
+/**
  * The shared scope/profile ceiling. Resource handlers still enforce assignment,
  * row ownership, and serializer redaction; this policy can only deny earlier.
  */
