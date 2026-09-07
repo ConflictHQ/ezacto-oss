@@ -1374,6 +1374,50 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     )
   }
 
+  /**
+   * The Add-row form offers real selects; the timer and entry dialog took free
+   * text, so starting work meant typing the project and task as exact strings.
+   * A datalist keeps the free typing the validation depends on and offers the
+   * list underneath it.
+   */
+  const suggestion = (label: string): HTMLOptionElement => {
+    const element = document.createElement('option')
+    element.value = label
+    return element
+  }
+
+  const updateEntrySuggestions = (): void => {
+    if (snapshot === null) return
+    const projectIds = new Set(
+      snapshot.catalog.timeEntryOptions.map((entry) => entry.project_id),
+    )
+    const projects = snapshot.catalog.projects.filter((resource) =>
+      projectIds.has(resource.id),
+    )
+    required<HTMLElement>('[data-entry-project-options]').replaceChildren(
+      ...projects.map((resource) => suggestion(resourceLabel(resource))),
+    )
+    // Tasks narrow to the typed project when it resolves, and otherwise offer
+    // every task that is assigned somewhere — better than nothing while the
+    // project box is still empty.
+    const typed = entryProject.value.trim()
+    const matched = projects.find(
+      (resource) => resourceLabel(resource).toLowerCase() === typed.toLowerCase(),
+    )
+    const taskIds = new Set(
+      snapshot.catalog.timeEntryOptions
+        .filter((entry) => matched === undefined || entry.project_id === matched.id)
+        .map((entry) => entry.task_id),
+    )
+    required<HTMLElement>('[data-entry-task-options]').replaceChildren(
+      ...snapshot.catalog.tasks
+        .filter((resource) => taskIds.has(resource.id))
+        .map((resource) => suggestion(resourceLabel(resource))),
+    )
+  }
+
+  entryProject.addEventListener('input', () => updateEntrySuggestions())
+
   const updateRowOptions = (): void => {
     if (snapshot === null) return
     const projectIds = new Set(
@@ -1384,6 +1428,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       ...projects.map((resource) => option(resource.id, resourceLabel(resource))),
     )
     updateRowTaskOptions(projects[0]?.id ?? 0)
+    updateEntrySuggestions()
   }
 
   const canReviewTimesheets = (): boolean =>
