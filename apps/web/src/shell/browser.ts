@@ -2599,14 +2599,48 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   for (const close of document.querySelectorAll<HTMLButtonElement>('[data-dialog-close]')) {
     close.addEventListener('click', () => close.closest('dialog')?.close())
   }
+  /**
+   * A grid is a keyboard surface. Anything bound here has to survive the fact
+   * that the thing under the cursor is usually an input: a bare key would be
+   * typed into a cell rather than acted on, so the unmodified bindings check
+   * what has focus first, and none of them fire while a dialog is open.
+   */
+  const typingInAField = (): boolean => {
+    const active = document.activeElement
+    if (!(active instanceof HTMLElement)) return false
+    if (active.isContentEditable) return true
+    return (
+      active instanceof HTMLInputElement ||
+      active instanceof HTMLTextAreaElement ||
+      active instanceof HTMLSelectElement
+    )
+  }
+
   document.addEventListener('keydown', (event) => {
-    if (
-      currentIdentity !== null &&
-      (event.metaKey || event.ctrlKey) &&
-      event.key.toLocaleLowerCase('en-US') === 'k'
-    ) {
+    if (currentIdentity === null) return
+    const modified = event.metaKey || event.ctrlKey
+    if (modified && event.key.toLocaleLowerCase('en-US') === 'k') {
       event.preventDefault()
       open(commandDialog)
+      return
+    }
+    // Adding a row is the one action you take mid-typing, so it keeps a
+    // modifier and works from inside a cell.
+    if (modified && event.key === 'Enter') {
+      event.preventDefault()
+      open(rowDialog)
+      return
+    }
+    if (event.altKey || modified || typingInAField()) return
+    if (document.querySelector('dialog[open]') !== null) return
+    if (event.key === '[') {
+      event.preventDefault()
+      moveWeek(-7)
+      return
+    }
+    if (event.key === ']') {
+      event.preventDefault()
+      moveWeek(7)
     }
   })
 
