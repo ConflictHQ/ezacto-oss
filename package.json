@@ -14,6 +14,7 @@
   "scripts": {
     "contract:generate": "npm run build -w @ezacto/api && node scripts/generate-api-contract.mjs",
     "contract:check": "npm run build -w @ezacto/api && node scripts/generate-api-contract.mjs --check",
+    "prepare": "npm run theme:generate -w @ezacto/web && npm run shell:generate -w @ezacto/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",

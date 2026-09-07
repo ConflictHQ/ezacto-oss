@@ -11,3 +11,10 @@ snapshot/
 
 # never track a local node_modules (a worktree symlink slipped in once)
 /node_modules
+
+# Generated at build time from shell.css and the browser modules. Committed, it
+# was a 365KB blob on three lines that git cannot merge, so every branch
+# touching the shell collided on it and every back-merge stopped: 43 of the last
+# 150 merges on main resolved this one file by hand. The sibling generated files
+# stay tracked -- they are small, readable, and they merge.
+apps/web/src/generated/shell-assets.ts
