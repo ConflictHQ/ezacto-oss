@@ -17,6 +17,16 @@ describe('CLI time values', () => {
     expect(formatDuration(3661)).toBe('1:01:01')
   })
 
+  it('[unit] renders a correction as a negative duration, not as no value', () => {
+    // Formatting the magnitude and restoring the sign, rather than flooring a
+    // negative: Math.floor(-1800 / 3600) is -1, which would print -1:30 for
+    // half an hour back.
+    expect(formatDuration(-1800)).toBe('-0:30')
+    expect(formatDuration(-5400)).toBe('-1:30')
+    expect(formatDuration(-3661)).toBe('-1:01:01')
+    expect(formatDuration(Number.NaN)).toBe('—')
+  })
+
   it.each(['', '2', 'soon', '0h', '-1h', '0.001h'])(
     '[unit] rejects invalid or sub-second duration %j',
     (value) => expect(() => parseDuration(value)).toThrow(/duration/),

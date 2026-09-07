@@ -358,9 +358,26 @@ const checkedSum = (values: readonly number[], field: string): number => {
   return Number(sum)
 }
 
+/**
+ * A line groups tracked rows, and a correction is one of them: an entry of
+ * -1.0h against the same task nets against the +8.0h beside it, which is how
+ * Harvest shows a corrected day. So a group's own total is signed, bounded by
+ * magnitude, even though the invoice it lands on is not -- an invoice for a
+ * negative amount is a credit note, a different document, and `checkedSum`
+ * still refuses one at the total.
+ */
+const checkedSignedSum = (values: readonly number[], field: string): number => {
+  const sum = values.reduce((total, value) => total + BigInt(value), 0n)
+  if (sum < -centsLimit || sum > centsLimit) invalid(`${field} exceeds the invoice cents limit`)
+  return Number(sum)
+}
+
 const checkedIntegerSum = (values: readonly number[], field: string): number => {
   const sum = values.reduce((total, value) => total + BigInt(value), 0n)
-  if (sum < 0n || sum > BigInt(Number.MAX_SAFE_INTEGER)) {
+  if (
+    sum < BigInt(Number.MIN_SAFE_INTEGER) ||
+    sum > BigInt(Number.MAX_SAFE_INTEGER)
+  ) {
     invalid(`${field} exceeds the safe integer limit`)
   }
   return Number(sum)
@@ -596,7 +613,7 @@ const buildLines = async (
         group.entries.map((entry) => entry.roundedSeconds),
         'time duration',
       )
-      const amountCents = checkedSum(
+      const amountCents = checkedSignedSum(
         group.entries.map((entry) =>
           trackedAmountCents(
             entry.roundedSeconds,

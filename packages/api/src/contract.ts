@@ -36,6 +36,9 @@ type JsonSchema = Readonly<Record<string, unknown>>;
 
 const stringSchema = { type: "string" } as const;
 const integerSchema = { type: "integer", minimum: 1 } as const;
+// Durations and the totals netted from them. A Harvest correction entry is
+// negative by construction, so everything downstream of one is signed (#279).
+const signedIntegerSchema = { type: "integer" } as const;
 const booleanSchema = { type: "boolean" } as const;
 const dateSchema = { type: "string", format: "date" } as const;
 const timestampSchema = { type: "string", format: "date-time" } as const;
@@ -2596,9 +2599,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       is_contractor: booleanSchema,
       is_active: booleanSchema,
       weekly_capacity: { type: "integer", minimum: 0 },
-      total_seconds: { type: "integer", minimum: 0 },
-      billable_seconds: { type: "integer", minimum: 0 },
-      nonbillable_seconds: { type: "integer", minimum: 0 },
+      total_seconds: signedIntegerSchema,
+      billable_seconds: signedIntegerSchema,
+      nonbillable_seconds: signedIntegerSchema,
       utilization_ppm: nullable({ type: "integer", minimum: 0 }),
       running: booleanSchema,
     },
@@ -2901,9 +2904,11 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       user_assignment_id: integerSchema,
       task_assignment_id: integerSchema,
       spent_date: dateSchema,
-      seconds: { type: "integer", minimum: 0 },
-      seconds_without_timer: { type: "integer", minimum: 0 },
-      rounded_seconds: { type: "integer", minimum: 0 },
+      // Signed: an imported Harvest correction entry offsets an earlier one
+      // (#279). The write schemas below stay non-negative — see TimeEntryInput.
+      seconds: signedIntegerSchema,
+      seconds_without_timer: signedIntegerSchema,
+      rounded_seconds: signedIntegerSchema,
       is_running: booleanSchema,
       timer_started_at: nullable(timestampSchema),
       started_time: nullable({
@@ -2946,6 +2951,10 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       project_id: integerSchema,
       task_id: integerSchema,
       spent_date: dateSchema,
+      // Non-negative on the way in. A correction entry exists because Harvest
+      // will not let a locked timesheet be edited; here the entry that was
+      // wrong is the thing to edit, so there is nothing for a typed negative
+      // to offset.
       seconds: { type: "integer", minimum: 0 },
       started_time: { type: "string" },
       ended_time: { type: "string" },
@@ -3087,9 +3096,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       version: { type: "integer", minimum: 0 },
       entry_count: { type: "integer", minimum: 0 },
       expense_count: { type: "integer", minimum: 0 },
-      total_seconds: { type: "integer", minimum: 0 },
-      billable_seconds: { type: "integer", minimum: 0 },
-      nonbillable_seconds: { type: "integer", minimum: 0 },
+      total_seconds: signedIntegerSchema,
+      billable_seconds: signedIntegerSchema,
+      nonbillable_seconds: signedIntegerSchema,
       created_at: timestampSchema,
       updated_at: timestampSchema,
     },
@@ -3123,7 +3132,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       project_name: stringSchema,
       task_id: integerSchema,
       task_name: stringSchema,
-      seconds: { type: "integer", minimum: 0 },
+      seconds: signedIntegerSchema,
       notes: nullable(stringSchema),
     },
     additionalProperties: false,
@@ -3213,9 +3222,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       version: { type: "integer", minimum: 0 },
       entry_count: { type: "integer", minimum: 0 },
       expense_count: { type: "integer", minimum: 0 },
-      total_seconds: { type: "integer", minimum: 0 },
-      billable_seconds: { type: "integer", minimum: 0 },
-      nonbillable_seconds: { type: "integer", minimum: 0 },
+      total_seconds: signedIntegerSchema,
+      billable_seconds: signedIntegerSchema,
+      nonbillable_seconds: signedIntegerSchema,
       created_at: timestampSchema,
       updated_at: timestampSchema,
       entries: {
@@ -4560,13 +4569,13 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     ],
     properties: {
       currency: stringSchema,
-      rounded_seconds: { type: "integer", minimum: 0 },
+      rounded_seconds: signedIntegerSchema,
       time_entry_count: { type: "integer", minimum: 0 },
       unpriced_time_entry_count: { type: "integer", minimum: 0 },
       expense_count: { type: "integer", minimum: 0 },
-      time_cents: { type: "integer", minimum: 0 },
+      time_cents: signedIntegerSchema,
       expense_cents: { type: "integer", minimum: 0 },
-      total_cents: { type: "integer", minimum: 0 },
+      total_cents: signedIntegerSchema,
     },
     additionalProperties: false,
   },
@@ -4589,11 +4598,11 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: {
       currency: stringSchema,
       expense_cents: { type: "integer", minimum: 0 },
-      uninvoiced_time_cents: { type: "integer", minimum: 0 },
+      uninvoiced_time_cents: signedIntegerSchema,
       uninvoiced_expense_cents: { type: "integer", minimum: 0 },
-      uninvoiced_total_cents: { type: "integer", minimum: 0 },
+      uninvoiced_total_cents: signedIntegerSchema,
       money_budget_cents: { type: "integer", minimum: 0 },
-      cost_cents: { type: "integer", minimum: 0 },
+      cost_cents: signedIntegerSchema,
     },
     additionalProperties: false,
   },
@@ -4613,9 +4622,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: {
       time_entry_count: { type: "integer", minimum: 0 },
       expense_count: { type: "integer", minimum: 0 },
-      rounded_seconds: { type: "integer", minimum: 0 },
-      billable_seconds: { type: "integer", minimum: 0 },
-      budgeted_seconds: { type: "integer", minimum: 0 },
+      rounded_seconds: signedIntegerSchema,
+      billable_seconds: signedIntegerSchema,
+      budgeted_seconds: signedIntegerSchema,
       time_budget_seconds: { type: "integer", minimum: 0 },
       unpriced_billable_entry_count: { type: "integer", minimum: 0 },
       unpriced_cost_entry_count: { type: "integer", minimum: 0 },
@@ -4674,10 +4683,10 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       calculation: { type: "string", enum: ["time", "billable", "cost"] },
       unpriced_entry_count: { type: "integer", minimum: 0 },
       budget_seconds: nullable({ type: "integer", minimum: 0 }),
-      spent_seconds: { type: "integer", minimum: 0 },
+      spent_seconds: signedIntegerSchema,
       remaining_seconds: nullable({ type: "integer" }),
       budget_cents: nullable({ type: "integer", minimum: 0 }),
-      spent_cents: { type: "integer", minimum: 0 },
+      spent_cents: signedIntegerSchema,
       remaining_cents: nullable({ type: "integer" }),
     },
     additionalProperties: false,
@@ -4741,12 +4750,12 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       // the same per-field money gating the per-project report applies, so a
       // list cannot become a way to read a budget the detail page would hide.
       budget_seconds: nullable(integerSchema),
-      spent_seconds: integerSchema,
+      spent_seconds: signedIntegerSchema,
       remaining_seconds: nullable(integerSchema),
       budget_cents: nullable(integerSchema),
-      spent_cents: integerSchema,
+      spent_cents: signedIntegerSchema,
       remaining_cents: nullable(integerSchema),
-      cost_cents: integerSchema,
+      cost_cents: signedIntegerSchema,
     },
     additionalProperties: false,
   },

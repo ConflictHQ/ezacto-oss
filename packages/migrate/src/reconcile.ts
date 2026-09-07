@@ -25,7 +25,6 @@ export type ReconciliationValue = number | string | null
 export type ReconciliationGapId =
   | 'migration-spec-7-retainers-no-api'
   | 'migration-spec-7-recurring-invoices-no-api'
-  | 'migration-spec-7-negative-time-entries'
   | 'migration-spec-7-sub-cent-unit-prices'
   | 'migration-spec-7-estimates-module-disabled'
 
@@ -56,10 +55,6 @@ const MIGRATION_SPEC_GAP_CITATIONS = {
     id: 'migration-spec-7-recurring-invoices-no-api',
     reference: 'docs/migration-spec.md §7: Recurring invoices: no API.',
   },
-  negativeTimeEntries: {
-    id: 'migration-spec-7-negative-time-entries',
-    reference: 'docs/migration-spec.md §7: Negative time entries.',
-  },
   subCentUnitPrices: {
     id: 'migration-spec-7-sub-cent-unit-prices',
     reference: 'docs/migration-spec.md §7: Per-unit rates finer than a cent.',
@@ -77,7 +72,6 @@ const MIGRATION_SPEC_GAP_CITATIONS = {
  * skipping is not a safe handling for that class.
  */
 const ACCEPTED_ANOMALY_CITATIONS: Readonly<Record<string, ReconciliationGapCitation>> = {
-  negative_time_entry: MIGRATION_SPEC_GAP_CITATIONS.negativeTimeEntries,
   rate_residue: MIGRATION_SPEC_GAP_CITATIONS.subCentUnitPrices,
   unresolved_estimate_reference: MIGRATION_SPEC_GAP_CITATIONS.estimatesModuleDisabled,
 }
@@ -185,17 +179,6 @@ interface InvoiceSource {
   recurringInvoiceId: number | null
 }
 
-/**
- * `trackedAmountCents` asserts non-negative seconds, which is the right rule
- * for anything priced for real. A correction entry's contribution to a Harvest
- * report total is negative by construction, so price its magnitude and carry
- * the sign back.
- */
-const signedTrackedAmountCents = (seconds: number, rateCents: number): number =>
-  seconds < 0
-    ? -trackedAmountCents(-seconds, rateCents)
-    : trackedAmountCents(seconds, rateCents)
-
 const centsLimit = 9_000_000_000_000n
 const safeLimit = 9_007_199_254_740_991n
 
@@ -267,12 +250,6 @@ const nonnegativeReportMoney = (value: unknown, field: string): number => {
 
 const reportSeconds = (value: unknown, field: string): number =>
   hoursLiteralToSeconds(decimalLiteral(value, field), field).seconds
-
-const signedReportSeconds = (value: unknown, field: string): number => {
-  const literal = decimalLiteral(value, field)
-  if (!literal.startsWith('-')) return hoursLiteralToSeconds(literal, field).seconds
-  return -hoursLiteralToSeconds(literal.slice(1), field).seconds
-}
 
 const streamRaw = async function* (snapshotDir: string, resource: string): AsyncGenerator<RawRow> {
   const path = join(snapshotDir, 'raw', `${resource}.jsonl`)
@@ -459,9 +436,6 @@ interface SourceState {
   expenseReports: Map<string, Map<string, ExpenseAggregate>>
   monthly: Map<string, MonthlyAggregate>
   uninvoiced: Map<string, UninvoicedAggregate>
-  skippedTimeReports: Map<string, Map<string, TimeAggregate>>
-  skippedUninvoiced: Map<string, UninvoicedAggregate>
-  skippedRowCounts: Map<string, number>
   budgets: Map<number, BudgetActivity>
   taskBudgetActivity: Map<number, BudgetActivity>
   userBudgetActivity: Map<number, BudgetActivity>
@@ -577,12 +551,6 @@ const sourceState = async (
   const expenseReports = new Map<string, Map<string, ExpenseAggregate>>()
   const monthly = new Map<string, MonthlyAggregate>()
   const uninvoiced = new Map<string, UninvoicedAggregate>()
-  // What the rows the loader cannot store would have contributed, kept in the
-  // same shape as the real aggregates so a delta against Harvest's own report
-  // can be shown to equal them exactly rather than merely resemble them.
-  const skippedTimeReports = new Map<string, Map<string, TimeAggregate>>()
-  const skippedUninvoiced = new Map<string, UninvoicedAggregate>()
-  const skippedRowCounts = new Map<string, number>()
   const budgets = new Map<number, BudgetActivity>()
   const taskBudgetActivity = new Map<number, BudgetActivity>()
   const userBudgetActivity = new Map<number, BudgetActivity>()
@@ -593,16 +561,6 @@ const sourceState = async (
     const entryId = source.numbers.get('/id')
     if (entryId === undefined || !/^\d+$/.test(entryId) || BigInt(entryId) < 1n) {
       throw new Error(`time_entries:${source.line}.id must be a positive integer`)
-    }
-    // Mirror the loader: a Harvest correction entry with negative hours cannot
-    // be stored (time_entries.seconds is CHECK >= 0), so it stays out of the
-    // recomputed aggregates. Harvest's own report nets it out, so every report
-    // it touches shows a delta. It is aggregated into the skipped maps instead
-    // of dropped, which is what lets that delta be proved equal to the rows
-    // migration-spec §7 documents as skipped rather than left unexplained.
-    const isCorrection = (source.numbers.get('/hours') ?? '').startsWith('-')
-    if (isCorrection) {
-      skippedRowCounts.set('time_entries', (skippedRowCounts.get('time_entries') ?? 0) + 1)
     }
     const userId = idAt(source, '/user/id', `time_entries:${source.line}.user.id`)
     const projectId = idAt(source, '/project/id', `time_entries:${source.line}.project.id`)
@@ -626,23 +584,21 @@ const sourceState = async (
     const roundedLiteral = source.numbers.get('/rounded_hours')
     if (roundedLiteral === undefined)
       throw new Error(`time_entries:${source.line}.rounded_hours is missing`)
-    // A correction entry is recorded as negative_time_entry, never as
-    // hours_residue, so its literals must not enter the rounding evidence.
-    // hoursLiteralToSeconds refuses a negative literal, which is the right rule
-    // for anything that will be stored. Here the magnitude is what is wanted,
-    // carrying its sign, so a correction's contribution can be subtracted.
-    const hours = (path: string, literal: string | null): number | null => {
-      if (!isCorrection) return recordHoursResidue('time_entries', entryId, path, literal)
-      if (literal === null) return null
-      const magnitude = literal.startsWith('-') ? literal.slice(1) : literal
-      const { seconds } = hoursLiteralToSeconds(magnitude, `time_entries.${path}`)
-      return literal.startsWith('-') ? -seconds : seconds
-    }
-    const roundedSeconds = hours('/rounded_hours', roundedLiteral)!
+    const roundedSeconds = recordHoursResidue(
+      'time_entries',
+      entryId,
+      '/rounded_hours',
+      roundedLiteral,
+    )!
     const hoursLiteral = source.numbers.get('/hours')
     if (hoursLiteral === undefined) throw new Error(`time_entries:${source.line}.hours is missing`)
-    const seconds = hours('/hours', hoursLiteral)!
-    hours('/hours_without_timer', source.numbers.get('/hours_without_timer') ?? null)
+    const seconds = recordHoursResidue('time_entries', entryId, '/hours', hoursLiteral)!
+    recordHoursResidue(
+      'time_entries',
+      entryId,
+      '/hours_without_timer',
+      source.numbers.get('/hours_without_timer') ?? null,
+    )
     const billable = booleanValue(source.row, 'billable')
     const billableRateLiteral = source.numbers.get('/billable_rate')
     const costRateLiteral = source.numbers.get('/cost_rate')
@@ -663,7 +619,7 @@ const sourceState = async (
         ['team', userId],
       ] as const) {
         const report = getOrCreate(
-          isCorrection ? skippedTimeReports : timeReports,
+          timeReports,
           `time/${grain}/${period.year}`,
           () => new Map<string, TimeAggregate>(),
         )
@@ -682,38 +638,33 @@ const sourceState = async (
           if (billableRate !== null && exposesBillableAmount) {
             aggregate.billableCents = add(
               aggregate.billableCents,
-              signedTrackedAmountCents(roundedSeconds, billableRate),
+              trackedAmountCents(roundedSeconds, billableRate),
               'billable report cents',
             )
           }
         }
       }
     }
-    // Monthly money and budget activity are compared against the loaded
-    // database, which holds no correction rows, so a correction must not enter
-    // either side. Only the Harvest-facing reports need its contribution.
-    if (!isCorrection) {
-      const month = getOrCreate(
-        monthly,
-        monthlyKey(userId, projectId, date, project.currency),
-        monthlyAggregate,
+    const month = getOrCreate(
+      monthly,
+      monthlyKey(userId, projectId, date, project.currency),
+      monthlyAggregate,
+    )
+    month.seconds = add(month.seconds, seconds, 'monthly seconds')
+    if (billable && billableRate !== null) {
+      month.billableCents = add(
+        month.billableCents,
+        trackedAmountCents(roundedSeconds, billableRate),
+        'monthly billable cents',
       )
-      month.seconds = add(month.seconds, seconds, 'monthly seconds')
-      if (billable && billableRate !== null) {
-        month.billableCents = add(
-          month.billableCents,
-          trackedAmountCents(roundedSeconds, billableRate),
-          'monthly billable cents',
-        )
-      } else if (billable) month.unpricedBillable += 1
-      if (costRate !== null) {
-        month.costCents = add(
-          month.costCents,
-          trackedAmountCents(roundedSeconds, costRate),
-          'monthly cost cents',
-        )
-      } else month.unpricedCost += 1
-    }
+    } else if (billable) month.unpricedBillable += 1
+    if (costRate !== null) {
+      month.costCents = add(
+        month.costCents,
+        trackedAmountCents(roundedSeconds, costRate),
+        'monthly cost cents',
+      )
+    } else month.unpricedCost += 1
 
     // Harvest's uninvoiced report lists active projects only. Recomputing over
     // archived ones manufactured a delta on every archived project that still
@@ -725,7 +676,7 @@ const sourceState = async (
       date <= uninvoicedRange.to
     ) {
       const uninvoice = getOrCreate(
-        isCorrection ? skippedUninvoiced : uninvoiced,
+        uninvoiced,
         groupKey(projectId, project.currency),
         uninvoicedAggregate,
       )
@@ -744,14 +695,12 @@ const sourceState = async (
         if (billableRate !== null && project.billingMethod !== 'fixed_fee') {
           uninvoice.uninvoicedAmountCents = add(
             uninvoice.uninvoicedAmountCents,
-            signedTrackedAmountCents(roundedSeconds, billableRate),
+            trackedAmountCents(roundedSeconds, billableRate),
             'uninvoiced amount',
           )
         }
       }
     }
-
-    if (isCorrection) continue
 
     const includeInBudget =
       booleanValue(source.row, 'budgeted') &&
@@ -958,9 +907,6 @@ const sourceState = async (
     expenseReports,
     monthly,
     uninvoiced,
-    skippedTimeReports,
-    skippedUninvoiced,
-    skippedRowCounts,
     budgets,
     taskBudgetActivity,
     userBudgetActivity,
@@ -1028,18 +974,9 @@ const timeReportChecks = (checks: Checks, source: SourceState, report: ChecksumR
           )
         }
       }
-      const skipped = source.skippedTimeReports.get(annualKey) ?? new Map<string, TimeAggregate>()
       for (const key of new Set([...target.keys(), ...upstream.keys()])) {
         const expected = upstream.get(key) ?? timeAggregate()
         const actual = target.get(key) ?? timeAggregate()
-        // Harvest nets its correction entries into these totals; the loader
-        // cannot store them. The delta is a documented gap only when it is
-        // exactly what those rows would have contributed.
-        const absent = skipped.get(key) ?? timeAggregate()
-        const cite = (delta: number) => ({
-          delta: -delta,
-          citation: MIGRATION_SPEC_GAP_CITATIONS.negativeTimeEntries,
-        })
         checks.compare(
           'A',
           'harvest_time_report',
@@ -1047,9 +984,6 @@ const timeReportChecks = (checks: Checks, source: SourceState, report: ChecksumR
           'total_seconds',
           expected.totalSeconds,
           actual.totalSeconds,
-          'UNEXPLAINED',
-          null,
-          cite(absent.totalSeconds),
         )
         checks.compare(
           'A',
@@ -1058,9 +992,6 @@ const timeReportChecks = (checks: Checks, source: SourceState, report: ChecksumR
           'billable_seconds',
           expected.billableSeconds,
           actual.billableSeconds,
-          'UNEXPLAINED',
-          null,
-          cite(absent.billableSeconds),
         )
         checks.compare(
           'A',
@@ -1069,9 +1000,6 @@ const timeReportChecks = (checks: Checks, source: SourceState, report: ChecksumR
           'billable_amount_cents',
           expected.billableCents,
           actual.billableCents,
-          'UNEXPLAINED',
-          null,
-          cite(absent.billableCents),
         )
         checks.compare(
           'A',
@@ -1203,11 +1131,6 @@ const uninvoicedReportChecks = (
   for (const key of new Set([...source.uninvoiced.keys(), ...upstream.keys()])) {
     const expected = upstream.get(key) ?? uninvoicedAggregate()
     const actual = source.uninvoiced.get(key) ?? uninvoicedAggregate()
-    const absent = source.skippedUninvoiced.get(key) ?? uninvoicedAggregate()
-    const cite = (delta: number) => ({
-      delta: -delta,
-      citation: MIGRATION_SPEC_GAP_CITATIONS.negativeTimeEntries,
-    })
     checks.compare(
       'A',
       'harvest_uninvoiced_report',
@@ -1215,9 +1138,6 @@ const uninvoicedReportChecks = (
       'total_seconds',
       expected.totalSeconds,
       actual.totalSeconds,
-      'UNEXPLAINED',
-      null,
-      cite(absent.totalSeconds),
     )
     checks.compare(
       'A',
@@ -1226,9 +1146,6 @@ const uninvoicedReportChecks = (
       'uninvoiced_seconds',
       expected.uninvoicedSeconds,
       actual.uninvoicedSeconds,
-      'UNEXPLAINED',
-      null,
-      cite(absent.uninvoicedSeconds),
     )
     checks.compare(
       'A',
@@ -1245,9 +1162,6 @@ const uninvoicedReportChecks = (
       'uninvoiced_amount_cents',
       expected.uninvoicedAmountCents,
       actual.uninvoicedAmountCents,
-      'UNEXPLAINED',
-      null,
-      cite(absent.uninvoicedAmountCents),
     )
     checks.compare(
       'A',
@@ -1267,14 +1181,10 @@ const budgetValue = (
   context: string,
 ): number | null => {
   if (row[field] === null || row[field] === undefined) return null
-  const signed = field === 'budget_remaining'
-  return money
-    ? signed
-      ? reportMoney(row[field], `${context}.${field}`)
-      : nonnegativeReportMoney(row[field], `${context}.${field}`)
-    : signed
-      ? signedReportSeconds(row[field], `${context}.${field}`)
-      : reportSeconds(row[field], `${context}.${field}`)
+  if (!money) return reportSeconds(row[field], `${context}.${field}`)
+  return field === 'budget_remaining'
+    ? reportMoney(row[field], `${context}.${field}`)
+    : nonnegativeReportMoney(row[field], `${context}.${field}`)
 }
 
 const sourceBudget = (
@@ -1509,7 +1419,6 @@ const databasePreflight = (
   manifest: Manifest,
   checksum: ChecksumReport,
   manifestSha256: string,
-  source: SourceState,
 ): void => {
   const admission = database
     .prepare(
@@ -1586,20 +1495,7 @@ const databasePreflight = (
       database,
       `SELECT count(*) FROM ${mapping.table}${mapping.importedOnly ? ' WHERE harvest_id IS NOT NULL' : ''}`,
     )
-    checks.compare(
-      'B',
-      'resource_row_count',
-      resource,
-      'rows',
-      progress.count,
-      actual,
-      'UNEXPLAINED',
-      null,
-      {
-        delta: -(source.skippedRowCounts.get(resource) ?? 0),
-        citation: MIGRATION_SPEC_GAP_CITATIONS.negativeTimeEntries,
-      },
-    )
+    checks.compare('B', 'resource_row_count', resource, 'rows', progress.count, actual)
   }
   const expectedReceipts = Object.keys(manifest.binaries?.receipts ?? {}).length
   const actualReceipts = scalar<number>(database, 'SELECT count(*) FROM harvest_expense_receipts')
@@ -2593,7 +2489,7 @@ export const runReconcile = async (options: RunReconcileOptions): Promise<RunRec
     try {
       database.exec('BEGIN')
       databaseTransaction = true
-      databasePreflight(checks, database, manifest, checksum, manifestSha256, source)
+      databasePreflight(checks, database, manifest, checksum, manifestSha256)
       monthlyChecks(checks, source, database)
       currencyFidelityChecks(checks, source, database)
       invoiceSourceChecks(checks, source, database)

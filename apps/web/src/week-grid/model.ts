@@ -165,20 +165,29 @@ export const buildWeekGrid = (
   }
 }
 
+/**
+ * Renders a signed duration: an imported Harvest correction entry is negative
+ * (issue 279), and a cell holding one has to show it rather than throw.
+ * `parseCellSeconds` stays non-negative — reading a correction is not the same
+ * as typing one.
+ */
 export const formatCellHours = (
   seconds: number,
   timeFormat: 'decimal' | 'hours_minutes' = 'decimal',
 ): string => {
-  if (!Number.isSafeInteger(seconds) || seconds < 0) throw new Error('invalid cell seconds')
+  if (!Number.isSafeInteger(seconds)) throw new Error('invalid cell seconds')
   if (seconds === 0) return ''
+  const sign = seconds < 0 ? '-' : ''
+  const magnitude = Math.abs(seconds)
   if (timeFormat === 'hours_minutes') {
-    const totalMinutes = Math.round(seconds / 60)
-    return `${Math.floor(totalMinutes / 60)}:${String(totalMinutes % 60).padStart(2, '0')}`
+    const totalMinutes = Math.round(magnitude / 60)
+    return `${sign}${Math.floor(totalMinutes / 60)}:${String(totalMinutes % 60).padStart(2, '0')}`
   }
-  const hours = seconds / 3_600
-  return Number.isInteger(hours)
+  const hours = magnitude / 3_600
+  const rendered = Number.isInteger(hours)
     ? String(hours)
     : hours.toFixed(4).replace(/0+$/u, '').replace(/\.$/u, '')
+  return `${sign}${rendered}`
 }
 
 export const parseCellSeconds = (rawValue: string): number => {

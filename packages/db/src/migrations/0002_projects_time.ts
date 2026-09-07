@@ -3,6 +3,8 @@ const runningPredicate = `timer_started_at IS NOT NULL
 
 const maxSafeSeconds = 9_007_199_254_740_991
 
+const secondsCheck = (column: string) => `abs(${column}) <= ${maxSafeSeconds}`
+
 const newRunningPredicate = `NEW.timer_started_at IS NOT NULL
       OR (NEW.started_time IS NOT NULL AND NEW.ended_time IS NULL)`
 
@@ -192,10 +194,14 @@ export const projectsTimeMigration = [
     user_assignment_id INTEGER NOT NULL,
     task_assignment_id INTEGER NOT NULL,
     spent_date TEXT NOT NULL,
-    seconds INTEGER NOT NULL CHECK (seconds BETWEEN 0 AND ${maxSafeSeconds}),
-    seconds_without_timer INTEGER NOT NULL
-      CHECK (seconds_without_timer BETWEEN 0 AND ${maxSafeSeconds}),
-    rounded_seconds INTEGER NOT NULL CHECK (rounded_seconds BETWEEN 0 AND ${maxSafeSeconds}),
+    -- A duration is signed, like the money it prices. Harvest corrects an
+    -- over-logged timesheet with a negative entry offsetting an earlier one,
+    -- and a non-negative CHECK here forced the importer to skip those — which
+    -- overstated one contractor's August by 1.0 h and $60, on a payroll run
+    -- (#279). Budgets keep >= 0: a budget really is a magnitude.
+    seconds INTEGER NOT NULL CHECK (${secondsCheck('seconds')}),
+    seconds_without_timer INTEGER NOT NULL CHECK (${secondsCheck('seconds_without_timer')}),
+    rounded_seconds INTEGER NOT NULL CHECK (${secondsCheck('rounded_seconds')}),
     timer_started_at TEXT,
     started_time TEXT,
     ended_time TEXT,
@@ -269,12 +275,16 @@ export const projectsTimeMigration = [
     BEGIN
       SELECT RAISE(ABORT, 'stop running time entries before changing mode');
     END`,
+  // A correction has no interval to record: Harvest writes it as a bare
+  // negative duration even on a start_end account, so the shape rule cannot
+  // ask it for a started_time it was never given.
   `CREATE TRIGGER time_entries_mode_insert BEFORE INSERT ON time_entries
     WHEN (
       (SELECT time_entry_mode FROM organizations WHERE id = 1) = 'duration'
         AND (NEW.started_time IS NOT NULL OR NEW.ended_time IS NOT NULL)
     ) OR (
       (SELECT time_entry_mode FROM organizations WHERE id = 1) = 'start_end'
+        AND NEW.seconds >= 0
         AND (NEW.timer_started_at IS NOT NULL OR NEW.started_time IS NULL)
     )
     BEGIN SELECT RAISE(ABORT, 'time entry shape does not match organization mode'); END`,

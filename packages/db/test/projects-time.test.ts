@@ -421,6 +421,29 @@ for (const [runtime, factory] of factories) {
       ).toEqual([{ count: 0 }])
     })
 
+    it('[unit] stores a Harvest correction entry as a negative duration', async () => {
+      // #279: `seconds` was CHECK (… BETWEEN 0 AND …), so the importer could
+      // not store the negative entry Harvest writes to offset an over-logged
+      // timesheet, and every total touching that person ran high. A start_end
+      // account is the harder case: a correction carries no interval, so the
+      // shape rule must not ask it for a started_time Harvest never gave it.
+      const db = await setup('start_end')
+      await db.run(
+        `INSERT INTO time_entries
+          (user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+           spent_date, seconds, seconds_without_timer, rounded_seconds,
+           billable, created_at, updated_at)
+         VALUES (1, 1, 1, 1, 1, '2026-08-02', -3600, -3600, -3600, 1, ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+      expect(
+        await db.rows<{ seconds: number; rounded_seconds: number }>(
+          `SELECT seconds, rounded_seconds FROM time_entries`,
+        ),
+      ).toEqual([{ seconds: -3600, rounded_seconds: -3600 }])
+    })
+
     it('[unit] rejects normalized-invalid timer timestamps written through direct SQL', async () => {
       const db = await setup('duration')
       for (const invalid of ['2026-02-30T09:00:00Z', '2026-08-27T24:00:00Z']) {

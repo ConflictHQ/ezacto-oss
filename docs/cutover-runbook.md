@@ -666,25 +666,38 @@ which one you are on; the answer changes what abort means.
 
 **Zero UNEXPLAINED.** The rehearsal meets it.
 
+The gate is `unexplained 0`, and that is the number to hold the run to. The
+other three move as the loader improves, so read them from the run rather than
+from this page.
+
+The last full rehearsal, before corrections could be stored:
+
 ```
 complete: true   matches 26051   rounding 0   gaps 65   unexplained 0
 ```
 
-Every one of those 65 gaps carries a citation into
+Every gap carries a citation into
 [migration-spec §7](migration-spec.md#7-known-documented-gaps-from-research--decided-handling),
 and reconcile will not issue one on trust: a delta is a cited gap only where it
 equals what the documented skip would have contributed, to the second and to the
 cent. An approximate match is still UNEXPLAINED.
 
-| Cited gap | Rows |
+| Cited gap | Rows in that rehearsal |
 | --- | --- |
-| Negative time entries, across the time reports | 48 |
-| Negative time entries, across the uninvoiced report | 3 |
-| Negative time entries, as anomalies and a row count | 6 |
 | Sub-cent unit prices, rounded half-even | 3 |
 | The unresolved estimate reference | 1 |
 | Recurring invoice definitions with no API | 3 |
 | The retainer balance with no API | 1 |
+
+**Fifty-seven of that run's 65 gaps were negative time entries** — 48 across the
+time reports, 3 across the uninvoiced report, 6 as anomalies and a row count.
+They are gone: `time_entries.seconds` is signed now, so a correction loads and
+nets instead of being skipped and cited. Expect **8** cited gaps, the four rows
+above, and expect the match count to rise by whatever those 57 become.
+
+The exact figures are deliberately not written here. They come from the next run
+against a live snapshot, and inventing them would give an operator a number to
+match rather than a gate to pass. The gate is `unexplained 0`.
 
 Getting here took four fixes, and the numbers moved as follows:
 
@@ -695,6 +708,7 @@ Getting here took four fixes, and the numbers moved as follows:
 | Invoice state compared at all | 26,042 | 4 | 77 |
 | Documented skips cited rather than counted | 26,042 | 65 | 16 |
 | Non-positive receipts imported rather than skipped | 26,051 | 65 | **0** |
+| Corrections stored rather than skipped and cited | re-measure | 8 | **0** |
 
 The third row goes **up**: comparing `state` surfaced seven invoices that had
 been reading `open` against Harvest's `paid` without anything noticing. The

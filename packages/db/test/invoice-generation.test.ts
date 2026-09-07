@@ -351,6 +351,42 @@ for (const [runtime, factory] of factories) {
       ).toEqual([{ invoices: 0, timeEntries: 0, expenses: 0 }])
     })
 
+    it('[unit] nets a correction entry into the line it corrects', async () => {
+      // Harvest records an over-logged day by writing a negative entry against
+      // the same task, so the line the correction belongs to must simply come
+      // out smaller. Before signed seconds this threw: the group's total went
+      // below zero and the sum guard refused it, so a snapshot carrying one
+      // correction could not be invoiced at all.
+      const database = await setup()
+      await database.run(
+        `INSERT INTO time_entries (
+           id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+           spent_date, seconds, seconds_without_timer, rounded_seconds, notes, billable,
+           billable_rate_cents, cost_rate_cents, created_at, updated_at
+         ) VALUES (3, 2, 1, 1, 1, 1, '2026-08-12', -900, -900, -900, 'Logged twice', 1,
+           10001, 5000, ?, ?)`,
+        occurredAt,
+        occurredAt,
+      )
+
+      const invoice = await generator(database).generate(command('correction-entry'))
+
+      // 1800s at 100.01/h is 5000.5 -> 5001 cents; -900s is -2500.25 -> -2500.
+      // The Design line carries both, so it is the difference, not two lines.
+      // The correction does not earn a line of its own: exactly one Design line,
+      // carrying the difference. The other two are Review and the expense group,
+      // unchanged.
+      const design = invoice.line_items.filter((line) => line.description?.includes('Design'))
+      expect(design).toHaveLength(1)
+      expect(design[0]!.amount_cents).toBe(2501)
+      expect(invoice.line_items).toHaveLength(3)
+      expect(
+        await database.rows(
+          `SELECT count(*) AS count FROM time_entries WHERE invoice_id IS NOT NULL`,
+        ),
+      ).toEqual([{ count: 3 }])
+    })
+
     it('[unit] refuses a selection mixing an active project with an archived one', async () => {
       // The candidate read drops archived work, so without this the request
       // would succeed and return a document covering only the active project --
