@@ -4268,9 +4268,15 @@ dialog textarea {
   text-align: left;
 }
 
+/* The hover tint the old roster used, sampled from it rather than guessed
+   (issue 292). It is pointer-and-focus only: no row state -- overdue, locked,
+   selected, billable -- is expressed as a row background anywhere, which is why
+   the absence of print-color-adjust in this stylesheet costs nothing here. A
+   row fill that encoded meaning would be a bug, because it would vanish on
+   paper. */
 .data-table tbody tr[data-row]:hover,
 .data-table tbody tr[data-row]:focus-within {
-  background: var(--ez-surface);
+  background: var(--ez-row-hover);
 }
 
 /* A group's total closes its run: same weight as the footer, but it belongs to
