@@ -56,7 +56,9 @@ describe('activity log surface', () => {
     // empty input would turn an untouched filter into a 422 the reader cannot
     // explain.
     mount()
-    const listActivityLog = vi.fn(async () => ({ data: [] }))
+    const listActivityLog = vi.fn(async (_query: Record<string, string>) => ({
+      data: [] as ActivityRow[],
+    }))
     await createActivityController({ listActivityLog }).activate(new AbortController().signal)
 
     expect(Object.keys(listActivityLog.mock.calls[0]![0] as object)).toEqual([])

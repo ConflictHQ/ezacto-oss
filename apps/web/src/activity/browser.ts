@@ -60,7 +60,11 @@ export const createActivityController = (api: ActivityApi): ActivityController =
   const status = required<HTMLElement>('[data-activity-log-status]')
   const from = required<HTMLInputElement>('[data-activity-from]')
   const to = required<HTMLInputElement>('[data-activity-to]')
-  const type = required<HTMLSelectElement>('[data-activity-type]')
+  // Not `required<HTMLSelectElement>`: the worker's tsconfig uses workers-types,
+  // where HTMLSelectElement does not satisfy the DOM `Element` this generic is
+  // constrained to. Narrowed at the use site instead, which is the same check
+  // one layer down and compiles under both lib sets.
+  const type = required('[data-activity-type]') as unknown as HTMLInputElement
 
   let active: AbortSignal | null = null
 
