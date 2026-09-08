@@ -84,9 +84,13 @@ jobs:
           # Six files that npm run verify has always covered and this matrix
           # never did, so the merge gate was weaker than the deploy gate.
           - { name: container, workspaces: -w ezacto-container }
+          # This matrix names its workspaces explicitly, so a new package is
+          # NOT covered by being in the `packages/*` glob -- it has to be added
+          # here or its suite never runs in CI, silently. @ezacto/integrations
+          # arrived with 17 tests that would have been invisible.
           - {
               name: packages,
-              workspaces: -w @ezacto/core -w @ezacto/client -w @ezacto/mailer -w @ezacto/cli -w @ezacto/mcp,
+              workspaces: -w @ezacto/core -w @ezacto/client -w @ezacto/mailer -w @ezacto/cli -w @ezacto/mcp -w @ezacto/integrations,
             }
           # The only suite that drives a browser, so the only one that pays for
           # Chromium.
