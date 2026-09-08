@@ -71,7 +71,15 @@ export interface OutboxDrainSummary {
 
 export interface OutboxService {
   drain(limit?: number): Promise<OutboxDrainSummary>
-  listActivity(input?: { limit?: number }): Promise<ActivityLogRecord[]>
+  listActivity(input?: {
+    limit?: number
+    /** Inclusive calendar-date bounds on when the event occurred. */
+    from?: string
+    to?: string
+    eventType?: string
+    /** The user whose actions to show. Never matches a system event. */
+    actorId?: number
+  }): Promise<ActivityLogRecord[]>
   listDeliveries(input?: {
     status?: OutboxDeliveryStatus
     limit?: number
@@ -153,6 +161,26 @@ const assertCanonicalTimestamp = (value: string, field: string): void => {
 const assertIdentifier = (value: string, field: string): void => {
   if (!identifierPattern.test(value)) {
     throw new RangeError(`${field} must use 1-128 safe identifier characters`)
+  }
+}
+
+/**
+ * A date the calendar actually has. The shape check alone admits 2026-02-31,
+ * which would silently match nothing and read as "no activity that month"
+ * rather than as a bad request.
+ */
+const assertCalendarDate = (value: string, field: string): void => {
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/u.test(value) ||
+    new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) !== value
+  ) {
+    throw new RangeError(`${field} must be a calendar date`)
+  }
+}
+
+const assertRowId = (value: number, field: string): void => {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new RangeError(`${field} must be a positive integer`)
   }
 }
 
@@ -668,13 +696,42 @@ const createService = (
     async listActivity(input = {}) {
       const limit = input.limit ?? 100
       assertLimit(limit, 200, 'activity log limit')
+      const conditions: string[] = []
+      const params: unknown[] = []
+      if (input.from !== undefined) {
+        assertCalendarDate(input.from, 'activity log from')
+        conditions.push('event.occurred_at >= ?')
+        params.push(input.from)
+      }
+      if (input.to !== undefined) {
+        assertCalendarDate(input.to, 'activity log to')
+        // The whole of the named day. A `to` of 2026-09-08 that excluded
+        // everything on the 8th is the off-by-one nobody notices until an audit
+        // comes up a day short.
+        conditions.push("event.occurred_at < date(?, '+1 day')")
+        params.push(input.to)
+      }
+      if (input.eventType !== undefined) {
+        assertIdentifier(input.eventType, 'activity log event type')
+        conditions.push('event.event_type = ?')
+        params.push(input.eventType)
+      }
+      if (input.actorId !== undefined) {
+        assertRowId(input.actorId, 'activity log actor id')
+        // A system event carries a null actor id, so it never matches a person
+        // -- filtering by actor must not quietly attribute the nightly export
+        // to whoever configured it.
+        conditions.push("json_extract(event.payload_json, '$.actor.id') = ?")
+        params.push(input.actorId)
+      }
       const rows = await database.all<ActivityLogRow>(
         `SELECT ${eventColumns}, activity.recorded_at AS recordedAt
          FROM activity_log activity
          JOIN event_outbox event ON event.id = activity.event_id
+         ${conditions.length === 0 ? '' : `WHERE ${conditions.join(' AND ')}`}
          ORDER BY activity.recorded_at DESC, activity.event_id DESC
          LIMIT ?`,
-        [limit],
+        [...params, limit],
       )
       return rows.map((row) => ({ ...eventRecord(row), recordedAt: row.recordedAt }))
     },

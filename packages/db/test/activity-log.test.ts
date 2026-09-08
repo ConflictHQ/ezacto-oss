@@ -290,6 +290,52 @@ for (const [runtime, factory] of factories) {
       ).toEqual([{ count: 0 }])
     })
 
+    it('[unit] narrows the log by day, by type, and by the person who acted', async () => {
+      database = await factory()
+      const capture = async (
+        eventType: 'auth.signed_in' | 'api_token.created',
+        subjectId: number,
+        actorId: number,
+        occurredAt: string,
+        id: string,
+      ) =>
+        captureActivityEvent(
+          database!.orm,
+          { eventType, subjectId, actor: { type: 'user', id: actorId }, occurredAt, captureId: id },
+          { createEventId: () => id },
+        )
+      // All in the past: the outbox does not drain an event before its
+      // available_at, and an occurred_at later today is later today.
+      await capture('auth.signed_in', 1, 1, '2026-09-04T09:00:00.000Z', 'a-1')
+      await capture('api_token.created', 2, 1, '2026-09-05T09:00:00.000Z', 'a-2')
+      await capture('auth.signed_in', 3, 2, '2026-09-06T23:59:59.000Z', 'a-3')
+      const service = database.outbox()
+      await service.drain()
+
+      const ids = async (filter: Parameters<typeof service.listActivity>[0]) =>
+        (await service.listActivity(filter)).map((entry) => entry.id)
+
+      expect(await ids({})).toEqual(['a-3', 'a-2', 'a-1'])
+      expect(await ids({ eventType: 'auth.signed_in' })).toEqual(['a-3', 'a-1'])
+      expect(await ids({ actorId: 1 })).toEqual(['a-2', 'a-1'])
+
+      // The upper bound includes the whole of the day it names. a-3 happened one
+      // second before midnight; a `to` that excluded it would make an audit come
+      // up a day short and look like nothing happened.
+      expect(await ids({ from: '2026-09-06', to: '2026-09-06' })).toEqual(['a-3'])
+      expect(await ids({ from: '2026-09-04', to: '2026-09-05' })).toEqual(['a-2', 'a-1'])
+    })
+
+    it('[unit] refuses a bound that is not a date the calendar has', async () => {
+      // 2026-02-31 has the right shape and is not a day. Accepted, it would
+      // match nothing and read as "no activity" rather than as a bad request.
+      database = await factory()
+      const service = database.outbox()
+      await expect(service.listActivity({ from: '2026-02-31' })).rejects.toThrow(
+        /must be a calendar date/,
+      )
+    })
+
     it('[unit] treats a replayed capture id as the event it already recorded', async () => {
       database = await factory()
       const first = await captureActivityEvent(
