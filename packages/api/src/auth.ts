@@ -1,5 +1,6 @@
 import type { Context, Hono, MiddlewareHandler } from 'hono'
 import { canProfileUseApiScope, isApiScope, type ApiScope } from '@ezacto/core'
+import { captureRequestActivity, type ActivityRecorder } from './activity-log.js'
 import type { ApiContext, UserProfile } from './context.js'
 import {
   ApiError,
@@ -71,6 +72,8 @@ export interface ApiSessionResolver {
 export interface ApiAuthentication {
   tokens?: ApiTokenService
   sessions?: ApiSessionResolver
+  /** Where credential events are recorded. Absent leaves them unrecorded. */
+  activity?: ActivityRecorder
 }
 
 const unauthorized = <Bindings extends object>(
@@ -329,6 +332,11 @@ const isJsonObject = (value: unknown): value is Record<string, unknown> =>
 export const installApiTokenRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   tokens: ApiTokenService,
+  // Optional so an install without a log still serves tokens. Where it is
+  // present the write is awaited, not fired and forgotten: an API token is a
+  // credential, and "one was issued and we cannot say who by" is not a state
+  // this should be able to reach.
+  activity?: ActivityRecorder,
 ): void => {
   api.get('/api-tokens', async (context) => {
     const principal = requireSessionPrincipal(context)
@@ -377,6 +385,14 @@ export const installApiTokenRoutes = <Bindings extends object>(
           ? { expiresAt: body.expires_at as string | null }
           : {}),
       })
+      if (activity !== undefined) {
+        await captureRequestActivity(context, activity, {
+          eventType: 'api_token.created',
+          subjectId: issued.id,
+          occurredAt: issued.createdAt,
+          detail: { name: issued.name, scopes: issued.scopes },
+        })
+      }
       return context.json(
         { data: { ...tokenData(issued), token: issued.token } },
         201,
@@ -404,6 +420,17 @@ export const installApiTokenRoutes = <Bindings extends object>(
         status: 404,
         code: 'not_found',
         message: 'The requested API token does not exist.',
+      })
+    }
+    // Recorded from the row's own revoked_at rather than from the clock here,
+    // and only when the row carries one. A revocation the database did not
+    // record is not one this log should claim happened.
+    if (activity !== undefined && revoked.revokedAt !== null) {
+      await captureRequestActivity(context, activity, {
+        eventType: 'api_token.revoked',
+        subjectId: revoked.id,
+        occurredAt: revoked.revokedAt,
+        detail: { name: revoked.name },
       })
     }
     return context.json({ data: tokenData(revoked) }, 200, {
