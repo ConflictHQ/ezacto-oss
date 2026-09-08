@@ -635,7 +635,12 @@ for (const [runtime, factory] of factories) {
         await database.close()
         database = undefined
       }
-    })
+      // Same budget as the sibling below, and for the same reason: this builds
+      // a fresh database per case in a loop, and the default five seconds is
+      // not a statement about this test so much as about how long one D1
+      // migration run takes on an unloaded machine. It fails on a busy one,
+      // which is how it reached CI as a flake rather than a failure.
+    }, 60_000)
 
     it('[db] materializes a passed old deadline before changing policy without prior traffic', async () => {
       for (const [name, patch] of [
