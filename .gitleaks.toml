@@ -56,3 +56,23 @@ description = "Composed away in HEAD; this is the historical blob only"
 condition = "AND"
 commits = ["70547af8abd60d6a08b60ea6afc45ecd16c6a54e"]
 paths = ['''^packages/api/test/sso-domains\.test\.ts$''']
+
+# TOTP secrets are base32, 32 characters, and high-entropy by construction, so
+# generic-api-key cannot tell a standards-body test vector from a real one. The
+# two below are not secrets in any sense: they base32-decode to the ASCII
+# strings "12345678901234567890" -- the RFC 6238 test seed every TOTP
+# implementation is checked against -- and "abcdefghijklmnopqrst".
+#
+# Allowlisted by VALUE rather than by path, following the invoice-token entry
+# above. A path rule would excuse whatever those test files hold next, which is
+# how a secrets gate stops being one; these regexes cannot excuse anything but
+# these two exact strings, in any file, forever.
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "RFC 6238 TOTP test vectors — decode to 12345678901234567890 and abcdefghijklmnopqrst"
+condition = "OR"
+regexTarget = "line"
+regexes = [
+  '''GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ''',
+  '''MFRGGZDFMZTWQ2LKNNWG23TPOBYXE43U''',
+]
