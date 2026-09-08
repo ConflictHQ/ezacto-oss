@@ -21,7 +21,18 @@ if (fixtureEmail === undefined || fixturePassword === undefined) {
  * plausible fallback makes the assertion mean the same thing everywhere, so a
  * developer catches this before pushing rather than after.
  */
-const listScreens = ['/tasks', '/clients', '/projects', '/team', '/invoices']
+const listScreens = [
+  '/tasks',
+  '/clients',
+  '/projects',
+  '/team',
+  '/invoices',
+  // The retainers pane is hidden on /invoices, so scanning that page says
+  // nothing about it. Naming it here is also what would have caught the 500
+  // this screen shipped behind: the fixture workspace has no retainers, which
+  // is exactly the state the endpoint used to fail on.
+  '/invoices/retainers',
+]
 
 for (const path of listScreens) {
   test(`[e2e:phone-lists] ${path} fits a 390px viewport`, async ({ page }) => {

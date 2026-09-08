@@ -4332,3 +4332,94 @@ dialog textarea {
     transition: opacity 120ms ease;
   }
 }
+
+/*
+ * Retainers.
+ *
+ * The facts grids and the ledger table are the two things the screen is, and
+ * both have to survive a 390px viewport and a mono-colour print. The columns
+ * use `minmax(min(180px, 100%), 1fr)` rather than a bare 180px floor: a bare
+ * floor is a track that refuses to shrink, which is the same widen-the-page
+ * failure `min-width: auto` produces on a flex item and which
+ * expectNoPageOverflow catches. Nothing here carries meaning in colour alone —
+ * an overdrawn balance reads by its minus sign and by the note beneath the
+ * grid, both of which survive losing the ink.
+ */
+.retainer-toolbar,
+.retainer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.retainer-toolbar {
+  margin: 24px 0 12px;
+}
+.retainer-toolbar > *,
+.retainer-actions > *,
+.retainer-detail-heading > * {
+  min-width: 0;
+}
+.retainer-toolbar button {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+/* The same pressed affordance the Week/Day segmented control already ships:
+   orange-tint fill under an orange border, ink text on top of it. */
+.retainer-toolbar button[aria-pressed='true'] {
+  border-color: var(--ez-live);
+  background: var(--ez-orange-tint);
+}
+.retainer-detail-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.retainer-detail-back {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+.retainer-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  gap: 12px 24px;
+  margin: 24px 0 0;
+  padding: 24px 0;
+  border-top: 1px solid var(--ez-border);
+}
+.retainer-facts div {
+  display: grid;
+  gap: 4px;
+}
+.retainer-facts dt {
+  color: var(--ez-muted);
+  font-size: 12px;
+}
+.retainer-facts dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.retainer-policy dd {
+  font-variant-numeric: normal;
+}
+.retainer-notes {
+  margin: 0;
+  padding: 12px 16px 12px 32px;
+  background: var(--ez-surface);
+  color: var(--ez-ink);
+}
+.retainer-notes li + li {
+  margin-top: 8px;
+}
+.retainer-ledger {
+  margin-top: 24px;
+}
+.retainer-ledger .hint {
+  max-width: 64ch;
+}

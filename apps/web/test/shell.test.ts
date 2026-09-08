@@ -304,7 +304,12 @@ describe('S-1 through S-5 application shell', () => {
       tabs: invoiceTabs('invoice-retainers'),
     })
     expect(retainers).toContain('data-invoice-retainers-page>')
-    expect(retainers).toContain('Retainers are not built yet')
+    // The pane no longer admits it is empty: it is the list and the detail the
+    // controller fills in, and both are present in the served document.
+    expect(retainers).not.toContain('Retainers are not built yet')
+    expect(retainers).toContain('data-retainer-list-view')
+    expect(retainers).toContain('data-retainer-detail-view hidden')
+    expect(retainers).toContain('data-retainer-ledger')
 
     const configure = renderAppShell({
       environment: 'test',

@@ -9,6 +9,7 @@ import { renderExpenseWorkflowPages } from '../expenses/render.js'
 import { renderTaskAdminPage } from '../tasks/render.js'
 import { renderTeamPages } from '../team/render.js'
 import { renderExpenseCategoriesPage } from '../expense-categories/render.js'
+import { renderRetainerPage } from '../retainers/render.js'
 import { renderModuleSettingsPage } from '../module-settings/render.js'
 import {
   renderInvoiceAttachmentSection,
@@ -543,12 +544,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
     </header>
     ${renderEmptyState('Recurring invoices are not built yet', 'Schedules that raise an invoice on a cadence. /api/v1/recurring-invoices already serves them; this screen does not read it yet.')}
   </main>
-  <main class="app-content invoice-workspace" data-invoice-retainers-page${view === 'invoice-retainers' ? '' : ' hidden'}>
-    <header class="context-row">
-      <div><p class="eyebrow">Money</p><h1>Retainers</h1></div>
-    </header>
-    ${renderEmptyState('Retainers are not built yet', 'Prepaid balances with a ledger and drawdowns. /api/v1/retainers already serves them; this screen does not read it yet.')}
-  </main>
+  ${renderRetainerPage(view)}
   <main class="app-content invoice-workspace" data-invoice-configure-page${view === 'invoice-configure' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Money</p><h1>Configure</h1></div>

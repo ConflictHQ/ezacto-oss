@@ -36,6 +36,7 @@ import type { InvoicePaymentApi } from '../invoices/model.js'
 import type { TaskAdminApi } from '../tasks/model.js'
 import type { TeamDirectoryApi } from '../team/model.js'
 import type { CompanySettingsApi } from '../module-settings/model.js'
+import type { RetainerWorkspaceApi } from '../retainers/model.js'
 
 interface CursorPage<T> {
   readonly data: readonly T[]
@@ -59,6 +60,7 @@ export interface ShellApi
     Partial<ReportWorkspaceApi>,
     Partial<ExpenseWorkflowApi>,
     Partial<ExpenseCategoryDirectoryApi>,
+    Partial<RetainerWorkspaceApi>,
     Partial<InvoicePaymentApi>,
     Partial<TaskAdminApi>,
     Partial<TeamDirectoryApi>,
@@ -1023,6 +1025,38 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     client.listInvoices({
       query: {
         per_page: 50,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listRetainers: (cursor, signal) =>
+    client.listRetainers({
+      query: {
+        per_page: 50,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  getRetainerDetail: async (id, signal) =>
+    (await client.getRetainer({ id, ...withSignal(signal) })).data,
+  listRetainerLedger: async (id, signal) =>
+    (await client.listRetainerLedger({ id, ...withSignal(signal) })).data,
+  // Unfiltered, unlike `listClients`/`listProjects` above: a retainer survives
+  // the archiving of the client or project it names, and a row that fell back
+  // to "Client #14" because the filter dropped the client is a worse answer
+  // than a slightly longer list.
+  listRetainerClients: (cursor, signal) =>
+    client.listClients({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listRetainerProjects: (cursor, signal) =>
+    client.listProjects({
+      query: {
+        per_page: 200,
         ...(cursor === undefined ? {} : { cursor }),
       },
       ...withSignal(signal),
