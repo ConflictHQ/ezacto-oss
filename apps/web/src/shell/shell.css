@@ -3497,8 +3497,19 @@ button[data-auth-action]:disabled {
   color: var(--ez-muted);
   text-align: center;
 }
-html[data-time-view="day"] .week-grid-wrap {
+html[data-time-view="day"] .week-grid-wrap,
+html[data-time-view="calendar"] .week-grid-wrap,
+html[data-time-view="calendar"] .day-list {
   display: none;
+}
+/* The calendar is its own panel rather than a restyled grid: the two answer
+   different questions, and one stylesheet trying to be both is how a view ends
+   up half-right in each. */
+.calendar-week {
+  display: none;
+}
+html[data-time-view="calendar"] .calendar-week {
+  display: block;
 }
 html[data-time-view="day"] .day-list {
   display: block;
@@ -4672,4 +4683,56 @@ dialog textarea {
 }
 .retainer-ledger .hint {
   max-width: 64ch;
+}
+
+/* The calendar. Height is minutes: a two-hour block is twice a one-hour block
+   in either mode, and only where the column starts differs between them. */
+.calendar-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.calendar-table caption {
+  padding: 0 0 10px;
+  color: var(--ez-muted);
+  font-size: 13px;
+  text-align: left;
+}
+.calendar-table th,
+.calendar-table td {
+  padding: 6px;
+  border: 1px solid var(--ez-border);
+  vertical-align: top;
+  min-width: 0;
+}
+.calendar-column {
+  position: relative;
+  min-height: 120px;
+}
+.calendar-block {
+  position: absolute;
+  top: calc(var(--calendar-offset) * 0.5px);
+  left: 0;
+  right: 0;
+  /* A floor, so a six-minute entry is still a target you can hit rather than a
+     hairline nobody can click. */
+  min-height: 18px;
+  height: calc(var(--calendar-minutes) * 0.5px);
+  padding: 2px 4px;
+  overflow: hidden;
+  border-radius: var(--ez-radius);
+  background: var(--ez-status-bg);
+  color: var(--ez-status-fg);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.calendar-untimed,
+.calendar-total {
+  margin: 6px 0 0;
+  color: var(--ez-muted);
+  font-size: 12px;
+}
+.calendar-total {
+  font-weight: 600;
 }
