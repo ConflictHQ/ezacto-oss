@@ -45,12 +45,17 @@ describe('Deel API client', () => {
     ])
 
     expect(requests.map((request) => request.url)).toEqual([
-      'https://api.letsdeel.com/rest/v2/people?limit=2&offset=0',
-      'https://api.letsdeel.com/rest/v2/people?limit=2&offset=2',
+      'https://api.letsdeel.com/rest/people?limit=2&offset=0',
+      'https://api.letsdeel.com/rest/people?limit=2&offset=2',
     ])
     expect(requests[0]!.method).toBe('GET')
     expect(requests[0]!.headers.get('authorization')).toBe('Bearer deel-token-for-tests')
     expect(requests[0]!.headers.get('accept')).toBe('application/json')
+    // Every request, not just the first: a client that pins the version on page
+    // one and drops it on page two reads two different APIs in one traversal.
+    for (const request of requests) {
+      expect(request.headers.get('x-version')).toBe('2026-01-01')
+    }
   })
 
   it('[unit] posts one timesheet per submission and returns the id Deel assigned', async () => {
@@ -75,7 +80,13 @@ describe('Deel API client', () => {
     expect(requests).toHaveLength(1)
     const request = requests[0]!
     expect(request.method).toBe('POST')
-    expect(request.url).toBe('https://api.letsdeel.com/rest/v2/timesheets')
+    expect(request.url).toBe('https://api.letsdeel.com/rest/timesheets')
+    // Deel versions by date header, not by path. Sending none does not mean
+    // "no version" -- it means Deel picks, and what it picks can move, so the
+    // integration breaks on a day nobody deployed. Asserted on both verbs
+    // because a read that pins and a write that does not is the same bug half
+    // the time.
+    expect(request.headers.get('x-version')).toBe('2026-01-01')
     expect(request.headers.get('content-type')).toBe('application/json')
     await expect(request.json()).resolves.toEqual({
       data: {

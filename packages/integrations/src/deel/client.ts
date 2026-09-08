@@ -64,7 +64,23 @@ export class DeelResponseError extends Error {
   }
 }
 
-const defaultBaseUrl = 'https://api.letsdeel.com/rest/v2'
+// Verified against developer.deel.com/api/stable/api-versioning.md, not
+// inferred: the base carries no version segment. `/rest/v2` paths still resolve
+// -- Deel keeps them backward-compatible for older integrations -- which is
+// exactly why writing them here looked correct and was not.
+const defaultBaseUrl = 'https://api.letsdeel.com/rest'
+
+/**
+ * The API version this client was written against.
+ *
+ * Deel versions by date header rather than by path. Sending no header does not
+ * mean "no version": it means Deel chooses, and what it chooses can move. An
+ * integration that has not said which version it expects is one that breaks on
+ * a day nobody deployed anything, which is the worst kind of break to diagnose.
+ *
+ * Raising this is a deliberate act with a changelog to read first.
+ */
+const apiVersion = '2026-01-01'
 const defaultPageSize = 50
 const maximumPageSize = 100
 // A people listing that never returns a short page means the API changed shape
@@ -151,7 +167,11 @@ export class DeelClient implements DeelTimesheetSink {
       const body = await this.#send(
         new Request(url, {
           method: 'GET',
-          headers: { accept: 'application/json', authorization: `Bearer ${this.#token}` },
+          headers: {
+            accept: 'application/json',
+            authorization: `Bearer ${this.#token}`,
+            'x-version': apiVersion,
+          },
         }),
       )
       const rows = list(body.data, 'people data')
@@ -182,6 +202,7 @@ export class DeelClient implements DeelTimesheetSink {
           accept: 'application/json',
           authorization: `Bearer ${this.#token}`,
           'content-type': 'application/json',
+          'x-version': apiVersion,
         },
         body: JSON.stringify({
           data: {

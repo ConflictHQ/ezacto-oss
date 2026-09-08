@@ -1,5 +1,5 @@
 /**
- * Response bodies shaped like Deel's `/rest/v2` payloads, trimmed to the fields
+ * Response bodies shaped like Deel's `/rest` payloads, trimmed to the fields
  * the adapter reads. They are fixtures on purpose: nothing in this package is
  * allowed to reach the real API from a test.
  */
