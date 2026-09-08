@@ -271,8 +271,9 @@ generation engine refuses them. They are live billing, not history: 466138 and
 440932 have been issuing monthly, and 90 issued invoices in the loaded database
 point at the three stubs. Leaving them incomplete silently stops that.
 
-One transcription rule the schema does not hint at. Harvest's Halcyon Biolabs
-definition (100001) carries a credit line at quantity `-1.0` × `$6,250.00`.
+One transcription rule the schema does not hint at. A Harvest recurring
+definition may carry a credit line at a negative quantity — one in the CONFLICT
+account reads quantity `-1.0` × `$6,250.00`.
 Transcribed faithfully the apply aborts:
 
 ```text
