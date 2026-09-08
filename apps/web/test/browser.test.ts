@@ -747,6 +747,33 @@ describe('week-grid browser behavior', () => {
     )
   })
 
+  it('[browser] Shift+Enter logs time against text that names a screen', async () => {
+    // Enter navigates and Shift+Enter logs time. The case that decides the
+    // design is text that is BOTH: "invoices" is a destination, so plain Enter
+    // must go there, and Shift+Enter must not -- otherwise the modifier means
+    // "sometimes" and the control cannot be used blind.
+    renderBrowserShell()
+    const api = browserApi(0)
+    await mountShell(api)
+
+    document.querySelector<HTMLButtonElement>('[data-command-trigger]')!.click()
+    const command = document.querySelector<HTMLInputElement>('[name="command"]')!
+    command.value = 'log 1h northpeak development'
+    command.dispatchEvent(new Event('input', { bubbles: true }))
+    command.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Enter',
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    )
+
+    const entryDialog = document.querySelector<HTMLDialogElement>('[data-entry-dialog]')!
+    await vi.waitFor(() => expect(entryDialog.open).toBe(true))
+    expect(entryDialog.dataset.entryContext).toBe('quick-add')
+  })
+
   it('[e2e:track-week] applies exact note policy to quick-add and timer notes', async () => {
     renderBrowserShell()
     const api = browserApi(5)

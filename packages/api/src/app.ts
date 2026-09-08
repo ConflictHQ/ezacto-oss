@@ -66,7 +66,11 @@ export const createApiApp = <Bindings extends object = object>(
     installTwoFactorRoutes(api, options.authentication.twoFactor)
   }
   if (options.authentication?.tokens !== undefined) {
-    installApiTokenRoutes(api, options.authentication.tokens)
+    installApiTokenRoutes(
+      api,
+      options.authentication.tokens,
+      options.authentication.activity,
+    )
   }
   options.installApi?.(api)
   app.route('/api/v1', api)
