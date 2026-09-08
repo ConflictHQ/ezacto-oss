@@ -17,7 +17,6 @@ import {
   type TwoFactorStore,
 } from '../src/two-factor.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
-import { twoFactorMigration } from '../src/migrations/0040_two_factor.js'
 
 const created = '2026-09-08T10:00:00.000Z'
 const later = '2026-09-08T10:05:00.000Z'
@@ -56,10 +55,9 @@ const seedUsers = `INSERT INTO users (
 
 const containerHarness = async (): Promise<Harness> => {
   const database = new BetterSqlite3(':memory:')
+  // 0040 is in the ledger, so migrateContainer creates these tables. Applying
+  // the statements again by hand is a duplicate CREATE.
   migrateContainer(database)
-  // 0040 is not in the runner's ledger yet — registering it is a change to
-  // migrate.ts, which this lane does not own — so the test applies it directly.
-  for (const statement of twoFactorMigration) database.prepare(statement).run()
   database.prepare(seedUsers).run(created, created, created, created)
   return {
     store: createContainerTwoFactorStore(database),
@@ -82,7 +80,6 @@ const d1Harness = async (): Promise<Harness> => {
   })
   const database = await miniflare.getD1Database('DB')
   await migrateD1(database)
-  for (const statement of twoFactorMigration) await database.prepare(statement).run()
   await database.prepare(seedUsers).bind(created, created, created, created).run()
   return {
     store: createD1TwoFactorStore(database),
@@ -237,7 +234,6 @@ describe('two-factor schema', () => {
   it('[architecture] refuses to un-spend or rewrite a recovery code', async () => {
     const database = new BetterSqlite3(':memory:')
     migrateContainer(database)
-    for (const statement of twoFactorMigration) database.prepare(statement).run()
     database.prepare(seedUsers).run(created, created, created, created)
     const store = createContainerTwoFactorStore(database)
     await store.beginEnrolment({ userId: 1, secret, codes }, created)
@@ -260,7 +256,6 @@ describe('two-factor schema', () => {
   it('[architecture] refuses to rotate or unconfirm a proved enrolment', async () => {
     const database = new BetterSqlite3(':memory:')
     migrateContainer(database)
-    for (const statement of twoFactorMigration) database.prepare(statement).run()
     database.prepare(seedUsers).run(created, created, created, created)
     const store = createContainerTwoFactorStore(database)
     await store.beginEnrolment({ userId: 1, secret, codes }, created)
