@@ -1312,9 +1312,15 @@
  * the one on a Mac was not. The rule was always wrong; the metrics hid it.
  */
 .client-list-toolbar > *,
+.client-list-toolbar fieldset > *,
 .project-list-toolbar > *,
+.project-list-toolbar fieldset > *,
 .team-list-toolbar > *,
-.invoice-list-toolbar > * {
+.team-list-toolbar fieldset > *,
+.invoice-list-toolbar > *,
+.invoice-list-toolbar fieldset > *,
+.task-admin-toolbar > *,
+.task-admin-toolbar fieldset > * {
   min-width: 0;
 }
 .client-list-toolbar button,
