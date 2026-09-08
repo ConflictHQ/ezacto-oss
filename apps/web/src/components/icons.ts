@@ -168,7 +168,11 @@ export const icon = (name: IconName, options: IconOptions = {}): SVGSVGElement =
   for (const shape of iconGeometry[name]) {
     const child = document.createElementNS(svgNamespace, shape.element)
     for (const [key, value] of Object.entries(shape.attributes)) child.setAttribute(key, value)
-    element.append(child)
+    // appendChild, not append: the worker and container tsconfigs pull in
+    // workers-types, where a global `append` resolves to an overload taking
+    // string | Response | ReadableStream. apps/web's own tsconfig sees the DOM
+    // lib and typechecks clean either way, which is how this reached main.
+    element.appendChild(child)
   }
   return element
 }
