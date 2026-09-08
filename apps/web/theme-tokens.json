@@ -21,7 +21,9 @@
       "red",
       "amber",
       "amber_bg",
-      "live_text"
+      "live_text",
+      "surface_2",
+      "row_hover"
     ],
     "fonts": [
       "display",
@@ -55,6 +57,8 @@
       "amber": "#F1B34A",
       "amber_bg": "#FEF6E4",
       "live_text": "#BA470A",
+      "surface_2": "#EBEDEF",
+      "row_hover": "#E1ECFB",
       "display": "IBM Plex Sans",
       "body": "IBM Plex Sans",
       "mono": "IBM Plex Mono",

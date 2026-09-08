@@ -20,6 +20,8 @@ export const themeSlotNames = [
   'amber',
   'amber_bg',
   'live_text',
+  'surface_2',
+  'row_hover',
 ] as const
 
 export const themeFontNames = ['display', 'body', 'mono'] as const
