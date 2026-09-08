@@ -43,6 +43,7 @@ import { clientBudgetsMigration } from './migrations/0036_client_budgets.js'
 import { recurringGenerateCommandMigration } from './migrations/0037_recurring_generate_command.js'
 import { timesheetBulkApprovalMigration } from './migrations/0038_timesheet_bulk_approval.js'
 import { ssoProvisioningDomainsMigration } from './migrations/0039_sso_provisioning_domains.js'
+import { twoFactorMigration } from './migrations/0040_two_factor.js'
 import { recurringLineThroughMigration } from './migrations/0041_recurring_line_through.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
@@ -1430,6 +1431,7 @@ const migrations = [
   { id: '0037_recurring_generate_command', statements: recurringGenerateCommandMigration },
   { id: '0038_timesheet_bulk_approval', statements: timesheetBulkApprovalMigration },
   { id: '0039_sso_provisioning_domains', statements: ssoProvisioningDomainsMigration },
+  { id: '0040_two_factor', statements: twoFactorMigration },
   { id: '0041_recurring_line_through', statements: recurringLineThroughMigration },
 ] as const
 
