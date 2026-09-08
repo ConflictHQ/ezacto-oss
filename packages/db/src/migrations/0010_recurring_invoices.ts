@@ -21,7 +21,42 @@ const canonicalTimestamp = (column: string) => `unixepoch(${column}) IS NOT NULL
         OR ${column} GLOB '????-??-??T??:??:??.[0-9][0-9][0-9]Z'
       )`
 
-const fixedLinesValid = `json_type(NEW.amount_config, '$.schema_version') = 'integer'
+/**
+ * The fixed_lines predicate, parameterised by the optional per-line keys a
+ * later migration may add.
+ *
+ * Exported as a builder rather than a string because 0040 first transcribed
+ * this by hand and got three separate things wrong: `trim` lost its whitespace
+ * argument, so a kind of tabs and newlines read as non-blank; the import
+ * predicate's `time` and `expenses` became booleans instead of objects; and the
+ * distinct-project_ids check disappeared. None of those were caught by types,
+ * and two of them loosened validation rather than tightening it, which is the
+ * direction that does not announce itself.
+ */
+export const fixedLinesValidWith = ({
+  optionalLineKeys = [],
+  extraLineRejection = '',
+}: {
+  optionalLineKeys?: readonly string[]
+  /** An additional clause OR-ed into the per-line rejection test. */
+  extraLineRejection?: string
+} = {}) => {
+  const lineKeys = [
+    'kind',
+    'description',
+    'quantity',
+    'unit_price_cents',
+    'taxed',
+    'taxed2',
+    'project_id',
+    ...optionalLineKeys,
+  ]
+  const required = 7
+  const count =
+    optionalLineKeys.length === 0
+      ? `<> ${required}`
+      : `NOT BETWEEN ${required} AND ${lineKeys.length}`
+  return `json_type(NEW.amount_config, '$.schema_version') = 'integer'
       AND json_extract(NEW.amount_config, '$.schema_version') = 1
       AND json_type(NEW.amount_config, '$.type') = 'text'
       AND json_extract(NEW.amount_config, '$.type') = 'fixed_lines'
@@ -37,14 +72,12 @@ const fixedLinesValid = `json_type(NEW.amount_config, '$.schema_version') = 'int
       AND NOT EXISTS (
         SELECT 1 FROM json_each(NEW.amount_config, '$.line_items') line
         WHERE json_type(line.value) IS NOT 'object'
-          OR (SELECT count(*) FROM json_each(line.value)) <> 7
+          OR (SELECT count(*) FROM json_each(line.value)) ${count}
           OR (SELECT count(*) FROM json_each(line.value)) <>
             (SELECT count(DISTINCT key) FROM json_each(line.value))
           OR EXISTS (
             SELECT 1 FROM json_each(line.value)
-            WHERE key NOT IN (
-              'kind','description','quantity','unit_price_cents','taxed','taxed2','project_id'
-            )
+            WHERE key NOT IN (${lineKeys.map((key) => `'${key}'`).join(',')})
           )
           OR json_type(line.value, '$.kind') IS NOT 'text'
           OR NOT (${nonBlankText("json_extract(line.value, '$.kind')")})
@@ -77,9 +110,21 @@ const fixedLinesValid = `json_type(NEW.amount_config, '$.schema_version') = 'int
                 BETWEEN 1 AND ${safeIntegerLimit}
             )
           )
+          ${extraLineRejection}
       )`
+}
 
-const importConfigValid = `json_type(NEW.amount_config, '$.schema_version') = 'integer'
+const fixedLinesValid = fixedLinesValidWith()
+
+/**
+ * Exported so a later migration that replaces these triggers reuses this
+ * predicate rather than transcribing it. 0040 first hand-copied it and got it
+ * wrong -- `time` and `expenses` became booleans instead of objects carrying a
+ * summary_type, and the distinct-project_ids check was dropped -- which would
+ * have loosened validation on every import config without a single test
+ * noticing, because the tests that exercise it use valid configs.
+ */
+export const importConfigValid = `json_type(NEW.amount_config, '$.schema_version') = 'integer'
       AND json_extract(NEW.amount_config, '$.schema_version') = 1
       AND json_type(NEW.amount_config, '$.type') = 'text'
       AND json_extract(NEW.amount_config, '$.type') = 'line_items_import'

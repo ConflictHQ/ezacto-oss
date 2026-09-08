@@ -133,6 +133,18 @@ const fixedAmountConfig = {
   ],
 }
 
+/** A line that stops, alongside one that does not. */
+const decayingLine = (through: string | null) => ({
+  kind: 'Service' as const,
+  description: 'Credit 1 of 4',
+  quantity: 1,
+  unit_price_cents: -62_500,
+  taxed: false,
+  taxed2: false,
+  project_id: null,
+  through,
+})
+
 const createInput = (
   overrides: Partial<CreateRecurringInvoiceDefinitionInput> = {},
 ): CreateRecurringInvoiceDefinitionInput => ({
@@ -189,6 +201,74 @@ for (const [runtime, factory] of factories) {
     let database: TestDatabase | undefined
 
     afterEach(async () => database?.close())
+
+    it('[unit] drops a line once the issue date passes its through date', async () => {
+      // The case this exists for: an imported definition carrying a credit that
+      // decays. Harvest tracked "CREDIT 1 of 4" in the description, where no
+      // software could act on it, so the credit either ran forever or somebody
+      // remembered to delete it.
+      database = await factory()
+      await seedDatabase(database)
+      const definition = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({
+          nextIssueOn: '2026-08-31',
+          dayOfMonth: 31,
+          amountConfig: {
+            ...fixedAmountConfig,
+            line_items: [fixedAmountConfig.line_items[0]!, decayingLine('2026-08-31')],
+          },
+        }),
+      )
+
+      // On the through date itself the line still appears -- `through` is the
+      // last date it is on, not the first it is off.
+      const onTheDay = await createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-08-31T10:00:00.000Z',
+      }).generate(definition.id, '2026-08-31', principal)
+      const included = await database.rows<{ amount_cents: number }>(
+        `SELECT amount_cents FROM invoice_line_items WHERE invoice_id = ? ORDER BY position`,
+        onTheDay.invoiceId,
+      )
+      expect(included.map((line) => line.amount_cents)).toEqual([125_000, -62_500])
+
+      // The month after, only the line that never stops.
+      const after = await createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-09-30T10:00:00.000Z',
+      }).generate(definition.id, '2026-09-30', principal)
+      const remaining = await database.rows<{ amount_cents: number; position: number }>(
+        `SELECT amount_cents, position FROM invoice_line_items WHERE invoice_id = ? ORDER BY position`,
+        after.invoiceId,
+      )
+      expect(remaining.map((line) => line.amount_cents)).toEqual([125_000])
+      // And it is line 0, not line 0 with a hole where the credit was.
+      expect(remaining.map((line) => line.position)).toEqual([0])
+    })
+
+    it('[unit] refuses to issue an invoice whose every line has expired', async () => {
+      // An empty invoice reaches the client as a demand for zero, and silently
+      // skipping leaves a definition that looks live and never produces. Both
+      // are worse than saying so.
+      database = await factory()
+      await seedDatabase(database)
+      const definition = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({
+          nextIssueOn: '2026-08-31',
+          dayOfMonth: 31,
+          amountConfig: {
+            ...fixedAmountConfig,
+            line_items: [decayingLine('2026-07-31')],
+          },
+        }),
+      )
+      const engine = createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-08-31T10:00:00.000Z',
+      })
+      await expect(engine.generate(definition.id, '2026-08-31', principal)).rejects.toThrow(
+        /every line on this definition has passed its through date/,
+      )
+    })
 
     it('[unit] generates a fixed-lines invoice from a due definition', async () => {
       database = await factory()
