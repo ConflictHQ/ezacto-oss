@@ -78,6 +78,40 @@ const harness = (
 }
 
 describe('outbox observability API', () => {
+  it('[api] passes every filter through to the repository', async () => {
+    // The route holds no filtering logic of its own on purpose: the repository
+    // validates each bound and rejects a date the calendar does not have, so a
+    // bad request fails loudly here rather than returning an empty page that
+    // reads as "nothing happened".
+    const { app, monitor } = harness('accounting')
+    const response = await app.request(
+      '/api/v1/activity-log?per_page=10&from=2026-09-01&to=2026-09-08' +
+        '&event_type=auth.signed_in&actor_id=4',
+    )
+    expect(response.status).toBe(200)
+    expect(monitor.listActivity).toHaveBeenCalledWith({
+      limit: 10,
+      from: '2026-09-01',
+      to: '2026-09-08',
+      eventType: 'auth.signed_in',
+      actorId: 4,
+    })
+  })
+
+  it('[api] omits a filter that was not asked for rather than sending undefined', async () => {
+    // `{ from: undefined }` and no `from` are the same to a caller and not to a
+    // repository that checks `!== undefined` before validating. Sending the key
+    // would make every unfiltered request carry four invisible ones.
+    const { app, monitor } = harness('accounting')
+    await app.request('/api/v1/activity-log?per_page=5')
+    // Asserted on the keys, not with toHaveBeenCalledWith: that matcher treats
+    // an explicit `undefined` as equal to a missing key, so it cannot tell the
+    // two apart -- which is the whole distinction being made here.
+    const [call] = (monitor.listActivity as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls
+    expect(Object.keys(call![0] as object)).toEqual(['limit'])
+  })
+
   it('[api] exposes the applied activity stream to a money-report viewer', async () => {
     const { app, monitor } = harness('accounting')
     const response = await app.request('/api/v1/activity-log?per_page=25')
