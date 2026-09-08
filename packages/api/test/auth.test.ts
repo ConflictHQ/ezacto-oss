@@ -355,11 +355,10 @@ describe('API token lifecycle routes', () => {
       detail: { name: 'Reports', scopes: ['reports:read'] },
     })
 
-    const id = (
-      (await app
-        .request('/api/v1/api-tokens', { headers: { cookie: 'session=user' } })
-        .then((response) => response.json())) as { data: { id: number }[] }
-    ).data[0]!.id
+    const listing = await app.request('/api/v1/api-tokens', {
+      headers: { cookie: 'session=user' },
+    })
+    const id = ((await listing.json()) as { data: { id: number }[] }).data[0]!.id
     const revoked = await app.request(`/api/v1/api-tokens/${id}`, {
       method: 'DELETE',
       headers: { cookie: 'session=user', origin: 'http://localhost' },
@@ -399,11 +398,10 @@ describe('API token lifecycle routes', () => {
       },
       body: JSON.stringify({ name: 'Reports', scopes: ['reports:read'] }),
     })
-    const id = (
-      (await app
-        .request('/api/v1/api-tokens', { headers: { cookie: 'session=user' } })
-        .then((response) => response.json())) as { data: { id: number }[] }
-    ).data[0]!.id
+    const listing = await app.request('/api/v1/api-tokens', {
+      headers: { cookie: 'session=user' },
+    })
+    const id = ((await listing.json()) as { data: { id: number }[] }).data[0]!.id
     const revoked = await app.request(`/api/v1/api-tokens/${id}`, {
       method: 'DELETE',
       headers: { cookie: 'session=user', origin: 'http://localhost' },
