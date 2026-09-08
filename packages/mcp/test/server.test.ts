@@ -111,6 +111,8 @@ let lastUninvoicedFilter:
   | { from: string; to: string; clientId?: number; projectId?: number }
   | undefined
 
+let lastProjectBudgetRange: { from: string; to: string } | undefined
+
 const reportReader: ReportReader = {
   uninvoiced: async (filter) => {
     lastUninvoicedFilter = filter
@@ -189,7 +191,22 @@ const reportReader: ReportReader = {
       },
     ],
   }),
-  projectBudgetSummaries: async () => [],
+  projectBudgetSummaries: async (range) => {
+    lastProjectBudgetRange = range
+    return [
+      {
+        projectId: 20,
+        currency: 'USD',
+        budgetBy: 'project_cost',
+        unit: 'cents',
+        budgetAmount: 50_000,
+        spentAmount: 7_500,
+        remainingAmount: 42_500,
+        costCents: 7_500,
+        unpricedEntryCount: 0,
+      },
+    ]
+  },
   projectBudget: async (projectId, range) => ({
     projectId,
     budgetBy: 'project_cost',
@@ -390,15 +407,17 @@ describe('ezacto read-only MCP server', () => {
     await harness?.close()
     harness = undefined
     lastUninvoicedFilter = undefined
+    lastProjectBudgetRange = undefined
   })
 
-  it('[mcp] advertises only the five bounded read tools', async () => {
+  it('[mcp] advertises only the six bounded read tools', async () => {
     harness = await protocolHarness(tokens.administrator)
     const tools = await harness.client.listTools()
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
       'get_client_rollup',
       'get_project_budget',
       'get_uninvoiced',
+      'list_project_budgets',
       'list_projects',
       'list_time_entries',
     ])
@@ -506,6 +525,72 @@ describe('ezacto read-only MCP server', () => {
         ['budget_cents', 'spent_cents', 'remaining_cents'].filter((field) =>
           Object.hasOwn(grain, field),
         ),
+      ).toEqual(expectedFields)
+      await harness.close()
+      harness = undefined
+    }
+  })
+
+  it('[mcp] lists portfolio project budgets over the full range by default', async () => {
+    harness = await protocolHarness(tokens.administrator)
+    const result = await harness.client.callTool({
+      name: 'list_project_budgets',
+      arguments: {},
+    })
+    expect(result.isError, JSON.stringify(result)).not.toBe(true)
+    expect(lastProjectBudgetRange).toEqual({
+      from: DEFAULT_REPORT_FROM,
+      to: DEFAULT_REPORT_TO,
+    })
+    expect(result.structuredContent).toEqual(
+      await directApi(
+        tokens.administrator,
+        `/reports/project-budgets?from=${DEFAULT_REPORT_FROM}&to=${DEFAULT_REPORT_TO}`,
+      ),
+    )
+    expect(
+      (result.structuredContent as { data: Array<Record<string, unknown>> })
+        .data[0],
+    ).toMatchObject({
+      project_id: 20,
+      budget_cents: 50_000,
+      spent_cents: 7_500,
+      remaining_cents: 42_500,
+      cost_cents: 7_500,
+    })
+  })
+
+  it('[security] withholds cost-derived budget money from non-administrators', async () => {
+    for (const [token, expectedFields] of [
+      [tokens.member, []],
+      [tokens.accounting, ['budget_cents']],
+      [
+        tokens.administrator,
+        ['budget_cents', 'spent_cents', 'remaining_cents', 'cost_cents'],
+      ],
+    ] as const) {
+      harness = await protocolHarness(token)
+      const result = await harness.client.callTool({
+        name: 'list_project_budgets',
+        arguments: { from: '2026-08-01', to: '2026-08-31' },
+      })
+      expect(result.isError, token).not.toBe(true)
+      expect(result.structuredContent).toEqual(
+        await directApi(
+          token,
+          '/reports/project-budgets?from=2026-08-01&to=2026-08-31',
+        ),
+      )
+      const summary = (
+        result.structuredContent as { data: Array<Record<string, unknown>> }
+      ).data[0]!
+      expect(
+        [
+          'budget_cents',
+          'spent_cents',
+          'remaining_cents',
+          'cost_cents',
+        ].filter((field) => Object.hasOwn(summary, field)),
       ).toEqual(expectedFields)
       await harness.close()
       harness = undefined
