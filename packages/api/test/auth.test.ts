@@ -557,6 +557,34 @@ const asSession = (method: string, body?: unknown) => ({
 })
 
 describe('two-factor routes', () => {
+  it('[api] serves the routes off the authentication option, and not without it', async () => {
+    // The routes existed and nothing installed them, which is how this branch
+    // arrived: a feature that is complete, tested in isolation, and unreachable.
+    // So the wiring gets its own test rather than being implied by the tests
+    // that mount the routes by hand.
+    const wired = createApiApp({
+      authentication: {
+        tokens: tokenService(),
+        sessions: sessionResolver,
+        twoFactor: twoFactorService(),
+      },
+    })
+    const served = await wired.request('/api/v1/two-factor', {
+      headers: { cookie: 'session=user' },
+    })
+    expect(served.status).toBe(200)
+
+    // And an install that has not turned it on is a working install, not a
+    // broken one: the routes are simply absent.
+    const bare = createApiApp({
+      authentication: { tokens: tokenService(), sessions: sessionResolver },
+    })
+    const absent = await bare.request('/api/v1/two-factor', {
+      headers: { cookie: 'session=user' },
+    })
+    expect(absent.status).toBe(404)
+  })
+
   it('[api] enrols, stays pending, and only a code turns it on', async () => {
     const app = createTwoFactorApp()
     const before = await app.request('/api/v1/two-factor', {

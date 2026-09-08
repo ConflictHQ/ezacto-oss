@@ -1,5 +1,9 @@
 import { Hono } from 'hono'
-import { apiAuthenticationMiddleware, installApiTokenRoutes } from './auth.js'
+import {
+  apiAuthenticationMiddleware,
+  installApiTokenRoutes,
+  installTwoFactorRoutes,
+} from './auth.js'
 import type { ApiContext, CreateApiAppOptions } from './context.js'
 import { errorResponse, notFoundResponse } from './errors.js'
 
@@ -58,6 +62,9 @@ export const createApiApp = <Bindings extends object = object>(
       { 'cache-control': 'no-store' },
     )
   })
+  if (options.authentication?.twoFactor !== undefined) {
+    installTwoFactorRoutes(api, options.authentication.twoFactor)
+  }
   if (options.authentication?.tokens !== undefined) {
     installApiTokenRoutes(api, options.authentication.tokens)
   }

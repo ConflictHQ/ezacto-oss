@@ -71,6 +71,12 @@ export interface ApiSessionResolver {
 export interface ApiAuthentication {
   tokens?: ApiTokenService
   sessions?: ApiSessionResolver
+  /**
+   * Enrolment and recovery for a second factor. Optional, and its absence is a
+   * working install rather than a degraded one: an instance that has not turned
+   * two-factor on simply does not serve these routes.
+   */
+  twoFactor?: TwoFactorService
 }
 
 const unauthorized = <Bindings extends object>(
