@@ -297,9 +297,10 @@ interface CommonCommand {
 }
 
 interface MoneyResourceService {
+  /** Null for an empty collection -- see CursorSource, which cursorPage reads. */
   highWatermark(
     kind: "invoices" | "estimates" | "retainers" | "recurring-invoices",
-  ): Promise<number>;
+  ): Promise<number | null>;
   listInvoices(window: CursorWindow): Promise<InvoiceResource[]>;
   getInvoice(id: number): Promise<InvoiceResource | null>;
   getInvoiceDeliveryContext(id: number): Promise<InvoiceDeliveryContext | null>;

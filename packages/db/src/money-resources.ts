@@ -798,13 +798,21 @@ const hydrateRecurring = (row: RawRecurring): RecurringInvoiceResource => ({
 export class MoneyResourceRepository {
   constructor(private readonly database: MoneyResourceDatabase) {}
 
-  async highWatermark(kind: MoneyCollection): Promise<number> {
+  /**
+   * Null for an empty collection, which is what CursorSource asks for and what
+   * cursorPage short-circuits to an empty page on. Coalescing to 0 instead sent
+   * a zero into `assertSafeInteger`, which requires a POSITIVE id, so every one
+   * of these four endpoints answered 500 on an empty table rather than an empty
+   * list -- on a fresh install, and on a freshly imported database whose
+   * estimates table nobody has written to yet.
+   */
+  async highWatermark(kind: MoneyCollection): Promise<number | null> {
     const table = kind === 'recurring-invoices' ? 'recurring_invoices' : kind
-    const row = await first<{ highWaterId: number }>(this.database, {
-      text: `SELECT COALESCE(MAX(id), 0) AS "highWaterId" FROM ${table}`,
+    const row = await first<{ highWaterId: number | null }>(this.database, {
+      text: `SELECT MAX(id) AS "highWaterId" FROM ${table}`,
       params: [],
     })
-    return row?.highWaterId ?? 0
+    return row?.highWaterId ?? null
   }
 
   async listInvoices(window: MoneyWindow): Promise<InvoiceResource[]> {
