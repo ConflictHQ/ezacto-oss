@@ -40,3 +40,19 @@ condition = "AND"
 regexTarget = "line"
 regexes = ['''reference_token = 'EZ-123456789ABC' WHERE id = 1''']
 paths = ['''^packages/db/test/invoice-import-contract\.test\.ts$''']
+
+# A DNS challenge-token fixture was committed as a 43-character base64url
+# literal, which is indistinguishable from a real key and rightly tripped this
+# rule. HEAD no longer contains it -- the fixture is composed from its parts --
+# but the gate scans --full-history, and history is not rewritten here.
+#
+# Scoped to the one commit that carries it rather than to the file: a path
+# allowlist would excuse whatever that test file holds next, which is how a
+# secrets gate stops being one. This entry cannot cover a future leak, because
+# a future leak is a different commit.
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Composed away in HEAD; this is the historical blob only"
+condition = "AND"
+commits = ["70547af8abd60d6a08b60ea6afc45ecd16c6a54e"]
+paths = ['''^packages/api/test/sso-domains\.test\.ts$''']
