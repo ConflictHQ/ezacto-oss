@@ -41,6 +41,8 @@ export interface GeneralResourceFilters {
   billToClientId?: number;
   profile?: string;
   isContractor?: boolean;
+  /** Substring a searchable collection matches its name against, in SQL. */
+  search?: string;
 }
 
 export interface GeneralListWindow {

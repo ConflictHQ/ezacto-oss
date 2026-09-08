@@ -97,6 +97,9 @@ describe('D16 Precision preference policy', () => {
       { name: 'red/surface text', minimum: 4.5, passes: true },
       { name: 'data/ground row action', minimum: 4.5, passes: true },
       { name: 'ink/surface control label', minimum: 4.5, passes: true },
+      { name: 'ink/surface-2 text', minimum: 4.5, passes: true },
+      { name: 'ink/row-hover text', minimum: 4.5, passes: true },
+      { name: 'data/row-hover row action', minimum: 4.5, passes: true },
     ])
     expect(results.map((result) => result.ratio)).toEqual([
       expect.closeTo(18.11, 2),
@@ -110,6 +113,9 @@ describe('D16 Precision preference policy', () => {
       expect.closeTo(5.04, 2),
       expect.closeTo(5.74, 2),
       expect.closeTo(16.74, 2),
+      expect.closeTo(15.43, 2),
+      expect.closeTo(15.17, 2),
+      expect.closeTo(4.81, 2),
     ])
     expect(() => assertThemeContrast(themeManifest.precision)).not.toThrow()
   })

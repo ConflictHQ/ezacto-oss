@@ -20,6 +20,7 @@ export type EzactoReadClient = Pick<
   | 'getUninvoicedReport'
   | 'getClientRollupReport'
   | 'getProjectBudgetReport'
+  | 'listProjectBudgetSummaries'
 >
 
 class SafeToolError extends Error {}
@@ -141,6 +142,11 @@ const projectBudgetInput = z
     ...reportRange,
     project: selector.describe('Exact project name, code, or positive numeric ID.'),
   })
+  .strict()
+  .superRefine(validateRange)
+
+const projectBudgetListInput = z
+  .object(reportRange)
   .strict()
   .superRefine(validateRange)
 
@@ -387,6 +393,23 @@ export const installEzactoReadTools = (
           query: range(input),
         }),
       ),
+  )
+
+  server.registerTool(
+    'list_project_budgets',
+    {
+      title: 'List ezacto project budget progress',
+      description:
+        'List budget progress for every project the token user can see, one row per project. An omitted date range means all dates. Use this to find projects near or over budget without naming one.',
+      inputSchema: projectBudgetListInput,
+      annotations: readonlyAnnotations,
+    },
+    // The API already bounds this list to visible projects and drops each money
+    // field the token profile may not see, so the payload is returned untouched.
+    // Reassembling portfolio money here from other reads would be a way to read
+    // a cost the per-project report withholds.
+    (input) =>
+      run(() => client.listProjectBudgetSummaries({ query: range(input) })),
   )
 
   server.registerTool(

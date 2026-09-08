@@ -2221,7 +2221,7 @@ export class EzactoClient {
     });
   }
 
-  async listClients(args: { query?: { "cursor"?: string; "per_page"?: number; "is_active"?: boolean; "updated_since"?: string; "parent_client_id"?: number; "bill_to_client_id"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<GeneralResourcePage> {
+  async listClients(args: { query?: { "cursor"?: string; "per_page"?: number; "is_active"?: boolean; "updated_since"?: string; "parent_client_id"?: number; "bill_to_client_id"?: number; "q"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<GeneralResourcePage> {
     const headers = new Headers(args.headers);
 
     return this.request<GeneralResourcePage>("GET", "/api/v1/clients", {
@@ -2365,7 +2365,7 @@ export class EzactoClient {
     });
   }
 
-  async listProjects(args: { query?: { "cursor"?: string; "per_page"?: number; "client_id"?: number; "is_active"?: boolean; "updated_since"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<GeneralResourcePage> {
+  async listProjects(args: { query?: { "cursor"?: string; "per_page"?: number; "client_id"?: number; "is_active"?: boolean; "updated_since"?: string; "q"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<GeneralResourcePage> {
     const headers = new Headers(args.headers);
 
     return this.request<GeneralResourcePage>("GET", "/api/v1/projects", {
@@ -2413,7 +2413,7 @@ export class EzactoClient {
     });
   }
 
-  async listTasks(args: { query?: { "cursor"?: string; "per_page"?: number; "is_active"?: boolean; "updated_since"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<GeneralResourcePage> {
+  async listTasks(args: { query?: { "cursor"?: string; "per_page"?: number; "is_active"?: boolean; "updated_since"?: string; "q"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<GeneralResourcePage> {
     const headers = new Headers(args.headers);
 
     return this.request<GeneralResourcePage>("GET", "/api/v1/tasks", {

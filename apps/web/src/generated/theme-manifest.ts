@@ -22,7 +22,9 @@ export const generatedThemes = {
       "red": "#C92A2A",
       "amber": "#F1B34A",
       "amber_bg": "#FEF6E4",
-      "live_text": "#BA470A"
+      "live_text": "#BA470A",
+      "surface_2": "#EBEDEF",
+      "row_hover": "#E1ECFB"
     },
     fonts: {
       "display": "IBM Plex Sans",

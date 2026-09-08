@@ -50,6 +50,8 @@ describe('D16 theme token contract', () => {
         --ez-amber: #F1B34A;
         --ez-amber-bg: #FEF6E4;
         --ez-live-text: #BA470A;
+        --ez-surface-2: #EBEDEF;
+        --ez-row-hover: #E1ECFB;
         --ez-font-display: "IBM Plex Sans";
         --ez-font-body: "IBM Plex Sans";
         --ez-font-mono: "IBM Plex Mono";
@@ -63,6 +65,37 @@ describe('D16 theme token contract', () => {
     expect(Object.keys(themeManifest.precision.fonts)).toEqual([...themeFontNames])
     expect(themeSlotNames.map(cssCustomProperty)).toContain('--ez-action-fg')
     expect(slot('live')).toBe('var(--ez-live)')
+  })
+
+  it('[unit] carries the nested surface and the row-hover tint as contract slots', () => {
+    // Neither value can be re-derived from the rest of the palette by reading
+    // it, so both are pinned here against the decisions recorded on #292.
+    //
+    // `surface_2` is a panel inside a card -- a toolbar inside a workspace, a
+    // summary band inside a list. It is `surface`'s own step off `ground`
+    // taken a second time, the same neutral at the same distance, so nesting
+    // reads as one more rung of one ramp rather than as a second colour.
+    const channels = (from: string, to: string): number[] =>
+      [1, 3, 5].map(
+        (index) =>
+          Number.parseInt(from.slice(index, index + 2), 16) -
+          Number.parseInt(to.slice(index, index + 2), 16),
+      )
+    const { ground, surface, surface_2: nested, row_hover: rowHover } =
+      themeManifest.precision.colors
+    expect(channels(ground, surface)).toEqual([10, 9, 8])
+    expect(channels(ground, nested)).toEqual([20, 18, 16])
+
+    // `row_hover` is read from the legacy Harvest roster, where the hovered row
+    // samples uniformly at rgb(225, 236, 251) against #FFFFFF unhovered --
+    // hsl(215, 76%, 93%), a high-lightness tint of the billable blue. The
+    // screenshot is not in this repository, only the value.
+    expect(rowHover).toBe('#E1ECFB')
+
+    expect(themeSlotNames).toContain('surface_2')
+    expect(themeSlotNames).toContain('row_hover')
+    expect(cssCustomProperty('surface_2')).toBe('--ez-surface-2')
+    expect(cssCustomProperty('row_hover')).toBe('--ez-row-hover')
   })
 
   it('[unit] requests only the active theme font stylesheet', async () => {
