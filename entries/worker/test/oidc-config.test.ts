@@ -86,10 +86,60 @@ describe('Worker OIDC provider registry', () => {
       oidcProvider('google', environment({ ...credentials, ENVIRONMENT: 'dev' }))
         ?.redirectOrigin,
     ).toBe('https://ezacto.io')
+    // Prod no longer carries a literal, so it is the deploy-time value that
+    // answers -- and an attacker-supplied APP_BASE_URL still cannot move it.
     expect(
-      oidcProvider('google', environment({ ...credentials, ENVIRONMENT: 'prod' }))
-        ?.redirectOrigin,
-    ).toBe('https://app.example.com')
+      oidcProvider(
+        'google',
+        environment({
+          ...credentials,
+          ENVIRONMENT: 'prod',
+          OIDC_REDIRECT_ORIGIN: 'https://time.acme.test',
+        }),
+      )?.redirectOrigin,
+    ).toBe('https://time.acme.test')
+  })
+
+  it('[unit] refuses to serve OIDC in prod with no declared redirect origin', () => {
+    // The old code fell back to a constant. A fallback here is the bug: a prod
+    // install with this unset would otherwise send its authorization codes to
+    // whichever host the constant happened to name.
+    expect(() =>
+      oidcProvider(
+        'google',
+        environment({
+          OIDC_GOOGLE_CLIENT_ID: 'client-id',
+          OIDC_GOOGLE_CLIENT_SECRET: 'client-secret',
+          APP_BASE_URL: 'https://attacker.example',
+          ENVIRONMENT: 'prod',
+        }),
+      ),
+    ).toThrow(/OIDC_REDIRECT_ORIGIN is required in prod/)
+  })
+
+  it('[unit] refuses a redirect origin that is not one', () => {
+    // Userinfo is the trick worth naming: `https://good.example@evil.example`
+    // reads as the trusted host to a person and resolves to the attacker's to a
+    // browser. Normalising it would be worse than refusing it.
+    for (const value of [
+      'https://good.example@evil.example',
+      'http://time.acme.test',
+      'https://time.acme.test/callback',
+      'https://time.acme.test/?next=evil',
+      'not-a-url',
+    ]) {
+      expect(() =>
+        oidcProvider(
+          'google',
+          environment({
+            OIDC_GOOGLE_CLIENT_ID: 'client-id',
+            OIDC_GOOGLE_CLIENT_SECRET: 'client-secret',
+            ENVIRONMENT: 'prod',
+            OIDC_REDIRECT_ORIGIN: value,
+          }),
+        ),
+      ).toThrow(/OIDC_REDIRECT_ORIGIN/)
+    }
   })
 
   it('[unit] permits an explicit local/test origin without trusting the request host', () => {
@@ -158,9 +208,14 @@ describe('Worker GitHub provider registry', () => {
         ?.redirectOrigin,
     ).toBe('https://ezacto.io')
     expect(
-      githubProvider(environment({ ...credentials, ENVIRONMENT: 'prod' }))
-        ?.redirectOrigin,
-    ).toBe('https://app.example.com')
+      githubProvider(
+        environment({
+          ...credentials,
+          ENVIRONMENT: 'prod',
+          OIDC_REDIRECT_ORIGIN: 'https://time.acme.test',
+        }),
+      )?.redirectOrigin,
+    ).toBe('https://time.acme.test')
   })
 })
 

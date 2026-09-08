@@ -24,3 +24,9 @@ apps/web/src/generated/shell-assets.ts
 # so ignoring only "snapshot/" left the documented path tracked.
 harvest-snapshot/
 cutover.db
+
+# Agent worktrees. Isolated checkouts created for parallel work: full copies of
+# the repo, one `git add -A` away from being committed into it. Running vitest
+# from the repo root also globs them, which runs every suite once per worktree
+# against the same fixtures and fails them all on timeout.
+.claude/worktrees/

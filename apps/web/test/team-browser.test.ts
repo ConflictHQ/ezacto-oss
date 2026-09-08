@@ -224,6 +224,62 @@ describe('Team browser controller', () => {
     ).toBe('false')
   })
 
+  it('narrows the roster to one cohort, and the band counts follow', async () => {
+    // The old roster had an `Everyone` control beside its Employees (1) /
+    // Contractors (16) bands. Ours had the bands and no way to ask for one of
+    // them, so "how many contractors" was answerable only by counting rows.
+    writeDocument('team-list')
+    const listTeamPeople = vi.fn(async () =>
+      page([
+        summary(),
+        summary({ id: 2, first_name: 'Kai', last_name: 'Reyes', is_contractor: true }),
+        summary({ id: 3, first_name: 'Nell', last_name: 'Ward', is_contractor: true }),
+      ]),
+    )
+    const controller = createTeamDirectoryController({ listTeamPeople })
+
+    await controller.activate(identity(), new AbortController().signal, () => false)
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-team-list]')?.textContent).toContain('Kai Reyes'),
+    )
+    const list = (): string => document.querySelector('[data-team-list]')?.textContent ?? ''
+    expect(list()).toContain('Employees (1)')
+    expect(list()).toContain('Contractors (2)')
+
+    const scope = document.querySelector<HTMLSelectElement>('[data-team-scope]')!
+    scope.value = 'contractors'
+    scope.dispatchEvent(new Event('change'))
+
+    await vi.waitFor(() => expect(list()).not.toContain('Avery Owner'))
+    expect(list()).toContain('Kai Reyes')
+    expect(list()).toContain('Nell Ward')
+    // The band that is left counts what is on screen, and the band that is
+    // gone does not linger with a stale number beside it.
+    expect(list()).toContain('Contractors (2)')
+    expect(list()).not.toContain('Employees (1)')
+
+    scope.value = 'employees'
+    scope.dispatchEvent(new Event('change'))
+    await vi.waitFor(() => expect(list()).toContain('Avery Owner'))
+    expect(list()).not.toContain('Kai Reyes')
+    expect(list()).toContain('Employees (1)')
+
+    // The count is of what is on screen, not of what was loaded. Search inside
+    // a cohort is where the two diverge: three contractors are loaded, one
+    // matches, and the band that says (3) is describing a list nobody can see.
+    scope.value = 'contractors'
+    scope.dispatchEvent(new Event('change'))
+    const search = document.querySelector<HTMLInputElement>('[data-team-search]')!
+    search.value = 'Kai'
+    search.dispatchEvent(new Event('input'))
+    await vi.waitFor(() => expect(list()).not.toContain('Nell Ward'))
+    expect(list()).toContain('Contractors (1)')
+
+    // A view over rows already in hand -- no second request for a question the
+    // page can answer itself.
+    expect(listTeamPeople).toHaveBeenCalledTimes(1)
+  })
+
   it('splits billable from non-billable and draws the team one bar', async () => {
     // The band showed Billable and left Non-billable as arithmetic for the
     // reader, with the two inputs a column apart. And every person had a bar

@@ -240,8 +240,8 @@
  *
  * `.data-table tbody td` already sets overflow:hidden and text-overflow:ellipsis,
  * but this cell's overflowing box is a flex child two levels down, so the td
- * clipped it without ever drawing the ellipsis — "Rosalind Whitfield" came out as
- * "Rosalind Whitfiel", cut mid-glyph, with nothing to say it had been cut. A flex
+ * clipped it without ever drawing the ellipsis — "Avery Featherstone" came out as
+ * "Avery Featherston", cut mid-glyph, with nothing to say it had been cut. A flex
  * item also keeps min-width:auto, so the identity column refused to shrink and
  * pushed the clip further out at 100% zoom while looking fine at 90%.
  */

@@ -131,6 +131,7 @@ export const createTeamDirectoryController = (
   const list = required<HTMLElement>('[data-team-list]')
   const listRetry = required<HTMLButtonElement>('[data-team-list-retry]')
   const search = required<HTMLInputElement>('[data-team-search]')
+  const scopeSelect = required<HTMLSelectElement>('[data-team-scope]')
   const summary = required<HTMLElement>('[data-team-summary]')
   const weekLabel = required<HTMLElement>('[data-team-week-label]')
   const personStatus = required<HTMLElement>('[data-team-person-status]')
@@ -189,6 +190,14 @@ export const createTeamDirectoryController = (
   let within = localDate()
   let weekStartDay: 'saturday' | 'sunday' | 'monday' = 'monday'
   let filter: 'active' | 'archived' | 'all' = 'active'
+  /**
+   * Which cohort the roster is showing. The old roster's `Everyone` control:
+   * a view over the people already loaded, not a second request -- is_contractor
+   * comes down on the person and the week's totals are already in hand, so
+   * asking the server again would cost a round trip to answer a question the
+   * page can answer itself.
+   */
+  let scope: 'everyone' | 'employees' | 'contractors' = 'everyone'
   let listGeneration = 0
   let mutationPending = false
   // The roster's own in-flight status change. Separate from mutationPending,
@@ -302,6 +311,8 @@ export const createTeamDirectoryController = (
     costSection.hidden = true
     required<HTMLElement>('[data-team-rates-redacted]').hidden = true
     search.value = ''
+    scope = 'everyone'
+    scopeSelect.value = 'everyone'
     listRetry.hidden = true
     personRetry.hidden = true
     listStatus.textContent = 'Loading team…'
@@ -438,10 +449,13 @@ export const createTeamDirectoryController = (
   const renderPeople = (): void => {
     const wanted = search.value.trim().toLocaleLowerCase('en-US')
     const visible = people
-      .filter((value) =>
-        `${value.first_name} ${value.last_name} ${value.email ?? ''}`
-          .toLocaleLowerCase('en-US')
-          .includes(wanted),
+      .filter(
+        (value) =>
+          (scope === 'everyone' ||
+            (scope === 'contractors') === Boolean(value.is_contractor)) &&
+          `${value.first_name} ${value.last_name} ${value.email ?? ''}`
+            .toLocaleLowerCase('en-US')
+            .includes(wanted),
       )
       // Employees before contractors, so each band covers one run of rows.
       .sort(
@@ -1179,6 +1193,15 @@ export const createTeamDirectoryController = (
   }
 
   search.addEventListener('input', renderPeople)
+  scopeSelect.addEventListener('change', () => {
+    const next = scopeSelect.value
+    if (next !== 'everyone' && next !== 'employees' && next !== 'contractors') return
+    scope = next
+    // A view change, not a data change: the week's rows are already here, so
+    // this re-renders rather than re-reading. The band counts follow, because
+    // they are counted off the visible set.
+    renderPeople()
+  })
   for (const control of document.querySelectorAll<HTMLButtonElement>('[data-team-filter]')) {
     control.addEventListener('click', () => {
       const active = currentSession()
