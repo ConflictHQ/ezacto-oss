@@ -1300,6 +1300,23 @@
 .client-list-toolbar {
   margin: 24px 0 12px;
 }
+
+/*
+ * A flex item keeps `min-width: auto` by default, so it refuses to shrink below
+ * its own content. The search field these toolbars gained therefore widened the
+ * toolbar past the viewport instead of narrowing inside it, and the whole page
+ * scrolled sideways on a phone -- which is what expectNoPageOverflow is for.
+ *
+ * It only failed on Linux CI. The webfont request is blocked there as it is
+ * here, and the fallback face is wide enough to push the field past 390px where
+ * the one on a Mac was not. The rule was always wrong; the metrics hid it.
+ */
+.client-list-toolbar > *,
+.project-list-toolbar > *,
+.team-list-toolbar > *,
+.invoice-list-toolbar > * {
+  min-width: 0;
+}
 .client-list-toolbar button,
 .client-header-actions button,
 .client-contacts header button,
