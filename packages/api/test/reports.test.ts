@@ -22,6 +22,9 @@ interface Harness {
     managerGrants?: readonly string[],
     userId?: number,
   ): Promise<Response>;
+  /** The repository itself, for reports with no route yet. */
+  reports: ReturnType<typeof createReportRepository>;
+  run(sql: string, params: readonly unknown[]): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -204,6 +207,8 @@ const createHarness = async (kind: "SQLite" | "D1"): Promise<Harness> => {
           },
         }),
       ),
+    reports,
+    run,
     close,
   };
 };
@@ -217,6 +222,53 @@ for (const [runtime, factory] of factories) {
   describe(`report API (${runtime})`, () => {
     let harness: Harness | undefined;
     afterEach(async () => harness?.close());
+
+    it("[db] totals what each person cost, and refuses to total unrated hours", async () => {
+      harness = await factory();
+      const report = await harness.reports.contractorCost({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      });
+
+      // 3600s @ 4000 + 1800s @ 5000 + 900s @ 6000 + 3600s @ 3000
+      //   = 4000 + 2500 + 1500 + 3000 = 11000 cents
+      expect(report.rows).toEqual([
+        expect.objectContaining({
+          userId: 1,
+          roundedSeconds: 9900,
+          costCents: 11_000,
+          entriesWithoutRate: 0,
+        }),
+      ]);
+
+      // Cost rates carry no currency of their own, so the figure is the
+      // organization's currency -- never the project's billing currency, which
+      // would relabel the number without converting it.
+      expect(report.rows[0]!.currency).toBe("USD");
+    });
+
+    it("[db] answers null rather than a total that quietly omits unrated hours", async () => {
+      harness = await factory();
+      await harness.run(
+        `INSERT INTO time_entries
+          (id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+           spent_date, seconds, seconds_without_timer, rounded_seconds, billable, budgeted,
+           billable_rate_cents, cost_rate_cents, created_at, updated_at)
+         VALUES (199, 1, 1, 1, 21, 11, '2026-08-14', 3600, 3600, 3600, 1, 1, 10000, NULL, ?, ?)`,
+        [now, now],
+      );
+      const report = await harness.reports.contractorCost({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      });
+
+      // A total that silently drops the unrated hour looks payable and
+      // underpays, and nothing in the number says which hour it left out. The
+      // hours still total, because those are known.
+      expect(report.rows[0]!.costCents).toBeNull();
+      expect(report.rows[0]!.entriesWithoutRate).toBe(1);
+      expect(report.rows[0]!.roundedSeconds).toBe(13_500);
+    });
 
     it("[unit] keeps uninvoiced totals identical to the generation preview to the cent", async () => {
       harness = await factory();
