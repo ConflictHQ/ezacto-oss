@@ -25,7 +25,13 @@ const authentication: ApiAuthentication = {
 }
 
 const clock = '2026-09-05T12:00:00.000Z'
-const token = 'lXcS7Yb0Qm5wJ2rT8vN4kA1hF6dP9gZ3sE0uB7yC2iM'
+// A challenge token is a long base64url string, and a literal of that shape is
+// indistinguishable from a real key: this one tripped the E12 secrets gate and
+// put main red. Composed rather than pasted, so the fixture keeps the shape the
+// split-TXT assertions need without the gate having to allowlist a test file —
+// allowlisting per fixture is how a secrets gate ends up excusing the thing it
+// exists to catch.
+const token = ['chal', 'a'.repeat(19), 'b'.repeat(19)].join('-')
 
 const claimed: SsoProvisioningDomain = {
   id: 4,
