@@ -70,7 +70,12 @@ export interface ShellApi
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
   listProjects(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listClients?(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
-  listInvoices?(cursor?: string, signal?: AbortSignal): Promise<CursorPage<Invoice>>
+  /** The page size a caller may raise when it is walking, not browsing. */
+  listInvoices?(
+    cursor?: string,
+    signal?: AbortSignal,
+    perPage?: number,
+  ): Promise<CursorPage<Invoice>>
   listTasks(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listTimeEntryOptions(signal?: AbortSignal): Promise<readonly TimeEntryOption[]>
   getTimeEntrySettings(signal?: AbortSignal): Promise<TimeEntrySettings>
@@ -273,6 +278,13 @@ export interface PaletteDestination {
 const primaryNav = (href: string): string => `.primary-nav a[href="${href}"]`
 
 export const paletteDestinations: readonly PaletteDestination[] = [
+  {
+    label: 'Home',
+    href: '/dashboard',
+    group: 'Track',
+    keywords: 'dashboard overview where things stand',
+    gate: primaryNav('/dashboard'),
+  },
   {
     label: 'Time',
     href: '/',
@@ -1021,10 +1033,10 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
-  listInvoices: (cursor, signal) =>
+  listInvoices: (cursor, signal, perPage) =>
     client.listInvoices({
       query: {
-        per_page: 50,
+        per_page: perPage ?? 50,
         ...(cursor === undefined ? {} : { cursor }),
       },
       ...withSignal(signal),

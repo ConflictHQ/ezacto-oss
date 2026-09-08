@@ -514,6 +514,31 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
+      // The screen a person lands on when they want to know where things
+      // stand. It is above the timesheet rather than instead of it: / remains
+      // Time, and every figure here links into the section that owns it.
+      app.get('/dashboard', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
+            activeSection: 'Home',
+            view: 'dashboard',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
       app.get('/invoices/new', (context) =>
         context.html(
           renderAppShell({

@@ -35,6 +35,7 @@ describe('worker entry', () => {
     const branded: AppEnv = { ...env, BRAND_NAME: 'CONFLICT' }
     const paths = [
       '/',
+      '/dashboard',
       '/approvals',
       '/expenses',
       '/expense-categories',
@@ -59,6 +60,19 @@ describe('worker entry', () => {
       expect(res.status, path).toBe(200)
       expect(await res.text(), path).toContain('data-brand="CONFLICT"')
     }
+  })
+
+  it('[acceptance] serves the home screen above the timesheet rather than instead of it', async () => {
+    // Signing in still lands on the timesheet; /dashboard is the screen that
+    // answers where things stand, and Time keeps '/'.
+    const home = await (await app.request('/dashboard', {}, env)).text()
+    expect(home).toContain('data-app-view="dashboard"')
+    expect(home).toContain('data-dashboard-page')
+    expect(home).toContain('<a href="/dashboard" aria-current="page">Home</a>')
+
+    const time = await (await app.request('/', {}, env)).text()
+    expect(time).toContain('data-app-view="time"')
+    expect(time).toContain('<a href="/" aria-current="page">Time</a>')
   })
 
   it('[unit] keeps the URL settings shipped under', async () => {
@@ -292,7 +306,7 @@ describe('worker entry', () => {
     },
   )
 
-  it.each(['/', '/clients', '/clients/42', '/projects', '/projects/42', '/tasks', '/expenses', '/expenses/42', '/expense-categories', '/invoices', '/invoices/42', '/invoices/new', '/approvals', '/reports'])(
+  it.each(['/', '/dashboard', '/clients', '/clients/42', '/projects', '/projects/42', '/tasks', '/expenses', '/expenses/42', '/expense-categories', '/invoices', '/invoices/42', '/invoices/new', '/approvals', '/reports'])(
     '[security] renders %s as an inert shell under an overlay when a session cookie is present',
     async (path) => {
       const res = await app.request(

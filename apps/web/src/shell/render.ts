@@ -4,6 +4,7 @@ import { themeManifest } from '../theme.js'
 import { type DeploymentBrand, resolveDeploymentBrand } from '../brand.js'
 import { renderClientDirectoryPages } from '../clients/render.js'
 import { renderProjectDirectoryPages } from '../projects/render.js'
+import { renderDashboardPage } from '../dashboard/render.js'
 import { renderReportsPage } from '../reports/render.js'
 import { renderExpenseWorkflowPages } from '../expenses/render.js'
 import { renderTaskAdminPage } from '../tasks/render.js'
@@ -39,6 +40,7 @@ export interface AppShellOptions {
     // on; naming a section outside the primary nav marks nothing, which is the
     // truth.
     | 'Settings'
+    | 'Home'
     | 'Time'
     | 'Approvals'
     | 'Expenses'
@@ -49,6 +51,7 @@ export interface AppShellOptions {
     | 'Invoices'
     | 'Reports'
   readonly view?:
+    | 'dashboard'
     | 'time'
     | 'timesheet-approvals'
     | 'invoice-list'
@@ -174,6 +177,7 @@ export const renderDocumentShell = (title: string, content: string, brand?: Part
 }
 
 const sections = [
+  'Home',
   'Time',
   'Approvals',
   'Expenses',
@@ -186,13 +190,15 @@ const sections = [
 ] as const
 
 const hrefFor = (section: (typeof sections)[number]): string =>
-  section === 'Time'
-    ? '/'
-    : section === 'Approvals'
-      ? '/approvals'
-      : section === 'Invoices'
-        ? '/invoices'
-        : `/${section.toLocaleLowerCase('en-US')}`
+  section === 'Home'
+    ? '/dashboard'
+    : section === 'Time'
+      ? '/'
+      : section === 'Approvals'
+        ? '/approvals'
+        : section === 'Invoices'
+          ? '/invoices'
+          : `/${section.toLocaleLowerCase('en-US')}`
 
 const providerSignIn = (providers: readonly SignInProvider[]): string => {
   const links: string[] = []
@@ -225,7 +231,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const navigation = sections
     .map(
       (section) =>
-        `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${section}</a>`,
+        `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === 'Invoices' ? ' data-money-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${section}</a>`,
     )
     .join('')
 
@@ -555,6 +561,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
   ${renderTeamPages(view)}
   ${renderProjectDirectoryPages(view)}
   ${renderTaskAdminPage(view)}
+  ${renderDashboardPage(view)}
   ${renderReportsPage(view)}
   ${renderExpenseWorkflowPages(view)}
   ${renderExpenseCategoriesPage(view)}

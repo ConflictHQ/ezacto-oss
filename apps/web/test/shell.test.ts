@@ -613,7 +613,10 @@ describe('S-1 through S-5 application shell', () => {
 
     expect(list).toContain('data-invoice-list-page')
     expect(list).toContain('data-invoice-list aria-label="Invoices"')
-    expect(list).toContain('href="/invoices" aria-current="page"')
+    // The Invoices item now carries the money gate the browser opens for a
+    // profile that may read invoices, so the marked-current assertion reads
+    // across it rather than around it.
+    expect(list).toContain('href="/invoices" data-money-nav hidden aria-current="page"')
     expect(detail).toContain('data-invoice-detail-page')
     expect(detail).toContain('data-invoice-document data-document-shell')
     expect(detail).toContain('data-ez-theme="precision"')

@@ -21,6 +21,12 @@ if (fixtureEmail === undefined || fixturePassword === undefined) {
  * plausible fallback makes the assertion mean the same thing everywhere, so a
  * developer catches this before pushing rather than after.
  */
+/**
+ * The home screen is not a list, but its card grid fails the same way a
+ * toolbar does -- a track with a fixed floor stops shrinking and widens the
+ * page -- and it is the screen a person lands on, so it is guarded here rather
+ * than in a file of its own.
+ */
 const listScreens = [
   '/tasks',
   '/clients',
@@ -32,6 +38,7 @@ const listScreens = [
   // this screen shipped behind: the fixture workspace has no retainers, which
   // is exactly the state the endpoint used to fail on.
   '/invoices/retainers',
+  '/dashboard',
 ]
 
 for (const path of listScreens) {

@@ -21,7 +21,9 @@ import {
 } from '../components/time-entry-editor.js'
 import { createClientDirectoryController } from '../clients/browser.js'
 import { createProjectDirectoryController } from '../projects/browser.js'
+import { createDashboardController } from '../dashboard/browser.js'
 import { createReportsController } from '../reports/browser.js'
+import { canReadFinancialReports } from '../reports/model.js'
 import { createExpenseWorkflowController } from '../expenses/browser.js'
 import { createTaskAdminController } from '../tasks/browser.js'
 import { createTeamDirectoryController } from '../team/browser.js'
@@ -926,6 +928,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const taskListPage = document.documentElement.dataset.appView === 'task-list'
   const teamListPage = document.documentElement.dataset.appView === 'team-list'
   const teamPersonPage = document.documentElement.dataset.appView === 'team-person'
+  const dashboardPage = document.documentElement.dataset.appView === 'dashboard'
   const reportsPage = document.documentElement.dataset.appView === 'reports'
   const expenseListPage = document.documentElement.dataset.appView === 'expense-list'
   const expenseDetailPage = document.documentElement.dataset.appView === 'expense-detail'
@@ -1035,6 +1038,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const projectDirectory = createProjectDirectoryController(api)
   const taskAdmin = createTaskAdminController(api)
   const teamDirectory = createTeamDirectoryController(api)
+  const dashboard = createDashboardController(api)
   const reports = createReportsController(api)
   const expenseWorkflow = createExpenseWorkflowController(api)
   const expenseCategories = createExpenseCategoryDirectoryController(api)
@@ -1433,6 +1437,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     // tab is the standing answer to "may this person open company settings",
     // and ⌘K asks it from wherever it is opened.
     revealCompanySettings(identity)
+    revealMoneySections(identity)
     signInResult.textContent = ''
     logoutResult.textContent = ''
     setApplicationAvailability(true)
@@ -1449,6 +1454,21 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const visible = identity.profile === 'administrator'
     for (const tab of document.querySelectorAll<HTMLElement>('[data-settings-company-tab]')) {
       tab.hidden = !visible
+    }
+  }
+
+  /**
+   * Invoices and the money on them belong to the three profiles the API grants
+   * invoices:read and reports:read -- the same three, and the same three the
+   * uninvoiced report's serializer will answer with amounts. A member reaching
+   * /invoices is answered 403, so the link is absent rather than present and
+   * broken, and the palette and the home screen read this element instead of
+   * keeping a second copy of the rule.
+   */
+  const revealMoneySections = (identity: Readonly<Whoami>): void => {
+    const visible = canReadFinancialReports(identity.profile)
+    for (const link of document.querySelectorAll<HTMLElement>('[data-money-nav]')) {
+      link.hidden = !visible
     }
   }
 
@@ -2335,6 +2355,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     } else if (teamListPage || teamPersonPage) {
       await Promise.all([
         teamDirectory.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (dashboardPage) {
+      await Promise.all([
+        dashboard.activate(
           identity,
           authenticated.signal,
           (error) => handleSessionFailure(error, authenticated),
