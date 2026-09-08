@@ -114,7 +114,45 @@ export interface ProjectReportViewer {
   profile: UserProfile
 }
 
+export interface ContractorCostRow {
+  userId: number
+  name: string
+  /**
+   * The person's primary address, offered as a *proposal* for matching them at
+   * a payout provider -- never as the join itself. #421 settles that: the real
+   * link is the provider's own identifier, stored when a person links their
+   * account, because matching on an address is a guess whose failure mode is
+   * paying the wrong person.
+   *
+   * Primary rather than a payroll-kind address because that column does not
+   * exist yet, and the import deliberately kept the source system's address
+   * primary for exactly this reason. When #280's `kind` lands this reads it
+   * instead, and the meaning stops being a coincidence of another flag.
+   */
+  payrollEmail: string | null
+  isContractor: boolean
+  /**
+   * The organization's currency, always. Cost rates carry no currency of their
+   * own -- there is no cost_currency column and the rate resolver never mentions
+   * one -- so a cost figure is an org-currency figure. Bucketing it under the
+   * project's billing currency would relabel a USD number as EUR without
+   * converting it, which is the one mistake a payroll export must not make.
+   */
+  currency: string
+  roundedSeconds: number
+  /** Null when any entry in the row has no cost rate -- see the note below. */
+  costCents: number | null
+  entriesWithoutRate: number
+}
+
+export interface ContractorCostReportRecord {
+  from: string
+  to: string
+  rows: ContractorCostRow[]
+}
+
 export interface ReportRepository {
+  contractorCost(range: Readonly<ReportDateRange>): Promise<ContractorCostReportRecord>
   uninvoiced(filter: Readonly<UninvoicedReportFilter>): Promise<UninvoicedReportRecord>
   clientRollup(
     clientId: number,
@@ -977,7 +1015,84 @@ const projectBudgetReport = async (
   }
 }
 
+interface ContractorCostQueryRow {
+  userId: number
+  name: string
+  payrollEmail: string | null
+  isContractor: number
+  roundedSeconds: number
+  costRateCents: number | null
+}
+
+/**
+ * What each person cost over a period, for the payroll hand-off.
+ *
+ * Grouped per person and currency rather than per person alone: an agency
+ * billing two clients in two currencies has two figures, and adding them would
+ * invent an exchange rate this system does not hold.
+ *
+ * The cost is null rather than partial when any entry in the group has no rate.
+ * A total that silently omits the unrated hours is the dangerous answer here --
+ * it looks payable and underpays, and nobody reading a number can see which
+ * hours it left out. `entriesWithoutRate` says how many, so the report can name
+ * the gap instead of averaging over it.
+ */
+const contractorCostReport = async (
+  database: Database,
+  range: Readonly<ReportDateRange>,
+): Promise<ContractorCostReportRecord> => {
+  const rows = await database.all<ContractorCostQueryRow>(sql`
+    SELECT person.id AS "userId",
+      person.first_name || ' ' || person.last_name AS "name",
+      (SELECT address FROM user_emails
+        WHERE user_id = person.id AND is_primary = 1 AND invalidated_at IS NULL
+        LIMIT 1) AS "payrollEmail",
+      person.is_contractor AS "isContractor",
+      entry.rounded_seconds AS "roundedSeconds",
+      entry.cost_rate_cents AS "costRateCents"
+    FROM time_entries entry
+    JOIN users person ON person.id = entry.user_id
+    WHERE entry.spent_date BETWEEN ${range.from} AND ${range.to}
+    ORDER BY person.id, entry.id
+  `)
+  const organization = await database.all<{ currency: string }>(
+    sql`SELECT upper(currency) AS "currency" FROM organizations WHERE id = 1`,
+  )
+  const currency = organization[0]?.currency
+  if (currency === undefined) {
+    throw new Error('organization must exist before reports are read')
+  }
+
+  const grouped = new Map<string, ContractorCostRow>()
+  for (const row of rows) {
+    // Per person. Not per person and project currency: the money here is
+    // org-currency by construction, so splitting on a billing currency would
+    // produce two rows that mean the same thing and invite adding them.
+    const key = String(row.userId)
+    const existing = grouped.get(key) ?? {
+      userId: row.userId,
+      name: row.name,
+      payrollEmail: row.payrollEmail,
+      isContractor: row.isContractor === 1,
+      currency,
+      roundedSeconds: 0,
+      costCents: 0,
+      entriesWithoutRate: 0,
+    }
+    existing.roundedSeconds += row.roundedSeconds
+    if (row.costRateCents === null) {
+      existing.entriesWithoutRate += 1
+      existing.costCents = null
+    } else if (existing.costCents !== null) {
+      existing.costCents += trackedAmountCents(row.roundedSeconds, row.costRateCents)
+    }
+    grouped.set(key, existing)
+  }
+  return { from: range.from, to: range.to, rows: [...grouped.values()] }
+}
+
 export const createReportRepository = (database: Database): ReportRepository => ({
+  contractorCost: (range) => contractorCostReport(database, range),
   uninvoiced: (filter) => uninvoicedReport(database, filter),
   clientRollup: (clientId, range) => clientRollupReport(database, clientId, range),
   projectBudgetSummaries: (range, viewer) =>
