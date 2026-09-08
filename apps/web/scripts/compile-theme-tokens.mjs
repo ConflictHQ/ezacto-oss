@@ -28,6 +28,8 @@ const slots = [
   'amber',
   'amber_bg',
   'live_text',
+  'surface_2',
+  'row_hover',
 ]
 const fonts = ['display', 'body', 'mono']
 const scalars = ['radius']

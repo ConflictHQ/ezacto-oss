@@ -72,6 +72,36 @@ export const precisionContrastRequirements: readonly ThemeContrastRequirement[] 
   // the surfaces those marks inherit their `currentColor` from.
   { name: 'data/ground row action', foreground: 'data', background: 'ground', minimum: 4.5 },
   { name: 'ink/surface control label', foreground: 'ink', background: 'surface', minimum: 4.5 },
+  // `surface_2` is the nested surface: a toolbar inside a workspace, a summary
+  // band inside a list. It is not a new colour but `surface`'s own step off
+  // `ground` taken a second time -- #FFFFFF, then -10/-9/-8, then -10/-9/-8
+  // again -- so a panel inside a card reads as one more rung of one ramp. Text
+  // in it is `ink`, exactly as on every other surface, and owes the same 4.5:1.
+  { name: 'ink/surface-2 text', foreground: 'ink', background: 'surface_2', minimum: 4.5 },
+  // Hovering a table row repaints the row, so the tint has to answer for every
+  // colour the row was already carrying, not just its cell text. Two do: `ink`
+  // on the cells, and `data` on the row actions the hover reveals -- the same
+  // pair the `data/ground row action` row above measures against the unhovered
+  // ground. One row each, so a later change to the tint is caught in both.
+  //
+  // The tint is #E1ECFB, read from the legacy roster where the hovered row
+  // samples uniformly at rgb(225, 236, 251) against #FFFFFF unhovered:
+  // hsl(215, 76%, 93%), a high-lightness tint of the same blue as the billable
+  // bar. It is reached by pointer or by keyboard focus and by nothing else --
+  // `data-row` goes on every body row unconditionally, and the only rules
+  // selecting on it are `:hover` and `:focus-within`. That is worth keeping
+  // true rather than incidental, because `print-color-adjust` is set nowhere
+  // in this stylesheet: a background fill is not guaranteed to reach paper, so
+  // a row tint that meant "overdue" or "selected" would print as nothing and
+  // the state would be lost. This one means "the pointer is here", which paper
+  // has no use for.
+  { name: 'ink/row-hover text', foreground: 'ink', background: 'row_hover', minimum: 4.5 },
+  {
+    name: 'data/row-hover row action',
+    foreground: 'data',
+    background: 'row_hover',
+    minimum: 4.5,
+  },
 ]
 
 const channel = (value: number): number => {

@@ -94,9 +94,32 @@ describe('D16 theme AA contrast gate', () => {
       ['red/surface text', 5.04],
       ['data/ground row action', 5.74],
       ['ink/surface control label', 16.74],
+      ['ink/surface-2 text', 15.43],
+      ['ink/row-hover text', 15.17],
+      ['data/row-hover row action', 4.81],
     ])
     expect(results.every((result) => result.passes)).toBe(true)
     expect(() => assertThemeContrast(themeManifest.precision)).not.toThrow()
+  })
+
+  it('[unit] holds the hover tint to every colour the row keeps while hovered', () => {
+    // A row hover repaints the whole row, so it is not enough for the cell text
+    // to clear the tint: the actions the hover reveals are painted in `data`,
+    // and the gate already answers for those against `ground`. Both surfaces a
+    // row action can sit on therefore need a row, or hovering would be the one
+    // state nothing measured.
+    const rowHover = precisionContrastRequirements.filter(
+      (requirement) => requirement.background === 'row_hover',
+    )
+    expect(rowHover.map((requirement) => requirement.foreground)).toEqual(['ink', 'data'])
+    expect(rowHover.every((requirement) => requirement.minimum === 4.5)).toBe(true)
+
+    // The tint is a hover affordance, so an unreadably faint one fails as a
+    // near-miss rather than as an obvious bug: it has to be distinguishable
+    // from the unhovered ground it replaces.
+    expect(
+      contrastRatio(themeManifest.precision.colors.row_hover, themeManifest.precision.colors.ground),
+    ).toBeGreaterThan(1.1)
   })
 
   it('[unit] fails the build when a token pair drops below its minimum', () => {
