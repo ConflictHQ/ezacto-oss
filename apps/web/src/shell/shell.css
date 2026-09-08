@@ -3733,6 +3733,7 @@ dialog textarea {
 }
 .task-admin-toolbar,
 .task-admin-toolbar fieldset,
+.invoice-list-toolbar fieldset,
 .task-admin-confirm-actions {
   display: flex;
   align-items: center;
@@ -3818,6 +3819,7 @@ dialog textarea {
   padding: 0;
   border: 0;
 }
+.invoice-list-toolbar fieldset button,
 .task-admin-toolbar button,
 .task-admin-confirm-actions button,
 .task-admin-workspace [data-task-create],
@@ -3830,6 +3832,7 @@ dialog textarea {
   background: var(--ez-ground);
   color: var(--ez-ink);
 }
+.invoice-list-toolbar fieldset button[aria-pressed='true'],
 .task-admin-toolbar button[aria-pressed='true'] {
   border-color: var(--ez-data);
   background: var(--ez-status-bg);
@@ -3848,8 +3851,16 @@ dialog textarea {
 }
 .invoice-list-toolbar {
   display: flex;
-  justify-content: flex-end;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin: 20px 0 12px;
+}
+.invoice-list-toolbar fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 .client-list-toolbar label,
 .task-admin-toolbar label,

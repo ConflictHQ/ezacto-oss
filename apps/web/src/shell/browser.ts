@@ -37,7 +37,7 @@ import {
   renderInvoiceListItems,
   setInvoiceClientNames,
 } from '../invoices/browser.js'
-import { invoiceIdentityCanRead } from '../invoices/model.js'
+import { invoiceIdentityCanRead, invoiceStatesFor } from '../invoices/model.js'
 import {
   buildWeekGrid,
   formatCellHours,
@@ -1119,6 +1119,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   let invoiceCommandId: string | null = null
   let invoiceNextCursor: string | null = null
   let invoiceListRows: readonly Invoice[] = []
+  /** Which states the list is asking the server for. Outstanding is the open question. */
+  let invoiceFilter: 'outstanding' | 'paid' | 'closed' | 'all' = 'outstanding'
   let invoiceClientNamesLoaded = false
   let invoiceListCount = 0
   let approvalModuleAvailable = false
@@ -1286,6 +1288,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     invoiceListRows = []
     invoiceClientNamesLoaded = false
     invoiceListCount = 0
+    invoiceFilter = 'outstanding'
+    for (const button of document.querySelectorAll<HTMLButtonElement>('[data-invoice-filter]')) {
+      button.setAttribute('aria-pressed', String(button.dataset.invoiceFilter === 'outstanding'))
+    }
     invoiceSearch.value = ''
     invoiceDetailStatus.textContent = 'Loading invoice…'
     invoiceDocument.hidden = true
@@ -2256,7 +2262,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     invoiceListStatus.textContent = append ? 'Loading more invoices…' : 'Loading invoices…'
     try {
       const [page] = await Promise.all([
-        listInvoices(cursor, operation.signal),
+        listInvoices(cursor, operation.signal, undefined, invoiceStatesFor(invoiceFilter)),
         ensureInvoiceClientNames(operation),
       ])
       if (!isSessionCurrent(operation)) return
@@ -3690,6 +3696,29 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   invoiceSearch.addEventListener('input', () => {
     if (invoiceListPage) renderInvoiceList()
   })
+  for (const control of document.querySelectorAll<HTMLButtonElement>('[data-invoice-filter]')) {
+    control.addEventListener('click', () => {
+      const operation = sessionOperation()
+      const next = control.dataset.invoiceFilter
+      if (
+        operation === null ||
+        (next !== 'outstanding' && next !== 'paid' && next !== 'closed' && next !== 'all') ||
+        next === invoiceFilter
+      )
+        return
+      invoiceFilter = next
+      for (const button of document.querySelectorAll<HTMLButtonElement>('[data-invoice-filter]')) {
+        button.setAttribute('aria-pressed', String(button.dataset.invoiceFilter === invoiceFilter))
+      }
+      // A different question, so a different traversal: the rows already loaded
+      // answered the old one, and the cursor that would fetch more of them is
+      // scoped to the query string that produced it.
+      invoiceNextCursor = null
+      invoiceListRows = []
+      invoiceLoadMore.hidden = true
+      void loadInvoiceList(operation)
+    })
+  }
   invoiceForm.addEventListener('submit', (event) => {
     event.preventDefault()
     const operation = sessionOperation()

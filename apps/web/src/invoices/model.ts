@@ -16,6 +16,34 @@ import type {
   Whoami,
 } from '@ezacto/client'
 
+export type InvoiceState = Invoice['state']
+
+/**
+ * What the Invoices list opens on.
+ *
+ * The question an operator arrives with is "what is outstanding", and the list
+ * used to answer it with all 739 invoices ever issued, newest first. Paid is
+ * settled; closed is written off or cancelled, which is settled by another
+ * name. Neither is outstanding, so neither is here -- the other states stay one
+ * click away rather than being the thing you have to read past.
+ */
+export const defaultInvoiceStates: readonly InvoiceState[] = ['draft', 'open']
+
+export type InvoiceListFilter = 'outstanding' | 'paid' | 'closed' | 'all'
+
+/**
+ * The states each toolbar position asks the server for. "All" asks for none,
+ * which is the absent parameter and therefore every state -- the behaviour
+ * this list had before it could be asked anything.
+ */
+export const invoiceStatesFor = (
+  filter: InvoiceListFilter,
+): readonly InvoiceState[] | undefined => {
+  if (filter === 'all') return undefined
+  if (filter === 'outstanding') return defaultInvoiceStates
+  return [filter]
+}
+
 export interface InvoicePaymentApi {
   getInvoice(id: number, signal?: AbortSignal): Promise<Invoice>
   listInvoiceMessages(id: number, signal?: AbortSignal): Promise<readonly InvoiceMessage[]>

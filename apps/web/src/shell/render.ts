@@ -432,6 +432,13 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
     </header>
     <p class="invoice-intro">Browse generated and imported invoices. Amounts are shown in each invoice's own currency.</p>
     <div class="invoice-list-toolbar">
+      <fieldset aria-label="Invoice state">
+        <legend class="visually-hidden">Invoice state</legend>
+        <button type="button" data-invoice-filter="outstanding" aria-pressed="true">Outstanding</button>
+        <button type="button" data-invoice-filter="paid" aria-pressed="false">Paid</button>
+        <button type="button" data-invoice-filter="closed" aria-pressed="false">Closed</button>
+        <button type="button" data-invoice-filter="all" aria-pressed="false">All</button>
+      </fieldset>
       <label for="ez-invoice-search">Search by invoice number or client
         <input id="ez-invoice-search" type="search" data-invoice-search autocomplete="off" placeholder="INV-1024 or client">
       </label>

@@ -310,12 +310,51 @@ interface CommonCommand {
   ) => boolean | Promise<boolean>;
 }
 
+export type InvoiceState = "draft" | "open" | "paid" | "closed";
+
+const invoiceStates: readonly InvoiceState[] = ["draft", "open", "paid", "closed"];
+
+export interface InvoiceCursorWindow extends CursorWindow {
+  states?: readonly InvoiceState[];
+}
+
+/**
+ * The `state` query parameter: a comma-separated set, also accepted repeated.
+ * Absent means every state, which is what this endpoint answered before it
+ * could be asked anything else, so an existing caller sees no change.
+ *
+ * Deduplicated, because `state=open,open` would otherwise put the same
+ * placeholder in the IN list twice. Unknown values are rejected rather than
+ * ignored: a typo that silently widens the answer back to the whole book is
+ * the exact failure this parameter exists to prevent.
+ */
+const invoiceStateFilter = (
+  requestUrl: URL,
+): readonly InvoiceState[] | undefined => {
+  const raw = requestUrl.searchParams.getAll("state");
+  if (raw.length === 0) return undefined;
+  const wanted = new Set<InvoiceState>();
+  for (const value of raw.flatMap((entry) => entry.split(","))) {
+    if (!(invoiceStates as readonly string[]).includes(value)) {
+      throw validationError([
+        {
+          field: "state",
+          code: "invalid",
+          message: `state must be one or more of ${invoiceStates.join(", ")}`,
+        },
+      ]);
+    }
+    wanted.add(value as InvoiceState);
+  }
+  return [...wanted];
+};
+
 interface MoneyResourceService {
   /** Null for an empty collection -- see CursorSource, which cursorPage reads. */
   highWatermark(
     kind: "invoices" | "estimates" | "retainers" | "recurring-invoices",
   ): Promise<number | null>;
-  listInvoices(window: CursorWindow): Promise<InvoiceResource[]>;
+  listInvoices(window: InvoiceCursorWindow): Promise<InvoiceResource[]>;
   getInvoice(id: number): Promise<InvoiceResource | null>;
   getInvoiceDeliveryContext(id: number): Promise<InvoiceDeliveryContext | null>;
   listInvoiceDeliveryJobs(eventId: string): Promise<InvoiceDeliveryJob[]>;
@@ -1106,15 +1145,24 @@ const installInvoiceReads = <Bindings extends object>(
 ): void => {
   api.get("/invoices", async (context) => {
     const principal = requireRead(context);
+    const requestUrl = new URL(context.req.url);
+    const states = invoiceStateFilter(requestUrl);
     return context.json(
       await cursorPage({
-        requestUrl: new URL(context.req.url),
+        requestUrl,
         cursorSigningKey: options.cursorSigningKey,
         viewer: principal,
         serializer: (invoice: Readonly<InvoiceResource>) => ({ ...invoice }),
         source: {
+          // The watermark stays the whole collection's. It bounds the
+          // traversal against later inserts; it is not a count of what
+          // matches, and narrowing it to the filtered set would make the
+          // cursor mean something different on each page.
           highWatermark: () => options.service.highWatermark("invoices"),
-          list: (window) => options.service.listInvoices(window),
+          list: (window) =>
+            options.service.listInvoices(
+              states === undefined ? window : { ...window, states },
+            ),
         },
       }),
     );

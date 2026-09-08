@@ -37,7 +37,22 @@ export interface MoneyWindow {
   afterId: number | null
   throughId: number
   take: number
+  /**
+   * States to keep, or undefined for every state. Applied in SQL rather than
+   * over the returned page: the cursor chassis asks for take+1 rows and reads
+   * "more than I asked for" as "there is a next page", so filtering after the
+   * fact would return short pages that claim to be the end of the collection.
+   * 739 invoices with 9 of them open is exactly the shape that breaks under a
+   * page-local filter.
+   */
+  states?: readonly InvoiceState[]
 }
+
+export type InvoiceState = 'draft' | 'open' | 'paid' | 'closed'
+
+const invoiceStates: ReadonlySet<string> = new Set(['draft', 'open', 'paid', 'closed'])
+
+export const isInvoiceState = (value: string): value is InvoiceState => invoiceStates.has(value)
 
 export type MoneyCollection = 'invoices' | 'estimates' | 'retainers' | 'recurring-invoices'
 
@@ -491,12 +506,28 @@ const invoiceLineSelect = `SELECT id, invoice_id, position, kind, description, q
 
 const invoiceLinesSelect = `${invoiceLineSelect} WHERE invoice_id = ? ORDER BY position, id`
 
-const invoiceWindow = `id > ? AND id <= ? ORDER BY id LIMIT ?`
+/**
+ * The id window, optionally narrowed to a set of states. The state list is
+ * interpolated as placeholders and its values bound, so nothing from the query
+ * string reaches the SQL text.
+ */
+const invoiceWindowFor = (states: readonly InvoiceState[] | undefined): string =>
+  states === undefined || states.length === 0
+    ? `id > ? AND id <= ? ORDER BY id LIMIT ?`
+    : `id > ? AND id <= ? AND state IN (${states.map(() => '?').join(', ')}) ORDER BY id LIMIT ?`
 
-const invoicePageLinesSelect = `${invoiceLineSelect}
+const invoicePageLinesSelectFor = (states: readonly InvoiceState[] | undefined): string =>
+  `${invoiceLineSelect}
   WHERE invoice_id IN (
-    SELECT id FROM invoices WHERE ${invoiceWindow}
+    SELECT id FROM invoices WHERE ${invoiceWindowFor(states)}
   ) ORDER BY invoice_id, position, id`
+
+const invoiceWindowParams = (window: MoneyWindow): unknown[] => [
+  window.afterId ?? 0,
+  window.throughId,
+  ...(window.states ?? []),
+  window.take,
+]
 
 const hydrateInvoiceLines = (lines: RawInvoiceLine[]): InvoiceLineResource[] =>
   lines.map((line) => ({ ...line, taxed: Boolean(line.taxed), taxed2: Boolean(line.taxed2) }))
@@ -624,12 +655,14 @@ const readConsistentInvoicePage = async (
   database: MoneyResourceDatabase,
   window: MoneyWindow,
 ): Promise<InvoiceResource[]> => {
-  const params = [window.afterId ?? 0, window.throughId, window.take]
+  const params = invoiceWindowParams(window)
+  const headerSelect = `${invoiceSelect} WHERE ${invoiceWindowFor(window.states)}`
+  const linesSelect = invoicePageLinesSelectFor(window.states)
   const client = database.$client
   if (isD1Client(client)) {
     const [headers, lines] = await client.batch([
-      client.prepare(`${invoiceSelect} WHERE ${invoiceWindow}`).bind(...params),
-      client.prepare(invoicePageLinesSelect).bind(...params),
+      client.prepare(headerSelect).bind(...params),
+      client.prepare(linesSelect).bind(...params),
     ])
     if (headers === undefined || lines === undefined) {
       throw new Error('D1 invoice page snapshot batch returned incomplete results')
@@ -640,10 +673,8 @@ const readConsistentInvoicePage = async (
     )
   }
   return client.transaction(() => {
-    const headers = client
-      .prepare(`${invoiceSelect} WHERE ${invoiceWindow}`)
-      .all(...params) as RawInvoice[]
-    const lines = client.prepare(invoicePageLinesSelect).all(...params) as RawInvoiceLine[]
+    const headers = client.prepare(headerSelect).all(...params) as RawInvoice[]
+    const lines = client.prepare(linesSelect).all(...params) as RawInvoiceLine[]
     return hydrateInvoicePage(headers, lines)
   })()
 }

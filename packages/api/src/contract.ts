@@ -678,7 +678,16 @@ const moneyOperations: ApiContractOperation[] = [
     tag: "invoices",
     responseStatus: 200,
     responseSchema: "InvoicePage",
-    parameters: pageParameters,
+    parameters: [
+      ...pageParameters,
+      // A comma-separated set, because the list a person actually wants open
+      // is draft plus open and one enum value cannot ask for two states. Also
+      // accepted repeated, so `state=draft&state=open` means the same thing.
+      query("state", {
+        type: "string",
+        pattern: "^(draft|open|paid|closed)(,(draft|open|paid|closed))*$",
+      }),
+    ],
   },
   {
     method: "get",

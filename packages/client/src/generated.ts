@@ -3008,7 +3008,7 @@ export class EzactoClient {
     });
   }
 
-  async listInvoices(args: { query?: { "cursor"?: string; "per_page"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<InvoicePage> {
+  async listInvoices(args: { query?: { "cursor"?: string; "per_page"?: number; "state"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<InvoicePage> {
     const headers = new Headers(args.headers);
 
     return this.request<InvoicePage>("GET", "/api/v1/invoices", {

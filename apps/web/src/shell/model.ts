@@ -26,6 +26,7 @@ import {
   type TimesheetWithdrawalInput,
   type Whoami,
 } from '@ezacto/client'
+import type { InvoiceState } from '../invoices/model.js'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 import type { ClientDirectoryApi } from '../clients/model.js'
 import type { ProjectDirectoryApi } from '../projects/model.js'
@@ -75,6 +76,7 @@ export interface ShellApi
     cursor?: string,
     signal?: AbortSignal,
     perPage?: number,
+    states?: readonly InvoiceState[],
   ): Promise<CursorPage<Invoice>>
   listTasks(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listTimeEntryOptions(signal?: AbortSignal): Promise<readonly TimeEntryOption[]>
@@ -1033,11 +1035,16 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
-  listInvoices: (cursor, signal, perPage) =>
+  listInvoices: (cursor, signal, perPage, states) =>
     client.listInvoices({
       query: {
         per_page: perPage ?? 50,
         ...(cursor === undefined ? {} : { cursor }),
+        // Empty means "every state", which is the absent parameter, not a
+        // request for nothing.
+        ...(states === undefined || states.length === 0
+          ? {}
+          : { state: states.join(',') }),
       },
       ...withSignal(signal),
     }),

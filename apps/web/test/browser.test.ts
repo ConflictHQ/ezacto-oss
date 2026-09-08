@@ -1368,6 +1368,56 @@ describe('invoice generation browser behavior', () => {
 })
 
 describe('invoice browse browser behavior', () => {
+  it('[acceptance] opens on what is outstanding and asks the server for it', async () => {
+    // 739 invoices, 9 of them open. The list opened on all 739 newest-first,
+    // and the endpoint had no state parameter, so narrowing it on the client
+    // would have narrowed the loaded page only -- 50 of 739 -- and reported a
+    // count over that slice as if it were the account.
+    renderBrowserShell({ view: 'invoice-list' })
+    const listInvoices = vi.fn(async (_cursor, _signal, _perPage, states) => ({
+      data: (states as readonly string[] | undefined)?.includes('paid')
+        ? [invoice(9, { state: 'paid' })]
+        : [invoice(7, { state: 'open' })],
+      page: { next_cursor: null },
+    }))
+    const api: ShellApi = { ...browserApi(), listInvoices }
+
+    await mountShell(api)
+
+    // Outstanding is draft plus open. Paid is settled; closed is written off
+    // or cancelled, which is settled by another name.
+    expect(listInvoices).toHaveBeenNthCalledWith(1, undefined, expect.anything(), undefined, [
+      'draft',
+      'open',
+    ])
+    expect(
+      document.querySelector('[data-invoice-filter="outstanding"]')?.getAttribute('aria-pressed'),
+    ).toBe('true')
+
+    document.querySelector<HTMLButtonElement>('[data-invoice-filter="paid"]')!.click()
+    await vi.waitFor(() => expect(listInvoices).toHaveBeenCalledTimes(2))
+    expect(listInvoices).toHaveBeenNthCalledWith(2, undefined, expect.anything(), undefined, [
+      'paid',
+    ])
+    await vi.waitFor(() =>
+      expect(document.querySelector('tbody tr[data-row-key="9"]')).not.toBeNull(),
+    )
+    // A different question is a different traversal: the rows that answered
+    // the old one do not stay on the page beside the new ones.
+    expect(document.querySelector('tbody tr[data-row-key="7"]')).toBeNull()
+
+    // All sends no state at all, which is the absent parameter.
+    document.querySelector<HTMLButtonElement>('[data-invoice-filter="all"]')!.click()
+    await vi.waitFor(() => expect(listInvoices).toHaveBeenCalledTimes(3))
+    expect(listInvoices).toHaveBeenNthCalledWith(
+      3,
+      undefined,
+      expect.anything(),
+      undefined,
+      undefined,
+    )
+  })
+
   it('[acceptance] loads a cursor page and appends the next invoice page', async () => {
     renderBrowserShell({ view: 'invoice-list' })
     const base = browserApi()
@@ -1412,8 +1462,14 @@ describe('invoice browse browser behavior', () => {
         document.querySelector('tbody tr[data-row-key="8"]')?.textContent,
       ).toContain('Invoice INV-8'),
     )
-    expect(listInvoices).toHaveBeenNthCalledWith(1, undefined, expect.anything())
-    expect(listInvoices).toHaveBeenNthCalledWith(2, 'next-page', expect.anything())
+    expect(listInvoices).toHaveBeenNthCalledWith(1, undefined, expect.anything(), undefined, [
+      'draft',
+      'open',
+    ])
+    expect(listInvoices).toHaveBeenNthCalledWith(2, 'next-page', expect.anything(), undefined, [
+      'draft',
+      'open',
+    ])
     expect(document.querySelector('[data-invoice-list-status]')?.textContent).toBe(
       '2 invoices loaded.',
     )

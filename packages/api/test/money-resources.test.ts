@@ -286,6 +286,31 @@ const seed = async (database: TestDatabase): Promise<void> => {
   );
 };
 
+/**
+ * Paid invoices, born paid. A state change is a lifecycle mutation and its
+ * trigger requires a pending command, so a test that wants a paid invoice
+ * inserts one rather than promoting a draft -- and the shape trigger wants
+ * exactly one of paid_at / paid_date on it.
+ */
+const seedPaidInvoices = async (
+  database: TestDatabase,
+  ids: readonly number[],
+): Promise<void> => {
+  for (const id of ids) {
+    await database.run(
+      `INSERT INTO invoices (
+         id, client_id, number, currency, issue_date, due_date, state,
+         amount_cents, due_amount_cents, paid_at, created_at, updated_at
+       ) VALUES (?, 1, ?, 'USD', '2026-08-01', '2026-08-31', 'paid', 0, 0, ?, ?, ?)`,
+      id,
+      `INV-S${id}`,
+      seedTime,
+      seedTime,
+      seedTime,
+    );
+  }
+};
+
 const seedInvoicePage = async (database: TestDatabase): Promise<void> => {
   await database.run(
     `WITH RECURSIVE invoice_ids(id) AS (
@@ -1001,6 +1026,71 @@ for (const [runtime, factory] of factories) {
           ],
         },
       ]);
+    });
+
+    // 739 invoices with 9 of them open is the shape that breaks a page-local
+    // filter: the chassis asks for per_page+1 rows and reads "more than I
+    // asked for" as "there is a next page", so a filter applied after the read
+    // returns short pages that claim to be the end of the collection. The
+    // predicate has to be in the SQL, which is what these two prove.
+    it("[api] pages the filtered set, not the filtered page", async () => {
+      const test = await setup();
+      await seedInvoicePage(test.database);
+      // Three paid invoices spread far apart through the 202 drafts, so a
+      // page-local filter would find them on three different pages.
+      await seedPaidInvoices(test.database, [300, 400, 500]);
+
+      const paid = await test.request("/api/v1/invoices?state=paid&per_page=2");
+      expect(paid.status).toBe(200);
+      const paidBody = (await paid.json()) as {
+        data: { id: number; state: string }[];
+        page: { next_cursor: string | null };
+      };
+      // A full page of matches out of a collection where they are 1.5% of the
+      // rows, and a cursor, because a third match is still out there.
+      expect(paidBody.data.map((row) => row.id)).toEqual([300, 400]);
+      expect(paidBody.data.every((row) => row.state === "paid")).toBe(true);
+      expect(paidBody.page.next_cursor).not.toBeNull();
+
+      const rest = await test.request(
+        `/api/v1/invoices?state=paid&per_page=2&cursor=${encodeURIComponent(paidBody.page.next_cursor!)}`,
+      );
+      const restBody = (await rest.json()) as {
+        data: { id: number }[];
+        page: { next_cursor: string | null };
+      };
+      expect(restBody.data.map((row) => row.id)).toEqual([500]);
+      expect(restBody.page.next_cursor).toBeNull();
+    });
+
+    it("[api] reads a comma-separated state set and rejects an unknown one", async () => {
+      const test = await setup();
+      await seedInvoicePage(test.database);
+      await seedPaidInvoices(test.database, [300, 400, 500]);
+
+      const outstanding = await test.request(
+        "/api/v1/invoices?state=draft,open&per_page=200",
+      );
+      const body = (await outstanding.json()) as {
+        data: { state: string }[];
+        page: { next_cursor: string | null };
+      };
+      // A full page, all of it matching, with more behind it -- 202 drafts do
+      // not fit in the 200-row ceiling.
+      expect(body.data).toHaveLength(200);
+      expect(
+        body.data.every((row) => row.state === "draft" || row.state === "open"),
+      ).toBe(true);
+      expect(body.page.next_cursor).not.toBeNull();
+
+      // Silently ignoring a typo would widen the answer back to the whole
+      // book, which is the failure this parameter exists to prevent.
+      const typo = await test.request("/api/v1/invoices?state=unpaid");
+      expect(typo.status).toBe(422);
+
+      // No parameter is still every state, so an existing caller is unchanged.
+      const everything = await test.request("/api/v1/invoices?per_page=200");
+      expect(((await everything.json()) as { data: unknown[] }).data).toHaveLength(200);
     });
 
     it("[api] hydrates a high-cardinality invoice traversal with fixed query count", async () => {
