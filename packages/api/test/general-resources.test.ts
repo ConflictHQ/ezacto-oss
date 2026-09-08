@@ -271,6 +271,37 @@ const data = async (response: Response): Promise<Record<string, unknown>> => {
   return ((await response.json()) as { data: Record<string, unknown> }).data;
 };
 
+/**
+ * A hundred and twenty tasks with three matches in them, at 10, 60 and 110, so
+ * the matches are further apart than any page this test asks for. That spread is
+ * the point: a filter applied to the returned page would look at ids 1..3 and
+ * answer nothing at all.
+ */
+const seedSearchableTasks = async (harness: Harness): Promise<void> => {
+  await harness.run(
+    `WITH RECURSIVE numbers(n) AS (
+       SELECT 1 UNION ALL SELECT n + 1 FROM numbers WHERE n < 120
+     )
+     INSERT INTO tasks (id, name, created_at, updated_at)
+     SELECT n,
+       CASE WHEN n IN (10, 60, 110) THEN 'Deployment ' || n ELSE 'Filler ' || n END,
+       ?, ?
+     FROM numbers`,
+    now,
+    now,
+  );
+};
+
+type CursorPage = {
+  data: { id: number; name: string }[];
+  page: { next_cursor: string | null };
+};
+
+const page = async (response: Response): Promise<CursorPage> => {
+  expect(response.status, await response.clone().text()).toBe(200);
+  return (await response.json()) as CursorPage;
+};
+
 for (const [runtime, createHarness] of factories) {
   describe(`${runtime} general-resource API`, () => {
     let harness: Harness;
@@ -2002,6 +2033,68 @@ for (const [runtime, createHarness] of factories) {
         ),
       ).toEqual([{ total: 0 }]);
       expect(otherUser.id).not.toBe(originalUser.id);
+    }, 20_000);
+
+    // The cursor chassis asks for per_page + 1 rows and reads "more than I
+    // asked for" as "there is a next page". A search applied after that read
+    // returns short pages that claim to be the end of the collection, so the
+    // predicate has to be in the SQL -- which is what walking the cursor here
+    // proves and a page-local filter cannot fake.
+    it("[api] pages the searched set, not the searched page", async () => {
+      await seedSearchableTasks(harness);
+
+      const first = await page(await harness.request("/tasks?q=deploy&per_page=2"));
+      // A full page of matches out of a collection where they are 2.5% of the
+      // rows, and a cursor, because a third match is still out there.
+      expect(first.data.map((task) => task.id)).toEqual([10, 60]);
+      expect(first.page.next_cursor).not.toBeNull();
+
+      const second = await page(
+        await harness.request(
+          `/tasks?q=deploy&per_page=2&cursor=${encodeURIComponent(first.page.next_cursor!)}`,
+        ),
+      );
+      expect(second.data.map((task) => task.id)).toEqual([110]);
+      expect(second.page.next_cursor).toBeNull();
+    }, 20_000);
+
+    it("[api] searches clients and projects by name, and refuses a search that is not one", async () => {
+      const client = await data(
+        await harness.request("/clients", json({ name: "Northwind Traders" })),
+      );
+      await data(await harness.request("/clients", json({ name: "Contoso" })));
+      const clientId = client.id as number;
+      await data(
+        await harness.request(
+          "/projects",
+          json({ client_id: clientId, name: "Website rebuild" }),
+        ),
+      );
+      await data(
+        await harness.request(
+          "/projects",
+          json({ client_id: clientId, name: "Payroll migration" }),
+        ),
+      );
+
+      // Lower case against a capitalised name, because the box on screen is not
+      // going to be typed in the same case the record was created in.
+      const clients = await page(await harness.request("/clients?q=northwind"));
+      expect(clients.data.map((row) => row.name)).toEqual(["Northwind Traders"]);
+      const projects = await page(await harness.request("/projects?q=rebuild"));
+      expect(projects.data.map((row) => row.name)).toEqual(["Website rebuild"]);
+      // Combines with the filters that were already there rather than replacing
+      // them, because the toolbar keeps its Active/All control either way.
+      const inactive = await page(
+        await harness.request("/projects?q=rebuild&is_active=false"),
+      );
+      expect(inactive.data).toEqual([]);
+
+      // A literal % is a search for a percent sign, not a search for everything.
+      const wildcard = await page(await harness.request("/clients?q=%25"));
+      expect(wildcard.data).toEqual([]);
+      const blank = await harness.request("/clients?q=%20");
+      expect(blank.status).toBe(422);
     }, 20_000);
 
     it("[api] rejects unknown/non-combinable query inputs and translates DB constraints", async () => {
