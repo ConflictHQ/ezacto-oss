@@ -91,9 +91,16 @@ const sessionResolver = {
   },
 }
 
-const createAuthApp = (tokens = tokenService()) =>
+const createAuthApp = (
+  tokens = tokenService(),
+  activity?: { capture: (request: unknown) => Promise<void> },
+) =>
   createApiApp({
-    authentication: { tokens, sessions: sessionResolver },
+    authentication: {
+      tokens,
+      sessions: sessionResolver,
+      ...(activity === undefined ? {} : { activity: activity as never }),
+    },
     installApi(api) {
       api.get('/principal', (context) =>
         context.json({ data: context.get('principal') }),
@@ -320,6 +327,92 @@ describe('API authentication middleware', () => {
 })
 
 describe('API token lifecycle routes', () => {
+  it('[api] records the issue and the revocation against the acting user', async () => {
+    // An API token is a credential. "One was issued and we cannot say who by"
+    // is the state the activity log exists to make unreachable, so the capture
+    // is awaited rather than fired and forgotten -- a route that could not
+    // write it has not finished.
+    const captured: unknown[] = []
+    const app = createAuthApp(tokenService(), {
+      capture: async (request) => {
+        captured.push(request)
+      },
+    })
+    const created = await app.request('/api/v1/api-tokens', {
+      method: 'POST',
+      headers: {
+        cookie: 'session=user',
+        origin: 'http://localhost',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ name: 'Reports', scopes: ['reports:read'] }),
+    })
+    expect(created.status).toBe(201)
+    expect(captured).toHaveLength(1)
+    expect(captured[0]).toMatchObject({
+      eventType: 'api_token.created',
+      actor: { type: 'user' },
+      detail: { name: 'Reports', scopes: ['reports:read'] },
+    })
+
+    const listing = await app.request('/api/v1/api-tokens', {
+      headers: { cookie: 'session=user' },
+    })
+    const id = ((await listing.json()) as { data: { id: number }[] }).data[0]!.id
+    const revoked = await app.request(`/api/v1/api-tokens/${id}`, {
+      method: 'DELETE',
+      headers: { cookie: 'session=user', origin: 'http://localhost' },
+    })
+    expect(revoked.status).toBe(200)
+    expect(captured).toHaveLength(2)
+    expect(captured[1]).toMatchObject({ eventType: 'api_token.revoked' })
+  })
+
+  it('[api] does not claim a revocation the row did not record', async () => {
+    // A service that answers "revoked" with a row carrying no revoked_at has
+    // not revoked anything the database can show. Logging it anyway would put
+    // an event in the audit trail that the data behind it contradicts, which is
+    // worse than no event -- the log is read as evidence.
+    const captured: unknown[] = []
+    const service = tokenService()
+    const app = createAuthApp(
+      {
+        ...service,
+        revoke: async (userId: number, id: number) => {
+          const row = await service.revoke(userId, id)
+          return row === null ? null : { ...row, revokedAt: null }
+        },
+      } as never,
+      {
+        capture: async (request) => {
+          captured.push(request)
+        },
+      },
+    )
+    await app.request('/api/v1/api-tokens', {
+      method: 'POST',
+      headers: {
+        cookie: 'session=user',
+        origin: 'http://localhost',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ name: 'Reports', scopes: ['reports:read'] }),
+    })
+    const listing = await app.request('/api/v1/api-tokens', {
+      headers: { cookie: 'session=user' },
+    })
+    const id = ((await listing.json()) as { data: { id: number }[] }).data[0]!.id
+    const revoked = await app.request(`/api/v1/api-tokens/${id}`, {
+      method: 'DELETE',
+      headers: { cookie: 'session=user', origin: 'http://localhost' },
+    })
+    expect(revoked.status).toBe(200)
+    // The issue was recorded; the revocation was not.
+    expect(captured.map((event) => (event as { eventType: string }).eventType)).toEqual([
+      'api_token.created',
+    ])
+  })
+
   it('[api] creates once-visible bearer material and lists scopes without it', async () => {
     const app = createAuthApp()
     const created = await app.request('/api/v1/api-tokens', {
