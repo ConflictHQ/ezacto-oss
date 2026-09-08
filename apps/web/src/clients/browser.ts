@@ -1,4 +1,5 @@
 import { renderDataTable } from '../components/data-table.js'
+import { sessionPresenter, type SessionPresenter } from '../session.js'
 import { EzactoApiError, type GeneralResource, type Whoami } from '@ezacto/client'
 import {
   clientDisplayName,
@@ -118,10 +119,9 @@ const paymentTermsLabel = (value: string | null): string => {
 const percentLabel = (value: unknown): string =>
   typeof value === 'number' && Number.isFinite(value) ? `${value}%` : 'None'
 
-interface ActiveSession {
+interface ActiveSession extends SessionPresenter {
   readonly identity: Whoami
   readonly signal: AbortSignal
-  readonly onSessionFailure: (error: unknown) => boolean
 }
 
 export interface ClientDirectoryController {
@@ -214,11 +214,6 @@ export const createClientDirectoryController = (
       element.hidden = !enabled
       if (element instanceof HTMLButtonElement) element.disabled = !enabled
     }
-  }
-
-  const handleFailure = (error: unknown): boolean => {
-    const active = currentSession()
-    return active !== null && active.onSessionFailure(error)
   }
 
   const option = (client: GeneralResource): HTMLOptionElement => {
@@ -508,10 +503,11 @@ export const createClientDirectoryController = (
       if (currentSession() !== active) return
       renderTree()
     } catch (error) {
-      if (handleFailure(error)) return
-      listStatus.textContent = messageFor(error)
-      tree.replaceChildren()
-      listRetry.hidden = false
+      active.presentFailure(error, () => {
+        listStatus.textContent = messageFor(error)
+        tree.replaceChildren()
+        listRetry.hidden = false
+      })
     } finally {
       if (currentSession() === active) tree.removeAttribute('aria-busy')
     }
@@ -555,10 +551,11 @@ export const createClientDirectoryController = (
       projects = selectedProjects
       renderDetail()
     } catch (error) {
-      if (handleFailure(error)) return
-      detailStatus.textContent = messageFor(error)
-      detail.hidden = true
-      detailRetry.hidden = false
+      active.presentFailure(error, () => {
+        detailStatus.textContent = messageFor(error)
+        detail.hidden = true
+        detailRetry.hidden = false
+      })
     } finally {
       if (currentSession() === active) detail.removeAttribute('aria-busy')
     }
@@ -682,7 +679,9 @@ export const createClientDirectoryController = (
           editingClientId === null ? 'Client added.' : 'Client updated.'
       })
       .catch((error: unknown) => {
-        if (!handleFailure(error)) clientFormResult.textContent = messageFor(error)
+        active.presentFailure(error, () => {
+          clientFormResult.textContent = messageFor(error)
+        })
       })
       .finally(() => {
         if (currentSession() === active) {
@@ -743,7 +742,9 @@ export const createClientDirectoryController = (
         detailStatus.textContent = editingContactId === null ? 'Contact added.' : 'Contact updated.'
       })
       .catch((error: unknown) => {
-        if (!handleFailure(error)) contactFormResult.textContent = messageFor(error)
+        active.presentFailure(error, () => {
+          contactFormResult.textContent = messageFor(error)
+        })
       })
       .finally(() => {
         if (currentSession() === active) {
@@ -778,7 +779,9 @@ export const createClientDirectoryController = (
         detailStatus.textContent = 'Client archived.'
       })
       .catch((error: unknown) => {
-        if (!handleFailure(error)) clientArchiveResult.textContent = messageFor(error)
+        active.presentFailure(error, () => {
+          clientArchiveResult.textContent = messageFor(error)
+        })
       })
       .finally(() => {
         if (currentSession() === active) {
@@ -816,7 +819,9 @@ export const createClientDirectoryController = (
         detailStatus.textContent = 'Contact deleted.'
       })
       .catch((error: unknown) => {
-        if (!handleFailure(error)) contactDeleteResult.textContent = messageFor(error)
+        active.presentFailure(error, () => {
+          contactDeleteResult.textContent = messageFor(error)
+        })
       })
       .finally(() => {
         if (currentSession() === active) {
@@ -828,7 +833,11 @@ export const createClientDirectoryController = (
 
   return {
     async activate(identity, signal, onSessionFailure) {
-      const active = { identity, signal, onSessionFailure }
+      const active: ActiveSession = {
+        identity,
+        signal,
+        ...sessionPresenter(() => currentSession() === active, onSessionFailure),
+      }
       session = active
       resetMutationState()
       signal.addEventListener(

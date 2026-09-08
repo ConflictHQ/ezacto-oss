@@ -14,6 +14,7 @@ export const renderTeamPages = (view?: string): string => `
   <main class="app-content team-workspace" data-team-list-page${view === 'team-list' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Organize</p><h1>Team</h1></div>
+      <button class="primary-action" type="button" data-team-person-create hidden disabled>Add person</button>
     </header>
     <section class="team-period" aria-label="Utilization period">
       <button type="button" data-team-week-previous aria-label="Previous week">${iconMarkup('chevron', { direction: 'left' })}</button>
@@ -136,6 +137,30 @@ export const renderTeamPages = (view?: string): string => `
     </article>
     <button type="button" data-team-person-retry hidden>Retry loading person</button>
   </main>
+
+  <dialog class="team-person-dialog" data-team-person-dialog aria-labelledby="team-person-dialog-title">
+    <form class="team-person-form" data-team-person-form>
+      <header><div><p class="eyebrow">New person</p><h2 id="team-person-dialog-title">Add person</h2></div><button type="button" data-team-person-close aria-label="Close">×</button></header>
+      <div class="team-form-pair">
+        <label for="ez-team-new-first-name">First name<input id="ez-team-new-first-name" name="first_name" autocomplete="given-name" maxlength="255" required></label>
+        <label for="ez-team-new-last-name">Last name<input id="ez-team-new-last-name" name="last_name" autocomplete="family-name" maxlength="255" required></label>
+      </div>
+      <label for="ez-team-new-email">Sign-in address<input id="ez-team-new-email" name="email" type="email" autocomplete="email" required aria-describedby="team-new-email-hint"></label>
+      <p class="hint" id="team-new-email-hint">This address becomes their sign-in identity the moment it is saved, and single sign-on will bind an account to it, so enter one you can vouch for. Nothing is mailed to it yet: tell them their account exists.</p>
+      <div class="team-form-pair">
+        <label for="ez-team-new-capacity">Weekly capacity (hours)<input id="ez-team-new-capacity" name="weekly_capacity" type="number" inputmode="decimal" min="0" step="0.25" value="35" required></label>
+        <label class="team-check"><input name="is_contractor" type="checkbox">Contractor</label>
+      </div>
+      <div data-team-new-profile-field>
+        <label for="ez-team-new-profile">Permission profile<select id="ez-team-new-profile" name="profile" data-team-new-profile></select></label>
+        <p class="hint" data-team-new-profile-description></p>
+      </div>
+      <p class="hint" data-team-new-profile-note hidden>Only an administrator can choose a permission profile. This person joins as a member.</p>
+      <p class="hint">Rates, projects, roles and notification preferences are set on the person afterwards.</p>
+      <p class="form-result" data-team-person-result role="status" aria-live="polite"></p>
+      <button class="primary-action" type="submit" data-team-person-submit>Add person</button>
+    </form>
+  </dialog>
 
   <dialog class="team-rate-dialog" data-team-rate-dialog aria-labelledby="team-rate-dialog-title">
     <form data-team-rate-form>

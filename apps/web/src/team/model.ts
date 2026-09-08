@@ -1,4 +1,5 @@
 import type {
+  GeneralResource,
   TeamAssignmentReplaceInput,
   TeamCatalog,
   TeamCommandReceipt,
@@ -10,6 +11,20 @@ import type {
   UserRate,
   Whoami,
 } from '@ezacto/client'
+
+/**
+ * What a person needs to exist. Everything else the record carries has a column
+ * default, and the person editor is where the rest of it is filled in; this is
+ * the first stage of #361, which stops short of the invitation itself.
+ */
+export type TeamPersonCreate = {
+  readonly first_name: string
+  readonly last_name: string
+  readonly email: string
+  readonly weekly_capacity: number
+  readonly is_contractor: boolean
+  readonly profile?: TeamProfile
+}
 
 export interface TeamDirectoryApi {
   getTeamStatus(signal?: AbortSignal): Promise<{ readonly enabled: boolean }>
@@ -27,6 +42,10 @@ export interface TeamDirectoryApi {
   ): Promise<TeamPersonSummaryPage>
   getTeamPerson(id: number, signal?: AbortSignal): Promise<TeamPerson>
   getTeamCatalog(signal?: AbortSignal): Promise<TeamCatalog>
+  createTeamPerson(
+    input: TeamPersonCreate,
+    signal?: AbortSignal,
+  ): Promise<GeneralResource>
   updateTeamPerson(
     id: number,
     commandId: string,

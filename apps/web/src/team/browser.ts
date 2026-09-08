@@ -1,4 +1,5 @@
 import { renderDataTable } from '../components/data-table.js'
+import { sessionPresenter, type SessionPresenter } from '../session.js'
 import {
   EzactoApiError,
   type TeamCatalog,
@@ -26,6 +27,8 @@ import {
   teamWeekRange,
   type TeamCapabilities,
   type TeamDirectoryApi,
+  type TeamPersonCreate,
+  type TeamProfile,
 } from './model.js'
 
 const required = <ElementType extends Element>(selector: string): ElementType => {
@@ -103,11 +106,10 @@ const formInput = (form: HTMLFormElement, name: string): HTMLInputElement => {
   return value
 }
 
-interface ActiveSession {
+interface ActiveSession extends SessionPresenter {
   readonly identity: Whoami
   readonly capabilities: TeamCapabilities
   readonly signal: AbortSignal
-  readonly onSessionFailure: (error: unknown) => boolean
 }
 
 export interface TeamDirectoryController {
@@ -166,6 +168,15 @@ export const createTeamDirectoryController = (
   const deactivateHeading = required<HTMLElement>('[data-team-deactivate-heading]')
   const deactivateConfirm = required<HTMLButtonElement>('[data-team-deactivate-confirm]')
   const deactivateCancel = required<HTMLButtonElement>('[data-team-deactivate-cancel]')
+  const addPersonTrigger = required<HTMLButtonElement>('[data-team-person-create]')
+  const addPersonDialog = required<HTMLDialogElement>('[data-team-person-dialog]')
+  const addPersonForm = required<HTMLFormElement>('[data-team-person-form]')
+  const addPersonResult = required<HTMLElement>('[data-team-person-result]')
+  const addPersonSubmit = required<HTMLButtonElement>('[data-team-person-submit]')
+  const addPersonProfileField = required<HTMLElement>('[data-team-new-profile-field]')
+  const addPersonProfile = required<HTMLSelectElement>('[data-team-new-profile]')
+  const addPersonProfileDescription = required<HTMLElement>('[data-team-new-profile-description]')
+  const addPersonProfileNote = required<HTMLElement>('[data-team-new-profile-note]')
 
   listPageElement.hidden = !listPage
   personPageElement.hidden = !personPage
@@ -188,13 +199,14 @@ export const createTeamDirectoryController = (
   // about different records.
   let archiveTarget: TeamPersonSummary | null = null
   let selectedRateKind: TeamRateInput['kind'] | null = null
+  // The roster's third in-flight write, alongside rosterStatusPending: a
+  // creation has no record to lock the person editor against, and no version
+  // to be conflicted on, so it guards only its own dialog.
+  let addPersonPending = false
   const commandIds = new Map<string, string>()
 
   const currentSession = (): ActiveSession | null =>
     session === null || session.signal.aborted ? null : session
-
-  const handleFailure = (error: unknown, active: ActiveSession): boolean =>
-    currentSession() === active && active.onSessionFailure(error)
 
   const readDenialMessage = (active: ActiveSession): string =>
     active.identity.authentication.kind === 'token' &&
@@ -217,6 +229,7 @@ export const createTeamDirectoryController = (
   const closeDialogs = (): void => {
     if (rateDialog.open) rateDialog.close()
     if (deactivateDialog.open) deactivateDialog.close()
+    if (addPersonDialog.open) addPersonDialog.close()
   }
 
   const lockMutationControls = (): Map<HTMLInputElement | HTMLButtonElement, boolean> => {
@@ -269,6 +282,10 @@ export const createTeamDirectoryController = (
     notificationsForm.reset()
     rateForm.reset()
     deactivateForm.reset()
+    addPersonForm.reset()
+    addPersonPending = false
+    addPersonTrigger.hidden = true
+    addPersonTrigger.disabled = true
     list.replaceChildren()
     list.removeAttribute('aria-busy')
     summary.replaceChildren()
@@ -301,6 +318,7 @@ export const createTeamDirectoryController = (
     notificationsResult.textContent = ''
     rateResult.textContent = ''
     deactivateResult.textContent = ''
+    addPersonResult.textContent = ''
     closeDialogs()
   }
 
@@ -546,15 +564,18 @@ export const createTeamDirectoryController = (
     )
   }
 
-  const loadPeople = async (active: ActiveSession): Promise<void> => {
+  // Returns whether the roster on screen is the one this call loaded. A caller
+  // that has just written a person has to say what the reader can now see, and
+  // "it reloaded" is not the same answer as "the request came back".
+  const loadPeople = async (active: ActiveSession): Promise<boolean> => {
     if (!active.capabilities.canRead) {
       listStatus.textContent = readDenialMessage(active)
       list.replaceChildren()
-      return
+      return false
     }
     if (api.listTeamPeople === undefined) {
       listStatus.textContent = 'Team browsing is unavailable in this build.'
-      return
+      return false
     }
     const generation = ++listGeneration
     const range = teamWeekRange(within, weekStartDay)
@@ -578,16 +599,21 @@ export const createTeamDirectoryController = (
         loaded.push(...page.data)
         cursor = page.page.next_cursor ?? undefined
       } while (cursor !== undefined)
-      if (currentSession() !== active || generation !== listGeneration) return
+      if (currentSession() !== active || generation !== listGeneration) return false
       people = loaded
       renderSummary()
       renderPeople()
       listStatus.textContent = `${people.length} ${people.length === 1 ? 'person' : 'people'} · ${teamWeekLabel(range.from, range.to)}`
+      return true
     } catch (error) {
-      if (handleFailure(error, active)) return
-      if (currentSession() !== active || generation !== listGeneration) return
-      listStatus.textContent = messageFor(error)
-      listRetry.hidden = false
+      active.presentFailure(error, () => {
+        // The generation is the list's own currency -- a newer week or filter
+        // request for this same session -- and stays the caller's to check.
+        if (generation !== listGeneration) return
+        listStatus.textContent = messageFor(error)
+        listRetry.hidden = false
+      })
+      return false
     } finally {
       if (currentSession() === active && generation === listGeneration) {
         list.removeAttribute('aria-busy')
@@ -640,15 +666,15 @@ export const createTeamDirectoryController = (
       commandIds.delete(key)
       changed = true
     } catch (error) {
-      if (handleFailure(error, active)) return false
-      if (currentSession() !== active) return false
-      // A stale version or a replayed id means this attempt is spent and the
-      // next one has to be a fresh command; anything else -- a dropped
-      // connection above all -- is worth retrying under the same id, which is
-      // the whole point of having one.
-      const code = apiErrorCode(error)
-      if (code === 'state_conflict' || code === 'command_id_reused') commandIds.delete(key)
-      result.textContent = messageFor(error)
+      active.presentFailure(error, () => {
+        // A stale version or a replayed id means this attempt is spent and the
+        // next one has to be a fresh command; anything else -- a dropped
+        // connection above all -- is worth retrying under the same id, which is
+        // the whole point of having one.
+        const code = apiErrorCode(error)
+        if (code === 'state_conflict' || code === 'command_id_reused') commandIds.delete(key)
+        result.textContent = messageFor(error)
+      })
     } finally {
       if (currentSession() === active) rosterStatusPending = false
     }
@@ -657,9 +683,103 @@ export const createTeamDirectoryController = (
       renderPeople()
       return false
     }
-    await loadPeople(active)
-    if (currentSession() === active) result.textContent = done
+    const reloaded = await loadPeople(active)
+    if (currentSession() === active) {
+      result.textContent = reloaded
+        ? done
+        : `${done} The roster could not be reloaded; use Retry loading team.`
+    }
     return true
+  }
+
+  // The control ships hidden and stays hidden unless this session may write a
+  // user: it is the roster's own capability check that reveals it, not the
+  // shell's signed-in sweep. Only an administrator may name a profile on the
+  // way in -- POST /api/v1/users refuses the field from anybody else, so
+  // offering it would be a 403 waiting to happen.
+  const syncAddPersonControls = (active: ActiveSession): void => {
+    addPersonTrigger.hidden = !active.capabilities.canManagePeople
+    addPersonTrigger.disabled = !active.capabilities.canManagePeople || addPersonPending
+    addPersonProfileField.hidden = !active.capabilities.canChangeProfile
+    addPersonProfileNote.hidden = active.capabilities.canChangeProfile
+    addPersonProfile.disabled = !active.capabilities.canChangeProfile || addPersonPending
+    for (const control of addPersonForm.elements) {
+      if (control instanceof HTMLInputElement) control.disabled = addPersonPending
+    }
+    addPersonSubmit.disabled = addPersonPending
+  }
+
+  const describeSelectedProfile = (): void => {
+    addPersonProfileDescription.textContent =
+      teamProfileOptions.find((option) => option.value === addPersonProfile.value)?.description ??
+      ''
+  }
+
+  const openAddPerson = (active: ActiveSession): void => {
+    addPersonForm.reset()
+    addPersonResult.textContent = ''
+    addPersonProfile.replaceChildren(
+      ...teamProfileOptions.map((profile) => {
+        const option = document.createElement('option')
+        option.value = profile.value
+        option.textContent = profile.label
+        return option
+      }),
+    )
+    // The column default, so the dialog and a person created any other way
+    // start the same person in the same place.
+    addPersonProfile.value = 'member'
+    describeSelectedProfile()
+    syncAddPersonControls(active)
+    addPersonDialog.showModal()
+    formInput(addPersonForm, 'first_name').focus()
+  }
+
+  // A creation has no record to read a version off and nothing to conflict
+  // with, so it does not join the person editor's optimistic-concurrency
+  // dance. What it does have to do is put the new person in the roster the
+  // reader is looking at: the bands, their counts and their totals are all
+  // derived from the loaded page, so the page is reloaded rather than the row
+  // appended to a table that would then disagree with its own totals.
+  const createPerson = async (
+    active: ActiveSession,
+    input: TeamPersonCreate,
+  ): Promise<void> => {
+    if (addPersonPending || api.createTeamPerson === undefined) return
+    addPersonPending = true
+    syncAddPersonControls(active)
+    addPersonResult.textContent = 'Adding person\u2026'
+    // One try for the whole piece of work -- the write and the reload that puts
+    // its result in front of the reader -- because the form unlocks in the
+    // finally. Unlocking between the two re-armed the submit button while the
+    // roster was still loading, and the second submit it invited creates the
+    // person a second time.
+    try {
+      try {
+        await api.createTeamPerson(input, active.signal)
+      } catch (error) {
+        active.presentFailure(error, () => {
+          addPersonResult.textContent = messageFor(error)
+        })
+        return
+      }
+      const reloaded = await loadPeople(active)
+      // The person exists from here whatever the reload did, so the dialog is
+      // spent either way and closes; what the roster line may not say is
+      // "added." over a roster that failed to reload and is still showing the
+      // page from before the person was on it.
+      active.present(() => {
+        listStatus.textContent = reloaded
+          ? `${input.first_name} ${input.last_name} added.`
+          : `${input.first_name} ${input.last_name} added. The roster could not be reloaded; use Retry loading team.`
+        addPersonDialog.close()
+      })
+    } finally {
+      if (currentSession() === active) {
+        addPersonPending = false
+        syncAddPersonControls(active)
+      }
+    }
   }
 
   const renderRelationOptions = (
@@ -952,11 +1072,11 @@ export const createTeamDirectoryController = (
       await fetchPerson(active)
       return currentSession() === active
     } catch (error) {
-      if (handleFailure(error, active)) return false
-      if (currentSession() !== active) return false
-      personStatus.textContent = messageFor(error)
-      personRetry.hidden = false
-      editor.hidden = true
+      active.presentFailure(error, () => {
+        personStatus.textContent = messageFor(error)
+        personRetry.hidden = false
+        editor.hidden = true
+      })
       return false
     } finally {
       if (currentSession() === active) editor.removeAttribute('aria-busy')
@@ -972,12 +1092,18 @@ export const createTeamDirectoryController = (
     if (person !== null) person = { ...person, version: receipt.version }
     try {
       await fetchPerson(active)
-      result.textContent = successMessage
-      return true
+      // fetchPerson guards its own paints and returns normally for a session
+      // that has ended, so a bare `result.textContent = successMessage` here
+      // told the next user their edit had been saved. The answer to "did it
+      // reach the page?" is the same answer this function returns.
+      return active.present(() => {
+        result.textContent = successMessage
+      })
     } catch (error) {
-      if (handleFailure(error, active)) return false
-      result.textContent = `${successMessage} The updated record could not be reloaded; use Retry loading person.`
-      personRetry.hidden = false
+      active.presentFailure(error, () => {
+        result.textContent = `${successMessage} The updated record could not be reloaded; use Retry loading person.`
+        personRetry.hidden = false
+      })
       return false
     }
   }
@@ -988,15 +1114,22 @@ export const createTeamDirectoryController = (
     key: string,
     result: HTMLElement,
   ): Promise<boolean> => {
-    if (handleFailure(error, active)) return false
+    // A version conflict is a 409 and can never be the session ending, so it
+    // takes its own exit rather than being routed through presentFailure. It
+    // reloads first, and the line that explains the reload is painted for the
+    // session that asked for it -- the await is long enough to lose it.
     if (apiErrorCode(error) === 'state_conflict') {
       commandIds.delete(key)
       const reloaded = await loadPerson(active)
-      result.textContent = 'This person changed elsewhere. The latest record is loaded; review and try again.'
+      active.present(() => {
+        result.textContent = 'This person changed elsewhere. The latest record is loaded; review and try again.'
+      })
       return reloaded
     }
-    if (apiErrorCode(error) === 'command_id_reused') commandIds.delete(key)
-    result.textContent = messageFor(error)
+    active.presentFailure(error, () => {
+      if (apiErrorCode(error) === 'command_id_reused') commandIds.delete(key)
+      result.textContent = messageFor(error)
+    })
     return false
   }
 
@@ -1374,6 +1507,51 @@ export const createTeamDirectoryController = (
       if (person?.is_active === false) deactivateDialog.close()
     })
   })
+  addPersonTrigger.addEventListener('click', () => {
+    const active = currentSession()
+    if (active === null || !active.capabilities.canManagePeople) return
+    openAddPerson(active)
+  })
+  addPersonProfile.addEventListener('change', describeSelectedProfile)
+  required<HTMLButtonElement>('[data-team-person-close]').addEventListener('click', () => {
+    if (!addPersonPending) addPersonDialog.close()
+  })
+  addPersonForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const active = currentSession()
+    if (
+      active === null ||
+      !active.capabilities.canManagePeople ||
+      api.createTeamPerson === undefined
+    ) {
+      return
+    }
+    const firstName = formInput(addPersonForm, 'first_name').value.trim()
+    const lastName = formInput(addPersonForm, 'last_name').value.trim()
+    const email = formInput(addPersonForm, 'email').value.trim()
+    if (firstName === '' || lastName === '' || email === '') {
+      addPersonResult.textContent = 'First name, last name, and a sign-in address are required.'
+      return
+    }
+    let capacity: number
+    try {
+      capacity = parseTeamCapacitySeconds(formInput(addPersonForm, 'weekly_capacity').value)
+    } catch (error) {
+      addPersonResult.textContent = messageFor(error)
+      return
+    }
+    const input: TeamPersonCreate = {
+      first_name: firstName,
+      last_name: lastName,
+      email,
+      weekly_capacity: capacity,
+      is_contractor: formInput(addPersonForm, 'is_contractor').checked,
+      ...(active.capabilities.canChangeProfile
+        ? { profile: addPersonProfile.value as TeamProfile }
+        : {}),
+    }
+    void createPerson(active, input)
+  })
   for (const selector of ['[data-team-deactivate-close]', '[data-team-deactivate-cancel]']) {
     required<HTMLButtonElement>(selector).addEventListener('click', () => {
       if (mutationPending || rosterStatusPending) return
@@ -1393,7 +1571,7 @@ export const createTeamDirectoryController = (
         identity,
         capabilities: teamCapabilities(identity),
         signal,
-        onSessionFailure,
+        ...sessionPresenter(() => currentSession() === active, onSessionFailure),
       }
       session = active
       const abort = (): void => {
@@ -1409,13 +1587,15 @@ export const createTeamDirectoryController = (
       removeSessionAbortListener = removeAbortListener
       signal.addEventListener('abort', abort, { once: true })
       if (listPage) {
+        syncAddPersonControls(active)
         if (api.getTeamWeekStartDay !== undefined) {
           try {
             weekStartDay = await api.getTeamWeekStartDay(active.signal)
           } catch (error) {
-            if (handleFailure(error, active)) return
-            listStatus.textContent = messageFor(error)
-            listRetry.hidden = false
+            active.presentFailure(error, () => {
+              listStatus.textContent = messageFor(error)
+              listRetry.hidden = false
+            })
             return
           }
         }

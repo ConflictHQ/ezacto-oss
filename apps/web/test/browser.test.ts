@@ -4151,6 +4151,38 @@ describe('company settings', () => {
     expect(moduleStatus()).toBe('Only administrators can manage module settings.')
   })
 
+  it('[security] does not report an ended session\u2019s failure to the shell at all', async () => {
+    // The paint half of every handler here was guarded; the report half was
+    // not, so a 401 from a session that had already gone was still handed to
+    // onSessionFailure. Nothing worse happened only because the shell checks
+    // currency a second time -- a guarantee this controller was borrowing
+    // rather than holding, and the borrowed one is what six earlier sites had.
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const checked = deferred<SsoDomain>()
+    const api = {
+      ...companyApi([senderIdentity()], [ssoDomain()]),
+      verifySsoDomain: vi.fn(async () => checked.promise),
+    }
+    const controller = createModuleSettingsController(api as never)
+
+    const operator = new AbortController()
+    const operatorSessionFailure = vi.fn(() => false)
+    await controller.activate(identity, operator.signal, operatorSessionFailure)
+    await vi.waitFor(() => expect(ssoTable().hidden).toBe(false))
+    ssoAction(0, 'Verify').click()
+    await vi.waitFor(() => expect(api.verifySsoDomain).toHaveBeenCalled())
+
+    operator.abort()
+    await controller.activate(secondIdentity, new AbortController().signal, () => false)
+    checked.reject(authenticationError(401, 'unauthorized'))
+    await settled()
+
+    expect(operatorSessionFailure).not.toHaveBeenCalled()
+    expect(ssoResult()).toBe('')
+    expect(moduleStatus()).toBe('Only administrators can manage module settings.')
+  })
+
   it('[unit] gives the next administrator controls that are not still disabled', async () => {
     // The finally that re-enables a control belongs to the session that
     // disabled it, so the reset has to happen where the next session's page is

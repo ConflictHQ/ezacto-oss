@@ -139,6 +139,10 @@ const submit = (form: HTMLFormElement): void => {
 const formInputValue = (form: HTMLFormElement, name: string): string =>
   (form.elements.namedItem(name) as HTMLInputElement).value
 
+const setField = (form: HTMLFormElement, name: string, value: string): void => {
+  ;(form.elements.namedItem(name) as HTMLInputElement).value = value
+}
+
 beforeEach(() => {
   vi.useRealTimers()
 })
@@ -326,6 +330,44 @@ describe('Team browser controller', () => {
     )
   })
 
+  it('does not say a person was restored over a roster that failed to reload', async () => {
+    // The roster status change reports through the same reload as the add, and
+    // tells the same truth about it: "Person restored." over the page that
+    // still shows them archived is the control describing a page that is not
+    // there.
+    writeDocument('team-list')
+    const listTeamPeople = vi.fn(async () => {
+      if (listTeamPeople.mock.calls.length > 1) throw new Error('The team could not be loaded.')
+      return page([
+        summary({ id: 2, first_name: 'Blake', last_name: 'Reed', is_owner: false, is_active: false }),
+      ])
+    })
+    const getTeamPerson = vi.fn<TeamDirectoryApi['getTeamPerson']>(async () =>
+      person({ id: 2, first_name: 'Blake', last_name: 'Reed', is_active: false, version: 4 }),
+    )
+    const updateTeamPerson = vi.fn<TeamDirectoryApi['updateTeamPerson']>(async () => receipt(5))
+    const controller = createTeamDirectoryController({
+      listTeamPeople,
+      getTeamPerson,
+      updateTeamPerson,
+    })
+
+    await controller.activate(identity(), new AbortController().signal, () => false)
+
+    const row = document.querySelector<HTMLElement>('[data-team-list] [data-row-key="2"]')!
+    ;[...row.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Restore')!
+      .click()
+
+    await vi.waitFor(() => expect(listTeamPeople).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-team-list-status]')?.textContent).toBe(
+        'Person restored. The roster could not be reloaded; use Retry loading team.',
+      ),
+    )
+    expect(document.querySelector<HTMLButtonElement>('[data-team-list-retry]')?.hidden).toBe(false)
+  })
+
   it('keeps the initials when an avatar fails to load', async () => {
     // Imported avatar_urls point at Harvest's CDN and prod's CSP is
     // img-src 'self' data:, so every one of them is blocked. The initials have
@@ -364,6 +406,275 @@ describe('Team browser controller', () => {
     expect(document.querySelector('[data-team-list-status]')?.textContent).not.toContain(
       'API token',
     )
+  })
+
+  it('adds a person and re-bands the roster the reader is looking at', async () => {
+    // POST /api/v1/users has shipped since the contract did and nothing called
+    // it, so a fresh instance had exactly one person in it forever. The bands,
+    // their counts and their per-band totals are all derived from the loaded
+    // page, so the new person has to arrive through a reload rather than being
+    // appended to a table that would then disagree with its own totals.
+    writeDocument('team-list')
+    const listTeamPeople = vi.fn(async () =>
+      listTeamPeople.mock.calls.length === 1
+        ? page([summary()])
+        : page([
+            summary(),
+            summary({
+              id: 2,
+              first_name: 'Blake',
+              last_name: 'Reed',
+              is_owner: false,
+              is_contractor: true,
+              weekly_capacity: 72_000,
+              total_seconds: 36_000,
+              billable_seconds: 36_000,
+              nonbillable_seconds: 0,
+              utilization_ppm: 500_000,
+            }),
+          ]),
+    )
+    const createTeamPerson = vi.fn<TeamDirectoryApi['createTeamPerson']>(async () => ({
+      id: 2,
+      created_at: timestamp,
+      updated_at: timestamp,
+    }))
+    const controller = createTeamDirectoryController({ listTeamPeople, createTeamPerson })
+
+    await controller.activate(identity(), new AbortController().signal, () => false)
+
+    const trigger = document.querySelector<HTMLButtonElement>('[data-team-person-create]')!
+    expect(trigger.hidden).toBe(false)
+    trigger.click()
+
+    const dialog = document.querySelector<HTMLDialogElement>('[data-team-person-dialog]')!
+    expect(dialog.open).toBe(true)
+    const form = document.querySelector<HTMLFormElement>('[data-team-person-form]')!
+    setField(form, 'first_name', 'Blake')
+    setField(form, 'last_name', 'Reed')
+    setField(form, 'email', 'blake@example.test')
+    setField(form, 'weekly_capacity', '20')
+    ;(form.elements.namedItem('is_contractor') as HTMLInputElement).checked = true
+    ;(form.elements.namedItem('profile') as HTMLSelectElement).value = 'project_manager'
+    submit(form)
+
+    await vi.waitFor(() => expect(createTeamPerson).toHaveBeenCalledTimes(1))
+    // Capacity is stored in seconds; the field is hours, and the two are not
+    // the same number.
+    expect(createTeamPerson.mock.calls[0]![0]).toEqual({
+      first_name: 'Blake',
+      last_name: 'Reed',
+      email: 'blake@example.test',
+      weekly_capacity: 72_000,
+      is_contractor: true,
+      profile: 'project_manager',
+    })
+    await vi.waitFor(() => expect(listTeamPeople).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(dialog.open).toBe(false))
+    await vi.waitFor(() =>
+      expect(
+        [...document.querySelectorAll('[data-team-list] tr.data-table-group th')].map(
+          (band) => band.textContent,
+        ),
+      ).toEqual(['Employees (1)', 'Contractors (1)']),
+    )
+    const totals = [...document.querySelectorAll('[data-team-list] tr.data-table-group-total')]
+    expect(totals[1]!.querySelector('td[data-column="capacity"]')?.textContent).toBe('20h')
+    expect(totals[1]!.querySelector('td[data-column="hours"]')?.textContent).toBe('10h')
+    expect(document.querySelector('[data-team-list-status]')?.textContent).toBe('Blake Reed added.')
+  })
+
+  it('leaves the profile out of a people administrator\u2019s request', async () => {
+    // POST /api/v1/users refuses `profile` from anybody but an administrator,
+    // so offering the field to a people administrator would be a 403 waiting to
+    // happen; the record takes the column default instead.
+    writeDocument('team-list')
+    const listTeamPeople = vi.fn(async () => page([summary()]))
+    const createTeamPerson = vi.fn<TeamDirectoryApi['createTeamPerson']>(async () => ({
+      id: 2,
+      created_at: timestamp,
+      updated_at: timestamp,
+    }))
+    const controller = createTeamDirectoryController({ listTeamPeople, createTeamPerson })
+
+    await controller.activate(identity('people_admin'), new AbortController().signal, () => false)
+
+    document.querySelector<HTMLButtonElement>('[data-team-person-create]')!.click()
+    expect(
+      document.querySelector<HTMLElement>('[data-team-new-profile-field]')?.hidden,
+    ).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-team-new-profile-note]')?.hidden).toBe(false)
+    const form = document.querySelector<HTMLFormElement>('[data-team-person-form]')!
+    setField(form, 'first_name', 'Blake')
+    setField(form, 'last_name', 'Reed')
+    setField(form, 'email', 'blake@example.test')
+    setField(form, 'weekly_capacity', '35')
+    submit(form)
+
+    await vi.waitFor(() => expect(createTeamPerson).toHaveBeenCalledTimes(1))
+    expect(Object.keys(createTeamPerson.mock.calls[0]![0])).not.toContain('profile')
+  })
+
+  it('offers no add-person control to a profile that cannot write a user', async () => {
+    // A project manager may read the roster and may not create anybody on it,
+    // which is exactly where the API draws the line.
+    writeDocument('team-list')
+    const listTeamPeople = vi.fn(async () => page([summary()]))
+    const createTeamPerson = vi.fn<TeamDirectoryApi['createTeamPerson']>(async () => ({
+      id: 2,
+      created_at: timestamp,
+      updated_at: timestamp,
+    }))
+    const controller = createTeamDirectoryController({ listTeamPeople, createTeamPerson })
+
+    await controller.activate(
+      identity('project_manager'),
+      new AbortController().signal,
+      () => false,
+    )
+
+    expect(document.querySelector<HTMLButtonElement>('[data-team-person-create]')?.hidden).toBe(
+      true,
+    )
+    expect(createTeamPerson).not.toHaveBeenCalled()
+  })
+
+  it('does not say a person was added over a roster that failed to reload', async () => {
+    // The person is created and the roster reload that puts them on the page
+    // fails: writing "Blake Reed added." over the failure told the operator the
+    // page in front of them contains the person it does not contain, and left
+    // Retry loading team sitting there with a success line above it.
+    writeDocument('team-list')
+    const listTeamPeople = vi.fn(async () => {
+      if (listTeamPeople.mock.calls.length === 1) return page([summary()])
+      throw new Error('The team could not be loaded.')
+    })
+    const createTeamPerson = vi.fn<TeamDirectoryApi['createTeamPerson']>(async () => ({
+      id: 2,
+      created_at: timestamp,
+      updated_at: timestamp,
+    }))
+    const controller = createTeamDirectoryController({ listTeamPeople, createTeamPerson })
+
+    await controller.activate(identity(), new AbortController().signal, () => false)
+
+    document.querySelector<HTMLButtonElement>('[data-team-person-create]')!.click()
+    const form = document.querySelector<HTMLFormElement>('[data-team-person-form]')!
+    setField(form, 'first_name', 'Blake')
+    setField(form, 'last_name', 'Reed')
+    setField(form, 'email', 'blake@example.test')
+    setField(form, 'weekly_capacity', '20')
+    submit(form)
+
+    await vi.waitFor(() => expect(listTeamPeople).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLDialogElement>('[data-team-person-dialog]')?.open).toBe(
+        false,
+      ),
+    )
+    expect(document.querySelector('[data-team-list-status]')?.textContent).toBe(
+      'Blake Reed added. The roster could not be reloaded; use Retry loading team.',
+    )
+    expect(document.querySelector<HTMLButtonElement>('[data-team-list-retry]')?.hidden).toBe(false)
+    // The roster still shows the page from before the person existed, which is
+    // exactly what the message now says.
+    expect(document.querySelectorAll('[data-team-list] tr[data-row-key]')).toHaveLength(1)
+  })
+
+  it('keeps the add-person form locked until the roster it writes to has reloaded', async () => {
+    // Unlocking on the write alone re-armed the submit button while the reload
+    // was still in flight, and the dialog is still open and still filled in:
+    // an operator who presses Add person again gets a second person.
+    writeDocument('team-list')
+    let releaseReload: (() => void) | null = null
+    const listTeamPeople = vi.fn(async () => {
+      if (listTeamPeople.mock.calls.length === 1) return page([summary()])
+      await new Promise<void>((resolve) => {
+        releaseReload = resolve
+      })
+      return page([summary(), summary({ id: 2, first_name: 'Blake', last_name: 'Reed' })])
+    })
+    const createTeamPerson = vi.fn<TeamDirectoryApi['createTeamPerson']>(async () => ({
+      id: 2,
+      created_at: timestamp,
+      updated_at: timestamp,
+    }))
+    const controller = createTeamDirectoryController({ listTeamPeople, createTeamPerson })
+
+    await controller.activate(identity(), new AbortController().signal, () => false)
+
+    const trigger = document.querySelector<HTMLButtonElement>('[data-team-person-create]')!
+    trigger.click()
+    const form = document.querySelector<HTMLFormElement>('[data-team-person-form]')!
+    setField(form, 'first_name', 'Blake')
+    setField(form, 'last_name', 'Reed')
+    setField(form, 'email', 'blake@example.test')
+    setField(form, 'weekly_capacity', '20')
+    submit(form)
+
+    await vi.waitFor(() => expect(listTeamPeople).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(releaseReload).not.toBeNull())
+    expect(document.querySelector<HTMLDialogElement>('[data-team-person-dialog]')?.open).toBe(true)
+
+    submit(form)
+    await Promise.resolve()
+    expect(createTeamPerson).toHaveBeenCalledTimes(1)
+    expect(document.querySelector<HTMLButtonElement>('[data-team-person-submit]')?.disabled).toBe(
+      true,
+    )
+    expect(trigger.disabled).toBe(true)
+
+    releaseReload!()
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLDialogElement>('[data-team-person-dialog]')?.open).toBe(
+        false,
+      ),
+    )
+    expect(createTeamPerson).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('[data-team-list-status]')?.textContent).toBe('Blake Reed added.')
+    expect(document.querySelector<HTMLButtonElement>('[data-team-person-submit]')?.disabled).toBe(
+      false,
+    )
+  })
+
+  it('[security] keeps an ended session\u2019s add-person failure off the next session\u2019s page', async () => {
+    // The add-person write is a call site like every other one, and it reports
+    // its failure through the session that made it. This is the test that says
+    // so, and it is why the team controller keeps no private failure helper
+    // alive for createPerson.
+    writeDocument('team-list')
+    let failCreate: ((error: unknown) => void) | null = null
+    const createTeamPerson = vi.fn<TeamDirectoryApi['createTeamPerson']>(
+      () =>
+        new Promise((_resolve, reject) => {
+          failCreate = reject
+        }),
+    )
+    const listTeamPeople = vi.fn(async () => page([summary()]))
+    const controller = createTeamDirectoryController({ listTeamPeople, createTeamPerson })
+    const first = new AbortController()
+    const firstSessionFailure = vi.fn(() => false)
+
+    await controller.activate(identity(), first.signal, firstSessionFailure)
+    document.querySelector<HTMLButtonElement>('[data-team-person-create]')!.click()
+    const form = document.querySelector<HTMLFormElement>('[data-team-person-form]')!
+    setField(form, 'first_name', 'Blake')
+    setField(form, 'last_name', 'Reed')
+    setField(form, 'email', 'blake@example.test')
+    setField(form, 'weekly_capacity', '20')
+    submit(form)
+    await vi.waitFor(() => expect(createTeamPerson).toHaveBeenCalledTimes(1))
+
+    first.abort()
+    await controller.activate(identity(), new AbortController().signal, () => false)
+    failCreate!(new Error('Adding the person was refused.'))
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(firstSessionFailure).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-team-person-result]')?.textContent).toBe('')
+    expect(document.body.textContent).not.toContain('Adding the person was refused.')
   })
 
   it('renders exactly six permission profiles and disables owner profile and deactivation', async () => {
@@ -752,5 +1063,79 @@ describe('Team browser controller', () => {
       'No projects are assigned',
     )
     expect(document.querySelectorAll('[data-team-project-id]')).toHaveLength(0)
+  })
+  it('[security] keeps an ended session\u2019s week-start failure off the next session\u2019s page', async () => {
+    // The confirmed instance from #382: activate() read the week start, the
+    // session ended while the request was in flight, and the catch wrote the
+    // error into a page that already belonged to whoever signed in next --
+    // Retry button and all, offering them a request they cannot make.
+    writeDocument('team-list')
+    let failWeekStart: ((error: unknown) => void) | null = null
+    const getTeamWeekStartDay = vi.fn(
+      () =>
+        new Promise<'monday'>((_resolve, reject) => {
+          failWeekStart = reject
+        }),
+    )
+    const onSessionFailure = vi.fn(() => false)
+    const auth = new AbortController()
+    const controller = createTeamDirectoryController({
+      getTeamWeekStartDay,
+      listTeamPeople: vi.fn(async () => page([summary()])),
+    })
+
+    const activation = controller.activate(identity(), auth.signal, onSessionFailure)
+    await vi.waitFor(() => expect(getTeamWeekStartDay).toHaveBeenCalledTimes(1))
+    auth.abort()
+    failWeekStart!(new Error('The week start day could not be read.'))
+    await activation
+
+    expect(document.body.textContent).not.toContain('The week start day could not be read.')
+    expect(document.querySelector('[data-team-list-status]')?.textContent).toBe('Loading team\u2026')
+    expect(document.querySelector<HTMLButtonElement>('[data-team-list-retry]')?.hidden).toBe(true)
+    // A stale 401 must not reach the shell either: the session it would end is
+    // no longer the one that made the request.
+    expect(onSessionFailure).not.toHaveBeenCalled()
+  })
+
+  it('[security] does not tell the next session that the previous one\u2019s edit was saved', async () => {
+    // refreshAfterMutation awaits fetchPerson, which guards its own paints and
+    // returns normally when the session has moved on. The success line was
+    // written regardless, so the next user read "Information saved." about an
+    // edit that was not theirs.
+    writeDocument('team-person')
+    let releaseReload: ((value: TeamPerson) => void) | null = null
+    let reloadReturned = false
+    const getTeamPerson = vi.fn(async () => {
+      if (getTeamPerson.mock.calls.length === 1) return person()
+      const value = await new Promise<TeamPerson>((resolve) => {
+        releaseReload = resolve
+      })
+      reloadReturned = true
+      return value
+    })
+    const updateTeamPerson = vi.fn<TeamDirectoryApi['updateTeamPerson']>(async () => receipt(4))
+    const auth = new AbortController()
+    const controller = createTeamDirectoryController({
+      getTeamPerson,
+      getTeamCatalog: vi.fn(async () => catalog),
+      updateTeamPerson,
+    })
+
+    await controller.activate(identity(), auth.signal, () => false)
+    submit(document.querySelector<HTMLFormElement>('[data-team-info-form]')!)
+    await vi.waitFor(() => expect(updateTeamPerson).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(getTeamPerson).toHaveBeenCalledTimes(2))
+
+    auth.abort()
+    releaseReload!(person({ first_name: 'Late', last_name: 'Secret' }))
+    await vi.waitFor(() => expect(reloadReturned).toBe(true))
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(document.querySelector('[data-team-info-result]')?.textContent).toBe('')
+    expect(document.body.textContent).not.toContain('Information saved.')
+    expect(document.body.textContent).not.toContain('Late Secret')
+    expect(document.querySelector<HTMLButtonElement>('[data-team-person-retry]')?.hidden).toBe(true)
   })
 })

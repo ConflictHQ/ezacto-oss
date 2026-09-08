@@ -5,6 +5,7 @@ import {
   type Whoami,
 } from '@ezacto/client'
 import { renderDataTable } from '../components/data-table.js'
+import { sessionPresenter, type SessionPresenter } from '../session.js'
 import {
   apiErrorMessage,
   noteSettingsPatch,
@@ -45,9 +46,8 @@ const required = <ElementType extends Element>(selector: string): ElementType =>
   return item
 }
 
-interface ActiveSession {
+interface ActiveSession extends SessionPresenter {
   readonly signal: AbortSignal
-  readonly onSessionFailure: (error: unknown) => boolean
 }
 
 export interface ModuleSettingsController {
@@ -177,25 +177,6 @@ export const createModuleSettingsController = (
   const currentSession = (): ActiveSession | null =>
     session === null || session.signal.aborted ? null : session
 
-  /**
-   * The only place an await's answer reaches the page. #372 fixed the sections
-   * that load on activation by clearing first and routing failures through
-   * onSessionFailure, but every in-flight write has the same problem: the page
-   * outlives the session, and by the time an add, a verify or a save answers,
-   * clearPrivatePresentation() may already have taken the previous
-   * administrator's data off the screen. Painting the answer then puts it back
-   * — challenge tokens and all — in front of whoever signed in next. One guard
-   * per handler is how the fourth handler misses it, so success, failure and
-   * finally alike name the session they are painting for and go through here.
-   */
-  const present = (active: ActiveSession, paint: () => void): void => {
-    // Two independent ways to stop being the session on screen: another
-    // activate() took the page (clearPrivatePresentation drops the claim), or
-    // the shell aborted this one on its way out. Neither implies the other.
-    if (session !== active || active.signal.aborted) return
-    paint()
-  }
-
   noteForm.addEventListener('submit', async (event) => {
     event.preventDefault()
     const active = currentSession()
@@ -210,14 +191,13 @@ export const createModuleSettingsController = (
         }),
         active.signal,
       )
-      present(active, () => {
+      active.present(() => {
         noteRequired.checked = saved.required
         noteMinimum.value = String(saved.minimum_length)
         noteResult.textContent = 'Saved.'
       })
     } catch (error) {
-      if (active.onSessionFailure(error)) return
-      present(active, () => {
+      active.presentFailure(error, () => {
         noteResult.textContent = messageFor(
           error,
           'Only executive managers and administrators can change the notes policy.',
@@ -227,7 +207,7 @@ export const createModuleSettingsController = (
     } finally {
       // Re-enabling belongs to the session that disabled it. The next session
       // gets its controls back from clearPrivatePresentation instead.
-      present(active, () => {
+      active.present(() => {
         noteSubmit.disabled = false
       })
     }
@@ -313,13 +293,12 @@ export const createModuleSettingsController = (
     ssoResult.textContent = `Checking ${domain.domain}…`
     try {
       const check = await api.verifySsoDomain(domain.id, active.signal)
-      present(active, () => {
+      active.present(() => {
         ssoState = ssoState.map((row) => (row.id === check.id ? check : row))
         ssoResult.textContent = ssoVerificationMessage(check)
       })
     } catch (error) {
-      if (active.onSessionFailure(error)) return
-      present(active, () => {
+      active.presentFailure(error, () => {
         // A lookup that could not run is not a domain that failed the check: the
         // record may be published and perfect. The API's own message says which
         // happened, so an operator does not go and pull a correct record.
@@ -327,7 +306,7 @@ export const createModuleSettingsController = (
       })
     } finally {
       ssoBusy = false
-      present(active, paintSsoDomains)
+      active.present(paintSsoDomains)
     }
   }
 
@@ -339,18 +318,17 @@ export const createModuleSettingsController = (
     ssoResult.textContent = `Removing ${domain.domain}…`
     try {
       await api.removeSsoDomain(domain.id, active.signal)
-      present(active, () => {
+      active.present(() => {
         ssoState = ssoState.filter((row) => row.id !== domain.id)
         ssoResult.textContent = `${domain.domain} no longer provisions anyone.`
       })
     } catch (error) {
-      if (active.onSessionFailure(error)) return
-      present(active, () => {
+      active.presentFailure(error, () => {
         ssoResult.textContent = apiErrorMessage(error, 'The domain could not be removed.')
       })
     } finally {
       ssoBusy = false
-      present(active, paintSsoDomains)
+      active.present(paintSsoDomains)
     }
   }
 
@@ -370,7 +348,7 @@ export const createModuleSettingsController = (
       // The new domain reaches the held list here and not a line earlier: a
       // domain added into a session that has ended is a challenge token
       // waiting for the next paint to put it on someone else's screen.
-      present(active, () => {
+      active.present(() => {
         ssoState = [...ssoState, added]
         ssoInput.value = ''
         paintSsoDomains()
@@ -381,12 +359,11 @@ export const createModuleSettingsController = (
           `${added.domain} added. Publish the ${added.record_type} record shown, then verify it.`
       })
     } catch (error) {
-      if (active.onSessionFailure(error)) return
-      present(active, () => {
+      active.presentFailure(error, () => {
         ssoResult.textContent = apiErrorMessage(error, 'The domain could not be added.')
       })
     } finally {
-      present(active, () => {
+      active.present(() => {
         ssoSubmit.disabled = false
       })
     }
@@ -448,7 +425,7 @@ export const createModuleSettingsController = (
         api.getTimeEntrySettings(active.signal),
         api.getTimeEntryNoteSettings(active.signal),
       ])
-      present(active, () => {
+      active.present(() => {
         facts(timeFacts, timeTrackingFacts(settings))
         noteRequired.checked = notes.required
         noteMinimum.value = String(notes.minimum_length)
@@ -460,8 +437,7 @@ export const createModuleSettingsController = (
       // session rather than printing the transport error. Without it the shell
       // still presents a signed-out user as signed in, over a raw
       // "request failed with status 401".
-      if (active.onSessionFailure(error)) return
-      present(active, () => {
+      active.presentFailure(error, () => {
         timeStatus.textContent = messageFor(
           error,
           'Only executive managers and administrators can read the time tracking settings.',
@@ -487,7 +463,7 @@ export const createModuleSettingsController = (
         api.listSenderIdentities(active.signal),
         api.getEmailHealth(active.signal),
       ])
-      present(active, () => {
+      active.present(() => {
         emailSenders.replaceChildren(senderTable(identities))
         emailSenders.hidden = false
         facts(emailReputation, [
@@ -506,8 +482,7 @@ export const createModuleSettingsController = (
         emailStatus.textContent = ''
       })
     } catch (error) {
-      if (active.onSessionFailure(error)) return
-      present(active, () => {
+      active.presentFailure(error, () => {
         emailStatus.textContent = messageFor(
           error,
           'Only administrators can view email delivery.',
@@ -531,15 +506,14 @@ export const createModuleSettingsController = (
     }
     try {
       const domains = await api.listSsoDomains(active.signal)
-      present(active, () => {
+      active.present(() => {
         ssoState = domains
         paintSsoDomains()
         ssoForm.hidden = false
         ssoStatus.textContent = ''
       })
     } catch (error) {
-      if (active.onSessionFailure(error)) return
-      present(active, () => {
+      active.presentFailure(error, () => {
         ssoStatus.textContent = messageFor(
           error,
           'Only administrators can manage SSO provisioning domains.',
@@ -560,7 +534,10 @@ export const createModuleSettingsController = (
         return
       }
 
-      const active: ActiveSession = { signal, onSessionFailure }
+      const active: ActiveSession = {
+        signal,
+        ...sessionPresenter(() => currentSession() === active, onSessionFailure),
+      }
       session = active
 
       const configuration = Promise.all([
@@ -571,7 +548,7 @@ export const createModuleSettingsController = (
 
       try {
         const modules = await fetchModules(signal)
-        present(active, () => {
+        active.present(() => {
           status.textContent = ''
           list.innerHTML = modules.map(renderModuleCard).join('')
 
@@ -585,14 +562,13 @@ export const createModuleSettingsController = (
 
               try {
                 const updated = await patchModule(moduleName, toggle.checked, signal)
-                present(active, () => {
+                active.present(() => {
                   const state = updated.find((m) => m.module === moduleName)
                   if (span) span.textContent = state?.enabled ? 'Enabled' : 'Disabled'
                   if (result) result.textContent = ''
                 })
               } catch (error) {
-                if (active.onSessionFailure(error)) return
-                present(active, () => {
+                active.presentFailure(error, () => {
                   toggle.checked = !toggle.checked
                   if (span) span.textContent = toggle.checked ? 'Enabled' : 'Disabled'
                   if (result) {
@@ -602,7 +578,7 @@ export const createModuleSettingsController = (
                   }
                 })
               } finally {
-                present(active, () => {
+                active.present(() => {
                   toggle.disabled = false
                 })
               }
@@ -610,8 +586,7 @@ export const createModuleSettingsController = (
           }
         })
       } catch (error) {
-        if (active.onSessionFailure(error)) return
-        present(active, () => {
+        active.presentFailure(error, () => {
           status.textContent = error instanceof Error
             ? error.message
             : 'Modules could not be loaded.'

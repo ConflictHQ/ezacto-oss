@@ -801,6 +801,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.getTeamPerson({ id, ...withSignal(signal) })).data,
   getTeamCatalog: async (signal) =>
     (await client.getTeamCatalog(withSignal(signal))).data,
+  createTeamPerson: async (input, signal) =>
+    (await client.createUser({ body: input, ...withSignal(signal) })).data,
   updateTeamPerson: async (id, commandId, body, signal) =>
     (
       await client.updateTeamPerson({

@@ -1,4 +1,5 @@
 import { renderDataTable, type DataColumn } from '../components/data-table.js'
+import { sessionPresenter, type SessionPresenter } from '../session.js'
 import { EzactoApiError, type GeneralResource, type Whoami } from '@ezacto/client'
 import {
   formatTaskRate,
@@ -44,11 +45,10 @@ const messageFor = (error: unknown): string => {
 const confirmedDialogSubmit = (event: SubmitEvent): boolean =>
   event.submitter instanceof HTMLButtonElement && event.submitter.value === 'confirm'
 
-interface ActiveSession {
+interface ActiveSession extends SessionPresenter {
   readonly identity: Whoami
   readonly capabilities: TaskAdminCapabilities
   readonly signal: AbortSignal
-  readonly onSessionFailure: (error: unknown) => boolean
 }
 
 export interface TaskAdminController {
@@ -93,9 +93,6 @@ export const createTaskAdminController = (
 
   const currentSession = (): ActiveSession | null =>
     session === null || session.signal.aborted ? null : session
-
-  const handleFailure = (error: unknown, active: ActiveSession): boolean =>
-    currentSession() === active && active.onSessionFailure(error)
 
   const formControl = (name: string): HTMLInputElement => {
     const control = form.elements.namedItem(name)
@@ -305,15 +302,14 @@ export const createTaskAdminController = (
         status.textContent = successMessage ?? loadedSummary()
       }
     } catch (error) {
-      if (handleFailure(error, active)) return
-      if (
-        currentSession() !== active ||
-        requestGeneration !== listGeneration ||
-        requestFilter !== filter
-      ) return
-      status.textContent = messageFor(error)
-      retry.hidden = false
-      loadMore.hidden = true
+      active.presentFailure(error, () => {
+        // Generation and filter are the list's own currency -- a newer request
+        // for this same session -- and stay the caller's to check.
+        if (requestGeneration !== listGeneration || requestFilter !== filter) return
+        status.textContent = messageFor(error)
+        retry.hidden = false
+        loadMore.hidden = true
+      })
     } finally {
       if (currentSession() === active && requestGeneration === listGeneration) {
         listPendingGeneration = null
@@ -452,9 +448,9 @@ export const createTaskAdminController = (
         await loadList(active, false, create ? 'Task added.' : 'Task saved.')
       })
       .catch((error: unknown) => {
-        if (!handleFailure(error, active) && currentSession() === active) {
+        active.presentFailure(error, () => {
           formResult.textContent = messageFor(error)
-        }
+        })
       })
       .finally(() => {
         if (currentSession() === active && mutationPending) {
@@ -495,9 +491,9 @@ export const createTaskAdminController = (
         await loadList(active, false, 'Task archived.')
       })
       .catch((error: unknown) => {
-        if (!handleFailure(error, active) && currentSession() === active) {
+        active.presentFailure(error, () => {
           archiveResult.textContent = messageFor(error)
-        }
+        })
       })
       .finally(() => {
         if (currentSession() === active && mutationPending) {
@@ -515,7 +511,7 @@ export const createTaskAdminController = (
         identity,
         capabilities: taskAdminCapabilities(identity),
         signal,
-        onSessionFailure,
+        ...sessionPresenter(() => currentSession() === active, onSessionFailure),
       }
       session = active
       page.hidden = false

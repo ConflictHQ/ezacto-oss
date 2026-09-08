@@ -300,4 +300,100 @@ describe('Clients V1 browser controller', () => {
       ),
     )
   })
+
+  it('[security] does not sign the next user out with an ended session\u2019s 401', async () => {
+    // The whole point of the session presenter. The old handleFailure asked
+    // currentSession() who to report to instead of asking the session that made
+    // the request, so a 401 arriving after a sign-out was handed to whoever had
+    // signed in since -- and their shell, doing exactly what it should with a
+    // 401, signed *them* out.
+    writeDocument('client-list', '/clients')
+    let failList: ((error: unknown) => void) | null = null
+    const listDirectoryClients = vi.fn(() =>
+      listDirectoryClients.mock.calls.length === 1
+        ? new Promise<ReturnType<typeof page>>((_resolve, reject) => {
+            failList = reject
+          })
+        : Promise.resolve(page([parent])),
+    )
+    const identity = (user_id: number): Whoami => ({
+      user_id,
+      profile: 'administrator',
+      manager_grants: [],
+      authentication: { kind: 'session' },
+    })
+    const controller = createClientDirectoryController({ listDirectoryClients })
+    const first = new AbortController()
+
+    const firstActivation = controller.activate(identity(1), first.signal, () => false)
+    await vi.waitFor(() => expect(listDirectoryClients).toHaveBeenCalledTimes(1))
+    first.abort()
+
+    const second = new AbortController()
+    const nextSessionFailure = vi.fn((error: unknown) => {
+      if (!(error instanceof EzactoApiError) || error.status !== 401) return false
+      second.abort()
+      return true
+    })
+    await controller.activate(identity(2), second.signal, nextSessionFailure)
+
+    failList!(new EzactoApiError(401, { error: { message: 'Session expired.' } }, null))
+    await firstActivation
+
+    expect(nextSessionFailure).not.toHaveBeenCalled()
+    expect(second.signal.aborted).toBe(false)
+    expect(document.body.textContent).not.toContain('Session expired.')
+    expect(document.querySelector<HTMLButtonElement>('[data-client-list-retry]')?.hidden).toBe(true)
+  })
+
+  it('[security] keeps an ended session\u2019s save failure out of the next user\u2019s dialog', async () => {
+    // The other shape in this file, `if (!handleFailure(error)) paint`: for a
+    // session that had gone it read as "nobody took it -- carry on", and the
+    // previous user's failure was waiting in the dialog the next one opens.
+    writeDocument('client-list', '/clients')
+    let failSave: ((error: unknown) => void) | null = null
+    const createDirectoryClient = vi.fn(
+      () =>
+        new Promise<GeneralResource>((_resolve, reject) => {
+          failSave = reject
+        }),
+    )
+    const identity = (user_id: number): Whoami => ({
+      user_id,
+      profile: 'administrator',
+      manager_grants: [],
+      authentication: { kind: 'session' },
+    })
+    const controller = createClientDirectoryController({
+      listDirectoryClients: vi.fn(async () => page([parent])),
+      createDirectoryClient,
+      updateDirectoryClient: vi.fn(),
+    })
+    const first = new AbortController()
+
+    await controller.activate(identity(1), first.signal, () => false)
+    const form = document.querySelector<HTMLFormElement>('[data-client-form]')!
+    const submitter = document.querySelector<HTMLButtonElement>('[data-client-form-submit]')!
+    document.querySelector<HTMLButtonElement>('[data-client-create]')!.click()
+    ;(form.elements.namedItem('name') as HTMLInputElement).value = 'Left in flight'
+    form.dispatchEvent(
+      new SubmitEvent('submit', { bubbles: true, cancelable: true, submitter }),
+    )
+    await vi.waitFor(() => expect(createDirectoryClient).toHaveBeenCalledTimes(1))
+
+    first.abort()
+    const nextSessionFailure = vi.fn(() => false)
+    await controller.activate(identity(2), new AbortController().signal, nextSessionFailure)
+
+    failSave!(new Error('Saving the client was refused.'))
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(nextSessionFailure).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-client-form-result]')?.textContent).not.toContain(
+      'Saving the client was refused.',
+    )
+    expect(document.body.textContent).not.toContain('Saving the client was refused.')
+  })
 })

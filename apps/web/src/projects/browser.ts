@@ -1,6 +1,7 @@
 import { EzactoApiError, type Attachment, type GeneralResource, type Whoami } from '@ezacto/client'
 
 import { renderDataTable } from '../components/data-table.js'
+import { sessionPresenter, type SessionPresenter } from '../session.js'
 import { localDate } from '../shell/model.js'
 import {
   projectBoolean,
@@ -206,11 +207,10 @@ const valueFor = (resource: GeneralResource | null, field: string): string => {
   return value === null || value === undefined ? '' : String(value)
 }
 
-interface ActiveSession {
+interface ActiveSession extends SessionPresenter {
   readonly identity: Whoami
   readonly capabilities: ProjectCapabilities
   readonly signal: AbortSignal
-  readonly onSessionFailure: (error: unknown) => boolean
 }
 
 export interface ProjectDirectoryController {
@@ -302,11 +302,6 @@ export const createProjectDirectoryController = (
   const setMutationPending = (pending: boolean): void => {
     mutationPending = pending
     syncMutationActions()
-  }
-
-  const handleFailure = (error: unknown): boolean => {
-    const active = currentSession()
-    return active !== null && active.onSessionFailure(error)
   }
 
   const closeDialogs = (): void => {
@@ -1056,9 +1051,10 @@ export const createProjectDirectoryController = (
       populateClientFilter()
       renderList()
     } catch (error) {
-      if (handleFailure(error)) return
-      listStatus.textContent = messageFor(error)
-      listRetry.hidden = false
+      active.presentFailure(error, () => {
+        listStatus.textContent = messageFor(error)
+        listRetry.hidden = false
+      })
     }
   }
 
@@ -1073,10 +1069,11 @@ export const createProjectDirectoryController = (
       attachmentStatus.textContent = `${attachments.length} ${attachments.length === 1 ? 'file' : 'files'} attached.`
       renderAttachments()
     } catch (error) {
-      if (handleFailure(error)) return
-      attachments = []
-      renderAttachments()
-      attachmentStatus.textContent = messageFor(error)
+      active.presentFailure(error, () => {
+        attachments = []
+        renderAttachments()
+        attachmentStatus.textContent = messageFor(error)
+      })
     }
   }
 
@@ -1113,10 +1110,11 @@ export const createProjectDirectoryController = (
       attachmentForm.hidden = !active.capabilities.canWrite
       await loadAttachmentData(active, projectId)
     } catch (error) {
-      if (handleFailure(error)) return
-      detail.hidden = true
-      detailStatus.textContent = messageFor(error)
-      detailRetry.hidden = false
+      active.presentFailure(error, () => {
+        detail.hidden = true
+        detailStatus.textContent = messageFor(error)
+        detailRetry.hidden = false
+      })
     }
   }
 
@@ -1186,7 +1184,9 @@ export const createProjectDirectoryController = (
         }
       })
       .catch((error: unknown) => {
-        if (!handleFailure(error)) projectFormResult.textContent = messageFor(error)
+        active.presentFailure(error, () => {
+          projectFormResult.textContent = messageFor(error)
+        })
       })
       .finally(() => {
         if (currentSession() === active) {
@@ -1227,7 +1227,9 @@ export const createProjectDirectoryController = (
         if (currentSession() === active) taskStatus.textContent = create ? 'Task assigned.' : 'Task assignment saved.'
       })
       .catch((error: unknown) => {
-        if (!handleFailure(error)) assignmentFormResult.textContent = messageFor(error)
+        active.presentFailure(error, () => {
+          assignmentFormResult.textContent = messageFor(error)
+        })
       })
       .finally(() => {
         if (currentSession() === active) {
@@ -1259,7 +1261,9 @@ export const createProjectDirectoryController = (
         if (currentSession() === active) globalThis.location.assign('/projects')
       })
       .catch((error: unknown) => {
-        if (!handleFailure(error)) archiveResult.textContent = messageFor(error)
+        active.presentFailure(error, () => {
+          archiveResult.textContent = messageFor(error)
+        })
       })
       .finally(() => {
         if (currentSession() === active) {
@@ -1296,7 +1300,9 @@ export const createProjectDirectoryController = (
         if (currentSession() === active) taskStatus.textContent = 'Task assignment archived.'
       })
       .catch((error: unknown) => {
-        if (!handleFailure(error)) assignmentArchiveResult.textContent = messageFor(error)
+        active.presentFailure(error, () => {
+          assignmentArchiveResult.textContent = messageFor(error)
+        })
       })
       .finally(() => {
         if (currentSession() === active) {
@@ -1344,7 +1350,9 @@ export const createProjectDirectoryController = (
         if (currentSession() === active) attachmentStatus.textContent = 'File attached.'
       })
       .catch((error: unknown) => {
-        if (!handleFailure(error)) attachmentStatus.textContent = messageFor(error)
+        active.presentFailure(error, () => {
+          attachmentStatus.textContent = messageFor(error)
+        })
       })
       .finally(() => {
         if (currentSession() === active) {
@@ -1362,7 +1370,7 @@ export const createProjectDirectoryController = (
         identity,
         capabilities: projectCapabilities(identity),
         signal,
-        onSessionFailure,
+        ...sessionPresenter(() => currentSession() === active, onSessionFailure),
       }
       session = active
       enableWrites(active.capabilities.canWrite)

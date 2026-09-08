@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 
-import type { Attachment, GeneralResource, Whoami } from '@ezacto/client'
+import { EzactoApiError, type Attachment, type GeneralResource, type Whoami } from '@ezacto/client'
 import { describe, expect, it, vi } from 'vitest'
 import { createProjectDirectoryController } from '../src/projects/browser.js'
 import type { ProjectDirectoryApi } from '../src/projects/model.js'
@@ -531,5 +531,139 @@ describe('Projects V1 browser controller', () => {
     filter.dispatchEvent(new Event('change'))
     expect(document.querySelector('[data-project-list]')?.textContent).toContain('Archived')
     expect(document.querySelector('[data-project-list]')?.textContent).not.toContain('Launch')
+  })
+
+  it('[security] keeps an ended session\u2019s list failure off the next session\u2019s page', async () => {
+    // projects\u2019 handleFailure returned false for a session that had gone,
+    // which read at the call site as "not handled -- carry on", so the catch
+    // wrote the previous user\u2019s error over a cleared page and offered them a
+    // Retry for a request that is not theirs to make.
+    writeDocument('project-list', '/projects')
+    let failClients: ((error: unknown) => void) | null = null
+    const listProjectClients = vi.fn(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          failClients = reject
+        }),
+    )
+    const onSessionFailure = vi.fn(() => false)
+    const auth = new AbortController()
+    const controller = createProjectDirectoryController({
+      listDirectoryProjects: vi.fn(async () => page([project])),
+      listProjectClients,
+    })
+
+    const activation = controller.activate(identity('administrator'), auth.signal, onSessionFailure)
+    await vi.waitFor(() => expect(listProjectClients).toHaveBeenCalledTimes(1))
+    auth.abort()
+    failClients!(new Error('The client list could not be loaded.'))
+    await activation
+
+    expect(document.body.textContent).not.toContain('The client list could not be loaded.')
+    expect(document.querySelector('[data-project-list-status]')?.textContent).toBe(
+      'Loading projects\u2026',
+    )
+    expect(document.querySelector<HTMLButtonElement>('[data-project-list-retry]')?.hidden).toBe(true)
+    expect(onSessionFailure).not.toHaveBeenCalled()
+  })
+
+  it('[security] keeps an ended session\u2019s attachment failure off the next session\u2019s page', async () => {
+    writeDocument('project-detail', '/projects/7')
+    let failAttachments: ((error: unknown) => void) | null = null
+    const listDirectoryProjectAttachments = vi.fn(
+      () =>
+        new Promise<Attachment[]>((_resolve, reject) => {
+          failAttachments = reject
+        }),
+    )
+    const auth = new AbortController()
+    const controller = createProjectDirectoryController(
+      detailApi({ listDirectoryProjectAttachments }),
+    )
+
+    const activation = controller.activate(identity('administrator'), auth.signal, () => false)
+    await vi.waitFor(() => expect(listDirectoryProjectAttachments).toHaveBeenCalledTimes(1))
+    auth.abort()
+    failAttachments!(new Error('The attachment list could not be read.'))
+    await activation
+
+    expect(document.querySelector('[data-project-attachment-status]')?.textContent).toBe('')
+    expect(document.body.textContent).not.toContain('The attachment list could not be read.')
+  })
+
+  it('[security] keeps an ended session\u2019s save failure out of the project dialog', async () => {
+    // The `if (!handleFailure(error))` shape: false for a dead session meant
+    // the message was painted, and the dialog it lives in is reopened by the
+    // next user with the previous one\u2019s failure already in it.
+    writeDocument('project-detail', '/projects/7')
+    let failSave: ((error: unknown) => void) | null = null
+    const updateDirectoryProject = vi.fn(
+      () =>
+        new Promise<GeneralResource>((_resolve, reject) => {
+          failSave = reject
+        }),
+    )
+    const auth = new AbortController()
+    const controller = createProjectDirectoryController(detailApi({ updateDirectoryProject }))
+
+    await controller.activate(identity('administrator'), auth.signal, () => false)
+    document.querySelector<HTMLButtonElement>('[data-project-edit]')!.click()
+    const form = document.querySelector<HTMLFormElement>('[data-project-form]')!
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(updateDirectoryProject).toHaveBeenCalledTimes(1))
+
+    auth.abort()
+    failSave!(new Error('Saving the project was refused.'))
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLDialogElement>('[data-project-form-dialog]')?.open).toBe(
+        false,
+      ),
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(document.querySelector('[data-project-form-result]')?.textContent).not.toContain(
+      'Saving the project was refused.',
+    )
+  })
+
+  it('[security] does not sign the next user out with an ended session\u2019s 401', async () => {
+    // The case the null-session tests above cannot reach: somebody has signed
+    // in since, so currentSession() is not null, it is *them*. Asking it who to
+    // report to handed the previous session\u2019s 401 to the new session\u2019s shell,
+    // which did the right thing with a 401 and signed the wrong person out.
+    writeDocument('project-list', '/projects')
+    let failClients: ((error: unknown) => void) | null = null
+    const listProjectClients = vi.fn(() =>
+      listProjectClients.mock.calls.length === 1
+        ? new Promise<ReturnType<typeof page>>((_resolve, reject) => {
+            failClients = reject
+          })
+        : Promise.resolve(page([client])),
+    )
+    const controller = createProjectDirectoryController({
+      listDirectoryProjects: vi.fn(async () => page([project])),
+      listProjectClients,
+    })
+    const first = new AbortController()
+
+    const activation = controller.activate(identity('administrator'), first.signal, () => false)
+    await vi.waitFor(() => expect(listProjectClients).toHaveBeenCalledTimes(1))
+    first.abort()
+
+    const second = new AbortController()
+    const nextSessionFailure = vi.fn((error: unknown) => {
+      if (!(error instanceof EzactoApiError) || error.status !== 401) return false
+      second.abort()
+      return true
+    })
+    await controller.activate(identity('member'), second.signal, nextSessionFailure)
+
+    failClients!(new EzactoApiError(401, { error: { message: 'Session expired.' } }, null))
+    await activation
+
+    expect(nextSessionFailure).not.toHaveBeenCalled()
+    expect(second.signal.aborted).toBe(false)
+    expect(document.body.textContent).not.toContain('Session expired.')
   })
 })

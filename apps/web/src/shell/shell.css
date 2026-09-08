@@ -477,7 +477,8 @@
   .team-person-panel button,
   .team-status-actions button,
   .team-rate-dialog button,
-  .team-deactivate-dialog button {
+  .team-deactivate-dialog button,
+  .team-person-dialog button {
     width: 100%;
   }
   .team-summary,
