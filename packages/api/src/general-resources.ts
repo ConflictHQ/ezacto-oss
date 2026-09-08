@@ -336,6 +336,14 @@ const hiddenGeneralField = (
     return !canSeeProjectBillableMoney(viewer);
   if (kind === "task-assignments" && field === "budgetCents")
     return !canSeeProjectCostBudget(viewer);
+  // clients.budget_cents is the same column the rollup already redacts as
+  // node_budget_cents behind canViewMoneyField(viewer, "money_budget"). This
+  // branch was simply absent, so a member refused the rollup could read the
+  // identical figure straight off /api/v1/clients. Gating it here makes the two
+  // endpoints agree about one column rather than leaving the rule true in one
+  // place and unenforced in the other.
+  if (kind === "clients" && field === "budgetCents")
+    return !canViewMoneyField(viewer, "money_budget");
   if (
     kind === "users" &&
     (field === "managerGrants" || field === "samlExempt")
@@ -746,6 +754,16 @@ const authorizeMutationFields = (
     kind === "projects" &&
     fields.has("notes") &&
     principal.profile !== "administrator"
+  ) {
+    return profileForbidden();
+  }
+  // clients:write reaches project_manager, so without this a profile that
+  // cannot READ the client budget could still SET it — and then read it back
+  // from its own request. A field nobody may see is a field nobody may write.
+  if (
+    kind === "clients" &&
+    fields.has("budgetCents") &&
+    !canViewMoneyField(principal, "money_budget")
   ) {
     return profileForbidden();
   }
