@@ -55,7 +55,7 @@ CI holds two repository-wide Cloudflare credentials. They are consumed only by
 | Secret | What |
 | --- | --- |
 | `CLOUDFLARE_API_TOKEN` | scoped deploy/provision token — account: Workers Scripts Write, Workers Observability Write, Account Settings Read, **D1 Edit**, **Workers R2 Storage Edit**; zone: Zone Read, Workers Routes Write, DNS Write, **limited to `example.com` and `ezacto.io`** |
-| `CLOUDFLARE_ACCOUNT_ID` | CONFLICT LLC account id (not secret; a secret only to keep it out of the tracked config) |
+| `CLOUDFLARE_ACCOUNT_ID` | the deploying account's id (not a secret in itself; held as one so it stays out of the tracked config) |
 
 R2 bucket discovery and creation use Cloudflare's account REST API. In the API
 token editor, grant **Account > Workers R2 Storage > Edit** and scope it to the

@@ -31,7 +31,7 @@ The operating credential is the wrangler OAuth session, not an API token.
 
 ```sh
 unset CLOUDFLARE_API_TOKEN
-export CLOUDFLARE_ACCOUNT_ID=00000000000000000000000000000000
+export CLOUDFLARE_ACCOUNT_ID=<your Cloudflare account id>
 npx wrangler whoami
 ```
 
@@ -174,10 +174,11 @@ sqlite3 ./cutover.db "
   UNION ALL SELECT 'migrations', count(*) FROM _ezacto_migrations;"
 ```
 
-The rehearsal figures were 30,665 time entries, 739 invoices, 11,909 line items,
-4,487 invoice messages, 30 clients, 60 users and 6 file objects. Treat those as
-the expected order of magnitude, not as constants: the account keeps moving
-until the freeze.
+Record your own rehearsal figures the first time you run this, and compare
+every later run against them. They are an order of magnitude to sanity-check
+against, never constants -- the source account keeps moving until the freeze,
+so a later run that matches an earlier one exactly is more suspicious than one
+that does not.
 
 Two things to settle here rather than discover later:
 
@@ -271,8 +272,9 @@ generation engine refuses them. They are live billing, not history: 466138 and
 440932 have been issuing monthly, and 90 issued invoices in the loaded database
 point at the three stubs. Leaving them incomplete silently stops that.
 
-One transcription rule the schema does not hint at. Harvest's Halcyon Biolabs
-definition (100001) carries a credit line at quantity `-1.0` × `$6,250.00`.
+One transcription rule the schema does not hint at. A Harvest recurring
+definition may carry a credit line at a negative quantity — one in the CONFLICT
+account reads quantity `-1.0` × `$6,250.00`.
 Transcribed faithfully the apply aborts:
 
 ```text
@@ -544,8 +546,9 @@ npx wrangler d1 execute ezacto-prod-<date> --remote --command \
 
 Every figure must equal the same query against `cutover.db`, with one exception:
 the remote table count is one higher, because hosted D1 carries its own `_cf_KV`
-table. The rehearsal saw 372 triggers, 206 indexes, 3 views, 94 local tables
-(95 remote), 30,665 time entries, 739 invoices, 4,487 messages and 30 clients.
+table. The schema figures are a property of the build rather than of any
+account -- a rehearsal on the current ledger saw 372 triggers, 206 indexes, 3
+views and 94 local tables (95 remote). The row counts are yours, not ours.
 
 Compare, do not assume. The point of the check is that the numbers match the
 file you built, not that they match this document.

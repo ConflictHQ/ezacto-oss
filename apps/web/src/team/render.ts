@@ -29,6 +29,13 @@ export const renderTeamPages = (view?: string): string => `
         <button type="button" data-team-filter="archived" aria-pressed="false">Archived</button>
         <button type="button" data-team-filter="all" aria-pressed="false">All</button>
       </fieldset>
+      <label for="ez-team-scope">Show
+        <select id="ez-team-scope" data-team-scope>
+          <option value="everyone" selected>Everyone</option>
+          <option value="employees">Employees</option>
+          <option value="contractors">Contractors</option>
+        </select>
+      </label>
       <label for="ez-team-search">Find a person
         <input id="ez-team-search" type="search" data-team-search autocomplete="off" placeholder="Name or email">
       </label>
