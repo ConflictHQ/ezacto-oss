@@ -188,7 +188,7 @@ export const createTeamDirectoryController = (
   let catalog: TeamCatalog = { roles: [], departments: [], projects: [] }
   let within = localDate()
   let weekStartDay: 'saturday' | 'sunday' | 'monday' = 'monday'
-  let filter: 'active' | 'all' = 'active'
+  let filter: 'active' | 'archived' | 'all' = 'active'
   let listGeneration = 0
   let mutationPending = false
   // The roster's own in-flight status change. Separate from mutationPending,
@@ -465,7 +465,9 @@ export const createTeamDirectoryController = (
         people.length === 0
           ? filter === 'active'
             ? 'No active people are available.'
-            : 'No people are available.'
+            : filter === 'archived'
+              ? 'No people are archived.'
+              : 'No people are available.'
           : 'No people match that search.'
       list.replaceChildren(empty)
       return
@@ -591,7 +593,9 @@ export const createTeamDirectoryController = (
         const page = await api.listTeamPeople(
           {
             ...range,
-            ...(filter === 'active' ? { is_active: true } : {}),
+            // Three states, two of which are a server-side is_active. "All"
+            // sends nothing, which is what asks for both.
+            ...(filter === 'all' ? {} : { is_active: filter === 'active' }),
           },
           cursor,
           active.signal,
@@ -1179,7 +1183,12 @@ export const createTeamDirectoryController = (
     control.addEventListener('click', () => {
       const active = currentSession()
       const next = control.dataset.teamFilter
-      if (active === null || (next !== 'active' && next !== 'all') || next === filter) return
+      if (
+        active === null ||
+        (next !== 'active' && next !== 'archived' && next !== 'all') ||
+        next === filter
+      )
+        return
       filter = next
       for (const button of document.querySelectorAll<HTMLButtonElement>('[data-team-filter]')) {
         button.setAttribute('aria-pressed', String(button.dataset.teamFilter === filter))

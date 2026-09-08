@@ -186,6 +186,44 @@ describe('Team browser controller', () => {
     )
   })
 
+  it('asks the server for the archived people, not for everyone', async () => {
+    // Active/All left the 46 archived contractors reachable only by reading
+    // past the 14 people still here. "Who did we archive" had no answer.
+    writeDocument('team-list')
+    const listTeamPeople = vi.fn(async (filter) =>
+      page(
+        filter.is_active === true
+          ? [summary()]
+          : filter.is_active === false
+            ? [summary({ id: 2, first_name: 'Kai', last_name: 'Archive', is_active: false })]
+            : [summary(), summary({ id: 2, first_name: 'Kai', last_name: 'Archive', is_active: false })],
+      ),
+    )
+    const controller = createTeamDirectoryController({ listTeamPeople })
+
+    await controller.activate(identity(), new AbortController().signal, () => false)
+    expect(listTeamPeople.mock.calls[0]![0]).toMatchObject({ is_active: true })
+
+    document.querySelector<HTMLButtonElement>('[data-team-filter="archived"]')!.click()
+    await vi.waitFor(() => expect(listTeamPeople).toHaveBeenCalledTimes(2))
+    // is_active: false is the request, not the absence of one -- absence is
+    // what "All" sends, and it would answer with the active people too.
+    expect(listTeamPeople.mock.calls[1]![0]).toMatchObject({ is_active: false })
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-team-list]')?.textContent).toContain('Kai Archive'),
+    )
+    expect(document.querySelector('[data-team-list]')?.textContent).not.toContain('Avery Owner')
+    expect(
+      document
+        .querySelector('[data-team-filter="archived"]')
+        ?.getAttribute('aria-pressed'),
+    ).toBe('true')
+    expect(
+      document.querySelector('[data-team-filter="active"]')?.getAttribute('aria-pressed'),
+    ).toBe('false')
+  })
+
   it('splits billable from non-billable and draws the team one bar', async () => {
     // The band showed Billable and left Non-billable as arithmetic for the
     // reader, with the two inputs a column apart. And every person had a bar

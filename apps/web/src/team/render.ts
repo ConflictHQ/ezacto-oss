@@ -26,6 +26,7 @@ export const renderTeamPages = (view?: string): string => `
       <fieldset aria-label="People status">
         <legend class="visually-hidden">People status</legend>
         <button type="button" data-team-filter="active" aria-pressed="true">Active</button>
+        <button type="button" data-team-filter="archived" aria-pressed="false">Archived</button>
         <button type="button" data-team-filter="all" aria-pressed="false">All</button>
       </fieldset>
       <label for="ez-team-search">Find a person
