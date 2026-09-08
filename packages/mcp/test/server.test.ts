@@ -88,6 +88,7 @@ const timeEntry: TimeEntryRecord = {
   billable: true,
   budgeted: true,
   approvalStatus: 'unsubmitted',
+  sourceApprovalStatus: null,
   invoiceId: null,
   billableRateCents: 20_000,
   costRateCents: 7_500,
