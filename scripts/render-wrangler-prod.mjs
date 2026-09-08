@@ -13,15 +13,23 @@
 // and `wrangler deploy` reads it again. Rendering to a different filename would
 // mean teaching all three about a second path, for no gain.
 //
-// The failure mode is deliberate. The committed placeholders are not valid
-// Cloudflare identifiers, so a prod deploy that skips this step is rejected by
-// wrangler before it can put anything anywhere -- rather than deploying
-// successfully against the wrong account, which is the failure worth designing
-// against.
+// The failure mode is deliberate. The placeholders are syntactically valid --
+// they have to be, because `wrangler deploy --dry-run` validates every
+// environment in the file, so an unparseable prod block breaks the dev build --
+// but they name nothing that exists, and the host sits under the reserved
+// .invalid TLD. A prod deploy that skips this step is refused by Cloudflare
+// rather than landing somewhere unintended.
 
 import { readFile, writeFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 
-const configUrl = new URL("../entries/worker/wrangler.jsonc", import.meta.url);
+// The config to render. Overridable only so the deployment-contract tests can
+// render into a scratch copy and assert what the rendered config becomes --
+// which puts this script under test rather than trusting it.
+const configUrl =
+  process.env.EZACTO_WRANGLER_CONFIG === undefined
+    ? new URL("../entries/worker/wrangler.jsonc", import.meta.url)
+    : pathToFileURL(process.env.EZACTO_WRANGLER_CONFIG);
 
 /**
  * Every prod value that identifies the operator, and the placeholder it
@@ -29,21 +37,21 @@ const configUrl = new URL("../entries/worker/wrangler.jsonc", import.meta.url);
  * is written so Cloudflare cannot accept it by accident.
  */
 const FIELDS = [
-  { env: "PROD_WORKER_NAME", placeholder: "REPLACE_ME_worker_name" },
-  { env: "PROD_HOST", placeholder: "REPLACE_ME.invalid" },
-  { env: "PROD_D1_DATABASE_NAME", placeholder: "REPLACE_ME_d1_name" },
+  { env: "PROD_WORKER_NAME", placeholder: "replace-me-worker-name" },
+  { env: "PROD_HOST", placeholder: "replace-me.invalid" },
+  { env: "PROD_D1_DATABASE_NAME", placeholder: "replace-me-d1-name" },
   { env: "PROD_D1_DATABASE_ID", placeholder: "00000000-0000-0000-0000-000000000000" },
-  { env: "PROD_R2_BUCKET", placeholder: "REPLACE_ME_r2_bucket" },
-  { env: "PROD_EMAIL_QUEUE", placeholder: "REPLACE_ME_email_queue" },
-  { env: "PROD_BRAND_NAME", placeholder: "REPLACE_ME_brand_name" },
-  { env: "PROD_BRAND_TAGLINE", placeholder: "REPLACE_ME_brand_tagline" },
-  { env: "PROD_BRAND_DESCRIPTION", placeholder: "REPLACE_ME_brand_description" },
-  { env: "PROD_BRAND_EMAIL_SENDER_NAME", placeholder: "REPLACE_ME_brand_sender" },
+  { env: "PROD_R2_BUCKET", placeholder: "replace-me-r2-bucket" },
+  { env: "PROD_EMAIL_QUEUE", placeholder: "replace-me-email-queue" },
+  { env: "PROD_BRAND_NAME", placeholder: "replace-me-brand-name" },
+  { env: "PROD_BRAND_TAGLINE", placeholder: "replace-me-brand-tagline" },
+  { env: "PROD_BRAND_DESCRIPTION", placeholder: "replace-me-brand-description" },
+  { env: "PROD_BRAND_EMAIL_SENDER_NAME", placeholder: "replace-me-brand-sender" },
 ];
 
 // The host appears twice: as the route pattern and inside APP_BASE_URL. Both
 // must move together or sign-in links point at the previous deployment.
-const HOST_URL_PLACEHOLDER = "https://REPLACE_ME.invalid";
+const HOST_URL_PLACEHOLDER = "https://replace-me.invalid";
 
 const missing = FIELDS.filter(({ env }) => {
   const value = process.env[env];
@@ -83,9 +91,9 @@ rendered = rendered
   .split(HOST_URL_PLACEHOLDER)
   .join(`https://${process.env.PROD_HOST}`);
 
-if (rendered.includes("REPLACE_ME")) {
+if (rendered.includes("replace-me")) {
   console.error(
-    "::error::a REPLACE_ME placeholder survived rendering; refusing to write",
+    "::error::a replace-me placeholder survived rendering; refusing to write",
   );
   process.exit(1);
 }

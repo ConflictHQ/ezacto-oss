@@ -87,6 +87,7 @@ export type Env = {
 
 export type AppEnv = Env & {
   APP_BASE_URL?: string
+  OIDC_REDIRECT_ORIGIN?: string
   OIDC_GOOGLE_CLIENT_ID?: string
   OIDC_GOOGLE_CLIENT_SECRET?: string
   GITHUB_CLIENT_ID?: string
@@ -1059,14 +1060,60 @@ export const cloudflareAccessConfig = (
   return config
 }
 
+/**
+ * Where the identity provider is told to send the browser back to.
+ *
+ * The rule this enforces is that the origin never comes from the request. A
+ * redirect origin an attacker can influence is an account takeover: point it at
+ * a host you control, and the authorization code arrives at your server instead
+ * of ours. `APP_BASE_URL` is not trusted for the live environments for exactly
+ * that reason -- it is reachable from too many places to be the thing an OIDC
+ * redirect hangs on.
+ *
+ * It used to be a literal in this file, which enforced the rule and also put
+ * one deployment's hostname in everyone's source. `OIDC_REDIRECT_ORIGIN` is set
+ * at deploy time beside the rest of that deployment's configuration: a value a
+ * request cannot reach, the same as a constant, but belonging to whoever is
+ * running the install. Prod fails closed rather than falling back, because a
+ * fallback here is the bug.
+ */
 const redirectOrigin = (env: AppEnv): string => {
+  const declared = configuredCredential(env.OIDC_REDIRECT_ORIGIN)
+  if (declared !== null) return assertRedirectOrigin(declared)
+  if (env.ENVIRONMENT === 'prod') {
+    throw new TypeError('OIDC_REDIRECT_ORIGIN is required in prod')
+  }
   if (env.ENVIRONMENT === 'dev') return 'https://ezacto.io'
-  if (env.ENVIRONMENT === 'prod') return 'https://app.example.com'
   const configured = configuredCredential(env.APP_BASE_URL)
   if (configured === null) {
     throw new TypeError('APP_BASE_URL is required for OIDC outside live environments')
   }
   return configured
+}
+
+/**
+ * An origin and nothing else: scheme and host, no credentials, no path, no
+ * query. A URL carrying userinfo (`https://good.example@evil.example`) reads as
+ * the trusted host to a person and resolves to the attacker's to a browser,
+ * which is the whole trick, so it is refused rather than normalised.
+ */
+const assertRedirectOrigin = (value: string): string => {
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw new TypeError('OIDC_REDIRECT_ORIGIN must be an absolute URL')
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new TypeError('OIDC_REDIRECT_ORIGIN must be https')
+  }
+  if (parsed.username !== '' || parsed.password !== '') {
+    throw new TypeError('OIDC_REDIRECT_ORIGIN must not carry credentials')
+  }
+  if (parsed.search !== '' || parsed.hash !== '' || parsed.pathname !== '/') {
+    throw new TypeError('OIDC_REDIRECT_ORIGIN must be an origin, with no path or query')
+  }
+  return parsed.origin
 }
 
 /** Application-owned provider registry. Request input never selects an issuer. */

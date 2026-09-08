@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "REPLACE_ME_worker_name",
+  "name": "replace-me-worker-name",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-26",
 
@@ -27,51 +27,51 @@
     // deploy that skips the render is refused rather than pointed somewhere
     // unintended.
     "prod": {
-      "name": "REPLACE_ME_worker_name",
-      "routes": [{ "pattern": "REPLACE_ME.invalid", "custom_domain": true }],
+      "name": "replace-me-worker-name",
+      "routes": [{ "pattern": "replace-me.invalid", "custom_domain": true }],
       "triggers": { "crons": ["* * * * *", "0 3 * * *"] },
       "vars": {
         "ENVIRONMENT": "prod",
         "RELEASE": "unknown",
-        "APP_BASE_URL": "https://REPLACE_ME.invalid",
+        "APP_BASE_URL": "https://replace-me.invalid",
         // Deployment brand seam (#72). A prod install carries the operator's
         // name through the shell, the sign-in gateway and outbound mail rather
         // than the product default. Wordmark and favicon are deliberately
         // unset: they take URLs, so the text wordmark renders until an operator
         // hosts assets of their own.
-        "BRAND_NAME": "REPLACE_ME_brand_name",
-        "BRAND_TAGLINE": "REPLACE_ME_brand_tagline",
-        "BRAND_DESCRIPTION": "REPLACE_ME_brand_description",
-        "BRAND_EMAIL_SENDER_NAME": "REPLACE_ME_brand_sender",
+        "BRAND_NAME": "replace-me-brand-name",
+        "BRAND_TAGLINE": "replace-me-brand-tagline",
+        "BRAND_DESCRIPTION": "replace-me-brand-description",
+        "BRAND_EMAIL_SENDER_NAME": "replace-me-brand-sender",
       },
       "d1_databases": [
         {
           "binding": "DB",
-          "database_name": "REPLACE_ME_d1_name",
+          "database_name": "replace-me-d1-name",
           "database_id": "00000000-0000-0000-0000-000000000000",
         },
       ],
       "r2_buckets": [
         {
           "binding": "ATTACHMENTS",
-          "bucket_name": "REPLACE_ME_r2_bucket",
+          "bucket_name": "replace-me-r2-bucket",
         },
       ],
       "queues": {
         "producers": [
           {
             "binding": "EMAIL_QUEUE",
-            "queue": "REPLACE_ME_email_queue",
+            "queue": "replace-me-email-queue",
           },
         ],
         "consumers": [
           {
-            "queue": "REPLACE_ME_email_queue",
+            "queue": "replace-me-email-queue",
             "max_batch_size": 1,
             "max_batch_timeout": 1,
             "max_retries": 100,
             "retry_delay": 5,
-            "dead_letter_queue": "REPLACE_ME_email_queue-dlq",
+            "dead_letter_queue": "replace-me-email-queue-dlq",
             "max_concurrency": 1,
           },
         ],
