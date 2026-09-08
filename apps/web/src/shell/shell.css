@@ -232,6 +232,28 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+}
+
+/*
+ * The ellipsis has to live on the text, not on the cell.
+ *
+ * `.data-table tbody td` already sets overflow:hidden and text-overflow:ellipsis,
+ * but this cell's overflowing box is a flex child two levels down, so the td
+ * clipped it without ever drawing the ellipsis — "Rosalind Whitfield" came out as
+ * "Rosalind Whitfiel", cut mid-glyph, with nothing to say it had been cut. A flex
+ * item also keeps min-width:auto, so the identity column refused to shrink and
+ * pushed the clip further out at 100% zoom while looking fine at 90%.
+ */
+.team-person-name > div {
+  min-width: 0;
+}
+.team-person-name a,
+.team-person-name p {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .team-person-name a {
   color: var(--ez-ink);
@@ -240,6 +262,19 @@
 .team-person-name p {
   margin: 4px 0 0;
   font-size: 13px;
+}
+
+/*
+ * The numbers need their own width and no more; the name is what should take
+ * the slack. Every cell carries max-width:0 so the table shares width by
+ * content, which handed "0h" and "0%" as much room as a full name — the reason
+ * the roster had dead space in the middle and a clipped column at the edge.
+ * `width: 1%` with nowrap is the shrink-to-content idiom for a table cell.
+ */
+[data-team-list] th:not(:first-child),
+[data-team-list] td:not(:first-child) {
+  width: 1%;
+  white-space: nowrap;
 }
 .team-avatar {
   display: grid;
