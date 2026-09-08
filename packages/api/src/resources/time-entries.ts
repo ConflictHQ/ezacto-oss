@@ -68,6 +68,13 @@ interface TimeEntryOutput {
   billable: boolean
   budgeted: boolean
   approval_status: ApprovalStatus
+  /**
+   * The approval state this row carried in the system it was imported from.
+   * See the note on the expense output: `approval_status` is what this
+   * instance decided, which on an instance with the approval module off is
+   * `unsubmitted` for every row. Null on anything this instance created.
+   */
+  source_approval_status: ApprovalStatus | null
   invoice_id: number | null
   is_billed: boolean
   is_locked: boolean
@@ -106,6 +113,7 @@ export const serializeTimeEntry = (
   billable: entry.billable,
   budgeted: entry.budgeted,
   approval_status: entry.state.approvalStatus,
+  source_approval_status: entry.sourceApprovalStatus,
   invoice_id: entry.state.invoiceId,
   is_billed: entry.state.isBilled,
   is_locked: entry.state.isLocked,

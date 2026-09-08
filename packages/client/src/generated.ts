@@ -705,6 +705,7 @@ export type TimeEntry = {
   "billable": boolean;
   "budgeted": boolean;
   "approval_status": "unsubmitted" | "submitted" | "approved";
+  "source_approval_status"?: "unsubmitted" | "submitted" | "approved" | null;
   "invoice_id"?: number | null;
   "is_billed": boolean;
   "is_locked": boolean;
@@ -991,6 +992,7 @@ export type Expense = {
   "total_cost_cents": number;
   "billable": boolean;
   "approval_status": "unsubmitted" | "submitted" | "approved";
+  "source_approval_status"?: "unsubmitted" | "submitted" | "approved" | null;
   "invoice_id"?: number | null;
   "is_billed": boolean;
   "is_locked": boolean;

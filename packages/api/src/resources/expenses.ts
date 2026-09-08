@@ -53,6 +53,14 @@ interface ExpenseOutput {
   total_cost_cents: number
   billable: boolean
   approval_status: ApprovalStatus
+  /**
+   * The approval state this row carried in the system it was imported from,
+   * kept apart from `approval_status` because the two answer different
+   * questions. `approval_status` is what *this* instance decided; on an
+   * instance whose approval module is off it is `unsubmitted` for every row,
+   * imported or not. Null on anything this instance created.
+   */
+  source_approval_status: ApprovalStatus | null
   invoice_id: number | null
   is_billed: boolean
   is_locked: boolean
@@ -81,6 +89,7 @@ export const serializeExpense = (
     total_cost_cents: expense.totalCostCents,
     billable: expense.billable,
     approval_status: expense.state.approvalStatus,
+    source_approval_status: expense.sourceApprovalStatus,
     invoice_id: expense.state.invoiceId,
     is_billed: expense.state.isBilled,
     is_locked: expense.state.isLocked,

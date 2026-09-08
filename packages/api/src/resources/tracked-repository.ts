@@ -20,6 +20,13 @@ interface TrackedRecord {
   notes: string | null
   billable: boolean
   approvalStatus: ApprovalStatus
+  /**
+   * The approval state the row carried in the system it came from. Held apart
+   * from `approvalStatus` because an instance with the approval module off
+   * resets that column to `unsubmitted` for every row, imported or not, and
+   * the imported answer would otherwise be lost. Null on native rows.
+   */
+  sourceApprovalStatus: ApprovalStatus | null
   invoiceId: number | null
   createdAt: string
   updatedAt: string

@@ -18124,6 +18124,21 @@
               "approved"
             ]
           },
+          "source_approval_status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "unsubmitted",
+                  "submitted",
+                  "approved"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "invoice_id": {
             "anyOf": [
               {
@@ -19515,6 +19530,21 @@
               "unsubmitted",
               "submitted",
               "approved"
+            ]
+          },
+          "source_approval_status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "unsubmitted",
+                  "submitted",
+                  "approved"
+                ]
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "invoice_id": {

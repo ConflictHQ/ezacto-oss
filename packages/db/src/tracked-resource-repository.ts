@@ -62,6 +62,7 @@ import {
   sql,
   type SQL,
 } from 'drizzle-orm'
+import type { SQLiteColumn } from 'drizzle-orm/sqlite-core'
 
 export interface ResourceWindow {
   afterId: number | null
@@ -116,6 +117,28 @@ const isPolicyLockWriteError = (error: unknown): boolean => {
   }
   return false
 }
+
+/**
+ * The approval status a row actually carries, as a filter condition.
+ *
+ * Two columns hold the answer. `approval_status` is what this instance
+ * decided; `source_approval_status` is what the row carried in the system it
+ * was imported from, kept because an instance whose approval module is off
+ * resets the native column to `unsubmitted` for every row and would otherwise
+ * lose the imported answer entirely. Where the native column says
+ * `unsubmitted` and an imported answer exists, the imported one is the true
+ * one -- the same rule the expense screen shows.
+ */
+const effectiveApprovalStatus = (
+  table: { approvalStatus: SQLiteColumn; sourceApprovalStatus: SQLiteColumn },
+  wanted: ApprovalStatus,
+): SQL =>
+  wanted === 'unsubmitted'
+    ? sql`${table.approvalStatus} = ${wanted}
+        AND coalesce(${table.sourceApprovalStatus}, 'unsubmitted') = 'unsubmitted'`
+    : sql`(${table.approvalStatus} = ${wanted}
+        OR (${table.approvalStatus} = 'unsubmitted'
+          AND ${table.sourceApprovalStatus} = ${wanted}))`
 
 const throwIfPolicyLockWriteError = (error: unknown): void => {
   if (isPolicyLockWriteError(error)) {
@@ -541,7 +564,13 @@ export class DrizzleTrackedResourceRepository {
     if (filters.from !== undefined) conditions.push(gte(timeEntries.spentDate, filters.from))
     if (filters.to !== undefined) conditions.push(lte(timeEntries.spentDate, filters.to))
     if (filters.approvalStatus !== undefined) {
-      conditions.push(eq(timeEntries.approvalStatus, filters.approvalStatus))
+      // Filter on the effective status, which is what the screen shows. An
+      // instance with the approval module off holds `unsubmitted` in the
+      // native column for every imported row, so matching only that column
+      // makes `approval_status=approved` answer "none" over a book where
+      // fourteen thousand rows were approved before this instance existed.
+      // Where the native column is unsubmitted the imported answer stands in.
+      conditions.push(effectiveApprovalStatus(timeEntries, filters.approvalStatus))
     }
     if (filters.invoiceId !== undefined)
       conditions.push(eq(timeEntries.invoiceId, filters.invoiceId))
@@ -589,7 +618,7 @@ export class DrizzleTrackedResourceRepository {
     if (filters.from !== undefined) conditions.push(gte(expenses.spentDate, filters.from))
     if (filters.to !== undefined) conditions.push(lte(expenses.spentDate, filters.to))
     if (filters.approvalStatus !== undefined) {
-      conditions.push(eq(expenses.approvalStatus, filters.approvalStatus))
+      conditions.push(effectiveApprovalStatus(expenses, filters.approvalStatus))
     }
     if (filters.invoiceId !== undefined) conditions.push(eq(expenses.invoiceId, filters.invoiceId))
     if (filters.isBilled !== undefined) {

@@ -22,6 +22,7 @@ import {
   expenseProjectLabel,
   expenseResourceNumber,
   expenseResourceText,
+  expenseApprovalDisplay,
   expenseStatusLabel,
   expenseValueForForm,
   expenseValueInput,
@@ -479,9 +480,17 @@ export const createExpenseWorkflowController = (
   }
 
   const expenseStatusPill = (expense: Expense): HTMLSpanElement => {
+    const display = expenseApprovalDisplay(expense)
     const pill = document.createElement('span')
     pill.className = 'expense-status-pill'
-    pill.textContent = expenseStatusLabel(expense.approval_status)
+    pill.textContent = display.label
+    if (display.imported) {
+      // The word carries the fact. A pill that only changed colour would say
+      // nothing on paper, and nothing to a reader who cannot see the colour.
+      pill.append(' (imported)')
+      pill.dataset.expenseStatusImported = ''
+      pill.title = display.explanation!
+    }
     return pill
   }
 
@@ -652,8 +661,10 @@ export const createExpenseWorkflowController = (
     formInput(editForm, 'reimbursable').checked = expense.reimbursable
     if (category !== undefined) formInput(editForm, 'expense_value').value = expenseValueForForm(expense, category)
     setValuePrompt(category, editValueLabel, formInput(editForm, 'expense_value'))
-    required<HTMLElement>('[data-expense-detail-approval]').textContent = expenseStatusLabel(expense.approval_status)
-    required<HTMLElement>('[data-expense-detail-approval-fact]').textContent = expenseStatusLabel(expense.approval_status)
+    const approval = expenseApprovalDisplay(expense)
+    const approvalText = approval.imported ? `${approval.label} (imported)` : approval.label
+    required<HTMLElement>('[data-expense-detail-approval]').textContent = approvalText
+    required<HTMLElement>('[data-expense-detail-approval-fact]').textContent = approvalText
     required<HTMLElement>('[data-expense-detail-reimbursement]').textContent = expense.reimbursable
       ? expenseStatusLabel(expense.reimbursement_status)
       : 'Not reimbursable'

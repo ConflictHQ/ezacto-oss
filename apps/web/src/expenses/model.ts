@@ -143,6 +143,47 @@ export const expenseStatusLabel = (value: string): string =>
     .map((part) => part[0]!.toLocaleUpperCase('en-US') + part.slice(1))
     .join(' ')
 
+export interface ExpenseApprovalDisplay {
+  readonly label: string
+  readonly imported: boolean
+  readonly explanation: string | null
+}
+
+/**
+ * What the approval pill should say.
+ *
+ * `approval_status` is what *this* instance decided, and on an instance whose
+ * approval module is off that is `unsubmitted` for every row -- including the
+ * fourteen years of imported rows that were approved long before this instance
+ * existed. The import keeps that answer in `source_approval_status` rather than
+ * overwriting the native column, so reading only the native one tells a
+ * fourteen-year-old approved expense it was never submitted.
+ *
+ * Where the two disagree the imported answer is the true one and it wins, but
+ * it is labelled as imported: this instance did not approve it and should not
+ * claim it did.
+ */
+export const expenseApprovalDisplay = (
+  expense: Readonly<Expense>,
+): ExpenseApprovalDisplay => {
+  const source = expense.source_approval_status
+  const imported =
+    expense.approval_status === 'unsubmitted' &&
+    (source === 'submitted' || source === 'approved')
+  if (!imported) {
+    return {
+      label: expenseStatusLabel(expense.approval_status),
+      imported: false,
+      explanation: null,
+    }
+  }
+  return {
+    label: expenseStatusLabel(source!),
+    imported: true,
+    explanation: `${expenseStatusLabel(source!)} in the system this expense was imported from.`,
+  }
+}
+
 export const expenseWeekStart = (
   spentDate: string,
   weekStartDay: ExpenseWeekStartDay = 'monday',

@@ -2,6 +2,7 @@ import type { Expense, ExpenseCategory } from '@ezacto/client'
 import { describe, expect, it } from 'vitest'
 import {
   expenseAmountCents,
+  expenseApprovalDisplay,
   expenseIdFromPathname,
   expenseIsEditable,
   expensePatch,
@@ -24,6 +25,7 @@ const expense = (overrides: Partial<Expense> = {}): Expense => ({
   total_cost_cents: 1250,
   billable: true,
   approval_status: 'unsubmitted',
+  source_approval_status: null,
   invoice_id: null,
   is_billed: false,
   is_locked: false,
@@ -134,5 +136,63 @@ describe('expense workflow model', () => {
       approval_status: 'submitted',
       reimbursement_status: 'pending',
     })
+  })
+})
+
+describe('what the approval pill is allowed to claim', () => {
+  // Years of a real book came in from Harvest with REDACTED time
+  // entries and three expenses marked approved. The import keeps that answer
+  // in source_approval_status rather than overwriting the native column,
+  // because an instance whose approval module is off resets the native column
+  // to unsubmitted for every row. Reading only the native column told a
+  // 2012 expense, invoiced and paid, that it had never been submitted.
+  it('shows the imported answer when this instance has not decided one', () => {
+    const display = expenseApprovalDisplay(
+      expense({ approval_status: 'unsubmitted', source_approval_status: 'approved' }),
+    )
+    expect(display.label).toBe('Approved')
+    expect(display.imported).toBe(true)
+    expect(display.explanation).toBe(
+      'Approved in the system this expense was imported from.',
+    )
+  })
+
+  it('says submitted for an imported submission, not approved', () => {
+    const display = expenseApprovalDisplay(
+      expense({ approval_status: 'unsubmitted', source_approval_status: 'submitted' }),
+    )
+    expect(display.label).toBe('Submitted')
+    expect(display.imported).toBe(true)
+  })
+
+  // The five expenses that really were unsubmitted in Harvest. Faithful is
+  // faithful in both directions: an imported unsubmitted must not be dressed
+  // up as anything else.
+  it('leaves a genuinely unsubmitted import alone', () => {
+    const display = expenseApprovalDisplay(
+      expense({ approval_status: 'unsubmitted', source_approval_status: 'unsubmitted' }),
+    )
+    expect(display.label).toBe('Unsubmitted')
+    expect(display.imported).toBe(false)
+    expect(display.explanation).toBeNull()
+  })
+
+  it('leaves a native row alone', () => {
+    const display = expenseApprovalDisplay(
+      expense({ approval_status: 'submitted', source_approval_status: null }),
+    )
+    expect(display.label).toBe('Submitted')
+    expect(display.imported).toBe(false)
+  })
+
+  // This instance's own decision is the one that counts where it made one.
+  // An imported row that has since been approved here is approved here, not
+  // "approved (imported)".
+  it('prefers this instance when it has decided', () => {
+    const display = expenseApprovalDisplay(
+      expense({ approval_status: 'approved', source_approval_status: 'submitted' }),
+    )
+    expect(display.label).toBe('Approved')
+    expect(display.imported).toBe(false)
   })
 })

@@ -3003,6 +3003,10 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         type: "string",
         enum: ["unsubmitted", "submitted", "approved"],
       },
+      source_approval_status: nullable({
+        type: "string",
+        enum: ["unsubmitted", "submitted", "approved"],
+      }),
       invoice_id: nullable(integerSchema),
       is_billed: booleanSchema,
       is_locked: booleanSchema,
@@ -3521,6 +3525,10 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         type: "string",
         enum: ["unsubmitted", "submitted", "approved"],
       },
+      source_approval_status: nullable({
+        type: "string",
+        enum: ["unsubmitted", "submitted", "approved"],
+      }),
       invoice_id: nullable(integerSchema),
       is_billed: booleanSchema,
       is_locked: booleanSchema,
