@@ -523,6 +523,7 @@ export const createInvoicePaymentController = (
   const transitionSummary = required<HTMLElement>('[data-invoice-transition-summary]')
   const transitionResult = required<HTMLElement>('[data-invoice-transition-result]')
   const transitionSubmit = required<HTMLButtonElement>('[data-invoice-transition-submit]')
+  const printInvoice = required<HTMLButtonElement>('[data-invoice-print]')
   const editInvoice = required<HTMLButtonElement>('[data-invoice-edit]')
   const editDialog = required<HTMLDialogElement>('[data-invoice-edit-dialog]')
   const editForm = required<HTMLFormElement>('[data-invoice-edit-form]')
@@ -2193,6 +2194,13 @@ export const createInvoicePaymentController = (
   retry.addEventListener('click', () => {
     const session = current()
     if (session !== null) void loadDetail(session, { hideDocument: invoice === null })
+  })
+  // The print rules are what make this worth a button: the sheet is the
+  // invoice, not the application around it. It needs no invoice state and no
+  // write scope -- the button lives inside the document, which is hidden until
+  // one is loaded -- so it is never disabled with the editing controls.
+  printInvoice.addEventListener('click', () => {
+    window.print()
   })
 
   return {

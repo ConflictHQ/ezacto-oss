@@ -185,7 +185,7 @@ export const renderInvoiceComposerDialog = (): string => `
             <input id="ez-invoice-reminder-date" name="reminderDate" data-invoice-composer-reminder-date type="date">
           </label>
           <label class="invoice-composer-check"><input name="deliver" data-invoice-composer-deliver-toggle type="checkbox" aria-describedby="invoice-deliver-hint"> Also deliver by email</label>
-          <p class="hint" id="invoice-deliver-hint">The email goes out from the verified organization sender on the configured invoice template, not the subject and message above. No PDF is attached.</p>
+          <p class="hint" id="invoice-deliver-hint">The email goes out from the verified organization sender on the configured invoice template, not the subject and message above. It lists this invoice's line items; no PDF is attached.</p>
           <label class="invoice-composer-check" data-invoice-composer-confirm-label hidden><input name="confirmed" data-invoice-composer-confirm type="checkbox"> I confirm these recipients and want to send this invoice.</label>
         </section>
         <aside class="invoice-variable-reference" aria-labelledby="invoice-variable-title">
@@ -196,6 +196,7 @@ export const renderInvoiceComposerDialog = (): string => `
             <div><dt><code>%invoice_number%</code></dt><dd>Display number</dd></div>
             <div><dt><code>%invoice_amount%</code></dt><dd>Formatted total</dd></div>
             <div><dt><code>%invoice_due_date%</code></dt><dd>Due date</dd></div>
+            <div><dt><code>%invoice_line_items%</code></dt><dd>The lines, quantity, rate, and amount</dd></div>
           </dl>
         </aside>
       </div>

@@ -116,7 +116,7 @@ describe("email template variables", () => {
   });
 
   it("[unit] exposes a closed reference vocabulary with honest compatibility labels", () => {
-    expect(emailTemplateVariables).toHaveLength(14);
+    expect(emailTemplateVariables).toHaveLength(15);
     expect(
       emailTemplateVariables
         .filter(({ compatibility }) => compatibility === "harvest")

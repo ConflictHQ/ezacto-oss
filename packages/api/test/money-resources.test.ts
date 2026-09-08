@@ -486,11 +486,18 @@ const withReadInterleaving = (
   return { ...orm, $client: proxiedClient } as MoneyResourceDatabase;
 };
 
+interface DeliveryTemplate {
+  subjectTemplate?: string;
+  textTemplate?: string;
+  htmlTemplate?: string | null;
+}
+
 const harness = async (
   factory: () => Promise<TestDatabase>,
   onGenerate?: (input: InvoiceGenerationCommand) => void,
   interleave?: "invoice" | "estimate",
   deliveryMailer?: SenderBoundQueuedMailer,
+  deliveryTemplate?: DeliveryTemplate,
 ): Promise<Harness> => {
   const database = await factory();
   await seed(database);
@@ -539,6 +546,7 @@ const harness = async (
                     subjectTemplate: "Invoice %invoice_number%",
                     textTemplate: "Hello %client_name%, amount %invoice_amount%.",
                     htmlTemplate: null,
+                    ...deliveryTemplate,
                     unknownVariablePolicy: "error" as const,
                     createdByUserId: 1,
                     createdAt: seedTime,
@@ -631,8 +639,15 @@ for (const [runtime, factory] of factories) {
       onGenerate?: (input: InvoiceGenerationCommand) => void,
       interleave?: "invoice" | "estimate",
       deliveryMailer?: SenderBoundQueuedMailer,
+      deliveryTemplate?: DeliveryTemplate,
     ): Promise<Harness> => {
-      active = await harness(factory, onGenerate, interleave, deliveryMailer);
+      active = await harness(
+        factory,
+        onGenerate,
+        interleave,
+        deliveryMailer,
+        deliveryTemplate,
+      );
       return active;
     };
 
@@ -699,6 +714,248 @@ for (const [runtime, factory] of factories) {
       )).toEqual([{ email: "client@example.net", status: "queued" }]);
     }, slowRuntimeTimeout);
 
+    const seedDeliveryLines = async (test: Harness): Promise<void> => {
+      const line = {
+        expected_version: 0,
+        position: 0,
+        kind: "Service",
+        description: "Discovery workshop <b>",
+        quantity: 3,
+        unit_price_cents: 12_500,
+        taxed: false,
+        taxed2: false,
+        project_id: null,
+      };
+      const first = await test.request(
+        "/api/v1/invoices/1/line-items",
+        jsonRequest("POST", line, "delivery-line-one"),
+      );
+      expect(first.status).toBe(201);
+      const second = await test.request(
+        "/api/v1/invoices/1/line-items",
+        jsonRequest(
+          "POST",
+          {
+            ...line,
+            expected_version: 1,
+            position: 1,
+            kind: "Expense",
+            description: null,
+            quantity: 1,
+            unit_price_cents: 4_000,
+          },
+          "delivery-line-two",
+        ),
+      );
+      expect(second.status).toBe(201);
+    };
+
+    const deliver = async (test: Harness, commandId: string): Promise<Response> =>
+      test.request(
+        "/api/v1/invoices/1/deliveries",
+        jsonRequest(
+          "POST",
+          {
+            expected_version: 2,
+            recipients: [{ name: "Client", email: "client@example.net" }],
+            confirmed: true,
+          },
+          commandId,
+        ),
+      );
+
+    // The defect this closes: a client received an amount owed and nothing
+    // saying what it was for. The template seeded in migration 0030 never
+    // mentioned the lines and cannot be rewritten in place, so a body that does
+    // not place them itself still has to carry them.
+    it("[api] carries the lines behind the amount into a template that never asked for them", async () => {
+      const mailer = {
+        assertAvailable: vi.fn(async () => undefined),
+        enqueue: vi.fn(),
+      } satisfies SenderBoundQueuedMailer;
+      const test = await setup(undefined, undefined, mailer);
+      await seedInvoiceDeliveryConfiguration(test.database);
+      await seedDeliveryLines(test);
+
+      expect((await deliver(test, "invoice-delivery-lines")).status).toBe(202);
+      expect(
+        await test.database.rows<{ textBody: string; htmlBody: string | null }>(
+          `SELECT text_body AS "textBody", html_body AS "htmlBody"
+             FROM invoice_email_intents`,
+        ),
+      ).toEqual([
+        {
+          textBody: [
+            "Hello Sanitized Client, amount $415.00.",
+            "",
+            "Line items",
+            "Service: Discovery workshop <b>",
+            "  3 x $125.00 = $375.00",
+            "Expense",
+            "  1 x $40.00 = $40.00",
+            "Total: $415.00",
+          ].join("\n"),
+          htmlBody: null,
+        },
+      ]);
+    }, slowRuntimeTimeout);
+
+    it("[api] lets a template place the lines itself, in either body", async () => {
+      const mailer = {
+        assertAvailable: vi.fn(async () => undefined),
+        enqueue: vi.fn(),
+      } satisfies SenderBoundQueuedMailer;
+      const test = await setup(undefined, undefined, mailer, {
+        textTemplate: "Owed %invoice_amount%:\n%invoice_line_items%\nThank you.",
+        htmlTemplate: "<p>%client_name%</p>%invoice_line_items%",
+      });
+      await seedInvoiceDeliveryConfiguration(test.database);
+      await seedDeliveryLines(test);
+
+      expect((await deliver(test, "invoice-delivery-placed")).status).toBe(202);
+      const [intent] = await test.database.rows<{
+        textBody: string;
+        htmlBody: string | null;
+      }>(
+        `SELECT text_body AS "textBody", html_body AS "htmlBody"
+           FROM invoice_email_intents`,
+      );
+      // Placed where the template says, and not repeated after it.
+      expect(intent!.textBody).toBe(
+        [
+          "Owed $415.00:",
+          "Line items",
+          "Service: Discovery workshop <b>",
+          "  3 x $125.00 = $375.00",
+          "Expense",
+          "  1 x $40.00 = $40.00",
+          "Total: $415.00",
+          "Thank you.",
+        ].join("\n"),
+      );
+      // The HTML body gets a table rather than the plain-text block escaped
+      // into one paragraph, and the description a client typed arrives as text.
+      expect(intent!.htmlBody).toContain("<p>Sanitized Client</p><table");
+      expect(intent!.htmlBody).toContain("Discovery workshop &lt;b&gt;");
+      expect(intent!.htmlBody).not.toContain("Discovery workshop <b>");
+      expect(intent!.htmlBody?.match(/<tr>/gu)).toHaveLength(4);
+    }, slowRuntimeTimeout);
+
+    // Line amounts are pre-tax and `amount_cents` is not, so a list printed
+    // straight under the header total contradicted it: $415.00 of listed work
+    // above a $407.25 total, with the $41.50 discount and $33.75 tax stated
+    // nowhere. Tax and discount rates are first-class, API-settable invoice
+    // fields, so this is the ordinary case rather than an exotic one.
+    it("[api] mails a list that adds up to the taxed, discounted total it prints", async () => {
+      const mailer = {
+        assertAvailable: vi.fn(async () => undefined),
+        enqueue: vi.fn(),
+      } satisfies SenderBoundQueuedMailer;
+      const test = await setup(undefined, undefined, mailer);
+      await seedInvoiceDeliveryConfiguration(test.database);
+      const taxedLine = await test.request(
+        "/api/v1/invoices/1/line-items",
+        jsonRequest(
+          "POST",
+          {
+            expected_version: 0,
+            position: 0,
+            kind: "Service",
+            description: "Discovery workshop",
+            quantity: 3,
+            unit_price_cents: 12_500,
+            taxed: true,
+            taxed2: true,
+            project_id: null,
+          },
+          "taxed-line-one",
+        ),
+      );
+      expect(taxedLine.status).toBe(201);
+      const untaxedLine = await test.request(
+        "/api/v1/invoices/1/line-items",
+        jsonRequest(
+          "POST",
+          {
+            expected_version: 1,
+            position: 1,
+            kind: "Expense",
+            description: null,
+            quantity: 1,
+            unit_price_cents: 4_000,
+            taxed: false,
+            taxed2: false,
+            project_id: null,
+          },
+          "taxed-line-two",
+        ),
+      );
+      expect(untaxedLine.status).toBe(201);
+      const rates = await test.request(
+        "/api/v1/invoices/1",
+        jsonRequest(
+          "PATCH",
+          {
+            expected_version: 2,
+            tax_rate_ppm: 100_000,
+            tax2_rate_ppm: 50_000,
+            discount_rate_ppm: 100_000,
+          },
+          "taxed-header",
+        ),
+      );
+      expect(rates.status).toBe(200);
+      // What the invoice header now holds, and what the email has to agree
+      // with. A second tax is as settable as the first, so the block has to
+      // carry both of them or go on contradicting itself.
+      expect(
+        await test.database.rows(
+          `SELECT amount_cents AS "amountCents", discount_amount_cents AS "discountCents",
+             tax_amount_cents AS "taxCents", tax2_amount_cents AS "tax2Cents"
+           FROM invoices WHERE id = 1`,
+        ),
+      ).toEqual([
+        { amountCents: 42_413, discountCents: 4_150, taxCents: 3_375, tax2Cents: 1_688 },
+      ]);
+
+      const sent = await test.request(
+        "/api/v1/invoices/1/deliveries",
+        jsonRequest(
+          "POST",
+          {
+            expected_version: 3,
+            recipients: [{ name: "Client", email: "client@example.net" }],
+            confirmed: true,
+          },
+          "taxed-delivery",
+        ),
+      );
+      expect(sent.status).toBe(202);
+      expect(
+        await test.database.rows<{ textBody: string }>(
+          `SELECT text_body AS "textBody" FROM invoice_email_intents`,
+        ),
+      ).toEqual([
+        {
+          textBody: [
+            "Hello Sanitized Client, amount $424.13.",
+            "",
+            "Line items",
+            "Service: Discovery workshop",
+            "  3 x $125.00 = $375.00",
+            "Expense",
+            "  1 x $40.00 = $40.00",
+            // $375.00 + $40.00 = $415.00, less the discount, plus both taxes
+            // ($33.75 and $16.88), is the amount stated at the top.
+            "Subtotal: $415.00",
+            "Discount: -$41.50",
+            "Tax: $50.63",
+            "Total: $424.13",
+          ].join("\n"),
+        },
+      ]);
+    }, slowRuntimeTimeout);
+
     it("[db] returns a self-consistent invoice header/line snapshot", async () => {
       const test = await setup(undefined, "invoice");
       expect(await test.service.getInvoice(1)).toMatchObject({
@@ -708,6 +965,19 @@ for (const [runtime, factory] of factories) {
         due_amount_cents: 101,
         updated_at: secondTime,
         line_items: [{ id: 777001, amount_cents: 101, updated_at: secondTime }],
+      });
+    });
+
+    // The email prints the header total and then the lines that make it up, so
+    // the two have to come from one snapshot: a competing line edit between two
+    // reads would send a client a list that does not add up to the amount above
+    // it.
+    it("[db] returns a self-consistent invoice delivery snapshot", async () => {
+      const test = await setup(undefined, "invoice");
+      expect(await test.service.getInvoiceDeliveryContext(1)).toMatchObject({
+        invoiceId: 1,
+        amountCents: 101,
+        lineItems: [{ kind: "Concurrent", quantity: 1, amountCents: 101 }],
       });
     });
 

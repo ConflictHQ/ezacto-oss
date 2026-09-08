@@ -472,7 +472,53 @@ export const invoiceTemplateVariableNames = [
   '%invoice_number%',
   '%invoice_amount%',
   '%invoice_due_date%',
+  '%invoice_line_items%',
 ] as const
+
+const invoiceMoney = (cents: number, currency: string): string =>
+  new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100)
+
+const invoiceQuantity = new Intl.NumberFormat('en-US', { maximumFractionDigits: 4 })
+
+/**
+ * The same block the invoice email carries, for the message recorded on the
+ * invoice. `invoiceLineItemsBlock` in @ezacto/core is the wire authority and
+ * this shape follows it; the composer runs in the browser, which holds the
+ * invoice already and does not import the domain package to render a list it
+ * can see. A description is free text, so its whitespace is collapsed here as
+ * it is there -- a newline in it would otherwise draw a row of its own. Line
+ * amounts are pre-tax, so the discount and tax that separate them from the
+ * header total are stated here as they are there, and in the wording the
+ * invoice document on screen already uses.
+ */
+export const invoiceLineItemsText = (invoice: Readonly<Invoice>): string => {
+  const rows = invoice.line_items.flatMap((line) => {
+    const kind = line.kind.replace(/\s+/gu, ' ').trim()
+    const description = (line.description ?? '').replace(/\s+/gu, ' ').trim()
+    const label = [kind, description].filter((part) => part !== '').join(': ')
+    return [
+      label === '' ? 'Line item' : label,
+      `  ${invoiceQuantity.format(line.quantity)} x ${invoiceMoney(line.unit_price_cents, invoice.currency)}` +
+        ` = ${invoiceMoney(line.amount_cents, invoice.currency)}`,
+    ]
+  })
+  const discount = invoice.discount_amount_cents
+  const tax = invoice.tax_amount_cents + invoice.tax2_amount_cents
+  const summary =
+    discount === 0 && tax === 0
+      ? []
+      : [
+          ['Subtotal', invoice.amount_cents + discount - tax] as const,
+          ...(discount === 0 ? [] : [['Discount', -discount] as const]),
+          ...(tax === 0 ? [] : [['Tax', tax] as const]),
+        ]
+  return [
+    'Line items',
+    ...(rows.length === 0 ? ['This invoice has no line items.'] : rows),
+    ...summary.map(([name, cents]) => `${name}: ${invoiceMoney(cents, invoice.currency)}`),
+    `Total: ${invoiceMoney(invoice.amount_cents, invoice.currency)}`,
+  ].join('\n')
+}
 
 export const interpolateInvoiceTemplate = (
   template: string,
@@ -481,14 +527,12 @@ export const interpolateInvoiceTemplate = (
   const variables: Record<(typeof invoiceTemplateVariableNames)[number], string> = {
     '%invoice_id%': String(invoice.id),
     '%invoice_number%': invoice.number,
-    '%invoice_amount%': new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: invoice.currency,
-    }).format(invoice.amount_cents / 100),
+    '%invoice_amount%': invoiceMoney(invoice.amount_cents, invoice.currency),
     '%invoice_due_date%': invoice.due_date,
+    '%invoice_line_items%': invoiceLineItemsText(invoice),
   }
   return template.replace(
-    /%(?:invoice_id|invoice_number|invoice_amount|invoice_due_date)%/gu,
+    /%(?:invoice_id|invoice_number|invoice_amount|invoice_due_date|invoice_line_items)%/gu,
     (variable) => variables[variable as keyof typeof variables],
   )
 }

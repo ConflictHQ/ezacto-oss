@@ -4334,6 +4334,128 @@ dialog textarea {
 }
 
 /*
+ * Paper.
+ *
+ * Cmd-P on an invoice printed the application. The top bar came out as a white
+ * band -- it is white text on --ez-ink, and a browser omits background-color
+ * when "Background graphics" is off, which is the default -- followed by the
+ * primary nav, the section tabs, "Loading invoice…", every control the operator
+ * uses to change the invoice, the internal message history, and the build
+ * stamp, wrapped around a document with no print rules of its own. A client who
+ * asked for something to file got the screenshot of an app.
+ *
+ * What is dropped is what belongs to the application rather than to the
+ * invoice: the chrome, the controls, the status lines, the attachment surface,
+ * and the send/reminder history, which names internal senders and recipients
+ * and is nobody's copy of the bill. What is kept is the document: who it is
+ * for, what the lines are, what is owed, the notes, and the payments already
+ * applied to it.
+ *
+ * Nothing here restores a background fill. As with the recipient pill on the
+ * contact sheet, anything whose meaning would live in one carries it in ink
+ * instead: the state pill trades its fill for a border, so it reads the same
+ * whether or not the person printing has background graphics switched on.
+ */
+@media print {
+  @page {
+    margin: 16mm;
+  }
+  /* Application chrome, on every screen: none of it is the page. */
+  .topbar,
+  .tabstrip,
+  .build-stamp,
+  .data-quality,
+  .session-check-overlay,
+  dialog {
+    display: none !important;
+  }
+  /*
+   * The invoice's own working surfaces. The document is what is being printed;
+   * the controls that change it, the states of those controls, and the history
+   * of who was sent what are the application around it.
+   */
+  [data-invoice-detail-page] .context-row,
+  .invoice-page-status,
+  .invoice-load-more,
+  .invoice-reminder-line,
+  .invoice-document-actions button,
+  .invoice-overflow,
+  .invoice-line-editor,
+  .invoice-line-actions,
+  .invoice-payment-heading button,
+  .invoice-payment-actions,
+  .invoice-attachment-section,
+  .invoice-history:not(.invoice-payment-history):not(.invoice-attachment-section),
+  .invoice-workspace .form-result,
+  .invoice-workspace .hint,
+  .invoice-line-table thead th:last-child {
+    display: none !important;
+  }
+  .app-content {
+    padding: 0;
+  }
+  /* The sheet is the border; the card's own is chrome, and its shadow is ink
+     spent on nothing. */
+  .invoice-document {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .invoice-document-heading {
+    flex-direction: row;
+  }
+  /*
+   * A printed page is about 695px wide at these margins, which is inside the
+   * 720px phone breakpoint, so the rules that turn the line table into stacked
+   * cards would otherwise apply to paper. An invoice is a table on paper.
+   */
+  .invoice-line-wrap {
+    overflow-x: visible;
+  }
+  .invoice-line-table {
+    min-width: 0;
+  }
+  .invoice-line-table thead {
+    display: table-header-group;
+  }
+  .invoice-line-table tbody {
+    display: table-row-group;
+  }
+  .invoice-line-table tbody tr {
+    display: table-row;
+    border: 0;
+    /* A line and its amount belong on the same sheet. */
+    break-inside: avoid;
+  }
+  .invoice-line-table tbody th,
+  .invoice-line-table tbody td {
+    border-bottom: 1px solid var(--ez-border);
+    text-align: right;
+  }
+  .invoice-line-table tbody th {
+    text-align: left;
+  }
+  .invoice-line-table td[data-label]::before {
+    content: none;
+  }
+  .invoice-totals,
+  .invoice-notes {
+    break-inside: avoid;
+  }
+  /*
+   * The state is the one thing on the document whose meaning was carried by a
+   * fill, and a fill is exactly what does not print. It becomes a bordered word
+   * in the muted ink it already uses, which clears 4.5:1 on the sheet.
+   */
+  .invoice-state {
+    border: 1px solid var(--ez-status-fg);
+    background: transparent;
+    color: var(--ez-status-fg);
+  }
+}
+
+/*
  * Retainers.
  *
  * The facts grids and the ledger table are the two things the screen is, and

@@ -15,6 +15,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createInvoicePaymentController } from '../src/invoices/browser.js'
 import type { InvoicePaymentApi } from '../src/invoices/model.js'
 import { renderAppShell } from '../src/shell/render.js'
+import { contrastRatio, defaultTheme, themeManifest, webAssets } from '../src/index.js'
 
 const timestamp = '2026-08-28T12:00:00.000Z'
 
@@ -127,6 +128,46 @@ const renderDetail = (): void => {
       .replace('  <script type="module" src="/assets/ezacto.js"></script>\n', ''),
   )
   document.close()
+}
+
+/**
+ * What the browser is left with on paper. happy-dom resolves `@media print`
+ * against a screen, so the served block is lifted out and applied on its own --
+ * after the full stylesheet, which is both where the print rules sit in the
+ * file and how they win. `@page` is dropped because it describes the sheet
+ * rather than any element.
+ */
+const applyPrintRules = (): void => {
+  const source = webAssets.stylesheet
+  const start = source.indexOf('@media print {')
+  if (start === -1) throw new Error('the served stylesheet carries no print rules')
+  const open = source.indexOf('{', start)
+  let depth = 0
+  let end = -1
+  for (let index = open; index < source.length; index += 1) {
+    if (source[index] === '{') depth += 1
+    else if (source[index] === '}') {
+      depth -= 1
+      if (depth === 0) {
+        end = index
+        break
+      }
+    }
+  }
+  if (end === -1) throw new Error('the print block is unbalanced')
+  const screen = document.createElement('style')
+  screen.textContent = source
+  const paper = document.createElement('style')
+  paper.textContent = source
+    .slice(open + 1, end)
+    .replace(/@page\s*\{[^}]*\}/u, '')
+  document.head.append(screen, paper)
+}
+
+const painted = (selector: string): CSSStyleDeclaration => {
+  const element = document.querySelector<HTMLElement>(selector)
+  if (element === null) throw new Error(`missing element: ${selector}`)
+  return window.getComputedStyle(element)
 }
 
 const submit = (selector: string): void => {
@@ -1065,5 +1106,75 @@ describe('invoice payment controller', () => {
     expect(item('reopen').hidden).toBe(false)
     expect(item('write_off').hidden).toBe(true)
     expect(item('cancel').hidden).toBe(true)
+  })
+  it('[browser] prints the invoice and not the application around it', async () => {
+    renderDetail()
+    const api: Partial<InvoicePaymentApi> = {
+      getInvoice: vi.fn(async () =>
+        invoice('INV-PRINT', { line_items: [line()], notes: 'Thank you for your business.' }),
+      ),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => [payment()]),
+    }
+    const controller = createInvoicePaymentController(api)
+    await controller.activate(identity(1), new AbortController().signal, () => false)
+    applyPrintRules()
+
+    // The chrome. The top bar is the worst of it: white text on --ez-ink, so
+    // with background graphics off -- the print default -- it printed as an
+    // empty band above the invoice.
+    for (const selector of ['.topbar', '.tabstrip', '.build-stamp']) {
+      expect(painted(selector).display).toBe('none')
+    }
+    // The controls that change the invoice, and the internal record of who was
+    // sent what, are the application rather than the bill.
+    for (const selector of [
+      '[data-invoice-print]',
+      '[data-invoice-send]',
+      '.invoice-line-editor',
+      '.invoice-line-actions',
+      '.invoice-attachment-section',
+      '[data-invoice-payment-record]',
+      '[aria-labelledby="invoice-message-heading"]',
+      '[data-invoice-detail-status]',
+      '[data-invoice-detail-page] .context-row',
+    ]) {
+      expect(painted(selector).display).toBe('none')
+    }
+    // The document itself, and the payments already applied to it, stay.
+    expect(painted('[data-invoice-document]').display).not.toBe('none')
+    expect(painted('.invoice-payment-history').display).not.toBe('none')
+    expect(painted('[data-invoice-detail-lines] tr').display).toBe('table-row')
+    expect(painted('.invoice-document').paddingTop).toBe('0px')
+    expect(painted('.invoice-document').borderTopWidth).toBe('0px')
+
+    // #378 again: the state is the one thing on this document whose meaning was
+    // a background fill, and a fill is what does not print. It has to stand on
+    // ink -- a border and a colour that clears 4.5:1 against bare paper.
+    const state = painted('.invoice-state')
+    const paper = themeManifest[defaultTheme].colors.ground
+    expect(state.backgroundColor).toBe('transparent')
+    expect(state.borderTopWidth).toBe('1px')
+    expect(contrastRatio(state.color, paper)).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it('[browser] gives the document a print control of its own', async () => {
+    renderDetail()
+    const api: Partial<InvoicePaymentApi> = {
+      getInvoice: vi.fn(async () => invoice('INV-PRINT')),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+    }
+    const controller = createInvoicePaymentController(api)
+    await controller.activate(identity(1), new AbortController().signal, () => false)
+
+    const print = vi.fn()
+    Object.defineProperty(window, 'print', { configurable: true, value: print })
+    const button = document.querySelector<HTMLButtonElement>('[data-invoice-print]')!
+    // Reading an invoice is enough: printing changes nothing and is never
+    // disabled with the editing controls.
+    expect(button.disabled).toBe(false)
+    button.click()
+    expect(print).toHaveBeenCalledTimes(1)
   })
 })

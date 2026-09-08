@@ -43,6 +43,10 @@ const invoice = (overrides: Partial<Invoice> = {}): Invoice =>
     sent_at: null,
     period_start: null,
     period_end: null,
+    discount_amount_cents: 0,
+    tax_amount_cents: 0,
+    tax2_amount_cents: 0,
+    line_items: [],
     ...overrides,
   }) as Invoice
 
@@ -268,6 +272,89 @@ describe('invoice workspace model', () => {
         selected,
       ),
     ).toBe('INV-0042 (#42) is $123.45, due 2026-09-30. %unknown%')
+  })
+
+  it('[unit] resolves the lines a message is about, flattened onto their own rows', () => {
+    const selected = invoice({
+      currency: 'USD',
+      amount_cents: 41_500,
+      line_items: [
+        {
+          kind: 'Service',
+          description: 'Discovery\nworkshop',
+          quantity: 3,
+          unit_price_cents: 12_500,
+          amount_cents: 37_500,
+        },
+        {
+          kind: 'Expense',
+          description: null,
+          quantity: 1,
+          unit_price_cents: 4_000,
+          amount_cents: 4_000,
+        },
+      ] as Invoice['line_items'],
+    })
+    expect(interpolateInvoiceTemplate('Owed:\n%invoice_line_items%', selected)).toBe(
+      [
+        'Owed:',
+        'Line items',
+        // A description is free text; a newline in it would otherwise look like
+        // a line the invoice does not have.
+        'Service: Discovery workshop',
+        '  3 x $125.00 = $375.00',
+        'Expense',
+        '  1 x $40.00 = $40.00',
+        'Total: $415.00',
+      ].join('\n'),
+    )
+    expect(
+      interpolateInvoiceTemplate('%invoice_line_items%', invoice({ currency: 'USD', amount_cents: 0, line_items: [] })),
+    ).toBe(['Line items', 'This invoice has no line items.', 'Total: $0.00'].join('\n'))
+  })
+
+  // Line amounts are pre-tax; `amount_cents` is not. Recording a message whose
+  // list contradicts the total it prints is the same defect on the composer
+  // side, so the same rows reconcile it here.
+  it('[unit] reconciles the recorded list to the taxed, discounted total', () => {
+    const selected = invoice({
+      currency: 'USD',
+      amount_cents: 42_413,
+      discount_amount_cents: 4_150,
+      // Both taxes reach the client as the one Tax row the invoice document on
+      // screen shows; dropping either would leave the column short.
+      tax_amount_cents: 3_375,
+      tax2_amount_cents: 1_688,
+      line_items: [
+        {
+          kind: 'Service',
+          description: 'Discovery workshop',
+          quantity: 3,
+          unit_price_cents: 12_500,
+          amount_cents: 37_500,
+        },
+        {
+          kind: 'Expense',
+          description: null,
+          quantity: 1,
+          unit_price_cents: 4_000,
+          amount_cents: 4_000,
+        },
+      ] as Invoice['line_items'],
+    })
+    expect(interpolateInvoiceTemplate('%invoice_line_items%', selected)).toBe(
+      [
+        'Line items',
+        'Service: Discovery workshop',
+        '  3 x $125.00 = $375.00',
+        'Expense',
+        '  1 x $40.00 = $40.00',
+        'Subtotal: $415.00',
+        'Discount: -$41.50',
+        'Tax: $50.63',
+        'Total: $424.13',
+      ].join('\n'),
+    )
   })
 
   it('[unit] validates reminder dates and derives the persisted open-invoice schedule', () => {

@@ -635,7 +635,8 @@ describe('S-1 through S-5 application shell', () => {
     expect(detail).toContain('data-invoice-composer-deliver-toggle')
     expect(detail).toContain('Also deliver by email')
     expect(detail).toContain('data-invoice-composer-confirm')
-    expect(detail).toContain('No PDF is attached')
+    // What the client actually receives: the lines, and still no PDF.
+    expect(detail).toContain("It lists this invoice's line items; no PDF is attached")
     expect(detail).toContain('data-invoice-reminder-line')
     expect(detail).toContain('data-invoice-composer-dialog')
     expect(detail).toContain('%invoice_number%')

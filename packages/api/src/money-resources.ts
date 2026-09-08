@@ -1,6 +1,8 @@
 import {
   calculateInvoiceLineAmountCents,
   interpolateEmailTemplate,
+  invoiceLineItemsBlock,
+  type EmailTemplateBlockValue,
   type InvoiceActorType,
   type InvoiceLifecycleCommand,
 } from "@ezacto/core";
@@ -35,16 +37,28 @@ interface InvoiceResource extends IdentifiedResource {
   currency: string;
 }
 
+export interface InvoiceDeliveryLine {
+  kind: string;
+  description: string | null;
+  quantity: number;
+  unitPriceCents: number;
+  amountCents: number;
+}
+
 export interface InvoiceDeliveryContext {
   invoiceId: number;
   number: string;
   subject: string | null;
   currency: string;
   amountCents: number;
+  discountAmountCents: number;
+  taxAmountCents: number;
+  tax2AmountCents: number;
   issueDate: string;
   dueDate: string;
   organizationName: string;
   clientName: string;
+  lineItems: readonly InvoiceDeliveryLine[];
 }
 
 export interface InvoiceDeliveryJob {
@@ -1858,6 +1872,27 @@ const installLifecycle = <Bindings extends object>(
   );
 };
 
+const lineItemsToken = "%invoice_line_items%";
+
+/**
+ * Where the lines go in the message the client receives.
+ *
+ * A template that names the variable places them itself. A template that does
+ * not -- which is every template written before the variable existed, including
+ * the one seeded in migration 0030 -- gets them after the body instead of not
+ * at all: an invoice email that states an amount owed and nothing about what it
+ * is for is the defect being closed here, and the persisted template versions
+ * are immutable, so waiting for an operator to edit theirs would leave every
+ * existing organization sending exactly what it sends today.
+ */
+const withLineItems = (
+  body: string,
+  template: string,
+  block: string,
+  separator: string,
+): string =>
+  template.includes(lineItemsToken) ? body : `${body}${separator}${block}`;
+
 const installInvoiceDelivery = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   options: ResolvedMoneyResourceRouteOptions,
@@ -1944,6 +1979,15 @@ const installInvoiceDelivery = <Bindings extends object>(
     }
 
     const issue = new Date(`${invoice.issueDate}T00:00:00.000Z`);
+    const lineItems: EmailTemplateBlockValue = invoiceLineItemsBlock(
+      invoice.lineItems,
+      {
+        currency: invoice.currency,
+        totalCents: invoice.amountCents,
+        discountCents: invoice.discountAmountCents,
+        taxCents: invoice.taxAmountCents + invoice.tax2AmountCents,
+      },
+    );
     const values = {
       company_name: invoice.organizationName,
       invoice_id: String(invoice.invoiceId),
@@ -1962,6 +2006,7 @@ const installInvoiceDelivery = <Bindings extends object>(
       invoice_issue_date: invoice.issueDate,
       invoice_due_date: invoice.dueDate,
       client_name: invoice.clientName,
+      invoice_line_items: lineItems,
     } as const;
     const interpolation = { unknownVariable: template.unknownVariablePolicy } as const;
     const subject = interpolateEmailTemplate(
@@ -1970,19 +2015,29 @@ const installInvoiceDelivery = <Bindings extends object>(
       values,
       interpolation,
     );
-    const textBody = interpolateEmailTemplate(
-      "invoice",
+    const textBody = withLineItems(
+      interpolateEmailTemplate(
+        "invoice",
+        template.textTemplate,
+        values,
+        interpolation,
+      ),
       template.textTemplate,
-      values,
-      interpolation,
+      lineItems.text,
+      "\n\n",
     );
     const htmlBody =
       template.htmlTemplate === null
         ? null
-        : interpolateEmailTemplate("invoice", template.htmlTemplate, values, {
-            ...interpolation,
-            output: "html",
-          });
+        : withLineItems(
+            interpolateEmailTemplate("invoice", template.htmlTemplate, values, {
+              ...interpolation,
+              output: "html",
+            }),
+            template.htmlTemplate,
+            lineItems.html,
+            "\n",
+          );
     const eventId = (await eventIds(invoiceId, commandId))[0];
     const deliveryRecipients = await Promise.all(
       recipients.map(async (recipient, index) => ({

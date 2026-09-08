@@ -100,16 +100,28 @@ export interface InvoiceResource {
   line_items: InvoiceLineResource[]
 }
 
+export interface InvoiceDeliveryLine {
+  kind: string
+  description: string | null
+  quantity: number
+  unitPriceCents: number
+  amountCents: number
+}
+
 export interface InvoiceDeliveryContext {
   invoiceId: number
   number: string
   subject: string | null
   currency: string
   amountCents: number
+  discountAmountCents: number
+  taxAmountCents: number
+  tax2AmountCents: number
   issueDate: string
   dueDate: string
   organizationName: string
   clientName: string
+  lineItems: InvoiceDeliveryLine[]
 }
 
 export interface InvoiceDeliveryJob {
@@ -558,6 +570,56 @@ const readConsistentInvoice = async (
   })()
 }
 
+const deliveryContextSelect = `SELECT invoice.id AS "invoiceId", invoice.number, invoice.subject,
+    invoice.currency, invoice.amount_cents AS "amountCents",
+    invoice.discount_amount_cents AS "discountAmountCents",
+    invoice.tax_amount_cents AS "taxAmountCents",
+    invoice.tax2_amount_cents AS "tax2AmountCents",
+    invoice.issue_date AS "issueDate", invoice.due_date AS "dueDate",
+    organization.name AS "organizationName", client.name AS "clientName"
+  FROM invoices invoice
+  JOIN clients client ON client.id = invoice.client_id
+  JOIN organizations organization ON organization.id = 1
+  WHERE invoice.id = ?`
+
+const deliveryLinesSelect = `SELECT kind, description, quantity,
+  unit_price_cents AS "unitPriceCents", amount_cents AS "amountCents"
+  FROM invoice_line_items WHERE invoice_id = ? ORDER BY position, id`
+
+type RawDeliveryContext = Omit<InvoiceDeliveryContext, 'lineItems'>
+
+/**
+ * The email states a total and then lists what makes it up, so the lines and
+ * every header component of that total -- discount and both taxes included --
+ * are read as one snapshot. Two independent reads could straddle a line edit
+ * and send a client a list that does not add up to the amount above it.
+ */
+const readConsistentDeliveryContext = async (
+  database: MoneyResourceDatabase,
+  invoiceId: number,
+): Promise<InvoiceDeliveryContext | null> => {
+  const client = database.$client
+  if (isD1Client(client)) {
+    const [header, lines] = await client.batch([
+      client.prepare(deliveryContextSelect).bind(invoiceId),
+      client.prepare(deliveryLinesSelect).bind(invoiceId),
+    ])
+    if (header === undefined || lines === undefined) {
+      throw new Error('D1 invoice delivery snapshot batch returned incomplete results')
+    }
+    const row = (header.results[0] as RawDeliveryContext | undefined) ?? null
+    if (row === null) return null
+    return { ...row, lineItems: lines.results as unknown as InvoiceDeliveryLine[] }
+  }
+  return client.transaction(() => {
+    const row = client.prepare(deliveryContextSelect).get(invoiceId) as
+      RawDeliveryContext | undefined
+    if (row === undefined) return null
+    const lines = client.prepare(deliveryLinesSelect).all(invoiceId) as InvoiceDeliveryLine[]
+    return { ...row, lineItems: lines }
+  })()
+}
+
 const readConsistentInvoicePage = async (
   database: MoneyResourceDatabase,
   window: MoneyWindow,
@@ -826,17 +888,7 @@ export class MoneyResourceRepository {
 
   async getInvoiceDeliveryContext(id: number): Promise<InvoiceDeliveryContext | null> {
     assertPositiveId(id, 'invoice id')
-    return first(this.database, {
-      text: `SELECT invoice.id AS "invoiceId", invoice.number, invoice.subject,
-          invoice.currency, invoice.amount_cents AS "amountCents",
-          invoice.issue_date AS "issueDate", invoice.due_date AS "dueDate",
-          organization.name AS "organizationName", client.name AS "clientName"
-        FROM invoices invoice
-        JOIN clients client ON client.id = invoice.client_id
-        JOIN organizations organization ON organization.id = 1
-        WHERE invoice.id = ?`,
-      params: [id],
-    })
+    return readConsistentDeliveryContext(this.database, id)
   }
 
   async listInvoiceDeliveryJobs(eventId: string): Promise<InvoiceDeliveryJob[]> {

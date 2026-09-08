@@ -115,6 +115,18 @@ export const emailTemplateVariables = [
     compatibility: "native",
   },
   {
+    /**
+     * A block, not a scalar: it carries its own plain-text and HTML renderings
+     * so the lines survive an HTML template as a table instead of arriving as
+     * one escaped blob.
+     */
+    name: "invoice_line_items",
+    token: "%invoice_line_items%",
+    description: "Invoice line items, quantity, rate, and amount",
+    kinds: invoiceKinds,
+    compatibility: "native",
+  },
+  {
     name: "action_url",
     token: "%action_url%",
     description: "One-time authentication action URL",
@@ -133,8 +145,24 @@ export const emailTemplateVariables = [
 export type EmailTemplateVariableName =
   (typeof emailTemplateVariables)[number]["name"];
 
+/**
+ * A value that is a passage rather than a word. The two renderings are built
+ * together by the producer, because escaping a plain-text block into an HTML
+ * template yields a wall of text and interpolating markup into a plain-text
+ * body yields tags -- the same content has to be authored twice or it is wrong
+ * in one of the two bodies every message carries. `html` is markup and is
+ * emitted verbatim, so whoever builds one owes the escaping (see
+ * `escapeEmailHtml`).
+ */
+export interface EmailTemplateBlockValue {
+  readonly text: string;
+  readonly html: string;
+}
+
+export type EmailTemplateVariableValue = string | EmailTemplateBlockValue;
+
 export type EmailTemplateVariableValues = Partial<
-  Readonly<Record<EmailTemplateVariableName, string>>
+  Readonly<Record<EmailTemplateVariableName, EmailTemplateVariableValue>>
 >;
 
 export type UnknownEmailTemplateVariablePolicy = "error" | "literal";
@@ -173,7 +201,11 @@ const assertKind: (kind: string) => asserts kind is EmailTemplateKind = (kind) =
   }
 };
 
-const escapeHtml = (value: string): string =>
+/**
+ * The one escaping rule for email bodies. Exported so a producer of an
+ * `EmailTemplateBlockValue` escapes exactly what interpolation would have.
+ */
+export const escapeEmailHtml = (value: string): string =>
   value
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -214,6 +246,14 @@ export const inspectEmailTemplateVariables = (
   return failures;
 };
 
+const isBlockValue = (
+  value: EmailTemplateVariableValue,
+): value is EmailTemplateBlockValue =>
+  typeof value === "object" &&
+  value !== null &&
+  typeof (value as EmailTemplateBlockValue).text === "string" &&
+  typeof (value as EmailTemplateBlockValue).html === "string";
+
 export const interpolateEmailTemplate = (
   kind: EmailTemplateKind,
   source: string,
@@ -247,9 +287,14 @@ export const interpolateEmailTemplate = (
     if (value === undefined) {
       throw new EmailTemplateVariableError("missing_variable", name, kind);
     }
+    if (isBlockValue(value)) {
+      // Already rendered for both bodies by whoever supplied it, markup
+      // included, so escaping here would print the tags.
+      return output === "html" ? value.html : value.text;
+    }
     if (typeof value !== "string") {
       throw new TypeError(`template variable ${name} must be a string`);
     }
-    return output === "html" ? escapeHtml(value) : value;
+    return output === "html" ? escapeEmailHtml(value) : value;
   });
 };
