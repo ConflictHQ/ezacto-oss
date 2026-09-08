@@ -1458,7 +1458,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
    */
   const revealCompanySettings = (identity: Readonly<Whoami>): void => {
     const visible = identity.profile === 'administrator'
-    for (const tab of document.querySelectorAll<HTMLElement>('[data-settings-company-tab]')) {
+    for (const tab of document.querySelectorAll<HTMLElement>(
+      '[data-settings-company-tab], [data-settings-activity-tab]',
+    )) {
       tab.hidden = !visible
     }
   }

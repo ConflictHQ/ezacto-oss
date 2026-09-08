@@ -4335,10 +4335,20 @@ describe('command palette browser behavior', () => {
     await vi.waitFor(() => expect(navHidden('/approvals')).toBe(false))
     await vi.waitFor(() => expect(navHidden('/team')).toBe(false))
 
+    // The tab must be revealed, not merely un-hidden by accident: it ships
+    // hidden, so a reveal that forgets it leaves it hidden and every
+    // member-side assertion still passes. This is the direction that catches it.
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector<HTMLElement>('[data-settings-activity-tab]')!.hidden,
+      ).toBe(false),
+    )
+
     const command = openPalette()
     expect(paletteLabels()).toContain('Approvals')
     expect(paletteLabels()).toContain('Team')
     expect(paletteLabels()).toContain('Company settings')
+    expect(paletteLabels()).toContain('Activity log')
     // Grouped by what you came to do, and only groups with results are drawn.
     expect(
       [...document.querySelectorAll<HTMLElement>('.command-group')].map((group) =>
@@ -4390,9 +4400,15 @@ describe('command palette browser behavior', () => {
     expect(navHidden('/approvals')).toBe(true)
     expect(navHidden('/team')).toBe(true)
     expect(document.querySelector<HTMLElement>('[data-settings-company-tab]')!.hidden).toBe(true)
+    // The activity log names who did what, so it is gated with Company rather
+    // than offered to everyone who can reach Settings.
+    expect(document.querySelector<HTMLElement>('[data-settings-activity-tab]')!.hidden).toBe(
+      true,
+    )
 
     openPalette()
     const labels = paletteLabels()
+    expect(labels).not.toContain('Activity log')
     expect(labels).not.toContain('Approvals')
     expect(labels).not.toContain('Team')
     expect(labels).not.toContain('Company settings')

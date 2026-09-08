@@ -11,7 +11,10 @@ import { renderTaskAdminPage } from '../tasks/render.js'
 import { renderTeamPages } from '../team/render.js'
 import { renderExpenseCategoriesPage } from '../expense-categories/render.js'
 import { renderRetainerPage } from '../retainers/render.js'
-import { renderModuleSettingsPage } from '../module-settings/render.js'
+import {
+  renderActivityLogPage,
+  renderModuleSettingsPage,
+} from '../module-settings/render.js'
 import {
   renderInvoiceAttachmentSection,
   renderInvoiceComposerDialog,
@@ -71,6 +74,7 @@ export interface AppShellOptions {
     | 'expense-categories'
     | 'settings-user'
     | 'settings-company'
+    | 'settings-activity'
     | 'team-list'
     | 'team-person'
   /**
@@ -573,6 +577,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
   ${renderExpenseWorkflowPages(view)}
   ${renderExpenseCategoriesPage(view)}
   ${renderModuleSettingsPage(view)}
+  ${renderActivityLogPage(view)}
   ${renderInvoiceComposerDialog()}
   ${renderInvoiceEditDialog()}
   ${renderInvoiceLineDialogs()}

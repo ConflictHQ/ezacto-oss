@@ -333,6 +333,15 @@ export const paletteDestinations: readonly PaletteDestination[] = [
     gate: '[data-settings-company-tab]',
   },
   {
+    label: 'Activity log',
+    href: '/settings/activity',
+    group: 'Review',
+    keywords: 'audit history who changed',
+    // The same gate as Company settings: the log names who did what, and the
+    // palette must not offer a destination that answers 403.
+    gate: '[data-settings-activity-tab]',
+  },
+  {
     label: 'Invoices',
     href: '/invoices',
     group: 'Bill',
