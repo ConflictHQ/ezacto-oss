@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "ezacto",
+  "name": "replace-me-worker-name",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-26",
 
@@ -20,53 +20,58 @@
   // Queue and R2 names are the provisioning contract; the reviewed provision
   // workflows converge durable resources before this configuration is deployed.
   "env": {
-    // CONFLICT's own instance — the dogfood deployment, and the OSS gate.
+    // The operator's own instance -- whoever is running their books on this.
+    // Every identifying value here is a placeholder: scripts/render-wrangler-prod.mjs
+    // fills them from the deploying environment immediately before a prod
+    // deploy. The placeholders are not valid Cloudflare identifiers, so a
+    // deploy that skips the render is refused rather than pointed somewhere
+    // unintended.
     "prod": {
-      "name": "ezacto",
-      "routes": [{ "pattern": "app.example.com", "custom_domain": true }],
+      "name": "replace-me-worker-name",
+      "routes": [{ "pattern": "replace-me.invalid", "custom_domain": true }],
       "triggers": { "crons": ["* * * * *", "0 3 * * *"] },
       "vars": {
         "ENVIRONMENT": "prod",
         "RELEASE": "unknown",
-        "APP_BASE_URL": "https://app.example.com",
-        // Deployment brand seam (#72). The install is CONFLICT's own, so the
-        // shell, the sign-in gateway and outbound mail carry its name instead of
-        // the product default. Wordmark and favicon are deliberately unset:
-        // they take URLs, and the brand assets are not hosted yet, so the text
-        // wordmark renders until they are.
-        "BRAND_NAME": "CONFLICT",
-        "BRAND_TAGLINE": "Time, exactly.",
-        "BRAND_DESCRIPTION": "Time tracking and invoicing for CONFLICT LLC.",
-        "BRAND_EMAIL_SENDER_NAME": "CONFLICT",
+        "APP_BASE_URL": "https://replace-me.invalid",
+        // Deployment brand seam (#72). A prod install carries the operator's
+        // name through the shell, the sign-in gateway and outbound mail rather
+        // than the product default. Wordmark and favicon are deliberately
+        // unset: they take URLs, so the text wordmark renders until an operator
+        // hosts assets of their own.
+        "BRAND_NAME": "replace-me-brand-name",
+        "BRAND_TAGLINE": "replace-me-brand-tagline",
+        "BRAND_DESCRIPTION": "replace-me-brand-description",
+        "BRAND_EMAIL_SENDER_NAME": "replace-me-brand-sender",
       },
       "d1_databases": [
         {
           "binding": "DB",
-          "database_name": "ezacto-prod",
+          "database_name": "replace-me-d1-name",
           "database_id": "00000000-0000-0000-0000-000000000000",
         },
       ],
       "r2_buckets": [
         {
           "binding": "ATTACHMENTS",
-          "bucket_name": "ezacto-prod-attachments",
+          "bucket_name": "replace-me-r2-bucket",
         },
       ],
       "queues": {
         "producers": [
           {
             "binding": "EMAIL_QUEUE",
-            "queue": "ezacto-prod-email",
+            "queue": "replace-me-email-queue",
           },
         ],
         "consumers": [
           {
-            "queue": "ezacto-prod-email",
+            "queue": "replace-me-email-queue",
             "max_batch_size": 1,
             "max_batch_timeout": 1,
             "max_retries": 100,
             "retry_delay": 5,
-            "dead_letter_queue": "ezacto-prod-email-dlq",
+            "dead_letter_queue": "replace-me-email-queue-dlq",
             "max_concurrency": 1,
           },
         ],
