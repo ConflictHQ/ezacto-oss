@@ -62,6 +62,7 @@ const definitions: Readonly<Record<GeneralResourceKind, ResourceDefinition>> = {
       updatedSince: 'updated_at',
       parentClientId: 'parent_client_id',
       billToClientId: 'bill_to_client_id',
+      search: 'name',
     },
   },
   contacts: {
@@ -130,7 +131,12 @@ const definitions: Readonly<Record<GeneralResourceKind, ResourceDefinition>> = {
     ]),
     json: new Set(),
     archive: true,
-    filters: { isActive: 'is_active', clientId: 'client_id', updatedSince: 'updated_at' },
+    filters: {
+      isActive: 'is_active',
+      clientId: 'client_id',
+      updatedSince: 'updated_at',
+      search: 'name',
+    },
   },
   tasks: {
     table: 'tasks',
@@ -144,7 +150,7 @@ const definitions: Readonly<Record<GeneralResourceKind, ResourceDefinition>> = {
     booleans: new Set(['billableByDefault', 'isDefault', 'isActive']),
     json: new Set(),
     archive: true,
-    filters: { isActive: 'is_active', updatedSince: 'updated_at' },
+    filters: { isActive: 'is_active', updatedSince: 'updated_at', search: 'name' },
   },
   'task-assignments': {
     table: 'task_assignments',
@@ -237,6 +243,16 @@ const definitions: Readonly<Record<GeneralResourceKind, ResourceDefinition>> = {
 
 const identifier = (name: string) => sql.identifier(name)
 
+/**
+ * The `search` filter, as a LIKE pattern. SQLite's LIKE is case-insensitive for
+ * ASCII, which is the match a search box wants without a second column to hold
+ * a folded copy. The wildcards and the escape character are escaped in the
+ * value: unescaped, a search for `%` would match every row and one for `_`
+ * would match every single character.
+ */
+const likePattern = (value: string): string =>
+  `%${value.replace(/[\\%_]/g, (character) => `\\${character}`)}%`
+
 const isD1Client = (client: NativeClient): client is D1Database => 'batch' in client
 
 const nativeClient = (database: Database): NativeClient =>
@@ -274,11 +290,15 @@ const whereFor = (
     const value = filters[field as keyof GeneralResourceFilters]
     if (value === undefined) continue
     const stored = typeof value === 'boolean' ? (value ? 1 : 0) : value
-    conditions.push(
-      field === 'updatedSince'
-        ? sql`${identifier(column!)} > ${stored}`
-        : sql`${identifier(column!)} = ${stored}`,
-    )
+    if (field === 'updatedSince') conditions.push(sql`${identifier(column!)} > ${stored}`)
+    // In the SQL, not over the returned page. The cursor chassis asks for
+    // take + 1 rows and reads "more than I asked for" as "there is a next
+    // page", so a filter applied after the read returns short pages that claim
+    // to be the end of the collection -- forty tasks with two matches in them
+    // is exactly the shape that breaks.
+    else if (field === 'search')
+      conditions.push(sql`${identifier(column!)} LIKE ${likePattern(String(value))} ESCAPE '\\'`)
+    else conditions.push(sql`${identifier(column!)} = ${stored}`)
   }
   if (window !== undefined) {
     if (window.afterId !== null) conditions.push(sql`id > ${window.afterId}`)

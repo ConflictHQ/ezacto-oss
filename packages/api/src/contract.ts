@@ -96,6 +96,7 @@ const filterSchemas: Readonly<Record<string, JsonSchema>> = {
     ],
   },
   is_contractor: booleanSchema,
+  q: { type: "string", minLength: 1, pattern: "\\S" },
 };
 
 const generalResources = [
@@ -107,6 +108,7 @@ const generalResources = [
       "updated_since",
       "parent_client_id",
       "bill_to_client_id",
+      "q",
     ],
   },
   {
@@ -127,12 +129,12 @@ const generalResources = [
   {
     plural: "projects",
     singular: "Project",
-    filters: ["client_id", "is_active", "updated_since"],
+    filters: ["client_id", "is_active", "updated_since", "q"],
   },
   {
     plural: "tasks",
     singular: "Task",
-    filters: ["is_active", "updated_since"],
+    filters: ["is_active", "updated_since", "q"],
   },
   {
     plural: "task-assignments",
