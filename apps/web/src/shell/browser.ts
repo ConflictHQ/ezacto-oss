@@ -21,6 +21,7 @@ import {
 } from '../components/time-entry-editor.js'
 import { createClientDirectoryController } from '../clients/browser.js'
 import { createProjectDirectoryController } from '../projects/browser.js'
+import { createActivityController } from '../activity/browser.js'
 import { createDashboardController } from '../dashboard/browser.js'
 import { createReportsController } from '../reports/browser.js'
 import { canReadFinancialReports } from '../reports/model.js'
@@ -1039,6 +1040,14 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const taskAdmin = createTaskAdminController(api)
   const teamDirectory = createTeamDirectoryController(api)
   const dashboard = createDashboardController(api)
+  // Reads only when the api offers the endpoint; an install without it still
+  // serves the page and simply says it cannot load.
+  const activity = createActivityController({
+    listActivityLog: async (query, signal) =>
+      api.listActivityLog === undefined
+        ? { data: [] }
+        : api.listActivityLog(query, signal),
+  })
   const reports = createReportsController(api)
   const expenseWorkflow = createExpenseWorkflowController(api)
   const expenseCategories = createExpenseCategoryDirectoryController(api)
@@ -2378,6 +2387,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         ),
         loadWeek(authenticated),
       ])
+    } else if (document.querySelector('[data-activity-log-page]:not([hidden])') !== null) {
+      await Promise.all([activity.activate(authenticated.signal), loadWeek(authenticated)])
     } else if (reportsPage) {
       await Promise.all([
         reports.activate(
