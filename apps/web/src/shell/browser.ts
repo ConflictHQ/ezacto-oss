@@ -3032,24 +3032,33 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       return
     }
     if (event.key !== 'Enter') return
+    // Shift+Enter logs time against what was typed instead of going anywhere.
+    // The default is deliberately the unsurprising one: this control gets used
+    // blind, and a key that navigates sometimes and starts an entry other times
+    // -- depending on what the highlighted row happens to be -- is the kind of
+    // ambiguity you cannot recover from without looking. So the faster daily
+    // action is a modifier away rather than a guess.
+    if (event.shiftKey) {
+      event.preventDefault()
+      const typed = new FormData(commandForm).get('command')
+      if (typeof typed === 'string' && typed.trim() !== '') quickAddFromCommand(typed)
+      return
+    }
     const highlighted = paletteOptions[paletteIndex]
     if (highlighted === undefined) return
     event.preventDefault()
     globalThis.location.assign(highlighted.href)
   })
 
-  commandForm.addEventListener('submit', (event) => {
-    event.preventDefault()
+  /**
+   * Turn what was typed into a draft time entry. Reached two ways: submitting
+   * the command form when the text is not a destination, and Shift+Enter, which
+   * asks for this outright rather than letting the text decide.
+   */
+  const quickAddFromCommand = (command: string): void => {
     const operation = sessionOperation()
     if (operation === null) return
     const result = required<HTMLElement>('[data-command-result]')
-    const command = new FormData(commandForm).get('command')
-    if (typeof command !== 'string') return
-    const destination = navigationDestination(command, paletteOffers)
-    if (destination !== null) {
-      globalThis.location.assign(destination)
-      return
-    }
     result.textContent = 'Preparing entry…'
     void prepareQuickAdd(api, command, new Date(), operation.signal)
       .then((draft) => {
@@ -3077,6 +3086,21 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
             ? messageFor(error)
             : `${noteRequirementMessage(minimumNoteLength)} Add it after the task name.`
       })
+  }
+
+  commandForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const command = new FormData(commandForm).get('command')
+    if (typeof command !== 'string') return
+    // Submitting still lets the text decide: a destination navigates, anything
+    // else becomes an entry. Shift+Enter is the way to say "an entry" about
+    // text that happens to name a screen.
+    const destination = navigationDestination(command, paletteOffers)
+    if (destination !== null) {
+      globalThis.location.assign(destination)
+      return
+    }
+    quickAddFromCommand(command)
   })
 
   commandInput.addEventListener('input', () => {

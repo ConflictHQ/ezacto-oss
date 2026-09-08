@@ -1,0 +1,37 @@
+export {
+  ACTIVE_DEEL_CONTRACT_STATUS,
+  matchPayrollContracts,
+  type ContractMatch,
+  type DirectoryEmail,
+  type DirectoryPerson,
+  type EmailKind,
+  type MatchFailure,
+  type PayrollContractMatches,
+  type UnmatchedDirectoryPerson,
+} from './deel/matching.js'
+export {
+  DeelApiError,
+  DeelClient,
+  DeelResponseError,
+  type DeelClientOptions,
+  type DeelContract,
+  type DeelPerson,
+  type DeelTimesheetInput,
+  type DeelTimesheetReceipt,
+  type DeelTimesheetSink,
+} from './deel/client.js'
+export {
+  planTimeTransfer,
+  submitTransferPlan,
+  timeEntryFingerprint,
+  type FailedSubmission,
+  type PlannedEntry,
+  type PlannedSubmission,
+  type TransferConflict,
+  type TransferLogRecord,
+  type TransferPlan,
+  type TransferResult,
+  type TransferTimeEntry,
+  type UnsyncableEntry,
+  type UnsyncableReason,
+} from './deel/time-sync.js'
