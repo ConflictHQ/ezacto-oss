@@ -123,6 +123,7 @@ const routeDefinitions: Readonly<
       updated_since: "updatedSince",
       parent_client_id: "parentClientId",
       bill_to_client_id: "billToClientId",
+      q: "search",
     },
   },
   contacts: {
@@ -187,6 +188,7 @@ const routeDefinitions: Readonly<
       client_id: "clientId",
       is_active: "isActive",
       updated_since: "updatedSince",
+      q: "search",
     },
   },
   tasks: {
@@ -198,7 +200,11 @@ const routeDefinitions: Readonly<
       is_active: bool,
     },
     required: new Set(["name"]),
-    filters: { is_active: "isActive", updated_since: "updatedSince" },
+    filters: {
+      is_active: "isActive",
+      updated_since: "updatedSince",
+      q: "search",
+    },
   },
   "task-assignments": {
     fields: {
@@ -578,6 +584,20 @@ const parseFilters = (
           message: `${query} must be a canonical UTC timestamp`,
         });
       else Object.assign(filters, { [field]: raw });
+    } else if (query === "q") {
+      // Surrounding whitespace is what a paste leaves behind, not what the
+      // person is looking for. A blank q is rejected rather than dropped:
+      // ignoring it would answer the whole collection while the box on screen
+      // still reads as a search, which is the half-truth this parameter exists
+      // to stop.
+      const term = raw.trim();
+      if (term === "")
+        errors.push({
+          field: query,
+          code: "blank",
+          message: `${query} must not be blank`,
+        });
+      else Object.assign(filters, { [field]: term });
     } else if (query === "profile") {
       if (!routeDefinitions.users.fields.profile!.values!.includes(raw))
         errors.push({
