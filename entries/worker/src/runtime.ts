@@ -30,6 +30,8 @@ import {
   createMagicLinkService,
   createD1TwoFactorStore,
   createRecurringInvoiceEngine,
+  createD1ReminderScheduler,
+  captureActivityEvent,
   createTwoFactorService,
 } from "@ezacto/db/d1";
 import { createPortalSessionService } from "@ezacto/api";
@@ -543,9 +545,15 @@ export const createRuntimeServices = async (
   // add-an-address route takes only `addEmail`.
   const passwordAuth = createD1PasswordAuthService(database);
   const moneyResources = createMoneyResourceRepository(drizzle);
+  // The reminder scheduler is an outbox subscriber, not a service: it schedules
+  // a reminder when an invoice is sent and cancels the pending ones when it is
+  // paid or written off. Unsubscribed, `reminder_policy` is accepted and stored
+  // and `scheduled_reminders` stays permanently empty.
+  const reminders = createD1ReminderScheduler(database);
   const outbox = createD1OutboxService(database, {
     additionalSubscribers: [
       createInvoiceEmailOutboxSubscriber(moneyResources, organizationMailer),
+      reminders.subscriber,
     ],
   });
   return {
@@ -562,6 +570,15 @@ export const createRuntimeServices = async (
     moneyResources,
     invoiceGeneration: createInvoiceGenerationService(drizzle),
     recurringInvoices: createRecurringInvoiceEngine(drizzle),
+    // Sign-ins, token grants and revocations, exports and restores. Without
+    // this the activity log can answer what happened to an invoice and not who
+    // signed in and took a copy of the database. The capture result is the
+    // written row, which the port has no use for.
+    activity: {
+      capture: async (request) => {
+        await captureActivityEvent(drizzle, request);
+      },
+    },
     trackedResources: new DrizzleTrackedResourceRepository(
       drizzle,
       timesheetLockPolicy,

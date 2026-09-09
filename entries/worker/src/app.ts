@@ -12,7 +12,6 @@ import {
   installEmailConfigurationRoutes,
   installGeneralResourceRoutes,
   installMagicLinkRoutes,
-  installTwoFactorRoutes,
   installModuleSettingsRoutes,
   installGitHubRoutes,
   installMoneyResourceRoutes,
@@ -42,6 +41,7 @@ import {
   type ModuleSettingsService,
   type EmailConfigurationRouteOptions,
   type MagicLinkRouteOptions,
+  type ActivityRecorder,
   type TwoFactorService,
   type GitHubProviderConfig,
   type MoneyResourceRouteOptions,
@@ -181,6 +181,8 @@ export interface RuntimeServices {
   portalAuth?: MagicLinkRouteOptions
   /** The second factor for signed-in users. Absent only where there is no store. */
   twoFactor?: TwoFactorService
+  /** Where credential events are recorded. Absent leaves them unrecorded. */
+  activity?: ActivityRecorder
   backupStatus?: BackupStatusReader
 }
 
@@ -212,6 +214,12 @@ export const createApp = (services?: RuntimeServices) =>
           authentication: {
             tokens: services.tokens,
             sessions: services.authenticationSessions ?? services.sessions,
+            ...(services.twoFactor === undefined
+              ? {}
+              : { twoFactor: services.twoFactor }),
+            ...(services.activity === undefined
+              ? {}
+              : { activity: services.activity }),
           },
           installApi: (api) => {
             installSessionRoutes(api, services.sessions)
@@ -299,12 +307,6 @@ export const createApp = (services?: RuntimeServices) =>
               clientKey: (request) =>
                 request.headers.get('cf-connecting-ip') ?? 'unknown-client',
             })
-            // Mounted here rather than beside the sign-in routes: these answer
-            // under /api/v1 for an already-authenticated principal, which is
-            // what the enrolment and disable endpoints require.
-            if (services.twoFactor !== undefined) {
-              installTwoFactorRoutes(api, services.twoFactor)
-            }
           },
         }),
     installApp(app) {

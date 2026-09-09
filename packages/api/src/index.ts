@@ -1,5 +1,11 @@
 export { createApiApp } from './app.js'
 export {
+  captureRequestActivity,
+  type ActivityActor,
+  type ActivityCaptureRequest,
+  type ActivityRecorder,
+} from './activity-log.js'
+export {
   installBackupStatusRoutes,
   type BackupStatusReader,
   type BackupStatusRecord,
