@@ -86,7 +86,45 @@ const page = (data: readonly GeneralResource[]) => ({
 })
 
 describe('Clients V1 browser controller', () => {
-  it('[browser] renders exact relations, contact routing, and projects for read-only profiles', async () => {
+  it('[security #466] keeps ungranted manager edits operational without resetting invoice defaults', async () => {
+    writeDocument()
+    const updateDirectoryClient = vi.fn(async (_id, input) => ({ ...child, ...input }))
+    const createClientContact = vi.fn(async (input) => ({ ...contact, ...input }))
+    const controller = createClientDirectoryController({
+      listDirectoryClients: async () => page([parent, child]),
+      getDirectoryClient: async () => child,
+      listClientContacts: async () => page([contact]),
+      listClientProjects: async () => page([project]),
+      updateDirectoryClient, createClientContact,
+      createDirectoryClient: vi.fn(), updateClientContact: vi.fn(),
+    })
+    const identity: Whoami = { user_id: 1, profile: 'project_manager', manager_grants: [], authentication: { kind: 'session' } }
+    await controller.activate(identity, new AbortController().signal, () => false)
+    document.querySelector<HTMLButtonElement>('[data-client-edit]')!.click()
+    const form = document.querySelector<HTMLFormElement>('[data-client-form]')!
+    const fields = ['payment_terms', 'default_tax_pct', 'default_tax2_pct', 'default_discount_pct']
+    for (const name of fields) {
+      const control = form.elements.namedItem(name) as HTMLInputElement
+      expect(control.disabled).toBe(true)
+      expect(control.closest('label')!.hidden).toBe(true)
+    }
+    ;(form.elements.namedItem('name') as HTMLInputElement).value = 'Renamed client'
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(updateDirectoryClient).toHaveBeenCalledTimes(1))
+    for (const name of fields) expect(updateDirectoryClient.mock.calls[0]![1]).not.toHaveProperty(name)
+    await vi.waitFor(() => expect(document.querySelector<HTMLButtonElement>('[data-client-form-submit]')!.disabled).toBe(false))
+    document.querySelector<HTMLButtonElement>('[data-contact-create]')!.click()
+    const contactForm = document.querySelector<HTMLFormElement>('[data-contact-form]')!
+    const routing = contactForm.elements.namedItem('invoice_recipient_status') as HTMLSelectElement
+    expect(routing.disabled).toBe(true)
+    expect(routing.closest('label')!.hidden).toBe(true)
+    ;(contactForm.elements.namedItem('first_name') as HTMLInputElement).value = 'Operational contact'
+    contactForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(createClientContact).toHaveBeenCalledTimes(1))
+    expect(createClientContact.mock.calls[0]![0]).not.toHaveProperty('invoice_recipient_status')
+  })
+
+  it('[security #466] renders operational relations but no commercial facts for members', async () => {
     writeDocument()
     const api: Partial<ClientDirectoryApi> = {
       listDirectoryClients: vi.fn(async () => page([child, parent])),
@@ -125,9 +163,14 @@ describe('Clients V1 browser controller', () => {
     )
     expect(projectLink?.getAttribute('href')).toBe('/projects/31')
     expect(projectLink?.textContent).toBe('[WEB] Launch')
-    expect(document.querySelector('[data-client-contacts]')?.textContent).toContain(
+    expect(document.querySelector('[data-client-contacts]')?.textContent).not.toContain(
       'Invoice CC',
     )
+    for (const selector of ['terms', 'tax', 'tax2', 'discount']) {
+      const element = document.querySelector<HTMLElement>(`[data-client-detail-${selector}]`)!
+      expect(element.textContent).toBe('')
+      expect(element.parentElement!.hidden).toBe(true)
+    }
     expect(
       [...document.querySelectorAll<HTMLElement>('[data-client-write]')].every(
         (element) => element.hidden,
@@ -153,7 +196,7 @@ describe('Clients V1 browser controller', () => {
     }
     const identity: Whoami = {
       user_id: 1,
-      profile: 'member',
+      profile: 'accounting',
       manager_grants: [],
       authentication: { kind: 'session' },
     }

@@ -1,4 +1,4 @@
-import { maximumBulkApprovalSelections } from "@ezacto/core";
+import { commercialTermFields, maximumBulkApprovalSelections } from "@ezacto/core";
 import {
   attachmentContractOperations,
   attachmentContractSchemas,
@@ -2684,6 +2684,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   WhoamiEnvelope: envelope("Whoami"),
   GeneralResource: {
     type: "object",
+    description: "Commercial fields are omitted without finance/admin authority or an explicit billable_rates_manager grant. The same authority is required to set them; resource read/write scopes still apply.",
+    "x-commercial-fields": Object.fromEntries(Object.entries(commercialTermFields).map(([kind, fields]) => [kind, fields.map((field) => field.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`))])),
     required: ["id", "created_at", "updated_at"],
     properties: {
       id: integerSchema,
@@ -2694,6 +2696,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   GeneralMutationInput: {
     type: "object",
+    description: "Commercial fields listed on GeneralResource require the same commercial authority for create and update, in addition to resource write scope.",
     minProperties: 1,
     additionalProperties: true,
   },

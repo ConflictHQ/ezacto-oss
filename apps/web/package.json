@@ -27,6 +27,7 @@
     "build": "npm run theme:check && npm run shell:generate && tsc -p tsconfig.build.json"
   },
   "dependencies": {
+    "@ezacto/core": "0.0.0",
     "@ezacto/client": "0.0.0"
   },
   "devDependencies": {

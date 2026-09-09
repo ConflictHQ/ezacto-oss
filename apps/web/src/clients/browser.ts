@@ -1,5 +1,6 @@
 import { renderDataTable } from '../components/data-table.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
+import { canManageClientTerms } from '../commercial-terms.js'
 import { EzactoApiError, type GeneralResource, type Whoami } from '@ezacto/client'
 import {
   clientDisplayName,
@@ -337,12 +338,12 @@ export const createClientDirectoryController = (
               return link
             },
           },
-          {
+          ...(session !== null && canManageClientTerms(session.identity) ? [{
             key: 'billing',
             label: 'Billing',
-            render: (project) =>
+            render: (project: GeneralResource) =>
               clientText(project, 'billing_method')?.replaceAll('_', ' ') ?? '—',
-          },
+          }] : []),
           {
             key: 'status',
             label: 'Status',
@@ -364,6 +365,9 @@ export const createClientDirectoryController = (
     }
     editingContactId = contact?.id ?? null
     contactForm.reset()
+    const routing = field(contactForm, 'invoice_recipient_status')
+    routing.disabled = !canManageClientTerms(active.identity)
+    routing.closest('label')!.hidden = routing.disabled
     contactFormTitle.textContent = contact === null ? 'Add contact' : 'Edit contact'
     contactFormSubmit.textContent = contact === null ? 'Add contact' : 'Save contact'
     contactFormResult.textContent = ''
@@ -420,10 +424,10 @@ export const createClientDirectoryController = (
                 .filter((value): value is string => value !== null)
                 .join(' · ') || '—',
           },
-          {
+          ...(session !== null && canManageClientTerms(session.identity) ? [{
             key: 'recipient',
             label: 'Invoices',
-            render: (contact) => {
+            render: (contact: GeneralResource) => {
               const pill = document.createElement('span')
               pill.className = 'client-recipient-pill'
               pill.dataset.recipientStatus =
@@ -431,7 +435,7 @@ export const createClientDirectoryController = (
               pill.textContent = recipientLabel(clientText(contact, 'invoice_recipient_status'))
               return pill
             },
-          },
+          }] : []),
         ],
         ...(canWrite
           ? {
@@ -477,6 +481,11 @@ export const createClientDirectoryController = (
     setText('[data-client-detail-tax]', percentLabel(currentClient['default_tax_pct']))
     setText('[data-client-detail-tax2]', percentLabel(currentClient['default_tax2_pct']))
     setText('[data-client-detail-discount]', percentLabel(currentClient['default_discount_pct']))
+    for (const selector of ['terms', 'tax', 'tax2', 'discount']) {
+      const element = required<HTMLElement>(`[data-client-detail-${selector}]`)
+      element.parentElement!.hidden = session === null || !canManageClientTerms(session.identity)
+      if (element.parentElement!.hidden) element.textContent = ''
+    }
     setText('[data-client-detail-address]', clientText(currentClient, 'address') ?? 'None')
     renderProjects()
     renderContacts()
@@ -566,6 +575,13 @@ export const createClientDirectoryController = (
     if (active === null || !clientProfileCanWrite(active.identity.profile)) return
     editingClientId = client?.id ?? null
     clientForm.reset()
+    const commercial = canManageClientTerms(active.identity)
+    for (const name of ['payment_terms', 'default_tax_pct', 'default_tax2_pct', 'default_discount_pct']) {
+      const control = field(clientForm, name)
+      control.disabled = !commercial
+      control.closest('label')!.hidden = !commercial
+    }
+    clientForm.querySelector<HTMLElement>('.client-defaults')!.hidden = !commercial
     clientFormTitle.textContent = client === null ? 'Add client' : 'Edit client'
     clientFormSubmit.textContent = client === null ? 'Add client' : 'Save client'
     clientFormResult.textContent = ''
@@ -650,10 +666,12 @@ export const createClientDirectoryController = (
         ...(currency === null ? {} : { currency: currency.toLocaleUpperCase('en-US') }),
         parent_client_id: relationId(data, 'parent_client_id'),
         bill_to_client_id: relationId(data, 'bill_to_client_id'),
-        payment_terms: optionalText(data, 'payment_terms') ?? 'custom',
-        default_tax_pct: optionalNumber(data, 'default_tax_pct'),
-        default_tax2_pct: optionalNumber(data, 'default_tax2_pct'),
-        default_discount_pct: optionalNumber(data, 'default_discount_pct'),
+        ...(canManageClientTerms(active.identity) ? {
+          payment_terms: optionalText(data, 'payment_terms') ?? 'custom',
+          default_tax_pct: optionalNumber(data, 'default_tax_pct'),
+          default_tax2_pct: optionalNumber(data, 'default_tax2_pct'),
+          default_discount_pct: optionalNumber(data, 'default_discount_pct'),
+        } : {}),
       }
     } catch (error) {
       clientFormResult.textContent = messageFor(error)
@@ -720,7 +738,9 @@ export const createClientDirectoryController = (
       phone_office: optionalText(data, 'phone_office'),
       phone_mobile: optionalText(data, 'phone_mobile'),
       fax: optionalText(data, 'fax'),
-      invoice_recipient_status: optionalText(data, 'invoice_recipient_status') ?? 'none',
+      ...(canManageClientTerms(active.identity) ? {
+        invoice_recipient_status: optionalText(data, 'invoice_recipient_status') ?? 'none',
+      } : {}),
     }
     mutationPending = true
     contactFormSubmit.disabled = true

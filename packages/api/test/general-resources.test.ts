@@ -41,6 +41,9 @@ const bearerPrincipals: Readonly<
     }
   >
 > = {
+  "member-directories": {
+    profile: "member", managerGrants: [], scopes: ["projects:read", "clients:read"],
+  },
   "member-projects": {
     profile: "member",
     managerGrants: [],
@@ -309,6 +312,56 @@ for (const [runtime, createHarness] of factories) {
       harness = await createHarness();
     }, 20_000);
     afterEach(async () => harness.close());
+
+    it('[security #466] protects commercial fields on lists, details, and mutations', async () => {
+      const clientTerms = { payment_terms: 'net_60', default_tax_pct: 7.25, default_tax2_pct: 3, default_discount_pct: 12 };
+      const projectTerms = { billing_method: 'time_materials', bill_by: 'people', billing_currency: 'EUR' };
+      const contactTerms = { invoice_recipient_status: 'bcc' };
+      const client = await data(await harness.request('/clients', json({ name: 'Commercial client', ...clientTerms })));
+      const project = await data(await harness.request('/projects', json({ client_id: client.id, name: 'Commercial project', ...projectTerms })));
+      const contact = await data(await harness.request('/contacts', json({ client_id: client.id, first_name: 'Billing contact', ...contactTerms })));
+      const cases = [
+        { resource: 'clients', record: client, terms: clientTerms, required: { name: 'Denied client' } },
+        { resource: 'projects', record: project, terms: projectTerms, required: { name: 'Denied project', client_id: client.id } },
+        { resource: 'contacts', record: contact, terms: contactTerms, required: { first_name: 'Denied contact', client_id: client.id } },
+      ];
+      for (const init of [asProfile('member'), asProfile('people_admin'), asProfile('project_manager'), asBearer('member-directories')]) {
+        for (const { resource, record, terms, required } of cases) {
+          for (const path of [`/${resource}`, `/${resource}/${record.id}`, ...(resource === 'projects' ? [`/projects?client_id=${client.id}`] : [])]) {
+            const response = await harness.request(path, init);
+            expect(response.status).toBe(200);
+            const body = await response.json() as { data: Record<string, unknown> | Record<string, unknown>[] };
+            const records = Array.isArray(body.data) ? body.data : [body.data];
+            expect(records.length).toBeGreaterThan(0);
+            for (const item of records) for (const field of Object.keys(terms)) expect(item, `${path}:${field}`).not.toHaveProperty(field);
+          }
+          for (const [field, value] of Object.entries(terms)) {
+            for (const [path, method, body] of [
+              [`/${resource}/${record.id}`, 'PATCH', { [field]: value }],
+              [`/${resource}`, 'POST', { ...required, [field]: value }],
+            ] as const) {
+              const headers = new Headers(init.headers);
+              headers.set('content-type', 'application/json');
+              const response = await harness.request(path, { method, headers, body: JSON.stringify(body) });
+              expect(response.status, `${path}:${field}`).toBe(403);
+            }
+          }
+        }
+      }
+      for (const profile of ['accounting', 'executive_manager', 'administrator', 'project_manager'] as const) {
+        const init = asProfile(profile, {}, ['billable_rates_manager']);
+        for (const { resource, record, terms } of cases) {
+          expect(await data(await harness.request(`/${resource}/${record.id}`, init))).toMatchObject(terms);
+          // Accounting's existing projects:write ceiling is not widened.
+          const response = await harness.request(`/${resource}/${record.id}`,
+            asProfile(profile, json(terms, 'PATCH'), ['billable_rates_manager']));
+          expect(response.status).toBe(profile === 'accounting' && resource === 'projects' ? 403 : 200);
+        }
+      }
+      // Operational manager edits still work without knowing or resetting terms.
+      expect((await harness.request(`/projects/${project.id}`, asProfile('project_manager', json({ name: 'Renamed work' }, 'PATCH')))).status).toBe(200);
+      expect(await data(await harness.request(`/projects/${project.id}`))).toMatchObject(projectTerms);
+    }, 30_000);
 
     it("[api] provides CRUD and every combinable general-resource list filter", async () => {
       const parent = await data(

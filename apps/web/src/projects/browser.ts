@@ -512,11 +512,11 @@ export const createProjectDirectoryController = (
             return link
           },
         },
-        {
+        ...(currentSession()?.capabilities.canManageCommercialTerms ? [{
           key: 'billing',
           label: 'Billing',
-          render: (project) => projectEnumLabel(projectText(project, 'billing_method')),
-        },
+          render: (project: GeneralResource) => projectEnumLabel(projectText(project, 'billing_method')),
+        }] : []),
         { key: 'budget', label: 'Budget', numeric: true, render: budgetLabel },
         { key: 'spent', label: 'Spent', numeric: true, render: spentLabel },
         { key: 'remaining', label: 'Remaining', numeric: true, render: remainingLabel },
@@ -590,8 +590,11 @@ export const createProjectDirectoryController = (
       fact('Status', projectIsActive(currentProject) ? 'Active' : 'Archived'),
       clientFact(currentProject),
       fact('Code', projectText(currentProject, 'code') ?? 'None'),
-      fact('Billing method', projectEnumLabel(projectText(currentProject, 'billing_method'))),
-      fact('Bill by', projectEnumLabel(projectText(currentProject, 'bill_by'))),
+      ...(active.capabilities.canManageCommercialTerms ? [
+        fact('Billing method', projectEnumLabel(projectText(currentProject, 'billing_method'))),
+        fact('Bill by', projectEnumLabel(projectText(currentProject, 'bill_by'))),
+        fact('Billing currency', projectText(currentProject, 'billing_currency') ?? 'Organization default'),
+      ] : []),
       ...(active.capabilities.canViewBillableMoney
         ? [
             fact('Hourly rate', projectMoney(projectNumber(currentProject, 'hourly_rate_cents'), currency)),
@@ -618,7 +621,6 @@ export const createProjectDirectoryController = (
       fact('Report visibility', projectEnumLabel(projectText(currentProject, 'report_visibility'))),
       fact('Starts on', projectText(currentProject, 'starts_on') ?? 'Not set'),
       fact('Ends on', projectText(currentProject, 'ends_on') ?? 'Not set'),
-      fact('Billing currency', projectText(currentProject, 'billing_currency') ?? 'Organization default'),
       fact(
         'Minimum time-entry note',
         projectNumber(currentProject, 'time_entry_notes_minimum_length') === null
@@ -788,7 +790,7 @@ export const createProjectDirectoryController = (
     const body: HTMLElement[] = [
       label('Client', client),
       pair(label('Name', name), label('Code', code)),
-      pair(label('Billing method', billingMethod), label('Bill by', billBy)),
+      ...(active.capabilities.canManageCommercialTerms ? [pair(label('Billing method', billingMethod), label('Bill by', billBy))] : []),
       ...(active.capabilities.canViewBillableMoney
         ? [
             pair(
@@ -803,7 +805,8 @@ export const createProjectDirectoryController = (
             label('Cost budget', input('cost_budget_cents', { type: 'number', min: '0', step: '0.01' })),
           ]
         : []),
-      pair(label('Billing currency', billingCurrency), label('Report visibility', reportVisibility)),
+      ...(active.capabilities.canManageCommercialTerms ? [label('Billing currency', billingCurrency)] : []),
+      label('Report visibility', reportVisibility),
       pair(label('Starts on', starts), label('Ends on', ends)),
       label('Minimum time-entry note length', noteMinimum),
       checkbox('budget_is_monthly', 'Reset the budget monthly'),
@@ -833,10 +836,8 @@ export const createProjectDirectoryController = (
       'client_id',
       'name',
       'code',
-      'billing_method',
-      'bill_by',
       'budget_by',
-      'billing_currency',
+      ...(active.capabilities.canManageCommercialTerms ? ['billing_method', 'bill_by', 'billing_currency'] : []),
       'starts_on',
       'ends_on',
       'time_entry_notes_minimum_length',
@@ -968,8 +969,6 @@ export const createProjectDirectoryController = (
       client_id: requiredId(data, 'client_id'),
       name: optionalText(data, 'name'),
       code: optionalText(data, 'code') ?? '',
-      billing_method: String(data.get('billing_method')),
-      bill_by: String(data.get('bill_by')),
       budget_by: String(data.get('budget_by')),
       budget_seconds: hoursSeconds(data, 'budget_seconds'),
       budget_is_monthly: data.has('budget_is_monthly'),
@@ -980,7 +979,6 @@ export const createProjectDirectoryController = (
       report_visibility: String(data.get('report_visibility')),
       starts_on: optionalText(data, 'starts_on'),
       ends_on: optionalText(data, 'ends_on'),
-      billing_currency: optionalText(data, 'billing_currency')?.toLocaleUpperCase('en-US') ?? null,
       time_entry_notes_minimum_length: optionalPositiveInteger(
         data,
         'time_entry_notes_minimum_length',
@@ -988,6 +986,11 @@ export const createProjectDirectoryController = (
       ),
     }
     if (payload.name === null) throw new Error('Project name is required.')
+    if (active.capabilities.canManageCommercialTerms) {
+      payload.billing_method = String(data.get('billing_method'))
+      payload.bill_by = String(data.get('bill_by'))
+      payload.billing_currency = optionalText(data, 'billing_currency')?.toLocaleUpperCase('en-US') ?? null
+    }
     if (active.capabilities.canViewBillableMoney) {
       payload.hourly_rate_cents = moneyCents(data, 'hourly_rate_cents')
       payload.fee_cents = moneyCents(data, 'fee_cents')

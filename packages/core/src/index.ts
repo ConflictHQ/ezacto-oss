@@ -1,4 +1,5 @@
 export * from './api-authorization.js'
+export * from './commercial-terms.js'
 export * from './email-templates.js'
 export * from './email-sender-identities.js'
 export * from './general-resources.js'

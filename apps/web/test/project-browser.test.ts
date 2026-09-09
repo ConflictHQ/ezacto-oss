@@ -170,6 +170,7 @@ describe('Projects V1 browser controller', () => {
     expect(form.elements.namedItem('cost_budget_cents')).toBeNull()
     expect(form.elements.namedItem('notes')).toBeNull()
     ;(form.elements.namedItem('name') as HTMLInputElement).value = 'Manager update'
+    for (const field of ['billing_method', 'bill_by', 'billing_currency']) expect(form.elements.namedItem(field)).toBeNull()
     form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
 
     await vi.waitFor(() => expect(updateDirectoryProject).toHaveBeenCalledTimes(1))
@@ -184,6 +185,7 @@ describe('Projects V1 browser controller', () => {
     expect(payload).not.toHaveProperty('fee_cents')
     expect(payload).not.toHaveProperty('cost_budget_cents')
     expect(payload).not.toHaveProperty('notes')
+    for (const field of ['billing_method', 'bill_by', 'billing_currency']) expect(payload).not.toHaveProperty(field)
   })
 
   it('[browser] submits exact authorized project and task-assignment units', async () => {

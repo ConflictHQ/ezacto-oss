@@ -109,6 +109,7 @@ describe('Projects V1 model', () => {
     (profile, manager_grants, canWrite, canViewBillableMoney, canViewCostBudget, canViewNotes) => {
       expect(projectCapabilities({ profile, manager_grants })).toEqual({
         canWrite,
+        canManageCommercialTerms: canViewBillableMoney || profile === 'accounting',
         canViewBillableMoney,
         canViewCostBudget,
         canViewNotes,

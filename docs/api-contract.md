@@ -64,6 +64,16 @@ without invoice authority receive the generic `locked` / `This record is locked.
 reason on reads and rejected mutations. Other operational lock reasons remain
 visible. Browser displays and exports must not infer "not invoiced" from omission.
 
+General-resource commercial fields are classified in `@ezacto/core`:
+client payment terms/tax/discount defaults, project billing method/bill-by/currency,
+and contact invoice-recipient routing. Finance, executive, administrator, and
+project managers explicitly granted `billable_rates_manager` may see them.
+Other viewers receive no keys, including on filtered client-project lists.
+Setting any of these fields requires the same authority plus the resource write
+scope; accounting's project-write restriction is unchanged. Operational edits can
+omit the fields without resetting stored terms. Browser capabilities consume the
+same policy; OpenAPI exposes the field classification as `x-commercial-fields`.
+
 ## OpenAPI and generated clients
 
 `packages/api/src/contract.ts` is the executable v1 contract definition. It emits

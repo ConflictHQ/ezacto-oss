@@ -1,4 +1,5 @@
 import type { Attachment, GeneralResource, Whoami } from '@ezacto/client'
+import { canManageCommercialTerms } from '@ezacto/core'
 
 export type ProjectDirectoryPage<T = GeneralResource> = {
   readonly data: readonly T[]
@@ -84,6 +85,7 @@ export interface ProjectDirectoryApi {
 
 export interface ProjectCapabilities {
   readonly canWrite: boolean
+  readonly canManageCommercialTerms: boolean
   readonly canViewBillableMoney: boolean
   readonly canViewCostBudget: boolean
   readonly canViewNotes: boolean
@@ -98,6 +100,7 @@ export const projectCapabilities = (
     identity.profile === 'administrator'
   return {
     canWrite,
+    canManageCommercialTerms: canManageCommercialTerms({ profile: identity.profile, managerGrants: identity.manager_grants }),
     canViewBillableMoney:
       identity.profile === 'executive_manager' ||
       identity.profile === 'administrator' ||

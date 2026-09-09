@@ -17209,6 +17209,23 @@
       },
       "GeneralResource": {
         "type": "object",
+        "description": "Commercial fields are omitted without finance/admin authority or an explicit billable_rates_manager grant. The same authority is required to set them; resource read/write scopes still apply.",
+        "x-commercial-fields": {
+          "clients": [
+            "payment_terms",
+            "default_tax_pct",
+            "default_tax2_pct",
+            "default_discount_pct"
+          ],
+          "projects": [
+            "billing_method",
+            "bill_by",
+            "billing_currency"
+          ],
+          "contacts": [
+            "invoice_recipient_status"
+          ]
+        },
         "required": [
           "id",
           "created_at",
@@ -17232,6 +17249,7 @@
       },
       "GeneralMutationInput": {
         "type": "object",
+        "description": "Commercial fields listed on GeneralResource require the same commercial authority for create and update, in addition to resource write scope.",
         "minProperties": 1,
         "additionalProperties": true
       },

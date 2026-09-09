@@ -1,5 +1,7 @@
 import {
   canViewMoneyField,
+  canManageCommercialTerms,
+  isCommercialTermField,
   GeneralResourceError,
   maximumTimeEntryNoteLength,
   TeamError,
@@ -326,6 +328,7 @@ const hiddenGeneralField = (
   field: string,
   viewer: Readonly<UserPrincipal>,
 ): boolean => {
+  if (isCommercialTermField(kind, field)) return !canManageCommercialTerms(viewer);
   if (kind === "projects") {
     if (field === "notes") return viewer.profile !== "administrator";
     if (field === "hourlyRateCents" || field === "feeCents")
@@ -749,6 +752,8 @@ const authorizeMutationFields = (
   create: boolean,
 ): void => {
   const fields = new Set(Object.keys(input));
+  if ([...fields].some((field) => isCommercialTermField(kind, field)) &&
+      !canManageCommercialTerms(principal)) return profileForbidden();
   if (
     kind === "users" &&
     ["profile", "managerGrants", "samlExempt"].some((field) =>
