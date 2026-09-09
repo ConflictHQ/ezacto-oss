@@ -356,7 +356,31 @@ export const createRecurringInvoiceEngine = (
     const subject = templateSubject(definition.subjectTemplate, issueDate)
     const notes = definition.notesTemplate ?? ''
 
-    const lines = fixedConfig.line_items.map((item, position) => {
+    // A line with a `through` date stops appearing once the issue date passes
+    // it. Compared as strings because both are ISO calendar dates, which sort
+    // lexicographically -- parsing them into Dates here would introduce a
+    // timezone where the agreement has none.
+    //
+    // Positions are assigned after the filter, so a surviving line does not
+    // inherit a gap from one that expired: an invoice's lines are numbered 0, 1,
+    // 2 whatever stopped before it.
+    const live = fixedConfig.line_items.filter(
+      // Absent and null both mean "repeats indefinitely" -- a line written
+      // before this key existed says nothing about stopping, which is the same
+      // as saying it does not.
+      (item) => item.through === null || item.through === undefined || item.through >= issueDate,
+    )
+    if (live.length === 0) {
+      // Every line has expired. Issuing an empty invoice would be worse than
+      // issuing nothing -- it reaches the client as a demand for zero -- and
+      // silently skipping would leave a definition that looks live and never
+      // produces. The definition needs a person.
+      throw new RecurringEngineError(
+        'invalid_definition',
+        'every line on this definition has passed its through date',
+      )
+    }
+    const lines = live.map((item, position) => {
       const amountCents = calculateInvoiceLineAmountCents(item.quantity, item.unit_price_cents)
       return { ...item, position, amountCents }
     })
