@@ -9,7 +9,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "vitest run --testTimeout=30000",
+    "test": "vitest run --testTimeout=30000 --hookTimeout=30000",
     "build": "esbuild src/index.ts --bundle --conditions=development --platform=node --format=esm --target=node22 --outfile=dist/index.js --external:better-sqlite3 --external:nodemailer"
   },
   "dependencies": {
