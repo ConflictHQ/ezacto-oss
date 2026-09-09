@@ -644,6 +644,7 @@ describe('invoice payment controller', () => {
     const dueDate = document.querySelector<HTMLInputElement>('[data-invoice-edit-due-date]')!
     const terms = document.querySelector<HTMLSelectElement>('[data-invoice-edit-payment-terms]')!
     const tax = document.querySelector<HTMLInputElement>('[data-invoice-edit-tax]')!
+    const notes = document.querySelector<HTMLTextAreaElement>('[data-invoice-edit-notes]')!
     expect(subject.value).toBe('Original subject')
     expect(purchaseOrder.value).toBe('PO-1')
     expect(document.querySelector<HTMLInputElement>('[data-invoice-edit-issue-date]')?.value).toBe(
@@ -655,6 +656,9 @@ describe('invoice payment controller', () => {
 
     subject.value = 'Revised subject'
     purchaseOrder.value = 'PO-77'
+    // Notes are prose the client reads, so the line breaks someone typed are
+    // part of what they wrote and have to survive the round trip.
+    notes.value = 'Thanks for your business.\nWire details overleaf.'
     dueDate.value = '2026-09-15'
     terms.value = 'net_45'
     tax.value = '8.25'
@@ -675,6 +679,7 @@ describe('invoice payment controller', () => {
         expected_version: 1,
         subject: 'Revised subject',
         purchase_order: 'PO-77',
+        notes: 'Thanks for your business.\nWire details overleaf.',
         issue_date: '2026-08-01',
         due_date: '2026-09-15',
         payment_terms: 'net_45',
@@ -711,6 +716,50 @@ describe('invoice payment controller', () => {
     expect(document.querySelector('[data-invoice-edit-result]')?.textContent).toBe(
       'Nothing changed.',
     )
+  })
+
+  it('[e2e:invoice-header] clears a note to null and treats an unchanged one as no edit', async () => {
+    // The detail page showed notes and the editor had no field for them, so a
+    // note that arrived with the migration could be read and never corrected.
+    renderDetail()
+    let currentInvoice = invoice('NOTES', { notes: 'Pay within 30 days.' })
+    const updateInvoice = vi.fn(
+      async (_invoiceId: number, _commandId: string, input: InvoiceEditInput) => {
+        currentInvoice = {
+          ...currentInvoice,
+          version: input.expected_version + 1,
+          ...(input.issue_date === undefined ? {} : { notes: input.notes ?? null }),
+        }
+        return currentInvoice
+      },
+    )
+    const controller = createInvoicePaymentController({
+      getInvoice: vi.fn(async () => currentInvoice),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+      updateInvoice,
+    })
+    await controller.activate(identity(1), new AbortController().signal, () => false)
+
+    document.querySelector<HTMLButtonElement>('[data-invoice-edit]')!.click()
+    const notes = document.querySelector<HTMLTextAreaElement>('[data-invoice-edit-notes]')!
+    expect(notes.value).toBe('Pay within 30 days.')
+
+    // Reopening without touching anything must not invent a command. A header
+    // write bumps the version, so a spurious one would make the next real edit
+    // fail its expected_version check.
+    submit('[data-invoice-edit-form]')
+    expect(updateInvoice).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-invoice-edit-result]')?.textContent).toBe(
+      'Nothing changed.',
+    )
+
+    // An emptied field is a removed note, not the empty string -- the column is
+    // nullable and "" would render as a blank Notes section on the invoice.
+    notes.value = '   '
+    submit('[data-invoice-edit-form]')
+    await vi.waitFor(() => expect(updateInvoice).toHaveBeenCalledTimes(1))
+    expect(updateInvoice.mock.calls[0]?.[2]).toMatchObject({ notes: null })
   })
 
   it('[reliability] keeps a committed header edit and retries only the failed rate command', async () => {
