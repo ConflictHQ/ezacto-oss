@@ -11,6 +11,7 @@ import {
   type TimesheetSubmissionDetail,
   type Whoami,
 } from '@ezacto/client'
+import { browserDensityStore, createDensityRuntime, type Density } from '../density.js'
 import {
   contextLabel,
   formatTimeForClock,
@@ -4075,6 +4076,34 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         logout.disabled = false
       })
   })
+
+  // Row density. The stylesheet has carried `[data-density='compact']` since the
+  // shell was built and nothing ever set the attribute, so §6's Comfortable /
+  // Compact toggle existed as CSS that matched no document. Applied before the
+  // session resolves, because it is a display preference and has nothing to
+  // wait for.
+  const density = createDensityRuntime({
+    store: browserDensityStore(globalThis.localStorage),
+    target: document.documentElement,
+  })
+  const syncDensityChoice = (current: Density): void => {
+    for (const button of document.querySelectorAll<HTMLButtonElement>(
+      '[data-density-choice]',
+    )) {
+      button.setAttribute(
+        'aria-pressed',
+        String(button.dataset.densityChoice === current),
+      )
+    }
+  }
+  syncDensityChoice(density.start())
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-density-choice]')) {
+    button.addEventListener('click', () => {
+      const chosen = button.dataset.densityChoice
+      if (chosen !== 'comfortable' && chosen !== 'compact') return
+      syncDensityChoice(density.set(chosen))
+    })
+  }
 
   const initialOperation = currentAuthOperation(null)
   try {

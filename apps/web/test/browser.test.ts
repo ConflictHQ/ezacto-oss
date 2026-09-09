@@ -398,6 +398,7 @@ const renderBrowserShell = (
       | 'invoice-list'
       | 'invoice-detail'
       | 'settings-company'
+      | 'settings-user'
     sessionCookiePresent?: boolean
   } = {},
 ): void => {
@@ -4434,4 +4435,34 @@ describe('command palette browser behavior', () => {
     await vi.waitFor(() => expect(entryDialog.open).toBe(true))
     expect(entryDialog.dataset.entryContext).toBe('quick-add')
   })
+  it('[browser] switches row density from the settings page and remembers it', async () => {
+    // The stylesheet has carried `[data-density='compact']` since the shell was
+    // built and nothing set the attribute, so the rule matched no document.
+    // This is the reachability half: a control that writes it, and a preference
+    // that survives the next load.
+    renderBrowserShell({ view: 'settings-user' })
+    await mountShell(browserApi())
+
+    const compact = document.querySelector<HTMLButtonElement>(
+      '[data-density-choice="compact"]',
+    )!
+    expect(document.documentElement.dataset.density).toBeUndefined()
+
+    compact.click()
+
+    expect(document.documentElement.dataset.density).toBe('compact')
+    expect(compact.getAttribute('aria-pressed')).toBe('true')
+    expect(globalThis.localStorage.getItem('ezacto.density')).toBe('compact')
+
+    // The next load reads it back and applies it before anything else paints.
+    renderBrowserShell({ view: 'settings-user', preserveStorage: true })
+    await mountShell(browserApi())
+    expect(document.documentElement.dataset.density).toBe('compact')
+    expect(
+      document
+        .querySelector<HTMLButtonElement>('[data-density-choice="compact"]')
+        ?.getAttribute('aria-pressed'),
+    ).toBe('true')
+  })
+
 })

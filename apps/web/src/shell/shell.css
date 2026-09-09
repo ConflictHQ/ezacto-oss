@@ -4996,6 +4996,36 @@ dialog textarea {
   margin-top: 24px;
 }
 
+/* Row density. The segmented pair the retainer status filter already uses --
+   one control, one pressed state, no third paint to learn. */
+.settings-density {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--ez-border);
+}
+.settings-density .hint {
+  max-width: 64ch;
+}
+.settings-density-choice {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.settings-density-choice button {
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font: inherit;
+  cursor: pointer;
+}
+.settings-density-choice button[aria-pressed='true'] {
+  border-color: var(--ez-live);
+  background: var(--ez-orange-tint);
+}
+
 /* The calendar. Height is minutes: a two-hour block is twice a one-hour block
    in either mode, and only where the column starts differs between them. */
 .calendar-table {
