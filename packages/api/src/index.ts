@@ -45,6 +45,7 @@ export {
 export {
   apiAuthenticationMiddleware,
   installApiTokenRoutes,
+  installTwoFactorRoutes,
   requireApiScope,
   type ApiAuthentication,
   type ApiSessionResolver,
@@ -53,6 +54,9 @@ export {
   type AuthenticatedApiToken,
   type IssuedApiToken,
   type SessionPrincipal,
+  type TwoFactorEnrolmentOffer,
+  type TwoFactorService,
+  type TwoFactorStatus,
 } from './auth.js'
 export {
   createQueuedAuthMailer,

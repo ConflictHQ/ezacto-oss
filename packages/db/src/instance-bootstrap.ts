@@ -389,11 +389,12 @@ const enrollInstanceOwnerPassword = async (
         query: ownerPasswordInsert,
         bindings: [
           password.algorithm,
-          password.algorithm === 'argon2id' ? password.version : null,
-          password.algorithm === 'pbkdf2-sha256' ? password.iterations : null,
-          password.algorithm === 'argon2id' ? password.memoryKiB : null,
-          password.algorithm === 'argon2id' ? password.timeCost : null,
-          password.algorithm === 'argon2id' ? password.parallelism : null,
+          password.version,
+          // iterations: a PBKDF2 column, and nothing hashes to PBKDF2 any more.
+          null,
+          password.memoryKiB,
+          password.timeCost,
+          password.parallelism,
           password.salt,
           password.passwordHash,
           timestamp,

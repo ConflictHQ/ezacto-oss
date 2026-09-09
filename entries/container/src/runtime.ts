@@ -14,6 +14,8 @@ import {
   createContainerPasswordAuthService,
   createContainerSessionStore,
   createContainerSsoProvisioningDomainStore,
+  createContainerTwoFactorStore,
+  createTwoFactorService,
   createGeneralResourceRepository,
   createInvoiceGenerationService,
   createMoneyResourceRepository,
@@ -337,6 +339,20 @@ export const createContainerRuntime = async (
       moduleSettings: createModuleSettingsRepository(drizzle),
       ssoProvisioningDomains:
         createContainerSsoProvisioningDomainStore(database),
+      twoFactor: createTwoFactorService({
+        store: createContainerTwoFactorStore(database),
+        accountName: async (userId) =>
+          (
+            database
+              .prepare(
+                `SELECT address FROM user_emails
+                   WHERE user_id = ? AND invalidated_at IS NULL AND verified_at IS NOT NULL
+                   ORDER BY is_primary DESC, id LIMIT 1`,
+              )
+              .get(userId) as { address: string } | undefined
+          )?.address ?? `user-${userId}`,
+        issuer: config.appEnv.BRAND_NAME ?? 'ezacto',
+      }),
       timesheetApprovals: createTimesheetApprovalRepository(drizzle),
       timesheetLockPolicy,
       cursorSigningKey: config.cursorSigningKey,

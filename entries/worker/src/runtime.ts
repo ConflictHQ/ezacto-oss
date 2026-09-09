@@ -28,6 +28,8 @@ import {
   createD1ContactSessionStore,
   createD1MagicLinkStore,
   createMagicLinkService,
+  createD1TwoFactorStore,
+  createTwoFactorService,
 } from "@ezacto/db/d1";
 import { createPortalSessionService } from "@ezacto/api";
 import {
@@ -592,6 +594,24 @@ export const createRuntimeServices = async (
     authenticationSessions,
     emailLog,
     emailConfiguration,
+    // Unlike portal auth, the second factor is opt-in on nothing: it holds no
+    // deployment secret to get wrong, and a factor no one can turn on is not a
+    // safe default -- it is the feature missing.
+    twoFactor: createTwoFactorService({
+      store: createD1TwoFactorStore(database),
+      accountName: async (userId) =>
+        (
+          await database
+            .prepare(
+              `SELECT address FROM user_emails
+                 WHERE user_id = ? AND invalidated_at IS NULL AND verified_at IS NOT NULL
+                 ORDER BY is_primary DESC, id LIMIT 1`,
+            )
+            .bind(userId)
+            .first<{ address: string }>()
+        )?.address ?? `user-${userId}`,
+      issuer: env.BRAND_NAME === undefined || env.BRAND_NAME === "" ? "ezacto" : env.BRAND_NAME,
+    }),
     ...(magicLinkSigningKey === undefined
       ? {}
       : {

@@ -12,6 +12,7 @@ import {
   installEmailConfigurationRoutes,
   installGeneralResourceRoutes,
   installMagicLinkRoutes,
+  installTwoFactorRoutes,
   installModuleSettingsRoutes,
   installGitHubRoutes,
   installMoneyResourceRoutes,
@@ -41,6 +42,7 @@ import {
   type ModuleSettingsService,
   type EmailConfigurationRouteOptions,
   type MagicLinkRouteOptions,
+  type TwoFactorService,
   type GitHubProviderConfig,
   type MoneyResourceRouteOptions,
   type OidcIdentityResolver,
@@ -175,6 +177,8 @@ export interface RuntimeServices {
   attachments?: AttachmentRouteOptions
   /** Portal magic-link authentication for contacts. */
   portalAuth?: MagicLinkRouteOptions
+  /** The second factor for signed-in users. Absent only where there is no store. */
+  twoFactor?: TwoFactorService
   backupStatus?: BackupStatusReader
 }
 
@@ -292,6 +296,12 @@ export const createApp = (services?: RuntimeServices) =>
               clientKey: (request) =>
                 request.headers.get('cf-connecting-ip') ?? 'unknown-client',
             })
+            // Mounted here rather than beside the sign-in routes: these answer
+            // under /api/v1 for an already-authenticated principal, which is
+            // what the enrolment and disable endpoints require.
+            if (services.twoFactor !== undefined) {
+              installTwoFactorRoutes(api, services.twoFactor)
+            }
           },
         }),
     installApp(app) {

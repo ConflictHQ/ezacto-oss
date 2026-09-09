@@ -181,7 +181,7 @@ const deriveArgon2id = async (
 
 export const hashPassword = async (
   password: string,
-): Promise<StoredPassword> => {
+): Promise<StoredArgon2idPassword> => {
   validatePassword(password)
   const salt = crypto.getRandomValues(new Uint8Array(16))
   const stored: StoredArgon2idPassword = {
