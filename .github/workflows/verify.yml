@@ -104,6 +104,19 @@ jobs:
         env:
           WORKSPACES: ${{ matrix.workspaces }}
           SHARD: ${{ matrix.shard }}
+          # apps/web's browser suite mounts the whole shell about eighty times
+          # and retains roughly 28 MB per test -- measured and linear, so it
+          # needs over two gigabytes to finish. A developer machine gives it
+          # that by default and a two-vCPU runner does not, which showed up as
+          # `test (web)` reporting 464 of 471 tests with nothing having failed,
+          # the fork having died partway through the file. Here for the same
+          # reason the worker count is: it is a property of the runner. It
+          # raises a ceiling rather than fixing the leak, which is #456.
+          #
+          # NODE_OPTIONS rather than vitest's poolOptions.forks.execArgv, which
+          # does not reach the fork -- setting a 300 MB limit there changed
+          # nothing, while the same limit in NODE_OPTIONS killed the run.
+          NODE_OPTIONS: --max-old-space-size=4096
         run: |
           # Two vCPUs on ubuntu-latest, so two workers. This belongs to the
           # runner, not to a package.json: the same suite on a developer
