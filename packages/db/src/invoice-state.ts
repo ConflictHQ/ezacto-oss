@@ -243,6 +243,20 @@ export type InvoiceEdit =
       dueDate?: string
       paymentTerms?: 'upon_receipt' | 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'custom'
       projectId?: number | null
+      /**
+       * The retainer this invoice moves against.
+       *
+       * The schema was built for this and nothing wrote it: `retainer_ledger`
+       * refuses a deposit or a drawdown whose invoice is not linked to the same
+       * retainer, so with no way to set the column a retainer could be created,
+       * shown, and never moved (#449).
+       *
+       * `invoices_retainer_client_insert` keeps the retainer on the invoice's
+       * own client, and `invoices_retainer_with_ledger_immutable` freezes the
+       * link once a movement names it -- so this is editable exactly while it
+       * is still only a plan, which is the correct window.
+       */
+      retainerId?: number | null
       reminderPolicy?: Readonly<InvoiceReminderPolicy> | null
     }
   | { type: 'payment_options'; paymentOptions: readonly InvoicePaymentOption[] }
@@ -362,6 +376,7 @@ interface StoredInvoiceDocument {
   dueDate: string
   paymentTerms: 'upon_receipt' | 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'custom'
   projectId: number | null
+  retainerId: number | null
   reminderPolicy: string | null
   paymentOptions: string
 }
@@ -841,7 +856,8 @@ const readInvoiceDocument = async (
     text: `SELECT client_id AS "clientId", number, subject,
         purchase_order AS "purchaseOrder", notes, currency,
         issue_date AS "issueDate", due_date AS "dueDate", payment_terms AS "paymentTerms",
-        project_id AS "projectId", reminder_policy AS "reminderPolicy",
+        project_id AS "projectId", retainer_id AS "retainerId",
+        reminder_policy AS "reminderPolicy",
         payment_options AS "paymentOptions"
       FROM invoices WHERE id = ?`,
     params: [invoiceId],
@@ -2231,6 +2247,7 @@ export const executeInvoiceEdit = async (
       input.edit.dueDate === undefined &&
       input.edit.paymentTerms === undefined &&
       input.edit.projectId === undefined &&
+      input.edit.retainerId === undefined &&
       input.edit.reminderPolicy === undefined
     ) {
       invalidInput('an invoice header edit must change at least one field')
@@ -2254,6 +2271,9 @@ export const executeInvoiceEdit = async (
     if (input.edit.projectId !== undefined && input.edit.projectId !== null) {
       assertPositiveSafeInteger(input.edit.projectId, 'projectId')
     }
+    if (input.edit.retainerId !== undefined && input.edit.retainerId !== null) {
+      assertPositiveSafeInteger(input.edit.retainerId, 'retainerId')
+    }
     if (input.edit.reminderPolicy !== undefined && input.edit.reminderPolicy !== null) {
       assertReminderPolicy(input.edit.reminderPolicy)
     }
@@ -2267,7 +2287,7 @@ export const executeInvoiceEdit = async (
     triggerMutation = {
       text: `UPDATE invoices SET client_id = ?, number = ?, subject = ?,
           purchase_order = ?, notes = ?, currency = ?, issue_date = ?, due_date = ?,
-          payment_terms = ?, project_id = ?, reminder_policy = ?
+          payment_terms = ?, project_id = ?, retainer_id = ?, reminder_policy = ?
         WHERE id = ? AND version = ? AND EXISTS (
           SELECT 1 FROM invoice_command_ledger
           WHERE invoice_id = ? AND command_id = ? AND completed = 0
@@ -2283,6 +2303,7 @@ export const executeInvoiceEdit = async (
         input.edit.dueDate ?? document.dueDate,
         input.edit.paymentTerms ?? document.paymentTerms,
         input.edit.projectId === undefined ? document.projectId : input.edit.projectId,
+        input.edit.retainerId === undefined ? document.retainerId : input.edit.retainerId,
         reminderPolicy,
         input.invoiceId,
         input.expectedVersion,
