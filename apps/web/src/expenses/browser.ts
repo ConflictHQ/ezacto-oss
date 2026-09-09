@@ -447,7 +447,9 @@ export const createExpenseWorkflowController = (
   }
 
   const expenseBilling = (expense: Expense): string =>
-    expense.invoice_id == null
+    expense.invoice_id === undefined
+      ? expense.billable ? 'Billable' : 'Non-billable'
+      : expense.invoice_id === null
       ? expense.billable
         ? 'Billable · not invoiced'
         : 'Non-billable'
@@ -668,7 +670,9 @@ export const createExpenseWorkflowController = (
     required<HTMLElement>('[data-expense-detail-reimbursement]').textContent = expense.reimbursable
       ? expenseStatusLabel(expense.reimbursement_status)
       : 'Not reimbursable'
-    required<HTMLElement>('[data-expense-detail-invoice]').textContent = expense.invoice_id == null ? 'Not invoiced' : `Invoice #${expense.invoice_id}`
+    const invoiceFact = required<HTMLElement>('[data-expense-detail-invoice]')
+    invoiceFact.parentElement!.hidden = expense.invoice_id === undefined
+    invoiceFact.textContent = expense.invoice_id === undefined ? '' : expense.invoice_id === null ? 'Not invoiced' : `Invoice #${expense.invoice_id}`
     required<HTMLElement>('[data-expense-detail-total]').textContent = expenseMoney(
       expense.total_cost_cents,
       expenseCurrency(expense.project_id, catalog.projects, catalog.clients),

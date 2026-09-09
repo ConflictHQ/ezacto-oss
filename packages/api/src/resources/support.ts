@@ -7,7 +7,8 @@ import {
   TrackedResourceNotFoundError,
 } from '@ezacto/core'
 import type { Context } from 'hono'
-import type { ApiContext } from '../context.js'
+import type { ApiContext, UserPrincipal } from '../context.js'
+import { canPrincipalUseApiScope } from '../auth.js'
 import {
   ApiError,
   readJsonBody,
@@ -258,9 +259,12 @@ export const notFound = (label: string): ApiError =>
 export const translateResourceError = (
   error: unknown,
   label: string,
+  viewer?: Readonly<UserPrincipal>,
 ): never => {
   if (error instanceof ApiError) throw error
   if (error instanceof TrackedMutationLockedError) {
+    const hideInvoiceReason = error.reasonCode === 'invoiced' &&
+      (viewer === undefined || !canPrincipalUseApiScope(viewer, 'invoices:read'))
     throw new ApiError({
       status: 422,
       code: error.code,
@@ -268,8 +272,8 @@ export const translateResourceError = (
       fields: [
         {
           field: label.replaceAll(' ', '_'),
-          code: error.reasonCode,
-          message: error.reason,
+          code: hideInvoiceReason ? 'locked' : error.reasonCode,
+          message: hideInvoiceReason ? 'This record is locked.' : error.reason,
         },
       ],
     })

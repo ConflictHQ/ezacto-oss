@@ -6,6 +6,7 @@ import type { ApiContext, UserPrincipal } from '../context.js'
 import { ApiError, type FieldError } from '../errors.js'
 import { cursorPage } from '../pagination.js'
 import { serializeOne } from '../serializer.js'
+import { authorizeInvoiceFilters, invoiceStateForViewer } from './invoice-visibility.js'
 import {
   assertFields,
   optionalBoolean,
@@ -61,8 +62,8 @@ interface ExpenseOutput {
    * imported or not. Null on anything this instance created.
    */
   source_approval_status: ApprovalStatus | null
-  invoice_id: number | null
-  is_billed: boolean
+  invoice_id?: number | null
+  is_billed?: boolean
   is_locked: boolean
   locked_reason_code: string | null
   locked_reason: string | null
@@ -77,7 +78,6 @@ export const serializeExpense = (
   expense: Readonly<ExpenseRecord>,
   viewer: Readonly<UserPrincipal>,
 ): ExpenseOutput => {
-  void viewer
   return {
     id: expense.id,
     user_id: expense.userId,
@@ -90,11 +90,7 @@ export const serializeExpense = (
     billable: expense.billable,
     approval_status: expense.state.approvalStatus,
     source_approval_status: expense.sourceApprovalStatus,
-    invoice_id: expense.state.invoiceId,
-    is_billed: expense.state.isBilled,
-    is_locked: expense.state.isLocked,
-    locked_reason_code: expense.state.lockedReasonCode,
-    locked_reason: expense.state.lockedReason,
+    ...invoiceStateForViewer(expense.state, viewer),
     reimbursable: expense.reimbursable,
     reimbursement_status: expense.reimbursementStatus,
     payout_ref: expense.payoutRef,
@@ -127,6 +123,7 @@ const expenseFilters = (
   principal: Readonly<UserPrincipal>,
 ): { readonly filters: ExpenseFilters; readonly userId: number } => {
   const params = strictSearchParams(url, listKeys)
+  authorizeInvoiceFilters(params, principal)
   const errors: FieldError[] = []
   const userId = queryPositiveInteger(params, 'user_id', errors)
   const clientId = queryPositiveInteger(params, 'client_id', errors)
@@ -355,7 +352,7 @@ export const installExpenseRoutes = <Bindings extends object>(
       })
       return context.json(envelope, 200, { 'cache-control': 'no-store' })
     } catch (error) {
-      return translateResourceError(error, 'expense')
+      return translateResourceError(error, 'expense', principal)
     }
   })
 
@@ -378,7 +375,7 @@ export const installExpenseRoutes = <Bindings extends object>(
         { 'cache-control': 'no-store', location: selfLink(expense.id) },
       )
     } catch (error) {
-      return translateResourceError(error, 'expense')
+      return translateResourceError(error, 'expense', principal)
     }
   })
 
@@ -400,7 +397,7 @@ export const installExpenseRoutes = <Bindings extends object>(
         { 'cache-control': 'no-store' },
       )
     } catch (error) {
-      return translateResourceError(error, 'expense')
+      return translateResourceError(error, 'expense', principal)
     }
   })
 
@@ -424,7 +421,7 @@ export const installExpenseRoutes = <Bindings extends object>(
         { 'cache-control': 'no-store' },
       )
     } catch (error) {
-      return translateResourceError(error, 'expense')
+      return translateResourceError(error, 'expense', principal)
     }
   })
 
@@ -446,7 +443,7 @@ export const installExpenseRoutes = <Bindings extends object>(
         { 'cache-control': 'no-store' },
       )
     } catch (error) {
-      return translateResourceError(error, 'expense')
+      return translateResourceError(error, 'expense', principal)
     }
   })
 }

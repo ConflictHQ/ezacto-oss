@@ -1,7 +1,7 @@
 import type { Context, Hono, MiddlewareHandler } from 'hono'
 import { canProfileUseApiScope, isApiScope, type ApiScope } from '@ezacto/core'
 import { captureRequestActivity, type ActivityRecorder } from './activity-log.js'
-import type { ApiContext, UserProfile } from './context.js'
+import type { ApiContext, UserProfile, UserPrincipal } from './context.js'
 import {
   ApiError,
   readJsonBody,
@@ -174,6 +174,11 @@ export const apiAuthenticationMiddleware =
     }
     await next()
   }
+
+/** Non-throwing equivalent of the route guard for profile-sensitive fields. */
+export const canPrincipalUseApiScope = (principal: Readonly<UserPrincipal>, scope: ApiScope): boolean =>
+  canProfileUseApiScope(principal.profile, scope) &&
+  (principal.authentication.kind === 'session' || principal.authentication.scopes.includes(scope))
 
 export const requireApiScope = <Bindings extends object>(
   context: Context<ApiContext<Bindings>>,

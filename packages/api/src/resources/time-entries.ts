@@ -9,6 +9,7 @@ import type { ApiContext, UserPrincipal } from '../context.js'
 import { ApiError, type FieldError } from '../errors.js'
 import { cursorPage } from '../pagination.js'
 import { serializeOne } from '../serializer.js'
+import { authorizeInvoiceFilters, invoiceStateForViewer } from './invoice-visibility.js'
 import {
   assertFields,
   optionalBoolean,
@@ -75,8 +76,8 @@ interface TimeEntryOutput {
    * `unsubmitted` for every row. Null on anything this instance created.
    */
   source_approval_status: ApprovalStatus | null
-  invoice_id: number | null
-  is_billed: boolean
+  invoice_id?: number | null
+  is_billed?: boolean
   is_locked: boolean
   locked_reason_code: string | null
   locked_reason: string | null
@@ -114,11 +115,7 @@ export const serializeTimeEntry = (
   budgeted: entry.budgeted,
   approval_status: entry.state.approvalStatus,
   source_approval_status: entry.sourceApprovalStatus,
-  invoice_id: entry.state.invoiceId,
-  is_billed: entry.state.isBilled,
-  is_locked: entry.state.isLocked,
-  locked_reason_code: entry.state.lockedReasonCode,
-  locked_reason: entry.state.lockedReason,
+  ...invoiceStateForViewer(entry.state, viewer),
   external_ref: entry.externalRef,
   calendar_event_ref: entry.calendarEventRef,
   minimum_note_length: entry.noteMinimumLength,
@@ -157,6 +154,7 @@ const timeFilters = (
   principal: Readonly<UserPrincipal>,
 ): TimeEntryFilters => {
   const params = strictSearchParams(url, listKeys)
+  authorizeInvoiceFilters(params, principal)
   const errors: FieldError[] = []
   const userId = queryPositiveInteger(params, 'user_id', errors)
   const clientId = queryPositiveInteger(params, 'client_id', errors)
@@ -431,7 +429,7 @@ export const installTimeEntryRoutes = <Bindings extends object>(
         { 'cache-control': 'no-store' },
       )
     } catch (error) {
-      return translateResourceError(error, 'time entry')
+      return translateResourceError(error, 'time entry', principal)
     }
   })
 
@@ -450,7 +448,7 @@ export const installTimeEntryRoutes = <Bindings extends object>(
       })
       return context.json(envelope, 200, { 'cache-control': 'no-store' })
     } catch (error) {
-      return translateResourceError(error, 'time entry')
+      return translateResourceError(error, 'time entry', principal)
     }
   })
 
@@ -473,7 +471,7 @@ export const installTimeEntryRoutes = <Bindings extends object>(
         { 'cache-control': 'no-store', location: selfLink(entry.id) },
       )
     } catch (error) {
-      return translateResourceError(error, 'time entry')
+      return translateResourceError(error, 'time entry', principal)
     }
   })
 
@@ -494,7 +492,7 @@ export const installTimeEntryRoutes = <Bindings extends object>(
         { 'cache-control': 'no-store' },
       )
     } catch (error) {
-      return translateResourceError(error, 'time entry')
+      return translateResourceError(error, 'time entry', principal)
     }
   })
 
@@ -517,7 +515,7 @@ export const installTimeEntryRoutes = <Bindings extends object>(
         { 'cache-control': 'no-store' },
       )
     } catch (error) {
-      return translateResourceError(error, 'time entry')
+      return translateResourceError(error, 'time entry', principal)
     }
   })
 
@@ -538,7 +536,7 @@ export const installTimeEntryRoutes = <Bindings extends object>(
         { 'cache-control': 'no-store' },
       )
     } catch (error) {
-      return translateResourceError(error, 'time entry')
+      return translateResourceError(error, 'time entry', principal)
     }
   })
 
@@ -560,7 +558,7 @@ export const installTimeEntryRoutes = <Bindings extends object>(
         { 'cache-control': 'no-store' },
       )
     } catch (error) {
-      return translateResourceError(error, 'time entry')
+      return translateResourceError(error, 'time entry', principal)
     }
   })
 
@@ -582,7 +580,7 @@ export const installTimeEntryRoutes = <Bindings extends object>(
         { 'cache-control': 'no-store' },
       )
     } catch (error) {
-      return translateResourceError(error, 'time entry')
+      return translateResourceError(error, 'time entry', principal)
     }
   })
 }

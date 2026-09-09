@@ -17,14 +17,14 @@ describe('CLI money module', () => {
     expect(definitions.length).toBe(3)
   })
 
-  it('[unit] the exportable time columns are the nine that describe the work', () => {
+  it('[unit] exportable columns describe the work without exposing invoice state', () => {
     expect(validExportColumns('time')).toEqual([
       'id', 'user_id', 'project_id', 'task_id', 'spent_date',
-      'seconds', 'billable', 'billed', 'notes',
+      'seconds', 'billable', 'notes',
     ])
     expect(validExportColumns('expenses')).toEqual([
       'id', 'user_id', 'project_id', 'expense_category_id', 'spent_date',
-      'total_cost_cents', 'billable', 'billed', 'notes',
+      'total_cost_cents', 'billable', 'notes',
     ])
   })
 

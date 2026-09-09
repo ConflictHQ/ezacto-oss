@@ -330,7 +330,7 @@ describe('ez money commands against the native API', () => {
     expect(rows.length).toBeGreaterThan(0)
     expect(Object.keys(rows[0]!)).toEqual([
       'id', 'user_id', 'project_id', 'task_id', 'spent_date',
-      'seconds', 'billable', 'billed', 'notes',
+      'seconds', 'billable', 'notes',
     ])
   })
 

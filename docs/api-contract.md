@@ -55,6 +55,15 @@ Every returned record passes through the supplied serializer before entering
 `data`. Permission and money-field redaction extend that seam rather than being
 implemented ad hoc in routes.
 
+Time-entry and expense responses omit `invoice_id` and `is_billed` unless both
+the acting profile and (for bearer credentials) token allow `invoices:read`.
+An omitted field is confidential, not an unbilled value. The `invoice_id` and
+`is_billed` filters require the same authority and otherwise return 403 without
+querying invoice state. Invoiced rows remain locked for every viewer, but readers
+without invoice authority receive the generic `locked` / `This record is locked.`
+reason on reads and rejected mutations. Other operational lock reasons remain
+visible. Browser displays and exports must not infer "not invoiced" from omission.
+
 ## OpenAPI and generated clients
 
 `packages/api/src/contract.ts` is the executable v1 contract definition. It emits

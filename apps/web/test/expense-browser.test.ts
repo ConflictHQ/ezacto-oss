@@ -125,6 +125,22 @@ const catalogs = (): Pick<
 })
 
 describe('Expenses V1 browser controller', () => {
+  it('[security #465] does not interpret omitted invoice state as not invoiced', async () => {
+    const redacted: Expense = { ...baseExpense, is_locked: true, locked_reason_code: 'locked', locked_reason: 'This record is locked.' }
+    delete redacted.invoice_id
+    delete redacted.is_billed
+    writeDocument('expense-list', '/expenses')
+    const list = createExpenseWorkflowController({ ...catalogs(), listWorkflowExpenses: async () => page([redacted]) })
+    await list.activate(identity, new AbortController().signal, () => false)
+    expect(document.querySelector('[data-expense-list]')?.textContent).not.toMatch(/not invoiced|Invoice #/i)
+    writeDocument('expense-detail', '/expenses/8')
+    const detail = createExpenseWorkflowController({ ...catalogs(), getWorkflowExpense: async () => redacted, listWorkflowExpenseAttachments: async () => [] })
+    await detail.activate(identity, new AbortController().signal, () => false)
+    expect(document.querySelector<HTMLElement>('[data-expense-detail-invoice]')?.parentElement?.hidden).toBe(true)
+    expect(document.querySelector('[data-expense-detail-invoice]')?.textContent).toBe('')
+    expect(document.querySelector<HTMLButtonElement>('[data-expense-edit-submit]')?.disabled).toBe(true)
+  })
+
   it('[browser] applies every supported filter and renders notes in week-grouped cards', async () => {
     writeDocument(
       'expense-list',

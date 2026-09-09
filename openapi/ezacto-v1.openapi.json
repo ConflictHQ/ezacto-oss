@@ -6896,7 +6896,8 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "minimum": 1
+              "minimum": 1,
+              "description": "Requires invoices:read for both the profile and token."
             }
           },
           {
@@ -6904,7 +6905,8 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "boolean"
+              "type": "boolean",
+              "description": "Requires invoices:read for both the profile and token."
             }
           },
           {
@@ -8808,7 +8810,8 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "minimum": 1
+              "minimum": 1,
+              "description": "Requires invoices:read for both the profile and token."
             }
           },
           {
@@ -8816,7 +8819,8 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "boolean"
+              "type": "boolean",
+              "description": "Requires invoices:read for both the profile and token."
             }
           },
           {
@@ -18675,7 +18679,6 @@
           "billable",
           "budgeted",
           "approval_status",
-          "is_billed",
           "is_locked",
           "minimum_note_length",
           "created_at",
@@ -18803,10 +18806,12 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Omitted without invoices:read authority (profile and token)."
           },
           "is_billed": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Omitted without invoices:read authority (profile and token)."
           },
           "is_locked": {
             "type": "boolean"
@@ -20122,7 +20127,6 @@
           "total_cost_cents",
           "billable",
           "approval_status",
-          "is_billed",
           "is_locked",
           "reimbursable",
           "reimbursement_status",
@@ -20211,10 +20215,12 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Omitted without invoices:read authority (profile and token)."
           },
           "is_billed": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Omitted without invoices:read authority (profile and token)."
           },
           "is_locked": {
             "type": "boolean"

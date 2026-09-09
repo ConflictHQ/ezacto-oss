@@ -729,7 +729,7 @@ export type TimeEntry = {
   "approval_status": "unsubmitted" | "submitted" | "approved";
   "source_approval_status"?: "unsubmitted" | "submitted" | "approved" | null;
   "invoice_id"?: number | null;
-  "is_billed": boolean;
+  "is_billed"?: boolean;
   "is_locked": boolean;
   "locked_reason_code"?: string | null;
   "locked_reason"?: string | null;
@@ -1016,7 +1016,7 @@ export type Expense = {
   "approval_status": "unsubmitted" | "submitted" | "approved";
   "source_approval_status"?: "unsubmitted" | "submitted" | "approved" | null;
   "invoice_id"?: number | null;
-  "is_billed": boolean;
+  "is_billed"?: boolean;
   "is_locked": boolean;
   "locked_reason_code"?: string | null;
   "locked_reason"?: string | null;

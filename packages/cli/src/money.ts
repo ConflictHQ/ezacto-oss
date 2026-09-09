@@ -442,7 +442,7 @@ export const timeExportColumns: readonly ExportColumn<TimeEntry>[] = [
   { name: 'spent_date', confidential: false, value: (entry) => entry.spent_date },
   { name: 'seconds', confidential: false, value: (entry) => entry.seconds },
   { name: 'billable', confidential: false, value: (entry) => entry.billable },
-  { name: 'billed', confidential: false, value: (entry) => entry.invoice_id != null },
+  { name: 'billed', confidential: true, value: (entry) => entry.is_billed ?? null },
   { name: 'notes', confidential: false, value: (entry) => entry.notes ?? '' },
   {
     name: 'billable_rate_cents',
@@ -459,8 +459,8 @@ export const timeExportColumns: readonly ExportColumn<TimeEntry>[] = [
 /**
  * Expenses carry no rate of ours: `total_cost_cents` is the third-party amount
  * the client is asked to reimburse, which is precisely what a subcontracted
- * export has to show. Nothing here is confidential today; the flag is still
- * spelled out on every column so that adding one forces the question.
+ * export has to show. Invoice state is confidential; the flag is spelled out
+ * on every column so that adding one forces the question.
  */
 export const expenseExportColumns: readonly ExportColumn<Expense>[] = [
   { name: 'id', confidential: false, value: (expense) => expense.id },
@@ -480,8 +480,8 @@ export const expenseExportColumns: readonly ExportColumn<Expense>[] = [
   { name: 'billable', confidential: false, value: (expense) => expense.billable },
   {
     name: 'billed',
-    confidential: false,
-    value: (expense) => expense.invoice_id != null,
+    confidential: true,
+    value: (expense) => expense.is_billed ?? null,
   },
   { name: 'notes', confidential: false, value: (expense) => expense.notes ?? '' },
 ]

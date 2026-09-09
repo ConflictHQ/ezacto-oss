@@ -250,6 +250,18 @@ const userProfiles: ReadonlySet<string> = new Set([
 ])
 
 const authentication: ApiAuthentication = {
+  tokens: {
+    authenticate: async (token) => token === 'finance' || token === 'limited-finance' ? {
+      tokenId: 1,
+      userId: 1,
+      profile: 'accounting',
+      scopes: ['time_entries:read', 'time_entries:write', 'expenses:read', 'expenses:write',
+        ...(token === 'finance' ? ['invoices:read'] : [])],
+    } : null,
+    issue: async () => { throw new Error('Not used by this harness') },
+    list: async () => [],
+    revoke: async () => null,
+  },
   sessions: {
     resolve: async (request) => {
       const profile = request.headers.get('x-test-profile') ?? 'member'
@@ -990,7 +1002,7 @@ for (const [runtime, factory] of factories) {
       }
       const query =
         '?client_id=1&project_id=1&task_id=1&from=2026-08-02&to=2026-08-04' +
-        '&approval_status=unsubmitted&is_billed=false&is_running=false' +
+        '&approval_status=unsubmitted&is_running=false' +
         '&billable=true&budgeted=true&external_reference_id=filtered-batch' +
         '&updated_since=2026-08-28T00%3A00%3A00Z&per_page=1'
       const firstPageResponse = await test.request(
@@ -1162,7 +1174,7 @@ for (const [runtime, factory] of factories) {
       expect(await lockedStop.json()).toMatchObject({
         error: {
           code: 'tracked_mutation_locked',
-          fields: [{ code: 'invoiced' }],
+          fields: [{ code: 'locked', message: 'This record is locked.' }],
         },
       })
       const replacement = await test.request(
@@ -1173,7 +1185,7 @@ for (const [runtime, factory] of factories) {
       expect(await replacement.json()).toMatchObject({
         error: {
           code: 'tracked_mutation_locked',
-          fields: [{ field: 'time_entry', code: 'invoiced' }],
+          fields: [{ field: 'time_entry', code: 'locked', message: 'This record is locked.' }],
         },
       })
       expect(
@@ -1246,7 +1258,7 @@ for (const [runtime, factory] of factories) {
       const list = await test.request(
         '/api/v1/expenses?client_id=1&project_id=1&expense_category_id=2' +
           '&from=2026-08-20&to=2026-08-22&approval_status=unsubmitted' +
-          '&is_billed=false&billable=true&reimbursable=true&reimbursement_status=none' +
+          '&billable=true&reimbursable=true&reimbursement_status=none' +
           '&updated_since=2026-08-28T00%3A00%3A00Z',
       )
       expect(list.status).toBe(200)
@@ -1321,6 +1333,60 @@ for (const [runtime, factory] of factories) {
       expect((await test.request(`/api/v1/expenses/${direct.id}`)).status).toBe(
         404,
       )
+    }, slowRuntimeTimeout)
+
+    it('[security #465] withholds invoice state, filter oracles, and mutation reasons without invoice authority', async () => {
+      const test = await setup()
+      const time = await data<{ id: number }>(await test.request('/api/v1/time-entries', jsonRequest('POST', {
+        project_id: 1, task_id: 1, spent_date: '2026-08-28', seconds: 3600,
+      })))
+      const expense = await data<{ id: number }>(await test.request('/api/v1/expenses', jsonRequest('POST', {
+        project_id: 1, expense_category_id: 1, spent_date: '2026-08-28', total_cost_cents: 500,
+      })))
+      await test.database.run('UPDATE time_entries SET invoice_id = 1 WHERE id = ?', time.id)
+      await test.database.run('UPDATE expenses SET invoice_id = 1 WHERE id = ?', expense.id)
+      const cases = [
+        ...(['member', 'people_admin', 'project_manager'] as const).map((profile) => ({
+          init: asProfile(profile, ['billable_rates_manager']), mayRead: false,
+        })),
+        ...(['accounting', 'executive_manager', 'administrator'] as const).map((profile) => ({
+          init: asProfile(profile), mayRead: true,
+        })),
+        { init: { headers: { authorization: 'Bearer limited-finance' } }, mayRead: false },
+        { init: { headers: { authorization: 'Bearer finance' } }, mayRead: true },
+      ]
+      for (const { init, mayRead } of cases) {
+        for (const [resource, id] of [['time-entries', time.id], ['expenses', expense.id]] as const) {
+          for (const path of [`/api/v1/${resource}`, `/api/v1/${resource}/${id}`]) {
+            const response = await test.request(path, init)
+            expect(response.status).toBe(200)
+            const result = await data<Record<string, unknown> | Record<string, unknown>[]>(response)
+            const record = Array.isArray(result) ? result[0]! : result
+            expect(record['is_locked']).toBe(true)
+            if (mayRead) {
+              expect(record).toMatchObject({ invoice_id: 1, is_billed: true, locked_reason_code: 'invoiced' })
+            } else {
+              expect(record).not.toHaveProperty('invoice_id')
+              expect(record).not.toHaveProperty('is_billed')
+              expect(record).toMatchObject({ locked_reason_code: 'locked', locked_reason: 'This record is locked.' })
+            }
+          }
+          for (const filter of ['invoice_id=1', 'invoice_id=99999', 'is_billed=true', 'is_billed=false']) {
+            const response = await test.request(`/api/v1/${resource}?${filter}`, init)
+            expect(response.status).toBe(mayRead ? 200 : 403)
+            if (!mayRead) expect(await response.json()).toMatchObject({ error: { code: 'invoice_filter_forbidden' } })
+          }
+          for (const method of ['PATCH', 'DELETE'] as const) {
+            const headers = new Headers(init.headers)
+            headers.set('content-type', 'application/json')
+            const response = await test.request(`/api/v1/${resource}/${id}`, {
+              method, headers, ...(method === 'PATCH' ? { body: JSON.stringify({ notes: 'forbidden edit' }) } : {}),
+            })
+            expect(response.status).toBe(422)
+            expect(await response.json()).toMatchObject({ error: { fields: [{ code: mayRead ? 'invoiced' : 'locked' }] } })
+          }
+        }
+      }
     }, slowRuntimeTimeout)
 
     it('[security #464] scopes expense list and detail to self or assigned reviewees', async () => {
@@ -1441,7 +1507,7 @@ for (const [runtime, factory] of factories) {
       expect(await invoiceResponse.json()).toMatchObject({
         error: {
           code: 'tracked_mutation_locked',
-          fields: [{ code: 'invoiced' }],
+          fields: [{ code: 'locked', message: 'This record is locked.' }],
         },
       })
 
