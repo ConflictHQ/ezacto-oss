@@ -54,6 +54,14 @@ export const renderModuleSettingsPage = (view?: string): string => `
     <p class="module-settings-intro">Your own account. Everything here is yours alone; the company settings beside it apply to everyone.</p>
     <p class="form-result module-settings-status" data-settings-user-status role="status" aria-live="polite">Loading your account…</p>
     <dl class="settings-facts" data-settings-user-facts hidden></dl>
+    <section class="settings-density" aria-labelledby="settings-density-heading">
+      <h2 id="settings-density-heading">Row density</h2>
+      <p class="hint">How much of a table fits on your screen. This is yours and this machine's — nobody else's view changes, and the company setting beside it is unaffected.</p>
+      <div class="settings-density-choice" role="group" aria-label="Row density">
+        <button type="button" data-density-choice="comfortable" aria-pressed="true">Comfortable</button>
+        <button type="button" data-density-choice="compact" aria-pressed="false">Compact</button>
+      </div>
+    </section>
   </main>`
 
 /**
