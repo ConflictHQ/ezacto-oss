@@ -21727,6 +21727,17 @@
               }
             ]
           },
+          "retainer_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "reminder_policy": {
             "anyOf": [
               {

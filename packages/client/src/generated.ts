@@ -1285,6 +1285,7 @@ export type InvoiceEditInput = {
   "due_date"?: string;
   "payment_terms"?: "upon_receipt" | "net_15" | "net_30" | "net_45" | "net_60" | "custom";
   "project_id"?: number | null;
+  "retainer_id"?: number | null;
   "reminder_policy"?: InvoiceReminderPolicy | null;
   "payment_options"?: Array<"stripe_checkout" | "paypal_checkout" | "quickbooks_checkout" | "mercury_transfer" | "wise_transfer">;
   "tax_rate_ppm"?: number | null;

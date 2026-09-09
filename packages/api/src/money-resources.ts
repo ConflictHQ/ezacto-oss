@@ -1455,6 +1455,7 @@ const headerFields = new Set([
   "due_date",
   "payment_terms",
   "project_id",
+  "retainer_id",
   "reminder_policy",
   "payment_options",
   "tax_rate_ppm",
@@ -1478,6 +1479,7 @@ const parseInvoiceEdit = (
     "due_date",
     "payment_terms",
     "project_id",
+    "retainer_id",
     "reminder_policy",
   ].filter((key) => Object.hasOwn(body, key));
   const optionKeys = Object.hasOwn(body, "payment_options") ? 1 : 0;
@@ -1649,6 +1651,17 @@ const parseInvoiceEdit = (
       ...(Object.hasOwn(body, "project_id")
         ? {
             projectId: integerValue(body, "project_id", errors, {
+              nullable: true,
+              minimum: 1,
+            }) as number | null,
+          }
+        : {}),
+      // The link a retainer movement has to name. Without it `retainer_ledger`
+      // refuses every deposit and drawdown, which is what left a retainer
+      // creatable, viewable and unable to move (#449).
+      ...(Object.hasOwn(body, "retainer_id")
+        ? {
+            retainerId: integerValue(body, "retainer_id", errors, {
               nullable: true,
               minimum: 1,
             }) as number | null,

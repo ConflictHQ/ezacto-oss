@@ -4203,6 +4203,12 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         ],
       },
       project_id: nullable(integerSchema),
+      // The retainer this invoice moves against. `retainer_ledger` refuses a
+      // deposit or a drawdown whose invoice is not linked to the same retainer,
+      // so until this existed a retainer could be created, shown, and never
+      // moved. Editable only until a movement names it: the schema freezes the
+      // link at that point.
+      retainer_id: nullable(integerSchema),
       reminder_policy: nullable(reference("InvoiceReminderPolicy")),
       payment_options: {
         type: "array",
