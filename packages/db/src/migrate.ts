@@ -45,6 +45,7 @@ import { timesheetBulkApprovalMigration } from './migrations/0038_timesheet_bulk
 import { ssoProvisioningDomainsMigration } from './migrations/0039_sso_provisioning_domains.js'
 import { twoFactorMigration } from './migrations/0040_two_factor.js'
 import { recurringLineThroughMigration } from './migrations/0041_recurring_line_through.js'
+import { payoutAccountsMigration } from './migrations/0042_payout_accounts.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL, statements_sha256 TEXT
@@ -1433,6 +1434,7 @@ const migrations = [
   { id: '0039_sso_provisioning_domains', statements: ssoProvisioningDomainsMigration },
   { id: '0040_two_factor', statements: twoFactorMigration },
   { id: '0041_recurring_line_through', statements: recurringLineThroughMigration },
+  { id: '0042_payout_accounts', statements: payoutAccountsMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges
