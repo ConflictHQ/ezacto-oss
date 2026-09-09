@@ -60,6 +60,8 @@ import {
   localDate,
   navigationDestination,
   palettePlan,
+  type PaletteEntity,
+  type PaletteResult,
   prepareQuickAdd,
   runningElapsedSeconds,
   timeEntryNoteLength,
@@ -2971,14 +2973,62 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     return gate !== null && !gate.hidden
   }
 
-  let paletteOptions: readonly PaletteDestination[] = []
+  let paletteOptions: readonly PaletteResult[] = []
   let paletteIndex = -1
+  let paletteEntities: readonly PaletteEntity[] = []
+  // The query the current `paletteEntities` answer. A reply that arrives after
+  // the person has typed on is for a question they are no longer asking, and
+  // showing it would put the wrong rows under the right word.
+  let paletteEntityQuery = ''
+  let paletteSearch: AbortController | null = null
 
   const paletteOptionId = (index: number): string => `ez-command-option-${index}`
 
+  /**
+   * Record hits come from the server, one small page per resource. Runs behind
+   * the render rather than in front of it: the commands are local and must not
+   * wait on a network round trip to appear.
+   */
+  const refreshPaletteEntities = (query: string): void => {
+    const wanted = query.trim()
+    if (api.searchEntities === undefined || wanted.length < 2) {
+      // One character matches too much to be worth a request, and clearing here
+      // is what stops a stale set outliving the query that fetched it.
+      paletteSearch?.abort()
+      paletteSearch = null
+      if (paletteEntities.length > 0) {
+        paletteEntities = []
+        paletteEntityQuery = ''
+        renderPalette()
+      }
+      return
+    }
+    if (wanted === paletteEntityQuery) return
+    paletteSearch?.abort()
+    const controller = new AbortController()
+    paletteSearch = controller
+    void api
+      .searchEntities(wanted, controller.signal)
+      .then((found) => {
+        if (controller.signal.aborted) return
+        paletteEntities = found
+        paletteEntityQuery = wanted
+        renderPalette()
+      })
+      .catch(() => {
+        // A palette that cannot reach the server still navigates. Failing loud
+        // here would replace a working command list with an error.
+      })
+  }
+
   const renderPalette = (): void => {
     const query = commandInput.value
-    const sections = palettePlan(query, paletteOffers)
+    const sections = palettePlan(
+      query,
+      paletteOffers,
+      // Only the hits for this exact query. Anything else is an older answer.
+      query.trim() === paletteEntityQuery ? paletteEntities : [],
+    )
     paletteOptions = sections.flatMap((section) => section.destinations)
     // Nothing is highlighted until the query says something. Enter on an
     // unhighlighted palette belongs to the form, which is what leaves
@@ -3128,6 +3178,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     // the list says it will rather than to whatever was highlighted before.
     paletteIndex = 0
     renderPalette()
+    refreshPaletteEntities(commandInput.value)
   })
 
   entryForm.addEventListener('submit', (event) => {
