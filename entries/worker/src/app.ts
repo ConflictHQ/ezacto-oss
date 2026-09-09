@@ -59,6 +59,7 @@ import {
   type TeamRouteOptions,
 } from '@ezacto/api'
 import {
+  demoAccounts,
   InstanceBootstrapConflictError,
   InstanceOwnerPasswordConflictError,
   type InstanceBootstrapInput,
@@ -73,6 +74,7 @@ import {
   renderAppShell,
   reportKindTabs,
   webAssets,
+  type DemoSignInAccount,
   type SignInProvider,
 } from '@ezacto/web'
 import type {
@@ -102,6 +104,12 @@ export type AppEnv = Env & {
   BRAND_WORDMARK_LIGHT?: string
   BRAND_WORDMARK_DARK?: string
   BRAND_EMAIL_SENDER_NAME?: string
+  /**
+   * Publishes sign-in credentials on the front page and lets the nightly cron
+   * wipe the database. Both are refused outside a non-production environment
+   * whatever this says -- see `demoDeployment`.
+   */
+  DEMO_MODE?: string
 }
 
 export type WorkerEnv = AppEnv & {
@@ -523,6 +531,7 @@ export const createApp = (services?: RuntimeServices) =>
             release: context.env.RELEASE,
             brand: brandFromEnv(context.env),
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -548,6 +557,7 @@ export const createApp = (services?: RuntimeServices) =>
             activeSection: 'Home',
             view: 'dashboard',
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -570,6 +580,7 @@ export const createApp = (services?: RuntimeServices) =>
             activeSection: 'Invoices',
             view: 'invoice-generation',
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -592,6 +603,7 @@ export const createApp = (services?: RuntimeServices) =>
             activeSection: 'Approvals',
             view: 'timesheet-approvals',
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -615,6 +627,7 @@ export const createApp = (services?: RuntimeServices) =>
             view: 'invoice-list',
             tabs: invoiceTabs('invoice-list'),
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -643,6 +656,7 @@ export const createApp = (services?: RuntimeServices) =>
             view: 'invoice-recurring',
             tabs: invoiceTabs('invoice-recurring'),
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -666,6 +680,7 @@ export const createApp = (services?: RuntimeServices) =>
             view: 'invoice-retainers',
             tabs: invoiceTabs('invoice-retainers'),
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -689,6 +704,7 @@ export const createApp = (services?: RuntimeServices) =>
             view: 'invoice-configure',
             tabs: invoiceTabs('invoice-configure'),
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -711,6 +727,7 @@ export const createApp = (services?: RuntimeServices) =>
             activeSection: 'Clients',
             view: 'client-list',
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -733,6 +750,7 @@ export const createApp = (services?: RuntimeServices) =>
             activeSection: 'Projects',
             view: 'project-list',
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -755,6 +773,7 @@ export const createApp = (services?: RuntimeServices) =>
             activeSection: 'Team',
             view: 'team-list',
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -777,6 +796,7 @@ export const createApp = (services?: RuntimeServices) =>
             activeSection: 'Tasks',
             view: 'task-list',
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -800,6 +820,7 @@ export const createApp = (services?: RuntimeServices) =>
             view: 'reports',
             tabs: reportKindTabs(context.req.query('report') ?? null),
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -822,6 +843,7 @@ export const createApp = (services?: RuntimeServices) =>
             activeSection: 'Expenses',
             view: 'expense-list',
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -844,6 +866,7 @@ export const createApp = (services?: RuntimeServices) =>
             activeSection: 'Expenses',
             view: 'expense-categories',
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -869,6 +892,7 @@ export const createApp = (services?: RuntimeServices) =>
             activeSection: 'Settings',
             view: 'settings-user',
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -890,6 +914,7 @@ export const createApp = (services?: RuntimeServices) =>
             activeSection: 'Settings',
             view: 'settings-company',
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -912,6 +937,7 @@ export const createApp = (services?: RuntimeServices) =>
             activeSection: 'Settings',
             view: 'settings-activity',
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -946,6 +972,7 @@ export const createApp = (services?: RuntimeServices) =>
             activeSection: 'Expenses',
             view: 'expense-detail',
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -976,6 +1003,7 @@ export const createApp = (services?: RuntimeServices) =>
             activeSection: 'Projects',
             view: 'project-detail',
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -1006,6 +1034,7 @@ export const createApp = (services?: RuntimeServices) =>
             activeSection: 'Team',
             view: 'team-person',
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -1036,6 +1065,7 @@ export const createApp = (services?: RuntimeServices) =>
             activeSection: 'Clients',
             view: 'client-detail',
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -1066,6 +1096,7 @@ export const createApp = (services?: RuntimeServices) =>
             activeSection: 'Invoices',
             view: 'invoice-detail',
             signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
@@ -1198,6 +1229,29 @@ export const githubProvider = (
     redirectOrigin: redirectOrigin(env),
   }
 }
+
+/**
+ * Whether this deployment is the public demo.
+ *
+ * Two conditions, and the environment is the one that matters: `DEMO_MODE` is
+ * an operator's switch and `ENVIRONMENT` is the deployment's identity, so a
+ * `DEMO_MODE` left set on a production worker publishes nothing and wipes
+ * nothing. Everything demo-shaped in this codebase asks this function, so
+ * there is one place to read to know what it takes.
+ */
+export const demoDeployment = (env: AppEnv): boolean =>
+  env.ENVIRONMENT !== 'prod' && env.DEMO_MODE === 'true'
+
+/** The accounts a demo prints on its own sign-in page, and nothing anywhere else. */
+export const publishedDemoAccounts = (env: AppEnv): readonly DemoSignInAccount[] | undefined =>
+  demoDeployment(env)
+    ? demoAccounts.map((account) => ({
+        label: account.label,
+        email: account.email,
+        password: account.password,
+        describes: account.describes,
+      }))
+    : undefined
 
 /** Public shell availability contains provider keys only, never credentials. */
 export const configuredSignInProviders = (

@@ -253,3 +253,40 @@ The run re-runs `verify` rather than trusting that `ci.yml` did, deploys with
 reports that SHA**. A wrangler exit code says the upload was accepted — not that
 the domain resolves, the certificate is up, or the route is bound. The target
 host is read out of `wrangler.jsonc`, never repeated in the workflow.
+
+## The public demo (`ezacto.io`)
+
+The dev deployment doubles as the demo anyone can click through. It publishes
+its own sign-in credentials on its front page, so the guarantee that makes that
+tolerable is that nothing done to it survives the night.
+
+| | |
+| --- | --- |
+| Brand | **Folding Forks (Fake)** — the fake name is the point; nothing here is CONFLICT's |
+| Sign-in | `admin@example.com` / `folding-forks-admin`, `user@example.com` / `folding-forks-user` |
+| Data | 20 people, 8 clients, 16 projects, three years of hours, expenses and invoices — all invented, all `@example.com` (RFC 2606, so demo mail can never reach a real person) |
+| Rebuild | `0 3 * * *` empties and reseeds; the every-minute cron bills the backlog ten client-months at a time |
+
+Two switches, and both must agree: `DEMO_MODE=true` **and** `ENVIRONMENT` other
+than `prod`. `DEMO_MODE` is an operator's switch and `ENVIRONMENT` is the
+deployment's identity, so the flag copied into a production worker's vars — the
+way this goes wrong — publishes nothing and wipes nothing. Everything
+demo-shaped asks `demoDeployment()` in `entries/worker/src/app.ts`.
+
+The history is anchored to the day it is built, not to a fixed calendar, so the
+demo always shows a book of work running up to today.
+
+### Rebuilding it by hand
+
+Nothing serves the reset over HTTP: an endpoint that empties a database is worth
+more to an attacker than everything else on the host put together. Trigger the
+`0 3 * * *` schedule from the Cloudflare dashboard's cron trigger, or locally:
+
+```
+npx wrangler dev --env dev --test-scheduled
+curl 'http://localhost:8787/__scheduled?cron=0+3+*+*+*'
+```
+
+The rebuild is idempotent and resumable: it reads what is left to bill off the
+uninvoiced rows themselves, so a tick that dies costs its own slice and the next
+one picks up where it stopped.

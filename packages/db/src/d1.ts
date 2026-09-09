@@ -166,6 +166,28 @@ export {
   type BackupObjectStore,
   type BackupRunRecord,
 } from './backup.js'
+export {
+  demoAccounts,
+  demoClientProjects,
+  demoRetainers,
+  demoSeedStatements,
+  type DemoAccount,
+  type DemoSeedOptions,
+  type DemoSeedStatement,
+} from './demo-seed.js'
+export {
+  billDemoBacklog,
+  createD1DemoResetDriver,
+  DEMO_ORGANIZATION_NAME,
+  PRESERVED_TABLES,
+  runDemoReset,
+  wipeAndSeedDemo,
+  type DemoBillingSummary,
+  type DemoResetDriver,
+  type DemoResetOptions,
+  type DemoResetSummary,
+  type DemoWipeSummary,
+} from './demo-reset.js'
 export { migrateD1, migrationIds } from './migrate.js'
 export {
   DrizzleTrackedResourceRepository,
