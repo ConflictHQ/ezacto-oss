@@ -71,6 +71,12 @@ export interface WorksheetFixedLine {
   taxed: boolean
   taxed2: boolean
   harvest_project_id: number | null
+  /**
+   * The last issue date this line appears on. Absent and null both mean the
+   * same thing -- repeats indefinitely -- which is what every line meant before
+   * migration 0041 added the column.
+   */
+  through?: string | null
 }
 
 export interface WorksheetFixedLinesConfig {
@@ -639,7 +645,7 @@ const parseWorksheetAmountConfig = (
             'taxed2',
             'harvest_project_id',
           ],
-          [],
+          ['through'],
           item,
         )
         const kind = safeText(candidate.kind, `${item}.kind`, { nonBlank: true })!
@@ -652,7 +658,16 @@ const parseWorksheetAmountConfig = (
           candidate.quantity <= 0 ||
           candidate.quantity > Number.MAX_SAFE_INTEGER
         ) {
-          throw new RangeError(`${item}.quantity must be positive and bounded`)
+          // Harvest encodes a credit as a negative quantity; this schema keeps
+          // quantity positive at three layers. The two are arithmetically
+          // identical, so the remedy is a re-encoding rather than a decision --
+          // and naming it here is the difference between a five-minute fix and
+          // an abandoned worksheet, because the apply is all-or-nothing.
+          throw new RangeError(
+            `${item}.quantity must be positive and bounded` +
+              ' — a Harvest credit line encoded as a negative quantity re-encodes' +
+              ' as quantity 1 with a negative unit_price_cents',
+          )
         }
         if (
           !Number.isSafeInteger(candidate.unit_price_cents) ||
@@ -663,6 +678,14 @@ const parseWorksheetAmountConfig = (
         if (typeof candidate.taxed !== 'boolean' || typeof candidate.taxed2 !== 'boolean') {
           throw new TypeError(`${item} tax flags must be booleans`)
         }
+        // Migration 0041 gave a line a date to stop on, and the engine honours
+        // it, but no worksheet could set one -- so a fixed-term line such as a
+        // credit over the first four months could only be transcribed as one
+        // that runs forever.
+        const through =
+          candidate.through === undefined || candidate.through === null
+            ? undefined
+            : canonicalDate(candidate.through, `${item}.through`)
         return {
           kind,
           description,
@@ -674,6 +697,9 @@ const parseWorksheetAmountConfig = (
             candidate.harvest_project_id === null
               ? null
               : positiveId(candidate.harvest_project_id, `${item}.harvest_project_id`),
+          // Omitted rather than written as null, so a line without a stop date
+          // serialises exactly as it did before this existed.
+          ...(through === undefined ? {} : { through }),
         }
       }),
     }
@@ -1488,6 +1514,9 @@ const resolveAmountConfig = (
             taxed2: line.taxed2,
             project_id:
               line.harvest_project_id === null ? null : projectId(line.harvest_project_id),
+            ...(line.through === undefined || line.through === null
+              ? {}
+              : { through: line.through }),
           })),
         }
       : {

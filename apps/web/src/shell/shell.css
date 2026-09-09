@@ -2743,6 +2743,70 @@ dialog h2,
 .sign-in-form[hidden] {
   display: none;
 }
+.demo-credentials {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px dashed var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+.demo-credentials-note {
+  margin: 0;
+  color: var(--ez-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.demo-credentials ul {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.demo-credentials li {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+.demo-account-label {
+  margin: 0;
+  font-weight: 600;
+}
+.demo-account-describes {
+  margin: 0;
+  color: var(--ez-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.demo-account-secret {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+}
+.demo-account-secret code {
+  padding: 2px 6px;
+  border: 1px solid var(--ez-border);
+  border-radius: calc(var(--ez-radius) / 2);
+  background: var(--ez-ground);
+  font: 12px/1.6 var(--ez-font-mono), monospace;
+  overflow-wrap: anywhere;
+}
+.demo-account-fill {
+  padding: 6px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.demo-account-fill:hover {
+  border-color: var(--ez-action);
+  color: var(--ez-action);
+}
 .auth-heading h2 {
   margin: 0 0 8px;
   font: 600 clamp(28px, 3vw, 36px) / 1.1 var(--ez-font-display), sans-serif;

@@ -1,6 +1,7 @@
 import type { QueuedEmailJob } from '@ezacto/mailer'
 import { createApp, type WorkerEnv } from './app.js'
 import { consumeCloudflareEmailBatch } from './email-queue.js'
+import { runDemoMaintenance } from './demo.js'
 import { runNightlyExport } from './nightly-export.js'
 import {
   createRuntimeServices,
@@ -72,6 +73,9 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
     if (controller.cron === '0 3 * * *' && env.ATTACHMENTS !== undefined) {
       await runNightlyExport(env.DB, env.ATTACHMENTS)
     }
+    // Refuses on any deployment that is not the demo, so this line is safe to
+    // read as unconditional. See `runDemoMaintenance`.
+    await runDemoMaintenance(env, controller.cron)
     await services.outbox.drain()
   },
 }
