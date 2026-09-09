@@ -100,6 +100,10 @@ export const renderInvoiceEditDialog = (): string => `
       <label for="ez-invoice-edit-purchase-order">Purchase order
         <input id="ez-invoice-edit-purchase-order" name="purchase_order" data-invoice-edit-purchase-order maxlength="100000" autocomplete="off">
       </label>
+      <label for="ez-invoice-edit-notes">Notes
+        <textarea id="ez-invoice-edit-notes" name="notes" data-invoice-edit-notes rows="4" maxlength="100000"></textarea>
+      </label>
+      <p class="hint">Notes appear on the invoice the client receives.</p>
       <div class="invoice-line-number-fields">
         <label for="ez-invoice-edit-issue-date">Issue date
           <input id="ez-invoice-edit-issue-date" name="issue_date" data-invoice-edit-issue-date type="date" required>

@@ -529,6 +529,7 @@ export const createInvoicePaymentController = (
   const editForm = required<HTMLFormElement>('[data-invoice-edit-form]')
   const editSubject = required<HTMLInputElement>('[data-invoice-edit-subject]')
   const editPurchaseOrder = required<HTMLInputElement>('[data-invoice-edit-purchase-order]')
+  const editNotes = required<HTMLTextAreaElement>('[data-invoice-edit-notes]')
   const editIssueDate = required<HTMLInputElement>('[data-invoice-edit-issue-date]')
   const editDueDate = required<HTMLInputElement>('[data-invoice-edit-due-date]')
   const editPaymentTerms = required<HTMLSelectElement>('[data-invoice-edit-payment-terms]')
@@ -1141,6 +1142,7 @@ export const createInvoicePaymentController = (
     editForm.reset()
     editSubject.value = invoice.subject ?? ''
     editPurchaseOrder.value = invoice.purchase_order ?? ''
+    editNotes.value = invoice.notes ?? ''
     editIssueDate.value = invoice.issue_date
     editDueDate.value = invoice.due_date
     editPaymentTerms.value = invoice.payment_terms
@@ -1653,6 +1655,10 @@ export const createInvoicePaymentController = (
     }
     const subject = editSubject.value.trim()
     const purchaseOrder = editPurchaseOrder.value.trim()
+    // Not trimmed to a single line: notes are prose the client reads, and the
+    // paragraph breaks someone typed are part of what they wrote. Only the
+    // surrounding whitespace goes, so an all-whitespace note still clears.
+    const notes = editNotes.value.trim()
     let rates: Pick<InvoiceEditInput, 'tax_rate_ppm' | 'tax2_rate_ppm' | 'discount_rate_ppm'>
     try {
       if (editIssueDate.value === '' || editDueDate.value === '') {
@@ -1673,6 +1679,7 @@ export const createInvoicePaymentController = (
     const header = {
       subject: subject === '' ? null : subject,
       purchase_order: purchaseOrder === '' ? null : purchaseOrder,
+      notes: notes === '' ? null : notes,
       issue_date: editIssueDate.value,
       due_date: editDueDate.value,
       payment_terms: editPaymentTerms.value as Invoice['payment_terms'],
@@ -1680,6 +1687,7 @@ export const createInvoicePaymentController = (
     const headerChanged =
       header.subject !== selectedInvoice.subject ||
       header.purchase_order !== selectedInvoice.purchase_order ||
+      header.notes !== selectedInvoice.notes ||
       header.issue_date !== selectedInvoice.issue_date ||
       header.due_date !== selectedInvoice.due_date ||
       header.payment_terms !== selectedInvoice.payment_terms
