@@ -28,7 +28,7 @@ const renderCard = (card: Readonly<DashboardCard>): string =>
  * exists, and a second one would be worse than none.
  */
 export const renderDashboardPage = (view?: string): string => `
-  <main class="app-content dashboard-workspace" data-dashboard-page${view === 'dashboard' ? '' : ' hidden'}>
+  <main class="app-content dashboard-workspace page--grid" data-dashboard-page${view === 'dashboard' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Where things stand</p><h1>Home</h1></div>
       <a class="dashboard-week-link" href="/">Open this week</a>

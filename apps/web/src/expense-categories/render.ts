@@ -1,5 +1,5 @@
 export const renderExpenseCategoriesPage = (view?: string): string => `
-  <main class="app-content expense-category-workspace" data-expense-categories-page${view === 'expense-categories' ? '' : ' hidden'}>
+  <main class="app-content expense-category-workspace page--grid" data-expense-categories-page${view === 'expense-categories' ? '' : ' hidden'}>
     <header class="context-row expense-category-header">
       <div><p class="eyebrow">Expenses</p><h1>Expense categories</h1></div>
       <a href="/expenses">Back to expenses</a>

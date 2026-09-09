@@ -12,7 +12,7 @@
  */
 
 export const renderRetainerPage = (view?: string): string => `
-  <main class="app-content invoice-workspace retainer-workspace" data-invoice-retainers-page${view === 'invoice-retainers' ? '' : ' hidden'}>
+  <main class="app-content invoice-workspace retainer-workspace page--grid" data-invoice-retainers-page${view === 'invoice-retainers' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Money</p><h1>Retainers</h1></div>
     </header>

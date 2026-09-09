@@ -1,5 +1,5 @@
 export const renderClientDirectoryPages = (view?: string): string => `
-  <main class="app-content client-workspace" data-client-list-page${view === 'client-list' ? '' : ' hidden'}>
+  <main class="app-content client-workspace page--grid" data-client-list-page${view === 'client-list' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Relationships</p><h1>Clients</h1></div>
       <button class="primary-action" type="button" data-client-create data-client-write data-auth-action hidden disabled>Add client</button>
@@ -19,7 +19,7 @@ export const renderClientDirectoryPages = (view?: string): string => `
     <div data-client-tree></div>
     <button type="button" data-client-list-retry hidden>Retry loading clients</button>
   </main>
-  <main class="app-content client-workspace" data-client-detail-page${view === 'client-detail' ? '' : ' hidden'}>
+  <main class="app-content client-workspace page--grid" data-client-detail-page${view === 'client-detail' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Clients</p><h1 data-client-detail-name>Client detail</h1></div>
       <div class="client-header-actions">

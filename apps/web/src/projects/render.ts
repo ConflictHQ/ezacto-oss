@@ -1,5 +1,5 @@
 export const renderProjectDirectoryPages = (view?: string): string => `
-  <main class="app-content project-workspace" data-project-list-page${view === 'project-list' ? '' : ' hidden'}>
+  <main class="app-content project-workspace page--grid" data-project-list-page${view === 'project-list' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Work</p><h1>Projects</h1></div>
       <button class="primary-action" type="button" data-project-create data-project-mutation-action data-project-write data-auth-action hidden disabled>Add project</button>
@@ -23,7 +23,7 @@ export const renderProjectDirectoryPages = (view?: string): string => `
     <div data-project-list></div>
     <button type="button" data-project-list-retry hidden>Retry loading projects</button>
   </main>
-  <main class="app-content project-workspace" data-project-detail-page${view === 'project-detail' ? '' : ' hidden'}>
+  <main class="app-content project-workspace page--grid" data-project-detail-page${view === 'project-detail' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Projects</p><h1 data-project-detail-name>Project detail</h1></div>
       <div class="project-header-actions">

@@ -1,5 +1,5 @@
 export const renderModuleSettingsPage = (view?: string): string => `
-  <main class="app-content module-settings-workspace" data-module-settings-page${view === 'settings-company' ? '' : ' hidden'}>
+  <main class="app-content module-settings-workspace page--document" data-module-settings-page${view === 'settings-company' ? '' : ' hidden'}>
     <header class="context-row module-settings-header">
       <div><p class="eyebrow">Settings</p><h1>Company</h1></div>
     </header>
@@ -46,7 +46,7 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <p class="form-result" data-sso-domain-result role="status" aria-live="polite"></p>
     </section>
   </main>
-  <main class="app-content module-settings-workspace" data-settings-user-page${view === 'settings-user' ? '' : ' hidden'}>
+  <main class="app-content module-settings-workspace page--document" data-settings-user-page${view === 'settings-user' ? '' : ' hidden'}>
     <header class="context-row module-settings-header">
       <div><p class="eyebrow">Settings</p><h1>You</h1></div>
     </header>
@@ -80,7 +80,7 @@ const renderSettingsTabs = (current: 'user' | 'company' | 'activity'): string =>
  * Filters narrow what is shown; they never narrow what is kept.
  */
 export const renderActivityLogPage = (view?: string): string => `
-  <main class="app-content module-settings-workspace" data-activity-log-page${view === 'settings-activity' ? '' : ' hidden'}>
+  <main class="app-content module-settings-workspace page--grid" data-activity-log-page${view === 'settings-activity' ? '' : ' hidden'}>
     <header class="context-row module-settings-header">
       <div><p class="eyebrow">Settings</p><h1>Activity</h1></div>
     </header>

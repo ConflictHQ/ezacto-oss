@@ -328,7 +328,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
     </div>
   </header>
   ${renderTabStrip(options)}
-  <main class="app-content" data-app-content${view === 'time' ? '' : ' hidden'}>
+  <main class="app-content page--grid" data-app-content${view === 'time' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">This week</p><h1>Time</h1></div>
       <button class="primary-action" type="button" data-command-trigger data-auth-action disabled>Log time</button>
@@ -386,7 +386,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
       </div>
     </section>
   </main>
-  <main class="app-content timesheet-approvals" data-timesheet-approvals-page${view === 'timesheet-approvals' ? '' : ' hidden'}>
+  <main class="app-content timesheet-approvals page--grid" data-timesheet-approvals-page${view === 'timesheet-approvals' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Timesheets</p><h1>Approvals</h1></div>
       <a href="/">Back to time</a>
@@ -437,7 +437,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
       <div class="timesheet-lock-list" data-timesheet-lock-list aria-live="polite"></div>
     </section>
   </main>
-  <main class="app-content invoice-workspace" data-invoice-list-page${view === 'invoice-list' ? '' : ' hidden'}>
+  <main class="app-content invoice-workspace page--grid" data-invoice-list-page${view === 'invoice-list' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Money</p><h1>Invoices</h1></div>
       <a class="primary-action invoice-create-link" href="/invoices/new">Generate invoice</a>
@@ -459,7 +459,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
     <section class="invoice-list" data-invoice-list aria-label="Invoices"></section>
     <button class="invoice-load-more" type="button" data-invoice-load-more hidden>Load more invoices</button>
   </main>
-  <main class="app-content invoice-workspace" data-invoice-detail-page${view === 'invoice-detail' ? '' : ' hidden'}>
+  <main class="app-content invoice-workspace page--grid" data-invoice-detail-page${view === 'invoice-detail' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Invoices</p><h1>Invoice detail</h1></div>
       <a href="/invoices">Back to invoices</a>
@@ -507,7 +507,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
       </section>
     </article>
   </main>
-  <main class="app-content invoice-generation" data-invoice-generation-page${view === 'invoice-generation' ? '' : ' hidden'}>
+  <main class="app-content invoice-generation page--document" data-invoice-generation-page${view === 'invoice-generation' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Invoices</p><h1>Generate an invoice</h1></div>
       <a href="/invoices">Back to invoices</a>
@@ -563,14 +563,14 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
       <a data-generated-invoice-link href="/invoices" hidden>Open draft invoice</a>
     </section>
   </main>
-  <main class="app-content invoice-workspace" data-invoice-recurring-page${view === 'invoice-recurring' ? '' : ' hidden'}>
+  <main class="app-content invoice-workspace page--grid" data-invoice-recurring-page${view === 'invoice-recurring' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Money</p><h1>Recurring</h1></div>
     </header>
     ${renderEmptyState('Recurring invoices are not built yet', 'Schedules that raise an invoice on a cadence. /api/v1/recurring-invoices already serves them; this screen does not read it yet.')}
   </main>
   ${renderRetainerPage(view)}
-  <main class="app-content invoice-workspace" data-invoice-configure-page${view === 'invoice-configure' ? '' : ' hidden'}>
+  <main class="app-content invoice-workspace page--grid" data-invoice-configure-page${view === 'invoice-configure' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Money</p><h1>Configure</h1></div>
     </header>

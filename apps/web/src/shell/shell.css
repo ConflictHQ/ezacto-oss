@@ -2458,6 +2458,10 @@ a {
   text-decoration: none;
   white-space: nowrap;
 }
+.tabstrip a:hover,
+.tabstrip a:focus-visible {
+  color: var(--ez-ink);
+}
 .tabstrip a[aria-current="page"] {
   color: var(--ez-ink);
   box-shadow: inset 0 -3px var(--ez-live);
@@ -2491,6 +2495,11 @@ a {
 .tabstrip.view-switch a:last-child {
   border-start-end-radius: var(--ez-radius);
   border-end-end-radius: var(--ez-radius);
+}
+.tabstrip.view-switch a:hover:not([aria-current="page"]),
+.tabstrip.view-switch a:focus-visible:not([aria-current="page"]) {
+  background: var(--ez-surface-2);
+  color: var(--ez-ink);
 }
 .tabstrip.view-switch a[aria-current="page"] {
   /* Above its neighbour, so the shared edge is the orange one. */
@@ -4268,10 +4277,16 @@ dialog textarea {
 }
 
 /* Grouping is a band, not an indent — the label owns the full width. */
+/*
+ * A band inside the list, not the list's own header -- which is why it takes
+ * the nested surface. On `--ez-surface` it was the same grey as `thead th`
+ * directly above it, so a grouped table read as one undifferentiated band and
+ * the grouping did no work.
+ */
 .data-table .data-table-group th {
   height: var(--ez-row-h);
   padding: 0 12px;
-  background: var(--ez-surface);
+  background: var(--ez-surface-2);
   border-bottom: 1px solid var(--ez-border);
   color: var(--ez-ink);
   font-size: 13px;

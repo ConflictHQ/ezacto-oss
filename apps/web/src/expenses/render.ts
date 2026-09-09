@@ -1,5 +1,5 @@
 export const renderExpenseWorkflowPages = (view?: string): string => `
-  <main class="app-content expense-workspace" data-expense-list-page${view === 'expense-list' ? '' : ' hidden'}>
+  <main class="app-content expense-workspace page--grid" data-expense-list-page${view === 'expense-list' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Money out</p><h1>Expenses</h1></div>
       <a href="/expense-categories">Manage categories</a>
@@ -38,7 +38,7 @@ export const renderExpenseWorkflowPages = (view?: string): string => `
     <button type="button" data-expense-load-more hidden>Load more expenses</button>
     <button type="button" data-expense-list-retry hidden>Retry loading expenses</button>
   </main>
-  <main class="app-content expense-workspace" data-expense-detail-page${view === 'expense-detail' ? '' : ' hidden'}>
+  <main class="app-content expense-workspace page--grid" data-expense-detail-page${view === 'expense-detail' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Expenses</p><h1>Expense detail</h1></div>
       <a href="/expenses">Back to expenses</a>

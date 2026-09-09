@@ -1,5 +1,5 @@
 export const renderTaskAdminPage = (view?: string): string => `
-  <main class="app-content task-admin-workspace" data-task-admin-page${view === 'task-list' ? '' : ' hidden'}>
+  <main class="app-content task-admin-workspace page--grid" data-task-admin-page${view === 'task-list' ? '' : ' hidden'}>
     <header class="context-row task-admin-header">
       <div><p class="eyebrow">Work</p><h1>Tasks</h1></div>
       <button class="primary-action" type="button" data-task-create data-task-write data-auth-action hidden disabled>Add task</button>

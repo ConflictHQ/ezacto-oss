@@ -124,4 +124,52 @@ describe('D16 theme token contract', () => {
       expect(source, path).not.toMatch(/#[0-9a-fA-F]{3,8}\b/u)
     }
   })
+
+  it('[unit] spends every token it declares, or names why not', async () => {
+    // A design-system slot that nothing references is not a token, it is a
+    // decision nobody applied -- `surface_2` and `row_hover` both sat in the
+    // contract and in the contrast gate while the stylesheet used neither, so
+    // the grouped-table band and the row hover stayed the wrong colour and
+    // every gate still passed.
+    //
+    // These five are the same shape and are not guessed at here: a slot's
+    // purpose is a decision, and inventing one is how a token comes to mean two
+    // things. The list is a ratchet -- it may shrink, and a new name appearing
+    // in it is a token that shipped without a job.
+    const awaitingAPurpose = ['money', 'ink_2', 'blue_light', 'amber', 'amber_bg']
+    const stylesheet = await readFile(resolve(root, 'src', 'shell', 'shell.css'), 'utf8')
+    const unspent = themeSlotNames.filter(
+      (name) => !stylesheet.includes(`var(${cssCustomProperty(name)})`),
+    )
+    expect(unspent).toEqual(awaitingAPurpose)
+  })
+
+  it('[unit] gives every page surface exactly one measure', async () => {
+    // `page--grid` and `page--document` replaced nine hand-written max-width
+    // caps, and were then applied to nothing -- so settings forms ran the full
+    // width of the monitor. Every page container declares which surface it is.
+    const renderers = (await filesUnder(resolve(root, 'src')))
+      .filter((path) => path.endsWith('render.ts') && !path.includes('generated'))
+    const containers: string[] = []
+    for (const path of renderers) {
+      const source = await readFile(path, 'utf8')
+      for (const [, classes] of source.matchAll(/<main class="(app-content[^"]*)"/gu)) {
+        containers.push(`${path}: ${classes}`)
+      }
+    }
+    expect(containers.length).toBeGreaterThan(0)
+    for (const container of containers) {
+      const grid = container.includes('page--grid')
+      const document = container.includes('page--document')
+      expect(grid !== document, container).toBe(true)
+    }
+  })
+
+  it('[unit] gives navigation a hover state, not only a current state', async () => {
+    // A tab that says which one you are on and nothing about which one you are
+    // about to choose reads as a label rather than a control.
+    const stylesheet = await readFile(resolve(root, 'src', 'shell', 'shell.css'), 'utf8')
+    expect(stylesheet).toMatch(/\.tabstrip a:hover/u)
+    expect(stylesheet).toMatch(/\.tabstrip\.view-switch a:hover/u)
+  })
 })

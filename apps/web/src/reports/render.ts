@@ -22,7 +22,7 @@ export const reportKindTabs = (kind: string | null): readonly ShellTab[] =>
   }))
 
 export const renderReportsPage = (view?: string): string => `
-  <main class="app-content reports-workspace" data-reports-page${view === 'reports' ? '' : ' hidden'}>
+  <main class="app-content reports-workspace page--grid" data-reports-page${view === 'reports' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Analysis</p><h1>Reports</h1></div>
     </header>

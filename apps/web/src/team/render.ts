@@ -11,7 +11,7 @@ const weekdays = [
 ] as const
 
 export const renderTeamPages = (view?: string): string => `
-  <main class="app-content team-workspace" data-team-list-page${view === 'team-list' ? '' : ' hidden'}>
+  <main class="app-content team-workspace page--grid" data-team-list-page${view === 'team-list' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Organize</p><h1>Team</h1></div>
       <button class="primary-action" type="button" data-team-person-create hidden disabled>Add person</button>
@@ -46,7 +46,7 @@ export const renderTeamPages = (view?: string): string => `
     <button type="button" data-team-list-retry hidden>Retry loading team</button>
   </main>
 
-  <main class="app-content team-workspace" data-team-person-page${view === 'team-person' ? '' : ' hidden'}>
+  <main class="app-content team-workspace page--grid" data-team-person-page${view === 'team-person' ? '' : ' hidden'}>
     <header class="context-row team-person-header">
       <div><p class="eyebrow">Team</p><h1 data-team-person-name>Person</h1></div>
       <a href="/team">Back to team</a>
