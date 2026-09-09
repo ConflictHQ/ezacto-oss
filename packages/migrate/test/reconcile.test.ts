@@ -417,6 +417,45 @@ describe('three-way reconciliation', () => {
     expect(await readFile(second.markdownPath, 'utf8')).toBe(firstMarkdown)
   })
 
+  it('[migration] says how far a loaded database is behind its snapshot', async () => {
+    // `load` is insert-if-absent, so a row whose updated_at advanced upstream is
+    // refreshed in the snapshot by `sync` and then skipped -- the row is there,
+    // the counts still agree, and only its contents are behind. That is the one
+    // kind of wrong that reads as right, so the report has to say it.
+    const clean = await runReconcile({ snapshotDir, databasePath })
+    expect(
+      clean.report.matches.filter((row) => row.check === 'load currency'),
+    ).not.toEqual([])
+    expect(clean.report.unexplained).toEqual([])
+
+    // Exactly what a sync does when someone renames a client in Harvest: the
+    // raw row is rewritten with a later updated_at. The database is untouched.
+    const rawPath = join(snapshotDir, 'raw', 'clients.jsonl')
+    const lines = (await readFile(rawPath, 'utf8')).split('\n').filter((line) => line.trim())
+    const edited = lines.map((line, index) => {
+      if (index > 0) return line
+      const row = JSON.parse(line) as Record<string, unknown>
+      return JSON.stringify({ ...row, name: 'Renamed upstream', updated_at: '2099-01-01T00:00:00Z' })
+    })
+    await writeFile(rawPath, `${edited.join('\n')}\n`)
+    await writePassingChecksums(snapshotDir)
+
+    const stale = await runReconcile({ snapshotDir, databasePath })
+    const currency = stale.report.unexplained.filter((row) => row.check === 'load currency')
+    expect(currency).toEqual([
+      expect.objectContaining({
+        key: 'clients',
+        metric: 'rows_behind_snapshot',
+        expected: 0,
+        actual: 1,
+      }),
+    ])
+    // The number alone would read as a counting error. The detail has to name
+    // the cause, because the totals printed below it describe the snapshot.
+    expect(currency[0]?.detail).toContain('insert-if-absent')
+    expect(reconciliationExitCode(stale.report)).toBe(1)
+  }, 60_000)
+
   it('[integration] accounts for a squashed duplicate instead of reporting it as loss', async () => {
     const aliasedPath = join(dir, 'aliased.sqlite')
     await runLoad({

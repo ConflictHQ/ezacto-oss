@@ -282,6 +282,94 @@ const streamRaw = async function* (snapshotDir: string, resource: string): Async
   }
 }
 
+/**
+ * Resources whose snapshot row and loaded row can be compared one to one by
+ * `harvest_id`, and whose `updated_at` the loader carries across unchanged.
+ *
+ * Deliberately not every table with those two columns: line items, messages and
+ * payments are children written as part of their parent's load, so a stale
+ * parent is the finding and counting its children again would trip the same
+ * alarm several times over.
+ */
+const REFRESHABLE_RESOURCES: readonly { resource: string; table: string }[] = [
+  { resource: 'clients', table: 'clients' },
+  { resource: 'contacts', table: 'contacts' },
+  { resource: 'projects', table: 'projects' },
+  { resource: 'tasks', table: 'tasks' },
+  { resource: 'users', table: 'users' },
+  { resource: 'expense_categories', table: 'expense_categories' },
+  { resource: 'time_entries', table: 'time_entries' },
+  { resource: 'expenses', table: 'expenses' },
+  { resource: 'invoices', table: 'invoices' },
+  { resource: 'estimates', table: 'estimates' },
+]
+
+/**
+ * Rows the snapshot has moved on from since they were loaded.
+ *
+ * `load` is insert-if-absent, not upsert: a row whose `updated_at` advanced
+ * upstream is refreshed in the snapshot by `sync` and then skipped, because a
+ * row already carries that `harvest_id`. Nothing else in this report notices,
+ * because the row is present and the counts still agree -- only its contents
+ * are behind, which is the one kind of wrong that reads as right.
+ *
+ * So the check is the comparison itself. Zero means the loaded database is
+ * genuinely current as of this snapshot; anything else means it is add-only and
+ * says how far behind, per resource, before anyone reads the totals below it.
+ */
+const staleLoadChecks = async (
+  checks: Checks,
+  snapshotDir: string,
+  databasePath: string,
+): Promise<void> => {
+  const database = new BetterSqlite3(databasePath, { readonly: true, fileMustExist: true })
+  try {
+    for (const { resource, table } of REFRESHABLE_RESOURCES) {
+      const loaded = database.prepare(
+        `SELECT updated_at AS updatedAt FROM ${table} WHERE harvest_id = ?`,
+      )
+      let behind = 0
+      let missing = 0
+      let compared = 0
+      for await (const source of streamRaw(snapshotDir, resource)) {
+        const id = source.row.id
+        const updatedAt = source.row.updated_at
+        if (typeof updatedAt !== 'string' || (typeof id !== 'number' && typeof id !== 'string')) {
+          continue
+        }
+        const row = loaded.get(String(id)) as { updatedAt: string | null } | undefined
+        if (row === undefined) {
+          // Never loaded at all. That is a different finding and the row-count
+          // checks already own it; counting it here would double-report.
+          missing += 1
+          continue
+        }
+        compared += 1
+        // Both sides are canonical UTC, so a lexical comparison is a temporal
+        // one. Equal is current: `sync` rewrites a row only when it changed.
+        if (row.updatedAt !== null && updatedAt > row.updatedAt) behind += 1
+      }
+      if (compared === 0 && missing === 0) continue
+      checks.compare(
+        'C',
+        'load currency',
+        resource,
+        'rows_behind_snapshot',
+        0,
+        behind,
+        'UNEXPLAINED',
+        behind === 0
+          ? null
+          : `${behind} of ${compared} loaded ${resource} rows are older than the snapshot. ` +
+            'load is insert-if-absent, so edits upstream do not reach an already-loaded ' +
+            'database; the totals in this report describe the snapshot, not this database.',
+      )
+    }
+  } finally {
+    database.close()
+  }
+}
+
 const timeAggregate = (): TimeAggregate => ({
   totalSeconds: 0,
   billableSeconds: 0,
@@ -2588,6 +2676,8 @@ export const runReconcile = async (options: RunReconcileOptions): Promise<RunRec
     expenseReportChecks(checks, source, checksum)
     uninvoicedReportChecks(checks, source, checksum)
     projectBudgetChecks(checks, source, checksum)
+
+    await staleLoadChecks(checks, options.snapshotDir, options.databasePath)
 
     const database = new BetterSqlite3(options.databasePath, {
       readonly: true,
