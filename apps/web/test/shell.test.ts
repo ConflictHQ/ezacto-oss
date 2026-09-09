@@ -6,6 +6,7 @@ import {
   loadShellSnapshot,
   maximumTimeEntryNoteLength,
   navigationDestination,
+  palettePlan,
   parseQuickAdd,
   quickAdd,
   renderAppShell,
@@ -480,6 +481,67 @@ describe('S-1 through S-5 application shell', () => {
     // blanket refusal.
     expect(navigationDestination('go reports', offered)).toBe('/reports')
     expect(navigationDestination('go time', offered)).toBe('/')
+  })
+
+  it('[unit] files record hits under their own headings, after the commands', () => {
+    // Track / Organize / Bill / Review name what you are trying to do. A client
+    // is not a thing you are trying to do, so filing one under Organize would
+    // make those four headings mean two things at once.
+    // The query has to match a command as well as the records, or the ordering
+    // claim is vacuous -- with no command sections present, records are first
+    // whether or not the code puts them last.
+    const sections = palettePlan('report', () => true, [
+      { kind: 'client', label: 'Reporting Co', href: '/clients/4' },
+      { kind: 'project', label: 'Report rebuild', href: '/projects/9' },
+    ])
+
+    const headings = sections.map((section) => section.group)
+    const commandHeadings = ['Track', 'Organize', 'Bill', 'Review']
+    expect(headings.some((heading) => commandHeadings.includes(heading))).toBe(true)
+    expect(headings).toContain('Clients')
+    expect(headings).toContain('Projects')
+    // Records come last: a typed query is more often reaching for a screen than
+    // for a row, and a screen the person can name should not be pushed down the
+    // list by rows that merely share a substring.
+    const lastCommand = headings.reduce(
+      (last, heading, index) => (commandHeadings.includes(heading) ? index : last),
+      -1,
+    )
+    const firstRecord = headings.findIndex(
+      (heading) => !commandHeadings.includes(heading),
+    )
+    expect(lastCommand).toBeLessThan(firstRecord)
+    const clients = sections.find((section) => section.group === 'Clients')
+    expect(clients?.destinations).toEqual([
+      { kind: 'client', label: 'Reporting Co', href: '/clients/4' },
+    ])
+  })
+
+  it('[unit] offers no records for an empty query', () => {
+    // An open palette that has been typed into and then cleared must not keep
+    // showing the rows the last word found.
+    const sections = palettePlan('', () => true, [
+      { kind: 'client', label: 'Northpeak', href: '/clients/4' },
+    ])
+
+    expect(sections.map((section) => section.group)).not.toContain('Clients')
+    expect(sections.flatMap((section) => section.destinations)).not.toContainEqual(
+      expect.objectContaining({ href: '/clients/4' }),
+    )
+  })
+
+  it('[security] record hits do not bypass the destination gate', () => {
+    // The gate withholds screens, not rows -- but a record section must not
+    // become a second way to reach a withheld screen either, so a gate that
+    // hides everything still leaves the record headings and nothing else.
+    const sections = palettePlan('north', () => false, [
+      { kind: 'client', label: 'Northpeak', href: '/clients/4' },
+    ])
+
+    expect(sections.map((section) => section.group)).toEqual(['Clients'])
+    expect(sections.flatMap((section) => section.destinations)).toEqual([
+      { kind: 'client', label: 'Northpeak', href: '/clients/4' },
+    ])
   })
 
   it('[unit] creates an entry and the refreshed week snapshot reflects it', async () => {

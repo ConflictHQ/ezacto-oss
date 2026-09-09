@@ -84,6 +84,15 @@ export interface ShellApi
     states?: readonly InvoiceState[],
   ): Promise<CursorPage<Invoice>>
   listTasks(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
+  /**
+   * Records matching a typed query, for the palette. Optional because a build
+   * without it simply offers no record hits; the palette's commands are
+   * unaffected.
+   */
+  searchEntities?(
+    query: string,
+    signal?: AbortSignal,
+  ): Promise<readonly PaletteEntity[]>
   listTimeEntryOptions(signal?: AbortSignal): Promise<readonly TimeEntryOption[]>
   getTimeEntrySettings(signal?: AbortSignal): Promise<TimeEntrySettings>
   listTimeEntries(query: {
@@ -372,9 +381,39 @@ export const paletteDestinations: readonly PaletteDestination[] = [
 
 const paletteGroups: readonly PaletteGroup[] = ['Track', 'Organize', 'Bill', 'Review']
 
+/**
+ * What an entity hit looks like once the search has resolved it. The palette
+ * renders a destination and a record identically -- both are somewhere to go --
+ * so the section holds the narrower shape both satisfy.
+ */
+export interface PaletteResult {
+  readonly label: string
+  readonly href: string
+}
+
+export type PaletteEntityKind = 'client' | 'project' | 'task'
+
+export interface PaletteEntity extends PaletteResult {
+  readonly kind: PaletteEntityKind
+}
+
+/**
+ * Records get their own headings rather than joining Track/Organize/Bill/Review.
+ * Those four name what you are trying to do; a client is not a thing you are
+ * trying to do, and filing one under Organize would make the groups mean two
+ * things at once.
+ */
+const entityHeadings: readonly { kind: PaletteEntityKind; heading: string }[] = [
+  { kind: 'client', heading: 'Clients' },
+  { kind: 'project', heading: 'Projects' },
+  { kind: 'task', heading: 'Tasks' },
+]
+
+export type PaletteHeading = PaletteGroup | 'Clients' | 'Projects' | 'Tasks'
+
 export interface PaletteSection {
-  readonly group: PaletteGroup
-  readonly destinations: readonly PaletteDestination[]
+  readonly group: PaletteHeading
+  readonly destinations: readonly PaletteResult[]
 }
 
 const paletteHaystack = (destination: PaletteDestination): string =>
@@ -388,6 +427,7 @@ const paletteHaystack = (destination: PaletteDestination): string =>
 export const palettePlan = (
   query: string,
   offered: (destination: PaletteDestination) => boolean,
+  entities: readonly PaletteEntity[] = [],
 ): readonly PaletteSection[] => {
   // Normalizing both sides drops the spaces, so "expense cat" still finds
   // Expense categories.
@@ -397,12 +437,28 @@ export const palettePlan = (
       offered(destination) &&
       (needle === '' || paletteHaystack(destination).includes(needle)),
   )
-  return paletteGroups
+  const commands: PaletteSection[] = paletteGroups
     .map((group) => ({
-      group,
-      destinations: matched.filter((destination) => destination.group === group),
+      group: group as PaletteHeading,
+      destinations: matched.filter(
+        (destination) => destination.group === group,
+      ) as readonly PaletteResult[],
     }))
     .filter((section) => section.destinations.length > 0)
+  // Records come after the commands: an empty query offers none, and a typed
+  // one is more often reaching for a screen than for a row.
+  const records: PaletteSection[] =
+    needle === ''
+      ? []
+      : entityHeadings
+          .map(({ kind, heading }) => ({
+            group: heading as PaletteHeading,
+            destinations: entities.filter(
+              (entity) => entity.kind === kind,
+            ) as readonly PaletteResult[],
+          }))
+          .filter((section) => section.destinations.length > 0)
+  return [...commands, ...records]
 }
 
 // `go <name>` predates the palette and still works. Its map is the palette's own
@@ -741,6 +797,46 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     }),
+  /**
+   * One `q` per resource rather than everything held in memory: the palette is
+   * open on every screen, and a build that loaded every client, project and
+   * task to filter three of them would pay for the whole directory on each
+   * keystroke. `per_page` is small because nobody reads past the first few.
+   */
+  searchEntities: async (query, signal) => {
+    const limit = 5
+    const [clients, projects, tasks] = await Promise.all([
+      client.listClients({
+        query: { per_page: limit, q: query },
+        ...withSignal(signal),
+      }),
+      client.listProjects({
+        query: { per_page: limit, q: query },
+        ...withSignal(signal),
+      }),
+      client.listTasks({
+        query: { per_page: limit, q: query },
+        ...withSignal(signal),
+      }),
+    ])
+    return [
+      ...clients.data.map((record) => ({
+        kind: 'client' as const,
+        label: String(record.name ?? `Client ${record.id}`),
+        href: `/clients/${record.id}`,
+      })),
+      ...projects.data.map((record) => ({
+        kind: 'project' as const,
+        label: String(record.name ?? `Project ${record.id}`),
+        href: `/projects/${record.id}`,
+      })),
+      ...tasks.data.map((record) => ({
+        kind: 'task' as const,
+        label: String(record.name ?? `Task ${record.id}`),
+        href: `/tasks`,
+      })),
+    ]
+  },
   listDirectoryClients: (cursor, signal) =>
     client.listClients({
       query: {
