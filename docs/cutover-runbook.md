@@ -234,12 +234,37 @@ the opening balance is entered:
 retainer balance cannot overdraw or exceed its unit bound
 ```
 
-`balance_cents` comes from the Harvest Retainers screen. `occurred_on` has no
-source in Harvest at all — the screen is four columns with no ledger and no
-dates — so adopt a convention and put the reason in `notes`, which is the only
-free-text field that survives. The defensible choices are the paid date of the
-last deposit invoice that built the balance, or the cutover date. Either is
-fine; an unexplained date is not. A negative balance cannot be entered at all.
+`balance_cents` comes from the Harvest Retainers screen — there is no API for
+it, which is why this is a worksheet at all. `occurred_on` has no source in
+Harvest either: the screen is four columns with no ledger and no dates, so the
+date is a convention and the reason for it belongs in `notes`, the only
+free-text field that survives. A negative balance cannot be entered at all.
+
+**Settled, 2026-09-09.** The retainer was consumed in full and zeroed out at the
+end of 2016, so the row is:
+
+```json
+{
+  "harvest_retainer_id": 12345,
+  "status": "pending",
+  "balance_cents": 0,
+  "occurred_on": "2016-12-31",
+  "notes": "Zeroed out at the end of 2016; consumed in full and never drawn on since. Harvest exposes no retainer ledger or dates, so this date is the convention recorded here rather than a fact from the source."
+}
+```
+
+Zero is a first-class answer, not an empty one. `completeHarvestRetainerBalance`
+writes **no ledger entry** for it — `ledgerEntryId: balanceCents === 0 ? null :
+…` — because the schema refuses an entry of amount zero, and the completion is
+recorded either way, so the reconciliation gap clears. What is *not* optional is
+the other two fields: a `pending` row needs all three of `balance_cents`,
+`occurred_on` and `notes`, and a row with some but not all is rejected as
+incomplete.
+
+The twelve invoices that built this retainer are #713 (2015-07-02) through #750
+(2016-06-01), all TeamOne, all $2,000, all paid — $24,000 deposited. That is the
+deposit side only; the drawdowns exist nowhere outside the Harvest screen, which
+is the whole reason the balance has to be entered by hand.
 
 The retainer's project link and nominal size are not worksheet fields and are
 lost by the load. If a `$0.00`-sized, project-less retainer in the UI is not
