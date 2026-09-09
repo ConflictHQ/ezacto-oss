@@ -107,6 +107,12 @@ export type WorkerEnv = AppEnv & {
   /** Content-addressed attachment objects. Metadata remains in DB. */
   ATTACHMENTS?: R2Bucket
   API_CURSOR_SIGNING_KEY: string
+  /**
+   * Portal magic-link signing key. Absent means portal auth is off: the routes
+   * hand out sessions, so an install with no key must not serve them rather
+   * than serve them with a weak one.
+   */
+  MAGIC_LINK_SIGNING_KEY?: string
   /** Bound together with a provider implementation; absent deployments fail auth email closed. */
   EMAIL_QUEUE?: Queue<QueuedEmailJob>
   /** Optional Cloudflare Access provider; both values are required together. */

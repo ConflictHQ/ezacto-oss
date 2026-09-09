@@ -172,3 +172,11 @@ export {
   type PolicySubject,
   type TrackedPolicyResolver,
 } from './tracked-resource-repository.js'
+
+// Portal magic-link auth. On this subpath rather than the package index
+// because the index reaches modules that import node:fs and node:path, and a
+// worker bundle cannot resolve those -- the import that dragged them in failed
+// the build rather than the typecheck, which is the slower way to find out.
+export { createD1MagicLinkStore } from './magic-link-state.js'
+export { createD1ContactSessionStore } from './contact-sessions.js'
+export { createMagicLinkService } from './magic-link-service.js'

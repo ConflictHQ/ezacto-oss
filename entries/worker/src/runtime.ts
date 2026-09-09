@@ -25,7 +25,11 @@ import {
   DrizzleTrackedResourceRepository,
   getLatestBackupRuns,
   migrateD1,
+  createD1ContactSessionStore,
+  createD1MagicLinkStore,
+  createMagicLinkService,
 } from "@ezacto/db/d1";
+import { createPortalSessionService } from "@ezacto/api";
 import {
   createApiSessionService,
   createCloudflareAccessSessionResolver,
@@ -463,6 +467,14 @@ export const createRuntimeServices = async (
 ): Promise<RuntimeServices> => {
   const database = requireDatabase(env);
   const cursorSigningKey = parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY);
+  // Portal magic-link auth is opt-in on the presence of its key. An install
+  // that has not set one does not serve the routes at all, rather than serving
+  // them with a weak or absent secret -- the routes hand out sessions, so
+  // "configured badly" and "not configured" must not look the same.
+  const magicLinkSigningKey =
+    env.MAGIC_LINK_SIGNING_KEY === undefined || env.MAGIC_LINK_SIGNING_KEY === ""
+      ? undefined
+      : parseCursorSigningKey(env.MAGIC_LINK_SIGNING_KEY);
   await ensureRuntimeDatabaseReady(database);
   const drizzle = createD1Database(database);
   const timesheetLockPolicy = createTimesheetLockPolicyRepository(drizzle);
@@ -580,6 +592,25 @@ export const createRuntimeServices = async (
     authenticationSessions,
     emailLog,
     emailConfiguration,
+    ...(magicLinkSigningKey === undefined
+      ? {}
+      : {
+          portalAuth: {
+            service: createMagicLinkService({
+              database: {
+                all: async (query: { sql: string; params: readonly unknown[] }) =>
+                  (await database
+                    .prepare(query.sql)
+                    .bind(...query.params)
+                    .all()).results as never[],
+              },
+              store: createD1MagicLinkStore(database),
+              signingKey: magicLinkSigningKey,
+            }),
+            sessions: createPortalSessionService(createD1ContactSessionStore(database)),
+            sessionStore: createD1ContactSessionStore(database),
+          },
+        }),
     ...(emailProvider instanceof SesMailer
       ? { senderIdentityVerifier: createSesSenderIdentityVerifier(emailProvider) }
       : emailProvider instanceof MailgunMailer && mailFrom !== undefined
