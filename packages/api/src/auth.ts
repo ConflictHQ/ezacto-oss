@@ -72,6 +72,12 @@ export interface ApiSessionResolver {
 export interface ApiAuthentication {
   tokens?: ApiTokenService
   sessions?: ApiSessionResolver
+  /**
+   * Enrolment and recovery for a second factor. Optional, and its absence is a
+   * working install rather than a degraded one: an instance that has not turned
+   * two-factor on simply does not serve these routes.
+   */
+  twoFactor?: TwoFactorService
   /** Where credential events are recorded. Absent leaves them unrecorded. */
   activity?: ActivityRecorder
 }
@@ -436,5 +442,190 @@ export const installApiTokenRoutes = <Bindings extends object>(
     return context.json({ data: tokenData(revoked) }, 200, {
       'cache-control': 'no-store',
     })
+  })
+}
+
+/**
+ * The second factor as the HTTP layer sees it. Nothing here computes a TOTP
+ * code or touches a recovery code hash: the service does that, and keeping the
+ * boundary at an interface is what lets the worker and the container share
+ * these routes while each supplies its own storage.
+ *
+ * Every one of these routes is session-only. An API token is a long-lived
+ * bearer credential, and letting one enrol, confirm, or remove a second factor
+ * would make the token strictly stronger than the password it was issued
+ * behind — the opposite of what enrolling is for.
+ */
+export interface TwoFactorStatus {
+  enrolled: boolean
+  /** A seed has been issued but no code has proved it, so sign-in is unchanged. */
+  pendingConfirmation: boolean
+  recoveryCodesRemaining: number
+}
+
+export interface TwoFactorEnrolmentOffer {
+  secret: string
+  otpauthUri: string
+  /** Shown once, at enrolment. The service keeps only their hashes. */
+  recoveryCodes: readonly string[]
+}
+
+export interface TwoFactorService {
+  status(userId: number): Promise<TwoFactorStatus>
+  beginEnrolment(userId: number): Promise<TwoFactorEnrolmentOffer>
+  confirmEnrolment(
+    userId: number,
+    code: string,
+  ): Promise<'enabled' | 'rejected' | 'not_pending'>
+  /** `code` is a TOTP code or a recovery code; the service decides which. */
+  disable(
+    userId: number,
+    code: string,
+  ): Promise<'disabled' | 'rejected' | 'not_enrolled'>
+}
+
+const twoFactorStatusData = (status: TwoFactorStatus) => ({
+  enrolled: status.enrolled,
+  pending_confirmation: status.pendingConfirmation,
+  recovery_codes_remaining: status.recoveryCodesRemaining,
+})
+
+const presentedCode = async <Bindings extends object>(
+  context: Context<ApiContext<Bindings>>,
+): Promise<string> => {
+  const body = await readJsonBody<unknown>(context, { maxBytes: 4 * 1024 })
+  if (!isJsonObject(body)) {
+    throw validationError([
+      {
+        field: 'body',
+        code: 'invalid',
+        message: 'request body must be a JSON object',
+      },
+    ])
+  }
+  const fields: FieldError[] = Object.keys(body)
+    .filter((field) => field !== 'code')
+    .map((field) => ({
+      field,
+      code: 'unknown',
+      message: `${field} is not accepted`,
+    }))
+  // Length only. Which shapes are codes is the service's business, and
+  // answering "that is not a TOTP code" here would tell an attacker which of
+  // the two kinds of credential the endpoint just turned down.
+  if (
+    typeof body.code !== 'string' ||
+    body.code.length < 1 ||
+    body.code.length > 64
+  ) {
+    fields.push({
+      field: 'code',
+      code: 'required',
+      message: 'code must contain between 1 and 64 characters',
+    })
+  }
+  if (fields.length > 0) throw validationError(fields)
+  return body.code as string
+}
+
+const rejectedCode = (): never => {
+  throw new ApiError({
+    status: 401,
+    code: 'invalid_two_factor_code',
+    message: 'The verification code is invalid.',
+  })
+}
+
+export const installTwoFactorRoutes = <Bindings extends object>(
+  api: Hono<ApiContext<Bindings>>,
+  service: TwoFactorService,
+): void => {
+  api.get('/two-factor', async (context) => {
+    const principal = requireSessionPrincipal(context)
+    return context.json(
+      {
+        data: twoFactorStatusData(await service.status(principal.userId)),
+        links: { self: '/api/v1/two-factor' },
+      },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
+  api.post('/two-factor', async (context) => {
+    const principal = requireSessionPrincipal(context)
+    let offer: TwoFactorEnrolmentOffer
+    try {
+      offer = await service.beginEnrolment(principal.userId)
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.name === 'TwoFactorEnrolmentLockedError'
+      ) {
+        throw new ApiError({
+          status: 409,
+          code: 'two_factor_already_enabled',
+          message:
+            'Two-factor authentication is already enabled. Remove it before enrolling again.',
+        })
+      }
+      throw error
+    }
+    return context.json(
+      {
+        data: {
+          secret: offer.secret,
+          otpauth_uri: offer.otpauthUri,
+          recovery_codes: [...offer.recoveryCodes],
+        },
+        links: { self: '/api/v1/two-factor' },
+      },
+      201,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
+  api.post('/two-factor/confirm', async (context) => {
+    const principal = requireSessionPrincipal(context)
+    const code = await presentedCode(context)
+    const result = await service.confirmEnrolment(principal.userId, code)
+    if (result === 'rejected') rejectedCode()
+    if (result === 'not_pending') {
+      throw new ApiError({
+        status: 409,
+        code: 'no_pending_enrolment',
+        message: 'There is no two-factor enrolment waiting to be confirmed.',
+      })
+    }
+    return context.json(
+      {
+        data: twoFactorStatusData(await service.status(principal.userId)),
+        links: { self: '/api/v1/two-factor' },
+      },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
+  api.delete('/two-factor', async (context) => {
+    const principal = requireSessionPrincipal(context)
+    const code = await presentedCode(context)
+    const result = await service.disable(principal.userId, code)
+    if (result === 'rejected') rejectedCode()
+    if (result === 'not_enrolled') {
+      throw new ApiError({
+        status: 409,
+        code: 'two_factor_not_enabled',
+        message: 'Two-factor authentication is not enabled for this user.',
+      })
+    }
+    return context.json(
+      {
+        data: twoFactorStatusData(await service.status(principal.userId)),
+        links: { self: '/api/v1/two-factor' },
+      },
+      200,
+      { 'cache-control': 'no-store' },
+    )
   })
 }
