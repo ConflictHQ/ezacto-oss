@@ -211,7 +211,10 @@ const assertSourceRecurringAmountConfig: (
           'taxed2',
           'harvest_project_id',
         ],
-        [],
+        // Optional since migration 0041: the date a line stops appearing on.
+        // The receipt records what the operator wrote, so a stop date they set
+        // has to survive here too or the apply refuses the row it just built.
+        ['through'],
         `sourceAmountConfig.line_items[${index}]`,
       )
       return {
@@ -222,6 +225,9 @@ const assertSourceRecurringAmountConfig: (
         taxed: line.taxed,
         taxed2: line.taxed2,
         project_id: line.harvest_project_id,
+        ...(line.through === undefined || line.through === null
+          ? {}
+          : { through: line.through }),
       }
     })
     assertRecurringAmountConfig({

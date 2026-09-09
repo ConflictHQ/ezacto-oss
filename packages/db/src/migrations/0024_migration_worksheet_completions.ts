@@ -108,7 +108,14 @@ const recurringSourceMappingValid = (inputJson: string, clientId: string) => `(
   )
 )`
 
-const recurringFixedShapeValid = (inputJson: string) => `
+/**
+ * Parameterised so a later migration can widen the permitted line keys without
+ * transcribing this SQL. 0041 added an optional `through` to a stored config;
+ * these worksheet-receipt triggers pin the same shape and had to learn it too.
+ */
+export const recurringFixedShapeValidWith =
+  (optionalLineKeys: readonly string[] = []) =>
+  (inputJson: string) => `
   ${exactObjectKeys(`json_extract(${inputJson}, '$.source_amount_config')`, fixedConfigKeys)}
   AND ${exactObjectKeys(`json_extract(${inputJson}, '$.amount_config')`, fixedConfigKeys)}
   AND json_extract(${inputJson}, '$.source_amount_config.schema_version') = 1
@@ -127,12 +134,15 @@ const recurringFixedShapeValid = (inputJson: string) => `
       ON resolved_line.key = source_line.key
     WHERE NOT coalesce((
       resolved_line.key IS NOT NULL
-      AND ${exactObjectKeys('source_line.value', sourceFixedLineKeys)}
-      AND ${exactObjectKeys('resolved_line.value', resolvedFixedLineKeys)}
+      AND ${exactObjectKeys('source_line.value', sourceFixedLineKeys, optionalLineKeys)}
+      AND ${exactObjectKeys('resolved_line.value', resolvedFixedLineKeys, optionalLineKeys)}
     ), 0)
   )`
 
-const recurringFixedScalarsValid = (inputJson: string) => `NOT EXISTS (
+/** Same reason as the shape builder: a later migration adds its own clauses. */
+export const recurringFixedScalarsValidWith =
+  (extraLineClauses = '') =>
+  (inputJson: string) => `NOT EXISTS (
   SELECT 1
   FROM json_each(${inputJson}, '$.source_amount_config.line_items') source_line
   LEFT JOIN json_each(${inputJson}, '$.amount_config.line_items') resolved_line
@@ -160,9 +170,12 @@ const recurringFixedScalarsValid = (inputJson: string) => `NOT EXISTS (
       AND json_extract(source_line.value, '$.taxed')
         IS json_extract(resolved_line.value, '$.taxed')
       AND json_extract(source_line.value, '$.taxed2')
-        IS json_extract(resolved_line.value, '$.taxed2')
+        IS json_extract(resolved_line.value, '$.taxed2')${extraLineClauses}
     ), 0)
   )`
+
+const recurringFixedShapeValid = recurringFixedShapeValidWith()
+const recurringFixedScalarsValid = recurringFixedScalarsValidWith()
 
 const recurringFixedProjectsValid = (inputJson: string, clientId: string) => `NOT EXISTS (
   SELECT 1

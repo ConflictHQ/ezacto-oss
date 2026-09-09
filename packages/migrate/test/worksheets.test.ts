@@ -316,6 +316,110 @@ describe('migration worksheets', () => {
     }
   })
 
+  it('[integration] carries a fixed line\'s through date and a credit priced negative', async () => {
+    // Migration 0041 gave a line a date to stop on and the engine honours it,
+    // but no worksheet could set one -- so a credit that runs for four months
+    // could only be transcribed as one that runs forever, which over-credits
+    // the client from the fifth issuance on.
+    //
+    // The negative price is the other half: Harvest encodes a credit as a
+    // negative quantity, this schema keeps quantity positive, and the two are
+    // arithmetically identical. Nothing exercised a negative unit price here.
+    const generated = await generateRecurringInvoiceWorksheet({ snapshotDir, databasePath })
+    const base = completeRecurring(generated)
+    const worksheet = {
+      ...base,
+      rows: base.rows.map((row) => ({
+        ...row,
+        amount_config: {
+          schema_version: 1 as const,
+          type: 'fixed_lines' as const,
+          line_items: [
+            {
+              kind: 'Service',
+              description: 'Blended monthly team fee',
+              quantity: 1,
+              unit_price_cents: 99_935,
+              taxed: false,
+              taxed2: false,
+              harvest_project_id: 14_308_069,
+            },
+            {
+              kind: 'Service',
+              description: 'CREDIT 1 of 4',
+              quantity: 1,
+              unit_price_cents: -6_250,
+              taxed: false,
+              taxed2: false,
+              harvest_project_id: 14_308_069,
+              through: '2026-11-30',
+            },
+          ],
+        },
+      })),
+    }
+    const inputPath = join(dir, 'recurring-through.json')
+    await writeFile(inputPath, jsonBytes(worksheet))
+
+    await expect(
+      applyRecurringInvoiceWorksheet({ snapshotDir, databasePath, inputPath }),
+    ).resolves.toMatchObject({ total: 1, completed: 1, pending: 0 })
+
+    const sqlite = new BetterSqlite3(databasePath, { readonly: true })
+    try {
+      const stored = sqlite
+        .prepare(
+          `SELECT amount_config AS amountConfig FROM recurring_invoices
+           WHERE harvest_id = 99001`,
+        )
+        .get() as { amountConfig: string }
+      const lines = (JSON.parse(stored.amountConfig) as {
+        line_items: { unit_price_cents: number; through?: string }[]
+      }).line_items
+      expect(lines[0]?.unit_price_cents).toBe(99_935)
+      // The open-ended line carries no `through` at all rather than an explicit
+      // null, so a line without a stop date serialises as it always did.
+      expect(lines[0]).not.toHaveProperty('through')
+      expect(lines[1]).toMatchObject({ unit_price_cents: -6_250, through: '2026-11-30' })
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it('[unit] tells an operator how to re-encode a Harvest credit line', async () => {
+    // The apply is all-or-nothing, so a message naming only the violated bound
+    // is the difference between a five-minute fix and an abandoned worksheet.
+    const generated = await generateRecurringInvoiceWorksheet({ snapshotDir, databasePath })
+    const base = completeRecurring(generated)
+    const worksheet = {
+      ...base,
+      rows: base.rows.map((row) => ({
+        ...row,
+        amount_config: {
+          schema_version: 1 as const,
+          type: 'fixed_lines' as const,
+          line_items: [
+            {
+              kind: 'Service',
+              description: 'CREDIT as Harvest encodes it',
+              quantity: -1,
+              unit_price_cents: 6_250,
+              taxed: false,
+              taxed2: false,
+              harvest_project_id: 14_308_069,
+            },
+          ],
+        },
+      })),
+    }
+    const inputPath = join(dir, 'recurring-negative-quantity.json')
+    await writeFile(inputPath, jsonBytes(worksheet))
+
+    await expect(
+      applyRecurringInvoiceWorksheet({ snapshotDir, databasePath, inputPath }),
+    ).rejects.toThrow(/negative unit_price_cents/u)
+  })
+
   it('[integration] resolves line-items-import Harvest project ids and retains both identities', async () => {
     const generated = await generateRecurringInvoiceWorksheet({ snapshotDir, databasePath })
     const worksheet: RecurringInvoiceWorksheet = {
