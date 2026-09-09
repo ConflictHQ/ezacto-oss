@@ -11,13 +11,14 @@ import {
   totpStep,
   type StoredArgon2idPassword,
 } from '@ezacto/core'
+import type * as Core from '@ezacto/core'
 
 // The decoy burn is only observable in what the verifier was handed, so the
 // real one is wrapped rather than replaced -- every other test still runs the
 // genuine argon2 comparison.
 const verifications: StoredArgon2idPassword[] = []
 vi.mock('@ezacto/core', async (importOriginal) => {
-  const core = await importOriginal<typeof import('@ezacto/core')>()
+  const core = await importOriginal<typeof Core>()
   return {
     ...core,
     verifyRecoveryCode: async (code: string, stored: StoredArgon2idPassword) => {

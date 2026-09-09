@@ -1850,6 +1850,32 @@ export type SsoDomainInput = {
   "domain": string;
 };
 
+export type TwoFactorStatus = {
+  "enrolled": boolean;
+  "pending_confirmation": boolean;
+  "recovery_codes_remaining": number;
+};
+
+export type TwoFactorStatusEnvelope = {
+  "data": TwoFactorStatus;
+  "links": Links;
+};
+
+export type TwoFactorEnrolment = {
+  "secret": string;
+  "otpauth_uri": string;
+  "recovery_codes": Array<string>;
+};
+
+export type TwoFactorEnrolmentEnvelope = {
+  "data": TwoFactorEnrolment;
+  "links": Links;
+};
+
+export type TwoFactorCodeInput = {
+  "code": string;
+};
+
 export type UserEmailInput = {
   "email": string;
 };
@@ -3605,6 +3631,44 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<SsoDomainCheckEnvelope>("POST", "/api/v1/settings/sso-domains/:id/verify".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getTwoFactorStatus(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TwoFactorStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TwoFactorStatusEnvelope>("GET", "/api/v1/two-factor", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async beginTwoFactorEnrolment(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TwoFactorEnrolmentEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TwoFactorEnrolmentEnvelope>("POST", "/api/v1/two-factor", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async confirmTwoFactorEnrolment(args: { body: TwoFactorCodeInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TwoFactorStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TwoFactorStatusEnvelope>("POST", "/api/v1/two-factor/confirm", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async disableTwoFactor(args: { body: TwoFactorCodeInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TwoFactorStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TwoFactorStatusEnvelope>("DELETE", "/api/v1/two-factor", {
+      body: args.body,
       signal: args.signal,
       headers,
     });
