@@ -24,6 +24,16 @@ export interface RecurringFixedLineV1 {
   taxed2: boolean
   /** Real project id; when present it must belong to the definition's client. */
   project_id: number | null
+  /**
+   * The last issue date this line appears on, or null to repeat indefinitely.
+   *
+   * A fixed definition otherwise repeats every line forever, which is wrong for
+   * any line that is inherently finite -- a discount running three months, a
+   * credit being worked off. Expressed as the last date it appears rather than
+   * the first it does not, because that is how the agreements read: "through
+   * November", not "stops on the first of December".
+   */
+  through?: string | null
 }
 
 export interface RecurringFixedLinesConfigV1 {
@@ -136,7 +146,7 @@ const assertFixedLine = (value: unknown, index: number): void => {
   assertExactKeys(
     value,
     ['kind', 'description', 'quantity', 'unit_price_cents', 'taxed', 'taxed2', 'project_id'],
-    [],
+    ['through'],
     field,
   )
   if (typeof value.kind !== 'string' || isWhitespaceOnly(value.kind)) {
@@ -162,6 +172,17 @@ const assertFixedLine = (value: unknown, index: number): void => {
   }
   if (typeof value.taxed !== 'boolean' || typeof value.taxed2 !== 'boolean') {
     throw new TypeError(`${field} tax flags must be booleans`)
+  }
+  // A shape check is not enough: '2026-02-31' is the right shape and not a day,
+  // and a line that expires on a date the calendar does not have never expires.
+  if (value.through !== null && value.through !== undefined) {
+    if (
+      typeof value.through !== 'string' ||
+      !/^\d{4}-\d{2}-\d{2}$/u.test(value.through) ||
+      new Date(`${value.through}T00:00:00.000Z`).toISOString().slice(0, 10) !== value.through
+    ) {
+      throw new RangeError(`${field}.through must be a calendar date or null`)
+    }
   }
   if (value.project_id !== null) {
     assertPositiveSafeInteger(value.project_id as number, `${field}.project_id`)

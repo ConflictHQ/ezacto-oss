@@ -22,6 +22,7 @@ import {
 import { createClientDirectoryController } from '../clients/browser.js'
 import { createProjectDirectoryController } from '../projects/browser.js'
 import { createActivityController } from '../activity/browser.js'
+import { createCalendarController } from '../calendar/browser.js'
 import { createDashboardController } from '../dashboard/browser.js'
 import { createReportsController } from '../reports/browser.js'
 import { canReadFinancialReports } from '../reports/model.js'
@@ -1039,6 +1040,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const projectDirectory = createProjectDirectoryController(api)
   const taskAdmin = createTaskAdminController(api)
   const teamDirectory = createTeamDirectoryController(api)
+  const calendar = createCalendarController()
   const dashboard = createDashboardController(api)
   // Reads only when the api offers the endpoint; an install without it still
   // serves the page and simply says it cannot load.
@@ -1097,7 +1099,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const lockPolicyResult = required<HTMLElement>('[data-lock-policy-result]')
   const timesheetLockList = required<HTMLElement>('[data-timesheet-lock-list]')
   const requestedView = new URL(globalThis.location.href).searchParams.get('view')
-  document.documentElement.dataset.timeView = requestedView === 'day' ? 'day' : 'week'
+  document.documentElement.dataset.timeView =
+    requestedView === 'day' || requestedView === 'calendar' ? requestedView : 'week'
   // Scoped to Time's own strip: this derives the current tab from the ?view=
   // parameter, which no other section navigates by. Left on '.tabstrip a' it
   // would strip aria-current off every tab in every other strip on load.
@@ -1946,6 +1949,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       openEntry,
       ...(api.restartTimeEntry === undefined ? {} : { restart: restartEntry }),
     }
+    // The same data the grid draws, laid out on whichever axis the
+    // organization's tracking mode makes true.
+    calendar.render(grid.dates, snapshot.entries, snapshot.timeEntrySettings.time_entry_mode)
     renderDayTotals(grid, selectedDay, selectDay)
     renderDesktopGrid(grid, handlers)
     renderPhoneDay(grid, selectedDay, handlers)

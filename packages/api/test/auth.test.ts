@@ -7,6 +7,12 @@ import {
   type ApiTokenService,
   type IssuedApiToken,
 } from '../src/index.js'
+// Not yet re-exported from the package index: adding it there is a change to
+// src/index.ts, which this lane does not own.
+import {
+  installTwoFactorRoutes,
+  type TwoFactorService,
+} from '../src/auth.js'
 
 const bearer =
   'ezacto_abcdefghijklmnop_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi1234567'
@@ -570,6 +576,262 @@ describe('API token lifecycle routes', () => {
     expect(response.status).toBe(403)
     expect(await response.json()).toMatchObject({
       error: { code: 'profile_forbidden' },
+    })
+  })
+})
+
+const enrolmentSecret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'
+const acceptedCode = '050471'
+
+class LockedEnrolment extends Error {
+  constructor() {
+    super('two-factor authentication is already enabled for this user')
+    this.name = 'TwoFactorEnrolmentLockedError'
+  }
+}
+
+/**
+ * Stands in for the storage-backed service. It answers the four verbs the
+ * routes call and nothing else, so a test that passes here is a test of the
+ * HTTP contract rather than of Argon2id.
+ */
+const twoFactorService = (): TwoFactorService => {
+  let state: 'none' | 'pending' | 'enabled' = 'none'
+  let remaining = 0
+  return {
+    status: async (userId) => {
+      expect(userId).toBe(42)
+      return {
+        enrolled: state === 'enabled',
+        pendingConfirmation: state === 'pending',
+        recoveryCodesRemaining: remaining,
+      }
+    },
+    beginEnrolment: async () => {
+      if (state === 'enabled') throw new LockedEnrolment()
+      state = 'pending'
+      remaining = 2
+      return {
+        secret: enrolmentSecret,
+        otpauthUri: `otpauth://totp/ezacto:owner?secret=${enrolmentSecret}`,
+        recoveryCodes: ['AAAAA-BBBBB-CCCCC-DDDDD', 'EEEEE-FFFFF-GGGGG-HHHHH'],
+      }
+    },
+    confirmEnrolment: async (_userId, code) => {
+      if (state !== 'pending') return 'not_pending'
+      if (code !== acceptedCode) return 'rejected'
+      state = 'enabled'
+      return 'enabled'
+    },
+    disable: async (_userId, code) => {
+      if (state !== 'enabled') return 'not_enrolled'
+      if (code !== acceptedCode) return 'rejected'
+      state = 'none'
+      remaining = 0
+      return 'disabled'
+    },
+  }
+}
+
+const createTwoFactorApp = (service = twoFactorService()) =>
+  createApiApp({
+    authentication: { tokens: tokenService(), sessions: sessionResolver },
+    installApi: (api) => installTwoFactorRoutes(api, service),
+  })
+
+const asSession = (method: string, body?: unknown) => ({
+  method,
+  headers: {
+    cookie: 'session=user',
+    origin: 'http://localhost',
+    'content-type': 'application/json',
+  },
+  ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+})
+
+describe('two-factor routes', () => {
+  it('[api] serves the routes off the authentication option, and not without it', async () => {
+    // The routes existed and nothing installed them, which is how this branch
+    // arrived: a feature that is complete, tested in isolation, and unreachable.
+    // So the wiring gets its own test rather than being implied by the tests
+    // that mount the routes by hand.
+    const wired = createApiApp({
+      authentication: {
+        tokens: tokenService(),
+        sessions: sessionResolver,
+        twoFactor: twoFactorService(),
+      },
+    })
+    const served = await wired.request('/api/v1/two-factor', {
+      headers: { cookie: 'session=user' },
+    })
+    expect(served.status).toBe(200)
+
+    // And an install that has not turned it on is a working install, not a
+    // broken one: the routes are simply absent.
+    const bare = createApiApp({
+      authentication: { tokens: tokenService(), sessions: sessionResolver },
+    })
+    const absent = await bare.request('/api/v1/two-factor', {
+      headers: { cookie: 'session=user' },
+    })
+    expect(absent.status).toBe(404)
+  })
+
+  it('[api] enrols, stays pending, and only a code turns it on', async () => {
+    const app = createTwoFactorApp()
+    const before = await app.request('/api/v1/two-factor', {
+      headers: { cookie: 'session=user' },
+    })
+    expect(await before.json()).toMatchObject({
+      data: {
+        enrolled: false,
+        pending_confirmation: false,
+        recovery_codes_remaining: 0,
+      },
+    })
+
+    const enrolled = await app.request('/api/v1/two-factor', asSession('POST'))
+    expect(enrolled.status).toBe(201)
+    // The seed and the codes are shown once and must never reach a cache.
+    expect(enrolled.headers.get('cache-control')).toBe('no-store')
+    expect(await enrolled.json()).toMatchObject({
+      data: {
+        secret: enrolmentSecret,
+        otpauth_uri: expect.stringContaining('otpauth://totp/'),
+        recovery_codes: [
+          'AAAAA-BBBBB-CCCCC-DDDDD',
+          'EEEEE-FFFFF-GGGGG-HHHHH',
+        ],
+      },
+    })
+
+    const pending = await app.request('/api/v1/two-factor', {
+      headers: { cookie: 'session=user' },
+    })
+    expect(await pending.json()).toMatchObject({
+      data: { enrolled: false, pending_confirmation: true },
+    })
+
+    const confirmed = await app.request(
+      '/api/v1/two-factor/confirm',
+      asSession('POST', { code: acceptedCode }),
+    )
+    expect(confirmed.status).toBe(200)
+    expect(await confirmed.json()).toMatchObject({
+      data: {
+        enrolled: true,
+        pending_confirmation: false,
+        recovery_codes_remaining: 2,
+      },
+    })
+  })
+
+  it('[api] answers a wrong code with 401 and leaves the enrolment pending', async () => {
+    const app = createTwoFactorApp()
+    await app.request('/api/v1/two-factor', asSession('POST'))
+    const rejected = await app.request(
+      '/api/v1/two-factor/confirm',
+      asSession('POST', { code: '000000' }),
+    )
+    expect(rejected.status).toBe(401)
+    expect(await rejected.json()).toMatchObject({
+      error: { code: 'invalid_two_factor_code' },
+    })
+    const status = await app.request('/api/v1/two-factor', {
+      headers: { cookie: 'session=user' },
+    })
+    expect(await status.json()).toMatchObject({
+      data: { enrolled: false, pending_confirmation: true },
+    })
+  })
+
+  it('[e2e:first-run] removal needs a factor, and clears the way to re-enrol', async () => {
+    const app = createTwoFactorApp()
+    await app.request('/api/v1/two-factor', asSession('POST'))
+    await app.request(
+      '/api/v1/two-factor/confirm',
+      asSession('POST', { code: acceptedCode }),
+    )
+
+    const locked = await app.request('/api/v1/two-factor', asSession('POST'))
+    expect(locked.status).toBe(409)
+    expect(await locked.json()).toMatchObject({
+      error: { code: 'two_factor_already_enabled' },
+    })
+
+    const wrong = await app.request(
+      '/api/v1/two-factor',
+      asSession('DELETE', { code: '000000' }),
+    )
+    expect(wrong.status).toBe(401)
+
+    const removed = await app.request(
+      '/api/v1/two-factor',
+      asSession('DELETE', { code: acceptedCode }),
+    )
+    expect(removed.status).toBe(200)
+    expect(await removed.json()).toMatchObject({
+      data: { enrolled: false, recovery_codes_remaining: 0 },
+    })
+    expect(
+      (await app.request('/api/v1/two-factor', asSession('POST'))).status,
+    ).toBe(201)
+  })
+
+  it('[api] refuses to confirm when nothing is pending', async () => {
+    const response = await createTwoFactorApp().request(
+      '/api/v1/two-factor/confirm',
+      asSession('POST', { code: acceptedCode }),
+    )
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'no_pending_enrolment' },
+    })
+  })
+
+  it('[security] refuses to manage the second factor with an API token', async () => {
+    const app = createTwoFactorApp()
+    for (const [path, method] of [
+      ['/api/v1/two-factor', 'GET'],
+      ['/api/v1/two-factor', 'POST'],
+      ['/api/v1/two-factor/confirm', 'POST'],
+      ['/api/v1/two-factor', 'DELETE'],
+    ] as const) {
+      const response = await app.request(path, {
+        method,
+        headers: {
+          authorization: `Bearer ${bearer}`,
+          'content-type': 'application/json',
+        },
+        ...(method === 'GET'
+          ? {}
+          : { body: JSON.stringify({ code: acceptedCode }) }),
+      })
+      expect(response.status, `${method} ${path}`).toBe(403)
+      expect(await response.json()).toMatchObject({
+        error: { code: 'session_required' },
+      })
+    }
+  })
+
+  it('[api] takes a code and nothing else', async () => {
+    const app = createTwoFactorApp()
+    await app.request('/api/v1/two-factor', asSession('POST'))
+    for (const body of [{}, { code: '' }, { code: 1 }, ['050471']]) {
+      const response = await app.request(
+        '/api/v1/two-factor/confirm',
+        asSession('POST', body),
+      )
+      expect(response.status, JSON.stringify(body)).toBe(422)
+    }
+    const extra = await app.request(
+      '/api/v1/two-factor/confirm',
+      asSession('POST', { code: acceptedCode, user_id: 1 }),
+    )
+    expect(extra.status).toBe(422)
+    expect(await extra.json()).toMatchObject({
+      error: { fields: [{ field: 'user_id', code: 'unknown' }] },
     })
   })
 })

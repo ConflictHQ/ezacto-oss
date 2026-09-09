@@ -135,6 +135,10 @@ const renderTabStrip = (options: AppShellOptions): string => {
     return (
       `<nav class="tabstrip view-switch" aria-label="Time views" data-time-views${view === 'time' ? '' : ' hidden'}>` +
       `<a href="/" aria-current="page">Week</a><a href="/?view=day">Day</a>` +
+      // Restored now that it leads somewhere. It was deleted in issue 296's first
+      // stage precisely because a tab that does nothing is worse than a missing
+      // feature, and putting it back without the panel would repeat that.
+      `<a href="/?view=calendar">Calendar</a>` +
       `</nav>`
     )
   }
@@ -368,6 +372,10 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
           <tfoot data-week-grid-totals></tfoot>
         </table>
       </div>
+      <section class="calendar-week" data-calendar-week aria-label="Calendar">
+        <p class="form-result" data-calendar-status role="status" aria-live="polite">Loading calendar…</p>
+        <div data-calendar-grid></div>
+      </section>
       <div class="day-list" data-day-list data-view="phone">
         <header class="day-switcher">
           <button type="button" data-day-previous data-auth-action disabled aria-label="Previous day">${iconMarkup('chevron', { direction: 'left' })}</button>
