@@ -4764,6 +4764,238 @@ dialog textarea {
   max-width: 64ch;
 }
 
+/* Recurring. It carries the retainer pane's furniture — the two sit under the
+   same strip and a person moves between them without a reload, so a second set
+   of spacing rules would read as two screens borrowed from two products. The
+   only thing of its own is the due pill, which has to be legible without the
+   colour: the word is 'Past due', not a red dot. */
+.recurring-toolbar,
+.recurring-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.recurring-toolbar {
+  margin: 24px 0 12px;
+}
+.recurring-toolbar > *,
+.recurring-actions > *,
+.recurring-detail-heading > * {
+  min-width: 0;
+}
+.recurring-toolbar input[type='search'] {
+  flex: 1 1 320px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font: inherit;
+}
+.recurring-detail-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.recurring-detail-back {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+.recurring-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  gap: 12px 24px;
+  margin: 24px 0 0;
+  padding: 24px 0;
+  border-top: 1px solid var(--ez-border);
+}
+.recurring-facts div {
+  display: grid;
+  gap: 4px;
+}
+.recurring-facts dt {
+  color: var(--ez-muted);
+  font-size: 12px;
+}
+.recurring-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.recurring-issue,
+.recurring-config,
+.recurring-templates {
+  margin-top: 24px;
+}
+.recurring-issue .hint,
+.recurring-config .hint {
+  max-width: 64ch;
+}
+.recurring-issue .primary-action {
+  margin-top: 12px;
+}
+/* Three tones, because the three answers are three different things. Issued is
+   done; not-due and already-issued are the definition working as instructed and
+   must not read as failures; only the last is an error. Each is carried by the
+   sentence as well as the colour. */
+[data-recurring-issue-result][data-outcome='issued'] {
+  color: var(--ez-ink);
+}
+[data-recurring-issue-result][data-outcome='not_due'],
+[data-recurring-issue-result][data-outcome='already_generated'] {
+  color: var(--ez-muted);
+}
+[data-recurring-issue-result][data-outcome='error'],
+[data-recurring-issue-result][data-outcome='unavailable'] {
+  color: var(--ez-red);
+}
+.recurring-issued-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+/* Past due is an invitation, not an alarm: it is the row you came to act on.
+   So it is marked by the live accent the timer uses rather than by an error
+   colour, and the word carries the meaning either way. */
+.invoice-state[data-recurring-due='overdue'] {
+  border-color: var(--ez-live);
+  background: var(--ez-orange-tint);
+}
+.recurring-confirm-dialog::backdrop {
+  background: color-mix(in srgb, var(--ez-ink) 45%, transparent);
+}
+.recurring-confirm-dialog form {
+  display: grid;
+  gap: 16px;
+  min-width: min(420px, 90vw);
+}
+.recurring-confirm-dialog header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.recurring-confirm-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.recurring-confirm-dialog button {
+  min-height: 44px;
+  padding: 8px 16px;
+}
+
+/* Invoice configuration. Two sections on one page, because they answer one
+   question between them — what a client sees when an invoice arrives — and an
+   operator checking the address is usually about to check the wording. */
+.email-senders,
+.email-templates {
+  margin-top: 32px;
+}
+.email-senders .hint,
+.email-templates .hint {
+  max-width: 72ch;
+}
+.email-config-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+.email-config-actions > * {
+  min-width: 0;
+}
+.email-config-actions button {
+  min-height: 44px;
+  padding: 8px 16px;
+}
+/* The one thing this screen can say that a bounce cannot: mail is about to go
+   out as an address the provider will refuse. It is lifted out of the table
+   because it is about the default, and the default is the one in use. */
+.email-sender-warning {
+  padding: 12px 16px;
+  border: 1px solid var(--ez-red);
+  border-radius: var(--ez-radius);
+  color: var(--ez-red);
+}
+/* Verified takes no colour. It is the state every sender is supposed to be in,
+   and marking the ordinary case is what leaves an operator scanning for which
+   green means which. Only the two that need attention are marked. */
+.invoice-state[data-sender-evidence='pending'] {
+  border-color: var(--ez-amber);
+  background: var(--ez-amber-bg);
+}
+.invoice-state[data-sender-evidence='failed'],
+.invoice-state[data-sender-evidence='unknown'] {
+  border-color: var(--ez-red);
+  color: var(--ez-red);
+}
+.email-template-editor {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--ez-border);
+}
+.email-template-editor-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.email-template-close {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+.email-template-editor form {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+.email-template-editor label {
+  display: grid;
+  gap: 6px;
+}
+.email-template-editor input,
+.email-template-editor textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font: inherit;
+}
+.email-template-editor textarea {
+  font: 13px/1.6 var(--ez-font-mono), monospace;
+  resize: vertical;
+}
+/* A token this template has no variable for. Not an error yet — it is a draft —
+   so it is a warning in the amber the rest of the shell uses for the same. */
+.email-template-unknown {
+  padding: 8px 12px;
+  border: 1px solid var(--ez-amber);
+  border-radius: var(--ez-radius);
+  background: var(--ez-amber-bg);
+}
+[data-template-result][data-outcome='saved'] {
+  color: var(--ez-ink);
+}
+[data-template-result][data-outcome='stale'] {
+  color: var(--ez-amber);
+}
+[data-template-result][data-outcome='invalid'],
+[data-template-result][data-outcome='error'] {
+  color: var(--ez-red);
+}
+.email-template-variables,
+.email-template-history {
+  margin-top: 24px;
+}
+
 /* The calendar. Height is minutes: a two-hour block is twice a one-hour block
    in either mode, and only where the column starts differs between them. */
 .calendar-table {

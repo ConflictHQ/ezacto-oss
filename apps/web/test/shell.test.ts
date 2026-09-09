@@ -295,7 +295,12 @@ describe('S-1 through S-5 application shell', () => {
     )
     expect(stripOf(recurring).match(/aria-current/gu)).toHaveLength(1)
     expect(recurring).toContain('data-invoice-recurring-page>')
-    expect(recurring).toContain('Recurring invoices are not built yet')
+    // The pane no longer admits it is empty: it is the list, the detail and the
+    // issue action the controller fills in, and all three are in the document.
+    expect(recurring).not.toContain('Recurring invoices are not built yet')
+    expect(recurring).toContain('data-recurring-list-view')
+    expect(recurring).toContain('data-recurring-detail-view hidden')
+    expect(recurring).toContain('data-recurring-issue')
     expect(recurring).toContain('data-invoice-retainers-page hidden>')
     expect(recurring).toContain('data-invoice-list-page hidden>')
 
@@ -322,7 +327,12 @@ describe('S-1 through S-5 application shell', () => {
       tabs: invoiceTabs('invoice-configure'),
     })
     expect(configure).toContain('data-invoice-configure-page>')
-    expect(configure).toContain('Invoice configuration is not built yet')
+    // The last placeholder is gone: the pane is the sender table and the
+    // template editor the controller fills in, and both are in the document.
+    expect(configure).not.toContain('Invoice configuration is not built yet')
+    expect(configure).toContain('data-sender-list')
+    expect(configure).toContain('data-template-editor hidden')
+    expect(configure).toContain('data-template-form')
   })
 
   it('[unit] draws the shell marks as inline icons rather than as glyphs', () => {

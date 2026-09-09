@@ -38,6 +38,8 @@ import type { InvoicePaymentApi } from '../invoices/model.js'
 import type { TaskAdminApi } from '../tasks/model.js'
 import type { TeamDirectoryApi } from '../team/model.js'
 import type { CompanySettingsApi } from '../module-settings/model.js'
+import type { EmailConfigurationApi } from '../email-config/model.js'
+import type { RecurringWorkspaceApi } from '../recurring/model.js'
 import type { RetainerWorkspaceApi } from '../retainers/model.js'
 
 interface CursorPage<T> {
@@ -62,6 +64,8 @@ export interface ShellApi
     Partial<ReportWorkspaceApi>,
     Partial<ExpenseWorkflowApi>,
     Partial<ExpenseCategoryDirectoryApi>,
+    Partial<EmailConfigurationApi>,
+    Partial<RecurringWorkspaceApi>,
     Partial<RetainerWorkspaceApi>,
     Partial<InvoicePaymentApi>,
     Partial<TaskAdminApi>,
@@ -1197,6 +1201,88 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...(states === undefined || states.length === 0
           ? {}
           : { state: states.join(',') }),
+      },
+      ...withSignal(signal),
+    }),
+  // `listSenderIdentities` is already supplied above, for the company-settings
+  // email-health panel. One adapter, two screens.
+  setDefaultSenderIdentity: async (id, expectedVersion, idempotencyKey, signal) =>
+    (
+      await client.setDefaultSenderIdentity({
+        id,
+        'Idempotency-Key': idempotencyKey,
+        body: { expected_version: expectedVersion },
+        ...withSignal(signal),
+      })
+    ).data,
+  archiveSenderIdentity: async (id, expectedVersion, idempotencyKey, signal) =>
+    (
+      await client.archiveSenderIdentity({
+        id,
+        'Idempotency-Key': idempotencyKey,
+        body: { expected_version: expectedVersion },
+        ...withSignal(signal),
+      })
+    ).data,
+  // The evidence carries its own version, separate from the identity's: a
+  // refresh is a claim about what the provider last said, not about the row.
+  refreshSenderIdentityEvidence: async (id, expectedEvidenceVersion, idempotencyKey, signal) =>
+    (
+      await client.refreshSenderIdentityEvidence({
+        id,
+        'Idempotency-Key': idempotencyKey,
+        body: { expected_evidence_version: expectedEvidenceVersion },
+        ...withSignal(signal),
+      })
+    ).data,
+  listEmailTemplates: async (signal) =>
+    (await client.listEmailTemplates(withSignal(signal))).data,
+  listEmailTemplateVersions: async (kind, signal) =>
+    (await client.listEmailTemplateVersions({ kind, ...withSignal(signal) })).data,
+  listEmailTemplateVariables: async (signal) =>
+    (await client.listEmailTemplateVariables(withSignal(signal))).data,
+  createEmailTemplateVersion: async (kind, idempotencyKey, body, signal) =>
+    (
+      await client.createEmailTemplateVersion({
+        kind,
+        'Idempotency-Key': idempotencyKey,
+        body,
+        ...withSignal(signal),
+      })
+    ).data,
+  listRecurringInvoices: (cursor, signal) =>
+    client.listRecurringInvoices({
+      query: {
+        per_page: 50,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  getRecurringInvoice: async (id, signal) =>
+    (await client.getRecurringInvoice({ id, ...withSignal(signal) })).data,
+  generateRecurringInvoice: async (id, idempotencyKey, signal) =>
+    (
+      await client.generateRecurringInvoice({
+        id,
+        'Idempotency-Key': idempotencyKey,
+        ...withSignal(signal),
+      })
+    ).data,
+  // Unfiltered for the same reason the retainer lists below are: a recurring
+  // definition outlives the archiving of the client it bills.
+  listRecurringClients: (cursor, signal) =>
+    client.listClients({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listRecurringProjects: (cursor, signal) =>
+    client.listProjects({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
       },
       ...withSignal(signal),
     }),
