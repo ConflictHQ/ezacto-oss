@@ -32,6 +32,14 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <div class="settings-table" data-settings-sender-identities hidden></div>
       <dl class="settings-facts" data-settings-email-reputation hidden></dl>
     </section>
+    <section class="settings-section" data-settings-section="backup" aria-labelledby="settings-backup-title">
+      <header><h2 id="settings-backup-title">Backups</h2>
+      <p>When this instance last exported itself, and whether the last attempt worked. A backup nobody looks at is a backup nobody knows is broken, which is the state it stays in until it is needed.</p></header>
+      <p class="form-result" data-settings-backup-status role="status" aria-live="polite">Loading backup status…</p>
+      <p class="form-result settings-backup-alarm" data-settings-backup-alarm role="status" aria-live="polite" hidden></p>
+      <dl class="settings-facts" data-settings-backup-facts hidden></dl>
+      <div class="settings-table" data-settings-backup-runs hidden></div>
+    </section>
     <section class="settings-section" data-settings-section="sso" aria-labelledby="settings-sso-title">
       <header><h2 id="settings-sso-title">SSO provisioning domains</h2>
       <p>Email domains this instance will create an account from on first single sign-on. A domain provisions nobody until its DNS challenge verifies, which is what proves this instance is entitled to the domain.</p></header>

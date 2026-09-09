@@ -4996,6 +4996,24 @@ dialog textarea {
   margin-top: 24px;
 }
 
+/* Backups. The alarm is the section's answer, not a row to be found in the
+   table beneath it — so it sits above the facts and takes the red the rest of
+   the shell uses for a thing that has actually gone wrong. */
+.settings-backup-alarm {
+  padding: 12px 16px;
+  border: 1px solid var(--ez-red);
+  border-radius: var(--ez-radius);
+  color: var(--ez-red);
+}
+.invoice-state[data-backup-status='failed'] {
+  border-color: var(--ez-red);
+  color: var(--ez-red);
+}
+.invoice-state[data-backup-status='running'] {
+  border-color: var(--ez-amber);
+  background: var(--ez-amber-bg);
+}
+
 /* Row density. The segmented pair the retainer status filter already uses --
    one control, one pressed state, no third paint to learn. */
 .settings-density {

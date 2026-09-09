@@ -953,6 +953,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.updateTimeEntryNoteSettings({ body: patch, ...withSignal(signal) })).data,
   getEmailHealth: async (signal) =>
     (await client.getEmailHealth(withSignal(signal))).data,
+  getBackupStatus: async (signal) =>
+    (await client.getBackupStatus(withSignal(signal))).data,
   listSenderIdentities: async (signal) =>
     (await client.listSenderIdentities(withSignal(signal))).data,
   listSsoDomains: async (signal) =>

@@ -261,6 +261,28 @@ export type SenderIdentityVersionInput = {
   "expected_version": number;
 };
 
+export type BackupRun = {
+  "id": number;
+  "status": "running" | "completed" | "failed";
+  "trigger": "nightly" | "manual";
+  "started_at": string;
+  "completed_at": string | null;
+  "r2_prefix": string | null;
+  "table_count": number | null;
+  "total_rows": number | null;
+  "error_message": string | null;
+};
+
+export type BackupStatusEnvelope = {
+  "data": {
+  "last_completed": BackupRun | null;
+  "last_failed": BackupRun | null;
+  "recent_runs": Array<BackupRun>;
+  "has_failure": boolean;
+};
+  "links": Links;
+};
+
 export type SenderEvidenceRefreshInput = {
   "expected_evidence_version": number;
 };
@@ -3628,6 +3650,15 @@ export class EzactoClient {
 
     return this.request<ModuleListEnvelope>("PATCH", "/api/v1/admin/modules/:module".replace(":module", encodeURIComponent(String(args["module"]))), {
       body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getBackupStatus(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<BackupStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BackupStatusEnvelope>("GET", "/api/v1/backup/status", {
       signal: args.signal,
       headers,
     });

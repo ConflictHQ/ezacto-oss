@@ -18,8 +18,10 @@
  * Answered by a deployment and absent from the OpenAPI document. A surface no
  * generated client can discover, which is a gap rather than a feature.
  *
- * The GitHub pair are sign-in redirects whose OIDC counterparts are documented;
- * backup status predates the guard.
+ * The GitHub pair are sign-in redirects whose OIDC counterparts are documented.
+ * Backup status used to be here and no longer is: it was documented when a
+ * screen was finally written against it, which is the direction this list is
+ * meant to move in.
  *
  * The three portal routes are browser-facing like the GitHub pair: a contact
  * follows a link and gets a session, and there is no generated-client call to
@@ -29,7 +31,6 @@
  * a magic-link key; without one the routes are not mounted at all.
  */
 export const UNDOCUMENTED_ROUTES: readonly string[] = [
-  'get /api/v1/backup/status',
   'get /auth/github',
   'get /auth/github/callback',
   'post /portal/magic-link',

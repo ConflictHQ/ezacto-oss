@@ -13831,6 +13831,61 @@
         }
       }
     },
+    "/api/v1/backup/status": {
+      "get": {
+        "operationId": "getBackupStatus",
+        "summary": "The last completed and last failed backup run, and recent history",
+        "tags": [
+          "backup"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupStatusEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/backup/status",
+        "x-ezacto-generate-client": true
+      }
+    },
     "/api/v1/settings/sso-domains": {
       "get": {
         "operationId": "listSsoProvisioningDomains",
@@ -16468,6 +16523,153 @@
           "expected_version": {
             "type": "integer",
             "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "BackupRun": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "trigger",
+          "started_at",
+          "completed_at",
+          "r2_prefix",
+          "table_count",
+          "total_rows",
+          "error_message"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "completed",
+              "failed"
+            ]
+          },
+          "trigger": {
+            "type": "string",
+            "enum": [
+              "nightly",
+              "manual"
+            ]
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "r2_prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "table_count": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "total_rows": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "BackupStatusEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "last_completed",
+              "last_failed",
+              "recent_runs",
+              "has_failure"
+            ],
+            "properties": {
+              "last_completed": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/BackupRun"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "last_failed": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/BackupRun"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "recent_runs": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/BackupRun"
+                }
+              },
+              "has_failure": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
           }
         },
         "additionalProperties": false
