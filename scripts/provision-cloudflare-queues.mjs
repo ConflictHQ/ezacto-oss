@@ -12,11 +12,36 @@ const record = (value, field) => {
   return value;
 };
 
+/**
+ * The prod block of `wrangler.jsonc` ships with placeholders that
+ * `render-wrangler-prod.mjs` substitutes at deploy time. Provisioning runs from
+ * a fresh checkout and does not render, so it reads those placeholders -- and
+ * every one of them is a legal Cloudflare resource name.
+ *
+ * Without this, the documented order (provision prod, then deploy) creates a
+ * queue called `replace-me-email-queue` and a bucket called
+ * `replace-me-r2-bucket`, succeeds, and leaves the deploy binding to names that
+ * do not exist. Refusing is the only safe answer: a resource created under a
+ * placeholder name is one somebody has to find and delete later, and the error
+ * that sends them looking arrives an hour after the cause.
+ */
+const assertRendered = (value, field) => {
+  if (value.includes("replace-me")) {
+    throw new TypeError(
+      `${field} is still the unrendered placeholder "${value}". The prod config ` +
+        "is rendered at deploy time, so provisioning must run against a rendered " +
+        "config: set the PROD_* values on the environment and run " +
+        "scripts/render-wrangler-prod.mjs before this.",
+    );
+  }
+  return value;
+};
+
 const nonEmptyString = (value, field) => {
   if (typeof value !== "string" || value.trim() !== value || value === "") {
     throw new TypeError(`${field} must be a non-empty string`);
   }
-  return value;
+  return assertRendered(value, field);
 };
 
 const positiveInteger = (value, field) => {

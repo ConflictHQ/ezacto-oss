@@ -586,6 +586,12 @@ Set these on the `prod` GitHub environment **before** dispatching the deploy.
 Nothing here can be added afterwards without a second deploy, and two of them
 decide whether people can sign in at all.
 
+These are needed **before provisioning**, not just before the deploy. Both
+provisioning workflows read the resource names out of the tracked
+`wrangler.jsonc`, whose prod block holds placeholders until the render
+substitutes them — so provisioning an unrendered config would create a bucket
+called `replace-me-r2-bucket`. It refuses instead.
+
 #### The prod config the deploy renders
 
 `entries/worker/wrangler.jsonc` ships with placeholders, and

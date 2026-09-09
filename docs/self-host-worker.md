@@ -131,6 +131,14 @@ For `prod`, first run the `provision Queues` and `provision R2` workflows for
 `prod`, then dispatch `deploy` with `environment=prod`. A green upload without a
 green live-host poll is not a completed deployment.
 
+Both provisioning workflows read the resource names out of the tracked
+`wrangler.jsonc`, and the `prod` block of that file holds placeholders that only
+the deploy renders. So the `PROD_*` values must be set on the environment
+**before** provisioning, not just before deploying: provisioning refuses to run
+against an unrendered config rather than creating a bucket called
+`replace-me-r2-bucket`, which is a legal name and would leave the later deploy
+binding to something nobody made.
+
 Never dispatch an environment that still contains this repository's example
 hostnames, resource names, or IDs. Your token's account and zone restriction is
 an additional boundary, not a replacement for reviewing the tracked config.
