@@ -385,6 +385,12 @@ export interface TimesheetLockPolicyRepository extends TrackedPolicyResolver {
     reason: string,
     occurredAt: string,
   ): Promise<TimesheetSubmissionRecord>
+  /** A person taking back their own week before anyone has reviewed it. */
+  unsubmitTimesheet(
+    actor: Readonly<TimesheetLockPolicyActor>,
+    submissionId: number,
+    occurredAt: string,
+  ): Promise<TimesheetSubmissionRecord>
   resolve(subject: Readonly<PolicySubject>): Promise<TimesheetPolicyLockResolution>
   lockedDates(spentDates: readonly string[]): Promise<ReadonlyMap<string, boolean>>
 }
@@ -743,6 +749,19 @@ export class DrizzleTimesheetLockPolicyRepository implements TimesheetLockPolicy
   ): Promise<TimesheetSubmissionRecord> {
     assertPrivileged(actor)
     return this.#approvals.withdraw(actor, submissionId, assertReason(reason), occurredAt)
+  }
+
+  /**
+   * No `assertPrivileged`, deliberately. This is not a policy act -- the
+   * authority is that the submission is the actor's own, which the repository
+   * checks inside the UPDATE rather than trusting a caller's read.
+   */
+  async unsubmitTimesheet(
+    actor: Readonly<TimesheetLockPolicyActor>,
+    submissionId: number,
+    occurredAt: string,
+  ): Promise<TimesheetSubmissionRecord> {
+    return this.#approvals.unsubmit(actor, submissionId, occurredAt)
   }
 
   async resolve(subject: Readonly<PolicySubject>): Promise<TimesheetPolicyLockResolution> {

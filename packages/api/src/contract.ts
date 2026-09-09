@@ -534,6 +534,17 @@ const timesheetApprovalOperations: ApiContractOperation[] = [
   },
   {
     method: "post",
+    path: "/api/v1/timesheet-submissions/:id/unsubmit",
+    operationId: "unsubmitTimesheetSubmission",
+    summary: "Take back your own timesheet before anyone has reviewed it",
+    tag: "timesheet-approvals",
+    responseStatus: 200,
+    responseSchema: "TimesheetSubmissionEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "post",
     path: "/api/v1/timesheet-submissions/:id/withdraw",
     operationId: "withdrawTimesheetSubmission",
     summary: "Explicitly withdraw or reopen a timesheet period",

@@ -5,6 +5,8 @@ import {
   invoiceTabs,
   loadShellSnapshot,
   maximumTimeEntryNoteLength,
+  isSelfWithdrawn,
+  SELF_WITHDRAWAL_REASON,
   navigationDestination,
   palettePlan,
   parseQuickAdd,
@@ -481,6 +483,31 @@ describe('S-1 through S-5 application shell', () => {
     // blanket refusal.
     expect(navigationDestination('go reports', offered)).toBe('/reports')
     expect(navigationDestination('go time', offered)).toBe('/')
+  })
+
+  it('[unit] tells a week you took back from one a reviewer sent back', () => {
+    // Both write the same three columns, because the table requires every
+    // unsubmitted row to name who returned it and why. Reading them as the same
+    // thing shows someone "Changes requested" for their own correction.
+    const week = {
+      status: 'unsubmitted' as const,
+      user_id: 4,
+      reviewed_by_user_id: 4,
+      rejection_reason: SELF_WITHDRAWAL_REASON,
+    }
+    expect(isSelfWithdrawn(week)).toBe(true)
+    expect(isSelfWithdrawn({ ...week, reviewed_by_user_id: 9 })).toBe(false)
+    expect(isSelfWithdrawn({ ...week, reviewed_by_user_id: null })).toBe(false)
+    // An administrator rejecting their own week is also a row whose reviewer is
+    // its owner. Identity alone read that as a self-withdrawal and hid a real
+    // rejection -- a browser test caught it, and this is the regression.
+    expect(
+      isSelfWithdrawn({ ...week, rejection_reason: 'Clarify the delivery detail.' }),
+    ).toBe(false)
+    // Only an unsubmitted week is anyone's to have taken back. An approved one
+    // reviewed by its own owner is a different thing entirely.
+    expect(isSelfWithdrawn({ ...week, status: 'approved' })).toBe(false)
+    expect(isSelfWithdrawn(null)).toBe(false)
   })
 
   it('[unit] files record hits under their own headings, after the commands', () => {
