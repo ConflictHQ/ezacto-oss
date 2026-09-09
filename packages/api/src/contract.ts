@@ -993,6 +993,16 @@ const moneyOperations: ApiContractOperation[] = [
       : {}),
     parameters: [path("id")],
   })),
+  {
+    method: "post",
+    path: "/api/v1/recurring-invoices/:id/generations",
+    operationId: "generateRecurringInvoice",
+    summary: "Issue the invoice this definition is due for",
+    tag: "recurring-invoices",
+    responseStatus: 201,
+    responseSchema: "RecurringGenerationEnvelope",
+    parameters: [path("id"), idempotency],
+  },
 ];
 
 const requiredReportRange = [
@@ -1069,6 +1079,53 @@ const ssoDomainOperations: ApiContractOperation[] = [
     responseSchema: "SsoDomainCheckEnvelope",
     sessionOnly: true,
     parameters: [path("id")],
+  },
+];
+
+const twoFactorOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/two-factor",
+    operationId: "getTwoFactorStatus",
+    summary: "Report whether a second factor is enrolled, pending, or absent",
+    tag: "two-factor",
+    responseStatus: 200,
+    responseSchema: "TwoFactorStatusEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/two-factor",
+    operationId: "beginTwoFactorEnrolment",
+    summary: "Issue a TOTP seed and recovery codes, pending confirmation",
+    tag: "two-factor",
+    responseStatus: 201,
+    responseSchema: "TwoFactorEnrolmentEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/two-factor/confirm",
+    operationId: "confirmTwoFactorEnrolment",
+    summary: "Prove the authenticator holds the seed and turn the factor on",
+    tag: "two-factor",
+    responseStatus: 200,
+    responseSchema: "TwoFactorStatusEnvelope",
+    requestSchema: "TwoFactorCodeInput",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+  {
+    method: "delete",
+    path: "/api/v1/two-factor",
+    operationId: "disableTwoFactor",
+    summary: "Remove the second factor, on presentation of a current code",
+    tag: "two-factor",
+    responseStatus: 200,
+    responseSchema: "TwoFactorStatusEnvelope",
+    requestSchema: "TwoFactorCodeInput",
+    requestRequired: true,
+    sessionOnly: true,
   },
 ];
 
@@ -1625,6 +1682,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...reportOperations,
   ...moduleSettingsOperations,
   ...ssoDomainOperations,
+  ...twoFactorOperations,
   ...userEmailOperations,
   ...teamOperations,
   ...clientTreeOperations,
@@ -4664,6 +4722,36 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   RecurringInvoiceEnvelope: envelope("RecurringInvoice"),
+  RecurringGeneration: {
+    type: "object",
+    required: ["definition_id", "period", "next_issue_on", "retainer_drawdown_cents"],
+    properties: {
+      definition_id: integerSchema,
+      period: stringSchema,
+      // Where the definition lands next. Returned so a caller knows the
+      // cadence advanced without reading the definition back.
+      next_issue_on: stringSchema,
+      retainer_drawdown_cents: nullable({ type: "integer" }),
+    },
+    additionalProperties: false,
+  },
+  RecurringGenerationEnvelope: {
+    type: "object",
+    required: ["data", "links"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["invoice", "generation"],
+        properties: {
+          invoice: reference("Invoice"),
+          generation: reference("RecurringGeneration"),
+        },
+        additionalProperties: false,
+      },
+      links: reference("Links"),
+    },
+    additionalProperties: false,
+  },
   RecurringInvoicePage: page("RecurringInvoice"),
   RecurringInvoiceInput: {
     type: "object",
@@ -5003,6 +5091,54 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object",
     required: ["domain"],
     properties: { domain: stringSchema },
+    additionalProperties: false,
+  },
+  TwoFactorStatus: {
+    type: "object",
+    required: ["enrolled", "pending_confirmation", "recovery_codes_remaining"],
+    properties: {
+      enrolled: booleanSchema,
+      pending_confirmation: booleanSchema,
+      // Counts down as codes are spent, so zero is a real answer.
+      recovery_codes_remaining: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  TwoFactorStatusEnvelope: {
+    type: "object",
+    required: ["data", "links"],
+    properties: {
+      data: reference("TwoFactorStatus"),
+      links: reference("Links"),
+    },
+    additionalProperties: false,
+  },
+  TwoFactorEnrolment: {
+    type: "object",
+    required: ["secret", "otpauth_uri", "recovery_codes"],
+    properties: {
+      secret: stringSchema,
+      otpauth_uri: stringSchema,
+      // The only time these are readable. The server keeps their hashes.
+      recovery_codes: { type: "array", items: stringSchema },
+    },
+    additionalProperties: false,
+  },
+  TwoFactorEnrolmentEnvelope: {
+    type: "object",
+    required: ["data", "links"],
+    properties: {
+      data: reference("TwoFactorEnrolment"),
+      links: reference("Links"),
+    },
+    additionalProperties: false,
+  },
+  TwoFactorCodeInput: {
+    type: "object",
+    required: ["code"],
+    // A TOTP code or a recovery code. Which one is the server's business:
+    // saying so here would tell an attacker which kind was just refused.
+    properties: { code: stringSchema },
     additionalProperties: false,
   },
   UserEmailInput: {

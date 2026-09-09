@@ -493,11 +493,31 @@ export interface InvoiceGenerationPort {
   generate(input: InvoiceGenerationCommand): Promise<InvoiceResource>;
 }
 
+/**
+ * Issues the invoice a recurring definition is due for. Implemented by the
+ * engine in `@ezacto/db`, which this package does not depend on -- so the port
+ * is declared here for the same reason `InvoiceGenerationPort` is.
+ */
+export interface RecurringGenerationPort {
+  generate(
+    definitionId: number,
+    asOfDate: string,
+    principal: { userId: number; profile: string },
+  ): Promise<{
+    invoiceId: number;
+    definitionId: number;
+    period: string;
+    nextIssueOn: string;
+    retainerDrawdownCents: number | null;
+  }>;
+}
+
 export interface MoneyResourceRouteOptions {
   service: MoneyResourceService;
   cursorSigningKey: Uint8Array;
   clock?: () => string;
   generation?: InvoiceGenerationPort;
+  recurringGeneration?: RecurringGenerationPort;
   invoiceDelivery?: {
     configuration: Pick<
       EmailConfigurationService,
@@ -867,6 +887,26 @@ const translateMoneyError = (error: unknown): never => {
   }
   if (code === "invoice_not_found") throw notFound("invoice");
   if (code === "estimate_not_found") throw notFound("estimate");
+  if (code === "definition_not_found") throw notFound("recurring invoice");
+  if (code === "not_due") {
+    // Not an error in the request -- the caller asked early. 409 so a retry
+    // after the due date is the obvious next move, and the message carries it.
+    throw new ApiError({
+      status: 409,
+      code,
+      message:
+        databaseMessage === ""
+          ? "The recurring definition is not due yet."
+          : databaseMessage,
+    });
+  }
+  if (code === "already_generated") {
+    throw new ApiError({
+      status: 409,
+      code,
+      message: "This period has already been generated for this definition.",
+    });
+  }
   if (code === "invalid_command_input") {
     throw validationError([
       {
@@ -2779,6 +2819,51 @@ const installRecurring = <Bindings extends object>(
     } catch (error) {
       return translateMoneyError(error);
     }
+  });
+  api.post("/recurring-invoices/:id/generations", async (context) => {
+    const principal = requireWrite(context);
+    const id = resourceId(context.req.param("id"), "recurring invoice");
+    if (options.recurringGeneration === undefined) {
+      throw new ApiError({
+        status: 503,
+        code: "service_unavailable",
+        message:
+          "Recurring invoice generation is not available in this deployment.",
+      });
+    }
+    let result: Awaited<
+      ReturnType<RecurringGenerationPort["generate"]>
+    >;
+    try {
+      // The engine takes a date, not a timestamp, and decides for itself
+      // whether the definition is due on it. Passing today rather than the
+      // definition's own next_issue_on is what makes "not_due" reachable
+      // instead of making every call succeed by construction.
+      result = await options.recurringGeneration.generate(
+        id,
+        options.clock().slice(0, 10),
+        { userId: principal.userId, profile: principal.profile },
+      );
+    } catch (error) {
+      return translateMoneyError(error);
+    }
+    const invoice = await options.service.getInvoice(result.invoiceId);
+    if (invoice === null) throw notFound("invoice");
+    return context.json(
+      {
+        data: {
+          invoice,
+          generation: {
+            definition_id: result.definitionId,
+            period: result.period,
+            next_issue_on: result.nextIssueOn,
+            retainer_drawdown_cents: result.retainerDrawdownCents,
+          },
+        },
+        links: { self: `/api/v1/invoices/${result.invoiceId}` },
+      },
+      201,
+    );
   });
   api.get("/recurring-invoices/:id", async (context) => {
     requireRead(context);

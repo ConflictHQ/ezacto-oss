@@ -1,6 +1,7 @@
 import {
   hashPassword,
   verifyPassword,
+  type StoredArgon2idPassword,
   type StoredPassword,
 } from './password-auth.js'
 
@@ -232,7 +233,9 @@ export const recoveryCodeSelector = (value: string): string | null =>
   normalizeRecoveryCode(value)?.slice(0, RECOVERY_CODE_SELECTOR_LENGTH) ?? null
 
 /** Hashed with the same Argon2id parameters as a password, for the same reason. */
-export const hashRecoveryCode = (value: string): Promise<StoredPassword> => {
+export const hashRecoveryCode = (
+  value: string,
+): Promise<StoredArgon2idPassword> => {
   const normalized = normalizeRecoveryCode(value)
   if (normalized === null) throw new RangeError('recovery code is malformed')
   return hashPassword(normalized)

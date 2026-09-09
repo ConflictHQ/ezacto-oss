@@ -241,7 +241,7 @@ const createTwoFactorStore = (database: PortableDatabase): TwoFactorStore => ({
         ],
       })),
     ])
-    const inserted = enrolment((rows[2]?.[0] as EnrolmentRow | undefined) ?? null)
+    const inserted = enrolment((rows[2]?.[0] as unknown as EnrolmentRow | undefined) ?? null)
     if (inserted === null) throw new TwoFactorEnrolmentLockedError()
     return inserted
   },
