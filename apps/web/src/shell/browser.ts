@@ -31,6 +31,7 @@ import { createTaskAdminController } from '../tasks/browser.js'
 import { createTeamDirectoryController } from '../team/browser.js'
 import { teamCapabilities } from '../team/model.js'
 import { createExpenseCategoryDirectoryController } from '../expense-categories/browser.js'
+import { createRecurringWorkspaceController } from '../recurring/browser.js'
 import { createRetainerWorkspaceController } from '../retainers/browser.js'
 import { createModuleSettingsController } from '../module-settings/browser.js'
 import {
@@ -1056,6 +1057,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const reports = createReportsController(api)
   const expenseWorkflow = createExpenseWorkflowController(api)
   const expenseCategories = createExpenseCategoryDirectoryController(api)
+  const recurringWorkspace = createRecurringWorkspaceController(api)
   const retainerWorkspace = createRetainerWorkspaceController(api)
   const moduleSettings = createModuleSettingsController(api)
   const invoicePayments = createInvoicePaymentController(api)
@@ -2435,6 +2437,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     } else if (expenseCategoriesPage) {
       await Promise.all([
         expenseCategories.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (invoiceRecurringPage) {
+      await Promise.all([
+        recurringWorkspace.activate(
           identity,
           authenticated.signal,
           (error) => handleSessionFailure(error, authenticated),

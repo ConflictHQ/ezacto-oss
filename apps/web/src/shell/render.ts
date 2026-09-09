@@ -10,6 +10,7 @@ import { renderExpenseWorkflowPages } from '../expenses/render.js'
 import { renderTaskAdminPage } from '../tasks/render.js'
 import { renderTeamPages } from '../team/render.js'
 import { renderExpenseCategoriesPage } from '../expense-categories/render.js'
+import { renderRecurringPage } from '../recurring/render.js'
 import { renderRetainerPage } from '../retainers/render.js'
 import {
   renderActivityLogPage,
@@ -615,12 +616,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
       <a data-generated-invoice-link href="/invoices" hidden>Open draft invoice</a>
     </section>
   </main>
-  <main class="app-content invoice-workspace page--grid" data-invoice-recurring-page${view === 'invoice-recurring' ? '' : ' hidden'}>
-    <header class="context-row">
-      <div><p class="eyebrow">Money</p><h1>Recurring</h1></div>
-    </header>
-    ${renderEmptyState('Recurring invoices are not built yet', 'Schedules that raise an invoice on a cadence. /api/v1/recurring-invoices already serves them; this screen does not read it yet.')}
-  </main>
+  ${renderRecurringPage(view)}
   ${renderRetainerPage(view)}
   <main class="app-content invoice-workspace page--grid" data-invoice-configure-page${view === 'invoice-configure' ? '' : ' hidden'}>
     <header class="context-row">

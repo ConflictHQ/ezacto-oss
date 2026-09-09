@@ -38,6 +38,7 @@ import type { InvoicePaymentApi } from '../invoices/model.js'
 import type { TaskAdminApi } from '../tasks/model.js'
 import type { TeamDirectoryApi } from '../team/model.js'
 import type { CompanySettingsApi } from '../module-settings/model.js'
+import type { RecurringWorkspaceApi } from '../recurring/model.js'
 import type { RetainerWorkspaceApi } from '../retainers/model.js'
 
 interface CursorPage<T> {
@@ -62,6 +63,7 @@ export interface ShellApi
     Partial<ReportWorkspaceApi>,
     Partial<ExpenseWorkflowApi>,
     Partial<ExpenseCategoryDirectoryApi>,
+    Partial<RecurringWorkspaceApi>,
     Partial<RetainerWorkspaceApi>,
     Partial<InvoicePaymentApi>,
     Partial<TaskAdminApi>,
@@ -1197,6 +1199,42 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...(states === undefined || states.length === 0
           ? {}
           : { state: states.join(',') }),
+      },
+      ...withSignal(signal),
+    }),
+  listRecurringInvoices: (cursor, signal) =>
+    client.listRecurringInvoices({
+      query: {
+        per_page: 50,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  getRecurringInvoice: async (id, signal) =>
+    (await client.getRecurringInvoice({ id, ...withSignal(signal) })).data,
+  generateRecurringInvoice: async (id, idempotencyKey, signal) =>
+    (
+      await client.generateRecurringInvoice({
+        id,
+        'Idempotency-Key': idempotencyKey,
+        ...withSignal(signal),
+      })
+    ).data,
+  // Unfiltered for the same reason the retainer lists below are: a recurring
+  // definition outlives the archiving of the client it bills.
+  listRecurringClients: (cursor, signal) =>
+    client.listClients({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listRecurringProjects: (cursor, signal) =>
+    client.listProjects({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
       },
       ...withSignal(signal),
     }),
