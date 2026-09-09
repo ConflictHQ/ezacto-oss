@@ -882,6 +882,28 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
+      app.get('/settings/activity', (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            brand: brandFromEnv(context.env),
+            activeSection: 'Settings',
+            view: 'settings-activity',
+            signInProviders: configuredSignInProviders(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
       // The URL this page shipped under. Redirect rather than delete: someone
       // has it bookmarked, and a 404 to tidy a route table is a poor trade.
       app.get('/settings/modules', (context) => context.redirect('/settings/company', 301))

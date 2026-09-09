@@ -1,4 +1,10 @@
-const canonicalTimestamp = (column: string) => `unixepoch(${column}) IS NOT NULL
+/**
+ * Exported so the partition roll recreates the hot table with the same CHECK
+ * rather than a retyped one. Copying a predicate by hand cost three separate
+ * defects elsewhere in this repo, two of which loosened validation -- the
+ * direction that does not announce itself.
+ */
+export const canonicalTimestamp = (column: string) => `unixepoch(${column}) IS NOT NULL
   AND substr(${column}, 1, 19) = strftime('%Y-%m-%dT%H:%M:%S', ${column})
   AND CAST(substr(${column}, 12, 2) AS INTEGER) BETWEEN 0 AND 23
   AND CAST(substr(${column}, 15, 2) AS INTEGER) BETWEEN 0 AND 59

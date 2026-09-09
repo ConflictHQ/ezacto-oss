@@ -1518,6 +1518,10 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     responseSchema: "ActivityLogPage",
     parameters: [
       query("per_page", { type: "integer", minimum: 1, maximum: 200 }),
+      query("from", dateSchema),
+      query("to", dateSchema),
+      query("event_type", stringSchema),
+      query("actor_id", integerSchema),
     ],
   },
   {

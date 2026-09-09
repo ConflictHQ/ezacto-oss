@@ -21,6 +21,7 @@ import {
 } from '../components/time-entry-editor.js'
 import { createClientDirectoryController } from '../clients/browser.js'
 import { createProjectDirectoryController } from '../projects/browser.js'
+import { createActivityController } from '../activity/browser.js'
 import { createCalendarController } from '../calendar/browser.js'
 import { createDashboardController } from '../dashboard/browser.js'
 import { createReportsController } from '../reports/browser.js'
@@ -1041,6 +1042,14 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const teamDirectory = createTeamDirectoryController(api)
   const calendar = createCalendarController()
   const dashboard = createDashboardController(api)
+  // Reads only when the api offers the endpoint; an install without it still
+  // serves the page and simply says it cannot load.
+  const activity = createActivityController({
+    listActivityLog: async (query, signal) =>
+      api.listActivityLog === undefined
+        ? { data: [] }
+        : api.listActivityLog(query, signal),
+  })
   const reports = createReportsController(api)
   const expenseWorkflow = createExpenseWorkflowController(api)
   const expenseCategories = createExpenseCategoryDirectoryController(api)
@@ -1461,7 +1470,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
    */
   const revealCompanySettings = (identity: Readonly<Whoami>): void => {
     const visible = identity.profile === 'administrator'
-    for (const tab of document.querySelectorAll<HTMLElement>('[data-settings-company-tab]')) {
+    for (const tab of document.querySelectorAll<HTMLElement>(
+      '[data-settings-company-tab], [data-settings-activity-tab]',
+    )) {
       tab.hidden = !visible
     }
   }
@@ -2382,6 +2393,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         ),
         loadWeek(authenticated),
       ])
+    } else if (document.querySelector('[data-activity-log-page]:not([hidden])') !== null) {
+      await Promise.all([activity.activate(authenticated.signal), loadWeek(authenticated)])
     } else if (reportsPage) {
       await Promise.all([
         reports.activate(

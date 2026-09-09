@@ -84,7 +84,7 @@ export interface DataTableOptions<Row> {
 
 const put = (cell: HTMLElement, content: CellContent): void => {
   if (typeof content === 'string') cell.textContent = content
-  else cell.append(content)
+  else cell.appendChild(content)
 }
 
 const applyDataset = (element: HTMLElement, action: RowAction): void => {
@@ -105,7 +105,7 @@ const actionsCell = (actions: readonly RowAction[]): HTMLTableCellElement => {
     button.disabled = action.disabled === true
     applyDataset(button, action)
     button.addEventListener('click', action.onSelect)
-    cell.append(button)
+    cell.appendChild(button)
   }
   if (overflow.length > 0) {
     const details = document.createElement('details')
@@ -114,7 +114,7 @@ const actionsCell = (actions: readonly RowAction[]): HTMLTableCellElement => {
     // The control names itself, so the mark inside it is hidden: a reader that
     // announced both would say "More actions, image" on every row.
     summary.setAttribute('aria-label', 'More actions')
-    summary.append(icon('overflow'))
+    summary.appendChild(icon('overflow'))
     const menu = document.createElement('div')
     menu.className = 'data-table-menu'
     for (const action of overflow) {
@@ -127,10 +127,11 @@ const actionsCell = (actions: readonly RowAction[]): HTMLTableCellElement => {
         details.open = false
         action.onSelect()
       })
-      menu.append(button)
+      menu.appendChild(button)
     }
-    details.append(summary, menu)
-    cell.append(details)
+    details.appendChild(summary)
+    details.appendChild(menu)
+    cell.appendChild(details)
   }
   return cell
 }
@@ -143,7 +144,7 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
   const captionElement = document.createElement('caption')
   captionElement.className = 'visually-hidden'
   captionElement.textContent = caption
-  table.append(captionElement)
+  table.appendChild(captionElement)
 
   const span = columns.length + (actions === undefined ? 0 : 1)
 
@@ -155,7 +156,7 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
     cell.textContent = column.label
     cell.dataset.column = column.key
     if (column.numeric === true) cell.classList.add('is-numeric')
-    headRow.append(cell)
+    headRow.appendChild(cell)
   }
   if (actions !== undefined) {
     const cell = document.createElement('th')
@@ -165,11 +166,11 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
     const label = document.createElement('span')
     label.className = 'visually-hidden'
     label.textContent = 'Actions'
-    cell.append(label)
-    headRow.append(cell)
+    cell.appendChild(label)
+    headRow.appendChild(cell)
   }
-  head.append(headRow)
-  table.append(head)
+  head.appendChild(headRow)
+  table.appendChild(head)
 
   const body = document.createElement('tbody')
   if (rows.length === 0) {
@@ -178,8 +179,8 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
     cell.colSpan = span
     cell.className = 'data-table-empty'
     cell.textContent = empty ?? 'Nothing to show.'
-    row.append(cell)
-    body.append(row)
+    row.appendChild(cell)
+    body.appendChild(row)
   }
 
   // A grouped table closes each run with the same totals its footer carries.
@@ -195,9 +196,9 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
       if (column.numeric === true) cell.classList.add('is-numeric')
       if (column.total !== undefined) put(cell, column.total(members))
       else if (index === 0) cell.textContent = 'Total'
-      row.append(cell)
+      row.appendChild(cell)
     }
-    if (actions !== undefined) row.append(document.createElement('td'))
+    if (actions !== undefined) row.appendChild(document.createElement('td'))
     return row
   }
 
@@ -207,7 +208,7 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
     if (groupBy !== undefined) {
       const group = groupBy(row)
       if (group !== currentGroup) {
-        if (totalled && groupMembers.length > 0) body.append(groupTotalRow(groupMembers))
+        if (totalled && groupMembers.length > 0) body.appendChild(groupTotalRow(groupMembers))
         groupMembers = []
         currentGroup = group
         const bandRow = document.createElement('tr')
@@ -216,8 +217,8 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
         bandCell.scope = 'colgroup'
         bandCell.colSpan = span
         put(bandCell, renderGroup === undefined ? group : renderGroup(row))
-        bandRow.append(bandCell)
-        body.append(bandRow)
+        bandRow.appendChild(bandCell)
+        body.appendChild(bandRow)
       }
     }
     const element = document.createElement('tr')
@@ -228,16 +229,16 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
       cell.dataset.column = column.key
       if (column.numeric === true) cell.classList.add('is-numeric')
       put(cell, column.render(row))
-      element.append(cell)
+      element.appendChild(cell)
     }
-    if (actions !== undefined) element.append(actionsCell(actions(row)))
-    body.append(element)
+    if (actions !== undefined) element.appendChild(actionsCell(actions(row)))
+    body.appendChild(element)
     groupMembers.push(row)
   }
   if (groupBy !== undefined && totalled && groupMembers.length > 0) {
-    body.append(groupTotalRow(groupMembers))
+    body.appendChild(groupTotalRow(groupMembers))
   }
-  table.append(body)
+  table.appendChild(body)
 
   // A totals row only earns its place when a column knows how to total itself.
   if (rows.length > 0 && columns.some((column) => column.total !== undefined)) {
@@ -249,17 +250,17 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
       if (column.numeric === true) cell.classList.add('is-numeric')
       if (column.total !== undefined) put(cell, column.total(rows))
       else if (index === 0) cell.textContent = 'Total'
-      totalRow.append(cell)
+      totalRow.appendChild(cell)
     }
-    if (actions !== undefined) totalRow.append(document.createElement('td'))
-    foot.append(totalRow)
-    table.append(foot)
+    if (actions !== undefined) totalRow.appendChild(document.createElement('td'))
+    foot.appendChild(totalRow)
+    table.appendChild(foot)
   }
 
   // A table narrower than its columns scrolls inside its own container; the
   // page itself must not scroll sideways on a phone.
   const scroll = document.createElement('div')
   scroll.className = 'data-table-scroll'
-  scroll.append(table)
+  scroll.appendChild(table)
   return scroll
 }

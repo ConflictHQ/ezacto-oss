@@ -127,9 +127,24 @@ export const installOutboxRoutes = <Bindings extends object>(
   api.get('/activity-log', async (context) => {
     requireApiScope(context, 'reports:read')
     const limit = pageLimit(context.req.query('per_page'))
+    // Passed straight through. The repository validates each one and throws a
+    // RangeError the error middleware turns into a 422, so a bad date is a bad
+    // request here rather than an empty page that reads as "nothing happened".
+    const from = context.req.query('from')
+    const to = context.req.query('to')
+    const eventType = context.req.query('event_type')
+    const actor = context.req.query('actor_id')
     return context.json(
       {
-        data: (await monitor.listActivity({ limit })).map(activityData),
+        data: (
+          await monitor.listActivity({
+            limit,
+            ...(from === undefined ? {} : { from }),
+            ...(to === undefined ? {} : { to }),
+            ...(eventType === undefined ? {} : { eventType }),
+            ...(actor === undefined ? {} : { actorId: Number(actor) }),
+          })
+        ).map(activityData),
         links: { self: '/api/v1/activity-log' },
       },
       200,

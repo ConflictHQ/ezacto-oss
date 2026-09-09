@@ -27,6 +27,7 @@ import {
   type Whoami,
 } from '@ezacto/client'
 import type { InvoiceState } from '../invoices/model.js'
+import type { ActivityRow } from '../activity/browser.js'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 import type { ClientDirectoryApi } from '../clients/model.js'
 import type { ProjectDirectoryApi } from '../projects/model.js'
@@ -72,6 +73,10 @@ export interface ShellApi
   listProjects(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listClients?(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   /** The page size a caller may raise when it is walking, not browsing. */
+  listActivityLog?(
+    query: { readonly from?: string; readonly to?: string; readonly event_type?: string },
+    signal?: AbortSignal,
+  ): Promise<{ readonly data: readonly ActivityRow[] }>
   listInvoices?(
     cursor?: string,
     signal?: AbortSignal,
@@ -331,6 +336,15 @@ export const paletteDestinations: readonly PaletteDestination[] = [
     group: 'Organize',
     keywords: 'modules organization',
     gate: '[data-settings-company-tab]',
+  },
+  {
+    label: 'Activity log',
+    href: '/settings/activity',
+    group: 'Review',
+    keywords: 'audit history who changed',
+    // The same gate as Company settings: the log names who did what, and the
+    // palette must not offer a destination that answers 403.
+    gate: '[data-settings-activity-tab]',
   },
   {
     label: 'Invoices',
@@ -1035,6 +1049,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  listActivityLog: (query, signal) =>
+    client.listActivityLog({ query: { per_page: 200, ...query }, ...withSignal(signal) }),
   listInvoices: (cursor, signal, perPage, states) =>
     client.listInvoices({
       query: {

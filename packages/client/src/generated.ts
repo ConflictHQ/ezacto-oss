@@ -2137,7 +2137,7 @@ export class EzactoClient {
     });
   }
 
-  async listActivityLog(args: { query?: { "per_page"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ActivityLogPage> {
+  async listActivityLog(args: { query?: { "per_page"?: number; "from"?: string; "to"?: string; "event_type"?: string; "actor_id"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ActivityLogPage> {
     const headers = new Headers(args.headers);
 
     return this.request<ActivityLogPage>("GET", "/api/v1/activity-log", {

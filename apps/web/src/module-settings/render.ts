@@ -62,8 +62,45 @@ export const renderModuleSettingsPage = (view?: string): string => `
  * to see. The strip is hidden for a viewer with no company access, so it never
  * offers a tab that answers 403.
  */
-const renderSettingsTabs = (current: 'user' | 'company'): string =>
+const renderSettingsTabs = (current: 'user' | 'company' | 'activity'): string =>
   `<nav class="tabstrip settings-tabs" aria-label="Settings" data-settings-tabs>` +
   `<a href="/settings/user"${current === 'user' ? ' aria-current="page"' : ''}>You</a>` +
   `<a href="/settings/company" data-settings-company-tab hidden${current === 'company' ? ' aria-current="page"' : ''}>Company</a>` +
+  // Behind the same gate as Company. The log names who did what, which is not
+  // everyone's to read, and a tab that answers 403 is worse than no tab.
+  `<a href="/settings/activity" data-settings-activity-tab hidden${current === 'activity' ? ' aria-current="page"' : ''}>Activity</a>` +
   `</nav>`
+
+/**
+ * The activity log.
+ *
+ * Read-only by construction: the table it draws from is append-only at the
+ * database level, and retention rolls whole years into their own partition
+ * rather than deleting rows, so nothing on this screen can remove anything.
+ * Filters narrow what is shown; they never narrow what is kept.
+ */
+export const renderActivityLogPage = (view?: string): string => `
+  <main class="app-content module-settings-workspace" data-activity-log-page${view === 'settings-activity' ? '' : ' hidden'}>
+    <header class="context-row module-settings-header">
+      <div><p class="eyebrow">Settings</p><h1>Activity</h1></div>
+    </header>
+    ${renderSettingsTabs('activity')}
+    <p class="module-settings-intro">What happened in this instance, newest first. The log is append-only: filtering changes what you are shown, never what is kept.</p>
+    <div class="activity-log-toolbar">
+      <label for="ez-activity-from">From
+        <input id="ez-activity-from" type="date" data-activity-from>
+      </label>
+      <label for="ez-activity-to">To
+        <input id="ez-activity-to" type="date" data-activity-to>
+      </label>
+      <label for="ez-activity-type">Event
+        <select id="ez-activity-type" data-activity-type>
+          <option value="" selected>Every event</option>
+        </select>
+      </label>
+    </div>
+    <p class="form-result module-settings-status" data-activity-log-status role="status" aria-live="polite">Loading activity…</p>
+    <div data-activity-log-list></div>
+  </main>
+
+`
