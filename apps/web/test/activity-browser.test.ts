@@ -56,9 +56,12 @@ describe('activity log surface', () => {
     // empty input would turn an untouched filter into a 422 the reader cannot
     // explain.
     mount()
-    const listActivityLog = vi.fn(async (_query: Record<string, string>) => ({
-      data: [] as ActivityRow[],
-    }))
+    // Typed through the mock's generic rather than by naming an unused
+    // parameter: the assertions read the recorded call below, so the parameter
+    // only ever existed to carry a type, and lint rightly called it unused.
+    const listActivityLog = vi.fn<
+      (query: Record<string, string>) => Promise<{ data: ActivityRow[] }>
+    >(async () => ({ data: [] }))
     await createActivityController({ listActivityLog }).activate(new AbortController().signal)
 
     expect(Object.keys(listActivityLog.mock.calls[0]![0] as object)).toEqual([])
