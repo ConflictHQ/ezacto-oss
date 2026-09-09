@@ -586,6 +586,33 @@ Set these on the `prod` GitHub environment **before** dispatching the deploy.
 Nothing here can be added afterwards without a second deploy, and two of them
 decide whether people can sign in at all.
 
+#### The prod config the deploy renders
+
+`entries/worker/wrangler.jsonc` ships with placeholders, and
+`scripts/render-wrangler-prod.mjs` substitutes them at deploy time from these
+ten. It refuses to render if **any** is missing, and names the ones it wanted:
+rendering is all-or-nothing on purpose, because a half-rendered config deploys
+one operator's worker against another operator's database.
+
+| Name | Kind | What it is |
+| --- | --- | --- |
+| `PROD_WORKER_NAME` | variable | the Worker's name in the account |
+| `PROD_HOST` | variable | the hostname it serves; also becomes `APP_BASE_URL` |
+| `PROD_D1_DATABASE_NAME` | variable | the database created in section 7 |
+| `PROD_D1_DATABASE_ID` | **secret** | that database's id — the one value here you cannot set until section 7 has run |
+| `PROD_R2_BUCKET` | variable | attachment bucket, provisioned before the deploy |
+| `PROD_EMAIL_QUEUE` | variable | mail queue, provisioned before the deploy |
+| `PROD_BRAND_NAME` | variable | shown in the shell and on invoices |
+| `PROD_BRAND_TAGLINE` | variable | |
+| `PROD_BRAND_DESCRIPTION` | variable | |
+| `PROD_BRAND_EMAIL_SENDER_NAME` | variable | the display name outbound mail is sent under |
+
+`PROD_D1_DATABASE_ID` being a secret while its name is a variable is not an
+oversight — it is the one that points at live data, and the sequencing means it
+is the last thing you set before dispatching.
+
+#### Authentication, mail, and the portal
+
 | Name | Kind | Required | Absent means |
 | --- | --- | --- | --- |
 | `API_CURSOR_SIGNING_KEY` | secret | yes | the deploy fails rendering its secret payload |
@@ -599,6 +626,12 @@ better of the two failures but still a failure at the end of the night. It is an
 origin and nothing else -- scheme and host, no path, no query, no credentials --
 and it is set at deploy time precisely so that a request can never influence
 where the identity provider sends a browser back to.
+
+In practice it is `https://` + `PROD_HOST`, and it must also match a redirect URI
+registered on the Google OAuth client. They are separate settings because they
+answer to different owners: one is where the Worker is served, the other is where
+an identity provider is willing to send a browser. Setting them to different
+hosts is legal and almost always a mistake.
 
 The two signing keys are 32 random bytes as unpadded base64url, generated
 locally and sent straight to GitHub:
