@@ -282,6 +282,45 @@ describe("Worker operator bootstrap", () => {
       error: { code: 'provider_verification_unavailable' },
     })
 
+    // An API token is a credential, and "one was issued and we cannot say who
+    // by" is not a state this should reach. `installApiTokenRoutes` takes an
+    // optional recorder and for a long time no runtime supplied one, so the
+    // activity log could answer what happened to an invoice but not who signed
+    // in and took a copy of the database.
+    const issuedToken = await request("/api/v1/api-tokens", {
+      method: "POST",
+      headers: {
+        cookie: sessionCookie,
+        origin: "https://worker.test",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ name: "activity probe", scopes: ["projects:read"] }),
+    });
+    expect(issuedToken.status).toBe(201);
+    const issued = (await issuedToken.json()) as { data: { id: number } };
+
+    // The recorder puts the event on the outbox; the activity_log row is the
+    // drain's join, written later. Asserting on the outbox is asserting the
+    // recorder ran -- credential events and money events ride the same rail on
+    // purpose, so there is no second path to keep honest.
+    await expect(
+      database
+        .prepare(
+          `SELECT event_type AS eventType, aggregate_id AS subjectId,
+             json_extract(payload_json, '$.actor.type') AS actorType,
+             json_extract(payload_json, '$.actor.id') AS actorId
+           FROM event_outbox WHERE event_type = 'api_token.created'`,
+        )
+        .first(),
+    ).resolves.toEqual({
+      eventType: "api_token.created",
+      actorType: "user",
+      actorId: 1,
+      // The token that was granted, not the user -- the log answers "what
+      // happened to this token", so the subject has to be the token.
+      subjectId: issued.data.id,
+    });
+
     const sessions = await request("/api/v1/sessions", {
       headers: { cookie: sessionCookie },
     });
@@ -328,6 +367,7 @@ describe("Worker operator bootstrap", () => {
         .prepare(`SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1`)
         .first<{ id: string }>(),
     ).toEqual({ id: migrationIds.at(-1) });
+
   }, 40_000);
 
   it("[security] remains unavailable when the temporary Worker secret is absent", async () => {

@@ -16,6 +16,8 @@ import {
   createContainerSsoProvisioningDomainStore,
   createContainerTwoFactorStore,
   createRecurringInvoiceEngine,
+  createContainerReminderScheduler,
+  captureActivityEvent,
   createTwoFactorService,
   createGeneralResourceRepository,
   createInvoiceGenerationService,
@@ -285,9 +287,11 @@ export const createContainerRuntime = async (
       smtp.name,
       config.smtp.from,
     )
+    const reminders = createContainerReminderScheduler(database)
     const outbox = createContainerOutboxService(database, {
       additionalSubscribers: [
         createInvoiceEmailOutboxSubscriber(moneyResources, organizationMailer),
+        reminders.subscriber,
       ],
     })
     const organizationName = async () => {
@@ -337,6 +341,11 @@ export const createContainerRuntime = async (
       moneyResources,
       invoiceGeneration: createInvoiceGenerationService(drizzle),
       recurringInvoices: createRecurringInvoiceEngine(drizzle),
+      activity: {
+        capture: async (request) => {
+          await captureActivityEvent(drizzle, request)
+        },
+      },
       reports: createReportRepository(drizzle),
       moduleSettings: createModuleSettingsRepository(drizzle),
       ssoProvisioningDomains:
