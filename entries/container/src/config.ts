@@ -9,6 +9,12 @@ export interface ContainerConfig {
   attachmentDirectory: string
   appBaseUrl: string
   cursorSigningKey: Uint8Array
+  /**
+   * Portal magic-link signing key. Absent means portal auth is off: the routes
+   * hand out sessions, so an install with no key must not serve them rather
+   * than serve them with a weak one. Same rule as the Worker's.
+   */
+  magicLinkSigningKey?: Uint8Array
   smtp: { url: string; from: string }
   appEnv: AppEnv
 }
@@ -120,6 +126,7 @@ export const readContainerConfig = (
     4_096,
   )
   const bootstrapToken = optional(environment, 'EZACTO_BOOTSTRAP_TOKEN', 512)
+  const magicLinkKey = optional(environment, 'MAGIC_LINK_SIGNING_KEY', 128)
   const brandName = optional(environment, 'BRAND_NAME', 200)
   const brandTagline = optional(environment, 'BRAND_TAGLINE', 500)
   const brandDescription = optional(environment, 'BRAND_DESCRIPTION', 1_000)
@@ -158,6 +165,9 @@ export const readContainerConfig = (
     cursorSigningKey: signingKey(
       required(environment, 'API_CURSOR_SIGNING_KEY', 128),
     ),
+    ...(magicLinkKey === undefined
+      ? {}
+      : { magicLinkSigningKey: signingKey(magicLinkKey) }),
     smtp: {
       url: required(environment, 'SMTP_URL', 8_192),
       from: required(environment, 'SMTP_FROM', 320),
