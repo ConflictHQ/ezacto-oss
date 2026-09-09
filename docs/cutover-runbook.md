@@ -343,6 +343,27 @@ cited gap you have not seen before is still an abort condition — a citation sa
 a delta was expected, not that it was expected *here*. See
 [What "flawless" means here](#what-flawless-means-here) for the breakdown.
 
+### `load currency` — the one to read first
+
+A `load currency` row per resource compares each snapshot row's `updated_at`
+against the loaded row's. Zero everywhere means the database you are about to
+ship is current as of this snapshot.
+
+A nonzero one means it is not, and the reason is structural rather than a bad
+run: `load` is insert-if-absent, not upsert. A row edited upstream is refreshed
+in the snapshot by `sync` and then skipped, because a row already carries that
+`harvest_id`. The row is present and the counts still agree — only its contents
+are behind.
+
+That matters more than one failing check, because every other total in the
+report is computed **from the snapshot**. A stale database makes the whole
+report describe something other than the database being shipped. If this row is
+nonzero, the numbers below it are the snapshot's and not yours.
+
+For a single-shot cutover it should always be zero: nothing has been loaded
+before. It becomes real during a parallel run, where the remedy today is a
+rebuild from an empty database rather than a refresh in place (#407).
+
 ## 6. Convert the dump for D1
 
 Hosted D1 rejects a raw `sqlite3 .dump` twice, and neither failure can be found
@@ -558,6 +579,46 @@ deploy. If it is behind, the Worker will apply the difference on its first
 request; know that before it happens rather than reading a 503 as a failure.
 
 ## 10. Swap the binding and deploy
+
+### Configuration the deploy needs
+
+Set these on the `prod` GitHub environment **before** dispatching the deploy.
+Nothing here can be added afterwards without a second deploy, and two of them
+decide whether people can sign in at all.
+
+| Name | Kind | Required | Absent means |
+| --- | --- | --- | --- |
+| `API_CURSOR_SIGNING_KEY` | secret | yes | the deploy fails rendering its secret payload |
+| `OIDC_REDIRECT_ORIGIN` | variable | **yes for prod** | the deploy fails with `OIDC_REDIRECT_ORIGIN must be set for a prod deploy` |
+| `MAGIC_LINK_SIGNING_KEY` | secret | only for the client portal | the portal routes are not served, so every magic link a client is sent answers 404 |
+| `OIDC_GOOGLE_CLIENT_ID` / `_SECRET` | secrets | pair | no Google sign-in; a half-pair fails the deploy |
+| `MAILGUN_API_KEY` + `MAILGUN_DOMAIN` | secret + variable | for mail | no outbound mail; configuring SES as well fails the deploy |
+
+`OIDC_REDIRECT_ORIGIN` fails the deploy rather than the worker, which is the
+better of the two failures but still a failure at the end of the night. It is an
+origin and nothing else -- scheme and host, no path, no query, no credentials --
+and it is set at deploy time precisely so that a request can never influence
+where the identity provider sends a browser back to.
+
+The two signing keys are 32 random bytes as unpadded base64url, generated
+locally and sent straight to GitHub:
+
+```sh
+node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))"
+```
+
+Keep your own copy. GitHub will not show a stored secret again, and losing the
+magic-link key signs out every portal contact at once.
+
+Check what is already set before you begin, rather than discovering it at the
+deploy step:
+
+```sh
+gh secret list --env prod
+gh variable list --env prod
+```
+
+### The binding
 
 Two files pin the prod database, and they must change in the same commit:
 

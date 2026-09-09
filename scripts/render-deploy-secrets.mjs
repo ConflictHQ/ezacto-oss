@@ -2,11 +2,25 @@ import { pathToFileURL } from 'node:url'
 
 const cursorPattern = /^[A-Za-z0-9_-]{43}$/
 
-const canonicalCursor = (value) => {
+/**
+ * The portal's magic-link signing key, which is optional and validated exactly
+ * like the cursor key because the worker parses it with the same function.
+ *
+ * Absent means the portal routes are not served at all -- deliberately, so that
+ * "configured badly" and "not configured" cannot look alike on routes that hand
+ * out sessions. Absent must therefore still reach Wrangler as an explicit null,
+ * or a key removed from the environment would linger on the deployment.
+ */
+const optionalSigningKey = (value, field) => {
+  if (typeof value !== 'string' || value.trim() === '') return null
+  return canonicalSigningKey(value.trim(), field)
+}
+
+const canonicalCursor = (value) => canonicalSigningKey(value, 'API_CURSOR_SIGNING_KEY')
+
+const canonicalSigningKey = (value, field) => {
   if (typeof value !== 'string' || !cursorPattern.test(value)) {
-    throw new TypeError(
-      'API_CURSOR_SIGNING_KEY must be canonical base64url for exactly 32 bytes',
-    )
+    throw new TypeError(`${field} must be canonical base64url for exactly 32 bytes`)
   }
   const bytes = Buffer.from(value.replaceAll('-', '+').replaceAll('_', '/'), 'base64')
   const encoded = bytes
@@ -15,9 +29,7 @@ const canonicalCursor = (value) => {
     .replaceAll('/', '_')
     .replace(/=+$/, '')
   if (bytes.byteLength !== 32 || encoded !== value) {
-    throw new TypeError(
-      'API_CURSOR_SIGNING_KEY must be canonical base64url for exactly 32 bytes',
-    )
+    throw new TypeError(`${field} must be canonical base64url for exactly 32 bytes`)
   }
   return value
 }
@@ -48,6 +60,10 @@ const optionalSesConfig = (value) => {
 
 export const deploySecretPayload = (environment) => {
   const cursor = canonicalCursor(environment.API_CURSOR_SIGNING_KEY)
+  const magicLink = optionalSigningKey(
+    environment.MAGIC_LINK_SIGNING_KEY,
+    'MAGIC_LINK_SIGNING_KEY',
+  )
   const clientId = optionalCredential(environment.OIDC_GOOGLE_CLIENT_ID)
   const clientSecret = optionalCredential(environment.OIDC_GOOGLE_CLIENT_SECRET)
   if ((clientId === null) !== (clientSecret === null)) {
@@ -106,6 +122,7 @@ export const deploySecretPayload = (environment) => {
   }
   return {
     API_CURSOR_SIGNING_KEY: cursor,
+    MAGIC_LINK_SIGNING_KEY: magicLink,
     OIDC_GOOGLE_CLIENT_ID: clientId,
     OIDC_GOOGLE_CLIENT_SECRET: clientSecret,
     AWS_ACCESS_KEY_ID: accessKeyId,
