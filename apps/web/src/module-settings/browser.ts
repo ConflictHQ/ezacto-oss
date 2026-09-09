@@ -16,6 +16,7 @@ import {
   ssoVerificationMessage,
   timeTrackingFacts,
   type CompanySettingsApi,
+  type BackupRun,
 } from './model.js'
 
 interface ModuleState {
@@ -151,6 +152,10 @@ export const createModuleSettingsController = (
   const emailStatus = required<HTMLElement>('[data-settings-email-status]')
   const emailSenders = required<HTMLElement>('[data-settings-sender-identities]')
   const emailReputation = required<HTMLElement>('[data-settings-email-reputation]')
+  const backupStatus = required<HTMLElement>('[data-settings-backup-status]')
+  const backupAlarm = required<HTMLElement>('[data-settings-backup-alarm]')
+  const backupFacts = required<HTMLElement>('[data-settings-backup-facts]')
+  const backupRuns = required<HTMLElement>('[data-settings-backup-runs]')
   const ssoStatus = required<HTMLElement>('[data-settings-sso-status]')
   const ssoDomains = required<HTMLElement>('[data-settings-sso-domains]')
   const ssoForm = required<HTMLFormElement>('[data-sso-domain-form]')
@@ -492,6 +497,130 @@ export const createModuleSettingsController = (
     }
   }
 
+  /**
+   * How long ago, said the way someone reading a backup screen is thinking.
+   * "2026-09-07T03:00:12Z" answers a different question from "2 days ago", and
+   * the question here is whether the last one is recent enough.
+   */
+  const sinceLabel = (at: string, now: number): string => {
+    const elapsed = now - Date.parse(at)
+    if (!Number.isFinite(elapsed) || elapsed < 0) return at.slice(0, 10)
+    const hours = Math.floor(elapsed / 3_600_000)
+    if (hours < 1) return 'less than an hour ago'
+    if (hours < 24) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`
+    const days = Math.floor(hours / 24)
+    return `${days} ${days === 1 ? 'day' : 'days'} ago`
+  }
+
+  const backupRunTable = (runs: readonly BackupRun[]): HTMLElement =>
+    renderDataTable<BackupRun>({
+      caption: 'Recent backup runs',
+      rows: runs,
+      rowKey: (run) => String(run.id),
+      empty: 'No backup has run yet.',
+      columns: [
+        { key: 'started', label: 'Started', render: (run) => run.started_at.replace('T', ' ').slice(0, 19) },
+        { key: 'trigger', label: 'Trigger', render: (run) => run.trigger },
+        {
+          key: 'status',
+          label: 'Result',
+          render: (run) => {
+            const pill = document.createElement('span')
+            pill.className = 'invoice-state'
+            pill.dataset.backupStatus = run.status
+            pill.textContent = run.status
+            return pill
+          },
+        },
+        {
+          key: 'rows',
+          label: 'Rows',
+          numeric: true,
+          render: (run) =>
+            run.total_rows === null ? '—' : run.total_rows.toLocaleString('en-US'),
+        },
+        {
+          key: 'tables',
+          label: 'Tables',
+          numeric: true,
+          render: (run) => (run.table_count === null ? '—' : String(run.table_count)),
+        },
+        // The reason it failed, where there is one. A failed run whose message
+        // is only in a log is a failure nobody reads.
+        { key: 'error', label: 'Detail', render: (run) => run.error_message ?? '' },
+      ],
+    })
+
+  /**
+   * Backups.
+   *
+   * The endpoint has served this since it was written and no screen asked it,
+   * so whether the nightly export was working was a question only a terminal
+   * could answer. A backup nobody looks at is a backup nobody knows is broken,
+   * and it stays in that state until the day it is needed.
+   *
+   * Administrator-only, like the two sections above, and for the same reason:
+   * asking as an executive manager buys a 403 and tells the operator nothing
+   * about why the section is empty.
+   */
+  const loadBackups = async (identity: Whoami, active: ActiveSession): Promise<void> => {
+    if (identity.profile !== 'administrator') {
+      backupStatus.textContent = 'Backups are visible to administrators only.'
+      return
+    }
+    if (api.getBackupStatus === undefined) {
+      // The container composes no reader: its backups are the operator's
+      // filesystem, and RESTORE.md is the contract there rather than this page.
+      backupStatus.textContent =
+        'This deployment does not manage its own backups. See RESTORE.md.'
+      return
+    }
+    try {
+      const status = await api.getBackupStatus(active.signal)
+      active.present(() => {
+        const now = Date.now()
+        facts(backupFacts, [
+          [
+            'Last completed',
+            status.last_completed === null
+              ? 'Never'
+              : `${sinceLabel(status.last_completed.completed_at ?? status.last_completed.started_at, now)} · ${(status.last_completed.total_rows ?? 0).toLocaleString('en-US')} rows`,
+          ],
+          [
+            'Destination',
+            status.last_completed?.r2_prefix ?? '—',
+          ],
+          ['Runs recorded', String(status.recent_runs.length)],
+        ])
+        // A failure is not a row in a table to be scanned for; it is the answer
+        // to the only question this section is asked.
+        backupAlarm.hidden = !status.has_failure
+        backupAlarm.textContent =
+          status.last_failed === null
+            ? ''
+            : `The last attempt on ${status.last_failed.started_at.slice(0, 10)} failed: ${status.last_failed.error_message ?? 'no reason was recorded'}`
+        // Never having run is its own alarm. An empty history reads as "fine"
+        // and is the state in which nothing can be restored.
+        if (status.last_completed === null) {
+          backupAlarm.hidden = false
+          backupAlarm.textContent =
+            'No backup has ever completed, so there is nothing to restore from.'
+        }
+        backupRuns.replaceChildren(backupRunTable(status.recent_runs))
+        backupRuns.hidden = false
+        backupStatus.textContent = ''
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        backupStatus.textContent = messageFor(
+          error,
+          'Only administrators can view backups.',
+          'Backup status could not be loaded.',
+        )
+      })
+    }
+  }
+
   const loadSsoDomains = async (identity: Whoami, active: ActiveSession): Promise<void> => {
     // Every sso-domains route is administrator-only. Asking as an executive
     // manager buys a 403 and tells the operator nothing about why the section
@@ -543,6 +672,7 @@ export const createModuleSettingsController = (
       const configuration = Promise.all([
         loadTimeTracking(active),
         loadEmail(identity, active),
+        loadBackups(identity, active),
         loadSsoDomains(identity, active),
       ])
 

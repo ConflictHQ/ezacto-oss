@@ -3689,6 +3689,31 @@ describe('company settings', () => {
     ...overrides,
   })
 
+  const backupRun = (over: Record<string, unknown> = {}) => ({
+    id: 9,
+    status: 'completed' as const,
+    trigger: 'nightly' as const,
+    started_at: '2026-09-08T03:00:00.000Z',
+    completed_at: '2026-09-08T03:04:11.000Z',
+    r2_prefix: 'backups/2026-09-08',
+    table_count: 91,
+    total_rows: 32_516,
+    error_message: null,
+    ...over,
+  })
+
+  let backupStatusPayload: {
+    last_completed: ReturnType<typeof backupRun> | null
+    last_failed: ReturnType<typeof backupRun> | null
+    recent_runs: ReturnType<typeof backupRun>[]
+    has_failure: boolean
+  } = {
+    last_completed: backupRun(),
+    last_failed: null,
+    recent_runs: [backupRun()],
+    has_failure: false,
+  }
+
   const companyApi = (
     identities: readonly SenderIdentity[] = [senderIdentity()],
     domains: readonly SsoDomain[] = [],
@@ -3714,6 +3739,7 @@ describe('company settings', () => {
       dnssec_validated: false,
     })),
     removeSsoDomain: vi.fn(async () => undefined),
+    getBackupStatus: vi.fn(async () => backupStatusPayload),
     getEmailHealth: vi.fn(async () => ({
       reputation: {
         sent: 412,
@@ -4299,6 +4325,90 @@ describe('company settings', () => {
       false,
     )
   })
+  it('[browser] reports when this instance last backed itself up', async () => {
+    // The endpoint has served this since it was written and no screen asked it,
+    // so whether the nightly export worked was a question only a terminal could
+    // answer.
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const api = companyApi()
+    await mountShell(api)
+
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector<HTMLElement>('[data-settings-backup-facts]')?.hidden,
+      ).toBe(false),
+    )
+    const facts = document.querySelector('[data-settings-backup-facts]')!.textContent ?? ''
+    expect(facts).toContain('32,516 rows')
+    expect(facts).toContain('backups/2026-09-08')
+    // Nothing wrong, so no alarm.
+    expect(document.querySelector<HTMLElement>('[data-settings-backup-alarm]')?.hidden).toBe(
+      true,
+    )
+    expect(document.querySelector('[data-settings-backup-runs]')?.textContent).toContain(
+      'nightly',
+    )
+  })
+
+  it('[browser] raises the last failure above the table rather than in it', async () => {
+    // A failed run found by scanning a table is a failure nobody reads. It is
+    // the answer to the only question this section is asked, so it is the
+    // first thing on it.
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    backupStatusPayload = {
+      last_completed: backupRun(),
+      last_failed: backupRun({
+        id: 10,
+        status: 'failed',
+        completed_at: null,
+        error_message: 'R2 put failed: 503',
+      }),
+      recent_runs: [backupRun({ id: 10, status: 'failed', error_message: 'R2 put failed: 503' })],
+      has_failure: true,
+    }
+    await mountShell(companyApi())
+
+    const alarm = document.querySelector<HTMLElement>('[data-settings-backup-alarm]')!
+    await vi.waitFor(() => expect(alarm.hidden).toBe(false))
+    expect(alarm.textContent).toContain('R2 put failed: 503')
+  })
+
+  it('[security] treats never having backed up as an alarm, not as fine', async () => {
+    // An empty history reads as "nothing wrong" and is the state in which
+    // nothing can be restored.
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    backupStatusPayload = {
+      last_completed: null,
+      last_failed: null,
+      recent_runs: [],
+      has_failure: false,
+    }
+    await mountShell(companyApi())
+
+    const alarm = document.querySelector<HTMLElement>('[data-settings-backup-alarm]')!
+    await vi.waitFor(() => expect(alarm.hidden).toBe(false))
+    expect(alarm.textContent).toContain('nothing to restore from')
+  })
+
+  it('[browser] says where backups live when the deployment does not keep them', async () => {
+    // The container composes no reader: its backups are the operator's own
+    // filesystem, and an empty section would read as a broken one.
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const api = companyApi()
+    delete (api as { getBackupStatus?: unknown }).getBackupStatus
+    await mountShell(api)
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-settings-backup-status]')?.textContent).toContain(
+        'RESTORE.md',
+      ),
+    )
+  })
+
 })
 
 describe('command palette browser behavior', () => {

@@ -9,6 +9,7 @@ import type { EmailMessage, HttpEmailProvider } from '@ezacto/mailer'
 import { createApp } from '../../worker/src/app.js'
 import {
   UNDOCUMENTED_ROUTES,
+  WORKER_ONLY_ROUTES,
   expectedApiRoutes,
   mountedApiRoutes,
   routeDifference,
@@ -433,9 +434,17 @@ describe('container runtime composition', () => {
           .routes.filter((route) => route.method !== 'ALL')
           .map((route) => `${route.method.toLowerCase()} ${route.path}`),
       )
+      // Minus the routes declared Worker-only: a documented operation this
+      // deployment deliberately does not compose is not an unreachable one.
+      // `backup/status` is the case -- the Worker reads the R2 export its
+      // nightly cron writes, and the container's backups are the operator's
+      // filesystem.
       const unreachable = apiContractOperations
         .map((operation) => `${operation.method} ${operation.path}`)
-        .filter((operation) => !mounted.has(operation))
+        .filter(
+          (operation) =>
+            !mounted.has(operation) && !WORKER_ONLY_ROUTES.includes(operation),
+        )
         .sort()
 
       expect(unreachable).toEqual([])

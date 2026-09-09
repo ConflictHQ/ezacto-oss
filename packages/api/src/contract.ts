@@ -1047,6 +1047,26 @@ const moduleSettingsOperations: ApiContractOperation[] = [
   },
 ];
 
+/**
+ * Backup status. Mounted only where the deployment composes a reader, which the
+ * Worker does and the container does not -- the container's backups are the
+ * operator's own filesystem concern and `RESTORE.md` is the contract there.
+ * `entry-surface.ts` declares that difference; documenting the operation here is
+ * what lets a generated client call it at all.
+ */
+const backupOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/backup/status",
+    operationId: "getBackupStatus",
+    summary: "The last completed and last failed backup run, and recent history",
+    tag: "backup",
+    responseStatus: 200,
+    responseSchema: "BackupStatusEnvelope",
+    sessionOnly: true,
+  },
+];
+
 const ssoDomainOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -1692,6 +1712,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...attachmentContractOperations,
   ...reportOperations,
   ...moduleSettingsOperations,
+  ...backupOperations,
   ...ssoDomainOperations,
   ...twoFactorOperations,
   ...userEmailOperations,
@@ -2388,6 +2409,51 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object",
     required: ["expected_version"],
     properties: { expected_version: { type: "integer", minimum: 0 } },
+    additionalProperties: false,
+  },
+  BackupRun: {
+    type: "object",
+    required: [
+      "id",
+      "status",
+      "trigger",
+      "started_at",
+      "completed_at",
+      "r2_prefix",
+      "table_count",
+      "total_rows",
+      "error_message",
+    ],
+    properties: {
+      id: integerSchema,
+      status: { type: "string", enum: ["running", "completed", "failed"] },
+      trigger: { type: "string", enum: ["nightly", "manual"] },
+      started_at: timestampSchema,
+      completed_at: nullable(timestampSchema),
+      r2_prefix: nullable(stringSchema),
+      table_count: nullable(integerSchema),
+      total_rows: nullable(integerSchema),
+      error_message: nullable(stringSchema),
+    },
+    additionalProperties: false,
+  },
+  BackupStatusEnvelope: {
+    type: "object",
+    required: ["data", "links"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["last_completed", "last_failed", "recent_runs", "has_failure"],
+        properties: {
+          last_completed: nullable(reference("BackupRun")),
+          last_failed: nullable(reference("BackupRun")),
+          recent_runs: { type: "array", items: reference("BackupRun") },
+          has_failure: { type: "boolean" },
+        },
+        additionalProperties: false,
+      },
+      links: reference("Links"),
+    },
     additionalProperties: false,
   },
   SenderEvidenceRefreshInput: {

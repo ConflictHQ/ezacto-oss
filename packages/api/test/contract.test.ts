@@ -1,6 +1,7 @@
 import type { GeneralResourceRepository, TeamRepository } from "@ezacto/core";
 import { describe, expect, it } from "vitest";
 import {
+  installBackupStatusRoutes,
   apiContractOperations,
   createApiApp,
   generateOpenApiDocument,
@@ -190,6 +191,10 @@ const documentedApp = () =>
         isTeamModuleEnabled: async () => true,
       });
       installClientTreeRoutes(api, treeReader);
+      // Mounted only where a deployment composes a reader -- the Worker does,
+      // the container does not (`entry-surface.ts`). The fixture composes one so
+      // the documented operation has something to be checked against.
+      installBackupStatusRoutes(api, { latestRuns: async () => [] });
     },
   });
 

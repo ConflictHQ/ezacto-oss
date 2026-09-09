@@ -1,5 +1,7 @@
 import {
   EzactoApiError,
+  type BackupRun,
+  type BackupStatusEnvelope,
   type EmailHealth,
   type SenderIdentity,
   type SsoDomain,
@@ -14,6 +16,11 @@ import type { TimeEntrySettings } from '../components/time-entry-editor.js'
  * that already shipped and that nothing in the app called: the settings this
  * instance runs on were reachable only with a token and a terminal.
  */
+/** The envelope's payload, named so the port does not spell the shape twice. */
+export type BackupStatus = BackupStatusEnvelope['data']
+
+export type { BackupRun }
+
 export interface CompanySettingsApi {
   getTimeEntrySettings(signal?: AbortSignal): Promise<TimeEntrySettings>
   getTimeEntryNoteSettings(signal?: AbortSignal): Promise<TimeEntryNoteSettings>
@@ -22,6 +29,13 @@ export interface CompanySettingsApi {
     signal?: AbortSignal,
   ): Promise<TimeEntryNoteSettings>
   getEmailHealth(signal?: AbortSignal): Promise<EmailHealth>
+  /**
+   * Backup runs. Optional because only a deployment that composes a reader
+   * serves them -- the Worker exports itself to R2 nightly, and the container's
+   * backups are the operator's filesystem, where `RESTORE.md` is the contract.
+   */
+  getBackupStatus?(signal?: AbortSignal): Promise<BackupStatus>
+
   listSenderIdentities(signal?: AbortSignal): Promise<readonly SenderIdentity[]>
   listSsoDomains(signal?: AbortSignal): Promise<readonly SsoDomain[]>
   addSsoDomain(domain: string, signal?: AbortSignal): Promise<SsoDomain>
