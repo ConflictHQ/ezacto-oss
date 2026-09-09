@@ -324,6 +324,34 @@ const seedPaidInvoices = async (
   }
 };
 
+/**
+ * Draft invoices for a nominated client, at ids the caller chooses so they can
+ * be spread through another client's book. Draft rather than paid for the same
+ * reason seedPaidInvoices exists: a state change is a lifecycle mutation and
+ * wants a pending command, so a test inserts the state it needs.
+ */
+const seedClientInvoices = async (
+  database: TestDatabase,
+  clientId: number,
+  currency: string,
+  ids: readonly number[],
+): Promise<void> => {
+  for (const id of ids) {
+    await database.run(
+      `INSERT INTO invoices (
+         id, client_id, number, currency, issue_date, due_date, state,
+         amount_cents, due_amount_cents, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, '2026-08-01', '2026-08-31', 'draft', 0, 0, ?, ?)`,
+      id,
+      clientId,
+      `INV-C${clientId}-${id}`,
+      currency,
+      seedTime,
+      seedTime,
+    );
+  }
+};
+
 const seedInvoicePage = async (database: TestDatabase): Promise<void> => {
   await database.run(
     `WITH RECURSIVE invoice_ids(id) AS (
@@ -1193,6 +1221,86 @@ for (const [runtime, factory] of factories) {
       expect(typo.status).toBe(422);
 
       // No parameter is still every state, so an existing caller is unchanged.
+      const everything = await test.request("/api/v1/invoices?per_page=200");
+      expect(((await everything.json()) as { data: unknown[] }).data).toHaveLength(200);
+    });
+
+    // The client filter has to survive the same pressure the state filter does:
+    // a subtree's invoices are a handful of rows out of a whole book, so a
+    // filter applied to the page rather than to the collection returns short
+    // pages that claim to be the end of the list.
+    it("[api] pages the client-filtered set, not the filtered page", async () => {
+      const test = await setup();
+      await seedInvoicePage(test.database);
+      // Three invoices for the other client, spread far apart through the 202
+      // that belong to the first, so a page-local filter would find them on
+      // three different pages.
+      await seedClientInvoices(test.database, 2, "EUR", [300, 400, 500]);
+
+      const first = await test.request("/api/v1/invoices?client_id=2&per_page=2");
+      expect(first.status).toBe(200);
+      const firstBody = (await first.json()) as {
+        data: { id: number; client_id: number }[];
+        page: { next_cursor: string | null };
+      };
+      expect(firstBody.data.map((row) => row.id)).toEqual([300, 400]);
+      expect(firstBody.data.every((row) => row.client_id === 2)).toBe(true);
+      expect(firstBody.page.next_cursor).not.toBeNull();
+
+      const rest = await test.request(
+        `/api/v1/invoices?client_id=2&per_page=2&cursor=${encodeURIComponent(firstBody.page.next_cursor!)}`,
+      );
+      const restBody = (await rest.json()) as {
+        data: { id: number }[];
+        page: { next_cursor: string | null };
+      };
+      expect(restBody.data.map((row) => row.id)).toEqual([500]);
+      expect(restBody.page.next_cursor).toBeNull();
+    });
+
+    it("[api] reads a comma-separated client set and rejects a non-id", async () => {
+      const test = await setup();
+      await seedInvoicePage(test.database);
+      await seedClientInvoices(test.database, 2, "EUR", [300, 400, 500]);
+
+      // One client is exactly its own rows and nobody else's -- the failure
+      // this filter exists to prevent is another client's book on the screen.
+      const other = await test.request("/api/v1/invoices?client_id=2&per_page=200");
+      const otherBody = (await other.json()) as { data: { id: number }[] };
+      expect(otherBody.data.map((row) => row.id)).toEqual([300, 400, 500]);
+
+      // A set is the union, which is what a subtree rollup asks for: the tail
+      // of the same traversal carries the other client's rows.
+      const both = await test.request(
+        "/api/v1/invoices?client_id=1,2&state=paid,draft&per_page=200",
+      );
+      const bothBody = (await both.json()) as {
+        data: { client_id: number }[];
+        page: { next_cursor: string | null };
+      };
+      expect(bothBody.data).toHaveLength(200);
+      expect(bothBody.page.next_cursor).not.toBeNull();
+      const remainder = await test.request(
+        `/api/v1/invoices?client_id=1,2&state=paid,draft&per_page=200&cursor=${encodeURIComponent(bothBody.page.next_cursor!)}`,
+      );
+      const remainderBody = (await remainder.json()) as {
+        data: { id: number; client_id: number }[];
+      };
+      expect(
+        remainderBody.data.filter((row) => row.client_id === 2).map((row) => row.id),
+      ).toEqual([300, 400, 500]);
+      expect(remainderBody.data.every((row) => row.client_id === 1 || row.client_id === 2)).toBe(
+        true,
+      );
+
+      // Silently dropping an unparseable id would widen the answer back to
+      // every client, which on a money endpoint is somebody else's book.
+      const typo = await test.request("/api/v1/invoices?client_id=2;3");
+      expect(typo.status).toBe(422);
+      const negative = await test.request("/api/v1/invoices?client_id=-1");
+      expect(negative.status).toBe(422);
+
+      // No parameter is still every client, so an existing caller is unchanged.
       const everything = await test.request("/api/v1/invoices?per_page=200");
       expect(((await everything.json()) as { data: unknown[] }).data).toHaveLength(200);
     });
@@ -2569,6 +2677,46 @@ for (const [runtime, factory] of factories) {
         ),
       ).toHaveLength(0);
     }, slowRuntimeTimeout);
+
+    // client_id is nullable on retainers and the Harvest cutover produces rows
+    // with it unset. Those belong to no subtree, so a filtered read must leave
+    // them out rather than fold their balance into whichever client was asked
+    // for -- SQL's NULL semantics give that for free, and this is what proves
+    // the predicate is in the SQL rather than over the returned page.
+    it("[api] filters retainers to a client set and leaves the unclaimed ones out", async () => {
+      const test = await setup();
+      await test.database.run(
+        `INSERT INTO retainers (
+           id, client_id, state, denomination, amount_cents, seconds,
+           on_exhaustion, created_at, updated_at
+         ) VALUES
+           (2, 2, 'ongoing', 'money', 700, NULL, 'block', ?, ?),
+           (3, NULL, 'ongoing', 'money', 900, NULL, 'block', ?, ?)`,
+        seedTime,
+        seedTime,
+        seedTime,
+        seedTime,
+      );
+
+      const unfiltered = await test.request("/api/v1/retainers?per_page=200");
+      expect(unfiltered.status).toBe(200);
+      expect(
+        ((await unfiltered.json()) as { data: { id: number }[] }).data.map((row) => row.id),
+      ).toEqual([1, 2, 3]);
+
+      const one = await test.request("/api/v1/retainers?client_id=2&per_page=200");
+      expect(
+        ((await one.json()) as { data: { id: number }[] }).data.map((row) => row.id),
+      ).toEqual([2]);
+
+      const subtree = await test.request("/api/v1/retainers?client_id=1,2&per_page=200");
+      expect(
+        ((await subtree.json()) as { data: { id: number }[] }).data.map((row) => row.id),
+      ).toEqual([1, 2]);
+
+      const typo = await test.request("/api/v1/retainers?client_id=one");
+      expect(typo.status).toBe(422);
+    });
 
     it("[api] returns retainer movement plus balance and makes retries stable", async () => {
       const test = await setup();

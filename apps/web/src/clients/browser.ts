@@ -3,18 +3,37 @@ import { sessionPresenter, type SessionPresenter } from '../session.js'
 import { canManageClientTerms } from '../commercial-terms.js'
 import { EzactoApiError, type GeneralResource, type Whoami } from '@conflict-hq/ezacto-client'
 import {
+  EzactoApiError,
+  type GeneralResource,
+  type Invoice,
+  type Retainer,
+  type Whoami,
+} from '@ezacto/client'
+import { retainerAmount } from '../retainers/model.js'
+import {
+  clientBudgetBurn,
+  clientBurnWindow,
   clientDisplayName,
   clientHierarchy,
   clientIdFromPathname,
   clientIsActive,
   clientNumber,
+  clientOpenInvoiceTotals,
+  clientProfileCanReadMoney,
   clientProfileCanWrite,
+  clientRetainerBalances,
+  clientRollupHref,
+  clientRollupNodeFor,
   clientSearchMatches,
+  clientSubtreeIds,
   clientText,
   relationLabel,
+  type ClientBudgetBurn,
   type ClientDirectoryApi,
   type ClientDirectoryPage,
+  type ClientRetainerBalance,
 } from './model.js'
+import type { InvoiceObligation } from '../dashboard/model.js'
 
 const required = <ElementType extends Element>(selector: string): ElementType => {
   const element = document.querySelector<ElementType>(selector)
@@ -43,11 +62,11 @@ const messageFor = (error: unknown): string => {
   return error instanceof Error ? error.message : 'The request could not be completed.'
 }
 
-const collect = async (
-  load: (cursor?: string) => Promise<ClientDirectoryPage>,
+const collect = async <Resource>(
+  load: (cursor?: string) => Promise<ClientDirectoryPage<Resource>>,
   signal: AbortSignal,
-): Promise<GeneralResource[]> => {
-  const resources: GeneralResource[] = []
+): Promise<Resource[]> => {
+  const resources: Resource[] = []
   let cursor: string | undefined
   do {
     signal.throwIfAborted()
@@ -120,6 +139,39 @@ const paymentTermsLabel = (value: string | null): string => {
 const percentLabel = (value: unknown): string =>
   typeof value === 'number' && Number.isFinite(value) ? `${value}%` : 'None'
 
+const countLabel = (count: number, singular: string): string =>
+  `${count.toLocaleString('en-US')} ${count === 1 ? singular : `${singular}s`}`
+
+/**
+ * A currency the organization typed in is not necessarily one ICU knows, and a
+ * client screen is not the place to throw over it -- the same guard the expense
+ * and project screens carry around the same call.
+ */
+const money = (cents: number, currency: string): string => {
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100)
+  } catch {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(
+      cents / 100,
+    )
+  }
+}
+
+/**
+ * The calendar date in the reader's own zone, the way the reports screen reads
+ * it. A burn window computed in UTC would name yesterday for anyone west of it,
+ * and a figure whose range is off by a day is a figure that disagrees with the
+ * report it links to.
+ */
+const localToday = (): string => {
+  const now = new Date()
+  return [
+    String(now.getFullYear()).padStart(4, '0'),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+  ].join('-')
+}
+
 interface ActiveSession extends SessionPresenter {
   readonly identity: Whoami
   readonly signal: AbortSignal
@@ -178,6 +230,17 @@ export const createClientDirectoryController = (
   const contactDeleteDialog = required<HTMLDialogElement>('[data-contact-delete-dialog]')
   const contactDeleteForm = required<HTMLFormElement>('[data-contact-delete-form]')
   const contactDeleteResult = required<HTMLElement>('[data-contact-delete-result]')
+  const rollupSection = required<HTMLElement>('[data-client-360]')
+  const rollupFigures = required<HTMLElement>('[data-client-360-figures]')
+  const rollupStatus = required<HTMLElement>('[data-client-360-status]')
+  const rollupScope = required<HTMLElement>('[data-client-360-scope]')
+  const rollupReportLink = required<HTMLAnchorElement>('[data-client-360-report]')
+  const rollupInvoices = required<HTMLElement>('[data-client-360-invoices]')
+  const rollupRetainers = required<HTMLElement>('[data-client-360-retainers]')
+  const rollupBurn = required<HTMLElement>('[data-client-360-burn]')
+  const rollupBurnWindow = required<HTMLElement>('[data-client-360-burn-window]')
+  const rollupBurnNote = required<HTMLElement>('[data-client-360-burn-note]')
+  const rollupRetry = required<HTMLButtonElement>('[data-client-360-retry]')
 
   listPageElement.hidden = !listPage
   detailPageElement.hidden = !detailPage
@@ -218,6 +281,14 @@ export const createClientDirectoryController = (
     detailStatus.textContent = 'Loading client…'
     listRetry.hidden = true
     detailRetry.hidden = true
+    rollupSection.hidden = true
+    rollupFigures.hidden = true
+    rollupInvoices.replaceChildren()
+    rollupRetainers.replaceChildren()
+    rollupBurn.replaceChildren()
+    rollupBurnNote.hidden = true
+    rollupStatus.textContent = 'Loading the rollup…'
+    rollupRetry.hidden = true
   }
 
   const currentSession = (): ActiveSession | null =>
@@ -582,6 +653,201 @@ export const createClientDirectoryController = (
     detailStatus.textContent = 'Client details loaded.'
   }
 
+  const renderOpenInvoices = (obligations: readonly InvoiceObligation[]): void => {
+    rollupInvoices.replaceChildren(
+      renderDataTable<InvoiceObligation>({
+        caption: 'Open invoices for this client and everyone under it',
+        rows: obligations,
+        rowKey: (row) => row.currency,
+        empty: 'Nothing is open against this client or anything under it.',
+        columns: [
+          { key: 'currency', label: 'Currency', render: (row) => row.currency },
+          {
+            key: 'open',
+            label: 'Open',
+            numeric: true,
+            render: (row) => countLabel(row.openCount, 'invoice'),
+          },
+          {
+            key: 'due',
+            label: 'Due',
+            numeric: true,
+            render: (row) => money(row.dueCents, row.currency),
+          },
+          {
+            key: 'overdue',
+            label: 'Overdue',
+            numeric: true,
+            // Zero overdue is a fact worth stating plainly rather than as a
+            // currency-formatted nothing sitting beside a real amount.
+            render: (row) =>
+              row.overdueCount === 0
+                ? 'None'
+                : `${money(row.overdueCents, row.currency)} (${countLabel(row.overdueCount, 'invoice')})`,
+          },
+        ],
+      }),
+    )
+  }
+
+  const renderRetainerBalances = (balances: readonly ClientRetainerBalance[]): void => {
+    rollupRetainers.replaceChildren(
+      renderDataTable<ClientRetainerBalance>({
+        caption: 'Retainer balances for this client and everyone under it',
+        rows: balances,
+        rowKey: (row) => `${row.denomination}:${row.currency ?? ''}`,
+        empty: 'No retainer is held for this client or anything under it.',
+        columns: [
+          {
+            key: 'basis',
+            label: 'Basis',
+            render: (row) => (row.denomination === 'money' ? 'Money' : 'Hours'),
+          },
+          {
+            key: 'currency',
+            // An hours retainer is measured in seconds and is in no currency,
+            // which the dash says rather than borrowing one to fill the cell.
+            label: 'Currency',
+            render: (row) => row.currency ?? '—',
+          },
+          {
+            key: 'count',
+            label: 'Retainers',
+            numeric: true,
+            render: (row) => countLabel(row.count, 'retainer'),
+          },
+          {
+            key: 'balance',
+            label: 'Remaining',
+            numeric: true,
+            render: (row) =>
+              retainerAmount(
+                row.balance,
+                row.denomination === 'money' ? 'cents' : 'seconds',
+                row.currency ?? 'USD',
+              ),
+          },
+        ],
+      }),
+    )
+  }
+
+  const renderBurn = (burns: readonly ClientBudgetBurn[]): void => {
+    rollupBurn.replaceChildren(
+      renderDataTable<ClientBudgetBurn>({
+        caption: 'Budget burn for this client and everyone under it',
+        rows: burns,
+        rowKey: (row) => row.currency,
+        empty: 'Nothing was consumed in this window.',
+        columns: [
+          { key: 'currency', label: 'Currency', render: (row) => row.currency },
+          {
+            key: 'cost',
+            label: 'Labour cost',
+            numeric: true,
+            render: (row) => money(row.costCents, row.currency),
+          },
+          {
+            key: 'expense',
+            label: 'Expenses',
+            numeric: true,
+            render: (row) => money(row.expenseCents, row.currency),
+          },
+          {
+            key: 'burn',
+            label: 'Burn',
+            numeric: true,
+            render: (row) => money(row.burnCents, row.currency),
+          },
+        ],
+      }),
+    )
+  }
+
+  /**
+   * The three 360 figures, loaded after the client itself rather than with it:
+   * a name and an address should not wait on three money reads, and a rollup
+   * that fails leaves the rest of the page standing.
+   *
+   * The section is never inserted for a profile that may not read money, and
+   * never rendered as zeroes. A member who cannot see invoices being shown
+   * "nothing owed" would be told something false about the business, and a
+   * control that refuses without saying why is worse than one never offered --
+   * the same call the dashboard's gated cards make.
+   */
+  const refreshRollup = async (active: ActiveSession, clientId: number): Promise<void> => {
+    if (
+      !clientProfileCanReadMoney(active.identity.profile) ||
+      api.listClientSubtree === undefined ||
+      api.listClientOpenInvoices === undefined ||
+      api.listClientRetainers === undefined ||
+      api.getClientRollupReport === undefined
+    ) {
+      rollupSection.hidden = true
+      return
+    }
+    rollupSection.hidden = false
+    rollupFigures.hidden = true
+    rollupRetry.hidden = true
+    rollupStatus.textContent = 'Loading the rollup…'
+    // Read once. Two reads either side of the requests can straddle midnight,
+    // and a burn window that ends the day after the overdue test was made is
+    // two figures dated differently on the same screen.
+    const today = localToday()
+    const burnWindow = clientBurnWindow(today)
+    rollupReportLink.href = clientRollupHref(clientId, burnWindow)
+    try {
+      const subtree = clientSubtreeIds(
+        clientId,
+        await api.listClientSubtree(clientId, active.signal),
+      )
+      const [invoices, retainers, report] = await Promise.all([
+        collect<Invoice>(
+          (cursor) => api.listClientOpenInvoices!(subtree, cursor, active.signal),
+          active.signal,
+        ),
+        collect<Retainer>(
+          (cursor) => api.listClientRetainers!(subtree, cursor, active.signal),
+          active.signal,
+        ),
+        api.getClientRollupReport(clientId, burnWindow, active.signal),
+      ])
+      if (currentSession() !== active) return
+      renderOpenInvoices(clientOpenInvoiceTotals(invoices, subtree, today))
+      renderRetainerBalances(clientRetainerBalances(retainers, subtree, clients))
+      const node = clientRollupNodeFor(report, clientId)
+      const burns = node === null ? null : clientBudgetBurn(node)
+      rollupBurnWindow.textContent = `${burnWindow.from} to ${burnWindow.to} — the cost of tracked time plus expenses, kept per currency.`
+      if (burns === null) {
+        // Absent with the reason, not zero: `cost_cents` is administrator-only
+        // (`canViewMoneyField`), so accounting and executive managers reach
+        // this branch on every client and are owed an explanation rather than
+        // an empty table that reads as "nothing was spent".
+        rollupBurn.replaceChildren()
+        rollupBurnNote.hidden = false
+        rollupBurnNote.textContent =
+          'Burn is the cost of the work, and cost rates are administrator-only, so this figure is not shown to you.'
+      } else {
+        renderBurn(burns)
+        rollupBurnNote.hidden = false
+        rollupBurnNote.textContent =
+          'The API publishes no budget for a client node, so there is nothing here to measure this against.'
+      }
+      rollupScope.textContent =
+        subtree.length === 1
+          ? 'This client has nothing under it, so these are its own figures.'
+          : `Rolled up across ${countLabel(subtree.length, 'client')}: this one and everything under it.`
+      rollupFigures.hidden = false
+      rollupStatus.textContent = 'Rollup loaded.'
+    } catch (error) {
+      active.presentFailure(error, () => {
+        rollupStatus.textContent = messageFor(error)
+        rollupFigures.hidden = true
+        rollupRetry.hidden = false
+      })
+    }
+  }
+
   const loadClients = async (active: ActiveSession): Promise<GeneralResource[]> => {
     if (api.listDirectoryClients === undefined) throw new Error('Client directory is unavailable in this build.')
     return collect(
@@ -648,6 +914,7 @@ export const createClientDirectoryController = (
       contacts = selectedContacts
       projects = selectedProjects
       renderDetail()
+      await refreshRollup(active, id)
     } catch (error) {
       active.presentFailure(error, () => {
         detailStatus.textContent = messageFor(error)
@@ -754,6 +1021,11 @@ export const createClientDirectoryController = (
   })
   listRetry.addEventListener('click', () => void refreshList())
   detailRetry.addEventListener('click', () => void refreshDetail())
+  rollupRetry.addEventListener('click', () => {
+    const active = currentSession()
+    const id = clientIdFromPathname(globalThis.location.pathname)
+    if (active !== null && id !== null) void refreshRollup(active, id)
+  })
   for (const filter of document.querySelectorAll<HTMLButtonElement>('[data-client-filter]')) {
     filter.addEventListener('click', () => {
       const next = filter.dataset.clientFilter

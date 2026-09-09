@@ -46,6 +46,14 @@ export interface MoneyWindow {
    * page-local filter.
    */
   states?: readonly InvoiceState[]
+  /**
+   * Client ids to keep, or undefined for every client. In SQL for exactly the
+   * reason `states` is, and with a sharper edge: the caller is a client 360
+   * rolling a subtree up, so its filter routinely matches a few rows out of a
+   * whole book, which is the shape a page-local filter turns into short pages
+   * that claim to be the end of the collection.
+   */
+  clientIds?: readonly number[]
 }
 
 export type InvoiceState = 'draft' | 'open' | 'paid' | 'closed'
@@ -518,25 +526,43 @@ const invoiceLineSelect = `SELECT id, invoice_id, position, kind, description, q
 const invoiceLinesSelect = `${invoiceLineSelect} WHERE invoice_id = ? ORDER BY position, id`
 
 /**
- * The id window, optionally narrowed to a set of states. The state list is
- * interpolated as placeholders and its values bound, so nothing from the query
- * string reaches the SQL text.
+ * A bound `IN (...)` list, or the empty string when there is nothing to narrow
+ * to. Only the placeholders are interpolated; every value is bound, so nothing
+ * from the query string reaches the SQL text.
  */
-const invoiceWindowFor = (states: readonly InvoiceState[] | undefined): string =>
-  states === undefined || states.length === 0
-    ? `id > ? AND id <= ? ORDER BY id LIMIT ?`
-    : `id > ? AND id <= ? AND state IN (${states.map(() => '?').join(', ')}) ORDER BY id LIMIT ?`
+const inClause = (
+  column: string,
+  values: readonly unknown[] | undefined,
+): string =>
+  values === undefined || values.length === 0
+    ? ''
+    : ` AND ${column} IN (${values.map(() => '?').join(', ')})`
 
-const invoicePageLinesSelectFor = (states: readonly InvoiceState[] | undefined): string =>
+/**
+ * The id window, optionally narrowed to a set of states and a set of clients.
+ * The two narrowings are independent and compose, because "the open invoices
+ * for this subtree" needs both at once.
+ */
+const invoiceWindowFor = (window: Readonly<MoneyWindow>): string =>
+  `id > ? AND id <= ?${inClause('state', window.states)}${inClause(
+    'client_id',
+    window.clientIds,
+  )} ORDER BY id LIMIT ?`
+
+const invoicePageLinesSelectFor = (window: Readonly<MoneyWindow>): string =>
   `${invoiceLineSelect}
   WHERE invoice_id IN (
-    SELECT id FROM invoices WHERE ${invoiceWindowFor(states)}
+    SELECT id FROM invoices WHERE ${invoiceWindowFor(window)}
   ) ORDER BY invoice_id, position, id`
 
+// The order here is the order the placeholders appear in `invoiceWindowFor`;
+// the two must be read together, or the take binds to a filter slot and the
+// page silently answers a different question.
 const invoiceWindowParams = (window: MoneyWindow): unknown[] => [
   window.afterId ?? 0,
   window.throughId,
   ...(window.states ?? []),
+  ...(window.clientIds ?? []),
   window.take,
 ]
 
@@ -667,8 +693,8 @@ const readConsistentInvoicePage = async (
   window: MoneyWindow,
 ): Promise<InvoiceResource[]> => {
   const params = invoiceWindowParams(window)
-  const headerSelect = `${invoiceSelect} WHERE ${invoiceWindowFor(window.states)}`
-  const linesSelect = invoicePageLinesSelectFor(window.states)
+  const headerSelect = `${invoiceSelect} WHERE ${invoiceWindowFor(window)}`
+  const linesSelect = invoicePageLinesSelectFor(window)
   const client = database.$client
   if (isD1Client(client)) {
     const [headers, lines] = await client.batch([
@@ -1803,11 +1829,25 @@ export class MoneyResourceRepository {
     return deleteInvoicePayment(this.database, input)
   }
 
+  /**
+   * `retainer.client_id IN (...)` drops the retainers that belong to no client
+   * rather than folding them into the root of whatever subtree was asked for.
+   * The column is nullable and the cutover produces rows with it unset; a
+   * balance attributed to a client that never agreed to it is a wrong number,
+   * and SQL's NULL semantics give the right answer here for free.
+   */
   async listRetainers(window: MoneyWindow): Promise<RetainerResource[]> {
     const rows = await all<RawRetainer>(this.database, {
-      text: `${retainerSelect} WHERE retainer.id > ? AND retainer.id <= ?
-        ORDER BY retainer.id LIMIT ?`,
-      params: [window.afterId ?? 0, window.throughId, window.take],
+      text: `${retainerSelect} WHERE retainer.id > ? AND retainer.id <= ?${inClause(
+        'retainer.client_id',
+        window.clientIds,
+      )} ORDER BY retainer.id LIMIT ?`,
+      params: [
+        window.afterId ?? 0,
+        window.throughId,
+        ...(window.clientIds ?? []),
+        window.take,
+      ],
     })
     return rows.map((row) => ({ ...row, balance: row.balance ?? 0 }))
   }

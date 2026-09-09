@@ -53,6 +53,29 @@ export const renderClientDirectoryPages = (view?: string): string => `
           <input type="checkbox" data-client-bill-delivery data-client-write data-auth-action disabled>Send this client's invoices through BILL
         </label>
         <p class="form-result" data-client-delivery-result role="status" aria-live="polite"></p>
+      <section class="client-360" data-client-360 aria-labelledby="client-360-heading" hidden>
+        <header><div><p class="eyebrow">Money</p><h2 id="client-360-heading">This client and everyone under it</h2></div><a data-client-360-report href="/reports?report=client-rollup">Open the rollup report</a></header>
+        <p class="hint" data-client-360-scope>—</p>
+        <p class="form-result client-page-status" data-client-360-status role="status" aria-live="polite">Loading the rollup…</p>
+        <div class="client-360-figures" data-client-360-figures hidden>
+          <section aria-labelledby="client-360-invoices-heading">
+            <h3 id="client-360-invoices-heading">Open invoices</h3>
+            <p class="hint">Only an open invoice is owed. A draft has not been sent, and a paid or closed one is settled however it got that way.</p>
+            <div data-client-360-invoices></div>
+          </section>
+          <section aria-labelledby="client-360-retainers-heading">
+            <h3 id="client-360-retainers-heading">Retainer balance</h3>
+            <p class="hint">Kept apart by denomination and by currency: a balance is cents or hours and never both, and a retainer borrows its client's currency.</p>
+            <div data-client-360-retainers></div>
+          </section>
+          <section aria-labelledby="client-360-burn-heading">
+            <h3 id="client-360-burn-heading">Node budget burn</h3>
+            <p class="hint" data-client-360-burn-window>—</p>
+            <div data-client-360-burn></div>
+            <p class="hint" data-client-360-burn-note hidden>The API publishes no budget for a client node, so there is nothing here to measure this against.</p>
+          </section>
+        </div>
+        <button type="button" data-client-360-retry hidden>Retry loading the rollup</button>
       </section>
       <section class="client-projects" aria-labelledby="client-projects-heading">
         <header><div><p class="eyebrow">Work</p><h2 id="client-projects-heading">Associated projects</h2></div></header>

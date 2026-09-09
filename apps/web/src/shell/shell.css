@@ -1853,6 +1853,46 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
+/* Full width under the facts and the two related lists: the three figures are
+   per-currency tables, and a table squeezed into the 280px sidebar column would
+   wrap its own amounts. */
+.client-360 {
+  grid-column: 1 / -1;
+  padding: 20px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+.client-360 > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.client-360 h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.client-360 h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+.client-360 .hint {
+  font-size: 12px;
+}
+.client-360-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px;
+  margin-top: 16px;
+}
+.client-360-figures > section {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
 
 .project-workspace {
   width: 100%;

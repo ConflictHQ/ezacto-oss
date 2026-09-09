@@ -1022,6 +1022,29 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     }),
+  listClientSubtree: async (clientId, signal) =>
+    (await client.listClientDescendants({ id: clientId, ...withSignal(signal) })).data,
+  // One request for the whole subtree, not one per node: `client_id` is a
+  // comma-separated set on both of these for exactly this caller.
+  listClientOpenInvoices: (clientIds, cursor, signal) =>
+    client.listInvoices({
+      query: {
+        client_id: clientIds.join(','),
+        state: 'open',
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  listClientRetainers: (clientIds, cursor, signal) =>
+    client.listRetainers({
+      query: {
+        client_id: clientIds.join(','),
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
   listProjectBudgetSummaries: async (range, signal) =>
     (
       await client.listProjectBudgetSummaries({

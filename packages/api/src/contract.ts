@@ -75,6 +75,15 @@ const pageParameters = [
   query("per_page", { type: "integer", minimum: 1, maximum: 200 }),
 ] as const;
 
+// A set of client ids rather than one, for the same reason `state` is a set:
+// the question a client 360 asks is about a subtree, so the caller already has
+// every id in hand and one id per request would be one round-trip per node of a
+// holding company's tree. Comma-separated, and accepted repeated.
+const clientIdSetSchema = {
+  type: "string",
+  pattern: "^[1-9][0-9]*(,[1-9][0-9]*)*$",
+} as const;
+
 const filterSchemas: Readonly<Record<string, JsonSchema>> = {
   is_active: booleanSchema,
   updated_since: timestampSchema,
@@ -700,6 +709,7 @@ const moneyOperations: ApiContractOperation[] = [
         type: "string",
         pattern: "^(draft|open|paid|closed)(,(draft|open|paid|closed))*$",
       }),
+      query("client_id", clientIdSetSchema),
     ],
   },
   {
@@ -906,7 +916,7 @@ const moneyOperations: ApiContractOperation[] = [
     tag: "retainers",
     responseStatus: 200,
     responseSchema: "RetainerPage",
-    parameters: pageParameters,
+    parameters: [...pageParameters, query("client_id", clientIdSetSchema)],
   },
   {
     method: "post",
