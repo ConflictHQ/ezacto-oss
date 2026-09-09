@@ -1663,6 +1663,21 @@ export type RecurringInvoiceEnvelope = {
   "links": Links;
 };
 
+export type RecurringGeneration = {
+  "definition_id": number;
+  "period": string;
+  "next_issue_on": string;
+  "retainer_drawdown_cents": number | null;
+};
+
+export type RecurringGenerationEnvelope = {
+  "data": {
+  "invoice": Invoice;
+  "generation": RecurringGeneration;
+};
+  "links": Links;
+};
+
 export type RecurringInvoicePage = {
   "data": Array<RecurringInvoice>;
   "links": PageLinks;
@@ -3340,6 +3355,15 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<void>("DELETE", "/api/v1/recurring-invoices/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async generateRecurringInvoice(args: { "id": number; "Idempotency-Key": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<RecurringGenerationEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<RecurringGenerationEnvelope>("POST", "/api/v1/recurring-invoices/:id/generations".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });

@@ -29,6 +29,7 @@ import {
   createD1MagicLinkStore,
   createMagicLinkService,
   createD1TwoFactorStore,
+  createRecurringInvoiceEngine,
   createTwoFactorService,
 } from "@ezacto/db/d1";
 import { createPortalSessionService } from "@ezacto/api";
@@ -560,6 +561,7 @@ export const createRuntimeServices = async (
     team: createTeamRepository(drizzle),
     moneyResources,
     invoiceGeneration: createInvoiceGenerationService(drizzle),
+    recurringInvoices: createRecurringInvoiceEngine(drizzle),
     trackedResources: new DrizzleTrackedResourceRepository(
       drizzle,
       timesheetLockPolicy,

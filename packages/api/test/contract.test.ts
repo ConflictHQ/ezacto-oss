@@ -24,6 +24,7 @@ import {
   installTimesheetApprovalRoutes,
   installTimesheetLockPolicyRoutes,
   installUserEmailRoutes,
+  type RecurringGenerationPort,
   type TwoFactorService,
   type ApiSessionService,
   type ClientTreeReader,
@@ -79,6 +80,10 @@ const userEmails = new Proxy(
   { get: () => unavailable },
 ) as UserEmailService;
 const twoFactor = new Proxy({}, { get: () => unavailable }) as TwoFactorService;
+const recurringGeneration = new Proxy(
+  {},
+  { get: () => unavailable },
+) as RecurringGenerationPort;
 const team = new Proxy({}, { get: () => unavailable }) as TeamRepository;
 const treeReader = new Proxy({}, { get: () => unavailable }) as ClientTreeReader;
 const tokens = new Proxy({}, { get: () => unavailable }) as ApiTokenService;
@@ -161,6 +166,7 @@ const documentedApp = () =>
       installMoneyResourceRoutes(api, {
         service: moneyResources,
         cursorSigningKey: new Uint8Array(32),
+        recurringGeneration: recurringGeneration,
       });
       installAttachmentRoutes(api);
       installReportRoutes(api, reports);

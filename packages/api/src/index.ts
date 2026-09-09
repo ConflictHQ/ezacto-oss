@@ -82,6 +82,7 @@ export {
   type InvoiceGenerationCommand,
   type InvoiceGenerationExpenseSummary,
   type InvoiceGenerationPort,
+  type RecurringGenerationPort,
   type InvoiceGenerationRequest,
   type InvoiceGenerationTimeSummary,
   type MoneyResourceRouteOptions,

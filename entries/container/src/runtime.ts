@@ -15,6 +15,7 @@ import {
   createContainerSessionStore,
   createContainerSsoProvisioningDomainStore,
   createContainerTwoFactorStore,
+  createRecurringInvoiceEngine,
   createTwoFactorService,
   createGeneralResourceRepository,
   createInvoiceGenerationService,
@@ -335,6 +336,7 @@ export const createContainerRuntime = async (
       },
       moneyResources,
       invoiceGeneration: createInvoiceGenerationService(drizzle),
+      recurringInvoices: createRecurringInvoiceEngine(drizzle),
       reports: createReportRepository(drizzle),
       moduleSettings: createModuleSettingsRepository(drizzle),
       ssoProvisioningDomains:

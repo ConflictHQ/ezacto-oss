@@ -993,6 +993,16 @@ const moneyOperations: ApiContractOperation[] = [
       : {}),
     parameters: [path("id")],
   })),
+  {
+    method: "post",
+    path: "/api/v1/recurring-invoices/:id/generations",
+    operationId: "generateRecurringInvoice",
+    summary: "Issue the invoice this definition is due for",
+    tag: "recurring-invoices",
+    responseStatus: 201,
+    responseSchema: "RecurringGenerationEnvelope",
+    parameters: [path("id"), idempotency],
+  },
 ];
 
 const requiredReportRange = [
@@ -4712,6 +4722,36 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   RecurringInvoiceEnvelope: envelope("RecurringInvoice"),
+  RecurringGeneration: {
+    type: "object",
+    required: ["definition_id", "period", "next_issue_on", "retainer_drawdown_cents"],
+    properties: {
+      definition_id: integerSchema,
+      period: stringSchema,
+      // Where the definition lands next. Returned so a caller knows the
+      // cadence advanced without reading the definition back.
+      next_issue_on: stringSchema,
+      retainer_drawdown_cents: nullable({ type: "integer" }),
+    },
+    additionalProperties: false,
+  },
+  RecurringGenerationEnvelope: {
+    type: "object",
+    required: ["data", "links"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["invoice", "generation"],
+        properties: {
+          invoice: reference("Invoice"),
+          generation: reference("RecurringGeneration"),
+        },
+        additionalProperties: false,
+      },
+      links: reference("Links"),
+    },
+    additionalProperties: false,
+  },
   RecurringInvoicePage: page("RecurringInvoice"),
   RecurringInvoiceInput: {
     type: "object",

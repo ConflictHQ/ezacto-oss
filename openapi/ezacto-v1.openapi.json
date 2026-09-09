@@ -11640,6 +11640,83 @@
         ]
       }
     },
+    "/api/v1/recurring-invoices/{id}/generations": {
+      "post": {
+        "operationId": "generateRecurringInvoice",
+        "summary": "Issue the invoice this definition is due for",
+        "tags": [
+          "recurring-invoices"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecurringGenerationEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/recurring-invoices/:id/generations",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/invoices/{invoiceId}/attachments": {
       "get": {
         "operationId": "listInvoiceAttachments",
@@ -23887,6 +23964,67 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/RecurringInvoice"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RecurringGeneration": {
+        "type": "object",
+        "required": [
+          "definition_id",
+          "period",
+          "next_issue_on",
+          "retainer_drawdown_cents"
+        ],
+        "properties": {
+          "definition_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "period": {
+            "type": "string"
+          },
+          "next_issue_on": {
+            "type": "string"
+          },
+          "retainer_drawdown_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "RecurringGenerationEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "invoice",
+              "generation"
+            ],
+            "properties": {
+              "invoice": {
+                "$ref": "#/components/schemas/Invoice"
+              },
+              "generation": {
+                "$ref": "#/components/schemas/RecurringGeneration"
+              }
+            },
+            "additionalProperties": false
           },
           "links": {
             "$ref": "#/components/schemas/Links"

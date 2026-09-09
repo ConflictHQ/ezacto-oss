@@ -159,6 +159,8 @@ export interface RuntimeServices {
   timesheetLockPolicy: TimesheetLockPolicyService
   moneyResources: MoneyResourceRouteOptions['service']
   invoiceGeneration: NonNullable<MoneyResourceRouteOptions['generation']>
+  /** Issues the invoice a recurring definition is due for. */
+  recurringInvoices: NonNullable<MoneyResourceRouteOptions['recurringGeneration']>
   reports: ReportReader
   cursorSigningKey: Uint8Array
   passwordAuth: PasswordAuthService
@@ -258,6 +260,7 @@ export const createApp = (services?: RuntimeServices) =>
             installMoneyResourceRoutes(api, {
               service: services.moneyResources,
               generation: services.invoiceGeneration,
+              recurringGeneration: services.recurringInvoices,
               ...(services.organizationMailer === undefined
                 ? {}
                 : {
