@@ -132,11 +132,19 @@ describe('D16 theme token contract', () => {
     // the grouped-table band and the row hover stayed the wrong colour and
     // every gate still passed.
     //
-    // These five are the same shape and are not guessed at here: a slot's
-    // purpose is a decision, and inventing one is how a token comes to mean two
-    // things. The list is a ratchet -- it may shrink, and a new name appearing
-    // in it is a token that shipped without a job.
-    const awaitingAPurpose = ['money', 'ink_2', 'blue_light', 'amber', 'amber_bg']
+    // These are the same shape and are not guessed at here: a slot's purpose is
+    // a decision, and inventing one is how a token comes to mean two things.
+    // The list is a ratchet -- it may shrink, and a new name appearing in it is
+    // a token that shipped without a job.
+    //
+    // `amber` and `amber_bg` came off it with the invoice-configuration screen,
+    // which had the thing they are unambiguously for: a warning that is not yet
+    // an error -- a sender the provider has not finished verifying, and a
+    // template naming a variable that does not exist. `money` stayed on it. A
+    // verified sender wanted a positive colour and money-green was to hand, but
+    // that would have made the token mean two things; the screen marks only the
+    // states needing attention instead.
+    const awaitingAPurpose = ['money', 'ink_2', 'blue_light']
     const stylesheet = await readFile(resolve(root, 'src', 'shell', 'shell.css'), 'utf8')
     const unspent = themeSlotNames.filter(
       (name) => !stylesheet.includes(`var(${cssCustomProperty(name)})`),

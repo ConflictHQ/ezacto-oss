@@ -4888,6 +4888,114 @@ dialog textarea {
   padding: 8px 16px;
 }
 
+/* Invoice configuration. Two sections on one page, because they answer one
+   question between them — what a client sees when an invoice arrives — and an
+   operator checking the address is usually about to check the wording. */
+.email-senders,
+.email-templates {
+  margin-top: 32px;
+}
+.email-senders .hint,
+.email-templates .hint {
+  max-width: 72ch;
+}
+.email-config-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+.email-config-actions > * {
+  min-width: 0;
+}
+.email-config-actions button {
+  min-height: 44px;
+  padding: 8px 16px;
+}
+/* The one thing this screen can say that a bounce cannot: mail is about to go
+   out as an address the provider will refuse. It is lifted out of the table
+   because it is about the default, and the default is the one in use. */
+.email-sender-warning {
+  padding: 12px 16px;
+  border: 1px solid var(--ez-red);
+  border-radius: var(--ez-radius);
+  color: var(--ez-red);
+}
+/* Verified takes no colour. It is the state every sender is supposed to be in,
+   and marking the ordinary case is what leaves an operator scanning for which
+   green means which. Only the two that need attention are marked. */
+.invoice-state[data-sender-evidence='pending'] {
+  border-color: var(--ez-amber);
+  background: var(--ez-amber-bg);
+}
+.invoice-state[data-sender-evidence='failed'],
+.invoice-state[data-sender-evidence='unknown'] {
+  border-color: var(--ez-red);
+  color: var(--ez-red);
+}
+.email-template-editor {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--ez-border);
+}
+.email-template-editor-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.email-template-close {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+.email-template-editor form {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+.email-template-editor label {
+  display: grid;
+  gap: 6px;
+}
+.email-template-editor input,
+.email-template-editor textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font: inherit;
+}
+.email-template-editor textarea {
+  font: 13px/1.6 var(--ez-font-mono), monospace;
+  resize: vertical;
+}
+/* A token this template has no variable for. Not an error yet — it is a draft —
+   so it is a warning in the amber the rest of the shell uses for the same. */
+.email-template-unknown {
+  padding: 8px 12px;
+  border: 1px solid var(--ez-amber);
+  border-radius: var(--ez-radius);
+  background: var(--ez-amber-bg);
+}
+[data-template-result][data-outcome='saved'] {
+  color: var(--ez-ink);
+}
+[data-template-result][data-outcome='stale'] {
+  color: var(--ez-amber);
+}
+[data-template-result][data-outcome='invalid'],
+[data-template-result][data-outcome='error'] {
+  color: var(--ez-red);
+}
+.email-template-variables,
+.email-template-history {
+  margin-top: 24px;
+}
+
 /* The calendar. Height is minutes: a two-hour block is twice a one-hour block
    in either mode, and only where the column starts differs between them. */
 .calendar-table {

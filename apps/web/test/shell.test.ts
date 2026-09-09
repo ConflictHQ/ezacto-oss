@@ -327,7 +327,12 @@ describe('S-1 through S-5 application shell', () => {
       tabs: invoiceTabs('invoice-configure'),
     })
     expect(configure).toContain('data-invoice-configure-page>')
-    expect(configure).toContain('Invoice configuration is not built yet')
+    // The last placeholder is gone: the pane is the sender table and the
+    // template editor the controller fills in, and both are in the document.
+    expect(configure).not.toContain('Invoice configuration is not built yet')
+    expect(configure).toContain('data-sender-list')
+    expect(configure).toContain('data-template-editor hidden')
+    expect(configure).toContain('data-template-form')
   })
 
   it('[unit] draws the shell marks as inline icons rather than as glyphs', () => {

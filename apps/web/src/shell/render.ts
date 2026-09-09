@@ -10,6 +10,7 @@ import { renderExpenseWorkflowPages } from '../expenses/render.js'
 import { renderTaskAdminPage } from '../tasks/render.js'
 import { renderTeamPages } from '../team/render.js'
 import { renderExpenseCategoriesPage } from '../expense-categories/render.js'
+import { renderEmailConfigPage } from '../email-config/render.js'
 import { renderRecurringPage } from '../recurring/render.js'
 import { renderRetainerPage } from '../retainers/render.js'
 import {
@@ -618,12 +619,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
   </main>
   ${renderRecurringPage(view)}
   ${renderRetainerPage(view)}
-  <main class="app-content invoice-workspace page--grid" data-invoice-configure-page${view === 'invoice-configure' ? '' : ' hidden'}>
-    <header class="context-row">
-      <div><p class="eyebrow">Money</p><h1>Configure</h1></div>
-    </header>
-    ${renderEmptyState('Invoice configuration is not built yet', 'Sender identities and the email templates invoices go out under. /api/v1/sender-identities and /api/v1/email-templates already serve them; this screen does not read them yet.')}
-  </main>
+  ${renderEmailConfigPage(view)}
   ${renderClientDirectoryPages(view)}
   ${renderTeamPages(view)}
   ${renderProjectDirectoryPages(view)}
