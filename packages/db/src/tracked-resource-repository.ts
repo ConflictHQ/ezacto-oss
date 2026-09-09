@@ -6,6 +6,7 @@ import {
   TrackedResourceNotFoundError,
   type ApprovalStatus,
   type TrackedState,
+  type TeamViewer,
 } from '@ezacto/core'
 import {
   computeExpenseTotalCents,
@@ -40,6 +41,7 @@ import {
   timeEntries,
   timesheetSubmissions,
   userAssignments,
+  users,
 } from './schema.js'
 import {
   executeAtomicTrackedMutation,
@@ -708,8 +710,33 @@ export class DrizzleTrackedResourceRepository {
     }
   }
 
-  expenses(userId: number, filters: Readonly<ExpenseFilters>): ResourceSource<ExpenseRecord> {
-    const conditions = this.#expenseConditions(userId, filters)
+  // Submission review is based on explicit teammates, not project co-membership.
+  // Keep the predicate in every read query so a revoked assignment cannot be
+  // reused by an already-created cursor source.
+  #expenseReadAccess(viewer: Readonly<TeamViewer>, ownerId: SQL | SQLiteColumn): SQL {
+    if (viewer.profile === 'administrator' || viewer.profile === 'executive_manager') return sql`1`
+    if (viewer.profile !== 'project_manager') return sql`${ownerId} = ${viewer.userId}`
+    return sql`(${ownerId} = ${viewer.userId} OR EXISTS (
+      SELECT 1 FROM teammate_assignments reviewer
+      WHERE reviewer.manager_id = ${viewer.userId} AND reviewer.user_id = ${ownerId}
+    ))`
+  }
+
+  async canReadExpenseUser(viewer: Readonly<TeamViewer>, userId: number): Promise<boolean> {
+    const [row] = await this.#database.select().from(users)
+      .where(and(eq(users.id, userId), this.#expenseReadAccess(viewer, users.id))).limit(1)
+    return row !== undefined
+  }
+
+  expenses(
+    userId: number,
+    filters: Readonly<ExpenseFilters>,
+    viewer: Readonly<TeamViewer>,
+  ): ResourceSource<ExpenseRecord> {
+    const conditions = [
+      ...this.#expenseConditions(userId, filters),
+      this.#expenseReadAccess(viewer, expenses.userId),
+    ]
     return {
       highWatermark: async () => {
         const [row] = await this.#database
@@ -743,8 +770,14 @@ export class DrizzleTrackedResourceRepository {
     return this.#timeRecord(await this.#ownedTimeEntry(userId, id))
   }
 
-  async getExpense(userId: number, id: number): Promise<ExpenseRecord> {
-    return this.#expenseRecord(await this.#ownedExpense(userId, id))
+  async getExpense(
+    viewer: Readonly<TeamViewer>,
+    id: number,
+  ): Promise<ExpenseRecord> {
+    const [expense] = await this.#database.select().from(expenses)
+      .where(and(eq(expenses.id, id), this.#expenseReadAccess(viewer, expenses.userId))).limit(1)
+    if (expense === undefined) throw notFound('expense')
+    return this.#expenseRecord(expense)
   }
 
   async createTimeEntry(

@@ -1,4 +1,4 @@
-import type { ApprovalStatus, TrackedState } from '@ezacto/core'
+import type { ApprovalStatus, TrackedState, TeamViewer } from '@ezacto/core'
 import type { CursorSource } from '../pagination.js'
 
 export interface ResourceTimeBoundary {
@@ -183,9 +183,11 @@ export interface TrackedResourceRepository {
   expenses(
     userId: number,
     filters: Readonly<ExpenseFilters>,
+    viewer: Readonly<TeamViewer>,
   ): CursorSource<ExpenseRecord>
+  canReadExpenseUser(viewer: Readonly<TeamViewer>, userId: number): Promise<boolean>
   getTimeEntry(userId: number, id: number): Promise<TimeEntryRecord>
-  getExpense(userId: number, id: number): Promise<ExpenseRecord>
+  getExpense(viewer: Readonly<TeamViewer>, id: number): Promise<ExpenseRecord>
   createTimeEntry(
     userId: number,
     input: Readonly<CreateTimeEntryRequest>,

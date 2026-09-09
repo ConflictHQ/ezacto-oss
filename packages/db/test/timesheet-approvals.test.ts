@@ -404,7 +404,7 @@ for (const [runtime, factory] of factories) {
         approvalStatus: 'submitted',
         isLocked: false,
       })
-      expect(await tracked.getExpense(1, 1)).toMatchObject({
+      expect(await tracked.getExpense({ userId: 1, profile: 'member', managerGrants: [] }, 1)).toMatchObject({
         notes: 'Train fare',
         reimbursementStatus: 'none',
         state: { approvalStatus: 'submitted', isLocked: false, invoiceId: null },
@@ -473,7 +473,7 @@ for (const [runtime, factory] of factories) {
         lockedReasonCode: 'approved',
         lockedReason: 'Approved',
       })
-      expect(await tracked.getExpense(1, addedExpense.id)).toMatchObject({
+      expect(await tracked.getExpense({ userId: 1, profile: 'member', managerGrants: [] }, addedExpense.id)).toMatchObject({
         notes: 'Hotel receipt reviewed',
         reimbursable: true,
         reimbursementStatus: 'none',
@@ -544,7 +544,7 @@ for (const [runtime, factory] of factories) {
         approvalStatus: 'unsubmitted',
         isLocked: false,
       })
-      expect((await tracked.getExpense(1, 1)).state).toMatchObject({
+      expect((await tracked.getExpense({ userId: 1, profile: 'member', managerGrants: [] }, 1)).state).toMatchObject({
         approvalStatus: 'unsubmitted',
         isLocked: false,
       })
@@ -562,7 +562,7 @@ for (const [runtime, factory] of factories) {
         version: 2,
         expenseCount: 1,
       })
-      expect((await tracked.getExpense(1, 1)).state.approvalStatus).toBe('submitted')
+      expect((await tracked.getExpense({ userId: 1, profile: 'member', managerGrants: [] }, 1)).state.approvalStatus).toBe('submitted')
       expect(
         await database.rows<{ event_type: string; reason: string | null }>(
           `SELECT event_type,

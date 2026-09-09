@@ -339,9 +339,16 @@ export const installExpenseRoutes = <Bindings extends object>(
       await requireExpensesModule(options)
       const url = new URL(context.req.url)
       const scope = expenseFilters(url, principal)
+      if (!(await options.repository.canReadExpenseUser(principal, scope.userId))) {
+        throw new ApiError({
+          status: 403,
+          code: 'row_forbidden',
+          message: 'Expenses are limited to you and employees assigned to your review scope.',
+        })
+      }
       const envelope = await cursorPage({
         requestUrl: url,
-        source: options.repository.expenses(scope.userId, scope.filters),
+        source: options.repository.expenses(scope.userId, scope.filters, principal),
         viewer: principal,
         serializer: serializeExpense,
         cursorSigningKey: options.cursorSigningKey,
@@ -381,7 +388,7 @@ export const installExpenseRoutes = <Bindings extends object>(
     try {
       await requireExpensesModule(options)
       const expense = await options.repository.getExpense(
-        principal.userId,
+        principal,
         resourceId(context.req.param('id'), 'expense'),
       )
       return context.json(

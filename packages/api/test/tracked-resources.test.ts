@@ -1323,6 +1323,53 @@ for (const [runtime, factory] of factories) {
       )
     }, slowRuntimeTimeout)
 
+    it('[security #464] scopes expense list and detail to self or assigned reviewees', async () => {
+      const test = await setup()
+      await test.database.run(`INSERT INTO expenses
+        (id, user_id, project_id, expense_category_id, spent_date, total_cost_cents,
+         notes, invoice_id, payout_ref, created_at, updated_at)
+        VALUES (464, 2, 1, 1, '2026-08-28', 12345, 'private expense', 1,
+          'private payout', ?, ?)`, timestamp, timestamp)
+      // Even managing the same project does not confer submission-review scope.
+      await test.database.run(`UPDATE user_assignments SET is_project_manager = 1
+        WHERE user_id = 1 AND project_id = 1`)
+      for (const profile of ['member', 'people_admin', 'accounting', 'project_manager'] as const) {
+        for (const userId of [2, 999999]) {
+          const response = await test.request(`/api/v1/expenses?user_id=${userId}`, asProfile(profile))
+          expect(response.status, `${profile} must not list employee ${userId}`).toBe(403)
+          expect(await response.text()).not.toMatch(/12345|private expense|private payout|invoice_id/)
+        }
+        const detail = await test.request('/api/v1/expenses/464', asProfile(profile))
+        expect(detail.status).toBe(404)
+        expect(await detail.text()).not.toMatch(/12345|private expense|private payout|invoice_id/)
+      }
+      await test.database.run(`INSERT INTO teammate_assignments
+        (manager_id, user_id, created_at, updated_at) VALUES (1, 2, ?, ?)`, timestamp, timestamp)
+      for (const profile of ['project_manager', 'executive_manager', 'administrator'] as const) {
+        expect(await data(await test.request('/api/v1/expenses?user_id=2', asProfile(profile))))
+          .toMatchObject([{ id: 464, total_cost_cents: 12345 }])
+        expect(await data(await test.request('/api/v1/expenses/464', asProfile(profile))))
+          .toMatchObject({ id: 464, total_cost_cents: 12345 })
+        expect(await data(await test.request('/api/v1/expenses', asProfile(profile)))).toEqual([])
+        // Reading another employee's submission never grants ownership for writes.
+        expect((await test.request('/api/v1/expenses/464', {
+          ...jsonRequest('PATCH', { notes: 'unauthorized edit' }),
+          headers: { ...asProfile(profile).headers, 'content-type': 'application/json' },
+        })).status).toBe(404)
+      }
+      const repository = new DrizzleTrackedResourceRepository(test.database.orm, { isLocked: async () => false })
+      const source = repository.expenses(2, {}, { userId: 1, profile: 'project_manager', managerGrants: [] })
+      expect(await source.highWatermark()).toBe(464)
+      await test.database.run('DELETE FROM teammate_assignments WHERE manager_id = 1 AND user_id = 2')
+      expect(await source.list({ afterId: null, throughId: 464, take: 10 })).toEqual([])
+      expect((await test.request('/api/v1/expenses?user_id=2', asProfile('project_manager'))).status).toBe(403)
+      expect((await test.request('/api/v1/expenses/464', asProfile('project_manager'))).status).toBe(404)
+      for (const profile of ['executive_manager', 'administrator'] as const) {
+        expect((await test.request('/api/v1/expenses?user_id=2', asProfile(profile))).status).toBe(200)
+        expect((await test.request('/api/v1/expenses/464', asProfile(profile))).status).toBe(200)
+      }
+    }, slowRuntimeTimeout)
+
     it('[api] uses the shared three-axis guard for expense writes and rejects malformed filters', async () => {
       const test = await setup()
       const approved = await data<{ id: number }>(
@@ -1466,7 +1513,6 @@ for (const [runtime, factory] of factories) {
         ).status,
       ).toBe(403)
       for (const reviewer of [
-        'project_manager',
         'executive_manager',
         'administrator',
       ] as const) {
