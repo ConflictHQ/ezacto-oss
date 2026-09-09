@@ -2,6 +2,12 @@ import { Miniflare } from 'miniflare'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { apiContractOperations } from '@ezacto/api'
 import { createApp, type WorkerEnv } from '../src/app.js'
+import {
+  UNDOCUMENTED_ROUTES,
+  expectedApiRoutes,
+  mountedApiRoutes,
+  routeDifference,
+} from '../src/entry-surface.js'
 import { createRuntimeServices } from '../src/runtime.js'
 
 /**
@@ -50,41 +56,42 @@ describe('Worker contract reachability', () => {
   })
 
   // The other half of the same promise: a route the deployment answers but the
-  // document never mentions is a surface no client can discover. These three
-  // predate the guard — backup status, and the GitHub sign-in redirects whose
-  // OIDC counterparts are documented. Naming them keeps the gap visible and
-  // makes admitting the next one a decision rather than an omission.
-  //
-  // One caveat this list cannot express: the app under test is the Worker's.
-  // `get /api/v1/backup/status` is mounted only where `services.backupStatus`
-  // is defined, which the Worker runtime sets and the container runtime does
-  // not — so it answers here and not there. This guard therefore proves the
-  // contract against ONE entry, and a route mounted in only one of them still
-  // passes. Extending it over the container is #374.
-  const undocumented = [
-    'get /api/v1/backup/status',
-    'get /auth/github',
-    'get /auth/github/callback',
-  ]
-
+  // document never mentions is a surface no client can discover. The list lives
+  // in `entry-surface.ts` now, because the container's guard asserts the same
+  // one — a gap declared in one entry's test was a gap the other could not see.
   it('[contract] documents every API route the deployed app answers', () => {
     const documented = new Set(
       apiContractOperations.map(
         (operation) => `${operation.method} ${operation.path}`,
       ),
     )
-    const surplus = app.routes
+    const surplus = [...mountedApiRoutes(app.routes)]
       .filter(
-        (route) =>
-          route.method !== 'ALL' &&
-          (route.path.startsWith('/api/v1') || route.path.startsWith('/auth')),
-      )
-      .map((route) => `${route.method.toLowerCase()} ${route.path}`)
-      .filter(
-        (route) => !documented.has(route) && !undocumented.includes(route),
+        (route) => !documented.has(route) && !UNDOCUMENTED_ROUTES.includes(route),
       )
       .sort()
 
     expect(surplus).toEqual([])
+  })
+
+  // #374's second finding: this guard proved the contract against one entry, so
+  // a route mounted in only one of them still passed. The difference is now
+  // declared and asserted from both sides -- the container's test makes the
+  // mirror-image assertions, so a capability wired into one runtime and not the
+  // other fails the entry that has it and the entry that does not.
+  it('[contract] answers exactly the surface declared for this entry', () => {
+    // No magic-link key in this fixture, so the portal is off here.
+    const difference = routeDifference(
+      mountedApiRoutes(app.routes),
+      expectedApiRoutes(
+        apiContractOperations.map(
+          (operation) => `${operation.method} ${operation.path}`,
+        ),
+        'worker',
+        { portal: false },
+      ),
+    )
+
+    expect(difference).toEqual({ unexpected: [], missing: [] })
   })
 })

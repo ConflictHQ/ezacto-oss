@@ -7,6 +7,12 @@ import { migrationIds } from '@ezacto/db'
 import { apiContractOperations } from '@ezacto/api'
 import type { EmailMessage, HttpEmailProvider } from '@ezacto/mailer'
 import { createApp } from '../../worker/src/app.js'
+import {
+  UNDOCUMENTED_ROUTES,
+  expectedApiRoutes,
+  mountedApiRoutes,
+  routeDifference,
+} from '../../worker/src/entry-surface.js'
 import type { ContainerConfig } from '../src/config.js'
 import { createContainerRuntime } from '../src/runtime.js'
 
@@ -437,6 +443,95 @@ describe('container runtime composition', () => {
       await runtime.close()
     }
   })
+
+  // The other half, which the container never had: a route this deployment
+  // answers that the document does not mention is a surface no generated client
+  // can discover. The list is shared with the Worker's guard, so a gap admitted
+  // in one entry is a gap the other can see (#374).
+  it('[contract] documents every API route the container answers', async () => {
+    const root = await temporary()
+    const runtime = await createContainerRuntime(config(root), {
+      emailProvider: provider([]),
+    })
+    try {
+      const documented = new Set(
+        apiContractOperations.map(
+          (operation) => `${operation.method} ${operation.path}`,
+        ),
+      )
+      const surplus = [...mountedApiRoutes(createApp(runtime.services).routes)]
+        .filter(
+          (route) => !documented.has(route) && !UNDOCUMENTED_ROUTES.includes(route),
+        )
+        .sort()
+
+      expect(surplus).toEqual([])
+    } finally {
+      await runtime.close()
+    }
+  })
+
+  // The mirror of the Worker's assertion. Between them a capability wired into
+  // one runtime and not the other fails twice: here because it is mounted and
+  // not declared container-only, and there because it is declared Worker-only
+  // and missing. That is the failure #374 asked for -- the app is shared, the
+  // services are not, and the difference was invisible.
+  it('[contract] answers exactly the surface declared for this entry', async () => {
+    const root = await temporary()
+    const runtime = await createContainerRuntime(config(root), {
+      emailProvider: provider([]),
+    })
+    try {
+      const difference = routeDifference(
+        mountedApiRoutes(createApp(runtime.services).routes),
+        expectedApiRoutes(
+          apiContractOperations.map(
+            (operation) => `${operation.method} ${operation.path}`,
+          ),
+          'container',
+          { portal: false },
+        ),
+      )
+
+      expect(difference).toEqual({ unexpected: [], missing: [] })
+    } finally {
+      await runtime.close()
+    }
+  })
+
+  // The portal was mounted nowhere: `services.portalAuth` was optional and no
+  // runtime set it, so the magic-link routes existed in the codebase and in no
+  // deployment. The Worker wires it now; this is the container's half.
+  it('[contract] serves the portal where a magic-link key is configured, and not where it is absent', async () => {
+    const root = await temporary()
+    const withoutKey = await createContainerRuntime(config(root), {
+      emailProvider: provider([]),
+    })
+    try {
+      // Absent means off, not off-by-default-with-a-weak-secret: the routes
+      // hand out sessions, so "configured badly" and "not configured" must not
+      // look the same.
+      expect(mountedApiRoutes(createApp(withoutKey.services).routes)).not.toContain(
+        'post /portal/magic-link',
+      )
+    } finally {
+      await withoutKey.close()
+    }
+
+    const keyed = await temporary()
+    const withKey = await createContainerRuntime(
+      { ...config(keyed), magicLinkSigningKey: new Uint8Array(32).fill(0x21) },
+      { emailProvider: provider([]) },
+    )
+    try {
+      const mounted = mountedApiRoutes(createApp(withKey.services).routes)
+      expect(mounted).toContain('post /portal/magic-link')
+      expect(mounted).toContain('get /portal/verify')
+      expect(mounted).toContain('get /portal/statements')
+    } finally {
+      await withKey.close()
+    }
+  }, 30_000)
 
   it('[security] refuses a db.sqlite symlink before opening it', async () => {
     const root = await temporary()

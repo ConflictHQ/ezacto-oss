@@ -20,6 +20,7 @@ export {
   type HarvestPaymentDateEvidence,
   type InvoicePaymentOption,
 } from './invoice-payments.js'
+export * from './magic-link-service.js'
 export * from './magic-link-state.js'
 export * from './migrate.js'
 export * from './module-settings.js'

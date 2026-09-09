@@ -5,11 +5,14 @@ import {
   bootstrapInstanceContainer,
   createApiTokenStore,
   createAttachmentStore,
+  createContainerContactSessionStore,
   createContainerDatabase,
   createContainerEmailLogStore,
   createContainerEmailConfigurationStore,
   createContainerIdentityStore,
+  createContainerMagicLinkStore,
   createContainerOidcTransactionStore,
+  createMagicLinkService,
   createContainerOutboxService,
   createContainerPasswordAuthService,
   createContainerSessionStore,
@@ -36,6 +39,7 @@ import {
 import {
   createApiSessionService,
   createInvoiceEmailOutboxSubscriber,
+  createPortalSessionService,
   createQueuedAuthMailer,
   type AttachmentRouteOptions,
   type UserPrincipal,
@@ -386,6 +390,29 @@ export const createContainerRuntime = async (
         config.appBaseUrl,
       ),
       organizationMailer,
+      // Opt-in on the presence of its key, exactly as the Worker's is. Without
+      // one the routes are not mounted at all rather than mounted with a weak
+      // secret -- they hand out sessions, so "configured badly" and "not
+      // configured" must not look the same. Absent here, the container simply
+      // had no portal at all (#374).
+      ...(config.magicLinkSigningKey === undefined
+        ? {}
+        : {
+            portalAuth: {
+              service: createMagicLinkService({
+                database: {
+                  all: async (query: { sql: string; params: readonly unknown[] }) =>
+                    database.prepare(query.sql).all(...query.params) as never[],
+                },
+                store: createContainerMagicLinkStore(database),
+                signingKey: config.magicLinkSigningKey,
+              }),
+              sessions: createPortalSessionService(
+                createContainerContactSessionStore(database),
+              ),
+              sessionStore: createContainerContactSessionStore(database),
+            },
+          }),
       attachments: {
         metadata: createAttachmentStore(drizzle),
         objects,
