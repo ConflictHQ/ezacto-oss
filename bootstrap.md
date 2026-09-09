@@ -10,6 +10,37 @@ bottom-up per `PLAN.md`. The umbrella brain
 (`ezacto` (the umbrella)) holds the full research corpus and decision records; this repo
 carries localized copies of everything needed to build.
 
+## The thesis
+
+**ezacto is a Harvest replacement.** Harvest shipped a new navigation and put the
+previous one behind a toggle, with a banner saying the legacy look is no longer
+maintained. People who preferred it — including this account's owner — are being
+moved off something they chose. That is the opening.
+
+"Match Harvest" is unbounded and always trailing. "Be the old Harvest" is
+bounded and testable: the reference implementation exists, is captured in
+screenshot inventories, and is frozen because its vendor stopped developing it.
+The spec cannot move underneath us.
+
+It also settles what `packages/migrate` is for. It is not a nice-to-have import
+path, it is the product's front door — someone who wants the old Harvest back
+needs their thirteen years of data to come with them, which is what D7 already
+says.
+
+Two consequences that the build has since decided rather than assumed:
+
+- **Fidelity is the interaction model, not the visuals.** Where things live, how
+  many clicks, what the week grid does under your hands. The shell carries its
+  own design system rather than copying a vendor's; `apps/web/src/shell` and the
+  theme tokens are the answer to "how far does fidelity go".
+- **Where the old look and the new look disagree, the old wins by default.**
+  Departures are deliberate and listed — the DV deviations in
+  `docs/domain-model.md` are the record of which legacy behaviours were bad
+  enough not to carry forward.
+
+Still open: where this sits relative to the licence and public-flip work, which
+#95 tracks.
+
 ## What gets built here (D2, D7)
 
 One workspace, planned packages — created only when their build story starts:
