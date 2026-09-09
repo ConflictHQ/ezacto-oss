@@ -85,11 +85,26 @@ export interface AppShellOptions {
    */
   readonly tabs?: readonly ShellTab[]
   readonly signInProviders?: readonly SignInProvider[]
+  /**
+   * Sign-in credentials printed on the page. Only a demo deployment ever
+   * supplies them, and only a deployment whose database is rebuilt nightly has
+   * any business doing so.
+   */
+  readonly demoAccounts?: readonly DemoSignInAccount[]
   /** Presentation hint only. The browser still validates the session before enabling the app. */
   readonly sessionCookiePresent?: boolean
 }
 
 export type SignInProvider = 'google' | 'github'
+
+export interface DemoSignInAccount {
+  /** What the account is, e.g. "Administrator". */
+  readonly label: string
+  readonly email: string
+  readonly password: string
+  /** One line on what this account can see, so the choice between them means something. */
+  readonly describes: string
+}
 
 export interface DataQualityBannerOptions {
   readonly message: string
@@ -229,6 +244,41 @@ const providerSignIn = (providers: readonly SignInProvider[]): string => {
   )
 }
 
+/**
+ * The credentials panel a demo deployment publishes on its own front page.
+ *
+ * Two accounts rather than one, because the interesting thing about a demo is
+ * what each profile is allowed to see, and a single administrator login hides
+ * exactly that. The fill button is not a convenience: a nineteen-character
+ * password typed by hand is where a person gives up on a demo.
+ */
+const demoCredentials = (accounts: readonly DemoSignInAccount[]): string => {
+  if (accounts.length === 0) return ''
+  const rows = accounts
+    .map(
+      (account) =>
+        `<li>` +
+        `<p class="demo-account-label">${escapeHtml(account.label)}</p>` +
+        `<p class="demo-account-describes">${escapeHtml(account.describes)}</p>` +
+        `<p class="demo-account-secret"><code>${escapeHtml(account.email)}</code>` +
+        `<code>${escapeHtml(account.password)}</code></p>` +
+        `<button type="button" class="demo-account-fill" data-demo-fill` +
+        ` data-demo-email="${escapeHtml(account.email)}"` +
+        ` data-demo-password="${escapeHtml(account.password)}">` +
+        `Fill in ${escapeHtml(account.label.toLowerCase())}</button>` +
+        `</li>`,
+    )
+    .join('')
+  return (
+    `<section class="demo-credentials" data-demo-credentials aria-label="Demo accounts">` +
+    `<p class="eyebrow">Demo instance</p>` +
+    `<p class="demo-credentials-note">Every client, project and hour here is invented, ` +
+    `and the database is wiped and rebuilt each night. Sign in with either account.</p>` +
+    `<ul>${rows}</ul>` +
+    `</section>`
+  )
+}
+
 export const renderAppShell = (options: AppShellOptions): string => {
   const active = options.activeSection ?? 'Time'
   const view = options.view ?? 'time'
@@ -290,6 +340,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
           </label>
           <button class="primary-action" type="submit" data-sign-in-submit>Sign in</button>
           <p class="auth-result" data-sign-in-result role="status" aria-live="polite"></p>
+          ${demoCredentials(options.demoAccounts ?? [])}
         </form>
         <noscript>${renderEmptyState('JavaScript is required', `The ${escapeHtml(brand)} app uses JavaScript to establish and protect your session.`)}</noscript>
       </div>

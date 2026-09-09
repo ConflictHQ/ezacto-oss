@@ -3962,6 +3962,18 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     void loadWeek(operation)
   })
 
+  // Only a demo deployment renders these, and only into its own sign-in form.
+  // The values are read from the buttons the server wrote; nothing here knows
+  // a password, and on any other deployment the query matches nothing.
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-demo-fill]')) {
+    button.addEventListener('click', () => {
+      signInEmail.value = button.dataset.demoEmail ?? ''
+      signInPassword.value = button.dataset.demoPassword ?? ''
+      signInResult.textContent = ''
+      signInSubmit.focus()
+    })
+  }
+
   signInForm.addEventListener('submit', (event) => {
     event.preventDefault()
     if (signingIn) {
