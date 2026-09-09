@@ -360,6 +360,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
           <p class="form-result" data-timesheet-result role="status"></p>
         </div>
         <div class="timesheet-status-actions">
+          <button type="button" data-unsubmit-timesheet data-auth-action hidden disabled>Unsubmit week</button>
           <button type="button" data-withdraw-timesheet data-auth-action hidden disabled>Reopen week</button>
           <button class="primary-action" type="button" data-submit-timesheet data-auth-action disabled>Submit week</button>
         </div>

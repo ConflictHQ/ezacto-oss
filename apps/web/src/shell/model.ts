@@ -144,6 +144,11 @@ export interface ShellApi
     input: TimesheetWithdrawalInput,
     signal?: AbortSignal,
   ): Promise<TimesheetSubmission>
+  /** Taking back your own week before anyone has reviewed it. No reason asked. */
+  unsubmitTimesheetSubmission?(
+    id: number,
+    signal?: AbortSignal,
+  ): Promise<TimesheetSubmission>
   getTimesheetLockPolicy?(signal?: AbortSignal): Promise<TimesheetLockPolicy>
   updateTimesheetLockPolicy?(
     input: TimesheetLockPolicyPatch,
@@ -378,6 +383,41 @@ export const paletteDestinations: readonly PaletteDestination[] = [
   },
   { label: 'Reports', href: '/reports', group: 'Review', gate: primaryNav('/reports') },
 ]
+
+/**
+ * Mirrors `SELF_WITHDRAWAL_REASON` in `packages/db/src/timesheet-approvals.ts`,
+ * which is where the value is written. `apps/web` depends only on the generated
+ * client, so the literal is stated twice; a test in that package pins the same
+ * string so the pair cannot drift apart quietly.
+ */
+export const SELF_WITHDRAWAL_REASON = 'Taken back by the owner before review.'
+
+/**
+ * Whether an unsubmitted week was sent back by its own owner rather than by a
+ * reviewer. Both write the same three columns, because the table requires every
+ * unsubmitted row to say who returned it and why.
+ *
+ * Identity alone is not enough, and a browser test is what proved it: an
+ * administrator rejecting their *own* week is also a row whose reviewer is its
+ * owner, and reading that as a self-withdrawal hid a real rejection. The reason
+ * is what actually separates the two. A reviewer who types this exact sentence
+ * as their rejection reason would be misread, which costs a label and nothing
+ * else.
+ *
+ * Worth a named function rather than an inline comparison: getting it wrong
+ * shows someone "Changes requested" for a correction they made themselves.
+ */
+export const isSelfWithdrawn = (
+  submission: Pick<
+    TimesheetSubmission,
+    'status' | 'user_id' | 'reviewed_by_user_id' | 'rejection_reason'
+  > | null,
+): boolean =>
+  submission !== null &&
+  submission.status === 'unsubmitted' &&
+  submission.reviewed_by_user_id !== null &&
+  submission.reviewed_by_user_id === submission.user_id &&
+  submission.rejection_reason === SELF_WITHDRAWAL_REASON
 
 const paletteGroups: readonly PaletteGroup[] = ['Track', 'Organize', 'Bill', 'Review']
 
@@ -1422,6 +1462,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  unsubmitTimesheetSubmission: async (id, signal) =>
+    (await client.unsubmitTimesheetSubmission({ id, ...withSignal(signal) })).data,
   withdrawTimesheetSubmission: async (id, input, signal) =>
     (
       await client.withdrawTimesheetSubmission({

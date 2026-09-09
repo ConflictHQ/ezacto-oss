@@ -10,6 +10,15 @@ type NativeClient = BetterSqlite3.Database | D1Database
 
 export type TimesheetSubmissionStatus = 'unsubmitted' | 'submitted' | 'approved'
 
+
+/**
+ * The reason stored when someone takes back their own week. The CHECK on
+ * `timesheet_submissions` requires every unsubmitted row to carry a reason, and
+ * this is the one that means "nobody rejected this, the owner withdrew it" --
+ * which callers can also tell from the reviewer being the owner.
+ */
+export const SELF_WITHDRAWAL_REASON = 'Taken back by the owner before review.'
+
 export interface TimesheetApprovalActor {
   userId: number
   profile:
@@ -918,6 +927,84 @@ export class TimesheetApprovalRepository {
       'state_conflict',
       'The selected timesheet submissions changed before they could be approved.',
       identifiers,
+    )
+  }
+
+  /**
+   * A person taking back their own week before anyone has reviewed it.
+   *
+   * Distinct from `withdraw`, which undoes an approval and is an administrator
+   * act. Nothing is undone here except the person's own submission, so the
+   * check is ownership rather than profile. The state machine already allows
+   * this transition -- `timesheet_submissions_update_guard` requires a
+   * privileged actor only for `approved -> unsubmitted`.
+   *
+   * The row records the person as the one who sent it back, because the table
+   * CHECK requires every unsubmitted row to say who did it and why, and here
+   * the honest answer to both is the owner. Reviewers and the person's own
+   * screen tell this from a rejection by comparing the reviewer to the owner;
+   * `SELF_WITHDRAWAL_REASON` is the recognisable form. Giving this its own
+   * null-reviewer state would mean a fourth branch on that CHECK, which SQLite
+   * can only reach by rebuilding the table and its eleven triggers -- worth
+   * doing, and not worth doing in the same change as the feature.
+   *
+   * Only a submission still waiting. An approved week has been acted on by
+   * someone else and stays the administrator's to reopen.
+   */
+  async unsubmit(
+    actor: Readonly<TimesheetApprovalActor>,
+    submissionId: number,
+    occurredAt: string,
+  ): Promise<TimesheetSubmissionRecord> {
+    try {
+      const result = await atomicPair(
+        this.#client,
+        {
+          // Ownership and status are both in the predicate rather than read
+          // first: a read-then-write pair could approve between the two, and
+          // the write would then quietly undo a decision it never saw.
+          sql: `UPDATE timesheet_submissions AS submission
+            SET status = 'unsubmitted', reviewed_by_user_id = submission.user_id,
+              reviewed_at = ?, rejection_reason = ?,
+              version = version + 1, updated_at = ?
+            WHERE submission.id = ? AND submission.user_id = ?
+              AND submission.status = 'submitted'
+            RETURNING id`,
+          params: [
+            occurredAt,
+            SELF_WITHDRAWAL_REASON,
+            occurredAt,
+            submissionId,
+            actor.userId,
+          ],
+        },
+        { sql: `${submissionSelect} WHERE submission.id = ?`, params: [submissionId] },
+      )
+      if (result.mutationRows.length > 0 && result.readRows[0]) {
+        return record(result.readRows[0])
+      }
+    } catch (error) {
+      translateMutationFailure(error)
+    }
+
+    const existing = await first<{ status: TimesheetSubmissionStatus; user_id: number }>(
+      this.#client,
+      `SELECT status, user_id FROM timesheet_submissions WHERE id = ?`,
+      [submissionId],
+    )
+    if (existing === null) {
+      throw new TimesheetApprovalError('not_found', 'The timesheet submission does not exist.')
+    }
+    // Someone else's submission answers the same way a missing one does. Saying
+    // "that is not yours" confirms it exists and who it belongs to.
+    if (existing.user_id !== actor.userId) {
+      throw new TimesheetApprovalError('not_found', 'The timesheet submission does not exist.')
+    }
+    throw new TimesheetApprovalError(
+      'state_conflict',
+      existing.status === 'approved'
+        ? 'An approved timesheet can only be reopened by an administrator.'
+        : 'Only a submitted timesheet can be unsubmitted.',
     )
   }
 

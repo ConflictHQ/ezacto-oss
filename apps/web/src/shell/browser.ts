@@ -59,6 +59,7 @@ import {
   loadShellSnapshot,
   localDate,
   navigationDestination,
+  isSelfWithdrawn,
   palettePlan,
   type PaletteEntity,
   type PaletteResult,
@@ -1070,6 +1071,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const timesheetResult = required<HTMLElement>('[data-timesheet-result]')
   const submitTimesheet = required<HTMLButtonElement>('[data-submit-timesheet]')
   const withdrawTimesheet = required<HTMLButtonElement>('[data-withdraw-timesheet]')
+  const unsubmitTimesheet = required<HTMLButtonElement>('[data-unsubmit-timesheet]')
   const approvalsPageElement = required<HTMLElement>('[data-timesheet-approvals-page]')
   const approvalReviewPanel = required<HTMLElement>('[data-approval-review-panel]')
   const approvalQueue = required<HTMLElement>('[data-approval-queue]')
@@ -1324,6 +1326,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     lockPolicyPanel.hidden = true
     timesheetLockList.replaceChildren()
     withdrawTimesheet.hidden = true
+    unsubmitTimesheet.hidden = true
     approvalModuleAvailable = false
     lockPolicyAvailable = false
     currentSubmission = null
@@ -1644,16 +1647,23 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     if (!approvalModuleAvailable) return
     const status = currentSubmission?.status ?? 'unsubmitted'
     timesheetStatus.dataset.status = status
+    // A week the person took back themselves carries the same three columns a
+    // rejection does, so without this it would read as "Changes requested" for
+    // a correction nobody asked them to make.
+    const selfWithdrawn = isSelfWithdrawn(currentSubmission)
     timesheetStatusLabel.textContent =
       status === 'approved'
         ? 'Approved'
         : status === 'submitted'
           ? 'Submitted for approval'
-          : currentSubmission?.rejection_reason === null ||
+          : selfWithdrawn ||
+              currentSubmission?.rejection_reason === null ||
               currentSubmission?.rejection_reason === undefined
             ? 'Not submitted'
             : 'Changes requested'
-    const reason = currentSubmission?.rejection_reason?.trim() ?? ''
+    const reason = selfWithdrawn
+      ? ''
+      : currentSubmission?.rejection_reason?.trim() ?? ''
     timesheetRejectionReason.hidden = reason === ''
     timesheetRejectionReason.textContent = reason === '' ? '' : `Needs changes: ${reason}`
     submitTimesheet.textContent =
@@ -1661,7 +1671,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         ? 'Approved'
         : status === 'submitted'
           ? 'Awaiting approval'
-          : currentSubmission?.rejection_reason === null ||
+          : selfWithdrawn ||
+              currentSubmission?.rejection_reason === null ||
               currentSubmission?.rejection_reason === undefined
             ? 'Submit week'
             : 'Resubmit week'
@@ -1673,6 +1684,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       snapshot.entries.some((entry) => entry.is_running)
     withdrawTimesheet.hidden = status !== 'approved' || !canManageTimesheetLocks()
     withdrawTimesheet.disabled = timesheetTransitionPending || withdrawTimesheet.hidden
+    // Only while it is still waiting, and only your own -- the week grid shows
+    // one person's week, so a submission on screen is the viewer's. An approved
+    // week is someone else's decision to undo and keeps the Reopen path.
+    unsubmitTimesheet.hidden =
+      status !== 'submitted' || api.unsubmitTimesheetSubmission === undefined
+    unsubmitTimesheet.disabled = timesheetTransitionPending || unsubmitTimesheet.hidden
   }
 
   const renderLockPolicy = (): void => {
@@ -3456,6 +3473,41 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     open(withdrawalDialog)
     withdrawalReason.focus()
   }
+
+  unsubmitTimesheet.addEventListener('click', () => {
+    const operation = sessionOperation()
+    const submission = currentSubmission
+    if (
+      operation === null ||
+      submission?.status !== 'submitted' ||
+      timesheetTransitionPending ||
+      api.unsubmitTimesheetSubmission === undefined
+    ) {
+      return
+    }
+    // No reason is asked for. Nobody has reviewed this yet, so there is no
+    // decision to explain -- asking would make correcting your own typo feel
+    // like answering for it.
+    timesheetTransitionPending = true
+    renderTimesheetStatus()
+    timesheetResult.textContent = 'Unsubmitting week…'
+    void api
+      .unsubmitTimesheetSubmission(submission.id, operation.signal)
+      .then(async () => {
+        if (!(await refresh(operation))) return
+        timesheetResult.textContent =
+          'Week unsubmitted. Edit it and submit again when you are ready.'
+      })
+      .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
+        timesheetResult.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (!isSessionCurrent(operation)) return
+        timesheetTransitionPending = false
+        renderTimesheetStatus()
+      })
+  })
 
   withdrawTimesheet.addEventListener('click', () => {
     if (currentSubmission?.status !== 'approved') return

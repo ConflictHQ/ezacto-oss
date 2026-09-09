@@ -101,6 +101,11 @@ export interface TimesheetLockPolicyService {
     reason: string,
     occurredAt: string,
   ): Promise<TimesheetSubmissionRecord>
+  unsubmitTimesheet(
+    actor: Readonly<TimesheetLockPolicyActor>,
+    submissionId: number,
+    occurredAt: string,
+  ): Promise<TimesheetSubmissionRecord>
 }
 
 export interface TimesheetLockPolicyRouteOptions {
@@ -507,6 +512,45 @@ export const installTimesheetLockPolicyRoutes = <Bindings extends object>(
             options.clock(),
           ),
         ),
+        200,
+        { 'cache-control': 'no-store' },
+      )
+    } catch (error) {
+      return translate(error)
+    }
+  })
+
+  /**
+   * Taking back your own week before anyone has reviewed it.
+   *
+   * No administrator gate: the authority is that the submission belongs to the
+   * caller, and the repository checks that inside the UPDATE rather than
+   * trusting a read here. Someone else's submission answers 404, the same as a
+   * missing one -- a 403 would confirm it exists and whose it is.
+   *
+   * Deliberately not `reject`. A rejection is a reviewer's judgement, and a
+   * person should not have to wear one to fix their own typo.
+   */
+  api.post('/timesheet-submissions/:id/unsubmit', async (context) => {
+    try {
+      await options.service.assertApprovalEnabled()
+    } catch (error) {
+      return translate(error)
+    }
+    requireApiScope(context, 'time_entries:write')
+    requireApiScope(context, 'expenses:write')
+    const principal = requireSessionPrincipal(context)
+    try {
+      const submission = await options.service.unsubmitTimesheet(
+        { userId: principal.userId, profile: principal.profile },
+        resourceId(context.req.param('id'), 'timesheet submission'),
+        options.clock(),
+      )
+      return context.json(
+        {
+          data: serializeTimesheetSubmission(submission),
+          links: { self: `/api/v1/timesheet-submissions/${submission.id}` },
+        },
         200,
         { 'cache-control': 'no-store' },
       )

@@ -2933,6 +2933,15 @@ export class EzactoClient {
     });
   }
 
+  async unsubmitTimesheetSubmission(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetSubmissionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetSubmissionEnvelope>("POST", "/api/v1/timesheet-submissions/:id/unsubmit".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
   async withdrawTimesheetSubmission(args: { "id": number; body: TimesheetWithdrawalInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetSubmissionEnvelope> {
     const headers = new Headers(args.headers);
 

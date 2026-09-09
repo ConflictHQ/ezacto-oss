@@ -11,6 +11,7 @@ import {
 import { createStoppedTimeEntry, startTimeEntry } from '../src/time-entries.js'
 import {
   createTimesheetApprovalRepository,
+  SELF_WITHDRAWAL_REASON,
   TimesheetApprovalError,
   type TimesheetApprovalActor,
 } from '../src/timesheet-approvals.js'
@@ -313,6 +314,75 @@ for (const [runtime, factory] of factories) {
     let database: TestDatabase | undefined
 
     afterEach(async () => database?.close())
+
+    it('[unit] pins the self-withdrawal reason that apps/web reads', () => {
+      // `apps/web` depends only on the generated client, so it restates this
+      // literal in `shell/model.ts` to tell a self-withdrawal from a rejection.
+      // Changing it here alone would make every taken-back week read as
+      // "Changes requested" and nothing would fail in this package.
+      expect(SELF_WITHDRAWAL_REASON).toBe('Taken back by the owner before review.')
+    })
+
+    it('[db] lets a person take back their own week and edit it again', async () => {
+      // Submitting used to be one-way until a reviewer acted. Someone who spotted
+      // their own mistake had to ask for a rejection -- a reviewer's judgement --
+      // to correct a typo they made themselves.
+      database = await factory()
+      await installFixture(database)
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      const tracked = new DrizzleTrackedResourceRepository(database.orm, unlocked)
+
+      const submitted = await approvals.submit(1, periodStart, periodEnd, t1)
+      expect(submitted.status).toBe('submitted')
+
+      const taken = await approvals.unsubmit(actor(1, 'member'), submitted.id, t2)
+      expect(taken).toMatchObject({
+        status: 'unsubmitted',
+        // The owner is recorded as the one who sent it back, which is what
+        // separates this from a rejection: a reader compares the reviewer to
+        // the owner rather than guessing from a free-text reason.
+        reviewedByUserId: 1,
+        userId: 1,
+        rejectionReason: SELF_WITHDRAWAL_REASON,
+      })
+      expect((await tracked.getTimeEntry(1, 1)).state).toMatchObject({
+        approvalStatus: 'unsubmitted',
+        isLocked: false,
+      })
+    })
+
+    it('[security] refuses to unsubmit a week that is not yours', async () => {
+      database = await factory()
+      await installFixture(database)
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      const submitted = await approvals.submit(1, periodStart, periodEnd, t1)
+
+      // Not found rather than forbidden: a 403 would confirm the submission
+      // exists and tell the caller whose week it is.
+      await expect(
+        approvals.unsubmit(actor(2, 'member'), submitted.id, t2),
+      ).rejects.toMatchObject({ code: 'not_found' })
+      expect(
+        (await approvals.get(actor(10, 'administrator'), submitted.id))?.status,
+      ).toBe('submitted')
+    })
+
+    it('[security] leaves an approved week to the administrator path', async () => {
+      // An approved week has been acted on by someone else. Taking it back is
+      // undoing their decision, which stays `withdraw` and stays privileged.
+      database = await factory()
+      await installFixture(database)
+      const approvals = createTimesheetApprovalRepository(database.orm)
+      const submitted = await approvals.submit(1, periodStart, periodEnd, t1)
+      await approvals.approve(actor(10, 'administrator'), submitted.id, t2)
+
+      await expect(
+        approvals.unsubmit(actor(1, 'member'), submitted.id, t2),
+      ).rejects.toMatchObject({ code: 'state_conflict' })
+      expect(
+        (await approvals.get(actor(10, 'administrator'), submitted.id))?.status,
+      ).toBe('approved')
+    })
 
     it('[db] submits, accepts editable pending work, approves atomically, and audits', async () => {
       database = await factory()
