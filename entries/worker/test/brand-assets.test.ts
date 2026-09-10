@@ -81,14 +81,20 @@ describe('worker brand assets (#489)', () => {
     expect(new Uint8Array(await served.arrayBuffer())).toEqual(pngBytes)
   })
 
-  it('[integration] the deploy-time URL still renders when nothing is uploaded', async () => {
+  it('[integration] a deploy-time URL keeps the text wordmark, because the CSP refuses it', async () => {
+    // This asserted the opposite -- that the configured URL renders as an <img>
+    // -- and the same response carries `img-src 'self' data:`, so what it was
+    // pinning is a mark the browser refuses to load with no text left
+    // underneath it. On the sign-in splash, which is the first screen anyone
+    // sees. The expectation was wrong, not the CSP.
     const env = await environment({
       vars: { BRAND_WORDMARK_DARK: 'https://cdn.example/dark.png' },
     })
-    const html = await (
-      await createApp(undefined, workerBrandAssetSurface).request('/', {}, env)
-    ).text()
-    expect(html).toContain('src="https://cdn.example/dark.png"')
+    const response = await createApp(undefined, workerBrandAssetSurface).request('/', {}, env)
+    const html = await response.text()
+    expect(response.headers.get('content-security-policy')).toContain("img-src 'self'")
+    expect(html).not.toContain('cdn.example')
+    expect(html).not.toContain('brand-mark')
   })
 
   it('[integration] an uploaded mark displaces the deploy-time URL', async () => {

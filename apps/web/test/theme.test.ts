@@ -144,7 +144,11 @@ describe('D16 theme token contract', () => {
     // verified sender wanted a positive colour and money-green was to hand, but
     // that would have made the token mean two things; the screen marks only the
     // states needing attention instead.
-    const awaitingAPurpose = ['money', 'ink_2', 'blue_light']
+    // `blue_light` came off it with the brand-asset control (#489): the dark
+    // preview tile paints `--ez-ink`, and its hint needs a muted colour that
+    // stays legible on that ground, which is the job the token was holding a
+    // colour for. `money` and `ink_2` still have none.
+    const awaitingAPurpose = ['money', 'ink_2']
     const stylesheet = await readFile(resolve(root, 'src', 'shell', 'shell.css'), 'utf8')
     const unspent = themeSlotNames.filter(
       (name) => !stylesheet.includes(`var(${cssCustomProperty(name)})`),
