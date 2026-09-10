@@ -118,6 +118,23 @@ delete process.env.EZACTO_BROWSER_FIXTURE_PASSWORD
 
 const timestamp = fixtureInstant
 const spentDate = localDateAt(fixtureDate, fixtureTimeZone)
+// The team summary reads one week, Monday to Sunday, around the fixture's own
+// day -- the same range `teamWeekRange` derives in the browser from the
+// organization's `week_start_day`, which is `monday` by default and is left at
+// the default here. The roster seed asserts its totals over exactly this range,
+// so the range has to be computed rather than written down: move the fixture
+// instant and a hardcoded week would silently start measuring an empty week.
+const rosterWeek = (() => {
+  const day = new Date(`${spentDate}T00:00:00.000Z`)
+  const mondayOffset = (day.getUTCDay() + 6) % 7
+  const from = new Date(day.valueOf() - mondayOffset * 86_400_000)
+  const to = new Date(from.valueOf() + 6 * 86_400_000)
+  return {
+    from: from.toISOString().slice(0, 10),
+    to: to.toISOString().slice(0, 10),
+  }
+})()
+
 const run = async (statement, ...bindings) => {
   await database.prepare(statement).bind(...bindings).run()
 }
@@ -559,6 +576,206 @@ const fixtureControl = async (request, response) => {
         )
         .bind(timestamp, timestamp),
     ])
+  } else if (action === 'team-summary-seed') {
+    /**
+     * A roster, not a lone owner.
+     *
+     * The team summary strip is only worth asserting against when its numbers
+     * are the size real numbers are. With the signed-in owner as the only
+     * person it reads `1`, `35h`, `0.75h`, `0.75h`, `0h`, `2.1%` -- figures two
+     * to five characters wide, which fit any track at any width. That is what
+     * made the collision guard #515 wanted vacuous, and note the mechanism is
+     * not a hidden strip: the strip renders, so a count assertion passes too.
+     * Only the width of the figures was ever the problem.
+     *
+     * These eight people restore the shape the demo instance had when the
+     * overlap was reported, to the digit: 9 people, 315h capacity, 328.25h
+     * tracked, 284.5h billable, 43.75h non-billable, 104.2% utilization.
+     * `328.25h` is the seven-character figure that overran its 140px track.
+     *
+     * Seeded per spec rather than into the base fixture, which is the second
+     * thing #515 could not have known: 284.5h of billable time on the
+     * acceptance project is 284.5h the invoice wizard will sweep, and a roster
+     * in the base fixture turns `[e2e:invoice-cycle]`'s `$75.00` draft into
+     * `$28,450.00` -- measured, not guessed. `invoice-generation-seed` already
+     * owns this shape, so this follows it.
+     *
+     * Ids sit above 9000 so nothing an earlier spec creates through the API can
+     * collide with them, and the cleanup below is keyed on the same range.
+     */
+    const rosterTargets = {
+      // 315h, 328.25h, 284.5h, 43.75h -- the strip's own figures, in seconds.
+      capacity: 1_134_000,
+      tracked: 1_181_700,
+      billable: 1_024_200,
+      nonBillable: 157_500,
+    }
+    const roster = [
+      { id: 9001, firstName: 'Ana', lastName: 'Solano', contractor: 0, billable: 38.5, nonBillable: 0 },
+      { id: 9002, firstName: 'Diego', lastName: 'Vargas', contractor: 0, billable: 40, nonBillable: 2.5 },
+      { id: 9003, firstName: 'Marta', lastName: 'Quesada', contractor: 0, billable: 36.25, nonBillable: 4 },
+      { id: 9004, firstName: 'Luis', lastName: 'Herrera', contractor: 0, billable: 41, nonBillable: 1.5 },
+      { id: 9005, firstName: 'Paula', lastName: 'Mora', contractor: 0, billable: 33.5, nonBillable: 6.25 },
+      { id: 9006, firstName: 'Tomas', lastName: 'Alfaro', contractor: 1, billable: 39.75, nonBillable: 3 },
+      { id: 9007, firstName: 'Nadia', lastName: 'Rojas', contractor: 1, billable: 30, nonBillable: 12.5 },
+    ]
+
+    /**
+     * One person absorbs whatever the run already left in this week.
+     *
+     * The owner's own time is not a constant by the time this spec runs. The
+     * invoice wizard takes an entry out of `invoice-generation-cleanup`'s reach
+     * by stamping `invoice_id` on it, so the week carries 0.75h on one ordering
+     * and 1h on another -- measured: the first version of this seed asserted
+     * `1181700` and got `1182600` in a full-suite run and `1181700` alone.
+     *
+     * Rounding the assertion to a band was the alternative and was rejected:
+     * the whole point of the roster is that `328.25h` is seven characters wide,
+     * and a band lets it drift to a width that cannot collide -- the vacuous
+     * test again, one step removed. So the eight person's hours are the target
+     * minus what is already there, the totals stay exact, and the assertion
+     * below stays an equality.
+     */
+    const existing = await database
+      .prepare(
+        `SELECT
+           coalesce(sum(CASE WHEN billable = 1 THEN rounded_seconds ELSE 0 END), 0) AS billable,
+           coalesce(sum(CASE WHEN billable = 0 THEN rounded_seconds ELSE 0 END), 0) AS nonBillable
+         FROM time_entries WHERE spent_date BETWEEN ? AND ?`,
+      )
+      .bind(rosterWeek.from, rosterWeek.to)
+      .first()
+    const plannedBillable = roster.reduce((total, person) => total + person.billable, 0) * 3_600
+    const plannedNonBillable =
+      roster.reduce((total, person) => total + person.nonBillable, 0) * 3_600
+    const absorbed = {
+      billable: rosterTargets.billable - existing.billable - plannedBillable,
+      nonBillable: rosterTargets.nonBillable - existing.nonBillable - plannedNonBillable,
+    }
+    // Forty hours is the widest slack one person can carry and still look like
+    // a week. Past that the acceptance run has left something this seed does
+    // not understand, and saying so beats seeding a roster that quietly reads
+    // wrong.
+    if (
+      absorbed.billable <= 0 ||
+      absorbed.nonBillable <= 0 ||
+      absorbed.billable > 144_000 ||
+      absorbed.nonBillable > 144_000
+    ) {
+      throw new Error(
+        `team summary roster cannot absorb the week already seeded: ${JSON.stringify({
+          existing,
+          absorbed,
+        })}`,
+      )
+    }
+    roster.push({
+      id: 9008,
+      firstName: 'Oscar',
+      lastName: 'Brenes',
+      contractor: 1,
+      billable: absorbed.billable / 3_600,
+      nonBillable: absorbed.nonBillable / 3_600,
+    })
+
+    for (const person of roster) {
+      await run(
+        `INSERT INTO users (
+           id, first_name, last_name, timezone, is_contractor, is_active,
+           weekly_capacity, profile, manager_grants, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, 1, 126000, 'member', '[]', ?, ?)`,
+        person.id,
+        person.firstName,
+        person.lastName,
+        fixtureTimeZone,
+        person.contractor,
+        timestamp,
+        timestamp,
+      )
+      await run(
+        `INSERT INTO user_emails (
+           id, user_id, address, verified_at, is_primary, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, 1, ?, ?)`,
+        person.id,
+        person.id,
+        `${person.firstName.toLowerCase()}.${person.lastName.toLowerCase()}@example.test`,
+        timestamp,
+        timestamp,
+        timestamp,
+      )
+      await run(
+        `INSERT INTO user_assignments (
+           id, project_id, user_id, created_at, updated_at
+         ) VALUES (?, 1, ?, ?, ?)`,
+        person.id,
+        person.id,
+        timestamp,
+        timestamp,
+      )
+      // The task assignment carries a billable default; the entry carries the
+      // fact. Splitting the week on the entry rather than adding a second task
+      // assignment keeps the project's own catalog exactly as the other
+      // acceptance specs already found it.
+      for (const [kind, hours, billable] of [
+        ['billable', person.billable, 1],
+        ['internal', person.nonBillable, 0],
+      ]) {
+        if (hours === 0) continue
+        await run(
+          `INSERT INTO time_entries (
+             id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+             spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+             billable_rate_cents, cost_rate_cents, budgeted, notes, created_at, updated_at
+           ) VALUES (?, ?, 1, 1, ?, 1, ?, ?, ?, ?, ?, 10000, 5000, 1, ?, ?, ?)`,
+          person.id * 10 + billable,
+          person.id,
+          person.id,
+          spentDate,
+          hours * 3_600,
+          hours * 3_600,
+          hours * 3_600,
+          billable,
+          `Team summary roster ${kind} week`,
+          timestamp,
+          timestamp,
+        )
+      }
+    }
+    await run(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`)
+    // The strip's six figures are what the regression guard measures, so the
+    // seed asserts the totals behind them. Anything this seed did not account
+    // for fails here, loudly, rather than shifting `328.25h` to a width that
+    // cannot collide and quietly turning the guard back into the vacuous test
+    // it exists to replace.
+    const totals = await database
+      .prepare(
+        `SELECT
+           (SELECT count(*) FROM users WHERE is_active = 1) AS people,
+           (SELECT sum(weekly_capacity) FROM users WHERE is_active = 1) AS capacity,
+           coalesce(sum(rounded_seconds), 0) AS tracked,
+           coalesce(sum(CASE WHEN billable = 1 THEN rounded_seconds ELSE 0 END), 0) AS billable
+         FROM time_entries WHERE spent_date BETWEEN ? AND ?`,
+      )
+      .bind(rosterWeek.from, rosterWeek.to)
+      .first()
+    if (
+      totals?.people !== 9 ||
+      totals.capacity !== rosterTargets.capacity ||
+      totals.tracked !== rosterTargets.tracked ||
+      totals.billable !== rosterTargets.billable
+    ) {
+      throw new Error(
+        `team summary roster totals drifted: ${JSON.stringify(totals)}`,
+      )
+    }
+  } else if (action === 'team-summary-cleanup') {
+    await database.batch([
+      database.prepare('DELETE FROM time_entries WHERE user_id >= 9000'),
+      database.prepare('DELETE FROM user_assignments WHERE user_id >= 9000'),
+      database.prepare('DELETE FROM user_emails WHERE user_id >= 9000'),
+      database.prepare('DELETE FROM users WHERE id >= 9000'),
+      database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+    ])
   } else if (action === 'task-admin-cleanup') {
     await database.batch([
       database.prepare(
@@ -700,7 +917,16 @@ const proxyFetch = async (request, response) => {
 }
 
 const server = http.createServer((request, response) => {
-  void proxyFetch(request, response).catch(() => {
+  void proxyFetch(request, response).catch((error) => {
+    // A fixture seed that throws used to reach the spec as a bare 500, and the
+    // reason it threw stayed inside this process: diagnosing one cost a full
+    // suite run. The message goes to stderr, which Playwright already pipes and
+    // prefixes `[WebServer]`, rather than into the response -- the control
+    // endpoint answers a browser the specs also drive, and its failures are not
+    // something to hand back over HTTP.
+    process.stderr.write(
+      `browser fixture request failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+    )
     if (!response.headersSent) {
       response.statusCode = 500
       response.setHeader('content-type', 'text/plain; charset=utf-8')
