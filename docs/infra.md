@@ -3,20 +3,23 @@
 Scaffolding decisions for hosting, domains, env, CI. Product code lands per
 `PLAN.md`; this file is the ops contract it lands into.
 
-## Domains (owned at Porkbun, all five zones live on Cloudflare; see umbrella D1 record)
+## Domains
 
-| Host | Role | When |
-| --- | --- | --- |
-| `app.example.com` | **OUR production instance** — the dogfood deployment, and the OSS gate | now |
-| `ezacto.io` | **the dev deployment**, on the apex; becomes the public demo | now |
-| `ezacto.dev` | developer site for the OSS project — docs + self-host guides, GitHub Pages (the `planopticon.dev` pattern: apex CNAME → `conflicthq.github.io`, proxied) | v1.0 |
-| `portal.example.com` | the umbrella portal (private, behind Access) | live |
-| `ezacto.com` | marketing site. Also carries Google Workspace MX and the Mailgun `go.` sending subdomain — **do not point an app at it** | v1.0 launch |
-| `ezacto.ai`, `ezacto.net` | parked | — |
+Three roles, each on a host you control. The names are yours; the roles are what
+the rest of this file assumes:
+
+| Role | What it is |
+| --- | --- |
+| Production host | the instance holding a real book of work |
+| Demo or dev host | where `main` lands, and what anyone can click through |
+| Docs site | self-host guides and developer documentation, served as static pages |
+
+Keep the mail domain out of that list. A zone carrying MX records and a
+transactional sending subdomain should not also have an app routed at its apex —
+the two want different DNS and fail in different ways.
 
 Two deployments, and only two. Per-branch preview Workers are how an account
-grows forty of them; targets here are hosts we own and name. `app.ezacto.dev` —
-the earlier plan for our instance — is dropped in favour of `app.example.com`.
+grows forty of them; targets here are hosts you own and name.
 
 ## Hosting
 
@@ -54,7 +57,7 @@ CI holds two repository-wide Cloudflare credentials. They are consumed only by
 
 | Secret | What |
 | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | scoped deploy/provision token — account: Workers Scripts Write, Workers Observability Write, Account Settings Read, **D1 Edit**, **Workers R2 Storage Edit**; zone: Zone Read, Workers Routes Write, DNS Write, **limited to `example.com` and `ezacto.io`** |
+| `CLOUDFLARE_API_TOKEN` | scoped deploy/provision token — account: Workers Scripts Write, Workers Observability Write, Account Settings Read, **D1 Edit**, **Workers R2 Storage Edit**; zone: Zone Read, Workers Routes Write, DNS Write, **limited to the two zones the deployments serve** |
 | `CLOUDFLARE_ACCOUNT_ID` | the deploying account's id (not a secret in itself; held as one so it stays out of the tracked config) |
 
 R2 bucket discovery and creation use Cloudflare's account REST API. In the API
@@ -82,8 +85,8 @@ one callback on each:
 
 | GitHub environment | Callback |
 | --- | --- |
-| `dev` | `https://ezacto.io/auth/oidc/google/callback` |
-| `prod` | `https://app.example.com/auth/oidc/google/callback` |
+| `dev` | `https://<dev-host>/auth/oidc/google/callback` |
+| `prod` | `https://<prod-host>/auth/oidc/google/callback` |
 
 Store each client's `OIDC_GOOGLE_CLIENT_ID` and
 `OIDC_GOOGLE_CLIENT_SECRET` in its matching GitHub environment. `deploy.yml`
@@ -155,8 +158,8 @@ after the first green deploy.
 
 Run the manual `provision D1` workflow once before adding bindings. It converges
 the exact database each environment names: `vars.DEV_D1_DATABASE_NAME`
-(`ezacto-dev`) and `vars.PROD_D1_DATABASE_NAME` (`ezacto-prod`), the same
-variables `render-wrangler-prod.mjs` reads, so a rename lands in one place. An
+(`ezacto-dev`) and `vars.PROD_D1_DATABASE_NAME`, the same variables
+`render-wrangler-prod.mjs` reads, so a rename lands in one place. An
 existing exact-name match is reused, no match is created, and duplicates fail
 closed. The workflow uploads a short-lived JSON artifact and job summary
 containing the non-secret database ID for each environment, and installs that
@@ -183,7 +186,7 @@ scope already documented above.
 | Environment | Delivery Queue                                    | Dead-letter Queue         |
 | ----------- | ------------------------------------------------- | ------------------------- |
 | `dev`       | `ezacto-dev-email`                                | `ezacto-dev-email-dlq`    |
-| `prod`      | `vars.PROD_EMAIL_QUEUE` (`ezacto-prod-email`) | the same name with `-dlq` |
+| `prod`      | `vars.PROD_EMAIL_QUEUE`                           | the same name with `-dlq` |
 
 The same Worker is the `EMAIL_QUEUE` producer and push consumer. The consumer
 accepts one message per batch with one concurrent invocation while SES sandbox
@@ -245,11 +248,11 @@ build, review — a red gate blocks merge.
 
 | Trigger | Target |
 | --- | --- |
-| push to `main` | **dev** — `ezacto.io` |
-| manual dispatch, `environment: prod`, only from `main` | **prod** — `app.example.com` |
+| push to `main` | **dev** — the demo host |
+| manual dispatch, `environment: prod`, only from `main` | **prod** — the production host |
 
-Prod is never automatic. "It merged" and "we are ready to move a real book of work
-onto it" are different questions, and only one is answered by a push event.
+Prod is never automatic. "It merged" and "we are ready to move a real book of
+work onto it" are different questions, and only one is answered by a push event.
 
 The run re-runs `verify` rather than trusting that `ci.yml` did, deploys with
 `--var RELEASE:$GITHUB_SHA`, and then **polls the live host's `/healthz` until it

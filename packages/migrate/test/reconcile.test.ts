@@ -780,8 +780,8 @@ describe('three-way reconciliation', () => {
   it('[unit] loads a correction entry so every total nets it out, as Harvest does', async () => {
     // #279: Harvest nets its negative correction entries into every report
     // total. time_entries.seconds was CHECK >= 0, so the loader skipped them
-    // and the recomputation ran higher — CONFLICT's August read $REDACTED
-    // against Harvest's $REDACTED, a $60 overpayment to one contractor.
+    // and the recomputation ran higher — one month read above Harvest by the
+    // whole of a skipped correction, which is an overpayment to a contractor.
     await rm(snapshotDir, { recursive: true, force: true })
     await rm(databasePath, { force: true })
     await buildSanitizedLoadSnapshot(snapshotDir)

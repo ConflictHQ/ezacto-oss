@@ -2,10 +2,10 @@
 
 The happy path, for somebody who is not us.
 
-[`cutover-runbook.md`](cutover-runbook.md) is the procedure CONFLICT ran against
-its own account, with its own hostnames and row counts. This is the shape of the
-thing, the order that matters, and the places it bites. It was written the day
-the account was closed, from what actually happened rather than what was planned.
+[`cutover-runbook.md`](cutover-runbook.md) is the full walkthrough of one real
+production run, kept for what it observed. This is the shape of the thing, the
+order that matters, and the places it bites. It was written the day that account
+was closed, from what actually happened rather than what was planned.
 
 ## What you get, and what you do not
 
@@ -98,8 +98,9 @@ invoice having its own PDF.
 ## A free reconciliation on the way out
 
 Harvest's account-closure page shows lifetime hours, projects and total invoiced.
-Ours read `$REDACTED` — matching the migrated database to the cent. If yours
-disagrees with your migration, find out why before you click through.
+On the run this was written from, that total matched the migrated database to the
+cent — a whole-account end-to-end check, free, from the vendor being left. If
+yours disagrees with your migration, find out why before you click through.
 
 The cancellation path itself is three retention screens deep, and `Cancel plan`
 and `Close account permanently` are different decisions. Cancelling stops the
