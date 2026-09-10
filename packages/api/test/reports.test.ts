@@ -378,6 +378,69 @@ for (const [runtime, factory] of factories) {
       );
     });
 
+    it("[db] agrees with the uninvoiced reader on every clause, not just the active one", async () => {
+      // The equality above passed over a fixture where three of the four
+      // conditions were inert: no entry had an `invoice_id`, a running timer, or
+      // a start without an end. The whole predicate could be deleted down to
+      // `billable AND project.is_active` and every test stayed green, while a
+      // regressed Time report would overstate `Uninvoiced amount` against the
+      // Uninvoiced report -- the drift this pair of readers exists to prevent.
+      //
+      // Both are billable, priced and inside the period, so each lands in the
+      // billable amount. Neither is uninvoiced work.
+      //
+      // The predicate's fourth clause -- a start with no end -- cannot be seeded
+      // here: this organisation runs in `duration` mode, and the shape
+      // constraint refuses a `started_time` outright. It is covered by that
+      // constraint rather than by this test, which is worth knowing before
+      // someone reads the equality below as proving all four.
+      harness = await factory();
+      await harness.run(
+        `INSERT INTO invoices
+          (id, client_id, number, currency, issue_date, due_date, payment_terms,
+           state, amount_cents, due_amount_cents, created_at, updated_at)
+         VALUES (900, 1, 'T-900', 'USD', '2026-08-20', '2026-09-19', 'net_30',
+           'open', 10000, 10000, ?, ?)`,
+        [now, now],
+      );
+      await harness.run(
+        `INSERT INTO time_entries
+          (id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+           spent_date, seconds, seconds_without_timer, rounded_seconds, billable, budgeted,
+           billable_rate_cents, cost_rate_cents, invoice_id, timer_started_at,
+           started_time, ended_time, created_at, updated_at)
+         VALUES
+           (901, 1, 1, 1, 21, 11, '2026-08-15', 3600, 3600, 3600, 1, 1, 10000, 4000,
+             900, NULL, NULL, NULL, ?, ?),
+           (902, 1, 1, 1, 21, 11, '2026-08-16', 3600, 3600, 3600, 1, 1, 10000, 4000,
+             NULL, ?, NULL, NULL, ?, ?)`,
+        [now, now, now, now, now],
+      );
+
+      const report = await harness.reports.timeReport({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      });
+      const uninvoiced = await harness.reports.uninvoiced({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      });
+
+      // Counted first: an insert that silently failed would leave the two
+      // readers agreeing over the original fixture and prove nothing.
+      expect(report.totals.timeEntryCount).toBe(6);
+      expect(report.totals.amounts).toHaveLength(1);
+      expect(uninvoiced.totals).toHaveLength(1);
+
+      // Two more billable hours at 100.00 each on top of the original 271.73.
+      expect(report.totals.amounts[0]!.billableCents).toBe(27_173 + 20_000);
+      // And none of them is uninvoiced: the figure is unchanged.
+      expect(report.totals.amounts[0]!.uninvoicedCents).toBe(18_173);
+      expect(report.totals.amounts[0]!.uninvoicedCents).toBe(
+        uninvoiced.totals[0]!.timeCents,
+      );
+    });
+
     it("[db] leaves an unrated billable hour out of the amount and says so", async () => {
       harness = await factory();
       await harness.run(

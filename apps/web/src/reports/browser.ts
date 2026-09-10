@@ -19,7 +19,7 @@ import { createPeriodControl } from '../components/period.js'
 // The team roster's own formatter. Utilization is one figure with one meaning,
 // and a second renderer for it here is how the same person comes to read 17%
 // on one screen and 17.4% on another.
-import { teamUtilization } from '../team/model.js'
+import { teamCapabilities, teamUtilization } from '../team/model.js'
 import {
   billablePercent,
   canReadFinancialReports,
@@ -718,6 +718,13 @@ const timeTable = <Row extends TimeRowFigures>(
   return wrapper
 }
 
+const plainNameCell = (label: string): HTMLTableCellElement => {
+  const cell = element('th')
+  cell.scope = 'row'
+  cell.textContent = label
+  return cell
+}
+
 const nameCell = (href: string, label: string): HTMLTableCellElement => {
   const cell = element('th')
   cell.scope = 'row'
@@ -735,6 +742,13 @@ const renderTimeReport = (
   report: Readonly<TimeReport>,
   filters: Readonly<ReportFilters>,
   onTab: (tab: TimeReportTab) => void,
+  /**
+   * Whether this viewer may open a person's page. `reports:read` and `team:read`
+   * are different sets -- accounting holds the first and not the second -- so a
+   * teammate row linked unconditionally hands them a link to a page the shell
+   * keeps out of their nav and the screen refuses on arrival.
+   */
+  canOpenTeam: boolean,
 ): DocumentFragment => {
   const fragment = document.createDocumentFragment()
   fragment.append(
@@ -815,7 +829,13 @@ const renderTimeReport = (
         [
           {
             label: 'Name',
-            cell: (row) => nameCell(`/team/${row.user_id}`, row.user_name),
+            // Plain text where the viewer cannot read Team, which is what the
+            // Tasks tab already does for the same reason: a dead link is worse
+            // than no link, because it looks like a way in.
+            cell: (row) =>
+              canOpenTeam
+                ? nameCell(`/team/${row.user_id}`, row.user_name)
+                : plainNameCell(row.user_name),
           },
         ],
         [
@@ -911,6 +931,14 @@ export const createReportsController = (
   page.hidden = !reportsPage
 
   let session: ActiveSession | null = null
+  /**
+   * `reports:read` and `team:read` are different sets -- accounting is in the
+   * first and not the second -- so whether a teammate name is a link is a
+   * question about the viewer, asked of the same helper the Team screen and the
+   * nav both use rather than a second copy of the rule.
+   */
+  const canOpenTeam = (): boolean =>
+    session !== null && teamCapabilities(session.identity).canRead
   let kind: ReportKind = 'uninvoiced'
   let timeTab: TimeReportTab = 'clients'
   /**
@@ -1074,7 +1102,9 @@ export const createReportsController = (
     syncKindHrefs(filters)
     globalThis.history.pushState(null, '', reportFiltersUrl(filters))
     if (lastTimeReport === null) return
-    results.replaceChildren(renderTimeReport(lastTimeReport, filters, showTimeTab))
+    results.replaceChildren(
+      renderTimeReport(lastTimeReport, filters, showTimeTab, canOpenTeam()),
+    )
   }
 
   const renderReport = (
@@ -1088,7 +1118,9 @@ export const createReportsController = (
   ): void => {
     if (filters.kind === 'time') {
       lastTimeReport = report as TimeReport
-      results.replaceChildren(renderTimeReport(lastTimeReport, filters, showTimeTab))
+      results.replaceChildren(
+      renderTimeReport(lastTimeReport, filters, showTimeTab, canOpenTeam()),
+    )
     } else if (filters.kind === 'my-hours') {
       results.replaceChildren(renderMyHours(report as MyHoursReport))
     } else if (filters.kind === 'uninvoiced') {

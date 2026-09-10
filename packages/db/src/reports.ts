@@ -1475,9 +1475,8 @@ const timeReport = async (
   const rows = await database.all<TimeReportQueryRow>(sql`
     SELECT entry.seconds AS "seconds", entry.rounded_seconds AS "roundedSeconds",
       entry.billable AS "billable", entry.billable_rate_cents AS "billableRateCents",
-      CASE WHEN entry.billable = 1 AND entry.invoice_id IS NULL
-        AND project.is_active = 1 AND entry.timer_started_at IS NULL
-        AND NOT (entry.started_time IS NOT NULL AND entry.ended_time IS NULL)
+      CASE WHEN entry.billable = 1
+        AND project.is_active = 1
         THEN 1 ELSE 0 END AS "uninvoiced",
       upper(coalesce(project.billing_currency, client.currency)) AS "currency",
       client.id AS "clientId", client.name AS "clientName",

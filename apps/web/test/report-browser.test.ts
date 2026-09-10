@@ -1384,6 +1384,38 @@ describe('Reports Stage 1 browser controller', () => {
     session.abort()
   })
 
+  it('[security] links a teammate only where the viewer may open a person', async () => {
+    // `reports:read` is accounting, executive_manager and administrator;
+    // `team:read` is project_manager, people_admin, executive_manager and
+    // administrator. Accounting sits in the first and not the second, so a
+    // teammate row linked unconditionally hands them a link to a page the shell
+    // keeps out of their nav and the Team screen refuses on arrival.
+    const open = async (profile: 'administrator' | 'accounting') => {
+      writeDocument('/reports?report=time&from=2026-09-01&to=2026-09-30&tab=teammates')
+      const session = new AbortController()
+      await createReportsController(
+        baseApi({ getTimeReport: vi.fn(async () => timeReportFixture) }),
+      ).activate(identity(profile), session.signal, () => false)
+      const rows = dataRows()
+      // Counted first: an empty table would satisfy both halves below.
+      expect(rows.length, `${profile} teammate rows`).toBeGreaterThan(0)
+      const result = {
+        names: rows.map((row) => row.querySelector('th')?.textContent ?? ''),
+        links: [...document.querySelectorAll<HTMLAnchorElement>('a[href^="/team/"]')].length,
+      }
+      session.abort()
+      return result
+    }
+
+    const asAdministrator = await open('administrator')
+    expect(asAdministrator.links).toBeGreaterThan(0)
+
+    const asAccounting = await open('accounting')
+    // The names are still there -- this withholds the link, not the report.
+    expect(asAccounting.names).toEqual(asAdministrator.names)
+    expect(asAccounting.links).toBe(0)
+  })
+
   it('[browser] opens on the tab the address names and drops the pickers the report has no axis for', async () => {
     writeDocument('/reports?report=time&from=2026-09-01&to=2026-09-30&tab=tasks')
     const session = new AbortController()
