@@ -223,6 +223,30 @@ describe('period control', () => {
     expect(ui.onChange).not.toHaveBeenCalled()
   })
 
+  it('[browser] a typed range is read the same way a chosen one is', () => {
+    // The same 1st-to-30th used to read as "This month: September 2026" when it
+    // was chosen and as a bare custom range when it was typed, because only
+    // `setRange` re-derived the kind. One range, two labels, depending on a
+    // history nobody can see from the screen.
+    const ui = mount({ today: '2026-09-10' })
+    ui.control.setRange(range('2026-09-01', '2026-09-10'))
+    expect(ui.control.kind()).toBe('custom')
+
+    ui.from.value = '2026-09-01'
+    ui.to.value = '2026-09-30'
+    ui.to.dispatchEvent(new Event('change', { bubbles: true }))
+
+    expect(ui.control.kind()).toBe('month')
+    expect(ui.summary.textContent).toBe('This month: September 2026')
+
+    // And it goes back to custom when the dates stop being a month, rather than
+    // latching on the first thing it recognised.
+    ui.to.value = '2026-09-20'
+    ui.to.dispatchEvent(new Event('change', { bubbles: true }))
+    expect(ui.control.kind()).toBe('custom')
+    expect(ui.summary.textContent).toBe('1 – 20 Sep 2026')
+  })
+
   it('[browser] steps the period on an arrow and reports the range it moved to', () => {
     const ui = mount({ today: '2026-09-10' })
     ui.control.setRange(range('2026-09-01', '2026-09-30'))

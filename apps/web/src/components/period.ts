@@ -388,6 +388,12 @@ export const createPeriodControl = (options: PeriodControlOptions): PeriodContro
 
   for (const input of [fromInput, toInput]) {
     input.addEventListener('change', () => {
+      // Re-derived, exactly as `setRange` does it. A range is a month because of
+      // the dates it holds, not because of which control put them there, and
+      // without this the same 1st-to-30th reads as "September 2026" when it is
+      // chosen and as a custom range when it is typed -- one range, two labels,
+      // depending on a history the reader cannot see.
+      kind = detectPeriodKind(readRange(), weekStartDay)
       refresh()
     })
   }
