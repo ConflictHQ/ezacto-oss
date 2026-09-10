@@ -62,6 +62,23 @@ describe('demo reset', () => {
     expect([...filled].sort()).toEqual([...PRESERVED_TABLES].sort())
   })
 
+  it('[unit] leaves D1\u2019s own bookkeeping table alone', async () => {
+    // The wipe reads its table list out of sqlite_master, and on D1 that list
+    // includes `_cf_KV`, which D1's authorizer refuses every statement against.
+    // A DELETE against it does not empty a table -- it fails the batch with
+    // SQLITE_AUTH, and the demo stays wiped-but-unbuilt until someone notices.
+    // Nothing creates `_cf_KV` here, so the test puts one there itself; the
+    // surviving row is the proof no DELETE was ever aimed at it.
+    const { client, driver } = harness()
+    migrateContainer(client)
+    client.exec('CREATE TABLE "_cf_KV" (key TEXT PRIMARY KEY, value BLOB)')
+    client.prepare('INSERT INTO "_cf_KV" (key, value) VALUES (?, ?)').run('k', 'v')
+
+    await wipeAndSeedDemo(driver, { now, years, confirm: 'wipe-and-reload' })
+
+    expect(count(client, '_cf_KV')).toBe(1)
+  })
+
   it('[unit] empties everything else and puts every trigger back', async () => {
     const { client, driver } = harness()
     const summary = await wipeAndSeedDemo(driver, { now, years, confirm: 'wipe-and-reload' })

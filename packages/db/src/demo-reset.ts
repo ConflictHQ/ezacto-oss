@@ -59,8 +59,8 @@ import {
 import { executeInvoiceLifecycleCommand, recordInvoicePayment } from './invoice-state.js'
 import { migrateD1 } from './migrate.js'
 
-/** The demo organisation. Fake, and named so a reader can tell at a glance. */
-export const DEMO_ORGANIZATION_NAME = 'Folding Forks (Fake)'
+/** The demo organisation. Invented; the sign-in page is where it says so. */
+export const DEMO_ORGANIZATION_NAME = 'Folding Forks'
 
 export interface DemoResetOptions {
   /** ISO instant the rebuilt demo is anchored to. */
@@ -153,6 +153,21 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   'email_template_heads',
 ])
 
+/**
+ * D1 keeps its own bookkeeping in the same database, under a reserved `_cf_`
+ * prefix, and `sqlite_master` hands it back with everything else. It is not a
+ * table a client may touch: D1's authorizer refuses every statement against it,
+ * so `DELETE FROM "_cf_KV"` does not empty a table, it fails the whole batch
+ * with `SQLITE_AUTH` and leaves the demo wiped-but-unbuilt.
+ *
+ * Matching the prefix rather than naming `_cf_KV` covers whatever else D1 puts
+ * there later. Nothing of ours starts `_cf_`; ours are `_ezacto_`.
+ *
+ * The container driver's SQLite has no such table, which is why the whole suite
+ * passed while the nightly rebuild had never once succeeded.
+ */
+const isD1Internal = (table: string): boolean => table.startsWith('_cf_')
+
 const wipeStatements = (
   objects: DemoSchemaObjects,
 ): {
@@ -167,7 +182,7 @@ const wipeStatements = (
   empty: [
     { text: 'PRAGMA defer_foreign_keys = true', bindings: [] },
     ...objects.tables
-      .filter((table) => !PRESERVED_TABLES.has(table))
+      .filter((table) => !PRESERVED_TABLES.has(table) && !isD1Internal(table))
       .map((table) => ({ text: `DELETE FROM ${quoted(table)}`, bindings: [] })),
     // Preserved, but not carried over: the counter is kept because generation
     // needs a row to read, and reset because yesterday's demo took every number

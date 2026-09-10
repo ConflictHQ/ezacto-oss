@@ -26,7 +26,7 @@ const seeded = (years = 0.5) => {
   client
     .prepare(
       `INSERT INTO organizations (id, name, modules, created_at, updated_at)
-       VALUES (1, 'Folding Forks (Fake)', '{}', ?, ?)`,
+       VALUES (1, 'Folding Forks', '{}', ?, ?)`,
     )
     .run(now, now)
   const statements = demoSeedStatements({ now, years })

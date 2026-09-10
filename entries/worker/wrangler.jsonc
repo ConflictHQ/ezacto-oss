@@ -89,13 +89,14 @@
         "ENVIRONMENT": "dev",
         "RELEASE": "unknown",
         "APP_BASE_URL": "https://ezacto.io",
-        // The demo is a made-up firm, and says so in its own name. Nothing on
-        // ezacto.io is CONFLICT's: not a client, not a project, not an hour.
-        "BRAND_NAME": "Folding Forks (Fake)",
+        // A made-up firm. Nothing on ezacto.io is CONFLICT's -- not a client,
+        // not a project, not an hour -- and the tagline and description below
+        // are where the demo says so, on every page that carries the brand.
+        "BRAND_NAME": "Folding Forks",
         "BRAND_TAGLINE": "A demo firm, invented whole.",
         "BRAND_DESCRIPTION":
           "Every client, project and hour in here is made up, and the whole database is wiped and rebuilt each night.",
-        "BRAND_EMAIL_SENDER_NAME": "Folding Forks (Fake)",
+        "BRAND_EMAIL_SENDER_NAME": "Folding Forks",
         // Publishes the sign-in credentials on the front page and lets the
         // nightly cron empty the database. Both are refused outside a
         // non-production ENVIRONMENT whatever this says.
