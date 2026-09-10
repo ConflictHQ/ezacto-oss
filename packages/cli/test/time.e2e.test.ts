@@ -63,6 +63,10 @@ describe('ez time commands against the native API', () => {
     sqlite = new BetterSqlite3(':memory:')
     migrateContainer(sqlite)
     const now = `${spentDate}T08:00:00.000Z`
+    // South Ridge and its `Legal` task exist so that "the firm's tasks" and
+    // "this member's tasks" are different sets. With one project carrying every
+    // task, a scoped catalog and an unscoped one return the same rows and the
+    // security test at the bottom of this file could not tell them apart.
     sqlite.exec(`
       INSERT INTO organizations (
         name, time_entry_mode, time_rounding, modules, created_at, updated_at
@@ -73,14 +77,19 @@ describe('ez time commands against the native API', () => {
       INSERT INTO clients (id, name, currency, created_at, updated_at)
       VALUES (1, 'North Peak', 'USD', '${now}', '${now}');
       INSERT INTO projects (id, client_id, name, code, created_at, updated_at)
-      VALUES (1, 1, 'North Peak', 'northpeak', '${now}', '${now}');
+      VALUES (1, 1, 'North Peak', 'northpeak', '${now}', '${now}'),
+             (2, 1, 'South Ridge', 'southridge', '${now}', '${now}');
       INSERT INTO tasks (id, name, created_at, updated_at)
-      VALUES (1, 'DevOps', '${now}', '${now}');
+      VALUES (1, 'DevOps', '${now}', '${now}'),
+             (2, 'Retainer', '${now}', '${now}'),
+             (3, 'Legal', '${now}', '${now}');
       INSERT INTO user_assignments (id, project_id, user_id, created_at, updated_at)
       VALUES (1, 1, 1, '${now}', '${now}');
       INSERT INTO task_assignments (
         id, project_id, task_id, billable, created_at, updated_at
-      ) VALUES (1, 1, 1, 1, '${now}', '${now}');
+      ) VALUES (1, 1, 1, 1, '${now}', '${now}'),
+               (2, 1, 2, 1, '${now}', '${now}'),
+               (3, 2, 3, 1, '${now}', '${now}');
     `)
     const database = createContainerDatabase(sqlite)
     const general = createGeneralResourceRepository(database)
@@ -248,5 +257,61 @@ describe('ez time commands against the native API', () => {
       total_seconds: 12_600,
       rows: [{ project: 'North Peak', task: 'DevOps', total: 12_600 }],
     })
+  })
+
+  /**
+   * The lesson the first half of issue 491 paid for: narrowing a collection
+   * breaks whatever reads it. The task catalog is read by the week grid, the
+   * entry dialog, quick-add, the palette and this CLI, and every one of them
+   * resolves a typed name against the catalog before it can post an entry -- so
+   * scoping tasks is only safe if the catalog still carries every task the
+   * member may log against.
+   *
+   * That is what this asserts, end to end and on a member token: the real
+   * routes, the real repository, and `ez log`, which is the same
+   * resolve-by-name-then-post that `shell/model.ts` performs. A unit test of
+   * the predicate could not show it, because the property is a relation between
+   * two collections that two different repositories build.
+   */
+  it('[security #491] keeps every task a member may log against and drops the rest', async () => {
+    const asMember = { headers: { authorization: `Bearer ${token}` } }
+    const options = (await (
+      await fetch(`${baseUrl}/api/v1/time-entry-options`, asMember)
+    ).json()) as { data: { project_id: number; task_id: number }[] }
+    // Counted before it is used. An empty options list would make the coverage
+    // loop below vacuously true and this test would pass against a catalog
+    // narrowed to nothing.
+    expect(options.data).toHaveLength(2)
+
+    // Exactly the request `loadCatalogResources` makes. `Legal` is assigned to
+    // South Ridge, which this member is not on, so it is gone; `DevOps` and
+    // `Retainer` hang off North Peak, which they are on.
+    const catalog = (await (
+      await fetch(`${baseUrl}/api/v1/tasks?per_page=200&is_active=true`, asMember)
+    ).json()) as { data: { id: number; name: string }[] }
+    expect(catalog.data.map((task) => task.name)).toEqual(['DevOps', 'Retainer'])
+    for (const option of options.data)
+      expect(catalog.data.map((task) => task.id)).toContain(option.task_id)
+
+    // Present is not the same as usable: a task the member reaches only through
+    // their own project still logs by name.
+    const logged = await runEz(
+      ['log', '30m', 'northpeak', 'retainer', '--date', spentDate, '--json'],
+      configPath,
+    )
+    expect(logged.code, logged.stderr).toBe(0)
+    expect(JSON.parse(logged.stdout)).toMatchObject({
+      project: 'North Peak',
+      task: 'Retainer',
+      seconds: 1800,
+    })
+
+    // And the withheld one is withheld rather than merely unlisted.
+    const refused = await runEz(
+      ['log', '30m', 'northpeak', 'legal', '--date', spentDate, '--json'],
+      configPath,
+    )
+    expect(refused.code).not.toBe(0)
+    expect(refused.stderr).toContain('task not found: legal')
   })
 })
