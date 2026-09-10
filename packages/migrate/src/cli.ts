@@ -11,6 +11,7 @@ import { reconciliationExitCode, runReconcile } from './reconcile.js'
 import { runSync, syncExitCode } from './sync.js'
 import { runVerify } from './verify.js'
 import { runCutoverPreflight } from './cutover-preflight.js'
+import { runInvoiceDelta } from './invoice-delta.js'
 import {
   applyRecurringInvoiceWorksheet,
   applyRetainerWorksheet,
@@ -31,6 +32,10 @@ Commands:
   load     Transform a verified snapshot into an ezacto SQLite database
   reconcile Compare Harvest checksums, snapshot rows, and the loaded database
   preflight-migrations Assert an exact, checksum-verified deployment migration ledger
+  carry-invoices Carry the invoices a live database is missing across from a
+           freshly loaded one, through the same importer the load uses. For an
+           instance that has moved on since its cutover, where reloading would
+           take its own work with it.
   finish-retainers Generate or apply the missing Harvest retainer-balance worksheet
   finish-recurring-invoices Generate or apply the missing recurring-invoice worksheet
 
@@ -130,6 +135,9 @@ const main = async (): Promise<number> => {
       'organization-currency': { type: 'string' },
       'organization-address': { type: 'string' },
       force: { type: 'boolean' },
+      source: { type: 'string' },
+      only: { type: 'string', multiple: true },
+      'dry-run': { type: 'boolean' },
     upgrade: { type: 'boolean' },
     },
   })
@@ -144,7 +152,8 @@ const main = async (): Promise<number> => {
     command !== 'reconcile' &&
     command !== 'preflight-migrations' &&
     command !== 'finish-retainers' &&
-    command !== 'finish-recurring-invoices'
+    command !== 'finish-recurring-invoices' &&
+    command !== 'carry-invoices'
   ) {
     process.stdout.write(USAGE)
     return 1
@@ -185,6 +194,35 @@ const main = async (): Promise<number> => {
       `loaded: ${result.loadedRows} row(s), ${result.invocations} chunk(s), ` +
         `${result.anomalies.length} anomaly(s); snapshot ${result.snapshotSha256}`,
     )
+    return 0
+  }
+
+  if (command === 'carry-invoices') {
+    if (!values.source) throw new Error('--source is required for carry-invoices')
+    if (!values.database) throw new Error('--database is required for carry-invoices')
+    const result = await runInvoiceDelta({
+      sourcePath: values.source,
+      targetPath: values.database,
+      only: values.only,
+      dryRun: values['dry-run'] === true,
+    })
+    const missing = result.missing.map((entry) => entry.number).join(',')
+    console.log(
+      `missing from target: ${result.missing.length}${result.missing.length === 0 ? '' : ` (${missing})`}`,
+    )
+    for (const entry of result.skipped) console.log(`skipped ${entry.number}: ${entry.reason}`)
+    if (values['dry-run'] === true) {
+      console.log('dry run: nothing written')
+      return 0
+    }
+    for (const entry of result.carried) {
+      console.log(
+        `carried ${entry.number}: invoice ${entry.invoiceId}, ${entry.state}, ` +
+          `${entry.amountCents} cent(s), ${entry.lines} line(s), ` +
+          `${entry.messages} message(s), ${entry.payments} payment(s)`,
+      )
+    }
+    console.log(`carried: ${result.carried.length} invoice(s)`)
     return 0
   }
 
