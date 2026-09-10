@@ -1387,9 +1387,15 @@
 .invoice-payment-heading {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 16px;
   margin-bottom: 12px;
+}
+/* Two buttons now, not one, and space-between would have pushed them apart to
+   either side of the row. The auto margin belongs to the title instead, so the
+   pair stays together at the end and reads as one group of actions. */
+.invoice-payment-heading > div {
+  margin-inline-end: auto;
 }
 .invoice-payment-heading h3 {
   margin-bottom: 4px;

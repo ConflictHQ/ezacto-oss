@@ -476,6 +476,7 @@ export const createInvoicePaymentController = (
   const retry = required<HTMLButtonElement>('[data-invoice-detail-retry]')
   const article = required<HTMLElement>('[data-invoice-document]')
   const record = required<HTMLButtonElement>('[data-invoice-payment-record]')
+  const settle = required<HTMLButtonElement>('[data-invoice-payment-settle]')
   const readonlyNotice = required<HTMLElement>('[data-invoice-payment-readonly]')
   const workflowStatus = required<HTMLElement>('[data-invoice-payment-status]')
   const paymentDialog = required<HTMLDialogElement>('[data-invoice-payment-dialog]')
@@ -585,6 +586,7 @@ export const createInvoicePaymentController = (
   let mutationPending = false
   let refreshRequired = false
   let paymentCommandId: string | null = null
+  let settleCommandId: string | null = null
   let deleteCommandId: string | null = null
   // The send transition and the email are two commands, so a delivery that
   // fails after the transition committed must retry the email alone. What has
@@ -717,7 +719,21 @@ export const createInvoicePaymentController = (
     const controlsLocked = mutationPending || refreshRequired
     record.hidden = !canWrite
     record.disabled = controlsLocked || !canRecord
-    record.title =
+    // The same gate as Record payment, because it is the same operation with the
+    // three fields already answered. The amount is on the label rather than
+    // behind a confirmation: a button that names the sum it is about to settle
+    // tells the reader more than a dialog asking whether they meant it, and a
+    // payment can be deleted afterwards, which restores the balance.
+    settle.hidden = !canWrite
+    settle.disabled = controlsLocked || !canRecord
+    settle.textContent =
+      invoice !== null && canRecord
+        ? `Mark paid · ${money(invoice.due_amount_cents, invoice.currency)}`
+        : 'Mark paid'
+    // One reason, held in one place. Both buttons are refused by the same gate,
+    // so reading it off the other button would have made one of them a pass
+    // behind whichever was assigned first.
+    const paymentRefusal =
       canWrite && !canRecord
         ? invoice?.state === 'draft'
           ? 'Payments can be recorded after this invoice is open.'
@@ -725,6 +741,8 @@ export const createInvoicePaymentController = (
             ? 'Payments cannot be recorded on a closed invoice.'
             : 'This invoice has no remaining amount due.'
         : ''
+    record.title = paymentRefusal
+    settle.title = paymentRefusal
     const canSend = canWrite && invoice !== null && invoiceCanMarkSent(invoice)
     send.hidden = !canSend
     send.disabled = controlsLocked || !canSend
@@ -870,6 +888,7 @@ export const createInvoicePaymentController = (
     mutationPending = false
     refreshRequired = false
     paymentCommandId = null
+    settleCommandId = null
     deleteCommandId = null
     sendAttempt = null
     pendingTransition = null
@@ -1274,6 +1293,7 @@ export const createInvoicePaymentController = (
     const code = apiErrorCode(error)
     if (code !== null && conflictCodes.has(code)) {
       paymentCommandId = null
+      settleCommandId = null
       deleteCommandId = null
       // `sendAttempt` is deliberately left standing. A conflict on the delivery
       // half arrives after the `send` has committed -- it is the error class
@@ -2176,6 +2196,67 @@ export const createInvoicePaymentController = (
     lineDeleteResult.textContent = ''
   })
   record.addEventListener('click', () => openPaymentDialog(null))
+  // Mark paid is Record payment with its three fields answered from the invoice
+  // itself: the whole remaining balance, today, no note. It goes through the
+  // payment route rather than a transition of its own because `paid` is derived
+  // from the payments -- an invoice is paid when nothing is left due -- so there
+  // is no flag to set, only a payment to record. The command id is held until
+  // the write lands, so a click repeated over a timeout settles the balance once.
+  settle.addEventListener('click', () => {
+    const session = current()
+    const selectedInvoice = invoice
+    const recordPayment = api.recordInvoicePayment
+    if (
+      session === null ||
+      selectedInvoice === null ||
+      mutationPending ||
+      refreshRequired ||
+      recordPayment === undefined ||
+      !invoiceIdentityCanWrite(session.identity) ||
+      !invoiceCanRecordPayment(selectedInvoice)
+    ) {
+      return
+    }
+    settleCommandId ??= commandId('record')
+    const activeCommand = settleCommandId
+    mutationPending = true
+    workflowStatus.textContent = 'Recording payment…'
+    syncControls()
+    void recordPayment(
+      selectedInvoice.id,
+      activeCommand,
+      {
+        expected_version: selectedInvoice.version,
+        amount_cents: selectedInvoice.due_amount_cents,
+        currency: selectedInvoice.currency,
+        ...invoicePaymentTiming('date', localDate()),
+        notes: null,
+      } as InvoicePaymentInput,
+      session.signal,
+    )
+      .then(async (updatedInvoice) => {
+        if (current() !== session) return
+        invoice = updatedInvoice
+        refreshRequired = true
+        settleCommandId = null
+        workflowStatus.textContent = 'Invoice marked paid. Refreshing invoice…'
+        syncControls()
+        const loaded = await loadDetail(session, {
+          hideDocument: false,
+          successMessage: 'Invoice marked paid.',
+        })
+        if (!loaded && current() === session && refreshRequired) {
+          workflowStatus.textContent =
+            'Invoice marked paid, but the updated invoice could not be refreshed. Retry invoice; the payment will not be submitted again.'
+        }
+      })
+      .catch((error: unknown) => handleMutationFailure(error, session, workflowStatus))
+      .finally(() => {
+        if (current() !== session) return
+        mutationPending = false
+        syncControls()
+      })
+  })
   attachmentForm.addEventListener('input', () => {
     if (!mutationPending) attachmentCommandId = null
   })
