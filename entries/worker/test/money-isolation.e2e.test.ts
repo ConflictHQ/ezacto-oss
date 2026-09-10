@@ -1002,4 +1002,90 @@ describe('Money isolation across the deployed API', () => {
     // stopped serving cost numbers to anyone.
     expect([...COST_DERIVED_KEYS].filter((key) => !seen.has(key))).toEqual([])
   })
+
+  /**
+   * The own-money setting, proved on the wire rather than at the predicate.
+   *
+   * The rule has unit tests and the API has tests that inject a stub resolver.
+   * Neither proves the setting is WIRED -- organizations.modules through the
+   * runtime's own query, into the principal, into `canViewMoneyField` -- which
+   * is the same failure class the header of this file was written about: five
+   * routes that no entry mounted, and a sibling payload shape a hand-kept
+   * register had missed.
+   *
+   * So this enables the setting through the real PATCH route, as the real
+   * administrator token, and then reads the bytes a member actually receives.
+   * Nothing here calls the predicate.
+   */
+  describe('[money] own_money reaches the wire', () => {
+    const memberViewer = viewers.find((viewer) => viewer.key === 'member')!
+    const ownEntry = `/api/v1/time-entries/${100 + memberViewer.userId}`
+    // Somebody else's row. The administrator's, which exists for the same reason
+    // every viewer has one seeded.
+    const otherEntry = `/api/v1/time-entries/${
+      100 + viewers.find((viewer) => viewer.key === 'administrator')!.userId
+    }`
+
+    const memberGet = async (path: string): Promise<Response> =>
+      request(path, { headers: { authorization: `Bearer ${tokens.get('member')!}` } })
+
+    const asMember = async (path: string): Promise<Record<string, unknown>> => {
+      const response = await memberGet(path)
+      expect(response.status, `member ${path}`).toBe(200)
+      const body = (await response.json()) as { data: Record<string, unknown> }
+      return body.data
+    }
+
+    it('withholds a rate until the setting is on, then shows only the reader their own', async () => {
+      // Off: the state every other test in this file runs under, restated here
+      // so the change below is measured against it rather than assumed.
+      const before = await asMember(ownEntry)
+      expect(before.rounded_seconds, 'the row itself is reachable').toBe(3600)
+      expect(before).not.toHaveProperty('billable_rate_cents')
+      expect(before).not.toHaveProperty('cost_rate_cents')
+
+      // Written to `organizations.modules` directly, because the PATCH route
+      // that normally sets it requires a browser session and this suite
+      // authenticates with stored API tokens. That route's acceptance of the
+      // key is covered in packages/api; what had no coverage anywhere, and is
+      // the point of this test, is everything downstream of the column: the
+      // runtime's own query, the principal it builds, and the serialiser that
+      // reads it.
+      await run(
+        `UPDATE organizations SET modules = json_set(modules, '$.own_money', json('true')) WHERE id = 1`,
+      )
+
+      try {
+        const own = await asMember(ownEntry)
+        // The seeded rates for this person, written as the seed writes them, so
+        // the assertion is a fact about the bytes rather than a restatement of
+        // whatever the serialiser chose to send.
+        expect(own.billable_rate_cents, 'member | own entry | billable_rate').toBe(
+          19_000 + memberViewer.userId * 100,
+        )
+        expect(own.cost_rate_cents, 'member | own entry | cost_rate').toBe(
+          4000 + memberViewer.userId * 100,
+        )
+
+        // The other half of the requirement: turning this on must not turn a
+        // member into a reader of anybody else's pay. It does not, and by a
+        // wider margin than the setting itself provides -- a member cannot
+        // reach another person's entry at all, so there is no payload for the
+        // subject check to have to redact. Asserted as the 404 it is, rather
+        // than as an absent field on a body that never arrives, because those
+        // two pass for very different reasons.
+        const other = await memberGet(otherEntry)
+        expect(other.status, 'member | another person | entry').toBe(404)
+        expect(await other.text(), 'member | another person | body').not.toContain(
+          'rate_cents',
+        )
+      } finally {
+        // Restored, because the captures every other test reads were taken with
+        // this off and a leaked `true` would quietly rewrite what they mean.
+        await run(
+          `UPDATE organizations SET modules = json_set(modules, '$.own_money', json('false')) WHERE id = 1`,
+        )
+      }
+    })
+  })
 })
