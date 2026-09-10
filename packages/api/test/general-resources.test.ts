@@ -313,6 +313,31 @@ for (const [runtime, createHarness] of factories) {
     }, 20_000);
     afterEach(async () => harness.close());
 
+    it('[security #467] never caches rate-bearing or redacted general resources', async () => {
+      const client = await data(await harness.request('/clients', json({ name: 'Private cache fixture' })));
+      const created = await harness.request('/projects', json({ client_id: client.id, name: 'Private rates', hourly_rate_cents: 25000, fee_cents: 500000, cost_budget_cents: 300000 }));
+      expect(created.headers.get('cache-control')).toBe('no-store');
+      const project = await data(created);
+      for (const init of [asProfile('administrator'), asProfile('member'), asBearer('member-projects')]) {
+        for (const path of ['/projects', `/projects/${project.id}`]) {
+          const headers = new Headers(init.headers);
+          headers.set('if-none-match', '"same-record"');
+          const response = await harness.request(path, { ...init, headers });
+          expect(response.status).toBe(200);
+          expect(response.headers.get('cache-control')).toBe('no-store');
+          expect(response.headers.get('etag')).toBeNull();
+          const body = await response.text();
+          if (headers.get('x-test-profile') === 'administrator') expect(body).toContain('25000');
+          else expect(body).not.toMatch(/hourly_rate_cents|fee_cents|cost_budget_cents/);
+        }
+      }
+      for (const method of ['PATCH', 'DELETE'] as const) {
+        const response = await harness.request(`/projects/${project.id}`, method === 'PATCH' ? json({ name: 'Renamed' }, method) : { method });
+        expect(response.status).toBeLessThan(300);
+        expect(response.headers.get('cache-control')).toBe('no-store');
+      }
+    });
+
     it('[security #466] protects commercial fields on lists, details, and mutations', async () => {
       const clientTerms = { payment_terms: 'net_60', default_tax_pct: 7.25, default_tax2_pct: 3, default_discount_pct: 12 };
       const projectTerms = { billing_method: 'time_materials', bill_by: 'people', billing_currency: 'EUR' };

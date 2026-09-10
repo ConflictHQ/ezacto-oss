@@ -27,6 +27,11 @@ always an array and every `422` has at least one entry. All `5xx` failures—inc
 deliberately raised ones—use the generic `internal_error` body; exception text is
 never placed on the wire. Errors are never cached.
 
+The chassis enforces `Cache-Control: no-store` on every `/api/v1` response,
+including errors and mutations. It removes cache validators and refuses 304
+responses, so clients cannot reuse a representation from an earlier privileged
+identity. Public paths such as `/openapi/v1.json` retain their own caching policy.
+
 JSON readers enforce a byte ceiling while consuming the stream (1 MiB by default),
 even if `Content-Length` is absent or falsely small. Oversized bodies receive the
 same envelope with `413 payload_too_large`.

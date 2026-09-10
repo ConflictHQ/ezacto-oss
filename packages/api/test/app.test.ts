@@ -106,6 +106,32 @@ for (const [runtime, requestFor] of runtimeFactories) {
       createApiApp({ authentication, installApi: installTestRoutes }),
     )
 
+    it('[security #467] owns no-store at the API boundary without changing public caching', async () => {
+      const request = requestFor(createApiApp({
+        authentication,
+        installApp: (app) => { app.get('/openapi/v1.json', (context) => context.json({}, 200, { 'cache-control': 'public, max-age=300' })) },
+        installApi: (api) => {
+          api.get('/unsafe-cache', (context) => context.json({ data: { hourly_rate_cents: 25000 } }, 200, {
+            'cache-control': 'public, max-age=3600', etag: '"same-record"', 'last-modified': 'Wed, 09 Sep 2026 00:00:00 GMT',
+          }))
+          api.get('/conditional', (context) => context.body(null, 304))
+          installTestRoutes(api)
+        },
+      }))
+      for (const [path, status] of [['/api/v1', 200], ['/api/v1/unsafe-cache', 200], ['/api/v1/conditional', 500], ['/api/v1/missing', 404], ['/api/v1/explode', 500]] as const) {
+        const response = await request(path, { headers: { 'if-none-match': '"same-record"' } })
+        expect(response.status).toBe(status)
+        expect(response.headers.get('cache-control')).toBe('no-store')
+        expect(response.headers.get('etag')).toBeNull()
+        expect(response.headers.get('last-modified')).toBeNull()
+      }
+      expect((await request('/openapi/v1.json')).headers.get('cache-control')).toBe('public, max-age=300')
+      const unauthenticated = requestFor(createApiApp())
+      const denied = await unauthenticated('/api/v1/whoami')
+      expect(denied.status).toBe(401)
+      expect(denied.headers.get('cache-control')).toBe('no-store')
+    })
+
     it('[unit] serves the same version root with a server-generated request id', async () => {
       const response = await request('/api/v1', {
         headers: { 'x-request-id': 'attacker-controlled' },

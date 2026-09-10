@@ -20,6 +20,22 @@ export const createApiApp = <Bindings extends object = object>(
   })
 
   const authenticateApi = apiAuthenticationMiddleware<Bindings>(options.authentication)
+  // A resource's representation can change with profile, grants, and token
+  // scopes. This boundary owns the policy, including failures before routing.
+  app.use('*', async (context, next) => {
+    const path = context.req.path
+    if (path !== '/api/v1' && !path.startsWith('/api/v1/')) return next()
+    context.header('cache-control', 'no-store')
+    await next()
+    context.header('cache-control', 'no-store')
+    context.header('etag', undefined)
+    context.header('last-modified', undefined)
+    // Never instruct a client to reuse a representation obtained under an
+    // earlier, potentially more privileged identity.
+    if (context.res.status === 304) {
+      context.res = errorResponse(new Error('Conditional responses are forbidden for authenticated API resources'), context)
+    }
+  })
   app.use('*', (context, next) => {
     const path = context.req.path
     if (path === '/api/v1' || path.startsWith('/api/v1/')) {

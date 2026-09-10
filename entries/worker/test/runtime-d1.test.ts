@@ -283,6 +283,20 @@ describe("Worker D1 runtime composition", () => {
     expect(project.data).not.toHaveProperty("hourly_rate_cents");
   });
 
+  it('[security #467] keeps rate-bearing and redacted responses private through the deployed Worker entry', async () => {
+    for (const token of [projectBearer, bearer]) {
+      const response = await request('/api/v1/projects/1', {
+        headers: { authorization: `Bearer ${token}`, 'if-none-match': '"same-record"' },
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toBe('no-store');
+      expect(response.headers.get('etag')).toBeNull();
+      const body = await response.json() as { data: Record<string, unknown> };
+      if (token === projectBearer) expect(body.data.hourly_rate_cents).toBe(10000);
+      else expect(body.data).not.toHaveProperty('hourly_rate_cents');
+    }
+  });
+
   it("[e2e:reports] reads exact operational reports through generated client and real D1", async () => {
     const client = new EzactoClient({
       baseUrl: "https://worker.test",
