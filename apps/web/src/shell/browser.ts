@@ -1606,11 +1606,27 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         .filter((entry) => matched === undefined || entry.project_id === matched.id)
         .map((entry) => entry.task_id),
     )
+    const available = snapshot.catalog.tasks.filter((resource) => taskIds.has(resource.id))
     required<HTMLElement>('[data-entry-task-options]').replaceChildren(
-      ...snapshot.catalog.tasks
-        .filter((resource) => taskIds.has(resource.id))
-        .map((resource) => suggestion(resourceLabel(resource))),
+      ...available.map((resource) => suggestion(resourceLabel(resource))),
     )
+    // Narrowing the list underneath is not enough. These are text inputs with a
+    // datalist, not selects, so the task box keeps whatever was typed for the
+    // previous project: switch project and the old activity is still sitting
+    // there, no longer offered and no longer valid. The pair check then refuses
+    // the entry with "That project/task combination is not available", which
+    // reads as "I picked a different activity and it would not take".
+    //
+    // Only once the project resolves. While it is still being typed every task
+    // looks wrong, and clearing on each keystroke would take the box away from
+    // someone who filled it in first. The Add-row form needs none of this: it
+    // uses real selects and repopulates them on `change`.
+    if (matched !== undefined && entryTask.value.trim() !== '') {
+      const held = entryTask.value.trim().toLowerCase()
+      if (!available.some((resource) => resourceLabel(resource).toLowerCase() === held)) {
+        entryTask.value = ''
+      }
+    }
   }
 
   entryProject.addEventListener('input', () => updateEntrySuggestions())

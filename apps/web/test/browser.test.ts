@@ -879,6 +879,50 @@ describe('week-grid browser behavior', () => {
     )
   })
 
+  it('[browser] clears a task the new project does not offer, rather than refusing the entry', async () => {
+    // The reported symptom was "I cannot select a different activity". The task
+    // box is a text input with a datalist, so switching project narrowed the
+    // list underneath while the old activity stayed in the box -- and the pair
+    // check then refused the entry with a message about the combination, which
+    // reads as the picker being broken.
+    renderBrowserShell()
+    const api = browserApi()
+    await mountShell(api)
+
+    document.querySelector<HTMLButtonElement>('[data-command-trigger]')!.click()
+    const command = document.querySelector<HTMLInputElement>('[name="command"]')!
+    command.value = 'log 1h northpeak development notes enough'
+    document
+      .querySelector<HTMLFormElement>('[data-command-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    const entryDialog = document.querySelector<HTMLDialogElement>('[data-entry-dialog]')!
+    await vi.waitFor(() => expect(entryDialog.open).toBe(true))
+
+    const project = document.querySelector<HTMLInputElement>('[data-entry-project]')!
+    const task = document.querySelector<HTMLInputElement>('[data-entry-task]')!
+    expect(project.value).toBe('Northpeak')
+    expect(task.value).toBe('Development')
+
+    // Acme offers Design and nothing else. Development has to go, or it is
+    // submitted against a project that never had it.
+    project.value = 'Acme'
+    project.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(task.value).toBe('')
+    expect(
+      [...document.querySelectorAll('[data-entry-task-options] option')].map(
+        (node) => (node as HTMLOptionElement).value,
+      ),
+    ).toEqual(['Design'])
+
+    // A task the project does offer survives the same keystrokes: this clears
+    // what is wrong, not whatever is there.
+    task.value = 'Design'
+    project.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(task.value).toBe('Design')
+  })
+
+
   it('[e2e:track-week] routes week, Day, K-bar, and edit through one editor instance', async () => {
     renderBrowserShell()
     const api = browserApi()
