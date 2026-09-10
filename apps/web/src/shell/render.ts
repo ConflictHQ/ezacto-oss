@@ -199,8 +199,32 @@ export const invoiceTabs = (view: AppShellOptions['view']): readonly ShellTab[] 
  * to load, or a reader who is not looking at the screen, still gets the brand
  * the deployment set instead of an empty link.
  */
+/**
+ * Same-origin, and therefore loadable. Every shell response sets
+ * `img-src 'self' data:`, so only a mark this deployment serves itself can be an
+ * `<img>` at all -- an uploaded asset, which lives at a root-relative
+ * `/brand/<slot>/<hash>`.
+ *
+ * `//host/path` is excluded deliberately: it reads as a path and is a
+ * cross-origin URL, which is exactly the case a `startsWith('/')` alone gets
+ * wrong.
+ */
+const sameOriginMark = (source: string): boolean =>
+  source.startsWith('/') && !source.startsWith('//')
+
+/**
+ * `BRAND_WORDMARK_*` take URLs to files the operator hosts elsewhere, and the
+ * CSP above refuses those outright. Rendering one as an `<img>` regardless
+ * would replace a styled wordmark with whatever the browser does for a blocked
+ * image -- on the sign-in splash, which is the first thing anyone sees.
+ *
+ * So the two sources are not interchangeable and are not treated as one: an
+ * uploaded mark is served from here and renders; a configured URL keeps the
+ * text wordmark it has always rendered. `team/browser.ts` reached the same
+ * conclusion about avatars for the same reason, and keeps its text underneath.
+ */
 const wordmark = (source: string | undefined, brand: string): string =>
-  source === undefined || source === ''
+  source === undefined || source === '' || !sameOriginMark(source)
     ? escapeHtml(brand)
     : `<img class="brand-mark" src="${escapeHtml(source)}" alt="${escapeHtml(brand)}">`
 

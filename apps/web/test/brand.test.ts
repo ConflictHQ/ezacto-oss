@@ -263,6 +263,37 @@ describe('#489 uploaded brand marks', () => {
     expect(html).toContain('src="/brand/wordmark-dark/b&quot;b"')
   })
 
+  it('[unit] a mark hosted elsewhere keeps the text wordmark, because the CSP refuses it', () => {
+    // BRAND_WORDMARK_* take URLs to files the operator hosts somewhere else, and
+    // every shell response sets `img-src 'self' data:`. Emitting one as an <img>
+    // anyway replaces a styled wordmark with a blocked image on the sign-in
+    // splash -- the first thing anybody sees. Only an uploaded mark, served from
+    // this origin at /brand/..., can be an image at all.
+    for (const hosted of [
+      'https://cdn.example/dark.png',
+      'http://cdn.example/dark.png',
+      '//cdn.example/dark.png',
+    ]) {
+      const html = renderAppShell({
+        environment: 'test',
+        release: 'abc1234',
+        brand: { name: 'Acme', wordmarkDark: hosted },
+      })
+      expect(html).not.toContain('brand-mark')
+      expect(html).not.toContain('cdn.example')
+      expect(html).toContain('>Acme</a>')
+    }
+
+    // And the same-origin case still renders, so this narrows the image to what
+    // the CSP allows rather than turning the feature off.
+    const uploaded = renderAppShell({
+      environment: 'test',
+      release: 'abc1234',
+      brand: { name: 'Acme', wordmarkDark: '/brand/wordmark-dark/bbbb' },
+    })
+    expect(uploaded).toContain('<img class="brand-mark" src="/brand/wordmark-dark/bbbb" alt="Acme">')
+  })
+
   it('[unit] with no mark configured the wordmark is still the name', () => {
     const html = renderAppShell({
       environment: 'test',
