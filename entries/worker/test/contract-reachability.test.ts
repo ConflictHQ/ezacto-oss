@@ -2,6 +2,7 @@ import { Miniflare } from 'miniflare'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { apiContractOperations } from '@ezacto/api'
 import { createApp, type WorkerEnv } from '../src/app.js'
+import { workerBrandAssetSurface } from '../src/brand-assets.js'
 import {
   UNDOCUMENTED_ROUTES,
   expectedApiRoutes,
@@ -36,7 +37,9 @@ describe('Worker contract reachability', () => {
       ENVIRONMENT: 'test',
       RELEASE: 'contract-reachability-test',
     }
-    app = createApp(await createRuntimeServices(env))
+    // The brand surface is passed the way `index.ts` passes it, or the guard
+    // would prove the contract against an app the entry never serves.
+    app = createApp(await createRuntimeServices(env), workerBrandAssetSurface)
   })
 
   afterAll(async () => miniflare.dispose())

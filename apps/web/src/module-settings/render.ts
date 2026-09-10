@@ -40,6 +40,13 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <dl class="settings-facts" data-settings-backup-facts hidden></dl>
       <div class="settings-table" data-settings-backup-runs hidden></div>
     </section>
+    <section class="settings-section" data-settings-section="brand" aria-labelledby="settings-brand-title">
+      <header><h2 id="settings-brand-title">Brand</h2>
+      <p>The marks this instance draws on itself and on the documents it sends. An uploaded mark replaces the one configured at deploy time; remove it and the deployment's own setting comes back. PNG, JPEG or WebP up to 512&nbsp;KB &mdash; SVG is not accepted, because it can carry script and these files are served to anyone who opens the sign-in page.</p></header>
+      <p class="form-result" data-settings-brand-status role="status" aria-live="polite">Loading brand assets…</p>
+      <div class="settings-brand-slots" data-settings-brand-slots hidden></div>
+      <p class="form-result" data-settings-brand-result role="status" aria-live="polite"></p>
+    </section>
     <section class="settings-section" data-settings-section="sso" aria-labelledby="settings-sso-title">
       <header><h2 id="settings-sso-title">SSO provisioning domains</h2>
       <p>Email domains this instance will create an account from on first single sign-on. A domain provisions nobody until its DNS challenge verifies, which is what proves this instance is entitled to the domain.</p></header>

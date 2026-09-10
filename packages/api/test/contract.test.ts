@@ -2,6 +2,7 @@ import type { GeneralResourceRepository, TeamRepository } from "@ezacto/core";
 import { describe, expect, it } from "vitest";
 import {
   installBackupStatusRoutes,
+  installBrandAssetRoutes,
   apiContractOperations,
   createApiApp,
   generateOpenApiDocument,
@@ -32,6 +33,7 @@ import {
   type EmailConfigurationService,
   type AuthMailer,
   type ApiTokenService,
+  type BrandAssetSurface,
   type OidcIdentityResolver,
   type OidcTransactionStorePort,
   type OutboxMonitor,
@@ -81,6 +83,10 @@ const userEmails = new Proxy(
   { get: () => unavailable },
 ) as UserEmailService;
 const twoFactor = new Proxy({}, { get: () => unavailable }) as TwoFactorService;
+const brandAssets = new Proxy(
+  {},
+  { get: () => unavailable },
+) as BrandAssetSurface<object>;
 const recurringGeneration = new Proxy(
   {},
   { get: () => unavailable },
@@ -179,6 +185,7 @@ const documentedApp = () =>
         service: ssoDomains,
         clock: () => "2026-08-28T12:00:00.000Z",
       });
+      installBrandAssetRoutes(api, brandAssets, () => "2026-08-28T12:00:00.000Z");
       installUserEmailRoutes(api, {
         service: userEmails,
         deploymentMailer: authMailer,

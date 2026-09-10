@@ -96,6 +96,80 @@ export const senderVerificationLabel = (identity: Readonly<SenderIdentity>): str
   return identity.evidence.dkim_status === 'verified' ? `${status} · DKIM signed` : status
 }
 
+/**
+ * The brand marks an operator can upload (#489), and the copy that says which
+ * is which.
+ *
+ * Naming them "light" and "dark" is exactly where this goes wrong: an operator
+ * reads "dark" as "the dark logo" and uploads a dark-on-transparent mark, which
+ * then draws in near-black on the near-black topbar and disappears. So the
+ * label names the ground the mark is drawn on and the hint names the screens
+ * it appears on, and the two together leave no reading under which the wrong
+ * file is the obvious one.
+ */
+export interface BrandAssetSlotCopy {
+  readonly slot: 'wordmark_light' | 'wordmark_dark' | 'favicon'
+  readonly segment: string
+  readonly label: string
+  readonly hint: string
+  /** Which ground the preview must be drawn on to be judged at all. */
+  readonly preview: 'light' | 'dark'
+}
+
+export const brandAssetSlotCopy: readonly BrandAssetSlotCopy[] = [
+  {
+    slot: 'wordmark_dark',
+    segment: 'wordmark-dark',
+    label: 'Wordmark for dark backgrounds',
+    hint: 'Drawn on the app header and the sign-in screen, both of which are near-black. Upload a light-coloured mark.',
+    preview: 'dark',
+  },
+  {
+    slot: 'wordmark_light',
+    segment: 'wordmark-light',
+    label: 'Wordmark for light backgrounds',
+    hint: 'Drawn on the white document surface — the pages a client is sent rather than the app. Upload a dark-coloured mark.',
+    preview: 'light',
+  },
+  {
+    slot: 'favicon',
+    segment: 'favicon',
+    label: 'Tab icon',
+    hint: 'The small square icon a browser shows in the tab and in a bookmark. A square image reads best.',
+    preview: 'light',
+  },
+]
+
+/** Half a megabyte, the same cap the upload route and migration 0045 enforce. */
+export const MAX_BRAND_ASSET_BYTES = 512 * 1024
+
+const acceptedBrandAssetTypes = ['image/png', 'image/jpeg', 'image/webp']
+
+export const brandAssetAccept = acceptedBrandAssetTypes.join(',')
+
+/**
+ * What the picker already knows, said before a round trip. The server checks
+ * the same two things against the bytes rather than the label -- it is the
+ * authority and this is not -- but an operator who picked an SVG deserves to
+ * be told why in the moment they picked it, not after uploading it.
+ */
+export const brandAssetRejection = (file: {
+  readonly name: string
+  readonly type: string
+  readonly size: number
+}): string | null => {
+  if (file.size > MAX_BRAND_ASSET_BYTES) {
+    return `${file.name} is ${Math.ceil(file.size / 1024)} KB. A brand asset must be ${MAX_BRAND_ASSET_BYTES / 1024} KB or smaller.`
+  }
+  if (file.size === 0) return `${file.name} is empty.`
+  if (!acceptedBrandAssetTypes.includes(file.type)) {
+    return file.type === 'image/svg+xml'
+      ? 'SVG is not accepted: it can carry script and this file is served to anyone who opens the sign-in page. Export the mark as PNG.'
+      : `${file.name} is not a PNG, JPEG or WebP image.`
+  }
+  return null
+}
+
 export interface NoteSettingsFormValues {
   readonly required: boolean
   readonly minimumLength: string

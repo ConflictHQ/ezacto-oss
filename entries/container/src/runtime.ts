@@ -53,8 +53,10 @@ import {
   type HttpEmailProvider,
 } from '@ezacto/mailer'
 import { SmtpMailer } from '@ezacto/mailer/smtp'
-import type { RuntimeServices } from '../../worker/src/app.js'
+import type { BrandAssetSurface } from '@ezacto/api'
+import type { AppEnv, RuntimeServices } from '../../worker/src/app.js'
 import type { ContainerConfig } from './config.js'
+import { createContainerBrandAssetSurface } from './brand-assets.js'
 import { createDiskAttachmentObjectStore } from './disk-attachments.js'
 import { ContainerEmailQueue } from './email-queue.js'
 import { ContainerOutboxScheduler } from './outbox-scheduler.js'
@@ -165,6 +167,8 @@ export const prepareContainerDatabase = (
 export interface ContainerRuntime {
   database: BetterSqlite3.Database
   services: RuntimeServices
+  /** Passed to `createApp` beside the services; see `brand-assets.ts`. */
+  brandAssets: BrandAssetSurface<AppEnv>
   drainOutbox(): ReturnType<RuntimeServices['outbox']['drain']>
   close(timeoutMs?: number): Promise<void>
 }
@@ -308,6 +312,10 @@ export const createContainerRuntime = async (
     const objects = await createDiskAttachmentObjectStore(
       config.attachmentDirectory,
     )
+    const brandAssets = await createContainerBrandAssetSurface(
+      database,
+      config.brandDirectory,
+    )
 
     const services: RuntimeServices = {
       bootstrap: (input) => bootstrapInstanceContainer(database, input),
@@ -426,6 +434,7 @@ export const createContainerRuntime = async (
     return {
       database,
       services,
+      brandAssets,
       drainOutbox: () => outboxScheduler!.drain(),
       async close(timeoutMs) {
         if (closed) return

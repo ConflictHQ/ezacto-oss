@@ -1,5 +1,6 @@
 import type { QueuedEmailJob } from '@ezacto/mailer'
 import { createApp, type WorkerEnv } from './app.js'
+import { workerBrandAssetSurface } from './brand-assets.js'
 import { consumeCloudflareEmailBatch } from './email-queue.js'
 import { runDemoMaintenance } from './demo.js'
 import { runNightlyExport } from './nightly-export.js'
@@ -8,7 +9,7 @@ import {
   createWorkerMailProvider,
 } from './runtime.js'
 
-const publicApp = createApp()
+const publicApp = createApp(undefined, workerBrandAssetSurface)
 
 const isDataRequest = (request: Request): boolean => {
   const path = new URL(request.url).pathname
@@ -51,7 +52,11 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
     }
     try {
       const services = await createRuntimeServices(env)
-      return createApp(services).fetch(request, env, executionContext)
+      return createApp(services, workerBrandAssetSurface).fetch(
+        request,
+        env,
+        executionContext,
+      )
     } catch {
       // Configuration and migration failures stay fail-closed and never reflect
       // binding values, bearer credentials, SQL, or secret material.

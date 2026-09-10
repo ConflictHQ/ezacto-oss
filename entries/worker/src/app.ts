@@ -4,8 +4,10 @@ import {
   assertValidCloudflareAccessConfig,
   assertValidGitHubProviderConfig,
   assertValidOidcProviderConfig,
+  brandAssetPath,
   generateOpenApiDocument,
   installAttachmentRoutes,
+  installBrandAssetRoutes,
   installClientTreeRoutes,
   installEmailHealthRoutes,
   installEmailLogRoutes,
@@ -18,6 +20,7 @@ import {
   installOidcRoutes,
   installOutboxRoutes,
   installPasswordAuthRoutes,
+  installPublicBrandAssetRoutes,
   installReportRoutes,
   installSessionRoutes,
   installSsoDomainRoutes,
@@ -34,6 +37,7 @@ import {
   type ApiSessionResolver,
   type AttachmentRouteOptions,
   type AuthMailer,
+  type BrandAssetSurface,
   type ClientTreeReader,
   type CloudflareAccessVerifierConfig,
   type ApiSessionService,
@@ -70,7 +74,7 @@ import {
   type RecurringInvoiceEngine,
 } from '@ezacto/db/d1'
 import {
-  brandFromEnv,
+  brandFromSources,
   invoiceTabs,
   renderAppShell,
   reportKindTabs,
@@ -219,8 +223,38 @@ const hasSessionCookie = (request: Request): boolean =>
       )
     })
 
-export const createApp = (services?: RuntimeServices) =>
-  createApiApp<AppEnv>({
+/**
+ * The brand marks this instance holds, resolved for a shell render.
+ *
+ * A stored mark beats the deploy-time URL for its slot and the env vars stay
+ * the fallback, so a deployment that already sets them renders what it rendered
+ * before -- see `brandFromSources`.
+ *
+ * The read is on the page path, which does no other database work: the Worker
+ * deliberately serves the shell from an app with no runtime services so that a
+ * page render is never behind a migration. That is why the surface is threaded
+ * with the request environment rather than composed into `RuntimeServices`, and
+ * why its `list` answers with nothing rather than throwing when the table is
+ * not there yet -- a brand lookup must never be the reason a page fails to
+ * render. Caching it per isolate was considered and left out: it buys a
+ * fraction of a millisecond and pays for it with an operator watching a stale
+ * logo and wondering whether the upload worked.
+ */
+export const createApp = (
+  services?: RuntimeServices,
+  brandAssets?: BrandAssetSurface<AppEnv>,
+) => {
+  const shellBrand = async (env: AppEnv) => {
+    const stored = brandAssets === undefined ? [] : await brandAssets.list(env)
+    return brandFromSources(
+      env as unknown as Record<string, string | undefined>,
+      stored.map((asset) => ({
+        slot: asset.slot,
+        url: brandAssetPath(asset.slot, asset.contentHash),
+      })),
+    )
+  }
+  return createApiApp<AppEnv>({
     ...(services === undefined
       ? {}
       : {
@@ -302,6 +336,12 @@ export const createApp = (services?: RuntimeServices) =>
               service: services.moduleSettings,
               clock: () => systemClock.now().instant,
             })
+            // Mounted only where the entry composes a brand surface, the way
+            // the attachment routes are mounted only where object storage is
+            // bound: without one there is nowhere for a mark to go.
+            if (brandAssets !== undefined) {
+              installBrandAssetRoutes(api, brandAssets, () => systemClock.now().instant)
+            }
             // The provisioning gate is enforced inside the identity store, so
             // this is the only way an instance gets from "provisions nothing"
             // to "provisions from the work domain". Unmounted, migration 0039
@@ -323,6 +363,11 @@ export const createApp = (services?: RuntimeServices) =>
           },
         }),
     installApp(app) {
+      // Before anything that needs a session, and outside the API surface: the
+      // wordmark on the sign-in page is fetched by a browser that has none.
+      if (brandAssets !== undefined) {
+        installPublicBrandAssetRoutes(app, brandAssets)
+      }
       if (services !== undefined) {
         installOidcRoutes(app, {
           transactions: services.oidcTransactions,
@@ -529,12 +574,12 @@ export const createApp = (services?: RuntimeServices) =>
         }),
       )
 
-      app.get('/', (context) =>
+      app.get('/', async (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
@@ -553,12 +598,12 @@ export const createApp = (services?: RuntimeServices) =>
       // The screen a person lands on when they want to know where things
       // stand. It is above the timesheet rather than instead of it: / remains
       // Time, and every figure here links into the section that owns it.
-      app.get('/dashboard', (context) =>
+      app.get('/dashboard', async (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Home',
             view: 'dashboard',
             signInProviders: configuredSignInProviders(context.env),
@@ -576,12 +621,12 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
-      app.get('/invoices/new', (context) =>
+      app.get('/invoices/new', async (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Invoices',
             view: 'invoice-generation',
             signInProviders: configuredSignInProviders(context.env),
@@ -599,12 +644,12 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
-      app.get('/approvals', (context) =>
+      app.get('/approvals', async (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Approvals',
             view: 'timesheet-approvals',
             signInProviders: configuredSignInProviders(context.env),
@@ -622,12 +667,12 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
-      app.get('/invoices', (context) =>
+      app.get('/invoices', async (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Invoices',
             view: 'invoice-list',
             tabs: invoiceTabs('invoice-list'),
@@ -651,12 +696,12 @@ export const createApp = (services?: RuntimeServices) =>
       // strip ships before the screens behind it: a labelled empty pane says
       // where recurring invoices, retainers and sender configuration will live,
       // and an absent section says nothing at all.
-      app.get('/invoices/recurring', (context) =>
+      app.get('/invoices/recurring', async (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Invoices',
             view: 'invoice-recurring',
             tabs: invoiceTabs('invoice-recurring'),
@@ -675,12 +720,12 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
-      app.get('/invoices/retainers', (context) =>
+      app.get('/invoices/retainers', async (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Invoices',
             view: 'invoice-retainers',
             tabs: invoiceTabs('invoice-retainers'),
@@ -699,12 +744,12 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
-      app.get('/invoices/configure', (context) =>
+      app.get('/invoices/configure', async (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Invoices',
             view: 'invoice-configure',
             tabs: invoiceTabs('invoice-configure'),
@@ -723,12 +768,12 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
-      app.get('/clients', (context) =>
+      app.get('/clients', async (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Clients',
             view: 'client-list',
             signInProviders: configuredSignInProviders(context.env),
@@ -746,12 +791,12 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
-      app.get('/projects', (context) =>
+      app.get('/projects', async (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Projects',
             view: 'project-list',
             signInProviders: configuredSignInProviders(context.env),
@@ -769,12 +814,12 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
-      app.get('/team', (context) =>
+      app.get('/team', async (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Team',
             view: 'team-list',
             signInProviders: configuredSignInProviders(context.env),
@@ -792,12 +837,12 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
-      app.get('/tasks', (context) =>
+      app.get('/tasks', async (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Tasks',
             view: 'task-list',
             signInProviders: configuredSignInProviders(context.env),
@@ -815,12 +860,12 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
-      app.get('/reports', (context) =>
+      app.get('/reports', async (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Reports',
             view: 'reports',
             tabs: reportKindTabs(context.req.query('report') ?? null),
@@ -839,12 +884,12 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
-      app.get('/expenses', (context) =>
+      app.get('/expenses', async (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Expenses',
             view: 'expense-list',
             signInProviders: configuredSignInProviders(context.env),
@@ -862,12 +907,12 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
-      app.get('/expense-categories', (context) =>
+      app.get('/expense-categories', async (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Expenses',
             view: 'expense-categories',
             signInProviders: configuredSignInProviders(context.env),
@@ -888,12 +933,12 @@ export const createApp = (services?: RuntimeServices) =>
       // Two destinations, split the way the settings themselves are: yours, and
       // everyone's. /settings/modules is kept because it shipped, and a URL
       // someone has open should not start 404ing to tidy a route table.
-      app.get('/settings/user', (context) =>
+      app.get('/settings/user', async (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Settings',
             view: 'settings-user',
             signInProviders: configuredSignInProviders(context.env),
@@ -910,12 +955,12 @@ export const createApp = (services?: RuntimeServices) =>
           },
         ),
       )
-      app.get('/settings/company', (context) =>
+      app.get('/settings/company', async (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Settings',
             view: 'settings-company',
             signInProviders: configuredSignInProviders(context.env),
@@ -933,12 +978,12 @@ export const createApp = (services?: RuntimeServices) =>
         ),
       )
 
-      app.get('/settings/activity', (context) =>
+      app.get('/settings/activity', async (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Settings',
             view: 'settings-activity',
             signInProviders: configuredSignInProviders(context.env),
@@ -960,7 +1005,7 @@ export const createApp = (services?: RuntimeServices) =>
       // has it bookmarked, and a 404 to tidy a route table is a poor trade.
       app.get('/settings/modules', (context) => context.redirect('/settings/company', 301))
 
-      app.get('/expenses/:expenseId', (context) => {
+      app.get('/expenses/:expenseId', async (context) => {
         const rawExpenseId = context.req.param('expenseId')
         const expenseId = Number(rawExpenseId)
         if (
@@ -973,7 +1018,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Expenses',
             view: 'expense-detail',
             signInProviders: configuredSignInProviders(context.env),
@@ -991,7 +1036,7 @@ export const createApp = (services?: RuntimeServices) =>
         )
       })
 
-      app.get('/projects/:projectId', (context) => {
+      app.get('/projects/:projectId', async (context) => {
         const rawProjectId = context.req.param('projectId')
         const projectId = Number(rawProjectId)
         if (
@@ -1004,7 +1049,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Projects',
             view: 'project-detail',
             signInProviders: configuredSignInProviders(context.env),
@@ -1022,7 +1067,7 @@ export const createApp = (services?: RuntimeServices) =>
         )
       })
 
-      app.get('/team/:personId', (context) => {
+      app.get('/team/:personId', async (context) => {
         const rawPersonId = context.req.param('personId')
         const personId = Number(rawPersonId)
         if (
@@ -1035,7 +1080,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Team',
             view: 'team-person',
             signInProviders: configuredSignInProviders(context.env),
@@ -1053,7 +1098,7 @@ export const createApp = (services?: RuntimeServices) =>
         )
       })
 
-      app.get('/clients/:clientId', (context) => {
+      app.get('/clients/:clientId', async (context) => {
         const rawClientId = context.req.param('clientId')
         const clientId = Number(rawClientId)
         if (
@@ -1066,7 +1111,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Clients',
             view: 'client-detail',
             signInProviders: configuredSignInProviders(context.env),
@@ -1084,7 +1129,7 @@ export const createApp = (services?: RuntimeServices) =>
         )
       })
 
-      app.get('/invoices/:invoiceId', (context) => {
+      app.get('/invoices/:invoiceId', async (context) => {
         const rawInvoiceId = context.req.param('invoiceId')
         const invoiceId = Number(rawInvoiceId)
         if (
@@ -1097,7 +1142,7 @@ export const createApp = (services?: RuntimeServices) =>
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: brandFromEnv(context.env),
+            brand: await shellBrand(context.env),
             activeSection: 'Invoices',
             view: 'invoice-detail',
             signInProviders: configuredSignInProviders(context.env),
@@ -1116,6 +1161,7 @@ export const createApp = (services?: RuntimeServices) =>
       })
     },
   })
+}
 
 const configuredCredential = (value: string | undefined): string | null => {
   if (value === undefined) return null

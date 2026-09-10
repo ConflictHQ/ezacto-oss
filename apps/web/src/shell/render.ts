@@ -189,6 +189,21 @@ export const invoiceTabs = (view: AppShellOptions['view']): readonly ShellTab[] 
     ...(view === destination ? { current: true } : {}),
   }))
 
+/**
+ * The mark, or the name set in it. Which of the two configured wordmarks a
+ * surface asks for is decided by the ground it paints, not by the surface:
+ * the topbar and the sign-in splash are `--ez-ink` and take the dark-ground
+ * mark, the document shell is `--ez-ground` and takes the light-ground one.
+ *
+ * The name stays the alt text rather than being dropped, so a mark that fails
+ * to load, or a reader who is not looking at the screen, still gets the brand
+ * the deployment set instead of an empty link.
+ */
+const wordmark = (source: string | undefined, brand: string): string =>
+  source === undefined || source === ''
+    ? escapeHtml(brand)
+    : `<img class="brand-mark" src="${escapeHtml(source)}" alt="${escapeHtml(brand)}">`
+
 export const renderEmptyState = (title: string, detail: string): string =>
   `<section class="empty-state" data-empty-state>` +
   `<h2>${escapeHtml(title)}</h2><p>${escapeHtml(detail)}</p></section>`
@@ -196,7 +211,7 @@ export const renderEmptyState = (title: string, detail: string): string =>
 export const renderDocumentShell = (title: string, content: string, brand?: Partial<DeploymentBrand>): string => {
   const b = resolveDeploymentBrand(brand)
   return `<article class="document-shell" data-document-shell data-ez-theme="precision">` +
-  `<header><a href="/">← Time</a><span>${escapeHtml(b.name)}</span></header>` +
+  `<header><a href="/">← Time</a><span>${wordmark(b.wordmarkLight, b.name)}</span></header>` +
   `<main><h1>${escapeHtml(title)}</h1><div class="document-content">${escapeHtml(content)}</div>` +
   `</main></article>`
 }
@@ -313,7 +328,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
 <body>
   <section class="auth-gateway" data-auth-gateway data-state="checking" aria-label="${escapeHtml(brand)} sign in" aria-busy="true"${resumeSession ? ' hidden' : ''}>
     <div class="auth-splash">
-      <a class="auth-wordmark" href="/" aria-label="${escapeHtml(brand)} home">${escapeHtml(brand)}</a>
+      <a class="auth-wordmark" href="/" aria-label="${escapeHtml(brand)} home">${wordmark(b.wordmarkDark, brand)}</a>
       <div class="auth-splash-copy">
         <p class="eyebrow">${escapeHtml(b.tagline)}</p>
         <h1>Make every hour visible.</h1>
@@ -357,7 +372,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
   </aside>
   <div class="authenticated-shell" data-authenticated-shell${resumeSession ? '' : ' hidden'} inert aria-busy="true">
   <header class="topbar">
-    <a class="brand" href="/" aria-label="${escapeHtml(brand)} home">${escapeHtml(brand)}</a>
+    <a class="brand" href="/" aria-label="${escapeHtml(brand)} home">${wordmark(b.wordmarkDark, brand)}</a>
     <nav class="primary-nav" aria-label="Primary">${navigation}</nav>
     <button class="timer-chip" type="button" data-timer-chip data-state="loading" data-auth-action disabled aria-haspopup="dialog">
       ${iconMarkup('clock')}

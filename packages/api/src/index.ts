@@ -41,6 +41,19 @@ export {
   type AttachmentRouteOptions,
 } from './attachments.js'
 export {
+  brandAssetFileKey,
+  brandAssetPath,
+  brandAssetSegment,
+  installBrandAssetRoutes,
+  installPublicBrandAssetRoutes,
+  MAX_BRAND_ASSET_BYTES,
+  sniffBrandAssetType,
+  type BrandAssetObject,
+  type BrandAssetSlot,
+  type BrandAssetSurface,
+  type StoredBrandAsset,
+} from './brand-assets.js'
+export {
   apiContractOperations,
   apiContractSchemas,
   generateOpenApiDocument,
