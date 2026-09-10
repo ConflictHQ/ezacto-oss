@@ -270,6 +270,204 @@ for (const [runtime, factory] of factories) {
       expect(report.rows[0]!.roundedSeconds).toBe(13_500);
     });
 
+    /**
+     * User 2's own week, seeded per test rather than into the shared fixture:
+     * the contractor-cost report totals every person in the range, so a second
+     * person in the fixture would change a number those tests state exactly.
+     *
+     * Deliberately unlike the fixture's entries: `seconds` and `rounded_seconds`
+     * differ, one entry is non-billable, and one sits a day outside the range,
+     * so a report that confused the two durations, ignored `billable`, or
+     * ignored the dates cannot still produce these figures.
+     */
+    const seedMemberWeek = async (harness: Harness): Promise<void> => {
+      // time_entries keys (user_assignment, project, user) as a triple, so this
+      // member needs their own assignment on the root project before they can
+      // have booked an hour to it.
+      await harness.run(
+        `INSERT INTO user_assignments
+          (id, project_id, user_id, is_active, is_project_manager, created_at, updated_at)
+         VALUES (26, 1, 2, 1, 0, ?, ?)`,
+        [now, now],
+      );
+      await harness.run(
+        `INSERT INTO time_entries
+          (id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+           spent_date, seconds, seconds_without_timer, rounded_seconds, billable, budgeted,
+           billable_rate_cents, cost_rate_cents, created_at, updated_at) VALUES
+          (301, 2, 2, 1, 24, 12, '2026-08-05', 5400, 5400, 7200, 1, 1, 12345, 5000, ?, ?),
+          (302, 2, 2, 1, 24, 12, '2026-08-06', 1800, 1800, 1800, 0, 0, NULL, 5000, ?, ?),
+          (303, 2, 1, 1, 26, 11, '2026-08-07', 3600, 3600, 3600, 1, 1, 10000, 4000, ?, ?),
+          (304, 2, 2, 1, 24, 12, '2026-07-31', 3600, 3600, 3600, 1, 1, 12345, 5000, ?, ?)`,
+        [now, now, now, now, now, now, now, now],
+      );
+    };
+
+    it("[api] totals a member's own hours by project, tracked and rounded apart", async () => {
+      harness = await factory();
+      await seedMemberWeek(harness);
+      const response = await harness.request(
+        "/reports/my-hours?from=2026-08-01&to=2026-08-31",
+        "member",
+        [],
+        2,
+      );
+      expect(response.status, await response.clone().text()).toBe(200);
+      const body = (await response.json()) as {
+        data: {
+          user_id: number;
+          project_id: number | null;
+          seconds: number;
+          rounded_seconds: number;
+          billable_seconds: number;
+          time_entry_count: number;
+          projects: Array<Record<string, unknown>>;
+        };
+      };
+
+      // 5400 + 1800 tracked on Child project, 3600 on Root; the 31 July entry
+      // is outside the range and the non-billable hour is out of the billable
+      // column but not the tracked one.
+      expect(body.data).toMatchObject({
+        user_id: 2,
+        project_id: null,
+        seconds: 10_800,
+        rounded_seconds: 12_600,
+        billable_seconds: 10_800,
+        time_entry_count: 3,
+      });
+      // Ordered by client, then project: "Child" before "Root".
+      expect(body.data.projects).toEqual([
+        {
+          project_id: 2,
+          project_name: "Child project",
+          project_code: "CHILD",
+          client_id: 2,
+          client_name: "Child",
+          seconds: 7200,
+          rounded_seconds: 9000,
+          billable_seconds: 7200,
+          time_entry_count: 2,
+        },
+        {
+          project_id: 1,
+          project_name: "Root project",
+          project_code: "ROOT",
+          client_id: 1,
+          client_name: "Root",
+          seconds: 3600,
+          rounded_seconds: 3600,
+          billable_seconds: 3600,
+          time_entry_count: 1,
+        },
+      ]);
+    });
+
+    it("[security] scopes a member's hours to that member, whatever the request says", async () => {
+      harness = await factory();
+      await seedMemberWeek(harness);
+      const range = "from=2026-08-01&to=2026-08-31";
+
+      // The fixture's 9900 tracked seconds belong to user 1. Nothing user 2 can
+      // put in the address reaches them: user_id is not an accepted parameter,
+      // and the person the report covers is the authenticated principal.
+      const named = await harness.request(
+        `/reports/my-hours?${range}&user_id=1`,
+        "member",
+        [],
+        2,
+      );
+      expect(named.status, await named.clone().text()).toBe(422);
+
+      const member = await harness.request(
+        `/reports/my-hours?${range}`,
+        "member",
+        [],
+        2,
+      );
+      const memberBody = (await member.json()) as {
+        data: { user_id: number; seconds: number; projects: Array<{ project_id: number }> };
+      };
+      expect(memberBody.data.user_id).toBe(2);
+      expect(memberBody.data.seconds).toBe(10_800);
+      // Project 3 and project 4 carry only user 1's entries, so a report that
+      // had widened past this member would name them.
+      expect(memberBody.data.projects.map((project) => project.project_id)).toEqual([
+        2, 1,
+      ]);
+
+      // The same endpoint, the same range, a different session: the account's
+      // own administrator sees their hours and not the member's.
+      const administrator = await harness.request(`/reports/my-hours?${range}`);
+      const administratorBody = (await administrator.json()) as {
+        data: { user_id: number; seconds: number; time_entry_count: number };
+      };
+      expect(administratorBody.data).toMatchObject({
+        user_id: 1,
+        seconds: 9900,
+        time_entry_count: 4,
+      });
+    });
+
+    it("[api] narrows one member's hours to a single project without widening the person", async () => {
+      harness = await factory();
+      await seedMemberWeek(harness);
+      const response = await harness.request(
+        "/reports/my-hours?from=2026-08-01&to=2026-08-31&project_id=2",
+        "member",
+        [],
+        2,
+      );
+      expect(response.status, await response.clone().text()).toBe(200);
+      const body = (await response.json()) as {
+        data: {
+          user_id: number;
+          project_id: number | null;
+          seconds: number;
+          rounded_seconds: number;
+          time_entry_count: number;
+          projects: Array<{ project_id: number }>;
+        };
+      };
+      expect(body.data).toMatchObject({
+        user_id: 2,
+        project_id: 2,
+        seconds: 7200,
+        rounded_seconds: 9000,
+        time_entry_count: 2,
+      });
+      expect(body.data.projects.map((project) => project.project_id)).toEqual([2]);
+    });
+
+    it("[security] serves my-hours to every profile and hides no money in it", async () => {
+      harness = await factory();
+      // time_entries:read, not reports:read: these are the acting user's own
+      // entries, so the three reporting profiles are not the ceiling. And no
+      // money field appears for anybody, so there is nothing here to redact.
+      const moneyFields = ["cost_cents", "billable_rate_cents", "total_cents"];
+      for (const profile of profiles) {
+        const response = await harness.request(
+          "/reports/my-hours?from=2026-08-01&to=2026-08-31",
+          profile,
+        );
+        expect(response.status, `${profile}: ${await response.clone().text()}`).toBe(
+          200,
+        );
+        const body = (await response.json()) as {
+          data: Record<string, unknown> & {
+            projects: Array<Record<string, unknown>>;
+          };
+        };
+        for (const field of moneyFields) {
+          expect(Object.hasOwn(body.data, field), `${profile} ${field}`).toBe(false);
+          expect(
+            body.data.projects.some((project) => Object.hasOwn(project, field)),
+            `${profile} ${field}`,
+          ).toBe(false);
+        }
+      }
+    });
+
     it("[unit] keeps uninvoiced totals identical to the generation preview to the cent", async () => {
       harness = await factory();
       const response = await harness.request(

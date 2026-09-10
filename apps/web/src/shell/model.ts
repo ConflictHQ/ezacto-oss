@@ -277,6 +277,23 @@ const normalized = (value: string): string =>
     .replace(/[^\p{Letter}\p{Number}]+/gu, '')
 
 /**
+ * Whether this profile browses the firm's directories -- Projects, Tasks and
+ * Clients. Not a shorthand for "is not a member": a member is refused because
+ * those three screens are the firm's own record of what it sells and who it
+ * sells to, while the member's record of what they did reaches them through
+ * their timesheet, their expenses, their reports and their dashboard
+ * (issue 491).
+ *
+ * The nav is the smaller half of that rule. The API narrows what the same three
+ * collections RETURN to a member -- the projects they are assigned to and those
+ * projects' clients -- so a member who types /clients is answered with their own
+ * work rather than the book, and the screens that read those collections to
+ * render, Expenses above all, keep the catalog they need.
+ */
+export const canBrowseDirectories = (profile: Whoami['profile']): boolean =>
+  profile !== 'member'
+
+/**
  * Every place ⌘K can take you, grouped by what you came to do rather than by
  * which table the page reads: Track is where the day goes in, Organize is the
  * shape of the work, Bill is the money out, Review is the checking. Settings
@@ -1035,6 +1052,13 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     }),
+  getMyHoursReport: async (filter, signal) =>
+    (
+      await client.getMyHoursReport({
+        query: filter,
+        ...withSignal(signal),
+      })
+    ).data,
   getUninvoicedReport: async (filter, signal) =>
     (
       await client.getUninvoicedReport({
@@ -1079,7 +1103,11 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     client.listTasks({
       query: {
         per_page: 50,
-        ...(filter === 'active' ? { is_active: true } : {}),
+        // Tasks arrive a page at a time, so the archived view has to be asked
+        // for rather than filtered out of what is on hand the way the client
+        // and project directories do it -- they page themselves to exhaustion,
+        // this one stops at fifty. "All" sends nothing, which asks for both.
+        ...(filter === 'all' ? {} : { is_active: filter === 'active' }),
         ...(cursor === undefined ? {} : { cursor }),
       },
       ...withSignal(signal),

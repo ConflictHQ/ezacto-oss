@@ -161,7 +161,9 @@ export const createTaskAdminController = (
     tasks.length === 0
       ? filter === 'active'
         ? 'No active tasks found.'
-        : 'No tasks found.'
+        : filter === 'archived'
+          ? 'No archived tasks found.'
+          : 'No tasks found.'
       : `${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'} loaded${nextCursor === null ? '.' : '; more are available.'}`
 
   const renderList = (): void => {
@@ -194,7 +196,9 @@ export const createTaskAdminController = (
           ? 'No loaded tasks match that filter.'
           : filter === 'active'
             ? 'No active tasks have been created or imported yet.'
-            : 'No tasks have been created or imported yet.'
+            : filter === 'archived'
+              ? 'No tasks are archived.'
+              : 'No tasks have been created or imported yet.'
       list.replaceChildren(empty)
       return
     }
@@ -385,9 +389,16 @@ export const createTaskAdminController = (
     if (!mutationPending) editingTask = null
   })
 
+  // Each state is a fresh request, because this list is the one directory of
+  // the three that pages from the server rather than holding everything. That
+  // is also why its Archived button carries no count while the client and
+  // project ones do: the only number available here is how many archived rows
+  // have been loaded so far, which grows as you press Load more, and a filter
+  // label that changes while you read it is worse than one that stays quiet.
   for (const control of document.querySelectorAll<HTMLButtonElement>('[data-task-filter]')) {
     control.addEventListener('click', () => {
-      const next = control.dataset.taskFilter === 'all' ? 'all' : 'active'
+      const next = control.dataset.taskFilter
+      if (next !== 'active' && next !== 'archived' && next !== 'all') return
       if (next === filter && listPendingGeneration === null) return
       setFilter(next)
       tasks = []

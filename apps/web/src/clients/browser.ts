@@ -144,6 +144,7 @@ export const createClientDirectoryController = (
   const detailStatus = required<HTMLElement>('[data-client-detail-status]')
   const tree = required<HTMLElement>('[data-client-tree]')
   const search = required<HTMLInputElement>('[data-client-search]')
+  const archivedFilter = required<HTMLButtonElement>('[data-client-filter="archived"]')
   const listRetry = required<HTMLButtonElement>('[data-client-list-retry]')
   const detailRetry = required<HTMLButtonElement>('[data-client-detail-retry]')
   const detail = required<HTMLElement>('[data-client-detail]')
@@ -176,7 +177,7 @@ export const createClientDirectoryController = (
   let contacts: readonly GeneralResource[] = []
   let projects: readonly GeneralResource[] = []
   let currentClient: GeneralResource | null = null
-  let clientFilter: 'active' | 'all' = 'active'
+  let clientFilter: 'active' | 'archived' | 'all' = 'active'
   let editingClientId: number | null = null
   let editingContactId: number | null = null
   let deletingContactId: number | null = null
@@ -256,8 +257,19 @@ export const createClientDirectoryController = (
   }
 
   const renderTree = (): void => {
+    // The whole directory is already resident -- loadClients pages it to
+    // exhaustion -- so how much is in the archive is a count of what is in hand
+    // rather than a request, and the label can answer it before anybody looks.
+    // It is deliberately the directory's count and not the visible one: the
+    // search box narrows the table, and a number that moved with every
+    // keystroke would stop answering the question the label is there for, which
+    // is how much is in the archive before you go into it.
+    const archivedCount = clients.filter((client) => !clientIsActive(client)).length
+    archivedFilter.textContent = `Archived (${archivedCount})`
     const listed =
-      clientFilter === 'active' ? clients.filter((client) => clientIsActive(client)) : clients
+      clientFilter === 'all'
+        ? clients
+        : clients.filter((client) => clientIsActive(client) === (clientFilter === 'active'))
     const visible = clientSearchMatches(listed, search.value)
     if (visible.length === 0) {
       const empty = document.createElement('p')
@@ -267,7 +279,9 @@ export const createClientDirectoryController = (
           ? 'No clients match that search.'
           : clientFilter === 'active'
             ? 'No active clients yet.'
-            : 'No clients have been created or imported yet.'
+            : clientFilter === 'archived'
+              ? 'No clients are archived.'
+              : 'No clients have been created or imported yet.'
       tree.replaceChildren(empty)
       listStatus.textContent = empty.textContent
       return
@@ -683,7 +697,9 @@ export const createClientDirectoryController = (
   detailRetry.addEventListener('click', () => void refreshDetail())
   for (const filter of document.querySelectorAll<HTMLButtonElement>('[data-client-filter]')) {
     filter.addEventListener('click', () => {
-      clientFilter = filter.dataset.clientFilter === 'all' ? 'all' : 'active'
+      const next = filter.dataset.clientFilter
+      if (next !== 'active' && next !== 'archived' && next !== 'all') return
+      clientFilter = next
       for (const button of document.querySelectorAll<HTMLButtonElement>('[data-client-filter]')) {
         button.setAttribute('aria-pressed', String(button === filter))
       }

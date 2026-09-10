@@ -1718,6 +1718,35 @@ export type RecurringInvoiceInput = {
   "can_draw_from_retainer_id"?: number | null;
 };
 
+export type MyHoursProject = {
+  "project_id": number;
+  "project_name": string;
+  "project_code": string;
+  "client_id": number;
+  "client_name": string;
+  "seconds": number;
+  "rounded_seconds": number;
+  "billable_seconds": number;
+  "time_entry_count": number;
+};
+
+export type MyHoursReport = {
+  "from": string;
+  "to": string;
+  "user_id": number;
+  "project_id": number | null;
+  "seconds": number;
+  "rounded_seconds": number;
+  "billable_seconds": number;
+  "time_entry_count": number;
+  "projects": Array<MyHoursProject>;
+};
+
+export type MyHoursReportEnvelope = {
+  "data": MyHoursReport;
+  "links": Links;
+};
+
 export type UninvoicedCurrencyTotal = {
   "currency": string;
   "rounded_seconds": number;
@@ -3592,6 +3621,16 @@ export class EzactoClient {
     return this.request<ArrayBuffer>("GET", "/api/v1/projects/:projectId/attachments/:attachmentId/content".replace(":projectId", encodeURIComponent(String(args["projectId"]))).replace(":attachmentId", encodeURIComponent(String(args["attachmentId"]))), {
       signal: args.signal,
       binary: true,
+      headers,
+    });
+  }
+
+  async getMyHoursReport(args: { query: { "from": string; "to": string; "project_id"?: number }; signal?: AbortSignal; headers?: HeadersInit }): Promise<MyHoursReportEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<MyHoursReportEnvelope>("GET", "/api/v1/reports/my-hours", {
+      query: args.query,
+      signal: args.signal,
       headers,
     });
   }

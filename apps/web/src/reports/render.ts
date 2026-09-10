@@ -2,6 +2,9 @@ import type { ShellTab } from '../shell/render.js'
 import type { ReportKind } from './model.js'
 
 const reportKindNames: readonly { readonly kind: ReportKind; readonly label: string }[] = [
+  // First, and first for everybody: it is the only kind that answers without a
+  // client or project chosen, and for a member it is the whole section.
+  { kind: 'my-hours', label: 'My hours' },
   { kind: 'uninvoiced', label: 'Uninvoiced work' },
   { kind: 'client-rollup', label: 'Client rollup' },
   { kind: 'project-budget', label: 'Project budget' },
