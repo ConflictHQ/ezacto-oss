@@ -5,6 +5,7 @@ import type {
   UninvoicedReport,
   Whoami,
 } from '@ezacto/client'
+import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 
 export type ReportKind = 'uninvoiced' | 'client-rollup' | 'project-budget'
 
@@ -14,6 +15,14 @@ export interface ReportCatalogPage {
 }
 
 export interface ReportWorkspaceApi {
+  /**
+   * Only `week_start_day` is wanted, and only so the period control can tell a
+   * whole week from an arbitrary seven days. Optional because a build without
+   * it should still report: the control then falls back to Monday and calls a
+   * Saturday-to-Friday range custom, which is a wrong label on a working
+   * report rather than a screen that refuses to load.
+   */
+  getTimeEntrySettings?(signal?: AbortSignal): Promise<TimeEntrySettings>
   listReportClients(cursor?: string, signal?: AbortSignal): Promise<ReportCatalogPage>
   listReportProjects(cursor?: string, signal?: AbortSignal): Promise<ReportCatalogPage>
   getUninvoicedReport(

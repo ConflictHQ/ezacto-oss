@@ -399,8 +399,8 @@ describe('Reports Stage 1 browser controller', () => {
     await controller.activate(identity('administrator'), session.signal, () => false)
 
     const form = document.querySelector<HTMLFormElement>('[data-report-form]')!
-    const from = document.querySelector<HTMLInputElement>('[data-report-from]')!
-    const to = document.querySelector<HTMLInputElement>('[data-report-to]')!
+    const from = document.querySelector<HTMLInputElement>('[data-period-from]')!
+    const to = document.querySelector<HTMLInputElement>('[data-period-to]')!
     const results = document.querySelector<HTMLElement>('[data-report-results]')!
     const retry = document.querySelector<HTMLButtonElement>('[data-report-retry]')!
     const run = document.querySelector<HTMLButtonElement>('[data-report-run]')!
@@ -451,8 +451,8 @@ describe('Reports Stage 1 browser controller', () => {
     const retry = document.querySelector<HTMLButtonElement>('[data-report-retry]')!
     expect(retry.hidden).toBe(false)
 
-    document.querySelector<HTMLInputElement>('[data-report-from]')!.value = '2026-09-02'
-    document.querySelector<HTMLInputElement>('[data-report-to]')!.value = '2026-09-01'
+    document.querySelector<HTMLInputElement>('[data-period-from]')!.value = '2026-09-02'
+    document.querySelector<HTMLInputElement>('[data-period-to]')!.value = '2026-09-01'
     document
       .querySelector<HTMLFormElement>('[data-report-form]')!
       .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
@@ -899,5 +899,109 @@ describe('Reports Stage 1 browser controller', () => {
       ),
     )
     expect(status.textContent).toBe('Report loaded.')
+  })
+
+  it('[browser] names the range the address already carried as a period', async () => {
+    writeDocument('/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31')
+    const getUninvoicedReport = vi.fn(async () => ({
+      from: '2026-08-01',
+      to: '2026-08-31',
+      client_id: null,
+      project_id: null,
+      totals: [],
+    }))
+    await createReportsController(baseApi({ getUninvoicedReport })).activate(
+      identity('administrator'),
+      new AbortController().signal,
+      () => false,
+    )
+
+    // No period parameter was added to the address: a whole August is readable
+    // as August from the dates alone.
+    expect(document.querySelector('[data-period-summary]')?.textContent).toBe('August 2026')
+    expect(document.querySelector<HTMLSelectElement>('[data-period-kind]')?.value).toBe('month')
+    expect(document.querySelector<HTMLElement>('[data-period-custom]')?.hidden).toBe(true)
+    // The two bare date fields the card used to carry are gone, not duplicated.
+    expect(document.querySelector('[data-report-from]')).toBeNull()
+    expect(document.querySelector('[data-report-to]')).toBeNull()
+  })
+
+  it('[browser] runs the previous period on the back arrow and puts it in the address', async () => {
+    writeDocument('/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31')
+    const getUninvoicedReport = vi.fn(async () => ({
+      from: '2026-08-01',
+      to: '2026-08-31',
+      client_id: null,
+      project_id: null,
+      totals: [],
+    }))
+    await createReportsController(baseApi({ getUninvoicedReport })).activate(
+      identity('administrator'),
+      new AbortController().signal,
+      () => false,
+    )
+    expect(getUninvoicedReport).toHaveBeenCalledTimes(1)
+
+    document.querySelector<HTMLButtonElement>('[data-period-previous]')!.click()
+    await vi.waitFor(() => expect(getUninvoicedReport).toHaveBeenCalledTimes(2))
+    expect(getUninvoicedReport).toHaveBeenLastCalledWith(
+      { from: '2026-07-01', to: '2026-07-31' },
+      expect.any(AbortSignal),
+    )
+    expect(window.location.search).toBe(
+      '?report=uninvoiced&from=2026-07-01&to=2026-07-31',
+    )
+    expect(document.querySelector('[data-period-summary]')?.textContent).toBe('July 2026')
+  })
+
+  it('[browser] reads a whole week as a week under the organisation week start', async () => {
+    // Saturday to Friday: a week only if the organisation starts on Saturday.
+    writeDocument('/reports?report=uninvoiced&from=2025-04-12&to=2025-04-18')
+    const getUninvoicedReport = vi.fn(async () => ({
+      from: '2025-04-12',
+      to: '2025-04-18',
+      client_id: null,
+      project_id: null,
+      totals: [],
+    }))
+    const getTimeEntrySettings = vi.fn(async () => ({
+      time_entry_mode: 'duration' as const,
+      time_format: 'decimal' as const,
+      clock: '24h' as const,
+      week_start_day: 'saturday' as const,
+    }))
+    await createReportsController(
+      baseApi({ getUninvoicedReport, getTimeEntrySettings }),
+    ).activate(identity('administrator'), new AbortController().signal, () => false)
+
+    expect(document.querySelector<HTMLSelectElement>('[data-period-kind]')?.value).toBe('week')
+    expect(document.querySelector('[data-period-summary]')?.textContent).toBe(
+      '12 – 18 Apr 2025',
+    )
+    document.querySelector<HTMLButtonElement>('[data-period-previous]')!.click()
+    await vi.waitFor(() => expect(getUninvoicedReport).toHaveBeenCalledTimes(2))
+    expect(getUninvoicedReport).toHaveBeenLastCalledWith(
+      { from: '2025-04-05', to: '2025-04-11' },
+      expect.any(AbortSignal),
+    )
+  })
+
+  it('[browser] still reports when the week-start setting cannot be read', async () => {
+    writeDocument('/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31')
+    const getUninvoicedReport = vi.fn(async () => ({
+      from: '2026-08-01',
+      to: '2026-08-31',
+      client_id: null,
+      project_id: null,
+      totals: [],
+    }))
+    const getTimeEntrySettings = vi.fn().mockRejectedValue(new Error('settings unavailable'))
+    await createReportsController(
+      baseApi({ getUninvoicedReport, getTimeEntrySettings }),
+    ).activate(identity('administrator'), new AbortController().signal, () => false)
+
+    expect(getTimeEntrySettings).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('[data-report-status]')?.textContent).toBe('Report loaded.')
+    expect(document.querySelector('[data-period-summary]')?.textContent).toBe('August 2026')
   })
 })
