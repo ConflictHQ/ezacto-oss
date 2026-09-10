@@ -1,20 +1,34 @@
-import type { GeneralResource, Retainer, RetainerLedgerEntry } from '@ezacto/client'
+import type {
+  GeneralResource,
+  Invoice,
+  Retainer,
+  RetainerLedgerEntry,
+} from '@ezacto/client'
 import { describe, expect, it } from 'vitest'
 import {
   retainerAmount,
+  retainerAmountFromForm,
   retainerCommitment,
   retainerCommitmentLabel,
+  retainerCreateInput,
   retainerCurrency,
+  retainerInvoiceLabel,
+  retainerLedgerBalanceEffect,
   retainerLedgerHistory,
   retainerLedgerNotes,
+  retainerLedgerRequestAmount,
   retainerLedgerSummary,
+  retainerLinkedInvoices,
   retainerLockedRateValueCents,
+  retainerPolicyPatch,
+  retainerProjectedBalance,
   retainerProjectLabel,
   retainerRemainingShare,
   retainerScopeConflict,
   retainerSelectionFromUrl,
   retainerStatusFilterFromUrl,
   retainerWorkspaceUrl,
+  retainerWouldOverdraw,
 } from '../src/retainers/model.js'
 
 const timestamp = '2026-09-02T12:00:00.000Z'
@@ -199,5 +213,245 @@ describe('Retainer model', () => {
     expect(retainerScopeConflict(scoped, [])).toBe(false)
     expect(retainerProjectLabel(money(), [])).toBe('All projects')
     expect(retainerProjectLabel(scoped, [project(4)])).toBe('Rollout')
+  })
+})
+
+/**
+ * The write path's arithmetic, tested against the rules the server actually
+ * applies rather than against this module's own restatement of them:
+ *
+ * - `sign = kind is drawdown or expiry ? -1 : +1`, applied by the API to a
+ *   magnitude before the row is written (`money-resources.ts`, `append`).
+ * - `retainer_ledger_balance_guard` aborts when `on_exhaustion <> 'overflow'
+ *   AND balance + amount < 0` — so `warn` refuses exactly as `block` does.
+ * - `amount_cents`/`seconds` have a minimum of 1 on every kind but `reset` and
+ *   `adjustment`, which take a signed non-zero value.
+ */
+describe('Retainer write path', () => {
+  const invoice = (overrides: Partial<Invoice> = {}): Invoice =>
+    ({
+      id: 77,
+      client_id: 4,
+      number: 'INV-77',
+      currency: 'USD',
+      issue_date: '2026-02-01',
+      amount_cents: 500_000,
+      retainer_id: 1,
+      created_at: timestamp,
+      updated_at: timestamp,
+      ...overrides,
+    }) as Invoice
+
+  it('[unit] converts a typed amount to its column exactly, in either unit', () => {
+    expect(retainerAmountFromForm('5000', 'cents')).toBe(500_000)
+    expect(retainerAmountFromForm('1234.56', 'cents')).toBe(123_456)
+    expect(retainerAmountFromForm('0.07', 'cents')).toBe(7)
+    expect(retainerAmountFromForm('40', 'seconds')).toBe(144_000)
+    expect(retainerAmountFromForm('7.5', 'seconds')).toBe(27_000)
+    // The reason the conversion goes through BigInt rather than a scale and a
+    // truncate. Both of these land *below* the integer they should be in binary
+    // floating point, so truncating loses a second off the hour and a cent off
+    // the dollar -- on 345 of the 10,000 two-decimal hour values and 9,174 of
+    // the first 200,000 cent ones, not on a curiosity.
+    expect(1.13 * 3_600).toBeLessThan(4_068)
+    expect(retainerAmountFromForm('1.13', 'seconds')).toBe(4_068)
+    expect(0.29 * 100).toBeLessThan(29)
+    expect(retainerAmountFromForm('0.29', 'cents')).toBe(29)
+    // A hundredth of an hour is 36 whole seconds, so two decimals is exact in
+    // both units and neither needs a rounding rule.
+    expect(retainerAmountFromForm('0.01', 'seconds')).toBe(36)
+
+    // A sign typed into the amount would be negated by the server's own sign
+    // and credit the retainer the operator meant to spend, so it never parses.
+    expect(() => retainerAmountFromForm('-1200', 'cents')).toThrow(/two decimals/u)
+    expect(() => retainerAmountFromForm('12.345', 'cents')).toThrow(/two decimals/u)
+    expect(() => retainerAmountFromForm('', 'cents')).toThrow(/two decimals/u)
+    expect(() => retainerAmountFromForm('1e3', 'cents')).toThrow(/two decimals/u)
+    expect(() => retainerAmountFromForm('90000000000000', 'cents')).toThrow(/too large/u)
+  })
+
+  it('[unit] [money] signs a movement the way the API signs it, and no other way', () => {
+    // Unsigned kinds carry a magnitude; the direction control does not apply to
+    // them, so asking for a decrease cannot make the request body negative.
+    expect(retainerLedgerRequestAmount('deposit', 500_000, 'increase')).toBe(500_000)
+    expect(retainerLedgerRequestAmount('deposit', 500_000, 'decrease')).toBe(500_000)
+    expect(retainerLedgerRequestAmount('expiry', 60_000, 'decrease')).toBe(60_000)
+    // `reset` and `adjustment` are the two kinds whose column takes a sign.
+    expect(retainerLedgerRequestAmount('adjustment', 30_000, 'increase')).toBe(30_000)
+    expect(retainerLedgerRequestAmount('adjustment', 30_000, 'decrease')).toBe(-30_000)
+    expect(retainerLedgerRequestAmount('reset', 30_000, 'decrease')).toBe(-30_000)
+
+    // What the balance does, restating `sign` on this side: a deposit adds a
+    // magnitude, a drawdown and an expiry subtract one, a signed kind applies
+    // its own sign.
+    expect(retainerLedgerBalanceEffect('deposit', 500_000)).toBe(500_000)
+    expect(retainerLedgerBalanceEffect('drawdown', 120_000)).toBe(-120_000)
+    expect(retainerLedgerBalanceEffect('expiry', 60_000)).toBe(-60_000)
+    expect(retainerLedgerBalanceEffect('adjustment', -30_000)).toBe(-30_000)
+    expect(retainerLedgerBalanceEffect('reset', 30_000)).toBe(30_000)
+  })
+
+  it('[unit] [money] projects the balance one movement ahead, arithmetically', () => {
+    const balance = 320_000
+    expect(retainerProjectedBalance(balance, 'deposit', 500_000)).toBe(820_000)
+    expect(retainerProjectedBalance(balance, 'drawdown', 120_000)).toBe(200_000)
+    expect(retainerProjectedBalance(balance, 'expiry', 60_000)).toBe(260_000)
+    expect(retainerProjectedBalance(balance, 'adjustment', -30_000)).toBe(290_000)
+    expect(retainerProjectedBalance(balance, 'reset', 30_000)).toBe(350_000)
+
+    // The projection has to agree with the ledger it is forecasting: post the
+    // same four movements as rows and the sum is the same number.
+    const posted = [
+      entry({ id: 'p1', kind: 'deposit', amount: 500_000, invoice_id: 7 }),
+      entry({ id: 'p2', kind: 'drawdown', amount: -120_000, invoice_id: 8 }),
+      entry({ id: 'p3', kind: 'expiry', amount: -60_000 }),
+      entry({ id: 'p4', kind: 'adjustment', amount: -30_000, notes: 'Credit note' }),
+    ]
+    expect(posted).toHaveLength(4)
+    let projected = 0
+    for (const row of posted) {
+      const request =
+        row.kind === 'drawdown' || row.kind === 'expiry' ? Math.abs(row.amount) : row.amount
+      projected = retainerProjectedBalance(projected, row.kind, request)
+    }
+    expect(projected).toBe(retainerLedgerSummary(posted).balance)
+    expect(projected).toBe(290_000)
+  })
+
+  it('[unit] [money] reads the overdraw trigger rather than the exhaustion label', () => {
+    // `retainer_ledger_balance_guard` tests `on_exhaustion <> 'overflow'`, so a
+    // retainer that only says it warns is refused by the database all the same.
+    expect(retainerWouldOverdraw(money({ on_exhaustion: 'block' }), -1)).toBe(true)
+    expect(retainerWouldOverdraw(money({ on_exhaustion: 'warn' }), -1)).toBe(true)
+    expect(retainerWouldOverdraw(money({ on_exhaustion: 'overflow' }), -1)).toBe(false)
+    // Zero is not an overdraw: spending a retainer to the cent is allowed.
+    expect(retainerWouldOverdraw(money({ on_exhaustion: 'block' }), 0)).toBe(false)
+
+    const blocked = money({ balance: 320_000, on_exhaustion: 'block' })
+    expect(
+      retainerWouldOverdraw(
+        blocked,
+        retainerProjectedBalance(blocked.balance, 'drawdown', 320_000),
+      ),
+    ).toBe(false)
+    expect(
+      retainerWouldOverdraw(
+        blocked,
+        retainerProjectedBalance(blocked.balance, 'drawdown', 320_001),
+      ),
+    ).toBe(true)
+  })
+
+  it('[unit] builds the create body its denomination allows, and locks a rate only at creation', () => {
+    const base = {
+      clientId: 4,
+      projectId: null,
+      amount: '5000',
+      lockedRate: '',
+      period: '  monthly  ',
+      rollover: '' as const,
+      expiresAt: '',
+      onExhaustion: 'block' as const,
+    }
+    expect(retainerCreateInput({ ...base, denomination: 'money' }, timestamp)).toEqual({
+      client_id: 4,
+      project_id: null,
+      denomination: 'money',
+      amount_cents: 500_000,
+      period: 'monthly',
+      rollover: null,
+      expires_at: null,
+      on_exhaustion: 'block',
+    })
+    // An hours retainer sends `seconds` and no `amount_cents`: the API's union
+    // has no member carrying both.
+    const unlocked = retainerCreateInput(
+      { ...base, denomination: 'hours', amount: '40', period: '', rollover: 'cap' },
+      timestamp,
+    )
+    expect(unlocked).toEqual({
+      client_id: 4,
+      project_id: null,
+      denomination: 'hours',
+      seconds: 144_000,
+      period: null,
+      rollover: 'cap',
+      expires_at: null,
+      on_exhaustion: 'block',
+    })
+    expect(Object.hasOwn(unlocked, 'locked_rate_cents')).toBe(false)
+    expect(
+      retainerCreateInput(
+        {
+          ...base,
+          denomination: 'hours',
+          amount: '40',
+          lockedRate: '150',
+          expiresAt: '2026-12-31',
+          onExhaustion: 'overflow',
+        },
+        timestamp,
+      ),
+    ).toEqual({
+      client_id: 4,
+      project_id: null,
+      denomination: 'hours',
+      seconds: 144_000,
+      locked_rate_cents: 15_000,
+      rate_locked_at: timestamp,
+      period: 'monthly',
+      rollover: null,
+      expires_at: '2026-12-31',
+      on_exhaustion: 'overflow',
+    })
+  })
+
+  it('[unit] patches only what the operator changed, because PATCH carries no version', () => {
+    const retainer = money({
+      state: 'ongoing',
+      period: 'monthly',
+      rollover: 'carry',
+      expires_at: null,
+      on_exhaustion: 'block',
+    })
+    const unchanged = {
+      state: 'ongoing' as const,
+      period: 'monthly',
+      rollover: 'carry' as const,
+      expiresAt: '',
+      onExhaustion: 'block' as const,
+    }
+    // Nothing touched is an empty body, which the API refuses — so the screen
+    // has to recognise it rather than send four values nobody changed.
+    expect(retainerPolicyPatch(retainer, unchanged)).toEqual({})
+    expect(retainerPolicyPatch(retainer, { ...unchanged, state: 'closed' })).toEqual({
+      state: 'closed',
+    })
+    expect(retainerPolicyPatch(retainer, { ...unchanged, period: '' })).toEqual({ period: null })
+    expect(retainerPolicyPatch(retainer, { ...unchanged, rollover: '' })).toEqual({
+      rollover: null,
+    })
+    expect(retainerPolicyPatch(retainer, { ...unchanged, expiresAt: '2026-12-31' })).toEqual({
+      expires_at: '2026-12-31',
+    })
+    expect(retainerPolicyPatch(retainer, { ...unchanged, onExhaustion: 'overflow' })).toEqual({
+      on_exhaustion: 'overflow',
+    })
+  })
+
+  it('[unit] offers only the invoices the ledger guard will accept, newest first', () => {
+    const retainer = money({ id: 1 })
+    const linked = retainerLinkedInvoices(retainer, [
+      invoice({ id: 77, number: 'INV-77' }),
+      // A different retainer's invoice: `retainer_ledger_invoice_client_guard`
+      // joins on `invoice.retainer_id = NEW.retainer_id`, so naming this one is
+      // a 409 rather than a movement.
+      invoice({ id: 90, number: 'INV-90', retainer_id: 2 }),
+      invoice({ id: 81, number: 'INV-81' }),
+      invoice({ id: 95, number: 'INV-95', retainer_id: null }),
+    ])
+    expect(linked).toHaveLength(2)
+    expect(linked.map((candidate) => candidate.number)).toEqual(['INV-81', 'INV-77'])
+    expect(retainerInvoiceLabel(linked[1]!)).toBe('INV-77 · $5,000.00 · 2026-02-01')
   })
 })

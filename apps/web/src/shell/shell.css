@@ -2372,13 +2372,15 @@
   }
   .invoice-payment-heading,
   .invoice-line-heading,
-  .invoice-payment-dialog-actions {
+  .invoice-payment-dialog-actions,
+  .retainer-dialog-actions {
     align-items: stretch;
     flex-direction: column;
   }
   .invoice-payment-heading button,
   .invoice-line-heading button,
-  .invoice-payment-dialog-actions button {
+  .invoice-payment-dialog-actions button,
+  .retainer-dialog-actions button {
     width: 100%;
   }
   .invoice-payment-amount-fields {
@@ -5072,6 +5074,37 @@ dialog textarea {
 }
 .retainer-ledger .hint {
   max-width: 64ch;
+}
+/* The status segmented control and the New retainer button share a line until
+   they cannot: `wrap` rather than a breakpoint, because the button's label
+   translates and a fixed width for it would be a guess. */
+.retainer-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.retainer-controls > * {
+  min-width: 0;
+}
+.retainer-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.retainer-dialog-actions button {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+}
+/* The projected balance is the one number in a write dialog the operator is
+   deciding on, so it reads at the ledger's own tabular alignment rather than as
+   running prose. */
+.retainer-projection {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Recurring. It carries the retainer pane's furniture — the two sit under the

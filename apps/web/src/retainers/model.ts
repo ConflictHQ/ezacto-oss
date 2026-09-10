@@ -27,7 +27,17 @@
  * in that state rather than as a broken idealised one.
  */
 
-import type { GeneralResource, Retainer, RetainerLedgerEntry } from '@ezacto/client'
+import type {
+  GeneralResource,
+  Invoice,
+  Retainer,
+  RetainerDrawdownInput,
+  RetainerInput,
+  RetainerLedgerEntry,
+  RetainerLedgerInput,
+  RetainerLedgerMutation,
+  RetainerPatch,
+} from '@ezacto/client'
 
 export type RetainerStatusFilter = 'ongoing' | 'all'
 
@@ -59,6 +69,33 @@ export interface RetainerWorkspaceApi {
     cursor?: string,
     signal?: AbortSignal,
   ): Promise<RetainerCursorPage<GeneralResource>>
+  /**
+   * Only a deposit and a drawdown need this, and only to name an invoice the
+   * database will accept, so it is loaded when one of those dialogs opens
+   * rather than with the client and project catalogs every visit pays for.
+   */
+  listRetainerInvoices(
+    cursor?: string,
+    signal?: AbortSignal,
+  ): Promise<RetainerCursorPage<Invoice>>
+  createRetainer(
+    commandId: string,
+    input: RetainerInput,
+    signal?: AbortSignal,
+  ): Promise<Retainer>
+  updateRetainer(id: number, input: RetainerPatch, signal?: AbortSignal): Promise<Retainer>
+  drawDownRetainer(
+    id: number,
+    commandId: string,
+    input: RetainerDrawdownInput,
+    signal?: AbortSignal,
+  ): Promise<RetainerLedgerMutation>
+  appendRetainerLedger(
+    id: number,
+    commandId: string,
+    input: RetainerLedgerInput,
+    signal?: AbortSignal,
+  ): Promise<RetainerLedgerMutation>
 }
 
 export interface RetainerLedgerSummary {
@@ -130,13 +167,18 @@ export const retainerMatchesFilter = (
  * A retainer carries no currency of its own, so it reads its client's — the
  * same fallback chain the expense and project screens already use.
  */
+export const retainerClientCurrency = (
+  clientId: number | null,
+  clients: readonly GeneralResource[],
+): string => {
+  const client = clients.find((candidate) => candidate.id === clientId)
+  return resourceText(client, 'currency') ?? 'USD'
+}
+
 export const retainerCurrency = (
   retainer: Readonly<Retainer>,
   clients: readonly GeneralResource[],
-): string => {
-  const client = clients.find((candidate) => candidate.id === retainer.client_id)
-  return resourceText(client, 'currency') ?? 'USD'
-}
+): string => retainerClientCurrency(retainer.client_id, clients)
 
 export const retainerMoney = (cents: number, currency: string): string => {
   try {
@@ -362,3 +404,232 @@ export const retainerLedgerNotes = (
   }
   return notes
 }
+
+/**
+ * The write path.
+ *
+ * Everything below exists because the retainers screen could read a balance and
+ * not touch it: retainer 12345 was hand-entered as a worksheet row during the
+ * cutover and its balance zeroed with a token and a terminal, because no
+ * control in the app reached `createRetainer`, `updateRetainer`,
+ * `drawDownRetainer` or `appendRetainerLedger`.
+ *
+ * Three facts about those endpoints shape all of it.
+ *
+ * 1. **The server owns the sign.** `POST /retainers/:id/ledger` and
+ *    `/drawdowns` take a magnitude and apply `sign = kind is drawdown or
+ *    expiry ? -1 : +1` before the row is written. A form that let an operator
+ *    type "-1200" for a drawdown would post -1200, have it negated to +1200,
+ *    and credit the retainer it meant to spend. So the forms carry a positive
+ *    magnitude and, where the column is signed, a direction; the sign is
+ *    derived from the kind by the same rule the API applies, stated once.
+ * 2. **A deposit or a drawdown must name an invoice already linked to this
+ *    retainer.** `retainer_ledger_invoice_client_guard` joins
+ *    `invoice.retainer_id = NEW.retainer_id`, so a typed-in invoice number is a
+ *    409 rather than a movement. The dialogs pick from the linked invoices.
+ * 3. **`PATCH /retainers/:id` carries no version and no idempotency key.** The
+ *    money paths have both to use -- `Idempotency-Key`, the resource-create
+ *    command ledger, the stable ledger-entry id -- and the controls below use
+ *    them. The policy patch has neither, which is why it sends only the fields
+ *    the operator changed: with no version guard, a whole-object PATCH is a
+ *    last-writer-wins clobber of four values nobody touched.
+ */
+
+export type RetainerLedgerFormKind = 'deposit' | 'expiry' | 'reset' | 'adjustment'
+
+/** Which way a signed movement goes; only `reset` and `adjustment` take one. */
+export type RetainerLedgerDirection = 'increase' | 'decrease'
+
+export interface RetainerCreateForm {
+  readonly clientId: number | null
+  readonly projectId: number | null
+  readonly denomination: 'money' | 'hours'
+  /** Typed in the denomination's own unit: currency for money, hours for hours. */
+  readonly amount: string
+  /** Money per hour to lock an hours retainer at; empty leaves it unlocked. */
+  readonly lockedRate: string
+  readonly period: string
+  readonly rollover: '' | 'carry' | 'expire' | 'cap'
+  readonly expiresAt: string
+  readonly onExhaustion: 'block' | 'warn' | 'overflow'
+}
+
+export interface RetainerPolicyForm {
+  readonly state: 'ongoing' | 'closed'
+  readonly period: string
+  readonly rollover: '' | 'carry' | 'expire' | 'cap'
+  readonly expiresAt: string
+  readonly onExhaustion: 'block' | 'warn' | 'overflow'
+}
+
+const decimalPattern = /^(0|[1-9][0-9]*)(?:\.([0-9]{1,2}))?$/u
+
+/**
+ * One typed amount in the retainer's own unit, as the integer its column
+ * stores. Two decimals is the whole precision either unit has room for: a cent
+ * is a hundredth by definition, and a hundredth of an hour is 36 whole seconds,
+ * so both conversions are exact and neither needs a rounding rule. BigInt for
+ * the same reason the invoice lines use it -- in binary floating point
+ * `1.13 * 3600` is 4067.9999999999995 and `0.29 * 100` is 28.999999999999996,
+ * so a scale-and-truncate is short by a second, or a cent, on 345 of the 10,000
+ * two-decimal hour values and 9,174 of the first 200,000 cent ones. Rounding
+ * would hide those, which is worse: it would also silently accept the third
+ * decimal the pattern above is there to refuse.
+ */
+export const retainerAmountFromForm = (raw: string, unit: 'cents' | 'seconds'): number => {
+  const match = decimalPattern.exec(raw.trim())
+  if (match === null) {
+    throw new Error(
+      unit === 'cents'
+        ? 'Amount must be a number with no more than two decimals.'
+        : 'Hours must be a number with no more than two decimals.',
+    )
+  }
+  const scale = unit === 'cents' ? 100n : 3_600n
+  const value = Number(
+    BigInt(match[1]!) * scale + (BigInt((match[2] ?? '').padEnd(2, '0')) * scale) / 100n,
+  )
+  if (!Number.isSafeInteger(value)) throw new Error('Amount is too large.')
+  if (unit === 'cents' && value > 9_000_000_000_000) throw new Error('Amount is too large.')
+  return value
+}
+
+/**
+ * What the request body carries, given a positive magnitude off the form.
+ * `deposit` and `expiry` are magnitudes the server signs; `reset` and
+ * `adjustment` are the two kinds whose column accepts either sign, so they are
+ * the only two the direction control applies to.
+ */
+export const retainerLedgerRequestAmount = (
+  kind: RetainerLedgerFormKind,
+  magnitude: number,
+  direction: RetainerLedgerDirection,
+): number =>
+  retainerLedgerKindIsSigned(kind) && direction === 'decrease' ? -magnitude : magnitude
+
+/**
+ * What one movement does to the balance -- the `sign` the API applies, restated
+ * on this side so a dialog can say what the balance will become before the
+ * operator commits to it.
+ */
+export const retainerLedgerBalanceEffect = (
+  kind: RetainerLedgerEntry['kind'],
+  requestAmount: number,
+): number => (kind === 'drawdown' || kind === 'expiry' ? -requestAmount : requestAmount)
+
+export const retainerProjectedBalance = (
+  balance: number,
+  kind: RetainerLedgerEntry['kind'],
+  requestAmount: number,
+): number => balance + retainerLedgerBalanceEffect(kind, requestAmount)
+
+/**
+ * Whether `retainer_ledger_balance_guard` will refuse this movement.
+ *
+ * The trigger's test is `on_exhaustion <> 'overflow' AND balance + amount < 0`,
+ * so `warn` refuses exactly as `block` does -- the label calls it a warning,
+ * the database calls it a stop. This reads the trigger rather than the label,
+ * because being refused is how the operator would otherwise find out which of
+ * the two is true.
+ */
+export const retainerWouldOverdraw = (
+  retainer: Readonly<Retainer>,
+  projected: number,
+): boolean => retainer.on_exhaustion !== 'overflow' && projected < 0
+
+export const retainerLedgerKindNeedsInvoice = (kind: RetainerLedgerFormKind): boolean =>
+  kind === 'deposit'
+
+export const retainerLedgerKindIsSigned = (kind: RetainerLedgerFormKind): boolean =>
+  kind === 'reset' || kind === 'adjustment'
+
+/** `adjustment` is the one kind the API requires a reason for. */
+export const retainerLedgerKindNeedsNotes = (kind: RetainerLedgerFormKind): boolean =>
+  kind === 'adjustment'
+
+export const retainerLedgerFormKindLabel = (kind: RetainerLedgerFormKind): string =>
+  kind === 'deposit'
+    ? 'Deposit against an invoice'
+    : kind === 'expiry'
+      ? 'Expire part of the balance'
+      : kind === 'reset'
+        ? 'Reset at a period boundary'
+        : 'Adjustment'
+
+export const retainerCreateInput = (
+  form: Readonly<RetainerCreateForm>,
+  lockedAt: string,
+): RetainerInput => {
+  const scope = {
+    client_id: form.clientId,
+    project_id: form.projectId,
+    period: form.period.trim() === '' ? null : form.period.trim(),
+    rollover: form.rollover === '' ? null : form.rollover,
+    expires_at: form.expiresAt === '' ? null : form.expiresAt,
+    on_exhaustion: form.onExhaustion,
+  }
+  if (form.denomination === 'money') {
+    return {
+      ...scope,
+      denomination: 'money',
+      amount_cents: retainerAmountFromForm(form.amount, 'cents'),
+    }
+  }
+  const seconds = retainerAmountFromForm(form.amount, 'seconds')
+  if (form.lockedRate.trim() === '') return { ...scope, denomination: 'hours', seconds }
+  // The rate lock is create-only: `RetainerPatch` has no field for it and the
+  // PATCH handler rejects unknown ones, so a lock skipped here can never be
+  // added afterwards. `rate_locked_at` is read off the clock rather than typed
+  // for the same reason -- it records when the lock was taken, and the only
+  // honest answer to that is now.
+  return {
+    ...scope,
+    denomination: 'hours',
+    seconds,
+    locked_rate_cents: retainerAmountFromForm(form.lockedRate, 'cents'),
+    rate_locked_at: lockedAt,
+  }
+}
+
+/**
+ * Only what changed. `PATCH /retainers/:id` takes no expected version, so every
+ * field in the body is a value this operator asserts over whatever is there
+ * now; sending the four they did not touch would silently undo another writer's
+ * change to any of them. The API also refuses an empty body, so an empty patch
+ * is the caller's cue that there is nothing to submit.
+ */
+export const retainerPolicyPatch = (
+  retainer: Readonly<Retainer>,
+  form: Readonly<RetainerPolicyForm>,
+): RetainerPatch => {
+  const period = form.period.trim() === '' ? null : form.period.trim()
+  const rollover = form.rollover === '' ? null : form.rollover
+  const expiresAt = form.expiresAt === '' ? null : form.expiresAt
+  return {
+    ...(form.state === retainer.state ? {} : { state: form.state }),
+    ...(period === retainer.period ? {} : { period }),
+    ...(rollover === retainer.rollover ? {} : { rollover }),
+    ...(expiresAt === retainer.expires_at ? {} : { expires_at: expiresAt }),
+    ...(form.onExhaustion === retainer.on_exhaustion
+      ? {}
+      : { on_exhaustion: form.onExhaustion }),
+  }
+}
+
+/**
+ * The invoices a deposit or a drawdown may name: the ones already linked to
+ * this retainer, which is what `retainer_ledger_invoice_client_guard` demands.
+ * Newest first, because the invoice being drawn against is nearly always the
+ * one just issued.
+ */
+export const retainerLinkedInvoices = (
+  retainer: Readonly<Retainer>,
+  invoices: readonly Invoice[],
+): readonly Invoice[] =>
+  invoices
+    .filter((invoice) => invoice.retainer_id === retainer.id)
+    .slice()
+    .sort((left, right) => right.id - left.id)
+
+export const retainerInvoiceLabel = (invoice: Readonly<Invoice>): string =>
+  `${invoice.number} · ${retainerMoney(invoice.amount_cents, invoice.currency)} · ${invoice.issue_date}`

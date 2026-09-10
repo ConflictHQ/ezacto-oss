@@ -1349,6 +1349,50 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     }),
+  // No `state` filter, unlike the invoice list screens: a deposit or a drawdown
+  // names an invoice already linked to the retainer, and that invoice is very
+  // often already paid or closed. Filtering by state here would hide exactly
+  // the rows the ledger's own guard is going to demand.
+  listRetainerInvoices: (cursor, signal) =>
+    client.listInvoices({
+      query: {
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  createRetainer: async (commandId, input, signal) =>
+    (
+      await client.createRetainer({
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data,
+  // The one retainer write with no `Idempotency-Key` parameter to pass: the
+  // contract gives PATCH /retainers/:id neither that nor an expected version.
+  // The screen compensates by sending only changed fields; see the note on
+  // `retainerPolicyPatch`.
+  updateRetainer: async (id, input, signal) =>
+    (await client.updateRetainer({ id, body: input, ...withSignal(signal) })).data,
+  drawDownRetainer: async (id, commandId, input, signal) =>
+    (
+      await client.drawDownRetainer({
+        id,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data,
+  appendRetainerLedger: async (id, commandId, input, signal) =>
+    (
+      await client.appendRetainerLedger({
+        id,
+        'Idempotency-Key': commandId,
+        body: input,
+        ...withSignal(signal),
+      })
+    ).data,
   getInvoice: async (id, signal) =>
     (await client.getInvoice({ id, ...withSignal(signal) })).data,
   listInvoiceMessages: async (id, signal) =>
