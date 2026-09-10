@@ -245,6 +245,66 @@ for (const [runtime, factory] of factories) {
       expect(remaining.map((line) => line.position)).toEqual([0])
     })
 
+    it('[unit] counts a finite line off against its own total as it runs out', async () => {
+      // The other half of the `through` story. That test proved a decaying line
+      // stops; this one proves it can say where it is while it runs. The comment
+      // above notes Harvest wrote "CREDIT 1 of 4" as prose no software could act
+      // on, so the number was either right by luck or wrong by inattention --
+      // and a definition imported from it carries whichever ordinal happened to
+      // be on the last invoice, forever.
+      database = await factory()
+      await seedDatabase(database)
+      const definition = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({
+          nextIssueOn: '2026-09-10',
+          dayOfMonth: 10,
+          everyNMonths: 1,
+          amountConfig: {
+            ...fixedAmountConfig,
+            line_items: [
+              fixedAmountConfig.line_items[0]!,
+              {
+                ...decayingLine('2026-11-10'),
+                description:
+                  '*CREDIT %line_installment_number% of %line_installment_total%:* $6,250.00',
+                installments: 4,
+              },
+            ],
+          },
+        }),
+      )
+
+      const creditOn = async (period: string, at: string): Promise<string | null> => {
+        const result = await createRecurringInvoiceEngine(database!.orm, {
+          clock: () => at,
+        }).generate(definition.id, period, principal)
+        const rows = await database!.rows<{ description: string | null; amount_cents: number }>(
+          `SELECT description, amount_cents FROM invoice_line_items
+            WHERE invoice_id = ? ORDER BY position`,
+          result.invoiceId,
+        )
+        return rows.find((row) => row.amount_cents < 0)?.description ?? null
+      }
+
+      // Three payments remain after this one, so this is the second of four --
+      // counted backwards from `through`, because the definition does not record
+      // when the run began.
+      expect(await creditOn('2026-09-10', '2026-09-10T10:00:00.000Z')).toBe(
+        '*CREDIT 2 of 4:* $6,250.00',
+      )
+      expect(await creditOn('2026-10-10', '2026-10-10T10:00:00.000Z')).toBe(
+        '*CREDIT 3 of 4:* $6,250.00',
+      )
+      // The through date itself is the last one, and it reads as the last one.
+      expect(await creditOn('2026-11-10', '2026-11-10T10:00:00.000Z')).toBe(
+        '*CREDIT 4 of 4:* $6,250.00',
+      )
+      // And then it is gone, rather than counting on to five.
+      expect(await creditOn('2026-12-10', '2026-12-10T10:00:00.000Z')).toBeNull()
+    })
+
+
     it('[unit] refuses to issue an invoice whose every line has expired', async () => {
       // An empty invoice reaches the client as a demand for zero, and silently
       // skipping leaves a definition that looks live and never produces. Both
