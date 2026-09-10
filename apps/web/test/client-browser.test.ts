@@ -180,6 +180,66 @@ describe('Clients V1 browser controller', () => {
     expect(api.archiveDirectoryClient).not.toHaveBeenCalled()
   })
 
+  it('[browser #486] restores an archived client from the detail header', async () => {
+    // 25 of this account's 30 clients arrived archived, so the archived detail
+    // page is a normal destination rather than a mistake to be undone once.
+    writeDocument()
+    const archived: GeneralResource = { ...child, is_active: false }
+    const updateDirectoryClient = vi.fn(async (_id: number, input: Record<string, unknown>) => ({
+      ...archived,
+      ...input,
+    }))
+    const archiveDirectoryClient = vi.fn(async () => undefined)
+    const controller = createClientDirectoryController({
+      listDirectoryClients: vi.fn(async () => page([parent, archived])),
+      getDirectoryClient: vi.fn(async () => archived),
+      listClientContacts: vi.fn(async () => page([contact])),
+      listClientProjects: vi.fn(async () => page([project])),
+      createDirectoryClient: vi.fn(),
+      updateDirectoryClient,
+      archiveDirectoryClient,
+      createClientContact: vi.fn(),
+      updateClientContact: vi.fn(),
+      deleteClientContact: vi.fn(),
+    })
+    const identity: Whoami = {
+      user_id: 1,
+      profile: 'administrator',
+      manager_grants: [],
+      authentication: { kind: 'session' },
+    }
+
+    await controller.activate(identity, new AbortController().signal, () => false)
+
+    const archiveAction = document.querySelector<HTMLButtonElement>('[data-client-archive]')!
+    const restoreAction = document.querySelector<HTMLButtonElement>('[data-client-restore]')!
+    expect(document.querySelector('[data-client-detail-active]')?.textContent).toBe('Archived')
+    expect(archiveAction.hidden).toBe(true)
+    expect(restoreAction.hidden).toBe(false)
+
+    restoreAction.click()
+
+    await vi.waitFor(() =>
+      expect(updateDirectoryClient).toHaveBeenCalledWith(
+        11,
+        { is_active: true },
+        expect.any(AbortSignal),
+      ),
+    )
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-client-detail-status]')?.textContent).toBe(
+        'Client restored.',
+      ),
+    )
+    expect(document.querySelector('[data-client-detail-active]')?.textContent).toBe('Active')
+    expect(
+      document.querySelector<HTMLDialogElement>('[data-client-archive-dialog]')!.open,
+    ).toBe(false)
+    expect(archiveDirectoryClient).not.toHaveBeenCalled()
+    expect(archiveAction.hidden).toBe(false)
+    expect(restoreAction.hidden).toBe(true)
+  })
+
   it('[browser] gives each invoice routing state its own pill, shape included', async () => {
     writeDocument()
     const contacts = (['recipient', 'cc', 'bcc', 'none'] as const).map((status, index) => ({

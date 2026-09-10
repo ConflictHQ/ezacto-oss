@@ -282,20 +282,29 @@ export const createExpenseCategoryDirectoryController = (
                   dataset: { expenseCategoryMutation: '' },
                   onSelect: () => openEdit(category),
                 },
-                ...(category.is_active
-                  ? [
-                      {
-                        label: 'Archive',
-                        disabled: mutationPending,
-                        dataset: { expenseCategoryMutation: '' },
-                        onSelect: () => {
-                          archivingId = category.id
-                          archiveResult.textContent = ''
-                          archiveDialog.showModal()
-                        },
+                // Archiving takes a category away from every expense form, so it
+                // stops to confirm. Restoring puts one back and takes nothing
+                // away, so it does not -- the same reading of the same pair of
+                // states the team roster's Archive/Restore menu already takes.
+                category.is_active
+                  ? {
+                      label: 'Archive',
+                      disabled: mutationPending,
+                      dataset: { expenseCategoryMutation: '' },
+                      onSelect: () => {
+                        archivingId = category.id
+                        archiveResult.textContent = ''
+                        archiveDialog.showModal()
                       },
-                    ]
-                  : []),
+                    }
+                  : {
+                      label: 'Restore',
+                      disabled: mutationPending,
+                      dataset: { expenseCategoryMutation: '' },
+                      onSelect: () => {
+                        void restore(category)
+                      },
+                    },
               ],
             }
           : {}),
@@ -373,6 +382,49 @@ export const createExpenseCategoryDirectoryController = (
       if (current() === session && generation === listGeneration) {
         listPending = false
         list.removeAttribute('aria-busy')
+        syncPending()
+      }
+    }
+  }
+
+  // The list's own status change, so it reports through the page status rather
+  // than a dialog result: there is no dialog to read one in. The reload is what
+  // says the category is back -- an active filter is the whole evidence that a
+  // restored category can be picked again.
+  const restore = async (category: ExpenseCategory): Promise<void> => {
+    const session = current()
+    if (
+      session === null ||
+      !canWrite(session) ||
+      mutationPending ||
+      api.updateDirectoryExpenseCategory === undefined
+    ) return
+    mutationPending = true
+    status.textContent = 'Restoring category…'
+    syncPending()
+    try {
+      await api.updateDirectoryExpenseCategory(
+        category.id,
+        { is_active: true },
+        session.signal,
+      )
+      if (current() !== session) return
+      await loadPage(true)
+      if (current() === session) status.textContent = 'Category restored.'
+    } catch (error) {
+      if (current() !== session) return
+      if (session.onSessionFailure(error)) return
+      if (apiErrorCode(error) === 'module_disabled') {
+        showModuleUnavailable()
+        return
+      }
+      status.textContent =
+        apiErrorCode(error) === 'profile_forbidden'
+          ? 'Only administrators can manage expense categories.'
+          : messageFor(error)
+    } finally {
+      if (current() === session) {
+        mutationPending = false
         syncPending()
       }
     }

@@ -26,6 +26,7 @@ export const renderClientDirectoryPages = (view?: string): string => `
         <a href="/clients">Back to clients</a>
         <button type="button" data-client-edit data-client-write data-auth-action hidden disabled>Edit</button>
         <button type="button" data-client-archive data-client-write data-auth-action hidden disabled>Archive</button>
+        <button type="button" data-client-restore data-client-write data-auth-action hidden disabled>Restore</button>
       </div>
     </header>
     <p class="form-result client-page-status" data-client-detail-status role="status" aria-live="polite">Loading client…</p>

@@ -692,6 +692,58 @@ for (const [runtime, createHarness] of factories) {
       }
     }, 20_000);
 
+    it("[api #486] restores an archived client, project and expense category", async () => {
+      // DELETE is Harvest's archive, and the web shell had no inverse of it for
+      // these three. The contract does not enumerate is_active on the client and
+      // project bodies -- GeneralMutationInput is open -- so the route
+      // definition is the only thing that says whether the field is accepted,
+      // and the active list is the only thing that says the record is usable
+      // again.
+      const client = await data(
+        await harness.request("/clients", json({ name: "Restorable" })),
+      );
+      const project = await data(
+        await harness.request(
+          "/projects",
+          json({ client_id: client.id, name: "Restorable work" }),
+        ),
+      );
+      const category = await data(
+        await harness.request(
+          "/expense-categories",
+          json({ name: "Restorable travel" }),
+        ),
+      );
+      for (const [kind, id] of [
+        ["clients", client.id],
+        ["projects", project.id],
+        ["expense-categories", category.id],
+      ] as const) {
+        expect(
+          (await harness.request(`/${kind}/${id}`, { method: "DELETE" })).status,
+          kind,
+        ).toBe(204);
+        expect(
+          (await page(await harness.request(`/${kind}?is_active=true`))).data.map(
+            (record) => record.id,
+          ),
+          kind,
+        ).not.toContain(id);
+        const restored = await harness.request(
+          `/${kind}/${id}`,
+          json({ is_active: true }, "PATCH"),
+        );
+        expect(restored.status, await restored.clone().text()).toBe(200);
+        expect((await data(restored)).is_active, kind).toBe(true);
+        expect(
+          (await page(await harness.request(`/${kind}?is_active=true`))).data.map(
+            (record) => record.id,
+          ),
+          kind,
+        ).toContain(id);
+      }
+    }, 20_000);
+
     it("[api] administers expense categories from a fresh organization without breaking expense references", async () => {
       const initial = await harness.request(
         "/expense-categories?is_active=true",
