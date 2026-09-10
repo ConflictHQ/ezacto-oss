@@ -154,10 +154,13 @@ after the first green deploy.
 ## D1 provisioning
 
 Run the manual `provision D1` workflow once before adding bindings. It converges
-the exact databases `ezacto-dev` and `ezacto-prod`: an existing exact-name match
-is reused, no match is created, and duplicates fail closed. The workflow uploads
-a short-lived JSON artifact and job summary containing the non-secret database
-ID for each environment, and installs that environment's cursor-signing secret.
+the exact database each environment names: `vars.DEV_D1_DATABASE_NAME`
+(`ezacto-dev`) and `vars.PROD_D1_DATABASE_NAME` (`ezacto-prod`), the same
+variables `render-wrangler-prod.mjs` reads, so a rename lands in one place. An
+existing exact-name match is reused, no match is created, and duplicates fail
+closed. The workflow uploads a short-lived JSON artifact and job summary
+containing the non-secret database ID for each environment, and installs that
+environment's cursor-signing secret.
 
 Commit the reported IDs under the matching `env.dev` and `env.prod`
 `d1_databases` entries in `entries/worker/wrangler.jsonc`. The normal deployment
@@ -177,10 +180,10 @@ Cloudflare's Queue list/create API accepts the existing Workers Scripts Write
 permission, so this does not broaden the repository token beyond the deployment
 scope already documented above.
 
-| Environment | Delivery Queue      | Dead-letter Queue       |
-| ----------- | ------------------- | ----------------------- |
-| `dev`       | `ezacto-dev-email`  | `ezacto-dev-email-dlq`  |
-| `prod`      | `ezacto-prod-email` | `ezacto-prod-email-dlq` |
+| Environment | Delivery Queue                                    | Dead-letter Queue         |
+| ----------- | ------------------------------------------------- | ------------------------- |
+| `dev`       | `ezacto-dev-email`                                | `ezacto-dev-email-dlq`    |
+| `prod`      | `vars.PROD_EMAIL_QUEUE` (`ezacto-prod-email`) | the same name with `-dlq` |
 
 The same Worker is the `EMAIL_QUEUE` producer and push consumer. The consumer
 accepts one message per batch with one concurrent invocation while SES sandbox

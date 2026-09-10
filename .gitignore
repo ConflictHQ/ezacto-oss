@@ -24,6 +24,10 @@ apps/web/src/generated/shell-assets.ts
 # so ignoring only "snapshot/" left the documented path tracked.
 harvest-snapshot/
 cutover.db
+# The same records again, as SQL: the loader writes cutover.sql and the
+# converter writes cutover.d1.sql beside it, both ~25 MB of live invoices.
+cutover.sql
+cutover.d1.sql
 
 # Agent worktrees. Isolated checkouts created for parallel work: full copies of
 # the repo, one `git add -A` away from being committed into it. Running vitest
