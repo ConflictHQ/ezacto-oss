@@ -1,5 +1,9 @@
 # Harvest cutover runbook
 
+> Migrating your own Harvest account rather than reading ours?
+> [`migrating-from-harvest.md`](migrating-from-harvest.md) is the generic path.
+> This document is CONFLICT's specific run, kept for its observed numbers.
+
 The ordered procedure for moving CONFLICT's Harvest account into the hosted
 prod instance at `app.example.com`. Every command here has been run; the
 row counts, error strings and timings are observed, not estimated.
