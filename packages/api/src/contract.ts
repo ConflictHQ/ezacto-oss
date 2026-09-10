@@ -4889,7 +4889,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: {
       project_id: integerSchema,
       project_name: stringSchema,
-      project_code: nullable(stringSchema),
+      project_code: stringSchema,
       client_id: integerSchema,
       client_name: stringSchema,
       // Tracked and rounded both, because they are different numbers on an

@@ -114,6 +114,20 @@ let lastUninvoicedFilter:
 let lastProjectBudgetRange: { from: string; to: string } | undefined
 
 const reportReader: ReportReader = {
+  // Not exercised here; present because ReportReader requires it. Returning an
+  // empty shape rather than throwing keeps a fixture that is about something
+  // else from failing loudly if a future test does reach it.
+  memberHours: async (filter) => ({
+    from: filter.from,
+    to: filter.to,
+    userId: filter.userId,
+    projectId: filter.projectId ?? null,
+    seconds: 0,
+    roundedSeconds: 0,
+    billableSeconds: 0,
+    timeEntryCount: 0,
+    projects: [],
+  }),
   uninvoiced: async (filter) => {
     lastUninvoicedFilter = filter
     return {

@@ -137,7 +137,12 @@ export interface MemberHoursFilter extends ReportDateRange {
 export interface MemberHoursProjectRecord {
   projectId: number
   projectName: string
-  projectCode: string | null
+  /**
+   * Never null: `projects.code` is NOT NULL DEFAULT '', so a project without a
+   * code carries the empty string. Typing it nullable invited a `=== null`
+   * check that an empty code slips past, which renders as `[] Project name`.
+   */
+  projectCode: string
   clientId: number
   clientName: string
   seconds: number
@@ -1076,7 +1081,12 @@ interface ContractorCostQueryRow {
 interface MemberHoursQueryRow {
   projectId: number
   projectName: string
-  projectCode: string | null
+  /**
+   * Never null: `projects.code` is NOT NULL DEFAULT '', so a project without a
+   * code carries the empty string. Typing it nullable invited a `=== null`
+   * check that an empty code slips past, which renders as `[] Project name`.
+   */
+  projectCode: string
   clientId: number
   clientName: string
   seconds: number

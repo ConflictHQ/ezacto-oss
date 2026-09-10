@@ -204,9 +204,13 @@ const renderMyHours = (report: Readonly<MyHoursReport>): DocumentFragment => {
     name.append(
       linkElement(
         `/projects/${project.project_id}`,
-        project.project_code === null
+        // Same test `reportResourceLabel` applies, and for the same reason: a
+        // project with no code stores the empty string, not null, so a
+        // null-check alone prints an empty pair of brackets in front of the
+        // name.
+        project.project_code.trim() === ''
           ? project.project_name
-          : `[${project.project_code}] ${project.project_name}`,
+          : `[${project.project_code.trim()}] ${project.project_name}`,
       ),
     )
     row.append(

@@ -107,7 +107,7 @@ export interface ProjectBudgetReportRecord extends ReportDateRange {
 export interface MyHoursProjectRecord {
   projectId: number;
   projectName: string;
-  projectCode: string | null;
+  projectCode: string;
   clientId: number;
   clientName: string;
   seconds: number;

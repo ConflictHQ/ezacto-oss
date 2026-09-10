@@ -24520,14 +24520,7 @@
             "type": "string"
           },
           "project_code": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": "string"
           },
           "client_id": {
             "type": "integer",

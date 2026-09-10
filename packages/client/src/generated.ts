@@ -1721,7 +1721,7 @@ export type RecurringInvoiceInput = {
 export type MyHoursProject = {
   "project_id": number;
   "project_name": string;
-  "project_code": string | null;
+  "project_code": string;
   "client_id": number;
   "client_name": string;
   "seconds": number;

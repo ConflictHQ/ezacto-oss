@@ -951,7 +951,11 @@ describe('Reports Stage 1 browser controller', () => {
         {
           project_id: 9,
           project_name: 'Internal',
-          project_code: null,
+          // The empty string, which is what a project with no code actually
+          // carries -- `projects.code` is NOT NULL DEFAULT ''. Feeding null
+          // here tested a response the API cannot produce, and let a label
+          // reading `[] Internal` pass.
+          project_code: '',
           client_id: 1,
           client_name: 'Parent',
           seconds: 3_600,
