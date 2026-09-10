@@ -170,10 +170,15 @@
  * rejected -- auto-fit cannot size a track below max-content, so a long figure
  * would widen the page into a horizontal scroll instead of wrapping.
  *
- * Not covered by an acceptance test: the fixture workspace never renders this
- * strip -- `.team-summary` stays hidden because its roster resolves empty -- so
- * a collision assertion written against it passes without measuring anything.
- * That fixture gap is the reason this shipped.
+ * Now covered, by `e2e/team-summary.browser.ts` (issue 524). It was not, and the
+ * reason is worth keeping: the acceptance roster was the signed-in owner alone,
+ * so the strip read `1`, `35h`, `0.75h`, `0.75h`, `0h`, `2.1%` -- figures two to
+ * five characters wide that fit any track at any width. A collision assertion
+ * over those passes with these three declarations reverted, which is exactly
+ * what happened. What guards them now is the `team-summary-seed` roster in
+ * `apps/web/scripts/browser-worker-harness.mjs`; shrink its hours and the guard
+ * goes quiet again rather than failing, which is why that seed asserts its own
+ * totals.
  */
 .team-summary {
   display: grid;
