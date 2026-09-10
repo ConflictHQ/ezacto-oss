@@ -789,7 +789,10 @@ describe('S-1 through S-5 application shell', () => {
 
     expect(list).toContain('data-project-list-page')
     expect(list).toContain('data-project-client-filter')
-    expect(list).toContain('href="/projects" aria-current="page"')
+    // The Projects item now carries the directory gate the browser opens for
+    // a profile that may browse them, so the marked-current assertion reads
+    // across that attribute rather than around it.
+    expect(list).toContain('href="/projects" data-directory-nav hidden aria-current="page"')
     expect(detail).toContain('data-project-detail-page')
     expect(detail).toContain('data-project-task-assignments')
     expect(detail).toContain('data-project-attachment-form hidden')

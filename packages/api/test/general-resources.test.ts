@@ -295,6 +295,35 @@ const seedSearchableTasks = async (harness: Harness): Promise<void> => {
   );
 };
 
+/**
+ * Puts the acting principal -- user 1, whichever profile the request claims --
+ * on a project. Since #491 a member reads the directories through their
+ * assignments, so a fixture that asks what a member may SEE of a client or a
+ * project has to put them on the work first; without this the question it means
+ * to ask becomes "may a stranger read it", which a redaction test does not
+ * answer. The user row is created on the way past because `user_assignments`
+ * has a foreign key to it and these harnesses seed only the organization.
+ */
+const assignActingUser = async (
+  harness: Harness,
+  projectId: number,
+): Promise<void> => {
+  await harness.run(
+    `INSERT INTO users (id, first_name, last_name, manager_grants, created_at, updated_at)
+     VALUES (1, 'Fixture', 'Principal', '[]', ?, ?)
+     ON CONFLICT (id) DO NOTHING`,
+    now,
+    now,
+  );
+  await harness.run(
+    `INSERT INTO user_assignments (project_id, user_id, created_at, updated_at)
+     VALUES (?, 1, ?, ?)`,
+    projectId,
+    now,
+    now,
+  );
+};
+
 type CursorPage = {
   data: { id: number; name: string }[];
   page: { next_cursor: string | null };
@@ -318,6 +347,7 @@ for (const [runtime, createHarness] of factories) {
       const created = await harness.request('/projects', json({ client_id: client.id, name: 'Private rates', hourly_rate_cents: 25000, fee_cents: 500000, cost_budget_cents: 300000 }));
       expect(created.headers.get('cache-control')).toBe('no-store');
       const project = await data(created);
+      await assignActingUser(harness, project.id as number);
       for (const init of [asProfile('administrator'), asProfile('member'), asBearer('member-projects')]) {
         for (const path of ['/projects', `/projects/${project.id}`]) {
           const headers = new Headers(init.headers);
@@ -345,6 +375,7 @@ for (const [runtime, createHarness] of factories) {
       const client = await data(await harness.request('/clients', json({ name: 'Commercial client', ...clientTerms })));
       const project = await data(await harness.request('/projects', json({ client_id: client.id, name: 'Commercial project', ...projectTerms })));
       const contact = await data(await harness.request('/contacts', json({ client_id: client.id, first_name: 'Billing contact', ...contactTerms })));
+      await assignActingUser(harness, project.id as number);
       const cases = [
         { resource: 'clients', record: client, terms: clientTerms, required: { name: 'Denied client' } },
         { resource: 'projects', record: project, terms: projectTerms, required: { name: 'Denied project', client_id: client.id } },
@@ -386,6 +417,102 @@ for (const [runtime, createHarness] of factories) {
       // Operational manager edits still work without knowing or resetting terms.
       expect((await harness.request(`/projects/${project.id}`, asProfile('project_manager', json({ name: 'Renamed work' }, 'PATCH')))).status).toBe(200);
       expect(await data(await harness.request(`/projects/${project.id}`))).toMatchObject(projectTerms);
+    }, 30_000);
+
+    it('[security #491] narrows the directories to a member\'s own work instead of refusing them', async () => {
+      // Hiding the Clients link is not withholding the client list, and the
+      // previous attempt at this (#507) proved the other half: refusing
+      // /clients outright took the member's own Expenses screen down with it,
+      // because that screen loads a client catalog to render. So the endpoint
+      // still answers a member -- with the clients and projects they are
+      // assigned to, and nothing else.
+      // The dormant client and its two projects are here to pull the two id
+      // sequences apart: clients run 1, 2, 3 while projects run 1, 2, 3, 4, so
+      // no client shares an id with its own project. Without that a predicate
+      // that compared a project's id to the client id -- the mistake next door
+      // to the right one -- reads exactly like the right one, and every list
+      // below still looks correct.
+      const dormant = await data(await harness.request('/clients', json({ name: 'Dormant Co' })));
+      await data(await harness.request('/projects', json({ client_id: dormant.id, name: 'Dormant work' })));
+      await data(await harness.request('/projects', json({ client_id: dormant.id, name: 'Dormant work again' })));
+      const mine = await data(await harness.request('/clients', json({ name: 'Assigned Co' })));
+      const theirs = await data(await harness.request('/clients', json({ name: 'Every other company we work for' })));
+      const myProject = await data(await harness.request('/projects', json({ client_id: mine.id, name: 'My work' })));
+      const theirProject = await data(await harness.request('/projects', json({ client_id: theirs.id, name: 'Not my work' })));
+      const myContact = await data(await harness.request('/contacts', json({ client_id: mine.id, first_name: 'Ada' })));
+      await data(await harness.request('/contacts', json({ client_id: theirs.id, first_name: 'Grace' })));
+      await data(await harness.request('/contacts', json({ client_id: dormant.id, first_name: 'Hedy' })));
+      expect(mine.id).not.toBe(myProject.id);
+      await data(await harness.request('/tasks', json({ name: 'Design' })));
+      await data(await harness.request('/expense-categories', json({ name: 'Travel' })));
+      await assignActingUser(harness, myProject.id as number);
+      // A colleague on the other project. "Assigned" has to mean assigned to
+      // THIS member: a predicate that asked only whether a project has anybody
+      // on it would hand back the other one too, and every list below would
+      // still look right because the fixture's other project was untouched.
+      await harness.run(
+        `INSERT INTO users (id, first_name, last_name, manager_grants, created_at, updated_at)
+         VALUES (2, 'Someone', 'Else', '[]', ?, ?)`,
+        now,
+        now,
+      );
+      await harness.run(
+        `INSERT INTO user_assignments (project_id, user_id, created_at, updated_at)
+         VALUES (?, 2, ?, ?)`,
+        theirProject.id as number,
+        now,
+        now,
+      );
+
+      const names = async (path: string, init: RequestInit): Promise<string[]> =>
+        (await page(await harness.request(path, init))).data.map((record) => record.name);
+      // Both ways in: the session the browser holds, and an API token issued
+      // before this landed. The token is narrowed like the session rather than
+      // rejected -- a member's clients:read token keeps working, it simply
+      // stops being a key to the whole book.
+      for (const init of [asProfile('member'), asBearer('member-directories')]) {
+        expect(await names('/clients', init)).toEqual(['Assigned Co']);
+        expect(await names('/projects', init)).toEqual(['My work']);
+        // A filter is not a way around it: search and client_id narrow the
+        // scoped rows rather than reopening the collection.
+        expect(await names('/clients?q=Co', init)).toEqual(['Assigned Co']);
+        expect((await page(await harness.request(`/projects?client_id=${theirs.id}`, init))).data).toEqual([]);
+        expect((await harness.request(`/clients/${theirs.id}`, init)).status).toBe(404);
+        expect((await harness.request(`/projects/${theirProject.id}`, init)).status).toBe(404);
+        // And the work that is theirs still reads, which is what the Expenses
+        // screen and the week grid ask this endpoint for.
+        expect(await data(await harness.request(`/clients/${mine.id}`, init))).toMatchObject({ name: 'Assigned Co' });
+        expect(await data(await harness.request(`/projects/${myProject.id}`, init))).toMatchObject({ name: 'My work' });
+        // Contacts hang off the client book and are scoped with it.
+        expect((await page(await harness.request('/contacts', init))).data.map((record) => record.id)).toEqual([myContact.id]);
+        // Tasks are deliberately NOT narrowed: they name kinds of work rather
+        // than who the firm sells to, and the week grid resolves every row's
+        // task name from this list. The nav no longer offers the page; the
+        // catalog stays whole.
+        expect(await names('/tasks', init)).toEqual(['Design']);
+      }
+      // The member's own Expenses screen, as it actually loads: its catalog is
+      // categories, projects and clients fetched together, and one refusal in
+      // that batch is the whole screen. All three answer.
+      for (const path of ['/expense-categories', '/projects', '/clients']) {
+        const response = await harness.request(path, asProfile('member'));
+        expect(response.status, path).toBe(200);
+        expect((await page(response)).data.length, path).toBeGreaterThan(0);
+      }
+      // The book is still the book for the profiles that keep it.
+      for (const profile of ['project_manager', 'people_admin', 'accounting', 'executive_manager', 'administrator'] as const) {
+        expect(await names('/clients', asProfile(profile))).toEqual([
+          'Dormant Co',
+          'Assigned Co',
+          'Every other company we work for',
+        ]);
+        expect(await names('/projects', asProfile(profile))).toEqual([
+          'Dormant work',
+          'Dormant work again',
+          'My work',
+          'Not my work',
+        ]);
+      }
     }, 30_000);
 
     it("[api] provides CRUD and every combinable general-resource list filter", async () => {
@@ -1452,6 +1579,7 @@ for (const [runtime, createHarness] of factories) {
         ),
       );
       const projectPath = `/projects/${project.id as number}`;
+      await assignActingUser(harness, project.id as number);
 
       const member = await harness.request(projectPath, asProfile("member"));
       expect(member.status).toBe(200);
@@ -1590,6 +1718,20 @@ for (const [runtime, createHarness] of factories) {
       expect(await tokenTeamWrite.json()).toMatchObject({
         error: { code: "session_required" },
       });
+
+      // The acting principal now has a user row of its own -- #491's directory
+      // scoping needs one to hang the assignment on -- so the person created
+      // above is no longer the same user as the project manager reading their
+      // rates back. This states the relationship those reads always relied on:
+      // the manager supervises them, which is what the grant assertions below
+      // are about. Without it the 200 would be a manager reading themselves.
+      await harness.run(
+        `INSERT INTO teammate_assignments (manager_id, user_id, created_at, updated_at)
+         VALUES (1, ?, ?, ?)`,
+        user.id as number,
+        now,
+        now,
+      );
 
       const billablePath = `/users/${user.id as number}/billable-rates`;
       const costPath = `/users/${user.id as number}/cost-rates`;
