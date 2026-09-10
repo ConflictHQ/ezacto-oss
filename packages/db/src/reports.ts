@@ -162,6 +162,102 @@ export interface MemberHoursReportRecord extends ReportDateRange {
   projects: readonly MemberHoursProjectRecord[]
 }
 
+/**
+ * The Time report: one dataset over a period, presented four ways.
+ *
+ * Harvest's default report is a single population -- every time entry in the
+ * range -- grouped by client, by project, by task and by teammate, with one
+ * summary strip above all four. It is modelled as one record rather than four
+ * endpoints because that is what makes the tabs trustworthy: the four groupings
+ * are folds of the same rows, so their totals agree by construction. Four
+ * separate queries would let the Projects tab and the Tasks tab disagree about
+ * the same month, which is the failure #519 opens with -- two reports that look
+ * comparable and are not.
+ */
+export interface TimeReportAmountRecord {
+  /** The project's billing currency, or its client's where it sets none. */
+  currency: string
+  /**
+   * Billable tracked time priced at the entry's own billable rate. Entries
+   * whose rate never resolved contribute nothing and are counted separately --
+   * see `unpricedBillableEntryCount` -- rather than being priced at zero.
+   */
+  billableCents: number
+  /**
+   * The part of `billableCents` that is not yet on an invoice, under exactly
+   * the predicate the uninvoiced report uses: still billable, no invoice, an
+   * active project, and no timer left running. Recomputing it here under a
+   * looser rule would put two numbers in the product that both claim to be
+   * "uninvoiced" and disagree -- so archived-project work counts as billable
+   * and not as uninvoiced, which is the distinction Harvest draws too.
+   */
+  uninvoicedCents: number
+}
+
+export interface TimeReportTotalsRecord {
+  /** Tracked seconds, as the week grid totals them. */
+  seconds: number
+  /** Rounded seconds -- what invoices and every other report count. */
+  roundedSeconds: number
+  /** Rounded seconds on billable entries; the remainder is internal work. */
+  billableSeconds: number
+  timeEntryCount: number
+  /**
+   * Billable entries with no resolved rate. A money column that quietly
+   * omitted them would read as a smaller month rather than an incomplete one.
+   */
+  unpricedBillableEntryCount: number
+  /** One bucket per currency touched by billable work; never summed across. */
+  amounts: readonly TimeReportAmountRecord[]
+}
+
+export interface TimeReportClientRecord extends TimeReportTotalsRecord {
+  clientId: number
+  clientName: string
+}
+
+export interface TimeReportProjectRecord extends TimeReportTotalsRecord {
+  projectId: number
+  projectName: string
+  /**
+   * Never null: `projects.code` is NOT NULL DEFAULT '', so a project without a
+   * code carries the empty string and a `=== null` check renders `[] Name`.
+   */
+  projectCode: string
+  clientId: number
+  clientName: string
+}
+
+export interface TimeReportTaskRecord extends TimeReportTotalsRecord {
+  taskId: number
+  taskName: string
+}
+
+export interface TimeReportTeammateRecord extends TimeReportTotalsRecord {
+  userId: number
+  userName: string
+  /** The Employees / Contractors split the teammates tab groups on. */
+  isContractor: boolean
+  /**
+   * The person's weekly capacity prorated across the reported days. The team
+   * screen divides a week's hours by `users.weekly_capacity` directly; a report
+   * period is any number of days, so the same divisor has to be scaled or the
+   * utilization of a month reads as four weeks' worth. A seven-day period
+   * therefore produces exactly the figure the team roster shows.
+   */
+  capacitySeconds: number
+  /** Null where the person's capacity is zero: no rate can be stated. */
+  utilizationPpm: number | null
+}
+
+export interface TimeReportRecord extends ReportDateRange {
+  totals: TimeReportTotalsRecord
+  clients: readonly TimeReportClientRecord[]
+  projects: readonly TimeReportProjectRecord[]
+  tasks: readonly TimeReportTaskRecord[]
+  teammates: readonly TimeReportTeammateRecord[]
+}
+
 export interface ProjectReportViewer {
   userId: number
   profile: UserProfile
@@ -318,6 +414,7 @@ export const DETAILED_TIME_ENTRY_LIMIT = 20_000
 export interface ReportRepository {
   contractorCost(range: Readonly<ReportDateRange>): Promise<ContractorCostReportRecord>
   detailedTime(filter: Readonly<DetailedTimeFilter>): Promise<DetailedTimeReportResult>
+  timeReport(range: Readonly<ReportDateRange>): Promise<TimeReportRecord>
   memberHours(filter: Readonly<MemberHoursFilter>): Promise<MemberHoursReportRecord>
   uninvoiced(filter: Readonly<UninvoicedReportFilter>): Promise<UninvoicedReportRecord>
   clientRollup(
@@ -1564,9 +1661,286 @@ const detailedTimeReport = async (
   }
 }
 
+interface TimeReportQueryRow {
+  seconds: number
+  roundedSeconds: number
+  billable: number
+  billableRateCents: number | null
+  /** 1 where the entry still qualifies for the uninvoiced report, else 0. */
+  uninvoiced: number
+  currency: string
+  clientId: number
+  clientName: string
+  projectId: number
+  projectName: string
+  projectCode: string
+  taskId: number
+  taskName: string
+  userId: number
+  userName: string
+  isContractor: number
+  weeklyCapacity: number
+}
+
+interface MutableTimeAmount {
+  currency: string
+  billableCents: number
+  uninvoicedCents: number
+}
+
+interface MutableTimeTotals {
+  seconds: number
+  roundedSeconds: number
+  billableSeconds: number
+  timeEntryCount: number
+  unpricedBillableEntryCount: number
+  amounts: Map<string, MutableTimeAmount>
+}
+
+const emptyTimeTotals = (): MutableTimeTotals => ({
+  seconds: 0,
+  roundedSeconds: 0,
+  billableSeconds: 0,
+  timeEntryCount: 0,
+  unpricedBillableEntryCount: 0,
+  amounts: new Map(),
+})
+
+/**
+ * Every grouping folds the same row the same way, so the four tabs cannot come
+ * to different answers about one month: whatever changes here changes for all
+ * of them at once.
+ */
+const addTimeRow = (totals: MutableTimeTotals, row: Readonly<TimeReportQueryRow>): void => {
+  totals.seconds = checkedAdd(totals.seconds, row.seconds, 'time report seconds')
+  totals.roundedSeconds = checkedAdd(
+    totals.roundedSeconds,
+    row.roundedSeconds,
+    'time report rounded seconds',
+  )
+  totals.timeEntryCount += 1
+  if (row.billable !== 1) return
+  totals.billableSeconds = checkedAdd(
+    totals.billableSeconds,
+    row.roundedSeconds,
+    'time report billable seconds',
+  )
+  let amount = totals.amounts.get(row.currency)
+  if (amount === undefined) {
+    amount = { currency: row.currency, billableCents: 0, uninvoicedCents: 0 }
+    totals.amounts.set(row.currency, amount)
+  }
+  // A billable entry with no resolved rate opens its currency bucket and adds
+  // nothing to it. Pricing it at zero would make an unpriced month look like a
+  // cheap one; the count beside the figure is what says the total is partial.
+  if (row.billableRateCents === null) {
+    totals.unpricedBillableEntryCount += 1
+    return
+  }
+  const cents = trackedAmountCents(row.roundedSeconds, row.billableRateCents)
+  amount.billableCents = checkedAdd(amount.billableCents, cents, 'time report billable cents')
+  if (row.uninvoiced === 1) {
+    amount.uninvoicedCents = checkedAdd(
+      amount.uninvoicedCents,
+      cents,
+      'time report uninvoiced cents',
+    )
+  }
+}
+
+const finalizedTimeTotals = (totals: MutableTimeTotals): TimeReportTotalsRecord => ({
+  seconds: totals.seconds,
+  roundedSeconds: totals.roundedSeconds,
+  billableSeconds: totals.billableSeconds,
+  timeEntryCount: totals.timeEntryCount,
+  unpricedBillableEntryCount: totals.unpricedBillableEntryCount,
+  amounts: [...totals.amounts.values()].sort((left, right) =>
+    left.currency.localeCompare(right.currency),
+  ),
+})
+
+/**
+ * Hours descending, because the bar beside each row reads as a ranking and a
+ * table sorted by name puts the month's biggest client wherever the alphabet
+ * happens to put it. Name then id break ties so SQLite and D1 return the same
+ * order for the same data.
+ */
+const byHours = <Row extends TimeReportTotalsRecord>(
+  name: (row: Row) => string,
+  id: (row: Row) => number,
+) => (left: Row, right: Row): number =>
+  right.roundedSeconds - left.roundedSeconds ||
+  name(left).localeCompare(name(right)) ||
+  id(left) - id(right)
+
+const dayMilliseconds = 86_400_000
+
+/** Inclusive, so a single-day report divides utilization by one day of capacity. */
+const reportedDays = (range: Readonly<ReportDateRange>): number =>
+  Math.round(
+    (Date.parse(`${range.to}T00:00:00.000Z`) - Date.parse(`${range.from}T00:00:00.000Z`)) /
+      dayMilliseconds,
+  ) + 1
+
+const timeUtilizationPpm = (seconds: number, capacity: number): number | null => {
+  if (capacity <= 0) return null
+  const value =
+    (BigInt(seconds) * 1_000_000n + BigInt(Math.floor(capacity / 2))) / BigInt(capacity)
+  if (value > BigInt(Number.MAX_SAFE_INTEGER) || value < -BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new RangeError('time report utilization exceeds the supported aggregate range')
+  }
+  return Number(value)
+}
+
+/**
+ * Harvest's Time report, read once and folded four ways.
+ *
+ * Every tracked entry in the range is in the population, archived projects and
+ * inactive people included: this report answers what was done, not what can
+ * still be billed. The uninvoiced column is the one place the narrower question
+ * is asked, and it is asked with the uninvoiced report's own predicate so the
+ * two screens cannot disagree.
+ */
+const timeReport = async (
+  database: Database,
+  range: Readonly<ReportDateRange>,
+): Promise<TimeReportRecord> => {
+  assertRange(range)
+  const rows = await database.all<TimeReportQueryRow>(sql`
+    SELECT entry.seconds AS "seconds", entry.rounded_seconds AS "roundedSeconds",
+      entry.billable AS "billable", entry.billable_rate_cents AS "billableRateCents",
+      CASE WHEN entry.billable = 1 AND entry.invoice_id IS NULL
+        AND project.is_active = 1 AND entry.timer_started_at IS NULL
+        AND NOT (entry.started_time IS NOT NULL AND entry.ended_time IS NULL)
+        THEN 1 ELSE 0 END AS "uninvoiced",
+      upper(coalesce(project.billing_currency, client.currency)) AS "currency",
+      client.id AS "clientId", client.name AS "clientName",
+      project.id AS "projectId", project.name AS "projectName",
+      project.code AS "projectCode",
+      task.id AS "taskId", task.name AS "taskName",
+      person.id AS "userId",
+      trim(person.first_name || ' ' || person.last_name) AS "userName",
+      person.is_contractor AS "isContractor",
+      person.weekly_capacity AS "weeklyCapacity"
+    FROM time_entries entry
+    JOIN projects project ON project.id = entry.project_id
+    JOIN clients client ON client.id = project.client_id
+    JOIN tasks task ON task.id = entry.task_id
+    JOIN users person ON person.id = entry.user_id
+    WHERE entry.spent_date BETWEEN ${range.from} AND ${range.to}
+    ORDER BY entry.id
+  `)
+
+  const totals = emptyTimeTotals()
+  const clients = new Map<number, MutableTimeTotals & { clientId: number; clientName: string }>()
+  const projects = new Map<
+    number,
+    MutableTimeTotals & {
+      projectId: number
+      projectName: string
+      projectCode: string
+      clientId: number
+      clientName: string
+    }
+  >()
+  const tasks = new Map<number, MutableTimeTotals & { taskId: number; taskName: string }>()
+  const teammates = new Map<
+    number,
+    MutableTimeTotals & {
+      userId: number
+      userName: string
+      isContractor: boolean
+      weeklyCapacity: number
+    }
+  >()
+
+  for (const row of rows) {
+    addTimeRow(totals, row)
+    const client = clients.get(row.clientId) ?? {
+      ...emptyTimeTotals(),
+      clientId: row.clientId,
+      clientName: row.clientName,
+    }
+    addTimeRow(client, row)
+    clients.set(row.clientId, client)
+    const project = projects.get(row.projectId) ?? {
+      ...emptyTimeTotals(),
+      projectId: row.projectId,
+      projectName: row.projectName,
+      projectCode: row.projectCode,
+      clientId: row.clientId,
+      clientName: row.clientName,
+    }
+    addTimeRow(project, row)
+    projects.set(row.projectId, project)
+    const task = tasks.get(row.taskId) ?? {
+      ...emptyTimeTotals(),
+      taskId: row.taskId,
+      taskName: row.taskName,
+    }
+    addTimeRow(task, row)
+    tasks.set(row.taskId, task)
+    const teammate = teammates.get(row.userId) ?? {
+      ...emptyTimeTotals(),
+      userId: row.userId,
+      userName: row.userName,
+      isContractor: row.isContractor === 1,
+      weeklyCapacity: row.weeklyCapacity,
+    }
+    addTimeRow(teammate, row)
+    teammates.set(row.userId, teammate)
+  }
+
+  const days = reportedDays(range)
+  return {
+    from: range.from,
+    to: range.to,
+    totals: finalizedTimeTotals(totals),
+    clients: [...clients.values()]
+      .map((client) => ({
+        ...finalizedTimeTotals(client),
+        clientId: client.clientId,
+        clientName: client.clientName,
+      }))
+      .sort(byHours((row) => row.clientName, (row) => row.clientId)),
+    projects: [...projects.values()]
+      .map((project) => ({
+        ...finalizedTimeTotals(project),
+        projectId: project.projectId,
+        projectName: project.projectName,
+        projectCode: project.projectCode,
+        clientId: project.clientId,
+        clientName: project.clientName,
+      }))
+      .sort(byHours((row) => row.projectName, (row) => row.projectId)),
+    tasks: [...tasks.values()]
+      .map((task) => ({
+        ...finalizedTimeTotals(task),
+        taskId: task.taskId,
+        taskName: task.taskName,
+      }))
+      .sort(byHours((row) => row.taskName, (row) => row.taskId)),
+    teammates: [...teammates.values()]
+      .map((teammate) => {
+        const capacitySeconds = Math.round((teammate.weeklyCapacity * days) / 7)
+        const finalized = finalizedTimeTotals(teammate)
+        return {
+          ...finalized,
+          userId: teammate.userId,
+          userName: teammate.userName,
+          isContractor: teammate.isContractor,
+          capacitySeconds,
+          utilizationPpm: timeUtilizationPpm(finalized.roundedSeconds, capacitySeconds),
+        }
+      })
+      .sort(byHours((row) => row.userName, (row) => row.userId)),
+  }
+}
+
 export const createReportRepository = (database: Database): ReportRepository => ({
   contractorCost: (range) => contractorCostReport(database, range),
   detailedTime: (filter) => detailedTimeReport(database, filter),
+  timeReport: (range) => timeReport(database, range),
   memberHours: (filter) => memberHoursReport(database, filter),
   uninvoiced: (filter) => uninvoicedReport(database, filter),
   clientRollup: (clientId, range) => clientRollupReport(database, clientId, range),

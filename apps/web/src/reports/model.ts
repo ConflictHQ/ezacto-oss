@@ -7,6 +7,7 @@ import type {
   GeneralResource,
   MyHoursReport,
   ProjectBudgetReport,
+  TimeReport,
   UninvoicedReport,
   Whoami,
 } from '@ezacto/client'
@@ -14,11 +15,21 @@ import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 
 export type ReportKind =
   | 'my-hours'
+  | 'time'
   | 'uninvoiced'
   | 'client-rollup'
   | 'project-budget'
   | 'contractor-cost'
   | 'detailed-time'
+
+/**
+ * The Time report's four sub-tabs. They are folds of one response, so the tab
+ * is presentation state and not a request parameter -- switching tabs must not
+ * re-ask the server for a month it already answered for. It still lives in the
+ * address because a link to "September by teammate" has to survive being sent
+ * to somebody.
+ */
+export type TimeReportTab = 'clients' | 'projects' | 'tasks' | 'teammates'
 
 export type DetailedTimeHours = DetailedTimeReport['hours']
 
@@ -107,6 +118,14 @@ export interface ReportWorkspaceApi {
     },
     signal?: AbortSignal,
   ): Promise<DetailedTimeReport>
+  /**
+   * No grouping parameter: the response carries all four foldings, because
+   * they are one dataset and asking four times invites four answers.
+   */
+  getTimeReport(
+    filter: { readonly from: string; readonly to: string },
+    signal?: AbortSignal,
+  ): Promise<TimeReport>
 }
 
 export interface ReportFilters {
@@ -115,16 +134,28 @@ export interface ReportFilters {
   readonly to: string
   readonly clientId: number | null
   readonly projectId: number | null
+  readonly tab: TimeReportTab
 }
 
 const reportKinds = new Set<ReportKind>([
   'my-hours',
+  'time',
   'uninvoiced',
   'client-rollup',
   'project-budget',
   'contractor-cost',
   'detailed-time',
 ])
+
+const timeReportTabs = new Set<TimeReportTab>([
+  'clients',
+  'projects',
+  'tasks',
+  'teammates',
+])
+
+export const isTimeReportTab = (value: string): value is TimeReportTab =>
+  timeReportTabs.has(value as TimeReportTab)
 
 export const isReportKind = (value: string): value is ReportKind =>
   reportKinds.has(value as ReportKind)
@@ -181,12 +212,18 @@ export const reportFiltersFromUrl = (
   const monthStart = `${today.slice(0, 8)}01`
   const from = url.searchParams.get('from')
   const to = url.searchParams.get('to')
+  const rawTab = url.searchParams.get('tab')
   return {
     kind,
     from: from ?? monthStart,
     to: to ?? today,
     clientId: positiveId(url.searchParams.get('client_id')),
     projectId: positiveId(url.searchParams.get('project_id')),
+    // Clients, as in the report being matched. An unreadable tab falls back
+    // rather than failing validation: the tab decides which fold of an answer
+    // already in hand is drawn, so a bad one is worth no more than a wrong
+    // starting tab.
+    tab: rawTab !== null && isTimeReportTab(rawTab) ? rawTab : 'clients',
   }
 }
 
@@ -255,6 +292,10 @@ export const reportFiltersUrl = (
     params.set('group', options.grouping)
     params.set('active_only', String(options.activeProjectsOnly))
   }
+  // Only the Time report has sub-tabs, so only it carries one. A `tab` left on
+  // every other kind's address would be a parameter that does nothing, and the
+  // first person to change it would reasonably expect something to happen.
+  if (filters.kind === 'time') params.set('tab', filters.tab)
   return `/reports?${params.toString()}`
 }
 
@@ -452,3 +493,14 @@ export const formatReportCents = (cents: number | null | undefined): string =>
   cents === null || cents === undefined
     ? '—'
     : `${new Intl.NumberFormat('en-US').format(cents)} cents`
+
+/**
+ * Billable share of a row's hours, as Harvest prints it beside the figure.
+ * Null where nothing was tracked: "0%" of no hours reads as a person who was
+ * busy on nothing billable, which is a different claim from an empty row.
+ */
+export const billablePercent = (
+  billableSeconds: number,
+  roundedSeconds: number,
+): number | null =>
+  roundedSeconds === 0 ? null : Math.round((billableSeconds * 100) / roundedSeconds)

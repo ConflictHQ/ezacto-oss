@@ -207,6 +207,57 @@ export type DetailedTimeReportResult =
   | { kind: "report"; report: DetailedTimeReportRecord }
   | { kind: "too_many_entries"; limit: number };
 
+export interface TimeReportAmountRecord {
+  currency: string;
+  billableCents: number;
+  /** The part of `billableCents` not yet on an invoice, on the uninvoiced report's predicate. */
+  uninvoicedCents: number;
+}
+
+export interface TimeReportTotalsRecord {
+  seconds: number;
+  roundedSeconds: number;
+  billableSeconds: number;
+  timeEntryCount: number;
+  unpricedBillableEntryCount: number;
+  amounts: readonly TimeReportAmountRecord[];
+}
+
+export interface TimeReportClientRecord extends TimeReportTotalsRecord {
+  clientId: number;
+  clientName: string;
+}
+
+export interface TimeReportProjectRecord extends TimeReportTotalsRecord {
+  projectId: number;
+  projectName: string;
+  projectCode: string;
+  clientId: number;
+  clientName: string;
+}
+
+export interface TimeReportTaskRecord extends TimeReportTotalsRecord {
+  taskId: number;
+  taskName: string;
+}
+
+export interface TimeReportTeammateRecord extends TimeReportTotalsRecord {
+  userId: number;
+  userName: string;
+  isContractor: boolean;
+  /** Weekly capacity prorated across the reported days. */
+  capacitySeconds: number;
+  utilizationPpm: number | null;
+}
+
+export interface TimeReportRecord extends ReportDateRange {
+  totals: TimeReportTotalsRecord;
+  clients: readonly TimeReportClientRecord[];
+  projects: readonly TimeReportProjectRecord[];
+  tasks: readonly TimeReportTaskRecord[];
+  teammates: readonly TimeReportTeammateRecord[];
+}
+
 export interface ProjectReportViewer {
   userId: number;
   profile: UserPrincipal["profile"];
@@ -220,6 +271,7 @@ export interface ReportReader {
     projectId?: number;
   }): Promise<MyHoursReportRecord>;
   contractorCost(range: Readonly<ReportDateRange>): Promise<ContractorCostReportRecord>;
+  timeReport(range: Readonly<ReportDateRange>): Promise<TimeReportRecord>;
   detailedTime(filter: {
     from: string;
     to: string;
@@ -437,6 +489,77 @@ const serializeDetailedTime = (
   };
 };
 
+/**
+ * Hours for everyone who can reach the report, amounts only for a viewer who
+ * may see billable rates -- the rule every other report here follows, applied
+ * once at the totals level so the summary strip and all four tabs redact
+ * together. Unlike the contractor report, this one is not refused outright when
+ * the money is withheld: hours by client, project, task and teammate is a whole
+ * useful report on its own, and only two of its columns are money.
+ *
+ * Today no profile reaches this route without that permission -- `reports:read`
+ * is accounting, executive manager and administrator, and all three may see
+ * billable rates -- so the branch is not reachable through the route. It is
+ * still written, and tested directly against the serializer, because the day
+ * `reports:read` widens (a project manager without the billable_rates_manager
+ * grant is the obvious candidate) the absence of this gate would be a silent
+ * disclosure rather than a compile error.
+ */
+const serializeTimeTotals = (
+  totals: Readonly<TimeReportTotalsRecord>,
+  viewer: Readonly<UserPrincipal>,
+) => ({
+  seconds: totals.seconds,
+  rounded_seconds: totals.roundedSeconds,
+  billable_seconds: totals.billableSeconds,
+  time_entry_count: totals.timeEntryCount,
+  unpriced_billable_entry_count: totals.unpricedBillableEntryCount,
+  ...(canViewMoneyField(viewer, "billable_rate")
+    ? {
+        amounts: totals.amounts.map((amount) => ({
+          currency: amount.currency,
+          billable_cents: amount.billableCents,
+          uninvoiced_cents: amount.uninvoicedCents,
+        })),
+      }
+    : {}),
+});
+
+const serializeTimeReport = (
+  report: Readonly<TimeReportRecord>,
+  viewer: Readonly<UserPrincipal>,
+) => ({
+  from: report.from,
+  to: report.to,
+  totals: serializeTimeTotals(report.totals, viewer),
+  clients: report.clients.map((client) => ({
+    ...serializeTimeTotals(client, viewer),
+    client_id: client.clientId,
+    client_name: client.clientName,
+  })),
+  projects: report.projects.map((project) => ({
+    ...serializeTimeTotals(project, viewer),
+    project_id: project.projectId,
+    project_name: project.projectName,
+    project_code: project.projectCode,
+    client_id: project.clientId,
+    client_name: project.clientName,
+  })),
+  tasks: report.tasks.map((task) => ({
+    ...serializeTimeTotals(task, viewer),
+    task_id: task.taskId,
+    task_name: task.taskName,
+  })),
+  teammates: report.teammates.map((teammate) => ({
+    ...serializeTimeTotals(teammate, viewer),
+    user_id: teammate.userId,
+    user_name: teammate.userName,
+    is_contractor: teammate.isContractor,
+    capacity_seconds: teammate.capacitySeconds,
+    utilization_ppm: teammate.utilizationPpm,
+  })),
+});
+
 const serializeRollupMetrics = (
   metrics: Readonly<ClientRollupMetricsRecord>,
   viewer: Readonly<UserPrincipal>,
@@ -605,6 +728,24 @@ export const installReportRoutes = <Bindings extends object>(
     return context.json(
       {
         data: serializeMyHours(report),
+        links: {
+          self:
+            new URL(context.req.url).pathname + new URL(context.req.url).search,
+        },
+      },
+      200,
+      { "cache-control": "no-store" },
+    );
+  });
+
+  api.get("/reports/time", async (context) => {
+    requireApiScope(context, "reports:read");
+    const parsed = rangeFrom(new URL(context.req.url), reportKeys);
+    assertFields(parsed.errors);
+    const report = await reports.timeReport(parsed.range);
+    return context.json(
+      {
+        data: serializeTimeReport(report, context.get("principal")),
         links: {
           self:
             new URL(context.req.url).pathname + new URL(context.req.url).search,
@@ -816,6 +957,7 @@ export const installReportRoutes = <Bindings extends object>(
 export {
   serializeClientRollup,
   serializeDetailedTime,
+  serializeTimeReport,
   serializeMyHours,
   serializeProjectBudget,
   serializeProjectBudgetSummary,

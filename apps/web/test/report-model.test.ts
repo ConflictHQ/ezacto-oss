@@ -1,6 +1,7 @@
 import type { DetailedTimeReport, DetailedTimeRow, EzactoClient, Whoami } from '@ezacto/client'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  billablePercent,
   canReadCostReports,
   canReadFinancialReports,
   createShellApi,
@@ -76,6 +77,9 @@ describe('Reports Stage 1 model', () => {
       to: '2026-08-31',
       clientId: 3,
       projectId: 9,
+      // Carried on every kind's filters and written to none but the Time
+      // report's address, which is the only report that has sub-tabs.
+      tab: 'clients',
     })
     expect(reportFiltersUrl(filters)).toBe(
       '/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31&client_id=3&project_id=9',
@@ -92,6 +96,7 @@ describe('Reports Stage 1 model', () => {
         to: '2026-09-17',
         clientId: 4,
         projectId: 9,
+        tab: 'teammates',
       }),
       // The project narrows it; the client does not, because the endpoint has
       // no client axis and a URL carrying one would imply it did.
@@ -112,6 +117,7 @@ describe('Reports Stage 1 model', () => {
         to: '2026-03-01',
         clientId: null,
         projectId: null,
+        tab: 'clients',
       }),
     ).toContain('valid')
     expect(
@@ -121,6 +127,7 @@ describe('Reports Stage 1 model', () => {
         to: '2026-09-01',
         clientId: 1,
         projectId: null,
+        tab: 'clients',
       }),
     ).toContain('on or after')
     expect(
@@ -130,6 +137,7 @@ describe('Reports Stage 1 model', () => {
         to: '2026-09-01',
         clientId: null,
         projectId: null,
+        tab: 'clients',
       }),
     ).toBe('Choose a project.')
   })
@@ -333,7 +341,7 @@ describe('Reports Stage 1 model', () => {
     expect(csv).toContain('"\'@SUM(A1)"')
   })
 
-  it('[unit] maps catalogs and all four reports to generated-client operations', async () => {
+  it('[unit] maps catalogs and all five reports to generated-client operations', async () => {
     const page = { data: [], links: {}, page: { next_cursor: null } }
     const generated = {
       listClients: vi.fn(async () => page),
@@ -343,6 +351,7 @@ describe('Reports Stage 1 model', () => {
       getProjectBudgetReport: vi.fn(async () => ({ data: { grains: [] } })),
       getMyHoursReport: vi.fn(async () => ({ data: { projects: [] } })),
       getContractorCostReport: vi.fn(async () => ({ data: { rows: [] } })),
+      getTimeReport: vi.fn(async () => ({ data: { clients: [] } })),
     }
     const api = createShellApi(generated as unknown as EzactoClient)
     const signal = new AbortController().signal
@@ -359,6 +368,7 @@ describe('Reports Stage 1 model', () => {
     await api.getProjectBudgetReport!(7, { from: '2026-08-01', to: '2026-08-31' }, signal)
     await api.getMyHoursReport!({ from: '2026-08-01', to: '2026-08-31' }, signal)
     await api.getContractorCostReport!({ from: '2026-08-01', to: '2026-08-31' }, signal)
+    await api.getTimeReport!({ from: '2026-08-01', to: '2026-08-31' }, signal)
 
     expect(generated.listClients).toHaveBeenCalledWith({
       query: { per_page: 200, cursor: 'clients-next' },
@@ -396,5 +406,51 @@ describe('Reports Stage 1 model', () => {
       query: { from: '2026-08-01', to: '2026-08-31' },
       signal,
     })
+    // A range and nothing else: the four groupings all come back in one
+    // response, so there is no tab to send.
+    expect(generated.getTimeReport).toHaveBeenCalledWith({
+      query: { from: '2026-08-01', to: '2026-08-31' },
+      signal,
+    })
+  })
+
+  it('[unit] carries the Time sub-tab in the address and nowhere else', () => {
+    const filters = reportFiltersFromUrl(
+      new URL(
+        'https://example.test/reports?report=time&from=2026-09-01&to=2026-09-30&tab=teammates',
+      ),
+      '2026-09-30',
+    )
+    expect(filters).toMatchObject({ kind: 'time', tab: 'teammates' })
+    expect(reportFiltersUrl(filters)).toBe(
+      '/reports?report=time&from=2026-09-01&to=2026-09-30&tab=teammates',
+    )
+    // An unreadable tab is a wrong starting tab, not a broken report: the tab
+    // chooses a fold of an answer already in hand.
+    expect(
+      reportFiltersFromUrl(
+        new URL('https://example.test/reports?report=time&tab=departments'),
+        '2026-09-30',
+      ).tab,
+    ).toBe('clients')
+    // No other kind writes it, because no other kind has sub-tabs.
+    expect(
+      reportFiltersUrl({
+        kind: 'uninvoiced',
+        from: '2026-09-01',
+        to: '2026-09-30',
+        clientId: null,
+        projectId: null,
+        tab: 'tasks',
+      }),
+    ).toBe('/reports?report=uninvoiced&from=2026-09-01&to=2026-09-30')
+  })
+
+  it('[unit] states no billable share for a row with no hours', () => {
+    expect(billablePercent(3600, 7200)).toBe(50)
+    expect(billablePercent(0, 7200)).toBe(0)
+    // Null, not 0: "0%" of nothing reads as somebody who was busy on nothing
+    // billable, which is a different claim from an empty row.
+    expect(billablePercent(0, 0)).toBeNull()
   })
 })

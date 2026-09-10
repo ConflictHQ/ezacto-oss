@@ -19,6 +19,8 @@ import {
   type DetailedTimeReportRecord,
   type UserProfile,
 } from "../src/index.js";
+import { serializeTimeReport } from "../src/reports.js";
+import type { UserPrincipal } from "../src/context.js";
 
 interface Harness {
   request(
@@ -273,6 +275,360 @@ for (const [runtime, factory] of factories) {
       expect(report.rows[0]!.costCents).toBeNull();
       expect(report.rows[0]!.entriesWithoutRate).toBe(1);
       expect(report.rows[0]!.roundedSeconds).toBe(13_500);
+    });
+
+    /**
+     * The four tabs are folds of one query, so the test that matters is that
+     * they still add up to the same month. Each grouping's row count is
+     * asserted before anything is measured over it: a fold that returned
+     * nothing would satisfy every sum below without measuring one row.
+     */
+    it("[db] folds one dataset four ways and the four tabs agree", async () => {
+      harness = await factory();
+      const report = await harness.reports.timeReport({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      });
+
+      expect(report.clients).toHaveLength(4);
+      expect(report.projects).toHaveLength(4);
+      expect(report.tasks).toHaveLength(1);
+      expect(report.teammates).toHaveLength(1);
+
+      expect(report.totals).toMatchObject({
+        seconds: 9900,
+        roundedSeconds: 9900,
+        billableSeconds: 9900,
+        timeEntryCount: 4,
+        unpricedBillableEntryCount: 0,
+      });
+      // 3600s @ 100.00 + 1800s @ 123.45 + 900s @ 80.00 + 3600s @ 90.00.
+      expect(report.totals.amounts).toEqual([
+        { currency: "USD", billableCents: 27_173, uninvoicedCents: 18_173 },
+      ]);
+
+      for (const [tab, rows] of [
+        ["clients", report.clients],
+        ["projects", report.projects],
+        ["tasks", report.tasks],
+        ["teammates", report.teammates],
+      ] as const) {
+        expect(
+          rows.reduce((sum, row) => sum + row.roundedSeconds, 0),
+          `${tab} hours`,
+        ).toBe(report.totals.roundedSeconds);
+        expect(
+          rows.reduce((sum, row) => sum + row.timeEntryCount, 0),
+          `${tab} entries`,
+        ).toBe(report.totals.timeEntryCount);
+        expect(
+          rows.reduce(
+            (sum, row) => sum + (row.amounts[0]?.billableCents ?? 0),
+            0,
+          ),
+          `${tab} billable amount`,
+        ).toBe(27_173);
+      }
+
+      // Hours descending, ties broken by name: the two 1.00h rows are ordered
+      // "Archived" before "Root", not by insertion.
+      expect(report.projects.map((project) => project.projectName)).toEqual([
+        "Archived project",
+        "Root project",
+        "Child project",
+        "Leaf project",
+      ]);
+      // projects.code is NOT NULL DEFAULT '', so the code is a string on every
+      // row and a project without one renders as its bare name, never "[] Name".
+      expect(report.projects[0]).toMatchObject({
+        projectCode: "ARCH",
+        clientId: 4,
+        clientName: "Archived holder",
+      });
+      expect(report.tasks[0]).toMatchObject({ taskId: 1, taskName: "Delivery" });
+    });
+
+    /**
+     * The distinction the whole KPI strip rests on. Work on an archived project
+     * is still billable work that happened; it is not uninvoiced work, because
+     * the uninvoiced report will not offer it for invoicing. Two numbers in one
+     * product both called "uninvoiced" that disagree is exactly the confusion
+     * #519 was raised over, so the assertion is against the other report's own
+     * output rather than against a figure retyped here.
+     */
+    it("[db] counts archived-project work as billable but never as uninvoiced", async () => {
+      harness = await factory();
+      const report = await harness.reports.timeReport({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      });
+      const archived = report.projects.find((project) => project.projectId === 4);
+      const root = report.projects.find((project) => project.projectId === 1);
+      expect(archived, "archived project row").toBeDefined();
+      expect(root, "root project row").toBeDefined();
+      expect(archived!.amounts).toEqual([
+        { currency: "USD", billableCents: 9000, uninvoicedCents: 0 },
+      ]);
+      expect(root!.amounts).toEqual([
+        { currency: "USD", billableCents: 10_000, uninvoicedCents: 10_000 },
+      ]);
+
+      const uninvoiced = await harness.reports.uninvoiced({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      });
+      expect(uninvoiced.totals).toHaveLength(1);
+      expect(report.totals.amounts[0]!.uninvoicedCents).toBe(
+        uninvoiced.totals[0]!.timeCents,
+      );
+    });
+
+    it("[db] agrees with the uninvoiced reader on every clause, not just the active one", async () => {
+      // The equality above passed over a fixture where three of the four
+      // conditions were inert: no entry had an `invoice_id`, a running timer, or
+      // a start without an end. The whole predicate could be deleted down to
+      // `billable AND project.is_active` and every test stayed green, while a
+      // regressed Time report would overstate `Uninvoiced amount` against the
+      // Uninvoiced report -- the drift this pair of readers exists to prevent.
+      //
+      // Both are billable, priced and inside the period, so each lands in the
+      // billable amount. Neither is uninvoiced work.
+      //
+      // The predicate's fourth clause -- a start with no end -- cannot be seeded
+      // here: this organisation runs in `duration` mode, and the shape
+      // constraint refuses a `started_time` outright. It is covered by that
+      // constraint rather than by this test, which is worth knowing before
+      // someone reads the equality below as proving all four.
+      harness = await factory();
+      await harness.run(
+        `INSERT INTO invoices
+          (id, client_id, number, currency, issue_date, due_date, payment_terms,
+           state, amount_cents, due_amount_cents, created_at, updated_at)
+         VALUES (900, 1, 'T-900', 'USD', '2026-08-20', '2026-09-19', 'net_30',
+           'open', 10000, 10000, ?, ?)`,
+        [now, now],
+      );
+      await harness.run(
+        `INSERT INTO time_entries
+          (id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+           spent_date, seconds, seconds_without_timer, rounded_seconds, billable, budgeted,
+           billable_rate_cents, cost_rate_cents, invoice_id, timer_started_at,
+           started_time, ended_time, created_at, updated_at)
+         VALUES
+           (901, 1, 1, 1, 21, 11, '2026-08-15', 3600, 3600, 3600, 1, 1, 10000, 4000,
+             900, NULL, NULL, NULL, ?, ?),
+           (902, 1, 1, 1, 21, 11, '2026-08-16', 3600, 3600, 3600, 1, 1, 10000, 4000,
+             NULL, ?, NULL, NULL, ?, ?)`,
+        [now, now, now, now, now],
+      );
+
+      const report = await harness.reports.timeReport({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      });
+      const uninvoiced = await harness.reports.uninvoiced({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      });
+
+      // Counted first: an insert that silently failed would leave the two
+      // readers agreeing over the original fixture and prove nothing.
+      expect(report.totals.timeEntryCount).toBe(6);
+      expect(report.totals.amounts).toHaveLength(1);
+      expect(uninvoiced.totals).toHaveLength(1);
+
+      // Two more billable hours at 100.00 each on top of the original 271.73.
+      expect(report.totals.amounts[0]!.billableCents).toBe(27_173 + 20_000);
+      // And none of them is uninvoiced: the figure is unchanged.
+      expect(report.totals.amounts[0]!.uninvoicedCents).toBe(18_173);
+      expect(report.totals.amounts[0]!.uninvoicedCents).toBe(
+        uninvoiced.totals[0]!.timeCents,
+      );
+    });
+
+    it("[db] leaves an unrated billable hour out of the amount and says so", async () => {
+      harness = await factory();
+      await harness.run(
+        `INSERT INTO time_entries
+          (id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+           spent_date, seconds, seconds_without_timer, rounded_seconds, billable, budgeted,
+           billable_rate_cents, cost_rate_cents, created_at, updated_at)
+         VALUES (198, 1, 1, 1, 21, 11, '2026-08-14', 3600, 3600, 3600, 1, 1, NULL, 4000, ?, ?)`,
+        [now, now],
+      );
+      const report = await harness.reports.timeReport({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      });
+      // The hour is real and counts as billable time; only its price is
+      // unknown. Pricing it at zero would make an unpriced month read as a
+      // cheap one, and the count is what says the amount is partial.
+      expect(report.totals.roundedSeconds).toBe(13_500);
+      expect(report.totals.billableSeconds).toBe(13_500);
+      expect(report.totals.unpricedBillableEntryCount).toBe(1);
+      expect(report.totals.amounts).toEqual([
+        { currency: "USD", billableCents: 27_173, uninvoicedCents: 18_173 },
+      ]);
+      const root = report.projects.find((project) => project.projectId === 1);
+      expect(root!.unpricedBillableEntryCount).toBe(1);
+    });
+
+    /**
+     * Every other entry in the fixture has `seconds` equal to `rounded_seconds`,
+     * which makes a column reading the wrong duration invisible. This one is
+     * rounded up from 1.50h to 2.00h, so the two answers differ by half an hour
+     * and half an hour's money -- the difference between this report and the
+     * invoice it is supposed to agree with.
+     */
+    it("[db] counts and prices the rounded hours, not the tracked ones", async () => {
+      harness = await factory();
+      await harness.run(
+        `INSERT INTO time_entries
+          (id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+           spent_date, seconds, seconds_without_timer, rounded_seconds, billable, budgeted,
+           billable_rate_cents, cost_rate_cents, created_at, updated_at)
+         VALUES (196, 1, 1, 1, 21, 11, '2026-08-15', 5400, 5400, 7200, 1, 1, 10000, 4000, ?, ?)`,
+        [now, now],
+      );
+      const report = await harness.reports.timeReport({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      });
+      expect(report.totals).toMatchObject({
+        seconds: 15_300,
+        roundedSeconds: 17_100,
+        // 17_100, not the 15_300 tracked: billable time is rounded time on
+        // billable entries.
+        billableSeconds: 17_100,
+        timeEntryCount: 5,
+      });
+      // 27_173 before, plus 7200s @ 100.00 = 20_000. Priced off the tracked
+      // 1.50h it would be 15_000, and the report would undercount the invoice.
+      expect(report.totals.amounts).toEqual([
+        { currency: "USD", billableCents: 47_173, uninvoicedCents: 38_173 },
+      ]);
+      const root = report.projects.find((project) => project.projectId === 1);
+      expect(root, "root project row").toBeDefined();
+      expect(root!.seconds).toBe(9000);
+      expect(root!.roundedSeconds).toBe(10_800);
+    });
+
+    it("[db] prorates weekly capacity across the reported days", async () => {
+      harness = await factory();
+      // Seven days is the window the team roster reports on, so a week here
+      // must divide by exactly the stored weekly capacity -- that is what makes
+      // the two screens comparable rather than merely similar.
+      const week = await harness.reports.timeReport({
+        from: "2026-08-10",
+        to: "2026-08-16",
+      });
+      expect(week.teammates).toHaveLength(1);
+      expect(week.teammates[0]).toMatchObject({
+        userId: 1,
+        isContractor: false,
+        capacitySeconds: 126_000,
+        roundedSeconds: 9900,
+        utilizationPpm: 78_571,
+      });
+
+      const month = await harness.reports.timeReport({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      });
+      // 126000 * 31 / 7. A month divided by one week's capacity would report
+      // this person at four times their real utilization.
+      expect(month.teammates[0]).toMatchObject({
+        capacitySeconds: 558_000,
+        utilizationPpm: 17_742,
+      });
+    });
+
+    it("[db] states no utilization for a person with no capacity", async () => {
+      harness = await factory();
+      await harness.run(
+        `INSERT INTO users
+          (id, first_name, last_name, profile, manager_grants, is_contractor,
+           weekly_capacity, created_at, updated_at)
+         VALUES (9, 'Zero', 'Capacity', 'member', '[]', 1, 0, ?, ?)`,
+        [now, now],
+      );
+      await harness.run(
+        `INSERT INTO user_assignments
+          (id, project_id, user_id, is_active, is_project_manager, created_at, updated_at)
+         VALUES (29, 1, 9, 1, 0, ?, ?)`,
+        [now, now],
+      );
+      await harness.run(
+        `INSERT INTO time_entries
+          (id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+           spent_date, seconds, seconds_without_timer, rounded_seconds, billable, budgeted,
+           billable_rate_cents, cost_rate_cents, created_at, updated_at)
+         VALUES (197, 9, 1, 1, 29, 11, '2026-08-15', 3600, 3600, 3600, 0, 0, NULL, NULL, ?, ?)`,
+        [now, now],
+      );
+      const report = await harness.reports.timeReport({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      });
+      const zero = report.teammates.find((teammate) => teammate.userId === 9);
+      expect(zero, "zero-capacity teammate row").toBeDefined();
+      // Null, not Infinity and not 0: a person with no capacity has no
+      // utilization to state, and a 0% would read as somebody who did nothing.
+      expect(zero!.utilizationPpm).toBeNull();
+      expect(zero!.capacitySeconds).toBe(0);
+      expect(zero!.roundedSeconds).toBe(3600);
+      expect(zero!.isContractor).toBe(true);
+      // Non-billable time opens no currency bucket: there is no amount to show.
+      expect(zero!.amounts).toEqual([]);
+      expect(report.totals.billableSeconds).toBe(9900);
+      expect(report.totals.roundedSeconds).toBe(13_500);
+    });
+
+    it("[api] serves the time report to the reporting profiles and refuses the rest", async () => {
+      harness = await factory();
+      const range = "from=2026-08-01&to=2026-08-31";
+      for (const profile of ["accounting", "executive_manager", "administrator"] as const) {
+        const response = await harness.request(`/reports/time?${range}`, profile);
+        expect(response.status, `${profile}: ${await response.clone().text()}`).toBe(200);
+        const body = (await response.json()) as {
+          data: {
+            from: string;
+            to: string;
+            totals: { rounded_seconds: number; amounts?: unknown[] };
+            projects: Array<{ project_code: string; amounts?: unknown[] }>;
+            teammates: Array<{ utilization_ppm: number | null }>;
+          };
+        };
+        expect(body.data.from).toBe("2026-08-01");
+        expect(body.data.to).toBe("2026-08-31");
+        // The fixture has tracked time, so an empty report would pass every
+        // assertion under it without measuring a row.
+        expect(body.data.projects.length, profile).toBeGreaterThan(0);
+        expect(body.data.teammates.length, profile).toBeGreaterThan(0);
+        expect(body.data.totals.rounded_seconds).toBe(9900);
+        expect(body.data.totals.amounts).toEqual([
+          { currency: "USD", billable_cents: 27_173, uninvoiced_cents: 18_173 },
+        ]);
+        expect(body.data.teammates[0]!.utilization_ppm).toBe(17_742);
+      }
+      for (const profile of ["member", "project_manager", "people_admin"] as const) {
+        const refused = await harness.request(`/reports/time?${range}`, profile);
+        expect(refused.status, `${profile} reached the time report`).toBe(403);
+      }
+    });
+
+    it("[api] rejects a time report range that is missing, invalid or inverted", async () => {
+      harness = await factory();
+      for (const path of [
+        "/reports/time?to=2026-08-31",
+        "/reports/time?from=2026-08-01",
+        "/reports/time?from=2026-02-30&to=2026-08-31",
+        "/reports/time?from=2026-09-01&to=2026-08-31",
+        "/reports/time?from=2026-08-01&to=2026-08-31&client_id=1",
+      ]) {
+        const response = await harness.request(path);
+        expect(response.status, path).toBe(422);
+      }
     });
 
     /**
@@ -1172,5 +1528,113 @@ describe("detailed time serialization", () => {
     expect(granted.rows).toHaveLength(1);
     expect(granted.rows[0]).toHaveProperty("billable_amount_cents", 10_000);
     expect(granted.currencies[0]).toHaveProperty("billable_amount_cents", 10_000);
+  });
+});
+
+/**
+ * The money gate, exercised where it can be: `reports:read` is accounting,
+ * executive manager and administrator today, and all three may see billable
+ * rates, so no request through the route can reach the withheld branch. Testing
+ * the serializer directly is the difference between a gate that is known to
+ * work and one that merely compiles -- the day `reports:read` widens to a
+ * project manager without the billable_rates_manager grant, this is the test
+ * that says whether their amounts leak.
+ */
+describe("time report money redaction", () => {
+  const totals = {
+    seconds: 3600,
+    roundedSeconds: 3600,
+    billableSeconds: 3600,
+    timeEntryCount: 1,
+    unpricedBillableEntryCount: 0,
+    amounts: [{ currency: "USD", billableCents: 10_000, uninvoicedCents: 10_000 }],
+  } as const;
+  const report = {
+    from: "2026-08-01",
+    to: "2026-08-31",
+    totals,
+    clients: [{ ...totals, clientId: 1, clientName: "Root" }],
+    projects: [
+      {
+        ...totals,
+        projectId: 1,
+        projectName: "Root project",
+        projectCode: "ROOT",
+        clientId: 1,
+        clientName: "Root",
+      },
+    ],
+    tasks: [{ ...totals, taskId: 1, taskName: "Delivery" }],
+    teammates: [
+      {
+        ...totals,
+        userId: 1,
+        userName: "Report Owner",
+        isContractor: false,
+        capacitySeconds: 558_000,
+        utilizationPpm: 6452,
+      },
+    ],
+  } as const;
+
+  const principal = (
+    profile: UserProfile,
+    managerGrants: readonly string[] = [],
+  ): UserPrincipal => ({
+    type: "user",
+    userId: 1,
+    profile,
+    managerGrants: [...managerGrants],
+    authentication: { kind: "session", sessionId: "redaction-test" },
+  });
+
+  const sections = (serialized: ReturnType<typeof serializeTimeReport>) => [
+    serialized.totals,
+    ...serialized.clients,
+    ...serialized.projects,
+    ...serialized.tasks,
+    ...serialized.teammates,
+  ];
+
+  it("[security] withholds amounts from a viewer who may not see billable rates", () => {
+    for (const viewer of [
+      principal("member"),
+      principal("people_admin"),
+      principal("project_manager"),
+    ]) {
+      const serialized = serializeTimeReport(report, viewer);
+      // Five sections, asserted before they are searched: an empty list would
+      // satisfy the loop below without inspecting a single row.
+      expect(sections(serialized)).toHaveLength(5);
+      for (const section of sections(serialized)) {
+        expect(
+          Object.hasOwn(section, "amounts"),
+          `${viewer.profile} kept amounts`,
+        ).toBe(false);
+        // The hours survive: a report of who worked on what is the whole
+        // report minus two columns, not a refusal.
+        expect(section.rounded_seconds).toBe(3600);
+      }
+    }
+  });
+
+  it("[security] serves amounts to a project manager holding the rates grant", () => {
+    for (const viewer of [
+      principal("project_manager", ["billable_rates_manager"]),
+      principal("accounting"),
+      principal("executive_manager"),
+      principal("administrator"),
+    ]) {
+      const serialized = serializeTimeReport(report, viewer);
+      expect(sections(serialized)).toHaveLength(5);
+      for (const section of sections(serialized)) {
+        expect(
+          Reflect.get(section, "amounts"),
+          `${viewer.profile} lost amounts`,
+        ).toEqual([
+          { currency: "USD", billable_cents: 10_000, uninvoiced_cents: 10_000 },
+        ]);
+      }
+    }
   });
 });

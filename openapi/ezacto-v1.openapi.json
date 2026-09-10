@@ -13444,6 +13444,84 @@
         ]
       }
     },
+    "/api/v1/reports/time": {
+      "get": {
+        "operationId": "getTimeReport",
+        "summary": "Report tracked time by client, project, task and teammate",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimeReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/reports/time",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/reports/contractor": {
       "get": {
         "operationId": "getContractorCostReport",
@@ -25251,6 +25329,341 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/DetailedTimeReport"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TimeReportAmount": {
+        "type": "object",
+        "required": [
+          "currency",
+          "billable_cents",
+          "uninvoiced_cents"
+        ],
+        "properties": {
+          "currency": {
+            "type": "string"
+          },
+          "billable_cents": {
+            "type": "integer"
+          },
+          "uninvoiced_cents": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TimeReportTotals": {
+        "type": "object",
+        "required": [
+          "seconds",
+          "rounded_seconds",
+          "billable_seconds",
+          "time_entry_count",
+          "unpriced_billable_entry_count"
+        ],
+        "properties": {
+          "seconds": {
+            "type": "integer"
+          },
+          "rounded_seconds": {
+            "type": "integer"
+          },
+          "billable_seconds": {
+            "type": "integer"
+          },
+          "time_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unpriced_billable_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "amounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimeReportAmount"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "TimeReportClientRow": {
+        "type": "object",
+        "required": [
+          "seconds",
+          "rounded_seconds",
+          "billable_seconds",
+          "time_entry_count",
+          "unpriced_billable_entry_count",
+          "client_id",
+          "client_name"
+        ],
+        "properties": {
+          "seconds": {
+            "type": "integer"
+          },
+          "rounded_seconds": {
+            "type": "integer"
+          },
+          "billable_seconds": {
+            "type": "integer"
+          },
+          "time_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unpriced_billable_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "amounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimeReportAmount"
+            }
+          },
+          "client_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "client_name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TimeReportProjectRow": {
+        "type": "object",
+        "required": [
+          "seconds",
+          "rounded_seconds",
+          "billable_seconds",
+          "time_entry_count",
+          "unpriced_billable_entry_count",
+          "project_id",
+          "project_name",
+          "project_code",
+          "client_id",
+          "client_name"
+        ],
+        "properties": {
+          "seconds": {
+            "type": "integer"
+          },
+          "rounded_seconds": {
+            "type": "integer"
+          },
+          "billable_seconds": {
+            "type": "integer"
+          },
+          "time_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unpriced_billable_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "amounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimeReportAmount"
+            }
+          },
+          "project_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "project_code": {
+            "type": "string"
+          },
+          "client_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "client_name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TimeReportTaskRow": {
+        "type": "object",
+        "required": [
+          "seconds",
+          "rounded_seconds",
+          "billable_seconds",
+          "time_entry_count",
+          "unpriced_billable_entry_count",
+          "task_id",
+          "task_name"
+        ],
+        "properties": {
+          "seconds": {
+            "type": "integer"
+          },
+          "rounded_seconds": {
+            "type": "integer"
+          },
+          "billable_seconds": {
+            "type": "integer"
+          },
+          "time_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unpriced_billable_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "amounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimeReportAmount"
+            }
+          },
+          "task_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "task_name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TimeReportTeammateRow": {
+        "type": "object",
+        "required": [
+          "seconds",
+          "rounded_seconds",
+          "billable_seconds",
+          "time_entry_count",
+          "unpriced_billable_entry_count",
+          "user_id",
+          "user_name",
+          "is_contractor",
+          "capacity_seconds",
+          "utilization_ppm"
+        ],
+        "properties": {
+          "seconds": {
+            "type": "integer"
+          },
+          "rounded_seconds": {
+            "type": "integer"
+          },
+          "billable_seconds": {
+            "type": "integer"
+          },
+          "time_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unpriced_billable_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "amounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimeReportAmount"
+            }
+          },
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "user_name": {
+            "type": "string"
+          },
+          "is_contractor": {
+            "type": "boolean"
+          },
+          "capacity_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "utilization_ppm": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "TimeReport": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "totals",
+          "clients",
+          "projects",
+          "tasks",
+          "teammates"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date"
+          },
+          "to": {
+            "type": "string",
+            "format": "date"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/TimeReportTotals"
+          },
+          "clients": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimeReportClientRow"
+            }
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimeReportProjectRow"
+            }
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimeReportTaskRow"
+            }
+          },
+          "teammates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimeReportTeammateRow"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "TimeReportEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TimeReport"
           },
           "links": {
             "$ref": "#/components/schemas/Links"

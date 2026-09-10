@@ -936,6 +936,137 @@
 .report-detailed-table tfoot td {
   font-weight: 600;
 }
+
+/* The Time report's summary strip. Same shape as the team roster's, because it
+   answers the same shape of question -- how much time, how much of it billable
+   -- and two different treatments for one idea is how a product stops reading
+   as one product. */
+.report-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+.report-summary > div {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+}
+.report-summary span {
+  color: var(--ez-muted);
+  font-size: 12px;
+}
+/* The KPI numerals are what make the strip readable in one look; at body size
+   they are four labels you have to stop and parse. */
+.report-summary strong {
+  overflow-wrap: anywhere;
+  font: 600 clamp(22px, 2.4vw, 34px) / 1.05 var(--ez-font-mono), monospace;
+  font-variant-numeric: tabular-nums;
+}
+/* The swatch ties each figure to its segment in the bar below, so the split is
+   readable without matching label text to colour by memory. */
+.report-summary > div[data-swatch] span::before {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border-radius: 2px;
+  content: '';
+}
+.report-summary > div[data-swatch='billable'] span::before {
+  background: var(--ez-action);
+}
+.report-summary > div[data-swatch='nonbillable'] span::before {
+  background: var(--ez-border);
+}
+.report-summary-bar {
+  display: flex;
+  grid-column: 1 / -1;
+  height: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--ez-ground);
+}
+.report-summary-bar span[data-part='billable'] {
+  background: var(--ez-action);
+}
+.report-summary-bar span[data-part='nonbillable'] {
+  background: var(--ez-border);
+}
+
+/* The four groupings, as the level-3 strip they are in the report being
+   matched. It borrows the shell strip's paint rather than inventing a third
+   active-state treatment, but sits inside the results because it selects a fold
+   of one answer rather than navigating anywhere. */
+.report-subtabs {
+  display: flex;
+  align-items: stretch;
+  gap: 24px;
+  height: 40px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--ez-border);
+}
+.report-subtabs a {
+  display: grid;
+  place-items: center;
+  color: var(--ez-muted);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.report-subtabs a:hover,
+.report-subtabs a:focus-visible {
+  color: var(--ez-ink);
+}
+.report-subtabs a[aria-current='page'] {
+  color: var(--ez-ink);
+  box-shadow: inset 0 -3px var(--ez-live);
+}
+
+/* The bar column carries no number, so it takes whatever width is left after
+   the figures have theirs; every other column shrinks to its content. */
+.report-time-table .report-bar-cell {
+  width: 30%;
+  min-width: 90px;
+}
+.report-time-table progress {
+  display: block;
+  width: 100%;
+  height: 10px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ez-ground);
+}
+.report-time-table progress::-webkit-progress-bar {
+  background: var(--ez-ground);
+}
+.report-time-table progress::-webkit-progress-value,
+.report-time-table progress::-moz-progress-bar {
+  background: var(--ez-action);
+}
+/* A currency per line: this product holds no exchange rate, so two currencies
+   are two figures and never a sum. */
+.report-time-table td span {
+  display: block;
+}
+.report-group-row th {
+  background: var(--ez-ground);
+  color: var(--ez-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.report-time-table tfoot th,
+.report-time-table tfoot td {
+  font-weight: 700;
+}
+
 .invoice-generation {
   width: min(880px, 100%);
   margin-inline: auto;

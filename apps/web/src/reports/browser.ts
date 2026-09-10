@@ -9,12 +9,24 @@ import {
   type GeneralResource,
   type MyHoursReport,
   type ProjectBudgetReport,
+  type TimeReport,
+  type TimeReportAmount,
+  type TimeReportClientRow,
+  type TimeReportProjectRow,
+  type TimeReportTaskRow,
+  type TimeReportTeammateRow,
+  type TimeReportTotals,
   type UninvoicedReport,
   type Whoami,
 } from '@ezacto/client'
 import { createPeriodControl } from '../components/period.js'
 import { moneyText } from '../money-display.js'
+// The team roster's own formatter. Utilization is one figure with one meaning,
+// and a second renderer for it here is how the same person comes to read 17%
+// on one screen and 17.4% on another.
+import { teamCapabilities, teamUtilization } from '../team/model.js'
 import {
+  billablePercent,
   canReadCostReports,
   canReadFinancialReports,
   decimalHours,
@@ -36,6 +48,7 @@ import {
   type ReportFilters,
   type ReportKind,
   type ReportWorkspaceApi,
+  type TimeReportTab,
 } from './model.js'
 
 /**
@@ -872,6 +885,383 @@ const renderDetailedTime = (
   return fragment
 }
 
+/**
+ * The Time report's summary strip: total hours, the billable split, and the two
+ * money figures. The money cards are absent, not blank, for a viewer whose
+ * response carried no `amounts` -- a card reading "—" would say the month had
+ * no billable value rather than that this reader may not see it.
+ */
+const timeSummary = (totals: Readonly<TimeReportTotals>): HTMLElement => {
+  const section = element('section', 'report-summary')
+  section.setAttribute('aria-label', 'Time report summary')
+  const nonBillableSeconds = totals.rounded_seconds - totals.billable_seconds
+  const metric = (label: string, value: string, swatch?: string): HTMLElement => {
+    const wrapper = element('div')
+    if (swatch !== undefined) wrapper.dataset['swatch'] = swatch
+    wrapper.append(textElement('span', label), textElement('strong', value))
+    return wrapper
+  }
+  section.append(
+    metric('Total hours', formatReportHours(totals.rounded_seconds)),
+    metric('Billable', formatReportHours(totals.billable_seconds), 'billable'),
+    metric('Non-billable', formatReportHours(nonBillableSeconds), 'nonbillable'),
+  )
+  if (totals.amounts !== undefined) {
+    // One line per currency rather than a sum: this product holds no exchange
+    // rate, and adding EUR to USD would be inventing one.
+    const money = (label: string, pick: (amount: TimeReportAmount) => number): HTMLElement => {
+      const wrapper = element('div')
+      wrapper.append(textElement('span', label))
+      if (totals.amounts!.length === 0) wrapper.append(textElement('strong', '—'))
+      else {
+        for (const amount of totals.amounts!) {
+          wrapper.append(
+            textElement('strong', formatReportMoney(pick(amount), amount.currency)),
+          )
+        }
+      }
+      return wrapper
+    }
+    section.append(
+      money('Billable amount', (amount) => amount.billable_cents),
+      money('Uninvoiced amount', (amount) => amount.uninvoiced_cents),
+    )
+  }
+  const bar = element('div', 'report-summary-bar')
+  // A period with no tracked time has no split to draw; a bar of two zero-width
+  // segments is a stray hairline that says nothing.
+  if (totals.rounded_seconds > 0) {
+    const billable = element('span')
+    billable.dataset['part'] = 'billable'
+    billable.style.flexGrow = String(Math.max(0, totals.billable_seconds))
+    const nonBillable = element('span')
+    nonBillable.dataset['part'] = 'nonbillable'
+    nonBillable.style.flexGrow = String(Math.max(0, nonBillableSeconds))
+    bar.append(billable, nonBillable)
+    section.append(bar)
+  }
+  return section
+}
+
+const timeTabNames: readonly { readonly tab: TimeReportTab; readonly label: string }[] = [
+  { tab: 'clients', label: 'Clients' },
+  { tab: 'projects', label: 'Projects' },
+  { tab: 'tasks', label: 'Tasks' },
+  { tab: 'teammates', label: 'Teammates' },
+]
+
+/**
+ * Real links, so a tab can be opened in a new window and sent to somebody, but
+ * an unmodified click is handled here: the four tabs are folds of a response
+ * already in memory, and re-fetching the month to redraw the same rows would
+ * make the fastest interaction on the screen the slowest.
+ */
+const timeTabStrip = (
+  filters: Readonly<ReportFilters>,
+  onTab: (tab: TimeReportTab) => void,
+): HTMLElement => {
+  const nav = element('nav', 'report-subtabs')
+  nav.setAttribute('aria-label', 'Time report grouping')
+  for (const entry of timeTabNames) {
+    const anchor = linkElement(reportFiltersUrl({ ...filters, tab: entry.tab }), entry.label)
+    if (entry.tab === filters.tab) anchor.setAttribute('aria-current', 'page')
+    anchor.dataset['reportTimeTab'] = entry.tab
+    anchor.addEventListener('click', (event) => {
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      event.preventDefault()
+      onTab(entry.tab)
+    })
+    nav.append(anchor)
+  }
+  return nav
+}
+
+interface TimeRowFigures {
+  readonly rounded_seconds: number
+  readonly billable_seconds: number
+  readonly amounts?: readonly TimeReportAmount[]
+}
+
+const hoursBar = (seconds: number, maximum: number, label: string): HTMLElement => {
+  const bar = document.createElement('progress')
+  // Against the largest row, not the period total: a bar scaled to the whole
+  // month leaves every row but the biggest client a stub, which is a column of
+  // ink that ranks nothing.
+  bar.max = Math.max(1, maximum)
+  bar.value = Math.max(0, Math.min(seconds, bar.max))
+  bar.setAttribute('aria-label', label)
+  return bar
+}
+
+const billableCell = (row: Readonly<TimeRowFigures>): HTMLTableCellElement => {
+  const cell = element('td')
+  const share = billablePercent(row.billable_seconds, row.rounded_seconds)
+  cell.textContent =
+    share === null
+      ? formatReportHours(row.billable_seconds)
+      : `${formatReportHours(row.billable_seconds)} (${share}%)`
+  return cell
+}
+
+const amountCell = (
+  amounts: readonly TimeReportAmount[],
+  pick: (amount: TimeReportAmount) => number,
+): HTMLTableCellElement => {
+  const cell = element('td')
+  if (amounts.length === 0) {
+    cell.textContent = '—'
+    return cell
+  }
+  for (const amount of amounts) {
+    cell.append(textElement('span', formatReportMoney(pick(amount), amount.currency)))
+  }
+  return cell
+}
+
+/**
+ * One table for all four tabs. The columns before the figures differ -- a
+ * project names its client, a teammate carries a utilization -- but Hours, the
+ * bar, Billable hours and Billable amount are the same four questions on every
+ * tab, so they are built once. A second copy per tab is how the Total row and a
+ * column drift apart.
+ */
+interface TimeTableColumn<Row> {
+  readonly label: string
+  readonly cell: (row: Row) => HTMLTableCellElement
+  /** The total row's cell, where the column has one. */
+  readonly total?: HTMLTableCellElement
+}
+
+const timeTable = <Row extends TimeRowFigures>(
+  leading: readonly TimeTableColumn<Row>[],
+  trailing: readonly TimeTableColumn<Row>[],
+  groups: readonly { readonly label: string | null; readonly rows: readonly Row[] }[],
+  totals: Readonly<TimeReportTotals>,
+  barLabel: (row: Row) => string,
+): HTMLElement => {
+  const showMoney = totals.amounts !== undefined
+  const wrapper = element('div', 'report-table-wrap')
+  const table = element('table', 'report-table report-time-table')
+  const labels = [
+    ...leading.map((column) => column.label),
+    'Hours',
+    '',
+    'Billable hours',
+    ...(showMoney ? ['Billable amount'] : []),
+    ...trailing.map((column) => column.label),
+  ]
+  const head = element('thead')
+  const headerRow = element('tr')
+  for (const label of labels) {
+    const cell = textElement('th', label)
+    cell.scope = 'col'
+    headerRow.append(cell)
+  }
+  head.append(headerRow)
+
+  const every = groups.flatMap((group) => group.rows)
+  const maximum = every.reduce((largest, row) => Math.max(largest, row.rounded_seconds), 0)
+  const body = element('tbody')
+  if (every.length === 0) {
+    const row = element('tr')
+    const cell = textElement('td', 'No time was tracked in this period.')
+    cell.colSpan = labels.length
+    row.append(cell)
+    body.append(row)
+  }
+  for (const group of groups) {
+    if (group.rows.length === 0) continue
+    if (group.label !== null) {
+      const groupRow = element('tr', 'report-group-row')
+      const groupCell = textElement('th', group.label)
+      groupCell.scope = 'colgroup'
+      groupCell.colSpan = labels.length
+      groupRow.append(groupCell)
+      body.append(groupRow)
+    }
+    for (const row of group.rows) {
+      const tableRow = element('tr')
+      for (const column of leading) tableRow.append(column.cell(row))
+      const hours = textElement('td', formatReportHours(row.rounded_seconds))
+      const bar = element('td', 'report-bar-cell')
+      bar.append(hoursBar(row.rounded_seconds, maximum, barLabel(row)))
+      tableRow.append(hours, bar, billableCell(row))
+      if (showMoney) {
+        tableRow.append(amountCell(row.amounts ?? [], (amount) => amount.billable_cents))
+      }
+      for (const column of trailing) tableRow.append(column.cell(row))
+      body.append(tableRow)
+    }
+  }
+
+  const foot = element('tfoot')
+  const totalRow = element('tr')
+  const totalLabel = textElement('th', 'Total')
+  totalLabel.scope = 'row'
+  totalLabel.colSpan = leading.length
+  totalRow.append(
+    totalLabel,
+    textElement('td', formatReportHours(totals.rounded_seconds)),
+    // The bar column has no total: the bars rank rows against each other, and a
+    // full-width bar on the Total row would read as a fifth data row.
+    element('td', 'report-bar-cell'),
+    billableCell(totals),
+  )
+  if (showMoney) {
+    totalRow.append(amountCell(totals.amounts ?? [], (amount) => amount.billable_cents))
+  }
+  for (const column of trailing) totalRow.append(column.total ?? element('td'))
+  foot.append(totalRow)
+  table.append(head, body, foot)
+  wrapper.append(table)
+  return wrapper
+}
+
+const plainNameCell = (label: string): HTMLTableCellElement => {
+  const cell = element('th')
+  cell.scope = 'row'
+  cell.textContent = label
+  return cell
+}
+
+const nameCell = (href: string, label: string): HTMLTableCellElement => {
+  const cell = element('th')
+  cell.scope = 'row'
+  cell.append(linkElement(href, label))
+  return cell
+}
+
+/** `[code] Name`, and the bare name where the project carries no code. */
+const projectLabel = (row: Readonly<TimeReportProjectRow>): string =>
+  row.project_code.trim() === ''
+    ? row.project_name
+    : `[${row.project_code.trim()}] ${row.project_name}`
+
+const renderTimeReport = (
+  report: Readonly<TimeReport>,
+  filters: Readonly<ReportFilters>,
+  onTab: (tab: TimeReportTab) => void,
+  /**
+   * Whether this viewer may open a person's page. `reports:read` and `team:read`
+   * are different sets -- accounting holds the first and not the second -- so a
+   * teammate row linked unconditionally hands them a link to a page the shell
+   * keeps out of their nav and the screen refuses on arrival.
+   */
+  canOpenTeam: boolean,
+): DocumentFragment => {
+  const fragment = document.createDocumentFragment()
+  fragment.append(
+    reportHeading('Time', `${report.from} through ${report.to}`),
+    timeSummary(report.totals),
+    timeTabStrip(filters, onTab),
+  )
+  if (report.totals.unpriced_billable_entry_count > 0 && report.totals.amounts !== undefined) {
+    fragment.append(
+      warning(
+        `${countLabel(report.totals.unpriced_billable_entry_count, 'billable time entry', 'billable time entries')} without a resolved rate ${report.totals.unpriced_billable_entry_count === 1 ? 'is' : 'are'} counted in hours and excluded from the amounts.`,
+      ),
+    )
+  }
+  if (filters.tab === 'clients') {
+    fragment.append(
+      timeTable<TimeReportClientRow>(
+        [
+          {
+            label: 'Name',
+            cell: (row) => nameCell(`/clients/${row.client_id}`, row.client_name),
+          },
+        ],
+        [],
+        [{ label: null, rows: report.clients }],
+        report.totals,
+        (row) => `${row.client_name} hours`,
+      ),
+    )
+  } else if (filters.tab === 'projects') {
+    fragment.append(
+      timeTable<TimeReportProjectRow>(
+        [
+          {
+            label: 'Name',
+            cell: (row) => nameCell(`/projects/${row.project_id}`, projectLabel(row)),
+          },
+          {
+            label: 'Clients',
+            cell: (row) => {
+              const cell = element('td')
+              cell.append(linkElement(`/clients/${row.client_id}`, row.client_name))
+              return cell
+            },
+          },
+        ],
+        [],
+        [{ label: null, rows: report.projects }],
+        report.totals,
+        (row) => `${row.project_name} hours`,
+      ),
+    )
+  } else if (filters.tab === 'tasks') {
+    fragment.append(
+      timeTable<TimeReportTaskRow>(
+        [
+          {
+            label: 'Name',
+            cell: (row) => {
+              const cell = element('th')
+              cell.scope = 'row'
+              // No link: a task has no screen of its own outside Manage, and a
+              // dead link is worse than plain text.
+              cell.textContent = row.task_name
+              return cell
+            },
+          },
+        ],
+        [],
+        [{ label: null, rows: report.tasks }],
+        report.totals,
+        (row) => `${row.task_name} hours`,
+      ),
+    )
+  } else {
+    fragment.append(
+      timeTable<TimeReportTeammateRow>(
+        [
+          {
+            label: 'Name',
+            // Plain text where the viewer cannot read Team, which is what the
+            // Tasks tab already does for the same reason: a dead link is worse
+            // than no link, because it looks like a way in.
+            cell: (row) =>
+              canOpenTeam
+                ? nameCell(`/team/${row.user_id}`, row.user_name)
+                : plainNameCell(row.user_name),
+          },
+        ],
+        [
+          {
+            label: 'Utilization',
+            cell: (row) => {
+              const cell = element('td')
+              cell.textContent = teamUtilization(row.utilization_ppm)
+              return cell
+            },
+            // No total: utilizations are ratios against different capacities,
+            // and the one number that could go here -- the team's hours over
+            // the team's capacity -- is not what the column above it holds.
+          },
+        ],
+        [
+          { label: 'Employees', rows: report.teammates.filter((row) => !row.is_contractor) },
+          { label: 'Contractors', rows: report.teammates.filter((row) => row.is_contractor) },
+        ],
+        report.totals,
+        (row) => `${row.user_name} hours`,
+      ),
+    )
+  }
+  return fragment
+}
+
 interface ActiveSession {
   readonly identity: Whoami
   readonly signal: AbortSignal
@@ -926,6 +1316,7 @@ export const createReportsController = (
     },
   })
   required<HTMLElement>('[data-report-period]').appendChild(period.element)
+  const catalogField = required<HTMLElement>('[data-report-catalog-field]')
   const catalogInput = required<HTMLSelectElement>('[data-report-catalog]')
   const clientField = required<HTMLElement>('[data-report-client-field]')
   const clientLabel = required<HTMLElement>('[data-report-client-label]')
@@ -939,7 +1330,23 @@ export const createReportsController = (
   page.hidden = !reportsPage
 
   let session: ActiveSession | null = null
+  /**
+   * `reports:read` and `team:read` are different sets -- accounting is in the
+   * first and not the second -- so whether a teammate name is a link is a
+   * question about the viewer, asked of the same helper the Team screen and the
+   * nav both use rather than a second copy of the rule.
+   */
+  const canOpenTeam = (): boolean =>
+    session !== null && teamCapabilities(session.identity).canRead
   let kind: ReportKind = 'uninvoiced'
+  let timeTab: TimeReportTab = 'clients'
+  /**
+   * The last Time response, kept so the four sub-tabs redraw from it. They are
+   * four foldings of one answer, so asking the server again to switch between
+   * them would be four requests for a month it has already reported on -- and
+   * four chances for the tabs to disagree if an entry is saved between them.
+   */
+  let lastTimeReport: TimeReport | null = null
   let clients: readonly GeneralResource[] = []
   let projects: readonly GeneralResource[] = []
   /**
@@ -1001,6 +1408,7 @@ export const createReportsController = (
     ...period.range(),
     clientId: selectedId(clientInput),
     projectId: selectedId(projectInput),
+    tab: timeTab,
   })
 
   /**
@@ -1040,9 +1448,20 @@ export const createReportsController = (
     // narrowed by project or not at all, and a client control would suggest a
     // second axis the endpoint does not take. Contractor cost has neither: it
     // takes a range alone, and a picker it would ignore is worse than no picker.
+    // The Time report has neither either: it is the whole account over a
+    // period, and a narrowed one is what the client and project tabs inside it
+    // are for.
     clientField.hidden =
-      kind === 'project-budget' || kind === 'my-hours' || kind === 'contractor-cost'
-    projectField.hidden = kind === 'client-rollup' || kind === 'contractor-cost'
+      kind === 'project-budget' ||
+      kind === 'my-hours' ||
+      kind === 'contractor-cost' ||
+      kind === 'time'
+    projectField.hidden =
+      kind === 'client-rollup' || kind === 'contractor-cost' || kind === 'time'
+    // The catalog switch exists to widen those two pickers. With neither on
+    // screen it is a control that changes nothing, which is worse than an
+    // absent one: the first person to move it waits for something to happen.
+    catalogField.hidden = clientField.hidden && projectField.hidden
     clientLabel.textContent = kind === 'client-rollup' ? 'Root client' : 'Client (optional)'
     required<HTMLElement>('[data-report-project-label]').textContent =
       kind === 'project-budget' ? 'Project' : 'Project (optional)'
@@ -1151,6 +1570,22 @@ export const createReportsController = (
     )
   }
 
+  /**
+   * A sub-tab is presentation, so it redraws what is already here and pushes
+   * the address that names it. A run in flight declines the click for the same
+   * reason the kind tabs do: the report about to arrive is the one the tab
+   * would be drawing.
+   */
+  const showTimeTab = (tab: TimeReportTab): void => {
+    if (pending || tab === timeTab) return
+    timeTab = tab
+    const filters = filtersFromForm()
+    syncKindHrefs(filters)
+    globalThis.history.pushState(null, '', reportFiltersUrl(filters))
+    if (lastTimeReport === null) return
+    results.replaceChildren(renderTimeReport(lastTimeReport, filters, showTimeTab, canOpenTeam()))
+  }
+
   const renderReport = (
     filters: Readonly<ReportFilters>,
     report:
@@ -1159,9 +1594,15 @@ export const createReportsController = (
       | ProjectBudgetReport
       | MyHoursReport
       | ContractorCostReport
-      | DetailedTimeReport,
+      | DetailedTimeReport
+      | TimeReport,
   ): void => {
-    if (filters.kind === 'detailed-time') {
+    if (filters.kind === 'time') {
+      lastTimeReport = report as TimeReport
+      results.replaceChildren(
+        renderTimeReport(lastTimeReport, filters, showTimeTab, canOpenTeam()),
+      )
+    } else if (filters.kind === 'detailed-time') {
       detailedReport = report as DetailedTimeReport
       renderDetailed(detailedReport)
     } else if (filters.kind === 'my-hours') {
@@ -1210,7 +1651,8 @@ export const createReportsController = (
       api.getProjectBudgetReport === undefined ||
       api.getMyHoursReport === undefined ||
       api.getContractorCostReport === undefined ||
-      api.getDetailedTimeReport === undefined
+      api.getDetailedTimeReport === undefined ||
+      api.getTimeReport === undefined
     ) {
       clearReportPresentation()
       status.textContent = 'Reports are unavailable in this build.'
@@ -1224,12 +1666,18 @@ export const createReportsController = (
     retry.hidden = true
     retryAction = null
     detailedReport = null
+    // The cached fold belongs to the range that produced it; keeping it across
+    // a reload would let a sub-tab click redraw last month under this month's
+    // heading.
+    lastTimeReport = null
     results.replaceChildren()
     status.textContent = 'Loading report…'
     try {
       const range = { from: filters.from, to: filters.to }
       const report =
-        filters.kind === 'my-hours'
+        filters.kind === 'time'
+        ? await api.getTimeReport(range, active.signal)
+        : filters.kind === 'my-hours'
         ? await api.getMyHoursReport(
             {
               ...range,
@@ -1295,6 +1743,7 @@ export const createReportsController = (
     )
     detailedOptions = detailedTimeOptionsFromUrl(location)
     setKind(presentedKind(filters.kind, active.identity))
+    timeTab = filters.tab
     period.setRange(filters)
     populateCatalog(filters)
     updateVisibleFilters()
@@ -1335,6 +1784,7 @@ export const createReportsController = (
       clients = []
       projects = []
       detailedReport = null
+      lastTimeReport = null
       catalogFilter = 'active'
       pending = false
       retryAction = null
@@ -1360,6 +1810,7 @@ export const createReportsController = (
           clients = []
           projects = []
           detailedReport = null
+          lastTimeReport = null
           pending = false
           retryAction = null
           queuedLocationFilters = null
@@ -1382,6 +1833,7 @@ export const createReportsController = (
       )
       detailedOptions = detailedTimeOptionsFromUrl(initialLocation)
       setKind(presentedKind(initial.kind, identity))
+      timeTab = initial.tab
       period.setRange(initial)
       updateVisibleFilters()
       // A kind this profile cannot read leaves the strip rather than sitting in
@@ -1423,6 +1875,7 @@ export const createReportsController = (
           const next = queuedLocationFilters ?? initial
           queuedLocationFilters = null
           setKind(presentedKind(next.kind, identity))
+          timeTab = next.tab
           // Before the range, so the range is read under the organisation's own
           // week rather than under Monday and then re-read.
           if (settings !== null) period.setWeekStartDay(settings.week_start_day)

@@ -4,6 +4,7 @@ import type {
   DetailedTimeReport,
   DetailedTimeRow,
   GeneralResource,
+  TimeReport,
   Whoami,
 } from '@ezacto/client'
 import { describe, expect, it, vi } from 'vitest'
@@ -58,6 +59,24 @@ const writeDocument = (path: string): void => {
   document.close()
 }
 
+/** The shape with nothing in it; the tests that measure rows build their own. */
+const emptyTimeReport: TimeReport = {
+  from: '2026-08-01',
+  to: '2026-08-31',
+  totals: {
+    seconds: 0,
+    rounded_seconds: 0,
+    billable_seconds: 0,
+    time_entry_count: 0,
+    unpriced_billable_entry_count: 0,
+    amounts: [],
+  },
+  clients: [],
+  projects: [],
+  tasks: [],
+  teammates: [],
+}
+
 const baseApi = (overrides: Partial<ReportWorkspaceApi> = {}): Partial<ReportWorkspaceApi> => ({
   listReportClients: vi.fn(async () => page([client(1, 'Parent'), client(2, 'Studio', { parent_client_id: 1, currency: 'EUR' })])),
   listReportProjects: vi.fn(async () => page([project(7, 'Launch', { code: 'WEB', client_id: 2 })])),
@@ -99,6 +118,7 @@ const baseApi = (overrides: Partial<ReportWorkspaceApi> = {}): Partial<ReportWor
     rows: [],
   })),
   getDetailedTimeReport: vi.fn(async () => detailedTimeReport()),
+  getTimeReport: vi.fn(async () => emptyTimeReport),
   ...overrides,
 })
 
@@ -694,6 +714,7 @@ describe('Reports Stage 1 browser controller', () => {
     const tabs = [...document.querySelectorAll<HTMLAnchorElement>('.tabstrip a[href^="/reports"]')]
     expect(tabs.map((tab) => tab.textContent)).toEqual([
       'My hours',
+      'Time',
       'Uninvoiced work',
       'Detailed time',
       'Client rollup',
@@ -702,6 +723,7 @@ describe('Reports Stage 1 browser controller', () => {
     ])
     expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual([
       null,
+      null,
       'page',
       null,
       null,
@@ -709,12 +731,12 @@ describe('Reports Stage 1 browser controller', () => {
       null,
     ])
     // Every tab is a real address, and it carries the range being looked at.
-    expect(tabs[3]?.getAttribute('href')).toBe(
+    expect(tabs[4]?.getAttribute('href')).toBe(
       '/reports?report=client-rollup&from=2026-08-01&to=2026-08-31',
     )
 
     document.querySelector<HTMLSelectElement>('[data-report-client]')!.value = '1'
-    tabs[3]?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    tabs[4]?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     await vi.waitFor(() => expect(getClientRollupReport).toHaveBeenCalledTimes(1))
     expect(getClientRollupReport).toHaveBeenCalledWith(
       1,
@@ -725,6 +747,7 @@ describe('Reports Stage 1 browser controller', () => {
       '/reports?report=client-rollup&from=2026-08-01&to=2026-08-31&client_id=1',
     )
     expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual([
+      null,
       null,
       null,
       null,
@@ -1185,6 +1208,354 @@ describe('Reports Stage 1 browser controller', () => {
     session.abort()
   })
 
+  /**
+   * One month, four foldings. The fixture deliberately differs on every axis a
+   * fold could confuse: two clients with different hours, a project with a code
+   * and one without, one employee and one contractor.
+   */
+  const timeReportFixture: TimeReport = {
+    from: '2026-09-01',
+    to: '2026-09-30',
+    totals: {
+      // Tracked and rounded deliberately differ: on an account that rounds
+      // they are two numbers, and a column reading the wrong one is invisible
+      // in a fixture where they agree.
+      seconds: 34_200,
+      rounded_seconds: 36_000,
+      billable_seconds: 27_000,
+      time_entry_count: 4,
+      unpriced_billable_entry_count: 0,
+      amounts: [{ currency: 'USD', billable_cents: 300_000, uninvoiced_cents: 120_000 }],
+    },
+    clients: [
+      {
+        client_id: 1,
+        client_name: 'Parent',
+        seconds: 25_200,
+        rounded_seconds: 27_000,
+        billable_seconds: 27_000,
+        time_entry_count: 3,
+        unpriced_billable_entry_count: 0,
+        amounts: [{ currency: 'USD', billable_cents: 300_000, uninvoiced_cents: 120_000 }],
+      },
+      {
+        client_id: 2,
+        client_name: 'Studio',
+        seconds: 9000,
+        rounded_seconds: 9000,
+        billable_seconds: 0,
+        time_entry_count: 1,
+        unpriced_billable_entry_count: 0,
+        amounts: [],
+      },
+    ],
+    projects: [
+      {
+        project_id: 7,
+        project_name: 'Launch',
+        project_code: 'WEB',
+        client_id: 1,
+        client_name: 'Parent',
+        seconds: 25_200,
+        rounded_seconds: 27_000,
+        billable_seconds: 27_000,
+        time_entry_count: 3,
+        unpriced_billable_entry_count: 0,
+        amounts: [{ currency: 'USD', billable_cents: 300_000, uninvoiced_cents: 120_000 }],
+      },
+      {
+        project_id: 8,
+        // A project with no code stores the empty string, never null.
+        project_name: 'Internal',
+        project_code: '',
+        client_id: 2,
+        client_name: 'Studio',
+        seconds: 9000,
+        rounded_seconds: 9000,
+        billable_seconds: 0,
+        time_entry_count: 1,
+        unpriced_billable_entry_count: 0,
+        amounts: [],
+      },
+    ],
+    tasks: [
+      {
+        task_id: 1,
+        task_name: 'Delivery',
+        seconds: 25_200,
+        rounded_seconds: 27_000,
+        billable_seconds: 27_000,
+        time_entry_count: 3,
+        unpriced_billable_entry_count: 0,
+        amounts: [{ currency: 'USD', billable_cents: 300_000, uninvoiced_cents: 120_000 }],
+      },
+      {
+        task_id: 2,
+        task_name: 'Admin',
+        seconds: 9000,
+        rounded_seconds: 9000,
+        billable_seconds: 0,
+        time_entry_count: 1,
+        unpriced_billable_entry_count: 0,
+        amounts: [],
+      },
+    ],
+    teammates: [
+      {
+        user_id: 4,
+        user_name: 'Ada Byron',
+        is_contractor: true,
+        capacity_seconds: 540_000,
+        utilization_ppm: 50_000,
+        seconds: 25_200,
+        rounded_seconds: 27_000,
+        billable_seconds: 27_000,
+        time_entry_count: 3,
+        unpriced_billable_entry_count: 0,
+        amounts: [{ currency: 'USD', billable_cents: 300_000, uninvoiced_cents: 120_000 }],
+      },
+      {
+        user_id: 5,
+        user_name: 'Grace Hopper',
+        is_contractor: false,
+        capacity_seconds: 540_000,
+        utilization_ppm: 16_667,
+        seconds: 9000,
+        rounded_seconds: 9000,
+        billable_seconds: 0,
+        time_entry_count: 1,
+        unpriced_billable_entry_count: 0,
+        amounts: [],
+      },
+    ],
+  }
+
+  /** Data rows only: the Employees / Contractors bands are not rows of data. */
+  const dataRows = (): HTMLTableRowElement[] => [
+    ...document.querySelectorAll<HTMLTableRowElement>(
+      '[data-report-results] tbody tr:not(.report-group-row)',
+    ),
+  ]
+  const headers = (): string[] =>
+    [...document.querySelectorAll<HTMLElement>('[data-report-results] thead th')].map(
+      (cell) => cell.textContent ?? '',
+    )
+
+  it('[browser] folds one Time response four ways and switches tabs without asking again', async () => {
+    writeDocument('/reports?report=time&from=2026-09-01&to=2026-09-30')
+    const getTimeReport = vi.fn(async () => timeReportFixture)
+    const session = new AbortController()
+    await createReportsController(baseApi({ getTimeReport })).activate(
+      identity('administrator'),
+      session.signal,
+      () => false,
+    )
+    expect(getTimeReport).toHaveBeenCalledTimes(1)
+    expect(getTimeReport).toHaveBeenCalledWith(
+      { from: '2026-09-01', to: '2026-09-30' },
+      expect.anything(),
+    )
+
+    const summary = document.querySelector<HTMLElement>('.report-summary')
+    expect(summary, 'summary strip').not.toBeNull()
+    // 10.00 rounded, 7.50 of it billable, so 2.50 is not. Rounded, not the
+    // 9.50 tracked: this is the figure invoices and every other report count.
+    expect(summary!.textContent).toContain('10 h')
+    expect(summary!.textContent).not.toContain('9.5 h')
+    expect(summary!.textContent).toContain('7.5 h')
+    expect(summary!.textContent).toContain('2.5 h')
+    expect(summary!.textContent).toContain('$3,000.00')
+    expect(summary!.textContent).toContain('$1,200.00')
+
+    // Clients is the tab a bare address lands on, and both clients are drawn:
+    // counted first, so nothing below can pass against an empty table.
+    expect(headers()).toEqual(['Name', 'Hours', '', 'Billable hours', 'Billable amount'])
+    expect(dataRows()).toHaveLength(2)
+    expect(dataRows()[0]!.textContent).toContain('Parent')
+    // The Hours column is the rounded figure too, not the 7.00 tracked.
+    expect(dataRows()[0]!.textContent).toContain('7.5 h')
+    expect(dataRows()[0]!.textContent).not.toContain('7 h')
+    expect(dataRows()[0]!.textContent).toContain('(100%)')
+    expect(dataRows()[1]!.textContent).toContain('Studio')
+    // No billable hours means no amount to state, not zero dollars.
+    expect(dataRows()[1]!.textContent).toContain('—')
+
+    const tab = (label: string): HTMLAnchorElement => {
+      const found = [
+        ...document.querySelectorAll<HTMLAnchorElement>('.report-subtabs a'),
+      ].find((anchor) => anchor.textContent === label)
+      if (found === undefined) throw new Error(`no ${label} sub-tab`)
+      return found
+    }
+    expect(tab('Projects').getAttribute('href')).toBe(
+      '/reports?report=time&from=2026-09-01&to=2026-09-30&tab=projects',
+    )
+    tab('Projects').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    // The four tabs are folds of the response already in hand, so switching
+    // must not cost a request.
+    expect(getTimeReport).toHaveBeenCalledTimes(1)
+    expect(window.location.search).toBe(
+      '?report=time&from=2026-09-01&to=2026-09-30&tab=projects',
+    )
+    expect(headers()).toEqual([
+      'Name',
+      'Clients',
+      'Hours',
+      '',
+      'Billable hours',
+      'Billable amount',
+    ])
+    expect(dataRows()).toHaveLength(2)
+    expect(dataRows()[0]!.textContent).toContain('[WEB] Launch')
+    // A project with no code renders as its bare name: projects.code is NOT
+    // NULL DEFAULT '', so a null check alone would print "[] Internal".
+    expect(dataRows()[1]!.textContent).toContain('Internal')
+    expect(dataRows()[1]!.textContent).not.toContain('[]')
+
+    tab('Teammates').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    expect(getTimeReport).toHaveBeenCalledTimes(1)
+    expect(headers()).toEqual([
+      'Name',
+      'Hours',
+      '',
+      'Billable hours',
+      'Billable amount',
+      'Utilization',
+    ])
+    const bands = [
+      ...document.querySelectorAll<HTMLElement>('[data-report-results] .report-group-row'),
+    ].map((row) => row.textContent)
+    expect(bands).toEqual(['Employees', 'Contractors'])
+    expect(dataRows()).toHaveLength(2)
+    // The utilization the team roster would print for the same figure.
+    expect(dataRows()[0]!.textContent).toContain('1.7%')
+    expect(dataRows()[1]!.textContent).toContain('5%')
+
+    tab('Tasks').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    expect(dataRows()).toHaveLength(2)
+    expect(dataRows()[0]!.textContent).toContain('Delivery')
+    // The Total row totals the period, not the tab: it is the same figure on
+    // all four.
+    const total = document.querySelector<HTMLElement>('[data-report-results] tfoot tr')
+    expect(total, 'total row').not.toBeNull()
+    expect(total!.textContent).toContain('Total')
+    expect(total!.textContent).toContain('10 h')
+    expect(total!.textContent).toContain('$3,000.00')
+    session.abort()
+  })
+
+  it('[security] links a teammate only where the viewer may open a person', async () => {
+    // `reports:read` is accounting, executive_manager and administrator;
+    // `team:read` is project_manager, people_admin, executive_manager and
+    // administrator. Accounting sits in the first and not the second, so a
+    // teammate row linked unconditionally hands them a link to a page the shell
+    // keeps out of their nav and the Team screen refuses on arrival.
+    const open = async (profile: 'administrator' | 'accounting') => {
+      writeDocument('/reports?report=time&from=2026-09-01&to=2026-09-30&tab=teammates')
+      const session = new AbortController()
+      await createReportsController(
+        baseApi({ getTimeReport: vi.fn(async () => timeReportFixture) }),
+      ).activate(identity(profile), session.signal, () => false)
+      const rows = dataRows()
+      // Counted first: an empty table would satisfy both halves below.
+      expect(rows.length, `${profile} teammate rows`).toBeGreaterThan(0)
+      const result = {
+        names: rows.map((row) => row.querySelector('th')?.textContent ?? ''),
+        links: [...document.querySelectorAll<HTMLAnchorElement>('a[href^="/team/"]')].length,
+      }
+      session.abort()
+      return result
+    }
+
+    const asAdministrator = await open('administrator')
+    expect(asAdministrator.links).toBeGreaterThan(0)
+
+    const asAccounting = await open('accounting')
+    // The names are still there -- this withholds the link, not the report.
+    expect(asAccounting.names).toEqual(asAdministrator.names)
+    expect(asAccounting.links).toBe(0)
+  })
+
+  it('[browser] opens on the tab the address names and drops the pickers the report has no axis for', async () => {
+    writeDocument('/reports?report=time&from=2026-09-01&to=2026-09-30&tab=tasks')
+    const session = new AbortController()
+    await createReportsController(baseApi({ getTimeReport: vi.fn(async () => timeReportFixture) })).activate(
+      identity('accounting'),
+      session.signal,
+      () => false,
+    )
+    expect(
+      document.querySelector<HTMLAnchorElement>('.report-subtabs a[aria-current="page"]')
+        ?.textContent,
+    ).toBe('Tasks')
+    expect(dataRows()[0]!.textContent).toContain('Delivery')
+    // The Time report is the whole account over a period; narrowing it is what
+    // the tabs inside it are for, so a client or project picker beside it would
+    // promise an axis the endpoint does not take.
+    expect(document.querySelector<HTMLElement>('[data-report-client-field]')?.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-report-project-field]')?.hidden).toBe(true)
+    // And with both pickers gone, the switch that widens them goes too.
+    expect(document.querySelector<HTMLElement>('[data-report-catalog-field]')?.hidden).toBe(
+      true,
+    )
+    session.abort()
+  })
+
+  it('[security] draws the hours and drops the amount columns when the response carries none', async () => {
+    writeDocument('/reports?report=time&from=2026-09-01&to=2026-09-30')
+    // What a viewer without billable-rate authority receives: every hours field
+    // present and the `amounts` key absent, which is what the serializer does
+    // -- an empty array would be a different claim, that the month held no
+    // billable work.
+    const stripAmounts = <Row extends object>(row: Row): Row => {
+      const copy = { ...row } as Record<string, unknown>
+      delete copy['amounts']
+      return copy as Row
+    }
+    const withoutMoney: TimeReport = {
+      ...timeReportFixture,
+      totals: stripAmounts(timeReportFixture.totals),
+      clients: timeReportFixture.clients.map(stripAmounts),
+      projects: timeReportFixture.projects.map(stripAmounts),
+      tasks: timeReportFixture.tasks.map(stripAmounts),
+      teammates: timeReportFixture.teammates.map(stripAmounts),
+    }
+    const session = new AbortController()
+    await createReportsController(
+      baseApi({ getTimeReport: vi.fn(async () => withoutMoney) }),
+    ).activate(identity('administrator'), session.signal, () => false)
+
+    expect(dataRows()).toHaveLength(2)
+    expect(headers()).toEqual(['Name', 'Hours', '', 'Billable hours'])
+    const results = document.querySelector<HTMLElement>('[data-report-results]')!
+    expect(results.textContent).toContain('10 h')
+    expect(results.textContent).toContain('7.5 h')
+    // No money anywhere -- not a column of dashes, which would say the month
+    // had no billable value rather than that this reader may not see it.
+    expect(results.textContent).not.toContain('$')
+    expect(results.textContent).not.toContain('Billable amount')
+    expect(results.textContent).not.toContain('Uninvoiced amount')
+    session.abort()
+  })
+
+  it('[browser] counts unpriced billable hours in the hours and says they are out of the amounts', async () => {
+    writeDocument('/reports?report=time&from=2026-09-01&to=2026-09-30')
+    const session = new AbortController()
+    await createReportsController(
+      baseApi({
+        getTimeReport: vi.fn(async () => ({
+          ...timeReportFixture,
+          totals: { ...timeReportFixture.totals, unpriced_billable_entry_count: 2 },
+        })),
+      }),
+    ).activate(identity('administrator'), session.signal, () => false)
+    const warning = document.querySelector<HTMLElement>('[data-report-results] .report-warning')
+    expect(warning, 'unpriced warning').not.toBeNull()
+    expect(warning!.textContent).toContain('2 billable time entries')
+    expect(warning!.textContent).toContain('excluded from the amounts')
+    session.abort()
+  })
+
   it('[browser] narrows my hours to a chosen project and says so in the address', async () => {
     writeDocument('/reports?report=my-hours&from=2026-08-01&to=2026-08-31')
     const getMyHoursReport = vi.fn(async () => ({
@@ -1341,6 +1712,7 @@ describe('Reports Stage 1 browser controller', () => {
     const tabs = [...document.querySelectorAll('.tabstrip a[href^="/reports"]')]
     expect(tabs.map((tab) => tab.textContent)).toEqual([
       'My hours',
+      'Time',
       'Uninvoiced work',
       'Detailed time',
       'Client rollup',
@@ -1357,6 +1729,7 @@ describe('Reports Stage 1 browser controller', () => {
     // surviving fallback kind is marked, and its filters are the ones shown.
     expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual([
       'page',
+      null,
       null,
       null,
       null,
