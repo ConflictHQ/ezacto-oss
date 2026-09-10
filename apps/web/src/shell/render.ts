@@ -12,7 +12,7 @@ import { renderTeamPages } from '../team/render.js'
 import { renderExpenseCategoriesPage } from '../expense-categories/render.js'
 import { renderEmailConfigPage } from '../email-config/render.js'
 import { renderRecurringPage } from '../recurring/render.js'
-import { renderRetainerPage } from '../retainers/render.js'
+import { renderRetainerDialogs, renderRetainerPage } from '../retainers/render.js'
 import {
   renderActivityLogPage,
   renderModuleSettingsPage,
@@ -686,6 +686,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
   ${renderInvoiceLineDialogs()}
   ${renderInvoicePaymentDialogs()}
   ${renderInvoiceTransitionDialog()}
+  ${renderRetainerDialogs()}
   <dialog class="command-dialog" data-command-dialog aria-labelledby="command-title">
     <form data-command-form>
       <header><div><p class="eyebrow">Command bar</p><h2 id="command-title">Go or log time</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
