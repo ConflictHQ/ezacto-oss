@@ -779,6 +779,94 @@ describe('Reports Stage 1 browser controller', () => {
     expect(document.querySelector('[data-report-results]')?.textContent).toBe('')
   })
 
+  it('[browser] offers active projects by default and archived ones on request', async () => {
+    // #495: 66 of the 78 projects on the reporting account are archived, so a
+    // picker that lists every one of them buries the twelve somebody is looking
+    // for. Archived work stays reportable, which is why this is the picker's
+    // default and not a restriction on what can be asked for.
+    writeDocument('/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31')
+    const api = baseApi({
+      listReportClients: vi.fn(async () =>
+        page([client(1, 'Parent'), client(3, 'Wound down', { is_active: false })]),
+      ),
+      listReportProjects: vi.fn(async () =>
+        page([
+          project(7, 'Launch', { code: 'WEB', client_id: 2 }),
+          project(8, 'Retired rebrand', { is_active: false }),
+        ]),
+      ),
+    })
+    const session = new AbortController()
+    await createReportsController(api).activate(
+      identity('administrator'),
+      session.signal,
+      () => false,
+    )
+
+    const projectPicker = document.querySelector<HTMLSelectElement>('[data-report-project]')!
+    const clientPicker = document.querySelector<HTMLSelectElement>('[data-report-client]')!
+    const optionValues = (picker: HTMLSelectElement): string[] =>
+      [...picker.options].map((choice) => choice.value)
+    expect(optionValues(projectPicker)).toEqual(['', '7'])
+    expect(optionValues(clientPicker)).toEqual(['', '1'])
+
+    const catalog = document.querySelector<HTMLSelectElement>('[data-report-catalog]')!
+    expect(catalog.value).toBe('active')
+    catalog.value = 'all'
+    catalog.dispatchEvent(new Event('change', { bubbles: true }))
+
+    expect(optionValues(projectPicker)).toEqual(['', '7', '8'])
+    expect(optionValues(clientPicker)).toEqual(['', '1', '3'])
+    // Widened, the archived entries say so rather than passing for live work.
+    expect([...projectPicker.options].map((choice) => choice.textContent)).toContain(
+      'Retired rebrand (archived)',
+    )
+    // Only one catalog request each way: widening is a re-dress of what is
+    // already in hand, not a second trip.
+    expect(api.listReportProjects).toHaveBeenCalledTimes(1)
+    session.abort()
+  })
+
+  it('[browser] keeps an archived project listed while its report is the one on screen', async () => {
+    // The link out of the project directory, and the bookmark: the report is
+    // this archived project's, so dropping its option would quietly retarget
+    // the picker to "All projects" and disagree with the results underneath.
+    writeDocument('/reports?report=project-budget&from=2026-08-01&to=2026-08-31&project_id=8')
+    const getProjectBudgetReport = vi.fn(async () => ({
+      project_id: 8,
+      budget_by: 'project' as const,
+      expenses_included: false,
+      from: '2026-08-01',
+      to: '2026-08-31',
+      grains: [],
+    }))
+    const session = new AbortController()
+    await createReportsController(
+      baseApi({
+        getProjectBudgetReport,
+        listReportProjects: vi.fn(async () =>
+          page([
+            project(7, 'Launch', { code: 'WEB', client_id: 2 }),
+            project(8, 'Retired rebrand', { is_active: false }),
+          ]),
+        ),
+      }),
+    ).activate(identity('administrator'), session.signal, () => false)
+
+    const projectPicker = document.querySelector<HTMLSelectElement>('[data-report-project]')!
+    expect(document.querySelector<HTMLSelectElement>('[data-report-catalog]')?.value).toBe(
+      'active',
+    )
+    expect([...projectPicker.options].map((choice) => choice.value)).toEqual(['', '7', '8'])
+    expect(projectPicker.value).toBe('8')
+    expect(getProjectBudgetReport).toHaveBeenCalledWith(
+      8,
+      { from: '2026-08-01', to: '2026-08-31' },
+      expect.anything(),
+    )
+    session.abort()
+  })
+
   it('[browser] exposes an accessible error retry and honest empty state', async () => {
     writeDocument('/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31')
     const getUninvoicedReport = vi
