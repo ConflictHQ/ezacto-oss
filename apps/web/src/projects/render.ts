@@ -30,6 +30,7 @@ export const renderProjectDirectoryPages = (view?: string): string => `
         <a href="/projects">Back to projects</a>
         <button type="button" data-project-edit data-project-mutation-action data-project-write data-auth-action hidden disabled>Edit</button>
         <button type="button" data-project-archive data-project-mutation-action data-project-write data-auth-action hidden disabled>Archive</button>
+        <button type="button" data-project-restore data-project-mutation-action data-project-write data-auth-action hidden disabled>Restore</button>
       </div>
     </header>
     <p class="form-result project-page-status" data-project-detail-status role="status" aria-live="polite">Loading project…</p>

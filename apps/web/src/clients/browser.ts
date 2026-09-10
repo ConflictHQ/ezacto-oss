@@ -159,6 +159,8 @@ export const createClientDirectoryController = (
   const contactFormTitle = required<HTMLElement>('[data-contact-form-title]')
   const contactFormResult = required<HTMLElement>('[data-contact-form-result]')
   const contactFormSubmit = required<HTMLButtonElement>('[data-contact-form-submit]')
+  const clientArchive = required<HTMLButtonElement>('[data-client-archive]')
+  const clientRestore = required<HTMLButtonElement>('[data-client-restore]')
   const clientArchiveDialog = required<HTMLDialogElement>('[data-client-archive-dialog]')
   const clientArchiveForm = required<HTMLFormElement>('[data-client-archive-form]')
   const clientArchiveResult = required<HTMLElement>('[data-client-archive-result]')
@@ -210,11 +212,24 @@ export const createClientDirectoryController = (
   const currentSession = (): ActiveSession | null =>
     session === null || session.signal.aborted ? null : session
 
+  // Archive and Restore are one decision read from either side, so the header
+  // carries whichever one the client is not already in: an Archive button on an
+  // archived client is dead weight, and a Restore button on an active one
+  // offers a state it is already in. The write sweep below cannot make that
+  // call -- it only knows whether this session may write at all.
+  const syncStatusActions = (): void => {
+    const writable = session !== null && clientProfileCanWrite(session.identity.profile)
+    const archived = currentClient !== null && !clientIsActive(currentClient)
+    clientArchive.hidden = !writable || archived
+    clientRestore.hidden = !writable || !archived
+  }
+
   const enableWrites = (enabled: boolean): void => {
     for (const element of document.querySelectorAll<HTMLElement>('[data-client-write]')) {
       element.hidden = !enabled
       if (element instanceof HTMLButtonElement) element.disabled = !enabled
     }
+    syncStatusActions()
   }
 
   const option = (client: GeneralResource): HTMLOptionElement => {
@@ -489,6 +504,7 @@ export const createClientDirectoryController = (
     setText('[data-client-detail-address]', clientText(currentClient, 'address') ?? 'None')
     renderProjects()
     renderContacts()
+    syncStatusActions()
     detail.hidden = false
     detailStatus.textContent = 'Client details loaded.'
   }
@@ -620,10 +636,48 @@ export const createClientDirectoryController = (
   required<HTMLButtonElement>('[data-contact-create]').addEventListener('click', () =>
     openContactForm(null),
   )
-  required<HTMLButtonElement>('[data-client-archive]').addEventListener('click', () => {
+  clientArchive.addEventListener('click', () => {
     if (currentClient === null) return
     clientArchiveResult.textContent = ''
     clientArchiveDialog.showModal()
+  })
+  // Restoring takes nothing away, so it does not stop to ask -- the dialog in
+  // front of Archive is there because archiving hides the client from every
+  // picker that offers it. The patch names the one field it changes rather than
+  // resubmitting the edit form's payload: nothing else about the client is
+  // being decided here.
+  clientRestore.addEventListener('click', () => {
+    const active = currentSession()
+    if (
+      active === null ||
+      currentClient === null ||
+      mutationPending ||
+      !clientProfileCanWrite(active.identity.profile) ||
+      api.updateDirectoryClient === undefined
+    ) {
+      return
+    }
+    mutationPending = true
+    clientRestore.disabled = true
+    detailStatus.textContent = 'Restoring client…'
+    api.updateDirectoryClient(currentClient.id, { is_active: true }, active.signal)
+      .then((saved) => {
+        if (currentSession() !== active) return
+        currentClient = saved
+        renderDetail()
+        detailStatus.textContent = 'Client restored.'
+      })
+      .catch((error: unknown) => {
+        active.presentFailure(error, () => {
+          detailStatus.textContent = messageFor(error)
+        })
+      })
+      .finally(() => {
+        if (currentSession() === active) {
+          mutationPending = false
+          clientRestore.disabled = false
+        }
+      })
   })
   listRetry.addEventListener('click', () => void refreshList())
   detailRetry.addEventListener('click', () => void refreshDetail())

@@ -256,6 +256,8 @@ export const createProjectDirectoryController = (
   const assignmentFormTitle = required<HTMLElement>('[data-task-assignment-title]')
   const assignmentFormResult = required<HTMLElement>('[data-task-assignment-form-result]')
   const assignmentFormSubmit = required<HTMLButtonElement>('[data-task-assignment-form-submit]')
+  const archiveAction = required<HTMLButtonElement>('[data-project-archive]')
+  const restoreAction = required<HTMLButtonElement>('[data-project-restore]')
   const archiveDialog = required<HTMLDialogElement>('[data-project-archive-dialog]')
   const archiveForm = required<HTMLFormElement>('[data-project-archive-form]')
   const archiveResult = required<HTMLElement>('[data-project-archive-result]')
@@ -352,6 +354,18 @@ export const createProjectDirectoryController = (
     closeDialogs()
   }
 
+  // Archive and Restore are one decision read from either side, so the header
+  // carries whichever one the project is not already in: the Archive button on
+  // an archived project already refused its own click, and a Restore button on
+  // an active one offers a state it is already in. The write sweep below cannot
+  // make that call -- it only knows whether this session may write at all.
+  const syncStatusActions = (): void => {
+    const writable = currentSession()?.capabilities.canWrite === true
+    const archived = currentProject !== null && !projectIsActive(currentProject)
+    archiveAction.hidden = !writable || archived
+    restoreAction.hidden = !writable || !archived
+  }
+
   const enableWrites = (enabled: boolean): void => {
     for (const element of document.querySelectorAll<HTMLElement>('[data-project-write]')) {
       element.hidden = !enabled
@@ -360,6 +374,7 @@ export const createProjectDirectoryController = (
           (mutationPending && element.hasAttribute('data-project-mutation-action'))
       }
     }
+    syncStatusActions()
   }
 
   const clientOption = (client: GeneralResource): HTMLOptionElement => {
@@ -1108,6 +1123,7 @@ export const createProjectDirectoryController = (
       required<HTMLElement>('[data-project-detail-name]').textContent = projectDisplayName(currentProject)
       detail.hidden = false
       detailStatus.textContent = projectIsActive(currentProject) ? 'Project loaded.' : 'Archived project loaded.'
+      syncStatusActions()
       renderFacts()
       renderAssignments()
       attachmentForm.hidden = !active.capabilities.canWrite
@@ -1123,10 +1139,43 @@ export const createProjectDirectoryController = (
 
   required<HTMLButtonElement>('[data-project-create]').addEventListener('click', () => openProjectForm(null))
   required<HTMLButtonElement>('[data-project-edit]').addEventListener('click', () => openProjectForm(currentProject))
-  required<HTMLButtonElement>('[data-project-archive]').addEventListener('click', () => {
+  archiveAction.addEventListener('click', () => {
     if (currentProject === null || !projectIsActive(currentProject)) return
     archiveResult.textContent = ''
     archiveDialog.showModal()
+  })
+  // Restoring takes nothing away, so it does not stop to ask -- the dialog in
+  // front of Archive is there because archiving takes the project off every
+  // timesheet that could still be tracking to it. The patch names the one field
+  // it changes rather than resubmitting the edit form's payload: nothing else
+  // about the project is being decided here.
+  restoreAction.addEventListener('click', () => {
+    const active = currentSession()
+    if (
+      active === null ||
+      !active.capabilities.canWrite ||
+      currentProject === null ||
+      projectIsActive(currentProject) ||
+      mutationPending ||
+      api.updateDirectoryProject === undefined
+    ) return
+    const projectId = currentProject.id
+    setMutationPending(true)
+    detailStatus.textContent = 'Restoring project…'
+    void api.updateDirectoryProject(projectId, { is_active: true }, active.signal)
+      .then(async () => {
+        if (currentSession() !== active) return
+        await loadDetail(active)
+        if (currentSession() === active) detailStatus.textContent = 'Project restored.'
+      })
+      .catch((error: unknown) => {
+        active.presentFailure(error, () => {
+          detailStatus.textContent = messageFor(error)
+        })
+      })
+      .finally(() => {
+        if (currentSession() === active) setMutationPending(false)
+      })
   })
   required<HTMLButtonElement>('[data-task-assignment-create]').addEventListener('click', () => openAssignmentForm(null))
   required<HTMLButtonElement>('[data-project-dialog-close]').addEventListener('click', () => projectDialog.close())

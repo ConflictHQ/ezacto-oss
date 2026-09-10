@@ -251,6 +251,77 @@ describe('Expense category browser controller', () => {
     expect(window.location.search).toBe('?status=all')
   })
 
+  it('[browser #486] restores an archived category into the active list without confirming', async () => {
+    // Archived is the majority state on a migrated account, so the archived row
+    // is the one an operator meets first -- and until now the only way out of it
+    // was a token and a terminal.
+    writeDocument('/expense-categories?status=all')
+    let categories: ExpenseCategory[] = [{ ...direct, is_active: false }]
+    const listDirectoryExpenseCategories = vi.fn(async (activeOnly: boolean) =>
+      page(categories.filter((category) => !activeOnly || category.is_active)),
+    )
+    const updateDirectoryExpenseCategory = vi.fn(async (id: number, patch) => {
+      const current = categories.find((category) => category.id === id)!
+      const updated = { ...current, ...patch }
+      categories = categories.map((category) => (category.id === id ? updated : category))
+      return updated
+    })
+    const archiveDirectoryExpenseCategory = vi.fn(async () => direct)
+    await createExpenseCategoryDirectoryController(
+      baseApi({
+        listDirectoryExpenseCategories,
+        updateDirectoryExpenseCategory,
+        archiveDirectoryExpenseCategory,
+      }),
+    ).activate(identity('administrator'), new AbortController().signal, () => false)
+
+    const archived = document.querySelector<HTMLElement>('[data-row-key="1"]')!
+    expect([...archived.querySelectorAll('button')].map((button) => button.textContent)).toEqual([
+      'Edit',
+      'Restore',
+    ])
+    ;[...archived.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Restore')!
+      .click()
+
+    await vi.waitFor(() =>
+      expect(updateDirectoryExpenseCategory).toHaveBeenCalledWith(
+        1,
+        { is_active: true },
+        expect.any(AbortSignal),
+      ),
+    )
+    expect(
+      document.querySelector<HTMLDialogElement>('[data-expense-category-archive-dialog]')!.open,
+    ).toBe(false)
+    expect(archiveDirectoryExpenseCategory).not.toHaveBeenCalled()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-expense-category-status]')?.textContent).toBe(
+        'Category restored.',
+      ),
+    )
+    const restored = document.querySelector<HTMLElement>('[data-row-key="1"]')!
+    expect(restored.textContent).toContain('Active')
+    expect([...restored.querySelectorAll('button')].map((button) => button.textContent)).toEqual([
+      'Edit',
+      'Archive',
+    ])
+
+    document.querySelector<HTMLButtonElement>('[data-expense-category-filter="active"]')!.click()
+    await vi.waitFor(() =>
+      expect(listDirectoryExpenseCategories).toHaveBeenLastCalledWith(
+        true,
+        undefined,
+        expect.any(AbortSignal),
+      ),
+    )
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-expense-category-list]')?.textContent).toContain(
+        'Travel',
+      ),
+    )
+  })
+
   it('[security] lets expense readers view categories without rendering mutation controls', async () => {
     writeDocument('/expense-categories?status=all')
     const api = baseApi()

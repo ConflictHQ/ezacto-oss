@@ -378,6 +378,57 @@ describe('Projects V1 browser controller', () => {
     expect(archiveProjectTaskAssignment).not.toHaveBeenCalled()
   })
 
+  it('[browser #486] restores an archived project from the detail header', async () => {
+    // 66 of this account's 78 projects arrived archived, and DELETE is Harvest's
+    // archive: without this the header offered a one-way door.
+    writeDocument('project-detail', '/projects/7')
+    let stored: GeneralResource = { ...project, is_active: false }
+    const getDirectoryProject = vi.fn(async () => stored)
+    const updateDirectoryProject = vi.fn(async (_id: number, patch: Record<string, unknown>) => {
+      stored = { ...stored, ...patch }
+      return stored
+    })
+    const archiveDirectoryProject = vi.fn(async () => undefined)
+    const api = detailApi({ getDirectoryProject, updateDirectoryProject, archiveDirectoryProject })
+
+    await createProjectDirectoryController(api).activate(
+      identity('administrator'),
+      new AbortController().signal,
+      () => false,
+    )
+
+    const archiveAction = document.querySelector<HTMLButtonElement>('[data-project-archive]')!
+    const restoreAction = document.querySelector<HTMLButtonElement>('[data-project-restore]')!
+    expect(document.querySelector('[data-project-facts]')?.textContent).toContain('Archived')
+    expect(archiveAction.hidden).toBe(true)
+    expect(restoreAction.hidden).toBe(false)
+
+    restoreAction.click()
+
+    await vi.waitFor(() =>
+      expect(updateDirectoryProject).toHaveBeenCalledWith(
+        7,
+        { is_active: true },
+        expect.any(AbortSignal),
+      ),
+    )
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-project-detail-status]')?.textContent).toBe(
+        'Project restored.',
+      ),
+    )
+    // The detail is reloaded rather than patched in place, so the Status fact is
+    // what the server now holds and not what the click hoped for.
+    expect(getDirectoryProject).toHaveBeenCalledTimes(2)
+    expect(document.querySelector('[data-project-facts]')?.textContent).not.toContain('Archived')
+    expect(
+      document.querySelector<HTMLDialogElement>('[data-project-archive-dialog]')!.open,
+    ).toBe(false)
+    expect(archiveDirectoryProject).not.toHaveBeenCalled()
+    expect(archiveAction.hidden).toBe(false)
+    expect(restoreAction.hidden).toBe(true)
+  })
+
   it('[browser] drops the Costs column rather than filling it with dashes', async () => {
     // A viewer whose profile cannot see cost gets no cost_cents on any row, so
     // the column would be an em dash in every cell -- which reads as "no cost
