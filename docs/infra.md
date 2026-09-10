@@ -260,7 +260,7 @@ reports that SHA**. A wrangler exit code says the upload was accepted — not th
 the domain resolves, the certificate is up, or the route is bound. The target
 host is read out of `wrangler.jsonc`, never repeated in the workflow.
 
-## The public demo (`ezacto.io`)
+## The public demo
 
 The dev deployment doubles as the demo anyone can click through. It publishes
 its own sign-in credentials on its front page, so the guarantee that makes that
@@ -268,7 +268,7 @@ tolerable is that nothing done to it survives the night.
 
 | | |
 | --- | --- |
-| Brand | **Folding Forks** — an invented firm; nothing here is CONFLICT's. The sign-in page and the brand tagline are where it says so |
+| Brand | **Folding Forks** — an invented firm; none of it is anyone's real book. The sign-in page and the brand tagline are where it says so |
 | Sign-in | `admin@example.com` / `folding-forks-admin`, `user@example.com` / `folding-forks-user` |
 | Data | 20 people, 8 clients, 16 projects, three years of hours, expenses and invoices — all invented, all `@example.com` (RFC 2606, so demo mail can never reach a real person) |
 | Rebuild | `0 3 * * *` empties and reseeds; the every-minute cron bills the backlog ten client-months at a time |

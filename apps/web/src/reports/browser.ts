@@ -11,6 +11,7 @@ import {
   type Whoami,
 } from '@ezacto/client'
 import { createPeriodControl } from '../components/period.js'
+import { moneyText } from '../money-display.js'
 import {
   canReadCostReports,
   canReadFinancialReports,
@@ -140,10 +141,36 @@ const catalogLabel = (
 const countLabel = (count: number, singular: string, plural = `${singular}s`): string =>
   `${count.toLocaleString('en-US')} ${count === 1 ? singular : plural}`
 
-const fact = (term: string, detail: string): HTMLDivElement => {
+const fact = (term: string, detail: string | Node): HTMLDivElement => {
   const wrapper = element('div')
-  wrapper.append(textElement('dt', term), textElement('dd', detail))
+  const value = element('dd')
+  value.append(detail)
+  wrapper.append(textElement('dt', term), value)
   return wrapper
+}
+
+/**
+ * A report amount, marked as one. The em dash a withheld or absent figure
+ * renders is left unmarked: it is the absence of an amount, and dots over it
+ * would claim there is a number behind them.
+ */
+const reportMoney = (
+  cents: number | null | undefined,
+  currency: string,
+): string | HTMLSpanElement => {
+  const label = formatReportMoney(cents, currency)
+  return cents === null || cents === undefined ? label : moneyText(label)
+}
+
+const reportCents = (cents: number | null | undefined): string | HTMLSpanElement => {
+  const label = formatReportCents(cents)
+  return cents === null || cents === undefined ? label : moneyText(label)
+}
+
+const moneyCell = (cents: number | null | undefined, currency: string): HTMLTableCellElement => {
+  const cell = element('td')
+  cell.append(reportMoney(cents, currency))
+  return cell
 }
 
 const warning = (message: string): HTMLParagraphElement => {
@@ -275,12 +302,14 @@ const renderUninvoiced = (report: Readonly<UninvoicedReport>): DocumentFragment 
   for (const total of report.totals) {
     const card = element('article', 'report-currency-card')
     const header = element('header')
-    header.append(textElement('h3', total.currency), textElement('strong', formatReportMoney(total.total_cents, total.currency)))
+    const headline = element('strong')
+    headline.append(reportMoney(total.total_cents, total.currency))
+    header.append(textElement('h3', total.currency), headline)
     const facts = element('dl', 'report-facts')
     facts.append(
       fact('Tracked time', formatReportHours(total.rounded_seconds)),
-      fact('Time amount', formatReportMoney(total.time_cents, total.currency)),
-      fact('Expense amount', formatReportMoney(total.expense_cents, total.currency)),
+      fact('Time amount', reportMoney(total.time_cents, total.currency)),
+      fact('Expense amount', reportMoney(total.expense_cents, total.currency)),
       fact('Time entries', total.time_entry_count.toLocaleString('en-US')),
       fact('Expenses', total.expense_count.toLocaleString('en-US')),
     )
@@ -332,10 +361,10 @@ const currencyTable = (metrics: Readonly<ClientRollupMetrics>): HTMLElement => {
       const row = element('tr')
       row.append(
         textElement('th', currency.currency),
-        textElement('td', formatReportMoney(currency.expense_cents, currency.currency)),
-        textElement('td', formatReportMoney(currency.uninvoiced_total_cents, currency.currency)),
-        textElement('td', formatReportMoney(currency.money_budget_cents, currency.currency)),
-        textElement('td', formatReportMoney(currency.cost_cents, currency.currency)),
+        moneyCell(currency.expense_cents, currency.currency),
+        moneyCell(currency.uninvoiced_total_cents, currency.currency),
+        moneyCell(currency.money_budget_cents, currency.currency),
+        moneyCell(currency.cost_cents, currency.currency),
       )
       ;(row.firstElementChild as HTMLTableCellElement).scope = 'row'
       body.append(row)
@@ -471,9 +500,11 @@ const renderProjectBudget = (
       )
     } else {
       facts.append(
-        fact('Budget', formatReportCents(grain.budget_cents)),
-        fact('Spent', formatReportCents(grain.spent_cents)),
-        fact('Remaining', formatReportCents(grain.remaining_cents)),
+        // The seconds branch above is the same three facts in hours, and it
+        // carries no marker: a budget measured in time is not money.
+        fact('Budget', reportCents(grain.budget_cents)),
+        fact('Spent', reportCents(grain.spent_cents)),
+        fact('Remaining', reportCents(grain.remaining_cents)),
       )
     }
     item.append(header, facts)

@@ -46,6 +46,13 @@ a7f98dc929b3dc4d98abe951e6b0cc9c9df26aeb:packages/migrate/test/worksheets.test.t
 6b76ed5547937059a37566ab41cbf5b624630267:packages/mailer/test/mailgun.test.ts:generic-api-key:5
 6b76ed5547937059a37566ab41cbf5b624630267:packages/mailer/test/mailgun.test.ts:generic-api-key:57
 
+# An SSO domain-verification test fixture: a DNS challenge token is written by
+# the server from random bytes and is then published by the domain owner in a
+# public TXT record to prove ownership, so a value of that shape is not
+# authentication material by design — migration `0039_sso_provisioning_domains.ts`
+# documents exactly that. The domain in the fixture is a reserved `.test` name.
+# Current source composes the value at runtime rather than pasting a literal;
+# the historical occurrence is pinned here because history is scanned.
 # An SSO domain-verification challenge token in a test. A challenge token is
 # written by the server from random bytes and is then published by the domain
 # owner in a public TXT record to prove ownership, so a value of this shape is

@@ -1,4 +1,5 @@
-import { renderDataTable } from '../components/data-table.js'
+import { renderDataTable, type CellContent } from '../components/data-table.js'
+import { markMoney, moneyText } from '../money-display.js'
 import {
   EzactoApiError,
   type GeneralResource,
@@ -34,6 +35,7 @@ import {
   retainerBalanceLabel,
   retainerBasisLabel,
   retainerClientLabel,
+  retainerCommitment,
   retainerCommitmentLabel,
   retainerCurrency,
   retainerDenominationUnit,
@@ -116,6 +118,22 @@ const localDate = (): string => {
 
 const text = (selector: string, value: string): void => {
   required<HTMLElement>(selector).textContent = value
+}
+
+/**
+ * A retainer is denominated in money or in hours, and the same column, fact and
+ * ledger row carries whichever this one is. So the money marker follows the
+ * denomination of the row rather than the heading above it -- marking the column
+ * would mask an hours retainer's ledger, which is not money and not the reader's
+ * to lose.
+ */
+const denominated = (value: string, isMoney: boolean): CellContent =>
+  isMoney ? moneyText(value) : value
+
+const denominatedText = (selector: string, value: string, isMoney: boolean): void => {
+  const element = required<HTMLElement>(selector)
+  element.textContent = value
+  markMoney(element, isMoney)
 }
 
 const factRow = (selector: string, visible: boolean): void => {
@@ -469,14 +487,22 @@ export const createRetainerWorkspaceController = (
             label: 'On retainer',
             numeric: true,
             render: (retainer) =>
-              retainerCommitmentLabel(retainer, retainerCurrency(retainer, clients)),
+              denominated(
+                retainerCommitmentLabel(retainer, retainerCurrency(retainer, clients)),
+                // "Not recorded" is not an amount, whatever the denomination.
+                retainerDenominationUnit(retainer) === 'cents' &&
+                  retainerCommitment(retainer) !== null,
+              ),
           },
           {
             key: 'balance',
             label: 'Remaining',
             numeric: true,
             render: (retainer) =>
-              retainerBalanceLabel(retainer, retainerCurrency(retainer, clients)),
+              denominated(
+                retainerBalanceLabel(retainer, retainerCurrency(retainer, clients)),
+                retainerDenominationUnit(retainer) === 'cents',
+              ),
           },
           {
             key: 'share',
@@ -543,23 +569,30 @@ export const createRetainerWorkspaceController = (
             label: 'Amount',
             numeric: true,
             render: (movement) =>
-              retainerAmount(movement.entry.amount, movement.entry.unit, currency),
+              denominated(
+                retainerAmount(movement.entry.amount, movement.entry.unit, currency),
+                movement.entry.unit === 'cents',
+              ),
             // The ledger's own sum, which is the balance by invariant 10. It
             // reads beside the last running balance, so a total computed some
             // other way would be a visible contradiction rather than a hidden
             // one.
             total: (rows) =>
-              retainerAmount(
-                rows.reduce((sum, movement) => sum + movement.entry.amount, 0),
-                unit,
-                currency,
+              denominated(
+                retainerAmount(
+                  rows.reduce((sum, movement) => sum + movement.entry.amount, 0),
+                  unit,
+                  currency,
+                ),
+                unit === 'cents',
               ),
           },
           {
             key: 'running',
             label: 'Balance',
             numeric: true,
-            render: (movement) => retainerAmount(movement.balance, unit, currency),
+            render: (movement) =>
+              denominated(retainerAmount(movement.balance, unit, currency), unit === 'cents'),
           },
         ],
       }),
@@ -575,19 +608,47 @@ export const createRetainerWorkspaceController = (
     const summary = retainerLedgerSummary(entries)
     text('[data-retainer-detail-client]', retainerClientLabel(retainer, clients))
     text('[data-retainer-detail-title]', `Retainer #${String(retainer.id)}`)
-    text('[data-retainer-commitment]', retainerCommitmentLabel(retainer, currency))
-    text('[data-retainer-deposited]', retainerAmount(summary.deposited, unit, currency))
-    text('[data-retainer-drawn]', retainerAmount(summary.drawnDown, unit, currency))
-    text('[data-retainer-expired]', retainerAmount(summary.expired, unit, currency))
-    text('[data-retainer-adjusted]', retainerAmount(summary.adjusted, unit, currency))
-    text('[data-retainer-remaining]', retainerBalanceLabel(retainer, currency))
+    const inMoney = unit === 'cents'
+    denominatedText(
+      '[data-retainer-commitment]',
+      retainerCommitmentLabel(retainer, currency),
+      inMoney && retainerCommitment(retainer) !== null,
+    )
+    denominatedText(
+      '[data-retainer-deposited]',
+      retainerAmount(summary.deposited, unit, currency),
+      inMoney,
+    )
+    denominatedText(
+      '[data-retainer-drawn]',
+      retainerAmount(summary.drawnDown, unit, currency),
+      inMoney,
+    )
+    denominatedText(
+      '[data-retainer-expired]',
+      retainerAmount(summary.expired, unit, currency),
+      inMoney,
+    )
+    denominatedText(
+      '[data-retainer-adjusted]',
+      retainerAmount(summary.adjusted, unit, currency),
+      inMoney,
+    )
+    denominatedText(
+      '[data-retainer-remaining]',
+      retainerBalanceLabel(retainer, currency),
+      inMoney,
+    )
     factRow('[data-retainer-share-row]', retainerRemainingShare(retainer) !== null)
     text('[data-retainer-share]', retainerRemainingShareLabel(retainer))
     const lockedValue = retainerLockedRateValueCents(retainer, retainer.balance)
     factRow('[data-retainer-locked-value-row]', lockedValue !== null)
-    text(
+    // Always money whatever the denomination: it is an hours retainer's
+    // balance priced at the rate the retainer locked.
+    denominatedText(
       '[data-retainer-locked-value]',
       lockedValue === null ? '—' : retainerMoney(lockedValue, currency),
+      lockedValue !== null,
     )
     text(
       '[data-retainer-scope]',

@@ -368,6 +368,78 @@ describe('home dashboard', () => {
     expect(note('owed')).toBe('1 invoice past due.')
   })
 
+  it('[browser #521] marks the two figures that are money and leaves the hours and the count alone', async () => {
+    // The distinction the $ toggle turns on, on the one screen that draws all
+    // three kinds of number at once. A week of hours and a queue depth are not
+    // amounts and stay on screen when the amounts go -- masking a timesheet
+    // would be a different feature and a worse one.
+    //
+    // Discretion, not permission: the payload is unchanged, `canViewMoneyField`
+    // is not consulted, and the card still holds the figure it declines to draw.
+    renderDashboard()
+    await mountShell(
+      dashboardApi('administrator', {
+        getUninvoicedReport: vi.fn(async () => uninvoicedReport(true)),
+        listInvoices: vi.fn(async () => ({
+          data: [invoice({ id: 1, due_amount_cents: 90_000 })],
+          page: { next_cursor: null },
+        })),
+        listPendingTimesheetSubmissions: vi.fn(async () => ({
+          submissions: [submission(9)],
+          nextCursor: null,
+        })),
+      }),
+    )
+    await vi.waitFor(() => expect(cardKeys()).toEqual(['week', 'approvals', 'uninvoiced', 'owed']))
+    await vi.waitFor(() => expect(figure('owed')).toBe('$900.00'))
+
+    // Counted before the split, so a run that found no figures at all cannot
+    // pass the comparison below by matching two empty sets.
+    const figures = [...document.querySelectorAll('[data-dashboard-figure]')]
+    expect(figures).toHaveLength(4)
+    const marked = figures
+      .filter((element) => element.classList.contains('money'))
+      .map((element) =>
+        element.closest('[data-dashboard-card]')!.getAttribute('data-dashboard-card'),
+      )
+    expect(marked).toEqual(['uninvoiced', 'owed'])
+    expect(figure('week')).toBe('3 h')
+    expect(figure('approvals')).toBe('1')
+
+    const control = document.querySelector<HTMLButtonElement>('[data-money-toggle]')!
+    control.click()
+    expect(document.documentElement.getAttribute('data-money')).toBe('hidden')
+    // The figures are still there to be totalled and linked from; the stylesheet
+    // is what declines to draw the two that said they are amounts.
+    expect(figure('uninvoiced')).toBe('$1,250.00')
+    expect(figure('week')).toBe('3 h')
+  })
+
+  it('[browser #521] takes the marker off a card that has no amount to show', async () => {
+    // "None" is a statement about the book, not a figure, and dots drawn over it
+    // would claim there is a number behind them.
+    renderDashboard()
+    await mountShell(
+      dashboardApi('administrator', {
+        getUninvoicedReport: vi.fn(async () => uninvoicedReport(true)),
+        listInvoices: vi.fn(async () => ({ data: [], page: { next_cursor: null } })),
+      }),
+    )
+    await vi.waitFor(() => expect(figure('owed')).toBe('None'))
+    expect(
+      document
+        .querySelector('[data-dashboard-card="owed"] [data-dashboard-figure]')!
+        .classList.contains('money'),
+    ).toBe(false)
+    // And the card beside it, which does have one, still carries it.
+    await vi.waitFor(() => expect(figure('uninvoiced')).toBe('$1,250.00'))
+    expect(
+      document
+        .querySelector('[data-dashboard-card="uninvoiced"] [data-dashboard-figure]')!
+        .classList.contains('money'),
+    ).toBe(true)
+  })
+
   it("[security #491] keeps the firm's directories out of a member's nav and leaves a manager's whole", async () => {
     // Projects, Tasks and Clients browse the firm rather than the reader. A
     // member's nav is the four sections that are their own work, and the
