@@ -9,6 +9,7 @@ import {
   type AttachmentDatabase,
   type AttachmentMetadataInput,
 } from '../src/attachments.js'
+import { sampleReceiptBytes } from './fixtures/sample-receipt.js'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import {
   invoiceLifecycleMigration,
@@ -647,7 +648,7 @@ for (const [runtime, factory] of factories) {
       const fixture = JSON.parse(
         await readFile(new URL('fixtures/harvest-expense.json', import.meta.url), 'utf8'),
       ) as HarvestExpenseFixture
-      const bytes = await readFile(new URL('fixtures/harvest-receipt.pdf', import.meta.url))
+      const bytes = await sampleReceiptBytes()
       const hash = await sha256ContentHash(bytes)
       expect(bytes.byteLength).toBe(fixture.receipt.file_size)
       expect(hash).toBe('eadef7418e14af08d4dab416d408d94121199f49e60eed1caa7a6bec3b16ebe0')

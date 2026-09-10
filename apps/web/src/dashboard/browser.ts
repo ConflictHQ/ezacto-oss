@@ -5,6 +5,7 @@ import {
   type Whoami,
 } from '@ezacto/client'
 import { formatReportHours, formatReportMoney } from '../reports/model.js'
+import { markMoney, moneyText } from '../money-display.js'
 import { localDate, weekRange } from '../shell/model.js'
 import {
   dashboardCards,
@@ -111,8 +112,18 @@ export const createDashboardController = (api: DashboardApi): DashboardControlle
     return element
   }
 
-  const setFigure = (key: DashboardCardKey, value: string): void => {
-    part(key, '[data-dashboard-figure]').textContent = value
+  /**
+   * `isMoney` is the whole distinction the $ toggle turns on. Two of these four
+   * figures are amounts and two are not -- a week of hours and a queue depth
+   * stay on screen when the amounts go, because masking a timesheet would be a
+   * different feature. It is a parameter rather than a property of the card so
+   * that the dash and the failure sentence, which are neither, drop the marker
+   * on their way in.
+   */
+  const setFigure = (key: DashboardCardKey, value: string, isMoney = false): void => {
+    const figure = part<HTMLElement>(key, '[data-dashboard-figure]')
+    figure.textContent = value
+    markMoney(figure, isMoney)
   }
 
   const setDetail = (key: DashboardCardKey, value: string): void => {
@@ -133,7 +144,7 @@ export const createDashboardController = (api: DashboardApi): DashboardControlle
     list.replaceChildren(
       ...rest.map((money) => {
         const item = document.createElement('li')
-        item.textContent = formatReportMoney(money.cents, money.currency)
+        item.append(moneyText(formatReportMoney(money.cents, money.currency)))
         return item
       }),
     )
@@ -289,6 +300,7 @@ export const createDashboardController = (api: DashboardApi): DashboardControlle
     setFigure(
       'uninvoiced',
       largest === undefined ? 'None' : formatReportMoney(largest.cents, largest.currency),
+      largest !== undefined,
     )
     setDetail(
       'uninvoiced',
@@ -334,6 +346,7 @@ export const createDashboardController = (api: DashboardApi): DashboardControlle
     setFigure(
       'owed',
       largest === undefined ? 'None' : formatReportMoney(largest.dueCents, largest.currency),
+      largest !== undefined,
     )
     setDetail(
       'owed',

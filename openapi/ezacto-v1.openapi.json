@@ -13696,6 +13696,124 @@
         ]
       }
     },
+    "/api/v1/reports/detailed-time": {
+      "get": {
+        "operationId": "getDetailedTimeReport",
+        "summary": "List tracked time by date, task and person",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailedTimeReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/reports/detailed-time",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "client_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "hours",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "billable",
+                "non_billable",
+                "uninvoiced"
+              ]
+            }
+          },
+          {
+            "name": "active_projects_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/reports/client-rollups/{clientId}": {
       "get": {
         "operationId": "getClientRollupReport",
@@ -24984,6 +25102,240 @@
         },
         "additionalProperties": false
       },
+      "DetailedTimeRow": {
+        "type": "object",
+        "required": [
+          "spent_date",
+          "client_id",
+          "client_name",
+          "project_id",
+          "project_name",
+          "project_code",
+          "task_id",
+          "task_name",
+          "user_id",
+          "user_name",
+          "roles",
+          "currency",
+          "seconds",
+          "rounded_seconds",
+          "billable_seconds",
+          "uninvoiced_billable_seconds",
+          "time_entry_count",
+          "entries_without_billable_rate"
+        ],
+        "properties": {
+          "spent_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "client_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "client_name": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "project_code": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "task_name": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "user_name": {
+            "type": "string"
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "currency": {
+            "type": "string"
+          },
+          "seconds": {
+            "type": "integer"
+          },
+          "rounded_seconds": {
+            "type": "integer"
+          },
+          "billable_seconds": {
+            "type": "integer"
+          },
+          "uninvoiced_billable_seconds": {
+            "type": "integer"
+          },
+          "time_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "billable_amount_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entries_without_billable_rate": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "DetailedTimeCurrencyTotal": {
+        "type": "object",
+        "required": [
+          "currency",
+          "entries_without_billable_rate"
+        ],
+        "properties": {
+          "currency": {
+            "type": "string"
+          },
+          "billable_amount_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entries_without_billable_rate": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "DetailedTimeReport": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "client_id",
+          "project_id",
+          "hours",
+          "active_projects_only",
+          "seconds",
+          "rounded_seconds",
+          "billable_seconds",
+          "uninvoiced_billable_seconds",
+          "time_entry_count",
+          "currencies",
+          "rows"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date"
+          },
+          "to": {
+            "type": "string",
+            "format": "date"
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hours": {
+            "type": "string",
+            "enum": [
+              "all",
+              "billable",
+              "non_billable",
+              "uninvoiced"
+            ]
+          },
+          "active_projects_only": {
+            "type": "boolean"
+          },
+          "seconds": {
+            "type": "integer"
+          },
+          "rounded_seconds": {
+            "type": "integer"
+          },
+          "billable_seconds": {
+            "type": "integer"
+          },
+          "uninvoiced_billable_seconds": {
+            "type": "integer"
+          },
+          "time_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "currencies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DetailedTimeCurrencyTotal"
+            }
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DetailedTimeRow"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "DetailedTimeReportEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/DetailedTimeReport"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
       "TimeReportAmount": {
         "type": "object",
         "required": [
@@ -26021,7 +26373,8 @@
             "type": "string",
             "enum": [
               "approval",
-              "expenses"
+              "expenses",
+              "own_money"
             ]
           },
           "enabled": {

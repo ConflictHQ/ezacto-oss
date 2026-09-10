@@ -852,6 +852,90 @@
 .report-table td:first-child {
   text-align: left;
 }
+/* One block per currency in the contractor cost report, stacked rather than
+   merged into a single table: the costs in two currencies do not add up, and a
+   reader should not be able to run their eye down one column and add them. */
+.report-cost-currency + .report-cost-currency {
+  margin-top: 20px;
+}
+.report-cost-currency h3 {
+  margin: 0;
+}
+/* The second line in a cell: contractor or employee under a name, and the count
+   of entries with no rate under a cost that therefore does not exist. */
+.report-cost-note {
+  display: block;
+  margin-top: 2px;
+  color: var(--ez-muted);
+  font-size: 11px;
+}
+
+/*
+ * The detailed report is five text columns and one number, where every other
+ * report table here is one label and a row of figures. Right-aligning names
+ * would leave the reader tracking a ragged left edge down the longest table on
+ * the screen, so the alignment is reversed and Hours opts back in.
+ */
+.report-detailed-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  gap: 20px;
+  align-items: start;
+}
+.report-detailed-summary .report-facts {
+  margin-block: 0;
+}
+.report-detailed-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+.report-detailed-controls select {
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.report-detailed-active {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+.report-detailed-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+.report-detailed-actions button {
+  min-height: 44px;
+  padding-inline: 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.report-detailed-table th,
+.report-detailed-table td {
+  text-align: left;
+}
+.report-detailed-table .report-numeric {
+  text-align: right;
+}
+.report-detailed-table .report-band-row th,
+.report-detailed-table .report-band-row td {
+  background: var(--ez-surface);
+  font-weight: 600;
+}
+.report-detailed-table tfoot th,
+.report-detailed-table tfoot td {
+  font-weight: 600;
+}
 
 /* The Time report's summary strip. Same shape as the team roster's, because it
    answers the same shape of question -- how much time, how much of it billable
@@ -2698,6 +2782,7 @@ a {
   color: var(--ez-ink);
 }
 .timer-chip,
+.money-toggle,
 .command-trigger,
 .menu-trigger {
   align-self: center;
@@ -2737,11 +2822,63 @@ a {
 .timer-chip[data-state="running"] .live-dot {
   background: var(--ez-live);
 }
+.money-toggle,
 .command-trigger,
 .menu-trigger {
   margin-left: 0;
   padding: 0 12px;
   font-family: var(--ez-font-mono), monospace;
+}
+/*
+ * Kept at every width, unlike the command trigger the narrow bands shed. It is
+ * one glyph wide, and on a touch screen it is the only way to reach the setting
+ * at all -- there is no keyboard there to take the shortcut.
+ */
+.money-toggle {
+  min-width: 36px;
+}
+/*
+ * Pressed means the amounts are off, which is the state worth marking: the
+ * whole point of the control is to be able to tell at a glance whether the
+ * figures on screen are the real ones.
+ */
+.money-toggle[aria-pressed='true'] {
+  /* The border carries the live hue, which is certified as an indicator at 3:1.
+     The label cannot: `live` fails AA as text, and `live_text` is the variant
+     that exists for exactly the two places the colour has to be read rather
+     than noticed. */
+  border-color: var(--ez-live);
+  color: var(--ez-live-text);
+}
+/*
+ * Masking, and why it is masking rather than hiding.
+ *
+ * `visibility: hidden` keeps the element's box, so the row it is in keeps
+ * exactly the width it had -- toggling redraws nothing else, and a table does
+ * not jump under the reader's eyes, which would be its own kind of attention in
+ * the moment someone is standing behind them. It also takes the figure out of
+ * the accessibility tree and out of a selection, so the amount is not read
+ * aloud or copied while it is masked.
+ *
+ * The dots are drawn in a pseudo-element pinned over that same box, so their
+ * count is fixed at four whatever the amount was. The box's width still tracks
+ * the amount's -- someone watching a toggle could infer a figure's digit count
+ * from it. That is a real leak and an acceptable one: this is a courtesy
+ * against a glance, not a security control, and `canViewMoneyField` is what
+ * decides whether the figure was ever sent.
+ */
+[data-money='hidden'] .money {
+  position: relative;
+  visibility: hidden;
+}
+[data-money='hidden'] .money::after {
+  content: '••••';
+  position: absolute;
+  inset: 0;
+  visibility: visible;
+  color: var(--ez-muted);
+  letter-spacing: 0.1em;
+  white-space: nowrap;
 }
 .menu-trigger {
   display: none;
@@ -5081,7 +5218,12 @@ dialog textarea {
   @page {
     margin: 16mm;
   }
-  /* Application chrome, on every screen: none of it is the page. */
+  /* Application chrome, on every screen: none of it is the page. Print is one
+     of the detailed report's two exports, so its controls belong here with the
+     rest of the chrome rather than in a print block of their own -- the invoice
+     test lifts the FIRST `@media print` it finds as the paper stylesheet, so a
+     second block earlier in the file silently became the whole of it. */
+  .report-detailed-controls,
   .topbar,
   .tabstrip,
   .build-stamp,

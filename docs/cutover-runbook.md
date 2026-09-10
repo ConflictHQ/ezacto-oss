@@ -1,8 +1,15 @@
 # Harvest cutover runbook
 
-The ordered procedure for moving CONFLICT's Harvest account into the hosted
-prod instance at `app.example.com`. Every command here has been run; the
-row counts, error strings and timings are observed, not estimated.
+> Want the shape of the thing rather than the whole walkthrough?
+> [`migrating-from-harvest.md`](migrating-from-harvest.md) is the short path.
+> This document is one operator's full run, kept for what it observed.
+
+The ordered procedure for moving a Harvest account into a hosted prod instance
+at `time.example.com`. It was executed end to end against a real production
+instance rather than rehearsed on paper: every command here has been run, and
+the row counts, error strings and timings are observed, not estimated. The
+figures are that run's — compare against your own extract, never against this
+page.
 
 It assumes one operator working alone. Where a control would normally be "have
 another operator confirm the database name" — as [RESTORE.md](../RESTORE.md)
@@ -17,30 +24,31 @@ of them are cheap to get right and expensive to redo.
 | --- | --- | --- |
 | Freeze, extract, verify | a snapshot directory | yes — re-extract |
 | Load | a local SQLite database | yes — delete the file, reload |
-| Worksheets | 4 hand-entered rows in that file | **no** — completions are one-way |
+| Worksheets | the hand-entered rows in that file | **no** — completions are one-way |
 | Convert, import | a new hosted D1 database | yes — delete the database |
-| Attachments | 6 objects in prod R2 | yes — content-addressed, additive |
+| Attachments | the receipt objects in prod R2 | yes — content-addressed, additive |
 | Binding swap and deploy | prod serving the imported data | yes — revert the commit |
 | First sign-in / first write | live use | **no** — see [Rollback](#rollback) |
 
 ## Outcome
 
-The window ran on 2026-09-10. The names below are what the account holds now,
-and they differ from the `ezacto-prod` names this procedure was written against:
-the resources were renamed during the window so the Worker, its D1 database, its
-Queue and its bucket all share one prefix.
+The window ran to completion. The names below are what the account held
+afterwards, and they differ from the `ezacto-prod` names this procedure was
+written against: the resources were renamed during the window so the Worker, its
+D1 database, its Queue and its bucket all share one prefix. `example-` stands in
+for whatever prefix you pick.
 
 | Resource | Name | Detail |
 | --- | --- | --- |
-| Worker | `ezacto-prod` | serving `app.example.com` |
-| D1 | `ezacto-prod` | `00000000-0000-0000-0000-000000000000` |
-| Queue | `ezacto-prod-email` | dead-letter `ezacto-prod-email-dlq` |
-| R2 | `ezacto-prod-attachments` | nightly export target |
+| Worker | `example-ezacto` | serving `time.example.com` |
+| D1 | `example-ezacto` | `<your-d1-database-id>` |
+| Queue | `example-ezacto-email` | dead-letter `example-ezacto-email-dlq` |
+| R2 | `example-ezacto-attachments` | nightly export target |
 
-Loaded: REDACTED time entries, 740 invoices, REDACTED line items, 60 users, 30
-clients, 3 recurring definitions, 4 worksheet completions, 44 migrations.
-Outstanding reconciles to Harvest exactly at `$REDACTED` across 10 open
-invoices. The old `ezacto-prod` D1 database was deleted once the new Worker
+Every resource loaded row for row against the export — each table's count
+checked against the snapshot rather than eyeballed — and the outstanding balance
+reconciled to Harvest to the cent. The old `ezacto-prod` D1 database was deleted
+once the new Worker
 answered on the domain, so the rollback of last resort is the Harvest snapshot
 and the reconcile, not Time Travel.
 
@@ -58,9 +66,9 @@ npx wrangler whoami
 
 A scoped `CLOUDFLARE_API_TOKEN` in the environment shadows the OAuth session and
 will authenticate as the wrong account, or fail on the D1 write scope. Unset it
-for the whole window rather than per command. `whoami` must report the CONFLICT
-LLC account with Workers and D1 write scopes; the account id above is the one
-this runbook's resources live in.
+for the whole window rather than per command. `whoami` must report the account
+that owns these resources, with Workers and D1 write scopes; the account id
+above is the one this runbook's resources live in.
 
 ### Account ceilings that matter
 
@@ -69,7 +77,7 @@ The three limits this procedure comes near:
 
 | Ceiling | Value | Where it bites |
 | --- | --- | --- |
-| Database size | 10 GB | the loaded database is ~24 MB — no risk |
+| Database size | 10 GB | a loaded database of tens of MB — no risk |
 | Single SQL statement | 100 KB | one long `INSERT` in the dump would abort the import |
 | Import file | 5 GB | the converted dump is tens of MB — no risk |
 
@@ -113,9 +121,9 @@ the replacement has passed this gate and reconciliation.
 The database and its attachments. Sign-in and outbound mail are separate
 go-live work and are not gated by anything here:
 
-- no identity provider is configured in prod, and most active people
-  have no password row — SSO provisioning must be scoped before the secrets are
-  set (#268, #270);
+- no identity provider is configured in prod, and almost none of the migrated
+  people have a password row — SSO provisioning must be scoped before the
+  secrets are set (#268, #270);
 - prod has no email transport, so password reset and invoice send both return
   503 (#276);
 - work email addresses are not seeded by the loader (#273).
@@ -147,8 +155,8 @@ database already admitted under an older one:
 load admission belongs to a different snapshot or load options
 ```
 
-So a late sync means a virgin database, a full reload of ~32,500 rows, and all
-four worksheet rows re-entered by hand. Note this cuts against a naive reading
+So a late sync means a virgin database, a full reload of every row, and every
+worksheet row re-entered by hand. Note this cuts against a naive reading
 of the milestone order in [migration-spec §8](migration-spec.md#8-milestones),
 where M6 (`sync` steady state) precedes M7 (worksheets): sync keeps the
 *snapshot* fresh during the parallel run, but the moment you load the snapshot
@@ -195,7 +203,7 @@ node packages/migrate/dist/cli.js load \
   --organization-currency USD
 ```
 
-Expect on the order of 32,500 rows and a handful of anomalies. Before
+The load reports its own row total, and a handful of anomalies with it. Before
 continuing, confirm the shape of the file:
 
 ```sh
@@ -236,11 +244,12 @@ sqlite3 ./cutover.db "SELECT kind, count(*) FROM _ezacto_load_anomalies
 
 ## 4. Worksheets
 
-Four rows in the whole account cannot come from any API: one retainer balance
-and three recurring-invoice definitions. Harvest exposes neither over its API,
-so they are transcribed from the Harvest UI by hand.
+Two classes of row cannot come from any API: retainer balances and
+recurring-invoice definitions. Harvest exposes neither, so they are transcribed
+from the Harvest UI by hand. In this run that was a handful of rows in the whole
+account; yours is however many stubs the load leaves behind.
 
-Gather all four values **before** touching the CLI. A worksheet apply is
+Gather every value **before** touching the CLI. A worksheet apply is
 all-or-nothing — one incomplete row applies zero rows — and an applied row
 cannot be corrected:
 
@@ -262,7 +271,7 @@ node packages/migrate/dist/cli.js finish-retainers \
   --snapshot-dir ./harvest-snapshot --database ./cutover.db --input retainer.json
 ```
 
-The one retainer is Harvest 12345 (a client), loaded with balance 0 and
+The retainer in this run was Harvest 12345 (a client), loaded with balance 0 and
 `on_exhaustion='block'`, which means every drawdown fails at the trigger until
 the opening balance is entered:
 
@@ -276,8 +285,8 @@ Harvest either: the screen is four columns with no ledger and no dates, so the
 date is a convention and the reason for it belongs in `notes`, the only
 free-text field that survives. A negative balance cannot be entered at all.
 
-**Settled, 2026-09-09.** The retainer was consumed in full and zeroed out at the
-end of 2016, so the row is:
+In this run the retainer had been consumed in full and zeroed out years earlier,
+so the row was:
 
 ```json
 {
@@ -297,10 +306,10 @@ the other two fields: a `pending` row needs all three of `balance_cents`,
 `occurred_on` and `notes`, and a row with some but not all is rejected as
 incomplete.
 
-The twelve invoices that built this retainer are #713 (2015-07-02) through #750
-(2016-06-01), all TeamOne, all $2,000, all paid — $24,000 deposited. That is the
-deposit side only; the drawdowns exist nowhere outside the Harvest screen, which
-is the whole reason the balance has to be entered by hand.
+The invoices that built the retainer are all in the snapshot, paid, and they add
+up to the deposit side. That is the deposit side only; the drawdowns exist
+nowhere outside the Harvest screen, which is the whole reason the balance has to
+be entered by hand.
 
 The retainer's project link and nominal size are not worksheet fields and are
 lost by the load. If a `$0.00`-sized, project-less retainer in the UI is not
@@ -309,8 +318,9 @@ retainer triggers, and it is safe in either order relative to the worksheet:
 
 ```sh
 npx wrangler d1 execute <new-database> --remote --command \
-  "UPDATE retainers SET project_id = 52, amount_cents = 2400000,
-     updated_at = '<iso8601>' WHERE id = 1;"
+  "UPDATE retainers SET project_id = <project id>,
+     amount_cents = <nominal size in cents>,
+     updated_at = '<iso8601>' WHERE id = <retainer id>;"
 ```
 
 That `UPDATE` lives outside the loader and outside the worksheet completions
@@ -327,16 +337,16 @@ node packages/migrate/dist/cli.js finish-recurring-invoices \
   --snapshot-dir ./harvest-snapshot --database ./cutover.db --input recurring.json
 ```
 
-All three definitions load `incomplete`, which means they are invisible to
+Definitions load `incomplete`, which means they are invisible to
 `GET /recurring-invoices`, cannot be fetched, patched or deleted, and the
 generation engine refuses them. They are live billing, not history: 466138 and
-440932 have been issuing monthly, and 90 issued invoices in the loaded database
-point at the three stubs. Leaving them incomplete silently stops that.
+440932 had been issuing monthly, and the issued invoices in the loaded database
+point back at the stubs. Leaving them incomplete silently stops that.
 
 One transcription rule the schema does not hint at. A Harvest recurring
-definition may carry a credit line at a negative quantity — one in the CONFLICT
-account reads quantity `-1.0` × `$6,250.00`.
-Transcribed faithfully the apply aborts:
+definition may carry a credit line at a negative quantity — say quantity `-1.0`
+against a unit price of `$1,000.00`, an illustrative figure standing in for
+whatever yours reads. Transcribed faithfully the apply aborts:
 
 ```text
 rows[2].amount_config.line_items[1].quantity must be positive and bounded
@@ -344,7 +354,8 @@ rows[2].amount_config.line_items[1].quantity must be positive and bounded
 
 Quantity must be positive at three separate layers, including a SQL trigger, so
 the encoding to use is **quantity 1 with a negative `unit_price_cents`**
-(`quantity: 1, unit_price_cents: -625000`). That is arithmetically identical —
+(`quantity: 1, unit_price_cents: -100000` for that illustrative line). That is
+arithmetically identical —
 the line total is an integer ratio rounded half away from zero either way — and
 it applies cleanly. Harvest itself uses both encodings elsewhere in the same
 account.
@@ -358,7 +369,7 @@ diarise an edit to the definition. Decide before you type it, not after.
 ### The gate reconcile cannot give you
 
 Reconcile is blind to the worksheets — it runs identically against a database
-with all four completions and one with none. So this query, not the reconcile
+with every completion and one with none. So this query, not the reconcile
 report, is what proves the manual gap is closed:
 
 ```sh
@@ -373,7 +384,8 @@ sqlite3 ./cutover.db "
 `retainer_ledger_rows` may be zero: the completion evidence, not a fabricated
 zero ledger entry, proves it was handled. Derive the
 expected completion count from the stubs — one per `retainers` row with a
-`harvest_id`, one per `recurring_invoices` row — rather than hardcoding 4.
+`harvest_id`, one per `recurring_invoices` row — rather than hardcoding a
+number.
 
 ## 5. Reconcile
 
@@ -387,7 +399,7 @@ order relative to the worksheets is otherwise free, because reconcile does not
 read them.
 
 **It exits 0.** That was not always true, and the history matters if you are
-reading an older copy of this page: the first rehearsal reported 25,333 matches,
+reading an older copy of this page: the first rehearsal reported
 0 rounding failures, 4 gaps and 74 UNEXPLAINED, because the classifier could not
 express an accepted delta (#277) and every deliberate loader skip landed in
 UNEXPLAINED with nowhere else to go. This page used to say a nonzero exit was
@@ -445,10 +457,10 @@ only from the local path. `executeRemotely` uploads the file byte for byte.
 
 **Second: `unistr()`.** For any TEXT value holding a control character,
 sqlite3 3.51 emits a `unistr('...\u000d\u000a...')` call rather than a plain
-quoted literal. The rehearsal dump held 9,292 such calls across seven tables
-(time entries 4,846; invoice messages 2,360; invoice line items 1,403; invoices
-625; invoice payments 38; clients 18; email template versions 2). D1 refuses the
-function outright:
+quoted literal. The rehearsal dump held thousands of such calls, spread across
+every table that carries operator-typed text — time entries, invoice messages,
+invoice line items, invoices, invoice payments, clients and email template
+versions. D1 refuses the function outright:
 
 ```text
 not authorized to use function: unistr at offset 60: SQLITE_ERROR
@@ -506,8 +518,9 @@ sqlite3 ./verify.db \
   "SELECT length(address), instr(hex(address), '0D0A') FROM clients WHERE id = 1;"
 ```
 
-In the rehearsal that returned `66|41`. Whatever it returns, it must match the
-same query against `cutover.db`.
+The second column is the offset of the CRLF and must be nonzero — that is the
+whole point of the check. Whatever it returns, it must match the same query
+against `cutover.db`.
 
 ## 7. Import into a new D1 database
 
@@ -550,8 +563,8 @@ npx wrangler d1 create ezacto-prod-<date> | tee ./new-database.txt
 npx wrangler d1 execute ezacto-prod-<date> --remote --file=./cutover.d1.sql
 ```
 
-Answer `y` to the "this may take some time" prompt. The rehearsal ran 68,326
-queries and wrote 281,011 rows in 7–12 seconds. Keep `new-database.txt` — the
+Answer `y` to the "this may take some time" prompt. Despite the warning, the
+rehearsal finished in seconds rather than minutes. Keep `new-database.txt` — the
 uuid it prints is what goes into `wrangler.jsonc`, and diffing it against
 `npx wrangler d1 list` is the single-operator substitute for a second pair of
 eyes on the database name.
@@ -564,14 +577,14 @@ never experiences this window at all.
 
 ## 8. Attachments into R2
 
-Six expense receipts have rows in the loaded database and no bytes behind them.
+Expense receipts have rows in the loaded database and no bytes behind them.
 The prod bucket is empty and nothing in extract, load, reconcile or CI ever
 writes to R2, so this cannot self-heal and reconcile cannot detect it — it
 compares manifest counts against database rows and never touches the object
 store (#274).
 
 The consequence of skipping this step is not a broken link. It is an opaque
-HTTP 500 on every one of the six receipt downloads, indistinguishable in the
+HTTP 500 on every one of those receipt downloads, indistinguishable in the
 logs from a real outage.
 
 Keys must be byte-identical to `file_objects.file_key`; there is no fallback
@@ -587,7 +600,9 @@ done
 npx wrangler r2 bucket info ezacto-prod-attachments
 ```
 
-`object_count` must reach 6. Then fetch one through the app after the deploy —
+`object_count` must reach the `file_objects` row count — read it off the
+database rather than trusting a number on this page. Then fetch one through the
+app after the deploy —
 `GET /api/v1/expenses/:id/attachments/:aid/content` — not just from the bucket.
 
 Do **not** backfill through the app's own upload endpoint. It mints a different
@@ -599,7 +614,7 @@ matching a migrated receipt; that is a product bug, tracked separately, not
 something to work around here.
 
 Keep the snapshot directory after cutover. The nightly export backs up
-attachment *metadata* only, so for these six objects the bucket and the snapshot
+attachment *metadata* only, so for those objects the bucket and the snapshot
 are the only two copies in existence.
 
 ## 9. Verify the imported database
@@ -753,7 +768,7 @@ cursor key, migrations:
 
 ```sh
 curl -s -o /tmp/whoami.json -w '%{http_code}\n' \
-  https://app.example.com/api/v1/whoami
+  https://time.example.com/api/v1/whoami
 cat /tmp/whoami.json
 ```
 
@@ -767,7 +782,7 @@ Readiness is cached per isolate, so one green probe proves the isolate that
 answered. Poll it a few times over a minute rather than once.
 
 Then prove the rows survived, with an authenticated read of a known client and
-a known time entry through the UI, and fetch one of the six receipts.
+a known time entry through the UI, and fetch one of the receipts.
 
 Be aware that a 503 here is deliberately opaque: the failure is swallowed to
 avoid reflecting binding values or SQL, and nothing is logged either. If you get
@@ -802,7 +817,7 @@ moment. Know which side of that moment you are on before you act.
 | --- | --- |
 | Before the load | Nothing has happened. Re-extract. |
 | After the load, before the worksheets | Delete `cutover.db` and reload. Free. |
-| After the worksheets | The four rows are one-way. A reload means re-entering them; keep the filled JSON so only the digests change. |
+| After the worksheets | The worksheet rows are one-way. A reload means re-entering them; keep the filled JSON so only the digests change. |
 | After the import, before the swap | `npx wrangler d1 delete ezacto-prod-<date>`. Prod is untouched and still serving the old database. |
 | After the R2 puts | Nothing to undo. The keys are content-addressed and the writes are additive; only delete them if you also roll back the database. |
 | After the swap, before anyone signs in | Revert the binding commit and re-run the deploy. The old database was never written to. **This is the last clean rollback point.** |
@@ -841,7 +856,7 @@ from this page.
 The last full rehearsal, before corrections could be stored:
 
 ```
-complete: true   matches 26051   rounding 0   gaps 65   unexplained 0
+complete: true   matches <count>   rounding 0   gaps 65   unexplained 0
 ```
 
 Every gap carries a citation into
@@ -866,13 +881,12 @@ Measured on a fresh rehearsal against the live account, 2026-09-07, snapshot
 `bc074919`:
 
 ```
-matches 26109   rounding 0   gaps 8   unexplained 0
+matches <count>   rounding 0   gaps 8   unexplained 0
 ```
 
-The eight are the four rows above. All five corrections in the account loaded,
-carrying their cost — including the 2026-08-02 entry of -1.0h at a $60 cost
-rate, which every previous rehearsal skipped and every previous total therefore
-ran high by.
+The eight are the four rows above. Every correction in the account loaded,
+carrying its cost — including a -1.0h entry at a real cost rate, which every
+previous rehearsal skipped and every previous total therefore ran high by.
 
 That run **exited 0**. Earlier revisions of this page said reconcile would exit 1
 and that this was expected; that has not been true since the gate reached zero
@@ -881,14 +895,14 @@ to read past.
 
 Getting here took four fixes, and the numbers moved as follows:
 
-| | matches | gaps | unexplained |
-| --- | --- | --- | --- |
-| The rehearsal as first run | 25,333 | 4 | 74 |
-| Archived projects out of uninvoiced work | 26,042 | 4 | 70 |
-| Invoice state compared at all | 26,042 | 4 | 77 |
-| Documented skips cited rather than counted | 26,042 | 65 | 16 |
-| Non-positive receipts imported rather than skipped | 26,051 | 65 | **0** |
-| Corrections stored rather than skipped and cited | 26,109 | 8 | **0** |
+| | gaps | unexplained |
+| --- | --- | --- |
+| The rehearsal as first run | 4 | 74 |
+| Archived projects out of uninvoiced work | 4 | 70 |
+| Invoice state compared at all | 4 | 77 |
+| Documented skips cited rather than counted | 65 | 16 |
+| Non-positive receipts imported rather than skipped | 65 | **0** |
+| Corrections stored rather than skipped and cited | 8 | **0** |
 
 The third row goes **up**: comparing `state` surfaced seven invoices that had
 been reading `open` against Harvest's `paid` without anything noticing. The
@@ -897,7 +911,7 @@ receipts that settled them load, and all seven read `paid` again.
 
 One consequence is worth stating plainly to whoever signs this off:
 
-- **The 739 archived invoice PDFs and 54 avatars are not imported.** They are
+- **The archived invoice PDFs and the avatars are not imported.** They are
   archived in the snapshot as evidence, not loaded: there is no PDF renderer in
   the product, and `avatar_url` remains the Harvest-hosted URL. If "my old
   invoice PDFs are in the new system" is anyone's expectation, it is unmet, and
@@ -909,7 +923,7 @@ So the definition of done for this cutover, written honestly:
 2. reconcile reports **zero** UNEXPLAINED, and every gap carries a §7 citation;
 3. the worksheet gate query in §4 passes;
 4. the remote counts in §9 equal the local file;
-5. six objects in R2, one of them fetched through the app;
+5. every receipt object in R2, one of them fetched through the app;
 6. `/api/v1/whoami` returns 401, not 503;
 7. the missing PDFs and avatars written down and acknowledged, not discovered
    later by someone reading the books.

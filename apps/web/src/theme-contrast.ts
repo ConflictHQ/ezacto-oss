@@ -58,6 +58,17 @@ export const precisionContrastRequirements: readonly ThemeContrastRequirement[] 
     background: 'status_bg',
     minimum: 4.5,
   },
+  // The `$` toggle's label while money is hidden. Its button paints
+  // `background: var(--ez-surface)`, a third surface for `live_text` beyond the
+  // two above, and the label is read rather than noticed -- so it owes the text
+  // ratio and not the indicator one. The border keeps `live` itself, which is
+  // certified as an indicator.
+  {
+    name: 'live-text/surface text',
+    foreground: 'live_text',
+    background: 'surface',
+    minimum: 4.5,
+  },
   // The invoice header's destructive verbs -- cancel and write off -- are red
   // text on the document ground and on the surface the menu row hovers to.
   // They are words, not an indicator, so both owe the 4.5:1 body-text bar. The

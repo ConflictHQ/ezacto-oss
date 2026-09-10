@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { sampleReceiptBytes, sampleReceiptPath } from '../../db/test/fixtures/sample-receipt.js'
 import { writeManifest, type Manifest, type ManifestBinaryAsset } from '../src/manifest.js'
 import { checksumReportDigest, snapshotDigest, type ChecksumReportPayload } from '../src/verify.js'
 import { preflight, resourceProgress } from './fixtures.js'
@@ -383,11 +384,11 @@ export const buildSanitizedLoadSnapshot = async (
   mileageExpense.approval_status = 'approved'
   await writeRows('expenses', [JSON.stringify(mileageExpense), JSON.stringify(directExpense)])
 
-  const receiptBytes = await readFile(golden('harvest-receipt.pdf'))
+  const receiptBytes = await sampleReceiptBytes()
   const sha256 = createHash('sha256').update(receiptBytes).digest('hex')
   const receiptPath = `receipts/${sha256}.pdf`
   await mkdir(join(snapshotDir, 'receipts'), { recursive: true })
-  await copyFile(golden('harvest-receipt.pdf'), join(snapshotDir, receiptPath))
+  await copyFile(sampleReceiptPath, join(snapshotDir, receiptPath))
   const receipt: ManifestBinaryAsset = {
     source_id: 152975211,
     sha256,

@@ -119,10 +119,15 @@ export const serializeTimeEntry = (
   external_ref: entry.externalRef,
   calendar_event_ref: entry.calendarEventRef,
   minimum_note_length: entry.noteMinimumLength,
-  ...(canViewMoneyField(viewer, 'billable_rate')
+  // The subject is the row's own user, never the person asking. Passing
+  // `viewer.userId` here would make the rule tautological and every entry the
+  // viewer's own; passing the row's user is what makes it possible for the
+  // answer to be no on somebody else's line, which is the whole safety of the
+  // #520 setting.
+  ...(canViewMoneyField(viewer, 'billable_rate', entry.userId)
     ? { billable_rate_cents: entry.billableRateCents }
     : {}),
-  ...(canViewMoneyField(viewer, 'cost_rate')
+  ...(canViewMoneyField(viewer, 'cost_rate', entry.userId)
     ? { cost_rate_cents: entry.costRateCents }
     : {}),
   created_at: entry.createdAt,

@@ -1,4 +1,5 @@
 import { renderDataTable, type DataColumn } from '../components/data-table.js'
+import { moneyText } from '../money-display.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
 import { EzactoApiError, type GeneralResource, type Whoami } from '@ezacto/client'
 import {
@@ -223,7 +224,12 @@ export const createTaskAdminController = (
         key: 'rate',
         label: 'Rate',
         numeric: true,
-        render: (task) => formatTaskRate(taskRateCents(task)),
+        render: (task) => {
+          const cents = taskRateCents(task)
+          // "No default rate" is a statement about the task, not an amount, so
+          // it stays legible when the amounts are masked.
+          return cents === null ? formatTaskRate(null) : moneyText(formatTaskRate(cents))
+        },
       })
     }
 

@@ -2,6 +2,10 @@ import {
   EzactoApiError,
   type ClientRollupMetrics,
   type ClientRollupReport,
+  type ContractorCostReport,
+  type ContractorCostRow,
+  type DetailedTimeReport,
+  type DetailedTimeRow,
   type GeneralResource,
   type MyHoursReport,
   type ProjectBudgetReport,
@@ -16,21 +20,31 @@ import {
   type Whoami,
 } from '@ezacto/client'
 import { createPeriodControl } from '../components/period.js'
+import { moneyText } from '../money-display.js'
 // The team roster's own formatter. Utilization is one figure with one meaning,
 // and a second renderer for it here is how the same person comes to read 17%
 // on one screen and 17.4% on another.
 import { teamCapabilities, teamUtilization } from '../team/model.js'
 import {
   billablePercent,
+  canReadCostReports,
   canReadFinancialReports,
+  decimalHours,
+  detailedTimeCsv,
+  detailedTimeOptionsFromUrl,
+  detailedTimeProjectLabel,
   formatReportCents,
   formatReportHours,
   formatReportMoney,
+  groupDetailedTimeRows,
   isReportKind,
   reportFiltersFromUrl,
   reportFiltersUrl,
   reportResourceLabel,
   validateReportFilters,
+  type DetailedTimeGrouping,
+  type DetailedTimeHours,
+  type DetailedTimeOptions,
   type ReportFilters,
   type ReportKind,
   type ReportWorkspaceApi,
@@ -47,6 +61,20 @@ const openToEveryProfile: ReadonlySet<ReportKind> = new Set<ReportKind>([
   'my-hours',
   'project-budget',
 ])
+
+/**
+ * Three tiers, not two. `contractor-cost` is all cost, and the route refuses it
+ * to anybody but an administrator, so treating it as one more financial kind
+ * would hand accounting and an executive manager a tab that 403s -- the failure
+ * the strip already avoids for a member.
+ */
+const canReadKind = (
+  kind: ReportKind,
+  identity: Pick<Whoami, 'profile' | 'manager_grants'>,
+): boolean =>
+  kind === 'contractor-cost'
+    ? canReadCostReports(identity)
+    : openToEveryProfile.has(kind) || canReadFinancialReports(identity.profile)
 
 const required = <ElementType extends Element>(selector: string): ElementType => {
   const element = document.querySelector<ElementType>(selector)
@@ -136,10 +164,36 @@ const catalogLabel = (
 const countLabel = (count: number, singular: string, plural = `${singular}s`): string =>
   `${count.toLocaleString('en-US')} ${count === 1 ? singular : plural}`
 
-const fact = (term: string, detail: string): HTMLDivElement => {
+const fact = (term: string, detail: string | Node): HTMLDivElement => {
   const wrapper = element('div')
-  wrapper.append(textElement('dt', term), textElement('dd', detail))
+  const value = element('dd')
+  value.append(detail)
+  wrapper.append(textElement('dt', term), value)
   return wrapper
+}
+
+/**
+ * A report amount, marked as one. The em dash a withheld or absent figure
+ * renders is left unmarked: it is the absence of an amount, and dots over it
+ * would claim there is a number behind them.
+ */
+const reportMoney = (
+  cents: number | null | undefined,
+  currency: string,
+): string | HTMLSpanElement => {
+  const label = formatReportMoney(cents, currency)
+  return cents === null || cents === undefined ? label : moneyText(label)
+}
+
+const reportCents = (cents: number | null | undefined): string | HTMLSpanElement => {
+  const label = formatReportCents(cents)
+  return cents === null || cents === undefined ? label : moneyText(label)
+}
+
+const moneyCell = (cents: number | null | undefined, currency: string): HTMLTableCellElement => {
+  const cell = element('td')
+  cell.append(reportMoney(cents, currency))
+  return cell
 }
 
 const warning = (message: string): HTMLParagraphElement => {
@@ -271,12 +325,14 @@ const renderUninvoiced = (report: Readonly<UninvoicedReport>): DocumentFragment 
   for (const total of report.totals) {
     const card = element('article', 'report-currency-card')
     const header = element('header')
-    header.append(textElement('h3', total.currency), textElement('strong', formatReportMoney(total.total_cents, total.currency)))
+    const headline = element('strong')
+    headline.append(reportMoney(total.total_cents, total.currency))
+    header.append(textElement('h3', total.currency), headline)
     const facts = element('dl', 'report-facts')
     facts.append(
       fact('Tracked time', formatReportHours(total.rounded_seconds)),
-      fact('Time amount', formatReportMoney(total.time_cents, total.currency)),
-      fact('Expense amount', formatReportMoney(total.expense_cents, total.currency)),
+      fact('Time amount', reportMoney(total.time_cents, total.currency)),
+      fact('Expense amount', reportMoney(total.expense_cents, total.currency)),
       fact('Time entries', total.time_entry_count.toLocaleString('en-US')),
       fact('Expenses', total.expense_count.toLocaleString('en-US')),
     )
@@ -328,10 +384,10 @@ const currencyTable = (metrics: Readonly<ClientRollupMetrics>): HTMLElement => {
       const row = element('tr')
       row.append(
         textElement('th', currency.currency),
-        textElement('td', formatReportMoney(currency.expense_cents, currency.currency)),
-        textElement('td', formatReportMoney(currency.uninvoiced_total_cents, currency.currency)),
-        textElement('td', formatReportMoney(currency.money_budget_cents, currency.currency)),
-        textElement('td', formatReportMoney(currency.cost_cents, currency.currency)),
+        moneyCell(currency.expense_cents, currency.currency),
+        moneyCell(currency.uninvoiced_total_cents, currency.currency),
+        moneyCell(currency.money_budget_cents, currency.currency),
+        moneyCell(currency.cost_cents, currency.currency),
       )
       ;(row.firstElementChild as HTMLTableCellElement).scope = 'row'
       body.append(row)
@@ -467,9 +523,11 @@ const renderProjectBudget = (
       )
     } else {
       facts.append(
-        fact('Budget', formatReportCents(grain.budget_cents)),
-        fact('Spent', formatReportCents(grain.spent_cents)),
-        fact('Remaining', formatReportCents(grain.remaining_cents)),
+        // The seconds branch above is the same three facts in hours, and it
+        // carries no marker: a budget measured in time is not money.
+        fact('Budget', reportCents(grain.budget_cents)),
+        fact('Spent', reportCents(grain.spent_cents)),
+        fact('Remaining', reportCents(grain.remaining_cents)),
       )
     }
     item.append(header, facts)
@@ -483,6 +541,347 @@ const renderProjectBudget = (
     list.append(item)
   }
   fragment.append(list)
+  return fragment
+}
+
+/**
+ * The three columns Harvest's own contractor report carries -- person, total
+ * hours, cost -- rather than a wider one of our own. Two departures, both
+ * forced by what the endpoint answers with:
+ *
+ * One table per currency instead of one table. A row states the currency its
+ * cost is in, so rows in two currencies are two different questions;
+ * `contractorCostReport` in packages/db refuses to add them because this system
+ * holds no exchange rate, and a single table with a currency column is an
+ * invitation to add them anyway. Separate tables cannot be totalled by eye.
+ *
+ * The person column says contractor or employee. The endpoint has no
+ * `is_contractor` filter -- it totals everybody who tracked time in the range,
+ * and `is_contractor` is a flag on the row -- so a column headed "Contractor"
+ * would be naming employees as contractors.
+ */
+const renderContractorCost = (
+  report: Readonly<ContractorCostReport>,
+): DocumentFragment => {
+  const fragment = document.createDocumentFragment()
+  fragment.append(
+    reportHeading(
+      'Contractor cost',
+      `${report.from} through ${report.to} · everybody who tracked time`,
+    ),
+  )
+  if (report.rows.length === 0) {
+    fragment.append(
+      textElement('p', 'Nobody tracked time in this period.', 'report-empty'),
+    )
+    return fragment
+  }
+  const byCurrency = new Map<string, ContractorCostRow[]>()
+  for (const row of report.rows) {
+    const bucket = byCurrency.get(row.currency)
+    if (bucket === undefined) byCurrency.set(row.currency, [row])
+    else bucket.push(row)
+  }
+  for (const [currency, rows] of byCurrency) {
+    const section = element('section', 'report-cost-currency')
+    section.append(textElement('h3', currency))
+    const wrapper = element('div', 'report-table-wrap')
+    const table = element('table', 'report-table')
+    const head = element('thead')
+    const headerRow = element('tr')
+    for (const label of ['Person', 'Total hours', 'Cost']) {
+      const cell = textElement('th', label)
+      cell.scope = 'col'
+      headerRow.append(cell)
+    }
+    head.append(headerRow)
+    const body = element('tbody')
+    let seconds = 0
+    let cents: number | null = 0
+    let entriesWithoutRate = 0
+    let peopleWithoutRate = 0
+    for (const row of rows) {
+      seconds += row.rounded_seconds
+      entriesWithoutRate += row.entries_without_rate
+      const person = element('th')
+      person.scope = 'row'
+      person.append(
+        linkElement(`/team/${row.user_id}`, row.name),
+        textElement(
+          'span',
+          row.is_contractor ? 'Contractor' : 'Employee',
+          'report-cost-note',
+        ),
+      )
+      const cost = element('td')
+      if (row.cost_cents === null) {
+        peopleWithoutRate += 1
+        cents = null
+        // Not an em dash and not a zero. Both read as "nothing to pay" against
+        // hours that were worked; this says the total does not exist, and the
+        // line under it says how many entries are the reason.
+        cost.append(
+          textElement('span', 'Not costed'),
+          textElement(
+            'span',
+            `${countLabel(row.entries_without_rate, 'entry', 'entries')} without a cost rate`,
+            'report-cost-note',
+          ),
+        )
+      } else {
+        if (cents !== null) cents += row.cost_cents
+        cost.textContent = formatReportMoney(row.cost_cents, currency)
+      }
+      const line = element('tr')
+      line.append(person, textElement('td', formatReportHours(row.rounded_seconds)), cost)
+      body.append(line)
+    }
+    const foot = element('tfoot')
+    const totalRow = element('tr')
+    const totalLabel = textElement('th', 'Total')
+    totalLabel.scope = 'row'
+    // The hours total whatever the rates say: seconds carry no rate and no
+    // currency, so they are the one figure an uncosted row does not take away.
+    totalRow.append(
+      totalLabel,
+      textElement('td', formatReportHours(seconds)),
+      textElement(
+        'td',
+        cents === null ? 'Not costed' : formatReportMoney(cents, currency),
+      ),
+    )
+    foot.append(totalRow)
+    table.append(head, body, foot)
+    wrapper.append(table)
+    section.append(wrapper)
+    if (entriesWithoutRate > 0) {
+      section.append(
+        warning(
+          `${countLabel(entriesWithoutRate, 'entry', 'entries')} across ${countLabel(peopleWithoutRate, 'person', 'people')} ${entriesWithoutRate === 1 ? 'has' : 'have'} no cost rate, so ${currency} has no total.`,
+        ),
+      )
+    }
+    fragment.append(section)
+  }
+  return fragment
+}
+
+interface DetailedTimeHandlers {
+  readonly onOptions: (next: DetailedTimeOptions) => void
+  readonly onExport: () => void
+  readonly onPrint: () => void
+}
+
+const selectControl = (
+  id: string,
+  label: string,
+  options: readonly (readonly [string, string])[],
+  value: string,
+  onChange: (next: string) => void,
+): HTMLElement => {
+  const field = element('div', 'report-filter-field')
+  const caption = textElement('label', label)
+  caption.htmlFor = id
+  const select = element('select')
+  select.id = id
+  for (const [optionValue, optionLabel] of options) {
+    const item = document.createElement('option')
+    item.value = optionValue
+    item.textContent = optionLabel
+    select.append(item)
+  }
+  select.value = value
+  select.addEventListener('change', () => onChange(select.value))
+  field.append(caption, select)
+  return field
+}
+
+/**
+ * The filter recap Harvest puts opposite the totals. It is worth carrying over:
+ * a row of collapsed dropdowns hides what a report actually covers, and this
+ * says it in four lines that survive being printed or screenshotted.
+ *
+ * Tasks and Team read "All …" because this screen has no task or person filter
+ * yet -- that is a true statement of what the report covers, not a promise that
+ * the control exists, and the line is already here for the day it does.
+ */
+const detailedTimeRecap = (
+  clientLabel: string,
+  projectLabel: string,
+): HTMLDListElement => {
+  const recap = element('dl', 'report-facts report-filter-recap')
+  recap.append(
+    fact('Clients', clientLabel),
+    fact('Projects', projectLabel),
+    fact('Tasks', 'All tasks'),
+    fact('Team', 'All people'),
+  )
+  return recap
+}
+
+const detailedTimeCells = (row: Readonly<DetailedTimeRow>): readonly Node[] => {
+  const client = element('th')
+  client.scope = 'row'
+  client.append(linkElement(`/clients/${row.client_id}`, row.client_name))
+  const project = element('td')
+  project.append(
+    linkElement(`/projects/${row.project_id}`, detailedTimeProjectLabel(row)),
+  )
+  return [
+    client,
+    project,
+    textElement('td', row.task_name),
+    // Empty rather than "—": a person holding no role is a fact about the
+    // account, where an em dash in this column would read as "not loaded".
+    textElement('td', row.roles.join(', ')),
+    textElement('td', row.user_name),
+    textElement('td', decimalHours(row.seconds), 'report-numeric'),
+  ]
+}
+
+const renderDetailedTime = (
+  report: Readonly<DetailedTimeReport>,
+  options: Readonly<DetailedTimeOptions>,
+  labels: { readonly client: string; readonly project: string },
+  handlers: DetailedTimeHandlers,
+): DocumentFragment => {
+  const fragment = document.createDocumentFragment()
+  fragment.append(
+    reportHeading(
+      // Harvest's own title, dates and all: the range is the report's identity,
+      // and a heading that said only "Detailed time" would print without it.
+      `Detailed time report: ${report.from} – ${report.to}`,
+      `${report.time_entry_count.toLocaleString('en-US')} time ${report.time_entry_count === 1 ? 'entry' : 'entries'}`,
+    ),
+  )
+  const summary = element('div', 'report-detailed-summary')
+  const totals = element('dl', 'report-facts')
+  totals.append(
+    fact('Total hours', formatReportHours(report.seconds)),
+    fact('Uninvoiced billable hours', formatReportHours(report.uninvoiced_billable_seconds)),
+  )
+  for (const currency of report.currencies) {
+    // Absent for a profile that cannot read billable rates; the fact is then
+    // not drawn at all rather than drawn empty.
+    if (currency.billable_amount_cents === undefined) continue
+    totals.append(
+      fact(
+        `Billable amount (${currency.currency})`,
+        formatReportMoney(currency.billable_amount_cents, currency.currency),
+      ),
+    )
+  }
+  summary.append(totals, detailedTimeRecap(labels.client, labels.project))
+  fragment.append(summary)
+
+  const controls = element('div', 'report-detailed-controls')
+  controls.append(
+    selectControl(
+      'ez-detailed-hours',
+      'Show',
+      [
+        ['all', 'All hours'],
+        ['billable', 'Billable hours'],
+        ['non_billable', 'Non-billable hours'],
+        ['uninvoiced', 'Uninvoiced billable hours'],
+      ],
+      options.hours,
+      (next) => handlers.onOptions({ ...options, hours: next as DetailedTimeHours }),
+    ),
+    selectControl(
+      'ez-detailed-group',
+      'Group by',
+      [
+        ['date', 'Date'],
+        ['client', 'Client'],
+        ['project', 'Project'],
+        ['task', 'Task'],
+        ['person', 'Person'],
+      ],
+      options.grouping,
+      (next) =>
+        handlers.onOptions({ ...options, grouping: next as DetailedTimeGrouping }),
+    ),
+  )
+  const activeField = element('div', 'report-filter-field report-detailed-active')
+  const activeInput = element('input')
+  activeInput.type = 'checkbox'
+  activeInput.id = 'ez-detailed-active'
+  activeInput.checked = options.activeProjectsOnly
+  activeInput.addEventListener('change', () =>
+    handlers.onOptions({ ...options, activeProjectsOnly: activeInput.checked }),
+  )
+  const activeLabel = textElement('label', 'Active projects only')
+  activeLabel.htmlFor = 'ez-detailed-active'
+  activeField.append(activeInput, activeLabel)
+  const actions = element('div', 'report-detailed-actions')
+  const exportButton = textElement('button', 'Export')
+  exportButton.type = 'button'
+  exportButton.dataset['detailedExport'] = ''
+  exportButton.addEventListener('click', handlers.onExport)
+  const printButton = textElement('button', 'Print')
+  printButton.type = 'button'
+  printButton.dataset['detailedPrint'] = ''
+  printButton.addEventListener('click', handlers.onPrint)
+  actions.append(exportButton, printButton)
+  controls.append(activeField, actions)
+  fragment.append(controls)
+
+  if (report.rows.length === 0) {
+    exportButton.disabled = true
+    fragment.append(
+      textElement('p', 'No time was tracked under these filters.', 'report-empty'),
+    )
+    return fragment
+  }
+
+  const wrapper = element('div', 'report-table-wrap')
+  const table = element('table', 'report-table report-detailed-table')
+  const head = element('thead')
+  const headerRow = element('tr')
+  for (const label of ['Client', 'Project', 'Task', 'Roles', 'Person', 'Hours']) {
+    const cell = textElement('th', label)
+    cell.scope = 'col'
+    if (label === 'Hours') cell.className = 'report-numeric'
+    headerRow.append(cell)
+  }
+  head.append(headerRow)
+  const body = element('tbody')
+  for (const band of groupDetailedTimeRows(report.rows, options.grouping)) {
+    const bandRow = element('tr', 'report-band-row')
+    const bandLabel = textElement('th', band.label)
+    bandLabel.colSpan = 5
+    bandLabel.scope = 'colgroup'
+    bandRow.append(bandLabel, textElement('td', decimalHours(band.seconds), 'report-numeric'))
+    body.append(bandRow)
+    for (const row of band.rows) {
+      const line = element('tr')
+      line.append(...detailedTimeCells(row))
+      body.append(line)
+    }
+  }
+  const foot = element('tfoot')
+  const totalRow = element('tr')
+  const totalLabel = textElement('th', 'Total')
+  totalLabel.scope = 'row'
+  totalLabel.colSpan = 5
+  totalRow.append(totalLabel, textElement('td', decimalHours(report.seconds), 'report-numeric'))
+  foot.append(totalRow)
+  table.append(head, body, foot)
+  wrapper.append(table)
+  fragment.append(wrapper)
+
+  const unpriced = report.currencies.reduce(
+    (count, currency) => count + currency.entries_without_billable_rate,
+    0,
+  )
+  if (unpriced > 0) {
+    fragment.append(
+      warning(
+        `${countLabel(unpriced, 'billable time entry', 'billable time entries')} without a resolved rate ${unpriced === 1 ? 'is' : 'are'} excluded from billable amounts.`,
+      ),
+    )
+  }
   return fragment
 }
 
@@ -962,6 +1361,17 @@ export const createReportsController = (
    * Client list beside it did not would be lying about what it holds.
    */
   let catalogFilter: 'active' | 'all' = 'active'
+  /**
+   * The last detailed report, kept so a change of grouping re-folds what is
+   * already here. Cleared whenever a request goes out, so Export can never hand
+   * out rows from a report the screen has stopped showing.
+   */
+  let detailedReport: DetailedTimeReport | null = null
+  let detailedOptions: DetailedTimeOptions = {
+    hours: 'all',
+    grouping: 'date',
+    activeProjectsOnly: false,
+  }
   let pending = false
   let retryAction: (() => void) | null = null
   let queuedLocationFilters: ReportFilters | null = null
@@ -984,6 +1394,7 @@ export const createReportsController = (
     setPending(false)
     retryAction = null
     retry.hidden = true
+    detailedReport = null
     results.replaceChildren()
   }
 
@@ -1009,8 +1420,10 @@ export const createReportsController = (
    * still receives the kind the URL asked for, so the withheld API call and the
    * message naming the denial are unchanged.
    */
-  const presentedKind = (requested: ReportKind, financial: boolean): ReportKind =>
-    financial || openToEveryProfile.has(requested) ? requested : 'my-hours'
+  const presentedKind = (
+    requested: ReportKind,
+    identity: Pick<Whoami, 'profile' | 'manager_grants'>,
+  ): ReportKind => (canReadKind(requested, identity) ? requested : 'my-hours')
 
   const setKind = (next: ReportKind): void => {
     kind = next
@@ -1026,19 +1439,25 @@ export const createReportsController = (
    */
   const syncKindHrefs = (filters: Readonly<ReportFilters>): void => {
     for (const [tabKind, anchor] of kindTabs) {
-      anchor.href = reportFiltersUrl({ ...filters, kind: tabKind })
+      anchor.href = reportFiltersUrl({ ...filters, kind: tabKind }, detailedOptions)
     }
   }
 
   const updateVisibleFilters = (): void => {
     // My hours has no client picker: the report is the acting user's own rows,
     // narrowed by project or not at all, and a client control would suggest a
-    // second axis the endpoint does not take. The Time report has neither: it
-    // is the whole account over a period, and a narrowed one is what the
-    // client and project tabs inside it are for.
+    // second axis the endpoint does not take. Contractor cost has neither: it
+    // takes a range alone, and a picker it would ignore is worse than no picker.
+    // The Time report has neither either: it is the whole account over a
+    // period, and a narrowed one is what the client and project tabs inside it
+    // are for.
     clientField.hidden =
-      kind === 'project-budget' || kind === 'my-hours' || kind === 'time'
-    projectField.hidden = kind === 'client-rollup' || kind === 'time'
+      kind === 'project-budget' ||
+      kind === 'my-hours' ||
+      kind === 'contractor-cost' ||
+      kind === 'time'
+    projectField.hidden =
+      kind === 'client-rollup' || kind === 'contractor-cost' || kind === 'time'
     // The catalog switch exists to widen those two pickers. With neither on
     // screen it is a control that changes nothing, which is worse than an
     // absent one: the first person to move it waits for something to happen.
@@ -1090,6 +1509,68 @@ export const createReportsController = (
   }
 
   /**
+   * The export writes what the table holds, in the order the table holds it.
+   * It never asks the API again: a second request could be answered with rows
+   * the screen was not shown, and the money columns are decided by whether the
+   * fetched rows carry the field rather than by anything read here.
+   */
+  const exportDetailedTime = (): void => {
+    if (detailedReport === null) return
+    const blob = new Blob([detailedTimeCsv(detailedReport, detailedOptions.grouping)], {
+      type: 'text/csv;charset=utf-8',
+    })
+    const href = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = href
+    link.download = `detailed-time-${detailedReport.from}-to-${detailedReport.to}.csv`
+    link.click()
+    URL.revokeObjectURL(href)
+  }
+
+  const renderDetailed = (report: Readonly<DetailedTimeReport>): void => {
+    const filters = filtersFromForm()
+    results.replaceChildren(
+      renderDetailedTime(
+        report,
+        detailedOptions,
+        {
+          client:
+            report.client_id === null
+              ? 'All clients'
+              : catalogLabel(clients, report.client_id, `Client #${report.client_id}`),
+          project:
+            report.project_id === null
+              ? 'All projects'
+              : catalogLabel(projects, report.project_id, `Project #${report.project_id}`),
+        },
+        {
+          onOptions: (next) => {
+            const regroupOnly =
+              next.hours === detailedOptions.hours &&
+              next.activeProjectsOnly === detailedOptions.activeProjectsOnly
+            detailedOptions = next
+            // Grouping is a re-fold of rows already here, so it re-renders
+            // without a request; Show and Active projects only change which
+            // rows exist, so they go back to the API.
+            if (regroupOnly) {
+              globalThis.history.pushState(
+                null,
+                '',
+                reportFiltersUrl({ ...filters, kind: 'detailed-time' }, detailedOptions),
+              )
+              renderDetailed(report)
+              return
+            }
+            void loadReport({ ...filters, kind: 'detailed-time' }, true)
+          },
+          onExport: exportDetailedTime,
+          onPrint: () => globalThis.print(),
+        },
+      ),
+    )
+  }
+
+  /**
    * A sub-tab is presentation, so it redraws what is already here and pushes
    * the address that names it. A run in flight declines the click for the same
    * reason the kind tabs do: the report about to arrive is the one the tab
@@ -1102,9 +1583,7 @@ export const createReportsController = (
     syncKindHrefs(filters)
     globalThis.history.pushState(null, '', reportFiltersUrl(filters))
     if (lastTimeReport === null) return
-    results.replaceChildren(
-      renderTimeReport(lastTimeReport, filters, showTimeTab, canOpenTeam()),
-    )
+    results.replaceChildren(renderTimeReport(lastTimeReport, filters, showTimeTab, canOpenTeam()))
   }
 
   const renderReport = (
@@ -1114,17 +1593,24 @@ export const createReportsController = (
       | ClientRollupReport
       | ProjectBudgetReport
       | MyHoursReport
+      | ContractorCostReport
+      | DetailedTimeReport
       | TimeReport,
   ): void => {
     if (filters.kind === 'time') {
       lastTimeReport = report as TimeReport
       results.replaceChildren(
-      renderTimeReport(lastTimeReport, filters, showTimeTab, canOpenTeam()),
-    )
+        renderTimeReport(lastTimeReport, filters, showTimeTab, canOpenTeam()),
+      )
+    } else if (filters.kind === 'detailed-time') {
+      detailedReport = report as DetailedTimeReport
+      renderDetailed(detailedReport)
     } else if (filters.kind === 'my-hours') {
       results.replaceChildren(renderMyHours(report as MyHoursReport))
     } else if (filters.kind === 'uninvoiced') {
       results.replaceChildren(renderUninvoiced(report as UninvoicedReport))
+    } else if (filters.kind === 'contractor-cost') {
+      results.replaceChildren(renderContractorCost(report as ContractorCostReport))
     } else if (filters.kind === 'client-rollup') {
       results.replaceChildren(renderClientRollup(report as ClientRollupReport, clients))
     } else {
@@ -1147,12 +1633,16 @@ export const createReportsController = (
       status.textContent = validation
       return
     }
-    if (
-      !openToEveryProfile.has(filters.kind) &&
-      !canReadFinancialReports(active.identity.profile)
-    ) {
+    if (!canReadKind(filters.kind, active.identity)) {
       clearReportPresentation()
-      status.textContent = 'Your profile does not have access to this financial report.'
+      // Named rather than folded into the financial refusal: accounting reads
+      // the financial reports and is still refused this one, so "your profile
+      // does not have access to this financial report" would leave them
+      // hunting for a permission that does not exist.
+      status.textContent =
+        filters.kind === 'contractor-cost'
+          ? 'Only an administrator can read the contractor cost report.'
+          : 'Your profile does not have access to this financial report.'
       return
     }
     if (
@@ -1160,6 +1650,8 @@ export const createReportsController = (
       api.getClientRollupReport === undefined ||
       api.getProjectBudgetReport === undefined ||
       api.getMyHoursReport === undefined ||
+      api.getContractorCostReport === undefined ||
+      api.getDetailedTimeReport === undefined ||
       api.getTimeReport === undefined
     ) {
       clearReportPresentation()
@@ -1167,15 +1659,18 @@ export const createReportsController = (
       return
     }
     syncKindHrefs(filters)
-    if (updateUrl) globalThis.history.pushState(null, '', reportFiltersUrl(filters))
+    if (updateUrl) {
+      globalThis.history.pushState(null, '', reportFiltersUrl(filters, detailedOptions))
+    }
     setPending(true)
     retry.hidden = true
     retryAction = null
-    results.replaceChildren()
+    detailedReport = null
     // The cached fold belongs to the range that produced it; keeping it across
     // a reload would let a sub-tab click redraw last month under this month's
     // heading.
     lastTimeReport = null
+    results.replaceChildren()
     status.textContent = 'Loading report…'
     try {
       const range = { from: filters.from, to: filters.to }
@@ -1190,6 +1685,17 @@ export const createReportsController = (
             },
             active.signal,
           )
+        : filters.kind === 'detailed-time'
+          ? await api.getDetailedTimeReport(
+              {
+                ...range,
+                ...(filters.clientId === null ? {} : { client_id: filters.clientId }),
+                ...(filters.projectId === null ? {} : { project_id: filters.projectId }),
+                hours: detailedOptions.hours,
+                active_projects_only: detailedOptions.activeProjectsOnly,
+              },
+              active.signal,
+            )
         : filters.kind === 'uninvoiced'
           ? await api.getUninvoicedReport(
               {
@@ -1199,9 +1705,11 @@ export const createReportsController = (
               },
               active.signal,
             )
-          : filters.kind === 'client-rollup'
-            ? await api.getClientRollupReport(filters.clientId!, range, active.signal)
-            : await api.getProjectBudgetReport(filters.projectId!, range, active.signal)
+          : filters.kind === 'contractor-cost'
+            ? await api.getContractorCostReport(range, active.signal)
+            : filters.kind === 'client-rollup'
+              ? await api.getClientRollupReport(filters.clientId!, range, active.signal)
+              : await api.getProjectBudgetReport(filters.projectId!, range, active.signal)
       if (currentSession() !== active) return
       if (queuedLocationFilters !== null) return
       renderReport(filters, report)
@@ -1227,12 +1735,14 @@ export const createReportsController = (
   const applyLocation = (): void => {
     const active = currentSession()
     if (active === null) return
+    const location = new URL(globalThis.location.href)
     const filters = reportFiltersFromUrl(
-      new URL(globalThis.location.href),
+      location,
       localToday(),
       canReadFinancialReports(active.identity.profile),
     )
-    setKind(presentedKind(filters.kind, canReadFinancialReports(active.identity.profile)))
+    detailedOptions = detailedTimeOptionsFromUrl(location)
+    setKind(presentedKind(filters.kind, active.identity))
     timeTab = filters.tab
     period.setRange(filters)
     populateCatalog(filters)
@@ -1273,6 +1783,7 @@ export const createReportsController = (
       session = { identity, signal, onSessionFailure }
       clients = []
       projects = []
+      detailedReport = null
       lastTimeReport = null
       catalogFilter = 'active'
       pending = false
@@ -1298,6 +1809,7 @@ export const createReportsController = (
           session = null
           clients = []
           projects = []
+          detailedReport = null
           lastTimeReport = null
           pending = false
           retryAction = null
@@ -1313,13 +1825,14 @@ export const createReportsController = (
         },
         { once: true },
       )
+      const initialLocation = new URL(globalThis.location.href)
       const initial = reportFiltersFromUrl(
-        new URL(globalThis.location.href),
+        initialLocation,
         localToday(),
         canReadFinancialReports(identity.profile),
       )
-      const financial = canReadFinancialReports(identity.profile)
-      setKind(presentedKind(initial.kind, financial))
+      detailedOptions = detailedTimeOptionsFromUrl(initialLocation)
+      setKind(presentedKind(initial.kind, identity))
       timeTab = initial.tab
       period.setRange(initial)
       updateVisibleFilters()
@@ -1329,7 +1842,7 @@ export const createReportsController = (
       // second session in the same document gets the strip its profile earns.
       kindStrip?.replaceChildren(
         ...[...kindTabs]
-          .filter(([tabKind]) => financial || openToEveryProfile.has(tabKind))
+          .filter(([tabKind]) => canReadKind(tabKind, identity))
           .map(([, anchor]) => anchor),
       )
       if (api.listReportClients === undefined || api.listReportProjects === undefined) {
@@ -1361,7 +1874,7 @@ export const createReportsController = (
           projects = loadedProjects
           const next = queuedLocationFilters ?? initial
           queuedLocationFilters = null
-          setKind(presentedKind(next.kind, financial))
+          setKind(presentedKind(next.kind, identity))
           timeTab = next.tab
           // Before the range, so the range is read under the organisation's own
           // week rather than under Monday and then re-read.

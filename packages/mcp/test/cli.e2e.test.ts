@@ -44,6 +44,25 @@ const tokenService: ApiTokenService = {
 
 const reports: ReportReader = {
   // Not exercised here; present because ReportReader requires it.
+  detailedTime: async (filter) => ({
+    kind: "report" as const,
+    report: {
+      from: filter.from,
+      to: filter.to,
+      clientId: filter.clientId ?? null,
+      projectId: filter.projectId ?? null,
+      hours: filter.hours ?? "all",
+      activeProjectsOnly: filter.activeProjectsOnly ?? false,
+      seconds: 0,
+      roundedSeconds: 0,
+      billableSeconds: 0,
+      uninvoicedBillableSeconds: 0,
+      timeEntryCount: 0,
+      currencies: [],
+      rows: [],
+    },
+  }),
+  // Not exercised here; present because ReportReader requires it.
   contractorCost: async (range) => ({ from: range.from, to: range.to, rows: [] }),
   // Not exercised here; present because ReportReader requires it.
   timeReport: async (range) => ({

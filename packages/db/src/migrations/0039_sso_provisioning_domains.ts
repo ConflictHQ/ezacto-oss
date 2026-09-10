@@ -15,7 +15,7 @@ const canonicalTimestamp = (column: string) => `unixepoch(${column}) IS NOT NULL
 /**
  * Which domains this instance may create a user for when nobody matches an SSO
  * assertion. The table exists because the answer is instance configuration and
- * an operator typing "we own ezacto.com" into a settings form is an
+ * an operator typing "we own example.com" into a settings form is an
  * assertion, not a proof: the row is inert until a TXT record published under
  * the domain repeats the token stored here.
  *

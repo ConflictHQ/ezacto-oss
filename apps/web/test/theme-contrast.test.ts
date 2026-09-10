@@ -49,6 +49,14 @@ const liveTextRules: readonly {
 }[] = [
   // `.auth-splash` paints `background: var(--ez-ink)`.
   { selector: '.auth-splash-copy .eyebrow', foreground: 'live', background: 'ink' },
+  // The `$` toggle when money is hidden. Its base rule paints
+  // `background: var(--ez-surface)`; the border keeps the live hue as an
+  // indicator and only the label is certified here.
+  {
+    selector: ".money-toggle[aria-pressed='true']",
+    foreground: 'live_text',
+    background: 'surface',
+  },
   // `.timesheet-status` paints `background: var(--ez-status-bg)`.
   {
     selector: '.timesheet-status [data-timesheet-rejection-reason]',
@@ -90,6 +98,7 @@ describe('D16 theme AA contrast gate', () => {
       ['ground/live-text button label', 5.26],
       ['live-text/ground text', 5.26],
       ['live-text/status-bg text', 4.63],
+      ['live-text/surface text', 4.86],
       ['red/ground text', 5.46],
       ['red/surface text', 5.04],
       ['data/ground row action', 5.74],

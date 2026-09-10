@@ -1,4 +1,5 @@
-import { renderDataTable } from '../components/data-table.js'
+import { renderDataTable, type CellContent } from '../components/data-table.js'
+import { markMoney, moneyText } from '../money-display.js'
 import {
   EzactoApiError,
   type GeneralResource,
@@ -9,6 +10,7 @@ import {
 } from '@ezacto/client'
 import {
   recurringAmountLabel,
+  recurringFixedTotalCents,
   recurringBasisLabel,
   recurringBlankFormValues,
   recurringBlankLine,
@@ -64,6 +66,14 @@ const conflictOnDelete = (error: unknown): string | null =>
     ? 'This definition has already raised an invoice, so it cannot be deleted. ' +
       'Edit it instead, or set its next issue date past the period you want to stop.'
     : null
+
+/**
+ * A definition that sweeps whatever is uninvoiced has no amount to state until
+ * it runs, and "Set when it runs" is a sentence rather than a figure. Marking it
+ * would put dots over an explanation.
+ */
+const amountIsKnown = (definition: Readonly<RecurringInvoice>): boolean =>
+  recurringFixedTotalCents(definition) !== null
 
 const text = (selector: string, value: string): void => {
   required<HTMLElement>(selector).textContent = value
@@ -658,8 +668,10 @@ export const createRecurringWorkspaceController = (
             key: 'amount',
             label: 'Amount',
             numeric: true,
-            render: (definition) =>
-              recurringAmountLabel(definition, recurringCurrency(definition, clients)),
+            render: (definition): CellContent => {
+              const label = recurringAmountLabel(definition, recurringCurrency(definition, clients))
+              return amountIsKnown(definition) ? moneyText(label) : label
+            },
           },
         ],
         actions: (definition) => [
@@ -710,25 +722,29 @@ export const createRecurringWorkspaceController = (
               key: 'unit',
               label: 'Unit price',
               numeric: true,
-              render: (row) => recurringMoney(row.line.unit_price_cents, currency),
+              render: (row) => moneyText(recurringMoney(row.line.unit_price_cents, currency)),
             },
             {
               key: 'amount',
               label: 'Amount',
               numeric: true,
               render: (row) =>
-                recurringMoney(
-                  Math.round(row.line.quantity * row.line.unit_price_cents),
-                  currency,
+                moneyText(
+                  recurringMoney(
+                    Math.round(row.line.quantity * row.line.unit_price_cents),
+                    currency,
+                  ),
                 ),
               total: (rows) =>
-                recurringMoney(
-                  rows.reduce(
-                    (sum, row) =>
-                      sum + Math.round(row.line.quantity * row.line.unit_price_cents),
-                    0,
+                moneyText(
+                  recurringMoney(
+                    rows.reduce(
+                      (sum, row) =>
+                        sum + Math.round(row.line.quantity * row.line.unit_price_cents),
+                      0,
+                    ),
+                    currency,
                   ),
-                  currency,
                 ),
             },
           ],
@@ -765,7 +781,9 @@ export const createRecurringWorkspaceController = (
     text('[data-recurring-next]', definition.next_issue_on)
     text('[data-recurring-due]', recurringDueLabel(state))
     text('[data-recurring-basis]', recurringBasisLabel(definition))
-    text('[data-recurring-amount]', recurringAmountLabel(definition, currency))
+    const amountFact = required<HTMLElement>('[data-recurring-amount]')
+    amountFact.textContent = recurringAmountLabel(definition, currency)
+    markMoney(amountFact, amountIsKnown(definition))
     text('[data-recurring-subject]', definition.subject_template)
     text('[data-recurring-notes]', definition.notes_template.trim() === '' ? '—' : definition.notes_template)
     const retainerRow = required<HTMLElement>('[data-recurring-retainer-row]')

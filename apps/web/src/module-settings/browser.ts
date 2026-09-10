@@ -112,6 +112,11 @@ const moduleDescriptions: Readonly<Record<string, { label: string; warning: stri
     warning:
       'Disabling hides the Expenses navigation link and returns 404 from expense API endpoints. Existing expense records are preserved.',
   },
+  own_money: {
+    label: 'Your own rates and take-home',
+    warning:
+      'Enabling lets a person read the billable rate and the take-home cost recorded on their own time entries, through the API and the ez command line. Nothing on anybody else’s entries becomes visible: a rate snapshot is served only to the person whose entry it is. Administrators already see both across everyone and are unaffected. The app’s own screens do not show these two figures yet. Disabling hides them again on the next request, and no stored data changes either way.',
+  },
 }
 
 const required = <ElementType extends Element>(selector: string): ElementType => {

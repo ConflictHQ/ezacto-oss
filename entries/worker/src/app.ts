@@ -168,6 +168,13 @@ export interface RuntimeServices {
    */
   userEmails: UserEmailService
   isTeamModuleEnabled(): Promise<boolean>
+  /**
+   * Whether this organization lets a person read their own rates and take-home
+   * (#520). Composed into `authentication` rather than a route's options: the
+   * rule it feeds is `canViewMoneyField`, which every money serializer already
+   * calls, so the answer belongs on the principal.
+   */
+  isOwnMoneyVisible(): Promise<boolean>
   timesheetApprovals: TimesheetApprovalService
   timesheetLockPolicy: TimesheetLockPolicyService
   moneyResources: MoneyResourceRouteOptions['service']
@@ -267,6 +274,7 @@ export const createApp = (
             ...(services.activity === undefined
               ? {}
               : { activity: services.activity }),
+            ownMoneyVisible: services.isOwnMoneyVisible,
           },
           installApi: (api) => {
             installSessionRoutes(api, services.sessions)
