@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  createCanonicalTemporaryDirectory,
   createPhysicalSnapshotMetadata,
   verifyPhysicalSnapshot,
 } from '../../../scripts/container-physical-snapshot.mjs'
@@ -62,6 +63,19 @@ afterEach(async () => {
 })
 
 describe('container physical snapshot', () => {
+  it('[regression #471] canonicalizes owned temp directories without accepting operator symlinks', async () => {
+    const { root } = await fixture()
+    const parent = await realpath(await mkdtemp(join(tmpdir(), 'ezacto-linked-temp-parent-')))
+    roots.push(parent)
+    const alias = join(parent, 'alias')
+    await symlink(root, alias, 'dir')
+
+    const temporary = await createCanonicalTemporaryDirectory('restore-', alias)
+    expect(temporary).toBe(await realpath(temporary))
+    expect(temporary.startsWith(`${root}/restore-`)).toBe(true)
+    await expect(verifyPhysicalSnapshot(alias)).rejects.toThrow('must not be a symbolic link')
+  })
+
   it('[unit] verifies the exact SQLite and content-addressed attachment inventory', async () => {
     const { root } = await fixture()
 

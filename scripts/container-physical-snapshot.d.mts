@@ -28,3 +28,8 @@ export function createPhysicalSnapshotMetadata(
 export function verifyPhysicalSnapshot(
   root: string,
 ): Promise<PhysicalSnapshotMetadata>;
+
+export function createCanonicalTemporaryDirectory(
+  prefix: string,
+  parent?: string,
+): Promise<string>;

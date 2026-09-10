@@ -18,6 +18,11 @@ import { pathToFileURL } from "node:url";
 
 const snapshotKind = "ezacto-container-physical-snapshot";
 const snapshotVersion = 1;
+
+// Only for directories this tool creates itself. Operator-supplied paths must
+// still pass the strict no-symlink checks without being silently normalized.
+export const createCanonicalTemporaryDirectory = async (prefix, parent = tmpdir()) =>
+  realpath(await mkdtemp(join(parent, prefix)));
 const dockerName = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 const imageName = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,511}$/u;
 const attachmentFile = /^attachments\/sha256\/([0-9a-f]{2})\/([0-9a-f]{64})$/u;
@@ -469,7 +474,7 @@ secure(target)
 `;
 
 const verifyRestoredVolume = async ({ bundle, volume, image, expected }) => {
-  const temporaryRoot = await mkdtemp(join(tmpdir(), "ezacto-restore-verify-"));
+  const temporaryRoot = await createCanonicalTemporaryDirectory("ezacto-restore-verify-");
   const extracted = join(temporaryRoot, "data");
   const verifier = `ezacto-restore-verify-${process.pid}-${randomBytes(6).toString("hex")}`;
   let created = false;

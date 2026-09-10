@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createCanonicalTemporaryDirectory } from '../../../scripts/container-physical-snapshot.mjs'
 
 const root = new URL('../../..', import.meta.url).pathname
 const suffix = `${process.pid}-${Date.now()}`
@@ -262,7 +262,7 @@ try {
   smtp = createSmtpCapture()
   const [smtpPort, appPort] = await Promise.all([smtp.listen(), freePort()])
   const origin = `http://localhost:${appPort}`
-  temporaryRoot = await mkdtemp(join(tmpdir(), 'ezacto-container-restore-'))
+  temporaryRoot = await createCanonicalTemporaryDirectory('ezacto-container-restore-')
   const bundle = join(temporaryRoot, 'snapshot')
   await command('docker', ['build', '--tag', image, '.'])
   await command('docker', ['volume', 'create', volume])
