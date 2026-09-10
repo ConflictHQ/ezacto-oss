@@ -176,7 +176,46 @@ const runAtomic = async (
  * in descriptions, so a definition brought over from Harvest arrives expecting
  * it to.
  */
-const templateTokens = (template: string, issueDate: string): string => {
+/**
+ * Which payment of a finite run this issue is, so a line can count itself off:
+ * "CREDIT 2 of 4".
+ *
+ * A definition records when a line *stops* (`through`) and never when it
+ * started, so the position is derived backwards -- the total less the issues
+ * still to come, which a fixed cadence makes countable. Deriving it forwards
+ * would mean storing a start date the agreement never had, purely to count.
+ *
+ * Null when the arithmetic cannot be trusted: a `through` already behind the
+ * issue date, or a run that works out longer than its own total. The caller
+ * leaves the token unsubstituted in that case, because a visible
+ * `%line_installment_number%` is a bug someone fixes, and "CREDIT 5 of 4" on an
+ * invoice is a bug the client reads first.
+ */
+const installmentPosition = (
+  through: string,
+  issueDate: string,
+  everyNMonths: number,
+  installments: number,
+): number | null => {
+  const months =
+    (Number(through.slice(0, 4)) - Number(issueDate.slice(0, 4))) * 12 +
+    (Number(through.slice(5, 7)) - Number(issueDate.slice(5, 7)))
+  if (!Number.isFinite(months) || months < 0) return null
+  const remaining = Math.floor(months / everyNMonths)
+  const position = installments - remaining
+  return position >= 1 && position <= installments ? position : null
+}
+
+interface InstallmentContext {
+  readonly position: number
+  readonly total: number
+}
+
+const templateTokens = (
+  template: string,
+  issueDate: string,
+  installment: InstallmentContext | null = null,
+): string => {
   const date = new Date(`${issueDate}T00:00:00.000Z`)
   const monthNames = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -186,6 +225,12 @@ const templateTokens = (template: string, issueDate: string): string => {
     .replace(/%invoice_issue_month_name%/g, monthNames[date.getUTCMonth()]!)
     .replace(/%invoice_issue_year%/g, String(date.getUTCFullYear()))
     .replace(/%invoice_issue_date%/g, issueDate)
+    .replace(/%line_installment_number%/g, (token) =>
+      installment === null ? token : String(installment.position),
+    )
+    .replace(/%line_installment_total%/g, (token) =>
+      installment === null ? token : String(installment.total),
+    )
 }
 
 const dueDate = (issueDate: string, terms: ClientDefaults['paymentTerms']): string => {
@@ -266,6 +311,10 @@ export const createRecurringInvoiceEngine = (
     ) {
       throw new RecurringEngineError('invalid_definition', 'complete definition has null required fields')
     }
+    // Captured at the guard: the narrowing above does not survive the awaits
+    // between here and the line rendering, and re-checking there would be a
+    // second guard for a fact already established.
+    const everyNMonths = definition.everyNMonths
 
     let parsedConfig: unknown
     try {
@@ -395,8 +444,22 @@ export const createRecurringInvoiceEngine = (
       const amountCents = calculateInvoiceLineAmountCents(item.quantity, item.unit_price_cents)
       // A null description stays null rather than becoming an empty string: the
       // column is nullable and "no description" is not the same fact as "".
+      // Only a line that carries both a total and an end can count itself; the
+      // config validator already refuses one without the other, so this is the
+      // absent case, not a half-configured one.
+      const installment: InstallmentContext | null =
+        item.installments === null ||
+        item.installments === undefined ||
+        item.through === null ||
+        item.through === undefined
+          ? null
+          : ((position) => (position === null ? null : { position, total: item.installments! }))(
+              installmentPosition(item.through, issueDate, everyNMonths, item.installments),
+            )
       const description =
-        item.description === null ? null : templateTokens(item.description, issueDate)
+        item.description === null
+          ? null
+          : templateTokens(item.description, issueDate, installment)
       return { ...item, description, position, amountCents }
     })
     const totalAmountCents = checkedSum(lines.map((l) => l.amountCents))

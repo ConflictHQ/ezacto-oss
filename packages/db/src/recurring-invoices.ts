@@ -34,6 +34,17 @@ export interface RecurringFixedLineV1 {
    * November", not "stops on the first of December".
    */
   through?: string | null
+  /**
+   * How many issues this line appears on in total, when it is a finite run
+   * being counted off in its own text -- "CREDIT 2 of 4".
+   *
+   * `through` already says when a line stops; it cannot say which payment this
+   * one is, because a definition does not record when the run started. Given
+   * the total and the cadence, the position is the total less the issues still
+   * to come, which `through` does know. Requires `through`: without an end
+   * there is nothing to count back from.
+   */
+  installments?: number | null
 }
 
 export interface RecurringFixedLinesConfigV1 {
@@ -146,7 +157,7 @@ const assertFixedLine = (value: unknown, index: number): void => {
   assertExactKeys(
     value,
     ['kind', 'description', 'quantity', 'unit_price_cents', 'taxed', 'taxed2', 'project_id'],
-    ['through'],
+    ['through', 'installments'],
     field,
   )
   if (typeof value.kind !== 'string' || isWhitespaceOnly(value.kind)) {
@@ -182,6 +193,15 @@ const assertFixedLine = (value: unknown, index: number): void => {
       new Date(`${value.through}T00:00:00.000Z`).toISOString().slice(0, 10) !== value.through
     ) {
       throw new RangeError(`${field}.through must be a calendar date or null`)
+    }
+  }
+  if (value.installments !== null && value.installments !== undefined) {
+    assertPositiveSafeInteger(value.installments as number, `${field}.installments`)
+    // Counting off "2 of 4" is counting backwards from the end. A total with no
+    // end date has nothing to count back from, and would render as the same
+    // number on every invoice forever, which is worse than not counting at all.
+    if (value.through === null || value.through === undefined) {
+      throw new TypeError(`${field}.installments requires ${field}.through`)
     }
   }
   if (value.project_id !== null) {
