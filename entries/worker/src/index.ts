@@ -73,6 +73,23 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
     if (controller.cron === '0 3 * * *' && env.ATTACHMENTS !== undefined) {
       await runNightlyExport(env.DB, env.ATTACHMENTS)
     }
+    if (controller.cron === '0 3 * * *') {
+      // Daily rather than every minute: a definition is due on a date, so the
+      // finest resolution the cadence has is a day, and fifty-nine of every
+      // sixty extra passes could only find the same nothing.
+      //
+      // The event this sweep writes is drained below in the same invocation,
+      // which is why it runs before `outbox.drain()` rather than after.
+      //
+      // `scheduledTime` rather than the wall clock so that a run delayed into
+      // the next day still generates the day it was scheduled for. The engine
+      // treats every definition due on or before that date, so the day a cron
+      // misses entirely is caught up by the next one.
+      await services.recurringInvoices.generateDue(
+        new Date(controller.scheduledTime).toISOString().slice(0, 10),
+        { type: 'system' },
+      )
+    }
     // Refuses on any deployment that is not the demo, so this line is safe to
     // read as unconditional. See `runDemoMaintenance`.
     await runDemoMaintenance(env, controller.cron)

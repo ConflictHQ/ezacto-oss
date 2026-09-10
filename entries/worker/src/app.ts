@@ -67,6 +67,7 @@ import {
   type InstanceOwnerPasswordInput,
   type InstanceOwnerPasswordResult,
   type OutboxService,
+  type RecurringInvoiceEngine,
 } from '@ezacto/db/d1'
 import {
   brandFromEnv,
@@ -167,8 +168,12 @@ export interface RuntimeServices {
   timesheetLockPolicy: TimesheetLockPolicyService
   moneyResources: MoneyResourceRouteOptions['service']
   invoiceGeneration: NonNullable<MoneyResourceRouteOptions['generation']>
-  /** Issues the invoice a recurring definition is due for. */
-  recurringInvoices: NonNullable<MoneyResourceRouteOptions['recurringGeneration']>
+  /**
+   * Issues the invoice a recurring definition is due for. The whole engine
+   * rather than the route's port, because the daily cron sweeps every due
+   * definition through the same object the Generate button uses.
+   */
+  recurringInvoices: RecurringInvoiceEngine
   reports: ReportReader
   cursorSigningKey: Uint8Array
   passwordAuth: PasswordAuthService

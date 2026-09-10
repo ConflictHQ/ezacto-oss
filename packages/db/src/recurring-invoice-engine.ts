@@ -38,10 +38,33 @@ export class RecurringEngineError extends Error {
   }
 }
 
-export interface RecurringGenerationPrincipal {
+export interface RecurringGenerationUserPrincipal {
+  type: 'user'
   userId: number
   profile: string
 }
+
+/**
+ * The scheduled pass, which has no person behind it.
+ *
+ * The alternative was to let the schedule borrow a user id -- the account
+ * owner, or whoever last edited the definition -- and that is the one thing
+ * that cannot be allowed here. `invoice_command_ledger` is the audit trail of a
+ * document that goes to a client, and a name in it that did not act is a lie
+ * that reads as a fact. The schema has always modelled the honest answer: its
+ * CHECK permits `actor_type = 'system' AND actor_id IS NULL`, and until the
+ * daily cron existed nothing ever wrote that branch.
+ *
+ * It carries no fields because there is nothing to authorize. Authority for a
+ * system run is the cron trigger itself, which is not reachable from a request.
+ */
+export interface RecurringGenerationSystemPrincipal {
+  type: 'system'
+}
+
+export type RecurringGenerationPrincipal =
+  | RecurringGenerationUserPrincipal
+  | RecurringGenerationSystemPrincipal
 
 export interface RecurringGenerationResult {
   invoiceId: number
@@ -145,6 +168,22 @@ const first = async <T>(
     )
   }
   return (client.prepare(statement.text).get(...statement.params) as T | undefined) ?? null
+}
+
+const all = async <T>(
+  database: RecurringEngineDatabase,
+  statement: SqlStatement,
+): Promise<T[]> => {
+  const client = database.$client
+  if (isD1Client(client)) {
+    return (
+      await client
+        .prepare(statement.text)
+        .bind(...statement.params)
+        .all<T>()
+    ).results
+  }
+  return client.prepare(statement.text).all(...statement.params) as T[]
 }
 
 const runAtomic = async (
@@ -261,12 +300,28 @@ export interface RecurringEngineOptions {
   clock?: () => string
 }
 
+export interface RecurringGenerationFailure {
+  definitionId: number
+  /** Null for a failure the engine did not raise itself. */
+  code: RecurringEngineErrorCode | null
+  message: string
+}
+
+export interface RecurringGenerationSweep {
+  generated: RecurringGenerationResult[]
+  failed: RecurringGenerationFailure[]
+}
+
 export interface RecurringInvoiceEngine {
   generate(
     definitionId: number,
     asOfDate: string,
     principal: RecurringGenerationPrincipal,
   ): Promise<RecurringGenerationResult>
+  generateDue(
+    asOfDate: string,
+    principal: RecurringGenerationPrincipal,
+  ): Promise<RecurringGenerationSweep>
 }
 
 export const createRecurringInvoiceEngine = (
@@ -274,17 +329,24 @@ export const createRecurringInvoiceEngine = (
   options: RecurringEngineOptions = {},
 ): RecurringInvoiceEngine => ({
   async generate(definitionId, asOfDate, principal) {
-    const actor = await first<{ profile: string }>(database, {
-      text: 'SELECT profile FROM users WHERE id = ? AND is_active = 1',
-      params: [principal.userId],
-    })
-    if (
-      actor === null ||
-      actor.profile !== principal.profile ||
-      !moneyProfiles.has(actor.profile)
-    ) {
-      throw new RecurringEngineError('forbidden', 'the acting user cannot generate recurring invoices')
+    // Only a user has anything to authorize. A system run is reached from the
+    // cron and from nowhere else, so there is no claim to check against a row;
+    // checking one would mean inventing a user for it, which is precisely what
+    // the system branch exists to avoid.
+    if (principal.type === 'user') {
+      const actor = await first<{ profile: string }>(database, {
+        text: 'SELECT profile FROM users WHERE id = ? AND is_active = 1',
+        params: [principal.userId],
+      })
+      if (
+        actor === null ||
+        actor.profile !== principal.profile ||
+        !moneyProfiles.has(actor.profile)
+      ) {
+        throw new RecurringEngineError('forbidden', 'the acting user cannot generate recurring invoices')
+      }
     }
+    const actorId = principal.type === 'user' ? principal.userId : null
 
     const definition = await first<StoredDefinition>(database, {
       text: `SELECT id, client_id AS "clientId", definition_status AS "definitionStatus",
@@ -519,12 +581,13 @@ export const createRecurringInvoiceEngine = (
       text: `INSERT INTO invoice_command_ledger (
           invoice_id, command_id, command_kind, input_fingerprint, actor_type, actor_id,
           expected_invoice_version, occurred_at, request_json, line_manifest_json
-        ) VALUES (?, ?, 'recurring.generate', ?, 'user', ?, 0, ?, ?, ?)`,
+        ) VALUES (?, ?, 'recurring.generate', ?, ?, ?, 0, ?, ?, ?)`,
       params: [
         invoiceId,
         commandId,
         fingerprint,
-        principal.userId,
+        principal.type,
+        actorId,
         occurredAt,
         requestJson,
         lineManifestJson,
@@ -532,6 +595,20 @@ export const createRecurringInvoiceEngine = (
     })
 
     const projectId = lines.length === 1 && lines[0]!.project_id !== null ? lines[0]!.project_id : null
+
+    // The acting user is re-checked here as well as at the top, so that a
+    // deactivation between the two cannot still put an invoice in front of a
+    // client. A system run has no row to re-check, so the clause is left out
+    // rather than folded into one that also passes when the actor is null --
+    // that version would silently start passing for a user whose id no longer
+    // resolves, which is the case it was written to catch.
+    const actorGuard =
+      principal.type === 'user'
+        ? `AND EXISTS (
+            SELECT 1 FROM users WHERE id = ? AND is_active = 1
+              AND profile IN ('accounting','executive_manager','administrator')
+          )`
+        : ''
 
     statements.push({
       text: `INSERT INTO invoices (
@@ -541,10 +618,7 @@ export const createRecurringInvoiceEngine = (
         ) SELECT ?, ?, ?, CAST(sequence.next_number AS TEXT), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         FROM invoice_number_sequence sequence
         WHERE sequence.singleton = 1
-          AND EXISTS (
-            SELECT 1 FROM users WHERE id = ? AND is_active = 1
-              AND profile IN ('accounting','executive_manager','administrator')
-          )
+          ${actorGuard}
           AND EXISTS (SELECT 1 FROM clients WHERE id = ?)
           AND EXISTS (
             SELECT 1 FROM invoice_command_ledger command
@@ -555,7 +629,7 @@ export const createRecurringInvoiceEngine = (
       params: [
         invoiceId,
         definition.clientId,
-        principal.userId,
+        actorId,
         subject,
         notes,
         client.currency,
@@ -569,7 +643,7 @@ export const createRecurringInvoiceEngine = (
         projectId,
         occurredAt,
         occurredAt,
-        principal.userId,
+        ...(principal.type === 'user' ? [principal.userId] : []),
         definition.clientId,
         invoiceId,
         commandId,
@@ -649,7 +723,7 @@ export const createRecurringInvoiceEngine = (
       occurred_at: occurredAt,
       aggregate: { type: 'invoice', id: invoiceId, sequence: 0 },
       command: { id: commandId, kind: 'recurring.generate', event_index: 0 },
-      actor: { type: 'user', id: principal.userId },
+      actor: { type: principal.type, id: actorId },
       trigger: { type: 'recurring_invoice', id: definitionId },
       invoice: {
         before: null,
@@ -745,5 +819,45 @@ export const createRecurringInvoiceEngine = (
       nextIssueOn,
       retainerDrawdownCents,
     }
+  },
+
+  async generateDue(asOfDate, principal) {
+    // Incomplete definitions are excluded by their own CHECK rather than by
+    // this predicate: the table only permits `next_issue_on` on a complete row,
+    // so the status test is what makes the date test meaningful rather than a
+    // second filter over the same fact.
+    const due = await all<{ id: number }>(database, {
+      text: `SELECT id FROM recurring_invoices
+        WHERE definition_status = 'complete' AND next_issue_on <= ?
+        ORDER BY id`,
+      params: [asOfDate],
+    })
+
+    const generated: RecurringGenerationResult[] = []
+    const failed: RecurringGenerationFailure[] = []
+    for (const { id } of due) {
+      // One at a time, and one failure at a time. A definition can throw for
+      // reasons that belong to it alone -- every line past its through date, a
+      // client deleted underneath it -- and the definitions behind it in the id
+      // order have nothing to do with that. Collecting the failure instead of
+      // rethrowing is the difference between one client not being invoiced this
+      // month and none of them being.
+      //
+      // Nothing here locks or remembers what it did. It does not have to: the
+      // engine keys each issue on `recurring:<definition>:<period>` in
+      // `invoice_command_ledger`, so a retry, a second cron that overlaps this
+      // one, or a catch-up after days of downtime all land on the same row and
+      // return the invoice that already exists.
+      try {
+        generated.push(await this.generate(id, asOfDate, principal))
+      } catch (error) {
+        failed.push({
+          definitionId: id,
+          code: error instanceof RecurringEngineError ? error.code : null,
+          message: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+    return { generated, failed }
   },
 })

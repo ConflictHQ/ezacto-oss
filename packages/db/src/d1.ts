@@ -204,6 +204,10 @@ export { createD1ContactSessionStore } from './contact-sessions.js'
 export { createMagicLinkService } from './magic-link-service.js'
 export { createD1TwoFactorStore } from './two-factor.js'
 export { createTwoFactorService } from './two-factor-service.js'
-export { createRecurringInvoiceEngine } from './recurring-invoice-engine.js'
+export {
+  createRecurringInvoiceEngine,
+  type RecurringGenerationPrincipal,
+  type RecurringInvoiceEngine,
+} from './recurring-invoice-engine.js'
 export { captureActivityEvent } from './activity-log.js'
 export { createD1ReminderScheduler } from './reminders.js'
