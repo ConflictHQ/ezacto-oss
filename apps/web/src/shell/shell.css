@@ -919,13 +919,6 @@
 .report-detailed-table tfoot td {
   font-weight: 600;
 }
-/* Print is one of this screen's two exports, so the controls leave the page. */
-@media print {
-  .report-detailed-controls {
-    display: none;
-  }
-}
-
 .invoice-generation {
   width: min(880px, 100%);
   margin-inline: auto;
@@ -5024,7 +5017,12 @@ dialog textarea {
   @page {
     margin: 16mm;
   }
-  /* Application chrome, on every screen: none of it is the page. */
+  /* Application chrome, on every screen: none of it is the page. Print is one
+     of the detailed report's two exports, so its controls belong here with the
+     rest of the chrome rather than in a print block of their own -- the invoice
+     test lifts the FIRST `@media print` it finds as the paper stylesheet, so a
+     second block earlier in the file silently became the whole of it. */
+  .report-detailed-controls,
   .topbar,
   .tabstrip,
   .build-stamp,

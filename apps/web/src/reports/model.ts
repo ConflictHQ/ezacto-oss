@@ -344,8 +344,32 @@ export const decimalHours = (seconds: number): string => (seconds / 3_600).toFix
  * is opened. Quoting alone does not stop it; the apostrophe does, and survives
  * as a visible character rather than silently changing the value.
  */
+/**
+ * A plain decimal, positive or negative, and nothing else: no exponent, no
+ * thousands separator, no currency symbol. Deliberately narrow, because the only
+ * job here is to recognise a cell the formula guard must leave alone.
+ */
+const looksNumeric = (value: string): boolean => /^-?\d+(?:\.\d+)?$/u.test(value)
+
+/**
+ * The guard exists because a cell opening with `=`, `+`, `-`, `@` or a control
+ * character is executed as a formula by Excel and Sheets, and a leading
+ * apostrophe forces it to text instead.
+ *
+ * It must not fire on a number. Negative time entries are supported and real --
+ * 0002_projects_time carries the correction that overstated a contractor's month
+ * -- so `-0.50` reaching the guard came back as `'-0.50`, which Excel reads as
+ * text. Those rows then drop silently out of a SUM of the Hours column, and a
+ * period that nets negative gets a text Total. That is a column not adding up to
+ * the total beneath it, which is the defect this report was written to avoid,
+ * relocated into the export where it is harder to notice.
+ *
+ * Numbers are exempted rather than the guard being applied per column: a column
+ * list has to be kept in step with the header every time one is added, and the
+ * failure is silent when it is not.
+ */
 const csvCell = (value: string): string => {
-  const guarded = /^[=+\-@\t\r]/u.test(value) ? `'${value}` : value
+  const guarded = !looksNumeric(value) && /^[=+\-@\t\r]/u.test(value) ? `'${value}` : value
   return `"${guarded.replaceAll('"', '""')}"`
 }
 

@@ -211,6 +211,41 @@ describe('Reports Stage 1 model', () => {
     expect(byDate.flatMap((band) => band.rows)).toHaveLength(rows.length)
   })
 
+  it('[unit] does not force a negative number to text in the export', () => {
+    // The formula guard exists because a cell opening with `=`, `+`, `-` or `@`
+    // is executed by Excel and Sheets. Applied to a numeric cell it prefixes an
+    // apostrophe, which forces text -- so a correction row drops out of a SUM of
+    // the Hours column and a period that nets negative gets a text Total. Those
+    // rows are real: 0002_projects_time carries the correction that overstated a
+    // contractor's month.
+    const correction = detailedRow()
+    correction.rounded_seconds = -1_800
+    correction.billable_amount_cents = -6_000
+    const csv = detailedTimeCsv(
+      detailedReport({ rows: [correction], seconds: -1_800 }),
+      'date',
+    )
+
+    expect(csv).toContain('"-0.50"')
+    expect(csv).toContain('"-60.00"')
+    expect(csv).not.toContain("'-0.50")
+    expect(csv).not.toContain("'-60.00")
+    // The total beneath the column is a number too, or the column does not add
+    // up to it -- which is the defect this report exists to avoid.
+    expect(csv.trimEnd().split('\r\n').at(-1)).toContain('"-0.50"')
+
+    // The guard still fires where it should: a project genuinely named with a
+    // leading `=` is a formula waiting to run.
+    const hostile = detailedRow()
+    hostile.project_name = '=cmd|calc'
+    hostile.project_code = ''
+    const guarded = detailedTimeCsv(
+      detailedReport({ rows: [hostile], seconds: 3_600 }),
+      'date',
+    )
+    expect(guarded).toContain(String.raw`"'=cmd|calc"`)
+  })
+
   it('[security] exports only the columns the response carried', () => {
     const withMoney = detailedTimeCsv(
       detailedReport({ rows: [detailedRow()], seconds: 3_600 }),
