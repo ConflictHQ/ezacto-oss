@@ -165,7 +165,18 @@ const runAtomic = async (
     .immediate()
 }
 
-const templateSubject = (template: string, issueDate: string): string => {
+/**
+ * The issue-date tokens, expanded wherever an operator can write them.
+ *
+ * This applied to the subject alone, and the line descriptions were copied
+ * through verbatim -- which is wrong for exactly the definitions this product
+ * exists to carry across. A migrated Client A line reads "for the month of
+ * September 2026"; frozen, every invoice it raises from October onwards names
+ * September, to a client, monthly, with nothing failing. Harvest expands them
+ * in descriptions, so a definition brought over from Harvest arrives expecting
+ * it to.
+ */
+const templateTokens = (template: string, issueDate: string): string => {
   const date = new Date(`${issueDate}T00:00:00.000Z`)
   const monthNames = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -353,7 +364,7 @@ export const createRecurringInvoiceEngine = (
 
     const fixedConfig = amountConfig as RecurringFixedLinesConfigV1
     const issueDate = period
-    const subject = templateSubject(definition.subjectTemplate, issueDate)
+    const subject = templateTokens(definition.subjectTemplate, issueDate)
     const notes = definition.notesTemplate ?? ''
 
     // A line with a `through` date stops appearing once the issue date passes
@@ -382,7 +393,11 @@ export const createRecurringInvoiceEngine = (
     }
     const lines = live.map((item, position) => {
       const amountCents = calculateInvoiceLineAmountCents(item.quantity, item.unit_price_cents)
-      return { ...item, position, amountCents }
+      // A null description stays null rather than becoming an empty string: the
+      // column is nullable and "no description" is not the same fact as "".
+      const description =
+        item.description === null ? null : templateTokens(item.description, issueDate)
+      return { ...item, description, position, amountCents }
     })
     const totalAmountCents = checkedSum(lines.map((l) => l.amountCents))
 

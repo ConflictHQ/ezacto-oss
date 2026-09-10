@@ -270,6 +270,53 @@ for (const [runtime, factory] of factories) {
       )
     })
 
+    it('[unit] expands the issue-date tokens in a line description, not only the subject', async () => {
+      // The tokens were expanded in the subject and the line descriptions were
+      // copied verbatim. Every definition migrated from Harvest names its month
+      // in the description -- "for the month of September 2026" -- so a frozen
+      // description sends a client the wrong month, on every invoice after the
+      // first, with nothing failing. Harvest expands them there, so a definition
+      // brought across arrives expecting it to.
+      database = await factory()
+      await seedDatabase(database)
+      const definition = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({
+          nextIssueOn: '2026-10-01',
+          dayOfMonth: 1,
+          amountConfig: {
+            schema_version: 1,
+            type: 'fixed_lines',
+            line_items: [
+              {
+                kind: 'Service',
+                description:
+                  'Software development for the month of %invoice_issue_month_name% %invoice_issue_year%',
+                quantity: 1,
+                unit_price_cents: 1_620_000,
+                taxed: false,
+                taxed2: false,
+                project_id: null,
+              },
+            ],
+          },
+        }),
+      )
+      const engine = createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-10-01T10:00:00.000Z',
+      })
+      const result = await engine.generate(definition.id, '2026-10-01', principal)
+
+      const lines = await database.rows<{ description: string }>(
+        `SELECT description FROM invoice_line_items WHERE invoice_id = ?`,
+        result.invoiceId,
+      )
+      expect(lines).toHaveLength(1)
+      expect(lines[0]?.description).toBe(
+        'Software development for the month of October 2026',
+      )
+    })
+
     it('[unit] generates a fixed-lines invoice from a due definition', async () => {
       database = await factory()
       await seedDatabase(database)
