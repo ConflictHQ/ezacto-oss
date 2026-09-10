@@ -16,9 +16,23 @@ export interface SanitizedLoadSnapshot {
   timeEntryHarvestId: string
 }
 
+export interface SanitizedLoadSnapshotOptions {
+  /**
+   * Write only the first invoice, and unbill whatever referenced the second.
+   * A target built this way is a live instance that has not seen that invoice
+   * yet -- which is the situation `carry-invoices` exists for. Leaving the
+   * references behind would fail verify as a dangling foreign key, correctly.
+   */
+  readonly firstInvoiceOnly?: boolean
+}
+
+/** The invoice `firstInvoiceOnly` withholds, and the id its referents cite. */
+const WITHHELD_INVOICE_ID = 12000001
+
 /** Reusable full-slice source fixture for #78 and its sync/reconciliation successors. */
 export const buildSanitizedLoadSnapshot = async (
   snapshotDir: string,
+  options: SanitizedLoadSnapshotOptions = {},
 ): Promise<SanitizedLoadSnapshot> => {
   await mkdir(join(snapshotDir, 'raw'), { recursive: true })
   const resources: Manifest['resources'] = {}
@@ -27,11 +41,34 @@ export const buildSanitizedLoadSnapshot = async (
     rows: readonly string[],
     lineage?: readonly { source_id: number; parent_id: number }[],
   ): Promise<void> => {
+    // Structural, not textual: a referent cites the withheld invoice as
+    // `{"id":…}` in one slice and `{"id":…,"number":…}` in another, and only
+    // one of those is a string you can match on.
+    const unbilled = (row: string): string => {
+      const parsed = JSON.parse(row) as Record<string, unknown>
+      const reference = parsed.invoice
+      if (
+        typeof reference === 'object' &&
+        reference !== null &&
+        (reference as { id?: unknown }).id === WITHHELD_INVOICE_ID
+      ) {
+        return JSON.stringify({ ...parsed, invoice: null })
+      }
+      return row
+    }
+    const written =
+      options.firstInvoiceOnly !== true
+        ? rows
+        : resource === 'invoices'
+          ? rows.filter(
+              (row) => (JSON.parse(row) as { id?: unknown }).id !== WITHHELD_INVOICE_ID,
+            )
+          : rows.map(unbilled)
     await writeFile(
       join(snapshotDir, 'raw', `${resource}.jsonl`),
-      rows.length === 0 ? '' : `${rows.join('\n')}\n`,
+      written.length === 0 ? '' : `${written.join('\n')}\n`,
     )
-    resources[resource] = resourceProgress({ count: rows.length })
+    resources[resource] = resourceProgress({ count: written.length })
     if (lineage) {
       await writeFile(
         join(snapshotDir, 'raw', `${resource}.lineage.jsonl`),
