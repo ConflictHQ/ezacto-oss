@@ -368,6 +368,44 @@ describe('home dashboard', () => {
     expect(note('owed')).toBe('1 invoice past due.')
   })
 
+  it("[security #491] keeps the firm's directories out of a member's nav and leaves a manager's whole", async () => {
+    // Projects, Tasks and Clients browse the firm rather than the reader. A
+    // member's nav is the four sections that are their own work, and the
+    // palette follows without a rule of its own because ⌘K reads these nav
+    // items. What the member loses is the firm-wide list, not the app: the API
+    // still answers them with the work they are assigned to.
+    const directories = (): Record<string, boolean | undefined> =>
+      Object.fromEntries(
+        ['/projects', '/tasks', '/clients'].map((href) => [
+          href,
+          document.querySelector<HTMLElement>(`.primary-nav a[href="${href}"]`)?.hidden,
+        ]),
+      )
+
+    renderDashboard()
+    await mountShell(dashboardApi('member'))
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-current-profile]')?.textContent).toBe('member'),
+    )
+    expect(directories()).toEqual({ '/projects': true, '/tasks': true, '/clients': true })
+    // Their own four are untouched: this withholds the directories, not the app.
+    for (const href of ['/dashboard', '/', '/expenses', '/reports']) {
+      expect(
+        document.querySelector<HTMLElement>(`.primary-nav a[href="${href}"]`)?.hidden,
+        href,
+      ).toBe(false)
+    }
+
+    renderDashboard()
+    await mountShell(dashboardApi('project_manager'))
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-current-profile]')?.textContent).toBe(
+        'project manager',
+      ),
+    )
+    expect(directories()).toEqual({ '/projects': false, '/tasks': false, '/clients': false })
+  })
+
   it('[security] withdraws the card when the server withholds the money the gate admitted', async () => {
     // The nav gate is a presentation rule; the serializer is the authority. If
     // they ever disagree the card leaves rather than standing there with a dash

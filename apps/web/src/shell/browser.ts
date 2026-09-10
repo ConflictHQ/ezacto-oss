@@ -57,6 +57,7 @@ import {
   type WeekRowSeed,
 } from '../week-grid/model.js'
 import {
+  canBrowseDirectories,
   createSameOriginShellApi,
   hydratePendingTimesheetDetails,
   loadShellSnapshot,
@@ -1466,6 +1467,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     // and ⌘K asks it from wherever it is opened.
     revealCompanySettings(identity)
     revealMoneySections(identity)
+    revealDirectorySections(identity)
     signInResult.textContent = ''
     logoutResult.textContent = ''
     setApplicationAvailability(true)
@@ -1498,6 +1500,25 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const revealMoneySections = (identity: Readonly<Whoami>): void => {
     const visible = canReadFinancialReports(identity.profile)
     for (const link of document.querySelectorAll<HTMLElement>('[data-money-nav]')) {
+      link.hidden = !visible
+    }
+  }
+
+  /**
+   * Projects, Tasks and Clients browse the firm rather than the reader, so a
+   * member's nav is the four sections that are their own work: Home, Time,
+   * Expenses and Reports. Settled here beside the money gate, on every page
+   * rather than on the three it hides, because the palette reads these nav
+   * items as its own gate and ⌘K is opened from anywhere.
+   *
+   * Unlike Invoices, the links it hides do not lead to a 403: the API narrows
+   * these collections to the member's assigned work instead of refusing them,
+   * which is what keeps their Expenses screen and week grid whole. The nav is
+   * saying whose screens these are, not what the server will answer.
+   */
+  const revealDirectorySections = (identity: Readonly<Whoami>): void => {
+    const visible = canBrowseDirectories(identity.profile)
+    for (const link of document.querySelectorAll<HTMLElement>('[data-directory-nav]')) {
       link.hidden = !visible
     }
   }

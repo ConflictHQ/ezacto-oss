@@ -214,6 +214,18 @@ const sections = [
   'Reports',
 ] as const
 
+/**
+ * The sections that browse the firm's directories rather than the reader's own
+ * work. They share one attribute because they answer one question -- may this
+ * profile browse them -- and the browser opens all three from the same
+ * capability, the way Approvals, Team and Invoices are each opened from theirs.
+ */
+const directorySections: ReadonlySet<(typeof sections)[number]> = new Set([
+  'Projects',
+  'Tasks',
+  'Clients',
+])
+
 const hrefFor = (section: (typeof sections)[number]): string =>
   section === 'Home'
     ? '/dashboard'
@@ -291,7 +303,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const navigation = sections
     .map(
       (section) =>
-        `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === 'Invoices' ? ' data-money-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${section}</a>`,
+        `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === 'Invoices' ? ' data-money-nav hidden' : ''}${directorySections.has(section) ? ' data-directory-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${section}</a>`,
     )
     .join('')
 

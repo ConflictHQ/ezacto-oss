@@ -102,11 +102,64 @@ export const teamProjectAccessSql = (
   )`
 }
 
+/**
+ * The projects a member is entitled to know about: the ones they have been put
+ * on. `user_assignments` is already the answer to "what work is this person's"
+ * everywhere else -- `timeEntryOptions` joins it to decide what they may log
+ * against, and the project-budget report joins it to decide whose budgets they
+ * may read -- so the directory answers the same question from the same table
+ * rather than inventing a second notion of belonging.
+ *
+ * Deliberately without `is_active = 1`, which is what the two neighbours above
+ * do use. They are asking a present-tense question -- what may this person log
+ * against today, whose budget may they read today -- while a directory read is
+ * mostly the catalog their own timesheet and expense history resolve names
+ * through. An assignment that ended does not un-tell them a project's name; it
+ * would only blank the labels on rows they still see, which is a worse product
+ * and not a smaller disclosure.
+ */
+const memberProjectAccessSql = (viewer: Readonly<TeamViewer>, projectId: SQL): SQL =>
+  sql`EXISTS (
+    SELECT 1 FROM user_assignments member_assignment
+    WHERE member_assignment.project_id = ${projectId}
+      AND member_assignment.user_id = ${viewer.userId}
+  )`
+
+/**
+ * A client is a member's to see when they are on a project of that client. The
+ * relation is only ever reached this way round: being assigned to one project
+ * of a client does not open that client's other projects, because the project
+ * predicate above is applied to those rows on their own.
+ *
+ * Parents and subsidiaries are not walked. A member reads this catalog to label
+ * and filter their own work, and their work hangs off the project's own client;
+ * pulling in a chain of holding companies would hand back part of the very
+ * structure the firm-wide list is being withheld to protect.
+ */
+const memberClientAccessSql = (viewer: Readonly<TeamViewer>, clientId: SQL): SQL =>
+  sql`EXISTS (
+    SELECT 1 FROM projects member_project
+    WHERE member_project.client_id = ${clientId}
+      AND ${memberProjectAccessSql(viewer, sql.raw('member_project.id'))}
+  )`
+
 export const teamGeneralResourceAccessSql = (
   kind: GeneralResourceKind,
   viewer: Readonly<TeamViewer> | undefined,
 ): SQL => {
   if (viewer === undefined) return sql`1`
+  // A member holds the work they are on, not the firm's book of who it sells to
+  // (#491). The refusal is here rather than at the route because their own
+  // Expenses screen and week grid read these three collections to render: the
+  // catalog they need is a subset of what they are entitled to, so narrowing
+  // the rows keeps those screens whole while the firm-wide list stops being
+  // theirs to hold. A 403 at the route takes the screens down with it.
+  if (viewer.profile === 'member') {
+    if (kind === 'projects') return memberProjectAccessSql(viewer, column('projects', 'id'))
+    if (kind === 'clients') return memberClientAccessSql(viewer, column('clients', 'id'))
+    if (kind === 'contacts')
+      return memberClientAccessSql(viewer, column('contacts', 'client_id'))
+  }
   if (kind === 'users') return teamPersonAccessSql(viewer)
   if (kind !== 'user-assignments') return sql`1`
   const userId = column('user_assignments', 'user_id')

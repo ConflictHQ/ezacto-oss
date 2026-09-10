@@ -4554,6 +4554,10 @@ describe('command palette browser behavior', () => {
     )
     expect(navHidden('/approvals')).toBe(true)
     expect(navHidden('/team')).toBe(true)
+    // #491 put the three directories behind a gate of the same kind.
+    expect(navHidden('/projects')).toBe(true)
+    expect(navHidden('/tasks')).toBe(true)
+    expect(navHidden('/clients')).toBe(true)
     expect(document.querySelector<HTMLElement>('[data-settings-company-tab]')!.hidden).toBe(true)
     // The activity log names who did what, so it is gated with Company rather
     // than offered to everyone who can reach Settings.
@@ -4567,8 +4571,13 @@ describe('command palette browser behavior', () => {
     expect(labels).not.toContain('Approvals')
     expect(labels).not.toContain('Team')
     expect(labels).not.toContain('Company settings')
+    // The palette needed no second rule to drop the directories: it reads the
+    // nav item, which is the whole reason the gate was put there.
+    expect(labels).not.toContain('Projects')
+    expect(labels).not.toContain('Tasks')
+    expect(labels).not.toContain('Clients')
     // And it is a filtered list rather than an empty one.
-    expect(labels).toContain('Projects')
+    expect(labels).toContain('Expenses')
     expect(labels).toContain('Your settings')
   })
 

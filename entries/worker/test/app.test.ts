@@ -178,7 +178,7 @@ describe('worker entry', () => {
     const listHtml = await list.text()
     expect(listHtml).toContain('data-app-view="client-list"')
     expect(listHtml).toContain('data-client-list-page')
-    expect(listHtml).toContain('href="/clients" aria-current="page"')
+    expect(listHtml).toContain('href="/clients" data-directory-nav hidden aria-current="page"')
 
     expect(detail.status).toBe(200)
     const detailHtml = await detail.text()
@@ -204,7 +204,7 @@ describe('worker entry', () => {
     const listHtml = await list.text()
     expect(listHtml).toContain('data-app-view="project-list"')
     expect(listHtml).toContain('data-project-list-page')
-    expect(listHtml).toContain('href="/projects" aria-current="page"')
+    expect(listHtml).toContain('href="/projects" data-directory-nav hidden aria-current="page"')
 
     expect(detail.status).toBe(200)
     const detailHtml = await detail.text()
@@ -227,7 +227,7 @@ describe('worker entry', () => {
     expect(html).toContain('data-task-admin-page')
     expect(html).toContain('data-task-form-dialog')
     expect(html).toContain('data-task-archive-dialog')
-    expect(html).toContain('href="/tasks" aria-current="page"')
+    expect(html).toContain('href="/tasks" data-directory-nav hidden aria-current="page"')
   })
 
   it('[acceptance] serves the operational Reports shell without a redirect', async () => {
