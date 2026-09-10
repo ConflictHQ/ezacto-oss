@@ -1,6 +1,11 @@
 /** @vitest-environment happy-dom */
 
-import type { GeneralResource, Whoami } from '@ezacto/client'
+import type {
+  DetailedTimeReport,
+  DetailedTimeRow,
+  GeneralResource,
+  Whoami,
+} from '@ezacto/client'
 import { describe, expect, it, vi } from 'vitest'
 import { createReportsController } from '../src/reports/browser.js'
 import type { ReportWorkspaceApi } from '../src/reports/model.js'
@@ -88,7 +93,50 @@ const baseApi = (overrides: Partial<ReportWorkspaceApi> = {}): Partial<ReportWor
     time_entry_count: 0,
     projects: [],
   })),
+  getDetailedTimeReport: vi.fn(async () => detailedTimeReport()),
   ...overrides,
+})
+
+const detailedTimeRow = (fields: Partial<DetailedTimeRow> = {}): DetailedTimeRow => ({
+  spent_date: '2026-08-10',
+  client_id: 1,
+  client_name: 'Parent',
+  project_id: 7,
+  project_name: 'Launch',
+  project_code: 'WEB',
+  task_id: 3,
+  task_name: 'Delivery',
+  user_id: 1,
+  user_name: 'Ada Lovelace',
+  roles: ['Engineering'],
+  currency: 'USD',
+  seconds: 3_600,
+  rounded_seconds: 3_600,
+  billable_seconds: 3_600,
+  uninvoiced_billable_seconds: 3_600,
+  time_entry_count: 1,
+  billable_amount_cents: 10_000,
+  entries_without_billable_rate: 0,
+  ...fields,
+})
+
+const detailedTimeReport = (
+  fields: Partial<DetailedTimeReport> = {},
+): DetailedTimeReport => ({
+  from: '2026-08-01',
+  to: '2026-08-31',
+  client_id: null,
+  project_id: null,
+  hours: 'all',
+  active_projects_only: false,
+  seconds: 0,
+  rounded_seconds: 0,
+  billable_seconds: 0,
+  uninvoiced_billable_seconds: 0,
+  time_entry_count: 0,
+  currencies: [],
+  rows: [],
+  ...fields,
 })
 
 describe('Reports Stage 1 browser controller', () => {
@@ -642,6 +690,7 @@ describe('Reports Stage 1 browser controller', () => {
     expect(tabs.map((tab) => tab.textContent)).toEqual([
       'My hours',
       'Uninvoiced work',
+      'Detailed time',
       'Client rollup',
       'Project budget',
     ])
@@ -650,14 +699,15 @@ describe('Reports Stage 1 browser controller', () => {
       'page',
       null,
       null,
+      null,
     ])
     // Every tab is a real address, and it carries the range being looked at.
-    expect(tabs[2]?.getAttribute('href')).toBe(
+    expect(tabs[3]?.getAttribute('href')).toBe(
       '/reports?report=client-rollup&from=2026-08-01&to=2026-08-31',
     )
 
     document.querySelector<HTMLSelectElement>('[data-report-client]')!.value = '1'
-    tabs[2]?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    tabs[3]?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     await vi.waitFor(() => expect(getClientRollupReport).toHaveBeenCalledTimes(1))
     expect(getClientRollupReport).toHaveBeenCalledWith(
       1,
@@ -668,6 +718,7 @@ describe('Reports Stage 1 browser controller', () => {
       '/reports?report=client-rollup&from=2026-08-01&to=2026-08-31&client_id=1',
     )
     expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual([
+      null,
       null,
       null,
       'page',
@@ -1163,6 +1214,210 @@ describe('Reports Stage 1 browser controller', () => {
     expect(document.querySelector('[data-report-results]')?.textContent).toContain(
       'You logged no time in this period.',
     )
+    session.abort()
+  })
+
+  const detailedFixture = (): DetailedTimeReport =>
+    detailedTimeReport({
+      seconds: 6_300,
+      rounded_seconds: 6_300,
+      billable_seconds: 5_400,
+      uninvoiced_billable_seconds: 5_400,
+      time_entry_count: 4,
+      currencies: [
+        { currency: 'USD', billable_amount_cents: 15_000, entries_without_billable_rate: 0 },
+      ],
+      rows: [
+        detailedTimeRow(),
+        detailedTimeRow({
+          user_id: 2,
+          user_name: 'Grace Hopper',
+          seconds: 1_800,
+          roles: [],
+        }),
+        detailedTimeRow({ spent_date: '2026-08-11', seconds: 900 }),
+      ],
+    })
+
+  it('[browser] draws the detailed report with its filter recap, bands and total', async () => {
+    writeDocument('/reports?report=detailed-time&from=2026-08-01&to=2026-08-31&client_id=2')
+    const getDetailedTimeReport = vi.fn(async () => ({
+      ...detailedFixture(),
+      client_id: 2,
+    }))
+    const session = new AbortController()
+    await createReportsController(baseApi({ getDetailedTimeReport })).activate(
+      identity('administrator'),
+      session.signal,
+      () => false,
+    )
+
+    const results = document.querySelector('[data-report-results]')!
+    expect(getDetailedTimeReport).toHaveBeenCalledTimes(1)
+    expect(results.querySelector('h2')?.textContent).toBe(
+      'Detailed time report: 2026-08-01 – 2026-08-31',
+    )
+
+    // The recap is counted before it is read: a four-line list that rendered
+    // empty would otherwise satisfy every assertion below it.
+    const recap = results.querySelector('.report-filter-recap')!
+    expect(recap.querySelectorAll('dt')).toHaveLength(4)
+    expect([...recap.querySelectorAll('dt')].map((term) => term.textContent)).toEqual([
+      'Clients',
+      'Projects',
+      'Tasks',
+      'Team',
+    ])
+    expect([...recap.querySelectorAll('dd')].map((value) => value.textContent)).toEqual([
+      'Studio',
+      'All projects',
+      'All tasks',
+      'All people',
+    ])
+
+    const bands = results.querySelectorAll('.report-band-row')
+    expect(bands).toHaveLength(2)
+    expect([...bands].map((band) => band.querySelector('th')?.textContent)).toEqual([
+      '2026-08-10',
+      '2026-08-11',
+    ])
+    expect(results.querySelectorAll('tbody tr:not(.report-band-row)')).toHaveLength(3)
+    expect(results.querySelector('tfoot td')?.textContent).toBe('1.75')
+    // Uninvoiced billable hours leads the summary, and is not the total.
+    expect(results.querySelector('.report-facts')?.textContent).toContain('1.5 h')
+    session.abort()
+  })
+
+  it('[browser] regroups the rows it already has without asking the API again', async () => {
+    writeDocument('/reports?report=detailed-time&from=2026-08-01&to=2026-08-31')
+    const getDetailedTimeReport = vi.fn(async () => detailedFixture())
+    const session = new AbortController()
+    await createReportsController(baseApi({ getDetailedTimeReport })).activate(
+      identity('accounting'),
+      session.signal,
+      () => false,
+    )
+    const results = document.querySelector('[data-report-results]')!
+    expect(getDetailedTimeReport).toHaveBeenCalledTimes(1)
+    expect(results.querySelectorAll('.report-band-row')).toHaveLength(2)
+
+    const group = document.querySelector<HTMLSelectElement>('#ez-detailed-group')!
+    group.value = 'person'
+    group.dispatchEvent(new Event('change'))
+
+    const bands = results.querySelectorAll('.report-band-row')
+    expect(bands).toHaveLength(2)
+    expect([...bands].map((band) => band.querySelector('th')?.textContent)).toEqual([
+      'Ada Lovelace',
+      'Grace Hopper',
+    ])
+    // Group by changes the table's shape, not its data: no second request, and
+    // the same three rows are still on screen.
+    expect(getDetailedTimeReport).toHaveBeenCalledTimes(1)
+    expect(results.querySelectorAll('tbody tr:not(.report-band-row)')).toHaveLength(3)
+    expect(window.location.search).toContain('group=person')
+    session.abort()
+  })
+
+  it('[browser] goes back to the API when Show or Active projects only changes', async () => {
+    writeDocument('/reports?report=detailed-time&from=2026-08-01&to=2026-08-31')
+    const getDetailedTimeReport = vi.fn(async () => detailedFixture())
+    const session = new AbortController()
+    await createReportsController(baseApi({ getDetailedTimeReport })).activate(
+      identity('accounting'),
+      session.signal,
+      () => false,
+    )
+    expect(getDetailedTimeReport).toHaveBeenCalledWith(
+      {
+        from: '2026-08-01',
+        to: '2026-08-31',
+        hours: 'all',
+        active_projects_only: false,
+      },
+      expect.anything(),
+    )
+
+    const show = document.querySelector<HTMLSelectElement>('#ez-detailed-hours')!
+    show.value = 'uninvoiced'
+    show.dispatchEvent(new Event('change'))
+    await vi.waitFor(() => expect(getDetailedTimeReport).toHaveBeenCalledTimes(2))
+    expect(getDetailedTimeReport).toHaveBeenLastCalledWith(
+      {
+        from: '2026-08-01',
+        to: '2026-08-31',
+        hours: 'uninvoiced',
+        active_projects_only: false,
+      },
+      expect.anything(),
+    )
+
+    const active = document.querySelector<HTMLInputElement>('#ez-detailed-active')!
+    active.checked = true
+    active.dispatchEvent(new Event('change'))
+    await vi.waitFor(() => expect(getDetailedTimeReport).toHaveBeenCalledTimes(3))
+    expect(getDetailedTimeReport).toHaveBeenLastCalledWith(
+      {
+        from: '2026-08-01',
+        to: '2026-08-31',
+        hours: 'uninvoiced',
+        active_projects_only: true,
+      },
+      expect.anything(),
+    )
+    session.abort()
+  })
+
+  it('[security] exports the rows on screen and nothing the API withheld', async () => {
+    writeDocument('/reports?report=detailed-time&from=2026-08-01&to=2026-08-31')
+    // A member-shaped response: no `billable_amount_cents` on any row, so the
+    // export has no money column to fill and no request that could fetch one.
+    const withheld = detailedFixture().rows.map((row) => {
+      const copy = { ...row }
+      delete copy.billable_amount_cents
+      return copy
+    })
+    const getDetailedTimeReport = vi.fn(async () => ({
+      ...detailedFixture(),
+      currencies: [{ currency: 'USD', entries_without_billable_rate: 0 }],
+      rows: withheld,
+    }))
+    const session = new AbortController()
+    await createReportsController(baseApi({ getDetailedTimeReport })).activate(
+      identity('accounting'),
+      session.signal,
+      () => false,
+    )
+
+    const blobs: Blob[] = []
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockImplementation((blob) => {
+      blobs.push(blob as Blob)
+      return 'blob:report'
+    })
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {})
+
+    document.querySelector<HTMLButtonElement>('[data-detailed-export]')!.click()
+
+    expect(click).toHaveBeenCalledTimes(1)
+    expect(blobs).toHaveLength(1)
+    const csv = await blobs[0]!.text()
+    expect(csv.split('\r\n')[0]).toBe(
+      '"Date","Client","Project","Task","Roles","Person","Hours"',
+    )
+    expect(csv).toContain('"[WEB] Launch"')
+    expect(csv).not.toContain('Billable amount')
+    // Three rows on screen, plus the header and the total, and nothing else.
+    expect(csv.trimEnd().split('\r\n')).toHaveLength(5)
+    // The API was asked once, for the report itself. Export never asks again.
+    expect(getDetailedTimeReport).toHaveBeenCalledTimes(1)
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:report')
+
+    createObjectURL.mockRestore()
+    revokeObjectURL.mockRestore()
+    click.mockRestore()
     session.abort()
   })
 })

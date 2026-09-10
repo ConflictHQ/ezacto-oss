@@ -184,8 +184,10 @@ export {
 export {
   installReportRoutes,
   serializeClientRollup,
+  serializeDetailedTime,
   serializeProjectBudget,
   serializeUninvoiced,
+  type DetailedTimeReportRecord,
   type ProjectReportViewer,
   type ReportReader,
 } from './reports.js'

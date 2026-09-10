@@ -1258,6 +1258,28 @@ const reportOperations: ApiContractOperation[] = [
   },
   {
     method: "get",
+    path: "/api/v1/reports/detailed-time",
+    operationId: "getDetailedTimeReport",
+    summary: "List tracked time by date, task and person",
+    tag: "reports",
+    responseStatus: 200,
+    responseSchema: "DetailedTimeReportEnvelope",
+    parameters: [
+      ...requiredReportRange,
+      query("client_id", integerSchema),
+      query("project_id", integerSchema),
+      // The Show control. Not a pair of booleans: billable-and-uninvoiced is
+      // one of the four answers, and two flags would also spell the two that
+      // select nothing.
+      query("hours", {
+        type: "string",
+        enum: ["all", "billable", "non_billable", "uninvoiced"],
+      }),
+      query("active_projects_only", booleanSchema),
+    ],
+  },
+  {
+    method: "get",
     path: "/api/v1/reports/client-rollups/:clientId",
     operationId: "getClientRollupReport",
     summary: "Roll up reporting metrics through a client subtree",
@@ -4993,6 +5015,109 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   MyHoursReportEnvelope: envelope("MyHoursReport"),
+  DetailedTimeRow: {
+    type: "object",
+    required: [
+      "spent_date",
+      "client_id",
+      "client_name",
+      "project_id",
+      "project_name",
+      "project_code",
+      "task_id",
+      "task_name",
+      "user_id",
+      "user_name",
+      "roles",
+      "currency",
+      "seconds",
+      "rounded_seconds",
+      "billable_seconds",
+      "uninvoiced_billable_seconds",
+      "time_entry_count",
+      "entries_without_billable_rate",
+    ],
+    properties: {
+      spent_date: dateSchema,
+      client_id: integerSchema,
+      client_name: stringSchema,
+      project_id: integerSchema,
+      project_name: stringSchema,
+      // Empty string, never null: `projects.code` is NOT NULL DEFAULT ''.
+      project_code: stringSchema,
+      task_id: integerSchema,
+      task_name: stringSchema,
+      user_id: integerSchema,
+      user_name: stringSchema,
+      roles: { type: "array", items: stringSchema },
+      currency: stringSchema,
+      // Tracked seconds. The Hours column is what the timesheet recorded;
+      // `rounded_seconds` is what the money below was priced from.
+      seconds: signedIntegerSchema,
+      rounded_seconds: signedIntegerSchema,
+      billable_seconds: signedIntegerSchema,
+      uninvoiced_billable_seconds: signedIntegerSchema,
+      time_entry_count: { type: "integer", minimum: 0 },
+      // Absent for a profile that cannot read billable rates; null when an
+      // entry folded into the row carries no rate at all.
+      billable_amount_cents: nullable(signedIntegerSchema),
+      entries_without_billable_rate: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  DetailedTimeCurrencyTotal: {
+    type: "object",
+    required: ["currency", "entries_without_billable_rate"],
+    properties: {
+      currency: stringSchema,
+      billable_amount_cents: nullable(signedIntegerSchema),
+      entries_without_billable_rate: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  DetailedTimeReport: {
+    type: "object",
+    required: [
+      "from",
+      "to",
+      "client_id",
+      "project_id",
+      "hours",
+      "active_projects_only",
+      "seconds",
+      "rounded_seconds",
+      "billable_seconds",
+      "uninvoiced_billable_seconds",
+      "time_entry_count",
+      "currencies",
+      "rows",
+    ],
+    properties: {
+      from: dateSchema,
+      to: dateSchema,
+      client_id: nullable(integerSchema),
+      project_id: nullable(integerSchema),
+      // Echoed so a saved or shared address renders the filter recap it was
+      // built with, rather than the defaults.
+      hours: {
+        type: "string",
+        enum: ["all", "billable", "non_billable", "uninvoiced"],
+      },
+      active_projects_only: booleanSchema,
+      seconds: signedIntegerSchema,
+      rounded_seconds: signedIntegerSchema,
+      billable_seconds: signedIntegerSchema,
+      uninvoiced_billable_seconds: signedIntegerSchema,
+      time_entry_count: { type: "integer", minimum: 0 },
+      currencies: {
+        type: "array",
+        items: reference("DetailedTimeCurrencyTotal"),
+      },
+      rows: { type: "array", items: reference("DetailedTimeRow") },
+    },
+    additionalProperties: false,
+  },
+  DetailedTimeReportEnvelope: envelope("DetailedTimeReport"),
   UninvoicedCurrencyTotal: {
     type: "object",
     required: [
