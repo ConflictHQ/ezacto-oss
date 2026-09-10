@@ -4029,6 +4029,33 @@ dialog textarea {
   flex-wrap: wrap;
 }
 @media (max-width: 720px) {
+  /*
+   * These two toolbars were a single flex row all the way down to 390px, which
+   * held only while the status filter was two buttons wide. A third one tips
+   * them over, and the thing that overflows is the search field: it is an input
+   * inside a label, so the `min-width: 0` sweep above -- which reaches a
+   * toolbar's children and a fieldset's -- never touches it, and an input keeps
+   * its intrinsic size and pushes the page sideways instead of narrowing.
+   *
+   * Stacking rather than wrapping, because that is what the neighbours already
+   * do at this width: .project-list-toolbar becomes a one-column grid and
+   * .team-list-toolbar a column of full-width controls. These two were simply
+   * the pair that had no narrow-width treatment at all.
+   */
+  .client-list-toolbar,
+  .task-admin-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .client-list-toolbar fieldset,
+  .client-list-toolbar label,
+  .client-list-toolbar input,
+  .task-admin-toolbar fieldset,
+  .task-admin-toolbar label,
+  .task-admin-toolbar input {
+    width: 100%;
+    min-width: 0;
+  }
   .auth-gateway {
     min-height: 100svh;
     grid-template-columns: 1fr;

@@ -300,6 +300,64 @@ describe('Tasks administration browser controller', () => {
     ])
   })
 
+  it('[browser #486] asks the server for the archive rather than filtering a mixed page', async () => {
+    // The other two directories page themselves to exhaustion and narrow what
+    // they hold; this one stops at fifty rows, so an archived task on page two
+    // is only reachable if the request itself asks for archived.
+    writeDocument()
+    const archivedControl = document.querySelector<HTMLButtonElement>(
+      '[data-task-filter="archived"]',
+    )!
+    // No count beside it, unlike the client and project directories: this list
+    // is paged, so the only number available would be how many archived rows
+    // have been loaded so far.
+    expect(archivedControl.textContent).toBe('Archived')
+    const listAdminTasks = vi.fn(async (filter: TaskAdminFilter) =>
+      filter === 'archived'
+        ? page([task(9, 'Retired research', { is_active: false })])
+        : page([task(7, 'Implementation')]),
+    )
+    const controller = createTaskAdminController(apiFor([], { listAdminTasks }))
+    await controller.activate(identity('administrator'), new AbortController().signal, () => false)
+    expect(document.querySelector('[data-task-list]')?.textContent).toContain('Implementation')
+
+    document.querySelector<HTMLButtonElement>('[data-task-filter="archived"]')!.click()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-task-list]')?.textContent).toContain(
+        'Retired research',
+      ),
+    )
+    const listed = document.querySelector('[data-task-list]')?.textContent ?? ''
+    expect(listed).not.toContain('Implementation')
+    // Restoring one is what the archive is opened for, and the row already
+    // carries the control that does it.
+    expect(listed).toContain('Edit or reactivate')
+    expect(listAdminTasks.mock.calls.map(([filter]) => filter)).toEqual(['active', 'archived'])
+    expect(
+      document
+        .querySelector('[data-task-filter="archived"]')
+        ?.getAttribute('aria-pressed'),
+    ).toBe('true')
+  })
+
+  it('[browser #486] says the archive is empty rather than that the account has no tasks', async () => {
+    writeDocument()
+    const controller = createTaskAdminController(
+      apiFor([], { listAdminTasks: vi.fn(async () => page([])) }),
+    )
+    await controller.activate(identity('administrator'), new AbortController().signal, () => false)
+
+    document.querySelector<HTMLButtonElement>('[data-task-filter="archived"]')!.click()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-task-list]')?.textContent).toBe(
+        'No tasks are archived.',
+      ),
+    )
+    expect(document.querySelector('[data-task-list-status]')?.textContent).toBe(
+      'No archived tasks found.',
+    )
+  })
+
   it('[browser] lets a fresh filter response win over a stale in-flight response', async () => {
     writeDocument()
     const active = deferred<ReturnType<typeof page>>()

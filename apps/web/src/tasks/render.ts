@@ -9,6 +9,7 @@ export const renderTaskAdminPage = (view?: string): string => `
       <fieldset aria-label="Task status">
         <legend class="visually-hidden">Task status</legend>
         <button type="button" data-task-filter="active" aria-pressed="true">Active</button>
+        <button type="button" data-task-filter="archived" aria-pressed="false">Archived</button>
         <button type="button" data-task-filter="all" aria-pressed="false">All</button>
       </fieldset>
       <label for="ez-task-search">Filter by task

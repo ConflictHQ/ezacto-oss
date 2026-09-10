@@ -586,6 +586,59 @@ describe('Projects V1 browser controller', () => {
     expect(document.querySelector('[data-project-list]')?.textContent).not.toContain('Launch')
   })
 
+  it('[browser #486] isolates archived projects and counts them in the filter', async () => {
+    // The old roster's status filter read "Archived projects (66)" -- 66 of the
+    // 78 projects on this account -- so the number is the point: it says how
+    // deep the archive is before you page through it looking for one to restore.
+    writeDocument('project-list', '/projects')
+    const secondClient = { ...client, id: 4, name: 'Beta' }
+    const api: Partial<ProjectDirectoryApi> = {
+      listDirectoryProjects: vi.fn(async () => page([
+        project,
+        { ...project, id: 8, client_id: 4, name: 'Retired rebrand', code: null, is_active: false },
+        { ...project, id: 9, client_id: 3, name: 'Wound down', code: null, is_active: false },
+      ])),
+      listProjectClients: vi.fn(async () => page([client, secondClient])),
+    }
+    await createProjectDirectoryController(api).activate(
+      identity('member'),
+      new AbortController().signal,
+      () => false,
+    )
+
+    const names = (): string[] =>
+      [...document.querySelectorAll<HTMLAnchorElement>(
+        '[data-project-list] tbody tr[data-row] a',
+      )].map(
+        (link) => link.textContent ?? '',
+      )
+    const archived = document.querySelector<HTMLButtonElement>('[data-project-filter="archived"]')!
+    expect(archived.textContent).toBe('Archived (2)')
+    expect(names()).toEqual(['[WEB] Launch'])
+
+    archived.click()
+    // Sorted by client band, so Acme's archived project leads Beta's.
+    expect(names()).toEqual(['Wound down', 'Retired rebrand'])
+    expect(document.querySelector('[data-project-list-status]')?.textContent).toBe(
+      '2 projects shown.',
+    )
+    expect(archived.getAttribute('aria-pressed')).toBe('true')
+
+    // The client picker and the search box narrow the table beside this
+    // control; the count is the archive's size regardless of either, or it
+    // stops answering the question it was put there for.
+    const clientPicker = document.querySelector<HTMLSelectElement>('[data-project-client-filter]')!
+    clientPicker.value = '4'
+    clientPicker.dispatchEvent(new Event('change'))
+    expect(names()).toEqual(['Retired rebrand'])
+    expect(archived.textContent).toBe('Archived (2)')
+
+    clientPicker.value = ''
+    clientPicker.dispatchEvent(new Event('change'))
+    document.querySelector<HTMLButtonElement>('[data-project-filter="all"]')!.click()
+    expect(names()).toEqual(['[WEB] Launch', 'Wound down', 'Retired rebrand'])
+  })
+
   it('[security] keeps an ended session\u2019s list failure off the next session\u2019s page', async () => {
     // projects\u2019 handleFailure returned false for a session that had gone,
     // which read at the call site as "not handled -- carry on", so the catch

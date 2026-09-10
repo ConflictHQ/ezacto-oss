@@ -9,6 +9,7 @@ export const renderClientDirectoryPages = (view?: string): string => `
       <fieldset aria-label="Client status">
         <legend class="visually-hidden">Client status</legend>
         <button type="button" data-client-filter="active" aria-pressed="true">Active</button>
+        <button type="button" data-client-filter="archived" aria-pressed="false">Archived</button>
         <button type="button" data-client-filter="all" aria-pressed="false">All</button>
       </fieldset>
       <label for="ez-client-search">Filter by client
