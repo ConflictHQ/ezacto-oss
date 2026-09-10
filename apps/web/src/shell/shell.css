@@ -157,9 +157,27 @@
   background: var(--ez-ground);
   color: var(--ez-ink);
 }
+/*
+ * A 140px floor cannot hold these numbers. They are set in
+ * `clamp(28px, 3.2vw, 46px)` monospace, so the figure grows with the viewport
+ * while the track floor does not, and `328.25h` overran into the column beside
+ * it -- the strip read `328.25h284.5h`, two figures printed over one another.
+ *
+ * Fixed the way `.dashboard-cards` already fixes it for the very same numeral,
+ * rather than inventing a second mechanism: a wider floor that still yields on
+ * a narrow screen, children that may shrink, and a figure that wraps rather
+ * than spilling. `minmax(max-content, 1fr)` was the other candidate and was
+ * rejected -- auto-fit cannot size a track below max-content, so a long figure
+ * would widen the page into a horizontal scroll instead of wrapping.
+ *
+ * Not covered by an acceptance test: the fixture workspace never renders this
+ * strip -- `.team-summary` stays hidden because its roster resolves empty -- so
+ * a collision assertion written against it passes without measuring anything.
+ * That fixture gap is the reason this shipped.
+ */
 .team-summary {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
   gap: 16px 24px;
   margin-top: 20px;
   padding: 20px;
@@ -169,6 +187,7 @@
 }
 .team-summary > div {
   display: grid;
+  min-width: 0;
   gap: 4px;
 }
 .team-summary span,
@@ -179,6 +198,7 @@
 /* The old app's KPI numerals are what make this screen readable in one look;
    at body size they are five labels you have to stop and parse. */
 .team-summary strong {
+  overflow-wrap: anywhere;
   font: 600 clamp(28px, 3.2vw, 46px)/1.05 var(--ez-font-mono), monospace;
   font-variant-numeric: tabular-nums;
 }
