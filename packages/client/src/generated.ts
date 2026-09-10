@@ -1773,6 +1773,28 @@ export type UninvoicedReportEnvelope = {
   "links": Links;
 };
 
+export type ContractorCostRow = {
+  "user_id": number;
+  "name": string;
+  "payroll_email": string | null;
+  "is_contractor": boolean;
+  "currency": string;
+  "rounded_seconds": number;
+  "cost_cents": number | null;
+  "entries_without_rate": number;
+};
+
+export type ContractorCostReport = {
+  "from": string;
+  "to": string;
+  "rows": Array<ContractorCostRow>;
+};
+
+export type ContractorCostReportEnvelope = {
+  "data": ContractorCostReport;
+  "links": Links;
+};
+
 export type ClientRollupCurrency = {
   "currency": string;
   "expense_cents": number;
@@ -3653,6 +3675,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<MyHoursReportEnvelope>("GET", "/api/v1/reports/my-hours", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getContractorCostReport(args: { query: { "from": string; "to": string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<ContractorCostReportEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ContractorCostReportEnvelope>("GET", "/api/v1/reports/contractor", {
       query: args.query,
       signal: args.signal,
       headers,
