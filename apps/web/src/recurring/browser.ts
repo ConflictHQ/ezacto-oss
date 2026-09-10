@@ -53,6 +53,18 @@ const messageFor = (error: unknown): string => {
   return error instanceof Error ? error.message : 'The request could not be completed.'
 }
 
+/**
+ * A 409 on delete has one cause: the definition has raised at least one invoice,
+ * and `invoices.recurring_invoice_id` is ON DELETE RESTRICT. Naming it beats the
+ * generic financial-command message, which tells the reader nothing they can act
+ * on. Null for anything else, so a genuinely unexpected failure still surfaces.
+ */
+const conflictOnDelete = (error: unknown): string | null =>
+  error instanceof EzactoApiError && error.status === 409
+    ? 'This definition has already raised an invoice, so it cannot be deleted. ' +
+      'Edit it instead, or set its next issue date past the period you want to stop.'
+    : null
+
 const text = (selector: string, value: string): void => {
   required<HTMLElement>(selector).textContent = value
 }
@@ -163,6 +175,7 @@ export const createRecurringWorkspaceController = (
   const editorSubmit = required<HTMLButtonElement>('[data-recurring-editor-submit]')
   const editorResult = required<HTMLElement>('[data-recurring-editor-result]')
   const editorClient = required<HTMLSelectElement>('[data-recurring-editor-client]')
+  const clientHint = required<HTMLElement>('[data-recurring-client-hint]')
   const editorEvery = required<HTMLInputElement>('[data-recurring-editor-every]')
   const editorDay = required<HTMLInputElement>('[data-recurring-editor-day]')
   const editorNext = required<HTMLInputElement>('[data-recurring-editor-next]')
@@ -467,10 +480,18 @@ export const createRecurringWorkspaceController = (
       createKey = null
       fillForm({ ...recurringBlankFormValues(), nextIssueOn: now().slice(0, 10) })
       editorTitle.textContent = 'New recurring invoice'
+      clientHint.hidden = true
     } else {
       if (api.updateRecurringInvoice === undefined || detail === null) return
       fillForm(recurringFormValuesFromDefinition(detail))
       editorTitle.textContent = 'Edit recurring invoice'
+      // `recurring_invoices_linked_invoice_client_update` aborts a client change
+      // whenever a linked invoice names a different one, and the API reports it
+      // as the same opaque conflict as everything else. Nothing on the payload
+      // says whether this definition has billed, so the control stays usable --
+      // a definition that never issued may legitimately move -- and says what
+      // the constraint is rather than letting the reader discover it on save.
+      clientHint.hidden = false
     }
     editing = target
     editorResult.textContent = ''
@@ -564,7 +585,11 @@ export const createRecurringWorkspaceController = (
       if (current() !== session) return
       if (session.onSessionFailure(error)) return
       deleteResult.dataset.outcome = 'error'
-      deleteResult.textContent = messageFor(error)
+      // The API answers a constraint refusal as an opaque `resource_conflict`,
+      // deliberately -- it does not leak database text. On this operation there
+      // is only one thing that conflicts, so the screen can say it rather than
+      // showing the caller a sentence about financial commands.
+      deleteResult.textContent = conflictOnDelete(error) ?? messageFor(error)
     } finally {
       if (current() === session) {
         mutationPending = false
@@ -972,7 +997,14 @@ export const createRecurringWorkspaceController = (
     deleting = detail.id
     deleteResult.textContent = ''
     delete deleteResult.dataset.outcome
-    deleteBody.textContent = `“${detail.subject_template}” stops billing ${recurringClientLabel(detail, clients)}. Invoices it has already raised are untouched.`
+    // Says only what is true. `invoices.recurring_invoice_id` is ON DELETE
+    // RESTRICT, and a definition imported through the Harvest worksheet carries
+    // a second guard besides, so a definition that has already raised an invoice
+    // cannot be deleted at all -- the previous copy read as a reassurance that
+    // it could, with the raised invoices left alone.
+    deleteBody.textContent =
+      `“${detail.subject_template}” stops billing ${recurringClientLabel(detail, clients)}. ` +
+      'A definition that has already raised an invoice cannot be deleted.'
     deleteDialog.showModal()
   })
   editorType.addEventListener('change', () => {

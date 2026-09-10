@@ -111,7 +111,9 @@ export const renderRecurringPage = (view?: string): string => `
           <button type="button" data-recurring-editor-cancel aria-label="Close">×</button>
         </header>
         <div class="recurring-editor-grid">
-          <label>Client<select data-recurring-editor-client required></select></label>
+          <label>Client<select data-recurring-editor-client required></select>
+            <span class="field-hint" data-recurring-client-hint hidden>The client cannot change once this definition has raised an invoice.</span>
+          </label>
           <label>Months between issues<input data-recurring-editor-every inputmode="numeric" pattern="[0-9]+" min="1" step="1" required></label>
           <label>Day of month<input data-recurring-editor-day inputmode="numeric" pattern="[0-9]+" min="1" max="31" step="1" required></label>
           <label>Next issue<input type="date" data-recurring-editor-next required></label>

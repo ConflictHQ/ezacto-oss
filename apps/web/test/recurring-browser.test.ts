@@ -694,6 +694,67 @@ describe('Recurring workspace controller', () => {
     expect(control<HTMLElement>('[data-recurring-detail-view]').hidden).toBe(true)
   })
 
+  it('[browser] says why a definition that has billed cannot be deleted', async () => {
+    // `invoices.recurring_invoice_id` is ON DELETE RESTRICT, and a definition
+    // imported through the Harvest worksheet carries a second guard besides, so
+    // every definition on a live account refuses deletion. The API reports that
+    // as an opaque `resource_conflict`, and the dialog used to promise the
+    // opposite outright -- "Invoices it has already raised are untouched".
+    writeDocument()
+    const api = baseApi()
+    api.deleteRecurringInvoice = vi.fn(async () => {
+      // The real class, and its real signature: (status, body, requestId).
+      throw new EzactoApiError(
+        409,
+        {
+          error: {
+            code: 'resource_conflict',
+            message: 'The financial command conflicts with current state.',
+          },
+        },
+        null,
+      )
+    })
+    await activate(api)
+    await openDefinition(api, 1)
+
+    control<HTMLButtonElement>('[data-recurring-delete]').click()
+    const body = control<HTMLElement>('[data-recurring-delete-body]').textContent ?? ''
+    expect(body).toContain('cannot be deleted')
+    expect(body).not.toContain('are untouched')
+
+    control<HTMLFormElement>('[data-recurring-delete-form]').dispatchEvent(
+      new Event('submit', { cancelable: true }),
+    )
+    await vi.waitFor(() =>
+      expect(control<HTMLElement>('[data-recurring-delete-result]').textContent).toContain(
+        'already raised an invoice',
+      ),
+    )
+    // Not the generic sentence about financial commands, which names nothing the
+    // reader can act on.
+    expect(control<HTMLElement>('[data-recurring-delete-result]').textContent).not.toContain(
+      'financial command',
+    )
+  })
+
+  it('[browser] names the client constraint only where it applies', async () => {
+    writeDocument()
+    const api = baseApi()
+    await activate(api)
+
+    // Creating: the client is free, so the constraint is not mentioned.
+    control<HTMLButtonElement>('[data-recurring-new]').click()
+    expect(control<HTMLElement>('[data-recurring-client-hint]').hidden).toBe(true)
+    control<HTMLButtonElement>('[data-recurring-editor-cancel]').click()
+
+    // Editing: the database refuses a client change once an invoice links back,
+    // and reports it as the same opaque conflict as everything else.
+    await openDefinition(api, 1)
+    control<HTMLButtonElement>('[data-recurring-edit]').click()
+    expect(control<HTMLElement>('[data-recurring-client-hint]').hidden).toBe(false)
+  })
+
   it('[security] offers no write controls to a profile that cannot write invoices', async () => {
     // The API refuses a member at `invoices:write`; the screen should not put
     // the button in front of one first.
