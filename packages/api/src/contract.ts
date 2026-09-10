@@ -1113,6 +1113,48 @@ const ssoDomainOperations: ApiContractOperation[] = [
   },
 ];
 
+// The upload is multipart and the browser sends it with `fetch` directly, so no
+// client method is generated for it: a generated wrapper over `FormData` would
+// be a second way to build the same request and only the hand-written one is
+// exercised. The list is generated, because the settings screen reads it.
+const brandAssetOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/settings/brand-assets",
+    operationId: "listBrandAssets",
+    summary: "List the brand marks stored on this instance",
+    tag: "brand-assets",
+    responseStatus: 200,
+    responseSchema: "BrandAssetListEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/settings/brand-assets/:slot",
+    operationId: "uploadBrandAsset",
+    summary: "Store a brand mark, replacing whatever the slot held",
+    tag: "brand-assets",
+    responseStatus: 201,
+    responseSchema: "BrandAssetEnvelope",
+    requestSchema: "BrandAssetUploadInput",
+    requestRequired: true,
+    requestContentType: "multipart/form-data",
+    sessionOnly: true,
+    generateClient: false,
+    parameters: [stringPath("slot")],
+  },
+  {
+    method: "delete",
+    path: "/api/v1/settings/brand-assets/:slot",
+    operationId: "removeBrandAsset",
+    summary: "Discard a stored brand mark and fall back to configuration",
+    tag: "brand-assets",
+    responseStatus: 204,
+    sessionOnly: true,
+    parameters: [stringPath("slot")],
+  },
+];
+
 const twoFactorOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -1727,6 +1769,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...moduleSettingsOperations,
   ...backupOperations,
   ...ssoDomainOperations,
+  ...brandAssetOperations,
   ...twoFactorOperations,
   ...userEmailOperations,
   ...teamOperations,
@@ -5240,6 +5283,50 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object",
     required: ["data"],
     properties: { data: reference("SsoDomainCheck") },
+    additionalProperties: false,
+  },
+  BrandAsset: {
+    type: "object",
+    required: [
+      "slot",
+      "content_hash",
+      "content_type",
+      "byte_size",
+      "url",
+      "updated_at",
+    ],
+    properties: {
+      slot: { enum: ["wordmark_light", "wordmark_dark", "favicon"] },
+      content_hash: { type: "string", pattern: "^[0-9a-f]{64}$" },
+      // A closed set, and the reason is in `brand-assets.ts`: these bytes are
+      // served to an anonymous browser from this origin, so nothing
+      // script-capable may name itself here.
+      content_type: { enum: ["image/png", "image/jpeg", "image/webp"] },
+      byte_size: { type: "integer", minimum: 1 },
+      url: stringSchema,
+      updated_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  BrandAssetListEnvelope: {
+    type: "object",
+    required: ["data", "links"],
+    properties: {
+      data: { type: "array", items: reference("BrandAsset") },
+      links: reference("Links"),
+    },
+    additionalProperties: false,
+  },
+  BrandAssetEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("BrandAsset") },
+    additionalProperties: false,
+  },
+  BrandAssetUploadInput: {
+    type: "object",
+    required: ["file"],
+    properties: { file: { type: "string", format: "binary" } },
     additionalProperties: false,
   },
   SsoDomainInput: {

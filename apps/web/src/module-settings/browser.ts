@@ -8,6 +8,9 @@ import { renderDataTable } from '../components/data-table.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
 import {
   apiErrorMessage,
+  brandAssetAccept,
+  brandAssetRejection,
+  brandAssetSlotCopy,
   noteSettingsPatch,
   ratePercentage,
   senderVerificationLabel,
@@ -26,6 +29,76 @@ interface ModuleState {
 
 interface ModuleListEnvelope {
   data: readonly ModuleState[]
+}
+
+/** One stored brand mark as `/api/v1/settings/brand-assets` reports it (#489). */
+interface BrandAssetState {
+  slot: string
+  content_type: string
+  byte_size: number
+  url: string
+  updated_at: string
+}
+
+interface BrandAssetListEnvelope {
+  data: readonly BrandAssetState[]
+}
+
+/**
+ * These three go through `fetch` rather than the generated client for the same
+ * reason `fetchModules` does: the upload is `multipart/form-data`, which the
+ * generated JSON client has no shape for, and having the list travel by a
+ * different road from the upload that changes it is how the two drift.
+ */
+const fetchBrandAssets = async (
+  signal?: AbortSignal,
+): Promise<readonly BrandAssetState[]> => {
+  const response = await globalThis.fetch('/api/v1/settings/brand-assets', {
+    credentials: 'same-origin',
+    ...withSignal(signal),
+  })
+  if (!response.ok) throw new EzactoApiError(
+      response.status,
+      await brandBody(response),
+      response.headers.get('x-request-id'),
+    )
+  return ((await response.json()) as BrandAssetListEnvelope).data
+}
+
+const brandBody = async (response: Response): Promise<unknown> =>
+  response.json().catch(() => null)
+
+const uploadBrandAsset = async (
+  segment: string,
+  file: File,
+  signal?: AbortSignal,
+): Promise<void> => {
+  const body = new FormData()
+  body.append('file', file)
+  const response = await globalThis.fetch(`/api/v1/settings/brand-assets/${segment}`, {
+    method: 'POST',
+    body,
+    credentials: 'same-origin',
+    ...withSignal(signal),
+  })
+  if (!response.ok) throw new EzactoApiError(
+      response.status,
+      await brandBody(response),
+      response.headers.get('x-request-id'),
+    )
+}
+
+const removeBrandAsset = async (segment: string, signal?: AbortSignal): Promise<void> => {
+  const response = await globalThis.fetch(`/api/v1/settings/brand-assets/${segment}`, {
+    method: 'DELETE',
+    credentials: 'same-origin',
+    ...withSignal(signal),
+  })
+  if (!response.ok) throw new EzactoApiError(
+      response.status,
+      await brandBody(response),
+      response.headers.get('x-request-id'),
+    )
 }
 
 const moduleDescriptions: Readonly<Record<string, { label: string; warning: string }>> = {
@@ -156,6 +229,9 @@ export const createModuleSettingsController = (
   const backupAlarm = required<HTMLElement>('[data-settings-backup-alarm]')
   const backupFacts = required<HTMLElement>('[data-settings-backup-facts]')
   const backupRuns = required<HTMLElement>('[data-settings-backup-runs]')
+  const brandStatus = required<HTMLElement>('[data-settings-brand-status]')
+  const brandSlots = required<HTMLElement>('[data-settings-brand-slots]')
+  const brandResult = required<HTMLElement>('[data-settings-brand-result]')
   const ssoStatus = required<HTMLElement>('[data-settings-sso-status]')
   const ssoDomains = required<HTMLElement>('[data-settings-sso-domains]')
   const ssoForm = required<HTMLFormElement>('[data-sso-domain-form]')
@@ -168,6 +244,8 @@ export const createModuleSettingsController = (
   // the challenge token the operator is part way through publishing.
   let ssoState: readonly SsoDomain[] = []
   let ssoBusy = false
+  let brandState: readonly BrandAssetState[] = []
+  let brandBusy = false
 
   // The form is wired once, not on every activation: a sign-out and a sign-in
   // back into the page would otherwise leave two listeners on it and send the
@@ -290,6 +368,132 @@ export const createModuleSettingsController = (
     ssoDomains.hidden = false
   }
 
+  /**
+   * One card per slot, drawn on the ground the mark will actually be drawn on.
+   * A light-on-transparent wordmark previewed on white is invisible, which is
+   * the same mistake as uploading it to the wrong slot and looks identical to
+   * an operator, so the preview commits to the ground the label names.
+   */
+  const paintBrandAssets = (): void => {
+    brandSlots.replaceChildren(
+      ...brandAssetSlotCopy.map((copy) => {
+        const stored = brandState.find((asset) => asset.slot === copy.slot)
+        const card = document.createElement('article')
+        card.className = 'brand-slot'
+        card.dataset.brandSlot = copy.slot
+
+        const heading = document.createElement('h3')
+        heading.textContent = copy.label
+        const hint = document.createElement('p')
+        hint.className = 'hint'
+        hint.textContent = copy.hint
+
+        const preview = document.createElement('div')
+        preview.className = 'brand-slot-preview'
+        preview.dataset.ground = copy.preview
+        if (stored === undefined) {
+          const empty = document.createElement('p')
+          empty.className = 'hint'
+          // Two different nothings. No mark stored does not mean no mark shown:
+          // the deployment may still be setting one by environment variable,
+          // and saying "nothing uploaded" rather than "no logo" is what keeps
+          // an operator from hunting for a logo that is working as configured.
+          empty.textContent = 'Nothing uploaded. The deployment setting applies.'
+          preview.append(empty)
+        } else {
+          const image = document.createElement('img')
+          image.src = stored.url
+          image.alt = `${copy.label} preview`
+          preview.append(image)
+        }
+
+        const picker = document.createElement('label')
+        picker.className = 'brand-slot-picker'
+        picker.append(stored === undefined ? 'Upload an image' : 'Replace')
+        const input = document.createElement('input')
+        input.type = 'file'
+        input.accept = brandAssetAccept
+        input.disabled = brandBusy
+        input.addEventListener('change', () => {
+          const file = input.files?.[0]
+          input.value = ''
+          if (file !== undefined) void submitBrandAsset(copy.segment, file)
+        })
+        picker.append(input)
+
+        const actions = document.createElement('div')
+        actions.className = 'brand-slot-actions'
+        actions.append(picker)
+        if (stored !== undefined) {
+          const remove = document.createElement('button')
+          remove.type = 'button'
+          remove.textContent = 'Remove'
+          remove.disabled = brandBusy
+          remove.addEventListener('click', () => void discardBrandAsset(copy.segment))
+          actions.append(remove)
+        }
+
+        card.append(heading, hint, preview, actions)
+        return card
+      }),
+    )
+    brandSlots.hidden = false
+  }
+
+  const submitBrandAsset = async (segment: string, file: File): Promise<void> => {
+    const active = currentSession()
+    if (active === null) return
+    const rejection = brandAssetRejection(file)
+    if (rejection !== null) {
+      brandResult.textContent = rejection
+      return
+    }
+    brandBusy = true
+    paintBrandAssets()
+    brandResult.textContent = `Uploading ${file.name}…`
+    try {
+      await uploadBrandAsset(segment, file, active.signal)
+      const assets = await fetchBrandAssets(active.signal)
+      active.present(() => {
+        brandState = assets
+        // The URL carries the content hash, so a replaced mark is a new URL and
+        // the browser cannot show the old one back from cache.
+        brandResult.textContent = `${file.name} is now in use.`
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        brandResult.textContent = apiErrorMessage(error, 'The brand asset could not be uploaded.')
+      })
+    } finally {
+      brandBusy = false
+      active.present(paintBrandAssets)
+    }
+  }
+
+  const discardBrandAsset = async (segment: string): Promise<void> => {
+    const active = currentSession()
+    if (active === null) return
+    brandBusy = true
+    paintBrandAssets()
+    brandResult.textContent = 'Removing…'
+    try {
+      await removeBrandAsset(segment, active.signal)
+      const assets = await fetchBrandAssets(active.signal)
+      active.present(() => {
+        brandState = assets
+        brandResult.textContent =
+          'Removed. This instance is back to whatever the deployment configures for that mark.'
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        brandResult.textContent = apiErrorMessage(error, 'The brand asset could not be removed.')
+      })
+    } finally {
+      brandBusy = false
+      active.present(paintBrandAssets)
+    }
+  }
+
   const verifySsoDomain = async (domain: SsoDomain): Promise<void> => {
     const active = currentSession()
     if (active === null || api.verifySsoDomain === undefined) return
@@ -407,6 +611,13 @@ export const createModuleSettingsController = (
     // The challenge tokens are the domains' proof of ownership as much as the
     // record they name, so they go with the rest of the previous session's
     // company data rather than sitting under a notice saying it is not yours.
+    // The marks themselves are public, but which of them this instance has
+    // uploaded is company configuration, so it leaves with the rest of it.
+    brandState = []
+    brandBusy = false
+    brandSlots.replaceChildren()
+    brandSlots.hidden = true
+    brandResult.textContent = ''
     ssoState = []
     ssoDomains.replaceChildren()
     ssoDomains.hidden = true
@@ -621,6 +832,34 @@ export const createModuleSettingsController = (
     }
   }
 
+  /**
+   * Administrator-only, like the sections above it: every brand-asset route
+   * answers 403 to anyone else, and asking anyway buys a 403 that tells the
+   * operator nothing about why the section is empty.
+   */
+  const loadBrandAssets = async (identity: Whoami, active: ActiveSession): Promise<void> => {
+    if (identity.profile !== 'administrator') {
+      brandStatus.textContent = 'Brand assets are visible to administrators only.'
+      return
+    }
+    try {
+      const assets = await fetchBrandAssets(active.signal)
+      active.present(() => {
+        brandState = assets
+        paintBrandAssets()
+        brandStatus.textContent = ''
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        brandStatus.textContent = messageFor(
+          error,
+          'Only administrators can change the brand assets.',
+          'Brand assets could not be loaded.',
+        )
+      })
+    }
+  }
+
   const loadSsoDomains = async (identity: Whoami, active: ActiveSession): Promise<void> => {
     // Every sso-domains route is administrator-only. Asking as an executive
     // manager buys a 403 and tells the operator nothing about why the section
@@ -659,6 +898,7 @@ export const createModuleSettingsController = (
         status.textContent = 'Only administrators can manage module settings.'
         timeStatus.textContent = ''
         emailStatus.textContent = ''
+        brandStatus.textContent = ''
         ssoStatus.textContent = ''
         return
       }
@@ -673,6 +913,7 @@ export const createModuleSettingsController = (
         loadTimeTracking(active),
         loadEmail(identity, active),
         loadBackups(identity, active),
+        loadBrandAssets(identity, active),
         loadSsoDomains(identity, active),
       ])
 

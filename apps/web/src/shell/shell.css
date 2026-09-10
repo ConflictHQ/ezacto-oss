@@ -2396,6 +2396,21 @@ a {
   text-decoration: none;
   margin-right: 12px;
 }
+/* An uploaded mark is bounded by the bar it sits in rather than by its own
+   pixel size: an operator uploads whatever their designer exported, and a
+   2000px wordmark must not decide how tall the topbar is. Width follows so a
+   wide lockup and a square glyph both keep their proportions. */
+.brand-mark {
+  max-height: 32px;
+  width: auto;
+  object-fit: contain;
+}
+.auth-wordmark .brand-mark {
+  max-height: clamp(28px, 3vw, 40px);
+}
+.document-shell .brand-mark {
+  max-height: 24px;
+}
 .primary-nav {
   display: flex;
   align-items: stretch;
@@ -3013,6 +3028,65 @@ dialog h2,
   color: var(--ez-muted);
 }
 
+.settings-brand-slots {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  margin-bottom: 12px;
+}
+.brand-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+.brand-slot h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.brand-slot .hint {
+  margin: 0;
+  max-width: 44ch;
+  color: var(--ez-muted);
+}
+/* The preview commits to the ground the slot's label names. A light-on-
+   transparent mark shown on white is invisible, and an operator cannot tell
+   that from having uploaded a broken file. */
+.brand-slot-preview {
+  display: grid;
+  place-items: center;
+  min-height: 72px;
+  padding: 12px;
+  border-radius: var(--ez-radius);
+}
+.brand-slot-preview[data-ground='dark'] {
+  background: var(--ez-ink);
+}
+.brand-slot-preview[data-ground='dark'] .hint {
+  color: var(--ez-blue-light);
+}
+.brand-slot-preview[data-ground='light'] {
+  background: var(--ez-ground);
+  border: 1px solid var(--ez-border);
+}
+.brand-slot-preview img {
+  max-width: 100%;
+  max-height: 56px;
+  object-fit: contain;
+}
+.brand-slot-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.brand-slot-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
 .settings-form {
   display: flex;
   flex-wrap: wrap;

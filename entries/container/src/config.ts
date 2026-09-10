@@ -7,6 +7,8 @@ export interface ContainerConfig {
   dataDirectory: string
   databasePath: string
   attachmentDirectory: string
+  /** Uploaded brand marks (#489), kept apart from the attachment content store. */
+  brandDirectory: string
   appBaseUrl: string
   cursorSigningKey: Uint8Array
   /**
@@ -161,6 +163,7 @@ export const readContainerConfig = (
     dataDirectory: directory,
     databasePath: `${directory}/db.sqlite`,
     attachmentDirectory: `${directory}/attachments`,
+    brandDirectory: `${directory}/brand`,
     appBaseUrl,
     cursorSigningKey: signingKey(
       required(environment, 'API_CURSOR_SIGNING_KEY', 128),

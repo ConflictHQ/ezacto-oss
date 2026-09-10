@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest'
 import {
   type DeploymentBrand,
   brandFromEnv,
+  brandFromSources,
+  brandFromStoredAssets,
   defaultBrand,
   defaultReportBrand,
   resolveDeploymentBrand,
@@ -172,5 +174,133 @@ describe('F12/DV-23 deployment brand seam', () => {
 
   it('[unit] brandFromEnv ignores empty-string env vars', () => {
     expect(brandFromEnv({ BRAND_NAME: '' })).toBeUndefined()
+  })
+})
+
+describe('#489 uploaded brand marks', () => {
+  const stored = [
+    { slot: 'wordmark_light', url: '/brand/wordmark-light/aaaa' },
+    { slot: 'wordmark_dark', url: '/brand/wordmark-dark/bbbb' },
+    { slot: 'favicon', url: '/brand/favicon/cccc' },
+  ] as const
+
+  it('[unit] a stored mark fills the slot its slot names', () => {
+    expect(brandFromStoredAssets(stored)).toEqual({
+      wordmarkLight: '/brand/wordmark-light/aaaa',
+      wordmarkDark: '/brand/wordmark-dark/bbbb',
+      favicon: '/brand/favicon/cccc',
+    })
+  })
+
+  it('[unit] no stored marks resolves to nothing rather than empty slots', () => {
+    expect(brandFromStoredAssets([])).toBeUndefined()
+  })
+
+  it('[unit] an uploaded mark wins over the deploy-time URL for its slot', () => {
+    const brand = brandFromSources(
+      {
+        BRAND_WORDMARK_LIGHT: 'https://cdn.example/light.png',
+        BRAND_WORDMARK_DARK: 'https://cdn.example/dark.png',
+      },
+      [{ slot: 'wordmark_dark', url: '/brand/wordmark-dark/bbbb' }],
+    )
+    expect(brand?.wordmarkDark).toBe('/brand/wordmark-dark/bbbb')
+    // Per slot, not per source: the light mark the deployment configured is
+    // untouched by an upload into the dark slot.
+    expect(brand?.wordmarkLight).toBe('https://cdn.example/light.png')
+  })
+
+  it('[unit] the env vars stay the fallback when nothing is uploaded', () => {
+    expect(
+      brandFromSources({
+        BRAND_NAME: 'Acme',
+        BRAND_WORDMARK_DARK: 'https://cdn.example/dark.png',
+      }),
+    ).toEqual({ name: 'Acme', wordmarkDark: 'https://cdn.example/dark.png' })
+  })
+
+  it('[unit] no configuration and no upload is still no brand override', () => {
+    expect(brandFromSources({}, [])).toBeUndefined()
+  })
+
+  it('[unit] the shell draws the dark-ground mark where the ground is dark', () => {
+    const html = renderAppShell({
+      environment: 'test',
+      release: 'abc1234',
+      brand: {
+        name: 'Acme',
+        wordmarkDark: '/brand/wordmark-dark/bbbb',
+        wordmarkLight: '/brand/wordmark-light/aaaa',
+      },
+    })
+    // The topbar and the sign-in splash are both painted --ez-ink, so both take
+    // the mark meant for a dark ground; the light-ground one belongs to the
+    // document shell and must not appear here.
+    expect(html).toContain('<img class="brand-mark" src="/brand/wordmark-dark/bbbb" alt="Acme">')
+    expect(html).not.toContain('/brand/wordmark-light/aaaa')
+    expect(
+      html.match(/<img class="brand-mark" src="\/brand\/wordmark-dark\/bbbb"/gu),
+    ).toHaveLength(2)
+  })
+
+  it('[unit] the document shell draws the light-ground mark', () => {
+    const html = renderDocumentShell('Invoice', 'Body', {
+      name: 'Acme',
+      wordmarkLight: '/brand/wordmark-light/aaaa',
+      wordmarkDark: '/brand/wordmark-dark/bbbb',
+    })
+    expect(html).toContain('<img class="brand-mark" src="/brand/wordmark-light/aaaa" alt="Acme">')
+    expect(html).not.toContain('wordmark-dark')
+  })
+
+  it('[unit] the brand name is the alt text, so a mark that fails to load still says who this is', () => {
+    const html = renderAppShell({
+      environment: 'test',
+      release: 'abc1234',
+      brand: { name: 'Acme & Co', wordmarkDark: '/brand/wordmark-dark/b"b' },
+    })
+    expect(html).toContain('alt="Acme &amp; Co"')
+    expect(html).toContain('src="/brand/wordmark-dark/b&quot;b"')
+  })
+
+  it('[unit] a mark hosted elsewhere keeps the text wordmark, because the CSP refuses it', () => {
+    // BRAND_WORDMARK_* take URLs to files the operator hosts somewhere else, and
+    // every shell response sets `img-src 'self' data:`. Emitting one as an <img>
+    // anyway replaces a styled wordmark with a blocked image on the sign-in
+    // splash -- the first thing anybody sees. Only an uploaded mark, served from
+    // this origin at /brand/..., can be an image at all.
+    for (const hosted of [
+      'https://cdn.example/dark.png',
+      'http://cdn.example/dark.png',
+      '//cdn.example/dark.png',
+    ]) {
+      const html = renderAppShell({
+        environment: 'test',
+        release: 'abc1234',
+        brand: { name: 'Acme', wordmarkDark: hosted },
+      })
+      expect(html).not.toContain('brand-mark')
+      expect(html).not.toContain('cdn.example')
+      expect(html).toContain('>Acme</a>')
+    }
+
+    // And the same-origin case still renders, so this narrows the image to what
+    // the CSP allows rather than turning the feature off.
+    const uploaded = renderAppShell({
+      environment: 'test',
+      release: 'abc1234',
+      brand: { name: 'Acme', wordmarkDark: '/brand/wordmark-dark/bbbb' },
+    })
+    expect(uploaded).toContain('<img class="brand-mark" src="/brand/wordmark-dark/bbbb" alt="Acme">')
+  })
+
+  it('[unit] with no mark configured the wordmark is still the name', () => {
+    const html = renderAppShell({
+      environment: 'test',
+      release: 'abc1234',
+      brand: { name: 'Acme' },
+    })
+    expect(html).not.toContain('brand-mark')
+    expect(html).toContain('>Acme</a>')
   })
 })

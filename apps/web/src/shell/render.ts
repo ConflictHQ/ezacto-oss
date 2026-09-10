@@ -189,6 +189,45 @@ export const invoiceTabs = (view: AppShellOptions['view']): readonly ShellTab[] 
     ...(view === destination ? { current: true } : {}),
   }))
 
+/**
+ * The mark, or the name set in it. Which of the two configured wordmarks a
+ * surface asks for is decided by the ground it paints, not by the surface:
+ * the topbar and the sign-in splash are `--ez-ink` and take the dark-ground
+ * mark, the document shell is `--ez-ground` and takes the light-ground one.
+ *
+ * The name stays the alt text rather than being dropped, so a mark that fails
+ * to load, or a reader who is not looking at the screen, still gets the brand
+ * the deployment set instead of an empty link.
+ */
+/**
+ * Same-origin, and therefore loadable. Every shell response sets
+ * `img-src 'self' data:`, so only a mark this deployment serves itself can be an
+ * `<img>` at all -- an uploaded asset, which lives at a root-relative
+ * `/brand/<slot>/<hash>`.
+ *
+ * `//host/path` is excluded deliberately: it reads as a path and is a
+ * cross-origin URL, which is exactly the case a `startsWith('/')` alone gets
+ * wrong.
+ */
+const sameOriginMark = (source: string): boolean =>
+  source.startsWith('/') && !source.startsWith('//')
+
+/**
+ * `BRAND_WORDMARK_*` take URLs to files the operator hosts elsewhere, and the
+ * CSP above refuses those outright. Rendering one as an `<img>` regardless
+ * would replace a styled wordmark with whatever the browser does for a blocked
+ * image -- on the sign-in splash, which is the first thing anyone sees.
+ *
+ * So the two sources are not interchangeable and are not treated as one: an
+ * uploaded mark is served from here and renders; a configured URL keeps the
+ * text wordmark it has always rendered. `team/browser.ts` reached the same
+ * conclusion about avatars for the same reason, and keeps its text underneath.
+ */
+const wordmark = (source: string | undefined, brand: string): string =>
+  source === undefined || source === '' || !sameOriginMark(source)
+    ? escapeHtml(brand)
+    : `<img class="brand-mark" src="${escapeHtml(source)}" alt="${escapeHtml(brand)}">`
+
 export const renderEmptyState = (title: string, detail: string): string =>
   `<section class="empty-state" data-empty-state>` +
   `<h2>${escapeHtml(title)}</h2><p>${escapeHtml(detail)}</p></section>`
@@ -196,7 +235,7 @@ export const renderEmptyState = (title: string, detail: string): string =>
 export const renderDocumentShell = (title: string, content: string, brand?: Partial<DeploymentBrand>): string => {
   const b = resolveDeploymentBrand(brand)
   return `<article class="document-shell" data-document-shell data-ez-theme="precision">` +
-  `<header><a href="/">← Time</a><span>${escapeHtml(b.name)}</span></header>` +
+  `<header><a href="/">← Time</a><span>${wordmark(b.wordmarkLight, b.name)}</span></header>` +
   `<main><h1>${escapeHtml(title)}</h1><div class="document-content">${escapeHtml(content)}</div>` +
   `</main></article>`
 }
@@ -325,7 +364,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
 <body>
   <section class="auth-gateway" data-auth-gateway data-state="checking" aria-label="${escapeHtml(brand)} sign in" aria-busy="true"${resumeSession ? ' hidden' : ''}>
     <div class="auth-splash">
-      <a class="auth-wordmark" href="/" aria-label="${escapeHtml(brand)} home">${escapeHtml(brand)}</a>
+      <a class="auth-wordmark" href="/" aria-label="${escapeHtml(brand)} home">${wordmark(b.wordmarkDark, brand)}</a>
       <div class="auth-splash-copy">
         <p class="eyebrow">${escapeHtml(b.tagline)}</p>
         <h1>Make every hour visible.</h1>
@@ -369,7 +408,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
   </aside>
   <div class="authenticated-shell" data-authenticated-shell${resumeSession ? '' : ' hidden'} inert aria-busy="true">
   <header class="topbar">
-    <a class="brand" href="/" aria-label="${escapeHtml(brand)} home">${escapeHtml(brand)}</a>
+    <a class="brand" href="/" aria-label="${escapeHtml(brand)} home">${wordmark(b.wordmarkDark, brand)}</a>
     <nav class="primary-nav" aria-label="Primary">${navigation}</nav>
     <button class="timer-chip" type="button" data-timer-chip data-state="loading" data-auth-action disabled aria-haspopup="dialog">
       ${iconMarkup('clock')}

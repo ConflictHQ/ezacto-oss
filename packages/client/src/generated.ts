@@ -1913,6 +1913,28 @@ export type SsoDomainCheckEnvelope = {
   "data": SsoDomainCheck;
 };
 
+export type BrandAsset = {
+  "slot": "wordmark_light" | "wordmark_dark" | "favicon";
+  "content_hash": string;
+  "content_type": "image/png" | "image/jpeg" | "image/webp";
+  "byte_size": number;
+  "url": string;
+  "updated_at": string;
+};
+
+export type BrandAssetListEnvelope = {
+  "data": Array<BrandAsset>;
+  "links": Links;
+};
+
+export type BrandAssetEnvelope = {
+  "data": BrandAsset;
+};
+
+export type BrandAssetUploadInput = {
+  "file": string;
+};
+
 export type SsoDomainInput = {
   "domain": string;
 };
@@ -3735,6 +3757,24 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<SsoDomainCheckEnvelope>("POST", "/api/v1/settings/sso-domains/:id/verify".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listBrandAssets(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<BrandAssetListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BrandAssetListEnvelope>("GET", "/api/v1/settings/brand-assets", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async removeBrandAsset(args: { "slot": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/settings/brand-assets/:slot".replace(":slot", encodeURIComponent(String(args["slot"]))), {
       signal: args.signal,
       headers,
     });

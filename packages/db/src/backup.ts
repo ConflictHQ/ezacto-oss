@@ -58,6 +58,7 @@ const BACKUP_TABLES = [
   'event_outbox',
   'backup_runs',
   'sso_provisioning_domains',
+  'brand_assets',
 ] as const
 
 export interface BackupObjectStore {

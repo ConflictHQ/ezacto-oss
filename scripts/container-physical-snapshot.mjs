@@ -123,7 +123,14 @@ const durableInventory = async (root) => {
   await assertCanonicalDirectory(root, "snapshot root");
 
   const names = (await readdir(root)).sort();
-  const allowed = ["attachments", "db.sqlite", "snapshot.json"];
+  // `brand` joins the contract with the uploaded marks (#489). The container
+  // keeps them in their own directory rather than mixed into the attachment
+  // store -- so an operator reading a backup can tell a logo from a receipt --
+  // but they are the same content-addressed objects, written by the same
+  // hardened disk store, so they are walked by the same rule rather than merely
+  // tolerated. A restore that silently dropped them would come back with the
+  // deployment's text wordmark and no indication anything was missing.
+  const allowed = ["attachments", "brand", "db.sqlite", "snapshot.json"];
   for (const name of names) {
     if (!allowed.includes(name))
       fail(`snapshot contains unexpected root path ${name}`);
@@ -150,6 +157,15 @@ const durableInventory = async (root) => {
     },
   ];
   await walkAttachments(root, attachmentsPath, files);
+
+  // Optional: a deployment that has never had a mark uploaded has no directory,
+  // and that is not a broken snapshot.
+  if (names.includes("brand")) {
+    const brandPath = join(root, "brand");
+    const brand = await securePath(brandPath);
+    if (!brand.isDirectory()) fail("brand must be a directory");
+    await walkAttachments(root, brandPath, files);
+  }
   return files.sort((left, right) => left.path.localeCompare(right.path));
 };
 

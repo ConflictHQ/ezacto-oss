@@ -36,9 +36,11 @@
         "APP_BASE_URL": "https://replace-me.invalid",
         // Deployment brand seam (#72). A prod install carries the operator's
         // name through the shell, the sign-in gateway and outbound mail rather
-        // than the product default. Wordmark and favicon are deliberately
-        // unset: they take URLs, so the text wordmark renders until an operator
-        // hosts assets of their own.
+        // than the product default. Wordmark and favicon stay unset here and no
+        // longer have to be set at all: since #489 an administrator uploads the
+        // marks from Settings > Company and they are stored in R2, which is the
+        // only route open to an install with nowhere to host a file. These vars
+        // remain the fallback for a deployment that already hosts its own.
         "BRAND_NAME": "replace-me-brand-name",
         "BRAND_TAGLINE": "replace-me-brand-tagline",
         "BRAND_DESCRIPTION": "replace-me-brand-description",

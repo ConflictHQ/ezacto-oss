@@ -135,6 +135,14 @@ export {
   type SessionStoreOptions,
 } from './sessions.js'
 export {
+  brandAssetSlots,
+  createD1BrandAssetStore,
+  type BrandAssetRecord,
+  type BrandAssetSlot,
+  type BrandAssetStore,
+  type BrandAssetWrite,
+} from './brand-assets.js'
+export {
   createD1SsoProvisioningDomainStore,
   SsoProvisioningDomainError,
   type SsoProvisioningDomainErrorCode,
