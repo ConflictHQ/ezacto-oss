@@ -9,6 +9,7 @@ export const renderProjectDirectoryPages = (view?: string): string => `
       <fieldset aria-label="Project status">
         <legend class="visually-hidden">Project status</legend>
         <button type="button" data-project-filter="active" aria-pressed="true">Active</button>
+        <button type="button" data-project-filter="archived" aria-pressed="false">Archived</button>
         <button type="button" data-project-filter="all" aria-pressed="false">All</button>
       </fieldset>
       <label for="ez-project-client-filter">Client

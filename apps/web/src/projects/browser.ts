@@ -233,6 +233,7 @@ export const createProjectDirectoryController = (
   const listElement = required<HTMLElement>('[data-project-list]')
   const listRetry = required<HTMLButtonElement>('[data-project-list-retry]')
   const clientFilter = required<HTMLSelectElement>('[data-project-client-filter]')
+  const archivedFilter = required<HTMLButtonElement>('[data-project-filter="archived"]')
   const search = required<HTMLInputElement>('[data-project-search]')
   const detailStatus = required<HTMLElement>('[data-project-detail-status]')
   const detail = required<HTMLElement>('[data-project-detail]')
@@ -282,7 +283,7 @@ export const createProjectDirectoryController = (
   let assignments: readonly GeneralResource[] = []
   let attachments: readonly Attachment[] = []
   let currentProject: GeneralResource | null = null
-  let projectFilter: 'active' | 'all' = 'active'
+  let projectFilter: 'active' | 'archived' | 'all' = 'active'
   let editingProjectId: number | null = null
   let editingAssignmentId: number | null = null
   let archivingAssignmentId: number | null = null
@@ -403,6 +404,14 @@ export const createProjectDirectoryController = (
   }
 
   const renderList = (): void => {
+    // 66 of the 78 projects on the migrated account are archived, so "how much
+    // is in there" is the question the archive view is opened with. loadList
+    // pages the whole directory in, so the answer is a count of what is already
+    // in hand. It counts the directory rather than the visible rows on purpose:
+    // the client picker and the search box beside it narrow the table, and a
+    // number that moved with them would stop being the archive's size.
+    const archivedCount = projects.filter((project) => !projectIsActive(project)).length
+    archivedFilter.textContent = `Archived (${archivedCount})`
     const selectedClient = Number(clientFilter.value)
     // Every project and its client are already resident -- the list collects
     // both before it renders -- so finding one is a match over what is in hand
@@ -411,7 +420,7 @@ export const createProjectDirectoryController = (
     const wanted = search.value.trim().toLocaleLowerCase('en-US')
     const visible = projects.filter(
       (project) =>
-        (projectFilter === 'all' || projectIsActive(project)) &&
+        (projectFilter === 'all' || projectIsActive(project) === (projectFilter === 'active')) &&
         (!Number.isSafeInteger(selectedClient) || selectedClient < 1 ||
           projectNumber(project, 'client_id') === selectedClient) &&
         `${projectDisplayName(project)} ${projectClientLabel(project, clients)}`
@@ -1183,7 +1192,9 @@ export const createProjectDirectoryController = (
 
   for (const control of document.querySelectorAll<HTMLButtonElement>('[data-project-filter]')) {
     control.addEventListener('click', () => {
-      projectFilter = control.dataset.projectFilter === 'all' ? 'all' : 'active'
+      const next = control.dataset.projectFilter
+      if (next !== 'active' && next !== 'archived' && next !== 'all') return
+      projectFilter = next
       for (const candidate of document.querySelectorAll<HTMLButtonElement>('[data-project-filter]')) {
         candidate.setAttribute('aria-pressed', String(candidate === control))
       }

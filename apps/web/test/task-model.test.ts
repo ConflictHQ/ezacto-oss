@@ -45,6 +45,7 @@ describe('Tasks administration model', () => {
 
     await api.listAdminTasks!('active', 'next', signal)
     await api.listAdminTasks!('all', undefined, signal)
+    await api.listAdminTasks!('archived', undefined, signal)
     await api.createAdminTask!({ name: 'Implementation' }, signal)
     await api.updateAdminTask!(7, { name: 'Delivery' }, signal)
     await api.archiveAdminTask!(7, signal)
@@ -55,6 +56,12 @@ describe('Tasks administration model', () => {
     })
     expect(generated.listTasks).toHaveBeenNthCalledWith(2, {
       query: { per_page: 50 },
+      signal,
+    })
+    // #486: the archived view is a request, not a client-side narrowing --
+    // this list is paged, so the rows it never fetched cannot be filtered for.
+    expect(generated.listTasks).toHaveBeenNthCalledWith(3, {
+      query: { per_page: 50, is_active: false },
       signal,
     })
     expect(generated.createTask).toHaveBeenCalledWith({

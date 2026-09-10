@@ -1,6 +1,6 @@
 import type { GeneralResource, Whoami } from '@ezacto/client'
 
-export type TaskAdminFilter = 'active' | 'all'
+export type TaskAdminFilter = 'active' | 'archived' | 'all'
 
 export type TaskAdminPage = {
   readonly data: readonly GeneralResource[]

@@ -1079,7 +1079,11 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     client.listTasks({
       query: {
         per_page: 50,
-        ...(filter === 'active' ? { is_active: true } : {}),
+        // Tasks arrive a page at a time, so the archived view has to be asked
+        // for rather than filtered out of what is on hand the way the client
+        // and project directories do it -- they page themselves to exhaustion,
+        // this one stops at fifty. "All" sends nothing, which asks for both.
+        ...(filter === 'all' ? {} : { is_active: filter === 'active' }),
         ...(cursor === undefined ? {} : { cursor }),
       },
       ...withSignal(signal),

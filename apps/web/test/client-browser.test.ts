@@ -349,6 +349,88 @@ describe('Clients V1 browser controller', () => {
       'No clients match that search.',
     )
   })
+  it('[browser #486] isolates archived clients and counts them in the filter', async () => {
+    // 25 of the 30 clients on the migrated account are archived, so "All" is
+    // mostly archive and finding the one to restore means paging a mixed list.
+    // The count is what the old roster put in the label -- it says how much is
+    // in there before you open it.
+    writeDocument('client-list', '/clients')
+    const retired: GeneralResource = { ...parent, id: 13, name: 'Retired Group', is_active: false }
+    const wound: GeneralResource = { ...parent, id: 14, name: 'Wound Down Ltd', is_active: false }
+    const api: Partial<ClientDirectoryApi> = {
+      listDirectoryClients: vi.fn(async () => page([parent, child, retired, wound])),
+    }
+    const identity: Whoami = {
+      user_id: 1,
+      profile: 'member',
+      manager_grants: [],
+      authentication: { kind: 'session' },
+    }
+    await createClientDirectoryController(api).activate(
+      identity,
+      new AbortController().signal,
+      () => false,
+    )
+
+    const names = (): string[] =>
+      [...document.querySelectorAll<HTMLAnchorElement>('[data-client-tree] a')].map(
+        (link) => link.textContent ?? '',
+      )
+    const archived = document.querySelector<HTMLButtonElement>('[data-client-filter="archived"]')!
+    const search = document.querySelector<HTMLInputElement>('[data-client-search]')!
+    const status = (): string => document.querySelector('[data-client-list-status]')?.textContent ?? ''
+
+    expect(archived.textContent).toBe('Archived (2)')
+    expect(names()).toEqual(['Parent Holding', 'Worked-For Studio'])
+
+    archived.click()
+    expect(names()).toEqual(['Retired Group', 'Wound Down Ltd'])
+    expect(status()).toBe('2 clients shown.')
+    expect(archived.getAttribute('aria-pressed')).toBe('true')
+    expect(
+      document.querySelector('[data-client-filter="active"]')?.getAttribute('aria-pressed'),
+    ).toBe('false')
+
+    // The count is the archive's size, not the size of what the search left
+    // standing: it has to mean the same thing whatever else is narrowing the
+    // table, or it stops being the reason to open the archive at all.
+    search.value = 'wound'
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(names()).toEqual(['Wound Down Ltd'])
+    expect(archived.textContent).toBe('Archived (2)')
+
+    search.value = ''
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+    document.querySelector<HTMLButtonElement>('[data-client-filter="all"]')!.click()
+    expect(names()).toEqual([
+      'Parent Holding',
+      'Worked-For Studio',
+      'Retired Group',
+      'Wound Down Ltd',
+    ])
+  })
+
+  it('[browser #486] says the archive is empty rather than that the directory is', async () => {
+    writeDocument('client-list', '/clients')
+    await createClientDirectoryController({
+      listDirectoryClients: vi.fn(async () => page([parent, child])),
+    }).activate(
+      { user_id: 1, profile: 'member', manager_grants: [], authentication: { kind: 'session' } },
+      new AbortController().signal,
+      () => false,
+    )
+
+    const archived = document.querySelector<HTMLButtonElement>('[data-client-filter="archived"]')!
+    expect(archived.textContent).toBe('Archived (0)')
+    archived.click()
+    // "No clients have been created or imported yet" is what this used to say
+    // for anything that was not the active filter, and on an account with two
+    // clients on screen a moment ago it is simply untrue.
+    expect(document.querySelector('[data-client-tree]')?.textContent).toBe(
+      'No clients are archived.',
+    )
+  })
+
   it('[browser] clears pending mutations after a shared 401 so reauthentication restores CRUD', async () => {
     writeDocument('client-list', '/clients')
     const createDirectoryClient = vi
