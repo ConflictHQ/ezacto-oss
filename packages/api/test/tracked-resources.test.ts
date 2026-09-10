@@ -1,6 +1,9 @@
+import { cp, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, describe, expect, it } from 'vitest'
 import {
   createContainerDatabase,
   createD1Database,
@@ -89,14 +92,55 @@ const containerDatabase = (): TestDatabase => {
   }
 }
 
+const d1Worker = {
+  modules: true,
+  script: 'export default { fetch() { return new Response("ok") } }',
+  d1Databases: ['DB'],
+} as const
+
+/**
+ * Every D1 case in this file used to replay the whole migration ledger before
+ * it could assert anything: 46 migrations, ~580 schema objects, ~2.4s of
+ * workerd round trips per `it`. That fixed cost, not the assertions, is what
+ * put `[security #465]` -- the widest matrix here at 128 requests -- over its
+ * 20s budget on a loaded runner while the same case finished in ~0.4s against
+ * better-sqlite3, and it read as a security regression three times on
+ * unrelated branches. See #526.
+ *
+ * So migrate once per worker process into a persisted directory and hand each
+ * case a byte copy of it. The ledger still runs against real D1 on every run of
+ * this file, so a migration that only breaks on D1 still fails here; it just
+ * runs once instead of fifteen times. Replaying `sqlite_master` DDL into a
+ * fresh database was the other candidate and was rejected -- it still creates
+ * those 580 objects one at a time and only halved the cost.
+ */
+let migratedD1Snapshot: Promise<string> | null = null
+
+const migratedD1Directory = async (): Promise<string> => {
+  migratedD1Snapshot ??= (async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'ezacto-d1-ledger-'))
+    const miniflare = new Miniflare({ ...d1Worker, d1Persist: directory })
+    await migrateD1(await miniflare.getD1Database('DB'))
+    // dispose() checkpoints the WAL and closes the files, which is what makes
+    // the directory safe to copy rather than a half-written snapshot.
+    await miniflare.dispose()
+    return directory
+  })()
+  return migratedD1Snapshot
+}
+
+// Each case copies this directory and removes its own copy; the original would
+// otherwise outlive the run, one ledger per invocation of this file.
+afterAll(async () => {
+  if (migratedD1Snapshot === null) return
+  await rm(await migratedD1Snapshot, { recursive: true, force: true })
+})
+
 const d1Database = async (): Promise<TestDatabase> => {
-  const miniflare = new Miniflare({
-    modules: true,
-    script: 'export default { fetch() { return new Response("ok") } }',
-    d1Databases: ['DB'],
-  })
+  const directory = await mkdtemp(join(tmpdir(), 'ezacto-d1-'))
+  await cp(await migratedD1Directory(), directory, { recursive: true })
+  const miniflare = new Miniflare({ ...d1Worker, d1Persist: directory })
   const d1 = await miniflare.getD1Database('DB')
-  await migrateD1(d1)
   const orm = createD1Database(d1)
   return {
     orm,
@@ -132,7 +176,10 @@ const d1Database = async (): Promise<TestDatabase> => {
       })
       return ormWithNativeClient(orm, client)
     },
-    close: async () => miniflare.dispose(),
+    close: async () => {
+      await miniflare.dispose()
+      await rm(directory, { recursive: true, force: true })
+    },
   }
 }
 
