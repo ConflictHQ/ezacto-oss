@@ -8,12 +8,13 @@
  *
  * Three things are deliberate.
  *
- * The wipe lifts the triggers and puts them back. Every table here is defended
- * by triggers that refuse a write without its command row -- exactly what you
- * want of a book of account, and exactly wrong for a wipe. So the wipe reads
- * their definitions out of `sqlite_master`, drops them, empties the tables,
- * and recreates them from the SQL it read. Nothing is hand-listed, so a
- * migration that adds a trigger is covered by the wipe the day it lands.
+ * The wipe lifts the triggers and puts them back, in one transaction. Every
+ * table here is defended by triggers that refuse a write without its command
+ * row -- exactly what you want of a book of account, and exactly wrong for a
+ * wipe. So the wipe reads their definitions out of `sqlite_master`, drops them,
+ * empties the tables, and recreates them from the SQL it read. Nothing is
+ * hand-listed, so a migration that adds a trigger is covered by the wipe the
+ * day it lands, and nothing commits until the triggers are back on.
  *
  * It empties rather than drops. Dropping is the obvious move and it does not
  * work: this schema has reference cycles, and SQLite refuses to drop a table
@@ -59,8 +60,8 @@ import {
 import { executeInvoiceLifecycleCommand, recordInvoicePayment } from './invoice-state.js'
 import { migrateD1 } from './migrate.js'
 
-/** The demo organisation. Fake, and named so a reader can tell at a glance. */
-export const DEMO_ORGANIZATION_NAME = 'Folding Forks (Fake)'
+/** The demo organisation. Invented; the sign-in page is where it says so. */
+export const DEMO_ORGANIZATION_NAME = 'Folding Forks'
 
 export interface DemoResetOptions {
   /** ISO instant the rebuilt demo is anchored to. */
@@ -103,8 +104,10 @@ export interface DemoResetDriver {
   readonly orm: InvoiceGenerationDatabase
   schemaObjects(): Promise<DemoSchemaObjects>
   readRows<T>(sql: string): Promise<readonly T[]>
-  execute(statements: readonly DemoSeedStatement[]): Promise<void>
-  /** One transaction, which is what makes `defer_foreign_keys` mean anything. */
+  /**
+   * One transaction. It is what makes `defer_foreign_keys` mean anything, and
+   * what keeps a half-done wipe from leaving the schema without its triggers.
+   */
   executeAtomic(statements: readonly DemoSeedStatement[]): Promise<void>
   bootstrap(input: InstanceBootstrapInput, now: string): Promise<unknown>
   enrollOwnerPassword(input: InstanceOwnerPasswordInput, now: string): Promise<unknown>
@@ -153,29 +156,52 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   'email_template_heads',
 ])
 
-const wipeStatements = (
-  objects: DemoSchemaObjects,
-): {
-  readonly liftTriggers: readonly DemoSeedStatement[]
-  readonly empty: readonly DemoSeedStatement[]
-  readonly restoreTriggers: readonly DemoSeedStatement[]
-} => ({
-  liftTriggers: objects.triggers.map((trigger) => ({
+/**
+ * D1 keeps its own bookkeeping in the same database, under a reserved `_cf_`
+ * prefix, and `sqlite_master` hands it back with everything else. It is not a
+ * table a client may touch: D1's authorizer refuses every statement against it,
+ * so `DELETE FROM "_cf_KV"` does not empty a table, it fails the whole batch
+ * with `SQLITE_AUTH` and leaves the demo wiped-but-unbuilt.
+ *
+ * Matching the prefix rather than naming `_cf_KV` covers whatever else D1 puts
+ * there later. Nothing of ours starts `_cf_`; ours are `_ezacto_`.
+ *
+ * The container driver's SQLite has no such table, which is why the whole suite
+ * passed while the nightly rebuild had never once succeeded.
+ */
+const isD1Internal = (table: string): boolean => table.startsWith('_cf_')
+
+/**
+ * Lift the triggers, empty the tables, put the triggers back -- as one list,
+ * because it is run as one transaction.
+ *
+ * That is the whole reason it is one list. Run as three steps it has a state
+ * between them where the schema's write guards are gone and the commit that
+ * would restore them has not happened yet, and a failure there does not undo
+ * the drops: it leaves a live database with no triggers on it at all, silently,
+ * until someone thinks to count them. That is not a hypothetical -- it is what
+ * the `_cf_KV` failure above did to ezacto.io, and losing a night of the demo
+ * was the smaller half of it.
+ */
+const wipeStatements = (objects: DemoSchemaObjects): readonly DemoSeedStatement[] => [
+  ...objects.triggers.map((trigger) => ({
     text: `DROP TRIGGER IF EXISTS ${quoted(trigger.name)}`,
     bindings: [],
   })),
-  empty: [
-    { text: 'PRAGMA defer_foreign_keys = true', bindings: [] },
-    ...objects.tables
-      .filter((table) => !PRESERVED_TABLES.has(table))
-      .map((table) => ({ text: `DELETE FROM ${quoted(table)}`, bindings: [] })),
-    // Preserved, but not carried over: the counter is kept because generation
-    // needs a row to read, and reset because yesterday's demo took every number
-    // below it and none of those invoices exist any more.
-    { text: 'UPDATE invoice_number_sequence SET next_number = 1', bindings: [] },
-  ],
-  restoreTriggers: objects.triggers.map((trigger) => ({ text: trigger.sql, bindings: [] })),
-})
+  { text: 'PRAGMA defer_foreign_keys = true', bindings: [] },
+  ...objects.tables
+    .filter((table) => !PRESERVED_TABLES.has(table) && !isD1Internal(table))
+    .map((table) => ({ text: `DELETE FROM ${quoted(table)}`, bindings: [] })),
+  // Preserved, but not carried over: the counter is kept because generation
+  // needs a row to read, and reset because yesterday's demo took every number
+  // below it and none of those invoices exist any more.
+  { text: 'UPDATE invoice_number_sequence SET next_number = 1', bindings: [] },
+  ...objects.triggers.map((trigger) => ({ text: trigger.sql, bindings: [] })),
+]
+
+/** The tables the wipe emptied, which is what the summary reports. */
+const clearedTableCount = (objects: DemoSchemaObjects): number =>
+  objects.tables.filter((table) => !PRESERVED_TABLES.has(table) && !isD1Internal(table)).length
 
 const base64Url = (bytes: Uint8Array): string => {
   let binary = ''
@@ -344,10 +370,7 @@ export const wipeAndSeedDemo = async (
   // A demo that has never been built has no schema to empty.
   await driver.migrate()
   const objects = await driver.schemaObjects()
-  const wipe = wipeStatements(objects)
-  await driver.execute(wipe.liftTriggers)
-  await driver.executeAtomic(wipe.empty)
-  await driver.execute(wipe.restoreTriggers)
+  await driver.executeAtomic(wipeStatements(objects))
 
   const owner = demoAccounts.find((account) => account.userId === 1)
   if (owner === undefined) throw new TypeError('the demo has no owner account')
@@ -376,8 +399,7 @@ export const wipeAndSeedDemo = async (
   }
 
   return {
-    // The counter reset is in `empty` and is not a table being cleared.
-    clearedTables: wipe.empty.length - 2,
+    clearedTables: clearedTableCount(objects),
     restoredTriggers: objects.triggers.length,
     seedStatements: seed.length,
   }
@@ -490,18 +512,15 @@ export const createD1DemoResetDriver = (database: D1Database): DemoResetDriver =
       tables: tables.results.map((row) => row.name),
     }
   },
-  async execute(statements) {
+  // D1 runs a batch as one transaction, which is exactly the guarantee the
+  // deferred foreign keys and the lifted triggers need.
+  async executeAtomic(statements) {
     if (statements.length === 0) return
     await database.batch(
       statements.map((statement) =>
         database.prepare(statement.text).bind(...statement.bindings),
       ),
     )
-  },
-  // D1 runs a batch as one transaction, which is exactly the guarantee the
-  // deferred foreign keys need.
-  executeAtomic(statements) {
-    return this.execute(statements)
   },
   async readRows<T>(sql: string) {
     const { results } = await database.prepare(sql).all<T>()
@@ -539,9 +558,6 @@ export const createContainerDemoResetDriver = (
           .all() as { name: string }[]
       ).map((row) => row.name),
     }
-  },
-  async execute(statements) {
-    runAll(database, statements)
   },
   async executeAtomic(statements) {
     database.transaction(() => runAll(database, statements))()
