@@ -20,7 +20,10 @@ describe('cutover migration preflight', () => {
 
   it('[security #468] checks a local artifact without changing any bytes', async () => {
     const before = await readFile(databasePath)
-    expect(await runCutoverPreflight({ databasePath })).toBe(migrationIds.length)
+    expect(await runCutoverPreflight({ databasePath })).toEqual({
+      ledgerRows: migrationIds.length,
+      pending: [],
+    })
     expect(await readFile(databasePath)).toEqual(before)
   })
 
@@ -30,13 +33,31 @@ describe('cutover migration preflight', () => {
     database.close()
     const inputPath = join(directory, 'ledger.json')
     await writeFile(inputPath, JSON.stringify([{ success: true, results: rows }]))
-    expect(await runCutoverPreflight({ inputPath })).toBe(migrationIds.length)
+    expect(await runCutoverPreflight({ inputPath })).toEqual({
+      ledgerRows: migrationIds.length,
+      pending: [],
+    })
     for (const value of [[], [{ success: false, results: rows }], [{ success: true, results: [{ id: 'x' }] }]]) {
       await writeFile(inputPath, JSON.stringify(value))
       await expect(runCutoverPreflight({ inputPath })).rejects.toThrow(/cutover_migration_ledger_invalid/)
     }
     await writeFile(inputPath, JSON.stringify([{ success: true, results: rows.slice(0, -6) }]))
     await expect(runCutoverPreflight({ inputPath })).rejects.toThrow(/cutover_migration_ledger_mismatch/)
+  })
+
+  it('[unit] an ordinary deploy is allowed to be ahead of the database it deploys over', async () => {
+    // The cutover rule refuses a build carrying a migration that has not
+    // shipped, which is every build carrying a migration. Running it on ordinary
+    // releases deadlocked the pipeline on the first one written after cutover.
+    const database = new BetterSqlite3(databasePath)
+    for (const id of migrationIds.slice(-6)) database.prepare('DELETE FROM _ezacto_migrations WHERE id = ?').run(id)
+    database.close()
+
+    await expect(runCutoverPreflight({ databasePath })).rejects.toThrow(/cutover_migration_ledger_mismatch/)
+    expect(await runCutoverPreflight({ databasePath, upgrade: true })).toEqual({
+      ledgerRows: migrationIds.length - 6,
+      pending: migrationIds.slice(-6),
+    })
   })
 
   it('[security #468] names missing migrations and unverifiable legacy evidence without upgrading it', async () => {

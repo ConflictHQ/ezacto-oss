@@ -1460,6 +1460,45 @@ export const assertCutoverMigrationLedger = (rows: readonly MigrationLedgerRow[]
   throw new Error(`cutover_migration_ledger_mismatch: missing=${missing.join(',') || 'none'}; unexpected=${unexpected.join(',') || 'none'}; unverifiable=${unverifiable.join(',') || 'none'}; changed=${changed.join(',') || 'none'}; duplicates=${duplicates.join(',') || 'none'}. Rebuild from the exact deployment source; do not migrate on first live request.`)
 }
 
+/**
+ * The same ledger, checked for an ordinary deploy rather than the cutover.
+ *
+ * The distinction the cutover assertion draws in its own comment -- "cutover is
+ * stricter than an upgrade" -- was not available to callers: there was one
+ * function, and the deploy workflow ran the strict one on every release. That
+ * made a build carrying a new migration unshippable, because the database it is
+ * about to deploy over cannot have applied a migration that has not shipped yet.
+ * The first migration written after the cutover deadlocked the pipeline.
+ *
+ * So `missing` is permitted here and returned, for the caller to log: the build
+ * being ahead of the database is what a deploy *is*, and the Worker applies the
+ * remainder on its first data request or the next cron. Everything else stays
+ * fatal, because everything else still means the schema is not the one this
+ * build describes:
+ *
+ * - `unexpected` -- the database ran DDL this build does not know about
+ * - `changed` -- a shipped migration was amended in place after it ran
+ * - `unverifiable` -- applied before checksums existed, so it cannot be compared
+ * - `duplicates` -- the ledger recorded one id twice
+ *
+ * The protection the cutover needed is kept for the cutover, where a freshly
+ * loaded database with thirty thousand rows should not discover its schema on a
+ * person's first request.
+ */
+export const assertUpgradeMigrationLedger = (
+  rows: readonly MigrationLedgerRow[],
+): readonly string[] => {
+  const expected = new Map<string, string>(migrations.map(({ id, statements }) => [id, statementsChecksum(statements)]))
+  const actual = new Set(rows.map(({ id }) => id))
+  const pending = migrationIds.filter((id) => !actual.has(id))
+  const unexpected = rows.filter(({ id }) => !expected.has(id)).map(({ id }) => id)
+  const unverifiable = rows.filter(({ statements_sha256 }) => statements_sha256 === null).map(({ id }) => id)
+  const changed = rows.filter(({ id, statements_sha256 }) => expected.has(id) && statements_sha256 !== null && expected.get(id) !== statements_sha256).map(({ id }) => id)
+  const duplicates = rows.filter(({ id }, index) => rows.findIndex((row) => row.id === id) !== index).map(({ id }) => id)
+  if ([unexpected, unverifiable, changed, duplicates].every((ids) => ids.length === 0)) return pending
+  throw new Error(`upgrade_migration_ledger_mismatch: unexpected=${unexpected.join(',') || 'none'}; unverifiable=${unverifiable.join(',') || 'none'}; changed=${changed.join(',') || 'none'}; duplicates=${duplicates.join(',') || 'none'}. The deployed database did not come from this source; pending migrations are permitted, these are not.`)
+}
+
 // The ledger records that an id ran, never what ran, so amending a shipped
 // migration reaches a fresh database and no other: two databases with identical
 // ledgers can carry different schemas and nothing says so. Comparing each

@@ -42,6 +42,10 @@ Options:
   --organization-currency <code>  ISO currency when Company/client data is ambiguous
   --organization-address <text>   Organization address (Company API omits it)
   --force              Re-stamp a snapshot dir that holds a different account
+  --upgrade            preflight-migrations: an ordinary deploy. Permits pending
+                       migrations (the build is ahead of the database, which is what a
+                       deploy is) and still refuses unexpected, changed, unverifiable
+                       or duplicated ones. Omit it for the cutover, which allows none.
   --request-timeout <s> Seconds to allow one request, headers and body (default: 10).
                        Raise it when a page of 2000 rows will not finish in time.
 `
@@ -126,6 +130,7 @@ const main = async (): Promise<number> => {
       'organization-currency': { type: 'string' },
       'organization-address': { type: 'string' },
       force: { type: 'boolean' },
+    upgrade: { type: 'boolean' },
     },
   })
   const command = positionals[0]
@@ -149,8 +154,22 @@ const main = async (): Promise<number> => {
   const timeoutMs = parseRequestTimeout(values['request-timeout'])
 
   if (command === 'preflight-migrations') {
-    const count = await runCutoverPreflight({ databasePath: values.database, inputPath: values.input })
-    console.log(`cutover migration ledger verified: ${count} exact ids and checksums; pending migrations: 0`)
+    const upgrade = values.upgrade === true
+    const { ledgerRows, pending } = await runCutoverPreflight({
+      databasePath: values.database,
+      inputPath: values.input,
+      upgrade,
+    })
+    if (!upgrade) {
+      console.log(`cutover migration ledger verified: ${ledgerRows} exact ids and checksums; pending migrations: 0`)
+      return 0
+    }
+    // Named, not counted. "3 pending" tells an operator reading a failed
+    // release afterwards nothing about which DDL the Worker was about to run.
+    console.log(
+      `upgrade migration ledger verified: ${ledgerRows} recorded id(s), none unexpected, changed or unverifiable; ` +
+        `pending migrations: ${pending.length === 0 ? 'none' : pending.join(',')}`,
+    )
     return 0
   }
 
