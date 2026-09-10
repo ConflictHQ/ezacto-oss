@@ -446,6 +446,19 @@ describe('S-1 through S-5 application shell', () => {
     )
   })
 
+  it('[e2e] lays the activity filters out instead of leaving them as inline text', () => {
+    // The toolbar had no rule of its own, so three labelled controls rendered as
+    // running text -- "To" ending one line and the date field it labels starting
+    // the next. auto-fit does it without a breakpoint: three across where there
+    // is room, one per row on a phone.
+    expect(webAssets.stylesheet).toMatch(
+      /\.activity-log-toolbar \{[\s\S]*grid-template-columns: repeat\(auto-fit, minmax\(180px, 1fr\)\);/u,
+    )
+    expect(webAssets.stylesheet).toMatch(
+      /\.activity-log-toolbar input,\s*\.activity-log-toolbar select \{[\s\S]*min-height: 44px;/u,
+    )
+  })
+
   it('[e2e] truncates the account name rather than painting it over the controls', () => {
     // `identity-text` is overflow: visible, so a name with nowhere to go does not
     // stop at its box -- it paints over the Settings button beside it. And a

@@ -1770,6 +1770,37 @@
   gap: 12px;
   margin-bottom: 14px;
 }
+/*
+ * The activity filters shipped without a rule of their own, so three labelled
+ * controls laid out as raw inline text: "To" on the end of one line and the
+ * date field it labels on the next. Same shape the other filter surfaces use,
+ * and `auto-fit` means no breakpoint -- three across where there is room, one
+ * per row on a phone, and the tracks never crush below a usable field.
+ */
+.activity-log-toolbar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.activity-log-toolbar label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.activity-log-toolbar input,
+.activity-log-toolbar select {
+  min-height: 44px;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+
 .expense-form,
 .expense-filter-form {
   display: grid;
