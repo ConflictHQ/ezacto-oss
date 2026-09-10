@@ -2646,8 +2646,12 @@ a {
  * figures on screen are the real ones.
  */
 .money-toggle[aria-pressed='true'] {
+  /* The border carries the live hue, which is certified as an indicator at 3:1.
+     The label cannot: `live` fails AA as text, and `live_text` is the variant
+     that exists for exactly the two places the colour has to be read rather
+     than noticed. */
   border-color: var(--ez-live);
-  color: var(--ez-live);
+  color: var(--ez-live-text);
 }
 /*
  * Masking, and why it is masking rather than hiding.
