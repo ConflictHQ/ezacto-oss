@@ -1,4 +1,5 @@
 import { renderDataTable } from '../components/data-table.js'
+import { markMoney } from '../money-display.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
 import {
   EzactoApiError,
@@ -850,6 +851,10 @@ export const createTeamDirectoryController = (
       period.textContent = ratePeriod(value)
       const amount = document.createElement('td')
       amount.textContent = teamMoney(value.amount_cents)
+      // The rate history is the one table on this screen that is money; the
+      // roster's Hours, Capacity and Billable columns beside it are all
+      // durations and stay on screen.
+      markMoney(amount)
       row.append(period, amount)
       body.append(row)
     }

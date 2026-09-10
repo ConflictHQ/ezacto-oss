@@ -1,6 +1,7 @@
 import { EzactoApiError, type Attachment, type GeneralResource, type Whoami } from '@ezacto/client'
 
-import { renderDataTable } from '../components/data-table.js'
+import { renderDataTable, type CellContent } from '../components/data-table.js'
+import { moneyText } from '../money-display.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
 import { localDate } from '../shell/model.js'
 import {
@@ -177,6 +178,17 @@ const moneyCents = (data: FormData, name: string): number | null => {
   const cents = Number(BigInt(whole!) * 100n + BigInt(fraction.padEnd(2, '0')))
   if (!Number.isSafeInteger(cents)) throw new Error(`${name} is too large.`)
   return cents
+}
+
+/**
+ * A label and the amount it names, as one node. Only the amount carries the
+ * money marker, so masking takes the figure and leaves the word that says what
+ * kind of figure it was.
+ */
+const rateFragment = (label: string, amount: string): DocumentFragment => {
+  const fragment = document.createDocumentFragment()
+  fragment.append(label, moneyText(amount))
+  return fragment
 }
 
 const hoursSeconds = (data: FormData, name: string): number | null => {
@@ -453,17 +465,21 @@ export const createProjectDirectoryController = (
     // Spent, Remaining and Costs come from the list-scoped rollup — one request
     // for the page rather than the one-per-row the per-project report would
     // have cost, which is why they were absent.
-    const spentLabel = (project: Readonly<GeneralResource>): string => {
+    // Budget, Spent and Remaining hold money on a project budgeted in cents and
+    // hours on one budgeted in seconds, so which cells are amounts is a fact
+    // about the row. A column-level marker would mask a cell of hours because
+    // the project above it happened to budget in money.
+    const spentLabel = (project: Readonly<GeneralResource>): CellContent => {
       const summary = budgets.get(project.id)
       if (summary === undefined) return '—'
       if (summary.unit === 'seconds') return projectHours(summary.spent_seconds ?? 0)
       if (summary.unit === 'cents' && summary.spent_cents !== undefined) {
-        return projectMoney(summary.spent_cents, currencyFor(project))
+        return moneyText(projectMoney(summary.spent_cents, currencyFor(project)))
       }
       return '—'
     }
 
-    const remainingLabel = (project: Readonly<GeneralResource>): string => {
+    const remainingLabel = (project: Readonly<GeneralResource>): CellContent => {
       const summary = budgets.get(project.id)
       if (summary === undefined) return '—'
       if (summary.unit === 'seconds') {
@@ -473,7 +489,7 @@ export const createProjectDirectoryController = (
       }
       return summary.remaining_cents == null
         ? '—'
-        : projectMoney(summary.remaining_cents, currencyFor(project))
+        : moneyText(projectMoney(summary.remaining_cents, currencyFor(project)))
     }
 
     // The server resolves this over a join where the client row is guaranteed
@@ -487,23 +503,27 @@ export const createProjectDirectoryController = (
       (summary) => summary.cost_cents !== undefined,
     )
 
-    const costLabel = (project: Readonly<GeneralResource>): string => {
+    const costLabel = (project: Readonly<GeneralResource>): CellContent => {
       const cents = budgets.get(project.id)?.cost_cents
       // Absent rather than zero when a single project has no cost recorded. The
       // whole column is dropped when no project does -- see the columns below.
-      return cents === undefined ? '—' : projectMoney(cents, currencyFor(project))
+      return cents === undefined
+        ? '—'
+        : moneyText(projectMoney(cents, currencyFor(project)))
     }
 
-    const budgetLabel = (project: Readonly<GeneralResource>): string => {
+    const budgetLabel = (project: Readonly<GeneralResource>): CellContent => {
       const by = projectText(project, 'budget_by')
       const currency = currencyFor(project)
       if (by === 'project' || by === 'task' || by === 'person') {
         return projectHours(projectNumber(project, 'budget_seconds'))
       }
       if (by === 'project_cost') {
-        return projectMoney(projectNumber(project, 'cost_budget_cents'), currency)
+        return moneyText(projectMoney(projectNumber(project, 'cost_budget_cents'), currency))
       }
-      if (by === 'task_fees') return projectMoney(projectNumber(project, 'fee_cents'), currency)
+      if (by === 'task_fees') {
+        return moneyText(projectMoney(projectNumber(project, 'fee_cents'), currency))
+      }
       return '—'
     }
 
@@ -621,14 +641,14 @@ export const createProjectDirectoryController = (
       ] : []),
       ...(active.capabilities.canViewBillableMoney
         ? [
-            fact('Hourly rate', projectMoney(projectNumber(currentProject, 'hourly_rate_cents'), currency)),
-            fact('Fixed fee', projectMoney(projectNumber(currentProject, 'fee_cents'), currency)),
+            fact('Hourly rate', moneyText(projectMoney(projectNumber(currentProject, 'hourly_rate_cents'), currency))),
+            fact('Fixed fee', moneyText(projectMoney(projectNumber(currentProject, 'fee_cents'), currency))),
           ]
         : []),
       fact('Budget by', projectEnumLabel(projectText(currentProject, 'budget_by'))),
       fact('Hours budget', projectHours(projectNumber(currentProject, 'budget_seconds'))),
       ...(active.capabilities.canViewCostBudget
-        ? [fact('Cost budget', projectMoney(projectNumber(currentProject, 'cost_budget_cents'), currency))]
+        ? [fact('Cost budget', moneyText(projectMoney(projectNumber(currentProject, 'cost_budget_cents'), currency)))]
         : []),
       fact('Monthly budget', projectBoolean(currentProject, 'budget_is_monthly') ? 'Yes' : 'No'),
       fact(
@@ -680,18 +700,32 @@ export const createProjectDirectoryController = (
         const taskId = projectNumber(assignment, 'task_id') ?? 0
         heading.textContent = taskLabel(taskId, tasks)
         const metadata = document.createElement('p')
-        const parts = [
+        // Assembled from nodes rather than joined into one string: the line
+        // carries hours and money side by side, and only the amounts are
+        // maskable -- a card that lost its budget hours with them would be
+        // hiding something the reader is entitled to keep looking at.
+        const parts: (string | Node)[] = [
           assignment['is_active'] === false ? 'Archived' : 'Active',
           projectBoolean(assignment, 'billable') ? 'Billable' : 'Non-billable',
           `Budget ${projectHours(projectNumber(assignment, 'budget_seconds'))}`,
-          ...(active.capabilities.canViewBillableMoney
-            ? [`Rate ${projectMoney(projectNumber(assignment, 'hourly_rate_cents'), currency)}`]
-            : []),
-          ...(active.capabilities.canViewCostBudget
-            ? [`Fee budget ${projectMoney(projectNumber(assignment, 'budget_cents'), currency)}`]
-            : []),
         ]
-        metadata.textContent = parts.join(' · ')
+        if (active.capabilities.canViewBillableMoney) {
+          parts.push(
+            rateFragment(
+              'Rate ',
+              projectMoney(projectNumber(assignment, 'hourly_rate_cents'), currency),
+            ),
+          )
+        }
+        if (active.capabilities.canViewCostBudget) {
+          parts.push(
+            rateFragment(
+              'Fee budget ',
+              projectMoney(projectNumber(assignment, 'budget_cents'), currency),
+            ),
+          )
+        }
+        metadata.append(...parts.flatMap((part, index) => (index === 0 ? [part] : [' · ', part])))
         details.append(heading, metadata)
         item.append(details)
         if (active.capabilities.canWrite) {

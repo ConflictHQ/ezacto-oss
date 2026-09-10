@@ -13,6 +13,12 @@ import {
 } from '@ezacto/client'
 import { browserDensityStore, createDensityRuntime, type Density } from '../density.js'
 import {
+  browserMoneyDisplayStore,
+  createMoneyDisplayRuntime,
+  moneyText,
+  type MoneyDisplay,
+} from '../money-display.js'
+import {
   contextLabel,
   formatTimeForClock,
   modeForEntryDraft,
@@ -1926,7 +1932,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
             const identity = document.createElement('strong')
             identity.textContent = `${expense.project_name} / ${expense.expense_category_name}`
             const amount = document.createElement('span')
-            amount.textContent = `${dayLabel(expense.spent_date, true)} · ${formatMoney(expense.total_cost_cents, expense.currency)}`
+            // The date and the figure share a line, so only the figure carries
+            // the marker: masking the whole span would take the day with it.
+            amount.append(
+              `${dayLabel(expense.spent_date, true)} · `,
+              moneyText(formatMoney(expense.total_cost_cents, expense.currency)),
+            )
             expenseHeader.append(identity, amount)
             const note = document.createElement('p')
             note.className = 'approval-entry-note'
@@ -3029,6 +3040,34 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   for (const close of document.querySelectorAll<HTMLButtonElement>('[data-dialog-close]')) {
     close.addEventListener('click', () => close.closest('dialog')?.close())
   }
+
+  /**
+   * Hiding amounts from your own screen. A display preference like density, and
+   * emphatically not a permission -- `canViewMoneyField` decided whether these
+   * figures were ever sent, and this decides only whether the screen draws the
+   * ones it has. Applied before the session resolves so a shell restored with
+   * the preference on never paints the amounts first.
+   */
+  const moneyToggle = required<HTMLButtonElement>('[data-money-toggle]')
+  const moneyDisplay = createMoneyDisplayRuntime({
+    store: browserMoneyDisplayStore(globalThis.localStorage),
+    target: document.documentElement,
+  })
+  const syncMoneyToggle = (display: MoneyDisplay): void => {
+    const hidden = display === 'hidden'
+    moneyToggle.setAttribute('aria-pressed', String(hidden))
+    // The label says what pressing it does next, not what state it is in: the
+    // pressed state is already carried by aria-pressed, and a reader told
+    // "Amounts hidden" has been given the state twice and the action never.
+    const label = `${hidden ? 'Show' : 'Hide'} money amounts ($)`
+    moneyToggle.setAttribute('aria-label', label)
+    moneyToggle.title = label
+  }
+  syncMoneyToggle(moneyDisplay.start())
+  moneyToggle.addEventListener('click', () => {
+    syncMoneyToggle(moneyDisplay.toggle())
+  })
+
   /**
    * A grid is a keyboard surface. Anything bound here has to survive the fact
    * that the thing under the cursor is usually an input: a bare key would be
@@ -3062,6 +3101,16 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       return
     }
     if (event.altKey || modified || typingInAField()) return
+    // Bound above the dialog guard, unlike the week keys. The reason to mask is
+    // someone walking up, which does not care what is on screen -- and an open
+    // invoice dialog is full of the figures this exists to put away. Shift is
+    // already in the chord on a US keyboard; `event.key` is the character the
+    // layout produced, so a layout that puts `$` elsewhere still works.
+    if (event.key === '$') {
+      event.preventDefault()
+      syncMoneyToggle(moneyDisplay.toggle())
+      return
+    }
     if (document.querySelector('dialog[open]') !== null) return
     if (event.key === '[') {
       event.preventDefault()

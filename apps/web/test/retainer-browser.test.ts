@@ -52,6 +52,17 @@ const importedStub: Retainer = {
 
 const closed: Retainer = { ...northpeak, id: 3, state: 'closed', balance: 0 }
 
+/** Denominated in hours: the same columns, and not one of them an amount. */
+const hoursRetainer: Retainer = {
+  ...northpeak,
+  id: 4,
+  client_id: 6,
+  denomination: 'hours',
+  amount_cents: null,
+  seconds: 360_000,
+  balance: 180_000,
+}
+
 const ledger: readonly RetainerLedgerEntry[] = [
   {
     id: 'ret_deposit',
@@ -176,6 +187,45 @@ describe('Retainer workspace controller', () => {
     expect(document.querySelector('[data-retainer-list-status]')?.textContent).toContain(
       '2 retainers loaded',
     )
+  })
+
+  it('[browser #521] marks a money retainer as money and an hours retainer as neither', async () => {
+    // The same three columns hold money on one row and hours on the next, which
+    // is why the $ toggle's marker is decided per row. A column-level marker
+    // would mask "50 hours" as though it were an amount, and hours are not the
+    // reader's to lose when they hide their money.
+    writeDocument()
+    await activate(
+      baseApi({
+        listRetainers: vi.fn(async () => page([northpeak, hoursRetainer])),
+        listRetainerClients: vi.fn(async () =>
+          page([
+            resource(4, { name: 'Northpeak', currency: 'USD' }),
+            resource(6, { name: 'Vantage', currency: 'USD' }),
+          ]),
+        ),
+      }),
+    )
+
+    const rows = [...document.querySelectorAll('[data-retainer-list] tbody tr[data-row]')]
+    // Counted before anything is read out of it: a selector that matched
+    // nothing would otherwise agree with every claim below.
+    expect(rows.map((row) => row.getAttribute('data-row-key'))).toEqual(['1', '4'])
+    const cell = (rowKey: string, column: string): HTMLElement =>
+      document.querySelector<HTMLElement>(
+        `[data-retainer-list] tr[data-row-key="${rowKey}"] td[data-column="${column}"]`,
+      )!
+
+    expect(cell('1', 'balance').textContent).toBe('$3,200.00')
+    expect(cell('1', 'balance').querySelectorAll('.money')).toHaveLength(1)
+    expect(cell('1', 'commitment').querySelectorAll('.money')).toHaveLength(1)
+
+    expect(cell('4', 'balance').textContent).toBe('50 hours')
+    expect(cell('4', 'balance').querySelectorAll('.money')).toHaveLength(0)
+    expect(cell('4', 'commitment').textContent).toBe('100 hours')
+    expect(cell('4', 'commitment').querySelectorAll('.money')).toHaveLength(0)
+    // Nor is the percentage beside them: a share is a ratio, not an amount.
+    expect(cell('1', 'share').querySelectorAll('.money')).toHaveLength(0)
   })
 
   it('[browser] opens a retainer, and the ledger ends on the balance it reports', async () => {

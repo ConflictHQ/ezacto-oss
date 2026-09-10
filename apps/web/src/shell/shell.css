@@ -2568,6 +2568,7 @@ a {
   color: var(--ez-ink);
 }
 .timer-chip,
+.money-toggle,
 .command-trigger,
 .menu-trigger {
   align-self: center;
@@ -2607,11 +2608,59 @@ a {
 .timer-chip[data-state="running"] .live-dot {
   background: var(--ez-live);
 }
+.money-toggle,
 .command-trigger,
 .menu-trigger {
   margin-left: 0;
   padding: 0 12px;
   font-family: var(--ez-font-mono), monospace;
+}
+/*
+ * Kept at every width, unlike the command trigger the narrow bands shed. It is
+ * one glyph wide, and on a touch screen it is the only way to reach the setting
+ * at all -- there is no keyboard there to take the shortcut.
+ */
+.money-toggle {
+  min-width: 36px;
+}
+/*
+ * Pressed means the amounts are off, which is the state worth marking: the
+ * whole point of the control is to be able to tell at a glance whether the
+ * figures on screen are the real ones.
+ */
+.money-toggle[aria-pressed='true'] {
+  border-color: var(--ez-live);
+  color: var(--ez-live);
+}
+/*
+ * Masking, and why it is masking rather than hiding.
+ *
+ * `visibility: hidden` keeps the element's box, so the row it is in keeps
+ * exactly the width it had -- toggling redraws nothing else, and a table does
+ * not jump under the reader's eyes, which would be its own kind of attention in
+ * the moment someone is standing behind them. It also takes the figure out of
+ * the accessibility tree and out of a selection, so the amount is not read
+ * aloud or copied while it is masked.
+ *
+ * The dots are drawn in a pseudo-element pinned over that same box, so their
+ * count is fixed at four whatever the amount was. The box's width still tracks
+ * the amount's -- someone watching a toggle could infer a figure's digit count
+ * from it. That is a real leak and an acceptable one: this is a courtesy
+ * against a glance, not a security control, and `canViewMoneyField` is what
+ * decides whether the figure was ever sent.
+ */
+[data-money='hidden'] .money {
+  position: relative;
+  visibility: hidden;
+}
+[data-money='hidden'] .money::after {
+  content: '••••';
+  position: absolute;
+  inset: 0;
+  visibility: visible;
+  color: var(--ez-muted);
+  letter-spacing: 0.1em;
+  white-space: nowrap;
 }
 .menu-trigger {
   display: none;
