@@ -1,6 +1,7 @@
 import type { EzactoClient, Whoami } from '@ezacto/client'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  canReadCostReports,
   canReadFinancialReports,
   createShellApi,
   formatReportCents,
@@ -94,6 +95,49 @@ describe('Reports Stage 1 model', () => {
     expect(all.filter(canReadFinancialReports)).toEqual(allowed)
   })
 
+  it('[security] holds cost reports to the administrator alone, grant or no grant', () => {
+    const all: Whoami['profile'][] = [
+      'member',
+      'project_manager',
+      'people_admin',
+      'accounting',
+      'executive_manager',
+      'administrator',
+    ]
+    expect(
+      all.filter((profile) => canReadCostReports({ profile, manager_grants: [] })),
+    ).toEqual(['administrator'])
+    // A narrower set than the financial one, and the two must not drift into
+    // each other: accounting reads uninvoiced work and is still refused cost.
+    expect(canReadFinancialReports('accounting')).toBe(true)
+    expect(canReadCostReports({ profile: 'accounting', manager_grants: [] })).toBe(false)
+    // The grant that opens billable rates to a project manager does not open
+    // cost rates -- canViewMoneyField only consults it for billable_rate.
+    expect(
+      canReadCostReports({
+        profile: 'project_manager',
+        manager_grants: ['billable_rates_manager'],
+      }),
+    ).toBe(false)
+  })
+
+  it('[unit] carries no client or project in a contractor cost address', () => {
+    const filters = reportFiltersFromUrl(
+      new URL(
+        'https://example.test/reports?report=contractor-cost&from=2026-08-01&to=2026-08-31&client_id=3&project_id=9',
+      ),
+      '2026-09-01',
+    )
+    expect(filters.kind).toBe('contractor-cost')
+    // The endpoint takes a range and nothing else, so a URL that kept the ids
+    // would promise a narrowing the report does not do.
+    expect(reportFiltersUrl(filters)).toBe(
+      '/reports?report=contractor-cost&from=2026-08-01&to=2026-08-31',
+    )
+    // ...and neither id is required of it, unlike the two kinds that name one.
+    expect(validateReportFilters(filters)).toBeNull()
+  })
+
   it('[unit] never renders absent money as a confident zero and keeps time units explicit', () => {
     expect(formatReportMoney(undefined, 'USD')).toBe('—')
     expect(formatReportMoney(null, 'USD')).toBe('—')
@@ -114,6 +158,7 @@ describe('Reports Stage 1 model', () => {
       getClientRollupReport: vi.fn(async () => ({ data: { nodes: [] } })),
       getProjectBudgetReport: vi.fn(async () => ({ data: { grains: [] } })),
       getMyHoursReport: vi.fn(async () => ({ data: { projects: [] } })),
+      getContractorCostReport: vi.fn(async () => ({ data: { rows: [] } })),
     }
     const api = createShellApi(generated as unknown as EzactoClient)
     const signal = new AbortController().signal
@@ -129,6 +174,7 @@ describe('Reports Stage 1 model', () => {
     await api.getClientRollupReport!(3, { from: '2026-08-01', to: '2026-08-31' }, signal)
     await api.getProjectBudgetReport!(7, { from: '2026-08-01', to: '2026-08-31' }, signal)
     await api.getMyHoursReport!({ from: '2026-08-01', to: '2026-08-31' }, signal)
+    await api.getContractorCostReport!({ from: '2026-08-01', to: '2026-08-31' }, signal)
 
     expect(generated.listClients).toHaveBeenCalledWith({
       query: { per_page: 200, cursor: 'clients-next' },
@@ -159,6 +205,10 @@ describe('Reports Stage 1 model', () => {
     })
     // Nothing identifies the person: the session the request is made on does.
     expect(generated.getMyHoursReport).toHaveBeenCalledWith({
+      query: { from: '2026-08-01', to: '2026-08-31' },
+      signal,
+    })
+    expect(generated.getContractorCostReport).toHaveBeenCalledWith({
       query: { from: '2026-08-01', to: '2026-08-31' },
       signal,
     })
