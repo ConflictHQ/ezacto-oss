@@ -285,10 +285,11 @@ const normalized = (value: string): string =>
  * (issue 491).
  *
  * The nav is the smaller half of that rule. The API narrows what the same three
- * collections RETURN to a member -- the projects they are assigned to and those
- * projects' clients -- so a member who types /clients is answered with their own
- * work rather than the book, and the screens that read those collections to
- * render, Expenses above all, keep the catalog they need.
+ * collections RETURN to a member -- the projects they are assigned to, those
+ * projects' clients, and the tasks assigned to those projects -- so a member who
+ * types /clients is answered with their own work rather than the book, and the
+ * screens that read those collections to render, Expenses above all, keep the
+ * catalog they need.
  */
 export const canBrowseDirectories = (profile: Whoami['profile']): boolean =>
   profile !== 'member'

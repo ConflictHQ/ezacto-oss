@@ -143,6 +143,34 @@ const memberClientAccessSql = (viewer: Readonly<TeamViewer>, clientId: SQL): SQL
       AND ${memberProjectAccessSql(viewer, sql.raw('member_project.id'))}
   )`
 
+/**
+ * A task is a member's to see when it is assigned to one of their projects.
+ * Reached through `task_assignments` rather than through the tasks table alone,
+ * because a task only becomes work when a project adopts it; the bare row is a
+ * name the firm uses, and the full list of those names is the shape of what
+ * every other team does.
+ *
+ * Leaving tasks firm-wide was the one entitlement issue 491 did not take, on the
+ * stated ground that the week grid resolves every row's task name from this
+ * catalog and so needs all of it. That does not hold. `shell/browser.ts` filters
+ * `catalog.tasks` to the ids reachable through `timeEntryOptions` before it fills
+ * either the row select or the entry datalist, and `timeEntryOptions` is itself a
+ * join through `user_assignments` and `task_assignments` -- a strict subset of
+ * what this predicate returns. Nor can a label fall back to `#id`: `time_entries`
+ * holds a RESTRICTed foreign key into `task_assignments(id, project_id, task_id)`,
+ * so a row a member can see pins the very assignment row this predicate reads.
+ *
+ * `is_active` is left out on both hops, matching the project predicate above and
+ * for the same reason: an archived assignment must still label the member's own
+ * past timesheet rows.
+ */
+const memberTaskAccessSql = (viewer: Readonly<TeamViewer>, taskId: SQL): SQL =>
+  sql`EXISTS (
+    SELECT 1 FROM task_assignments member_task
+    WHERE member_task.task_id = ${taskId}
+      AND ${memberProjectAccessSql(viewer, sql.raw('member_task.project_id'))}
+  )`
+
 export const teamGeneralResourceAccessSql = (
   kind: GeneralResourceKind,
   viewer: Readonly<TeamViewer> | undefined,
@@ -150,7 +178,7 @@ export const teamGeneralResourceAccessSql = (
   if (viewer === undefined) return sql`1`
   // A member holds the work they are on, not the firm's book of who it sells to
   // (#491). The refusal is here rather than at the route because their own
-  // Expenses screen and week grid read these three collections to render: the
+  // Expenses screen and week grid read these collections to render: the
   // catalog they need is a subset of what they are entitled to, so narrowing
   // the rows keeps those screens whole while the firm-wide list stops being
   // theirs to hold. A 403 at the route takes the screens down with it.
@@ -165,6 +193,7 @@ export const teamGeneralResourceAccessSql = (
     // project roster one table over -- so the same entitlement applies here.
     if (kind === 'task-assignments')
       return memberProjectAccessSql(viewer, column('task_assignments', 'project_id'))
+    if (kind === 'tasks') return memberTaskAccessSql(viewer, column('tasks', 'id'))
   }
   if (kind === 'users') return teamPersonAccessSql(viewer)
   if (kind !== 'user-assignments') return sql`1`

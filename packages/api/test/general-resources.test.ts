@@ -443,7 +443,37 @@ for (const [runtime, createHarness] of factories) {
       await data(await harness.request('/contacts', json({ client_id: theirs.id, first_name: 'Grace' })));
       await data(await harness.request('/contacts', json({ client_id: dormant.id, first_name: 'Hedy' })));
       expect(mine.id).not.toBe(myProject.id);
-      await data(await harness.request('/tasks', json({ name: 'Design' })));
+      // Four tasks in four states, because a task is reached through the
+      // project that adopted it and each state answers a different way. The
+      // orphan is the one to keep: a predicate that read the tasks table alone
+      // -- "is this task active", say -- would hand it back, and a fixture of
+      // only-assigned tasks could not tell that apart from the right answer.
+      //
+      // The assigned one is deliberately NOT task id 3. Projects run 1..4 and
+      // the member is on project 3, so a predicate that compared the outer
+      // task's id to `task_assignments.project_id` -- the wrong column, next
+      // door to the right one -- returns exactly one row and looks correct.
+      // With `Delivery` at id 1 that mutation returns `Onboarding` instead.
+      const myTask = await data(await harness.request('/tasks', json({ name: 'Delivery' })));
+      const theirTask = await data(await harness.request('/tasks', json({ name: 'Legal review' })));
+      const orphanTask = await data(await harness.request('/tasks', json({ name: 'Onboarding' })));
+      const retiredTask = await data(await harness.request('/tasks', json({ name: 'Retired work' })));
+      // Pinned so the property cannot quietly decay: the visible task must not
+      // wear the member's project id, and some other task must, or the wrong
+      // column and the right one agree on this fixture.
+      expect(myTask.id).not.toBe(myProject.id);
+      expect(orphanTask.id).toBe(myProject.id);
+      await data(await harness.request('/task-assignments', json({ project_id: myProject.id, task_id: myTask.id })));
+      await data(await harness.request('/task-assignments', json({ project_id: theirProject.id, task_id: theirTask.id })));
+      // Archived on the member's own project. The entitlement predicate omits
+      // `is_active` on both hops, matching the project predicate: a member's
+      // timesheet still holds rows against work that has since been retired,
+      // and this catalog is what puts a name on them. Withholding it would
+      // blank the labels on their own history rather than withhold anything.
+      const retiredAssignment = await data(
+        await harness.request('/task-assignments', json({ project_id: myProject.id, task_id: retiredTask.id })),
+      );
+      await data(await harness.request(`/task-assignments/${retiredAssignment.id}`, json({ is_active: false }, 'PATCH')));
       await data(await harness.request('/expense-categories', json({ name: 'Travel' })));
       await assignActingUser(harness, myProject.id as number);
       // A colleague on the other project. "Assigned" has to mean assigned to
@@ -485,11 +515,34 @@ for (const [runtime, createHarness] of factories) {
         expect(await data(await harness.request(`/projects/${myProject.id}`, init))).toMatchObject({ name: 'My work' });
         // Contacts hang off the client book and are scoped with it.
         expect((await page(await harness.request('/contacts', init))).data.map((record) => record.id)).toEqual([myContact.id]);
-        // Tasks are deliberately NOT narrowed: they name kinds of work rather
-        // than who the firm sells to, and the week grid resolves every row's
-        // task name from this list. The nav no longer offers the page; the
-        // catalog stays whole.
-        expect(await names('/tasks', init)).toEqual(['Design']);
+        // Tasks were left firm-wide when the rest of this landed, on the ground
+        // that the week grid resolves every row's task name from this list and
+        // so needs all of it. It does not: `shell/browser.ts` narrows
+        // `catalog.tasks` to the ids reachable through `timeEntryOptions`
+        // before it fills either the row select or the entry datalist, and
+        // those ids are a subset of what a member is assigned. So the task
+        // catalog is entitlement like the other three -- the firm's full list
+        // of the kinds of work it does is the shape of every other team's week,
+        // which is the thing being withheld.
+        //
+        // `Legal review` is assigned, but to somebody else's project;
+        // `Onboarding` is assigned to nothing at all. Both are refused, and for
+        // different reasons -- an implementation that only checked "does this
+        // task belong to a project" would pass one and fail the other.
+        expect(await names('/tasks', init)).toEqual(['Delivery', 'Retired work']);
+        expect(await names('/tasks?q=Legal', init)).toEqual([]);
+        expect(await names('/tasks?q=Deliv', init)).toEqual(['Delivery']);
+        expect((await harness.request(`/tasks/${theirTask.id}`, init)).status).toBe(404);
+        expect((await harness.request(`/tasks/${orphanTask.id}`, init)).status).toBe(404);
+        expect(await data(await harness.request(`/tasks/${myTask.id}`, init))).toMatchObject({ name: 'Delivery' });
+        // The row the predicate above hangs off, scoped with it. Left open it
+        // names `theirProject` and `theirTask` outright, which reassembles by
+        // hand what the two lists have just refused.
+        expect(
+          (await page(await harness.request('/task-assignments', init))).data.map(
+            (record) => (record as unknown as { task_id: number }).task_id,
+          ),
+        ).toEqual([myTask.id, retiredTask.id]);
       }
       // The member's own Expenses screen, as it actually loads: its catalog is
       // categories, projects and clients fetched together, and one refusal in
@@ -512,6 +565,29 @@ for (const [runtime, createHarness] of factories) {
           'My work',
           'Not my work',
         ]);
+        // Including the orphan: everyone but a member keeps the catalog of
+        // kinds of work whole, assigned or not. A predicate that fired on every
+        // profile rather than on `member` would take `Onboarding` off the page
+        // that exists to create and archive it.
+        expect(await names('/tasks', asProfile(profile))).toEqual([
+          'Delivery',
+          'Legal review',
+          'Onboarding',
+          'Retired work',
+        ]);
+      }
+      // Last, because it ends the assignment everything above depends on: the
+      // entitlement outlives the assignment. All three member predicates omit
+      // `is_active` on purpose -- team-access.ts says why, and until this line
+      // nothing held them to it -- because a member's own timesheet and expense
+      // history still hold rows against work that has finished, and these are
+      // the collections that put names on them. Withholding here would blank
+      // the labels on their own past rather than withhold anything.
+      await harness.run('UPDATE user_assignments SET is_active = 0 WHERE user_id = 1');
+      for (const init of [asProfile('member'), asBearer('member-directories')]) {
+        expect(await names('/clients', init)).toEqual(['Assigned Co']);
+        expect(await names('/projects', init)).toEqual(['My work']);
+        expect(await names('/tasks', init)).toEqual(['Delivery', 'Retired work']);
       }
     }, 30_000);
 
