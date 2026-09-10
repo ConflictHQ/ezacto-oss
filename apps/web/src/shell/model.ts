@@ -281,7 +281,8 @@ const normalized = (value: string): string =>
  * Clients. Not a shorthand for "is not a member": a member is refused because
  * those three screens are the firm's own record of what it sells and who it
  * sells to, while the member's record of what they did reaches them through
- * their timesheet, their expenses, their reports and their dashboard (#491).
+ * their timesheet, their expenses, their reports and their dashboard
+ * (issue 491).
  *
  * The nav is the smaller half of that rule. The API narrows what the same three
  * collections RETURN to a member -- the projects they are assigned to and those
