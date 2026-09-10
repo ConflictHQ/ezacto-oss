@@ -23,6 +23,27 @@ of them are cheap to get right and expensive to redo.
 | Binding swap and deploy | prod serving the imported data | yes — revert the commit |
 | First sign-in / first write | live use | **no** — see [Rollback](#rollback) |
 
+## Outcome
+
+The window ran on 2026-09-10. The names below are what the account holds now,
+and they differ from the `ezacto-prod` names this procedure was written against:
+the resources were renamed during the window so the Worker, its D1 database, its
+Queue and its bucket all share one prefix.
+
+| Resource | Name | Detail |
+| --- | --- | --- |
+| Worker | `ezacto-prod` | serving `app.example.com` |
+| D1 | `ezacto-prod` | `00000000-0000-0000-0000-000000000000` |
+| Queue | `ezacto-prod-email` | dead-letter `ezacto-prod-email-dlq` |
+| R2 | `ezacto-prod-attachments` | nightly export target |
+
+Loaded: REDACTED time entries, 740 invoices, REDACTED line items, 60 users, 30
+clients, 3 recurring definitions, 4 worksheet completions, 44 migrations.
+Outstanding reconciles to Harvest exactly at `$REDACTED` across 10 open
+invoices. The old `ezacto-prod` D1 database was deleted once the new Worker
+answered on the domain, so the rollback of last resort is the Harvest snapshot
+and the reconcile, not Time Travel.
+
 ## 0. Preconditions
 
 ### Credentials
