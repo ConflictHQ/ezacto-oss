@@ -5,6 +5,9 @@ const reportKindNames: readonly { readonly kind: ReportKind; readonly label: str
   // First, and first for everybody: it is the only kind that answers without a
   // client or project chosen, and for a member it is the whole section.
   { kind: 'my-hours', label: 'My hours' },
+  // Second, and first of the firm-wide ones, because it is the report the
+  // reference product opens on: one dataset over a period, four ways.
+  { kind: 'time', label: 'Time' },
   { kind: 'uninvoiced', label: 'Uninvoiced work' },
   { kind: 'client-rollup', label: 'Client rollup' },
   { kind: 'project-budget', label: 'Project budget' },
@@ -41,7 +44,7 @@ export const renderReportsPage = (view?: string): string => `
         takes the filter card's date fields rather than a band of its own.
       -->
       <div class="report-filter-field report-period-field" data-report-period></div>
-      <div class="report-filter-field"><label for="ez-report-catalog">Show</label>
+      <div class="report-filter-field" data-report-catalog-field><label for="ez-report-catalog">Show</label>
         <select id="ez-report-catalog" name="catalog" data-report-catalog>
           <option value="active">Active only</option>
           <option value="all">Active and archived</option>

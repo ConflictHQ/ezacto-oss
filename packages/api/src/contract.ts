@@ -1234,6 +1234,16 @@ const reportOperations: ApiContractOperation[] = [
   },
   {
     method: "get",
+    path: "/api/v1/reports/time",
+    operationId: "getTimeReport",
+    summary: "Report tracked time by client, project, task and teammate",
+    tag: "reports",
+    responseStatus: 200,
+    responseSchema: "TimeReportEnvelope",
+    parameters: [...requiredReportRange],
+  },
+  {
+    method: "get",
     path: "/api/v1/reports/contractor",
     operationId: "getContractorCostReport",
     summary: "Total what each person cost over a period",
@@ -1974,6 +1984,35 @@ const apiScopes = [
   "schedule:write",
   "reports:read",
 ] as const;
+
+/**
+ * The five figures every Time report row -- and the Total above them -- carries.
+ * Stated once because the four tabs are folds of a single dataset: a column
+ * added to one tab and forgotten on the total row would be a report whose Total
+ * does not total.
+ *
+ * `amounts` is optional rather than nullable because it is *absent* for a
+ * viewer who may not see billable rates, the way every other report here
+ * withholds money. An empty array would say "no billable work in this period",
+ * which is a different claim.
+ */
+const timeReportTotalsProperties: Readonly<Record<string, JsonSchema>> = {
+  // Tracked and rounded both: they differ on an account that rounds, and a
+  // report carrying only one disagrees with the timesheet beside it.
+  seconds: signedIntegerSchema,
+  rounded_seconds: signedIntegerSchema,
+  billable_seconds: signedIntegerSchema,
+  time_entry_count: { type: "integer", minimum: 0 },
+  unpriced_billable_entry_count: { type: "integer", minimum: 0 },
+  amounts: { type: "array", items: reference("TimeReportAmount") },
+};
+const timeReportTotalsRequired: readonly string[] = [
+  "seconds",
+  "rounded_seconds",
+  "billable_seconds",
+  "time_entry_count",
+  "unpriced_billable_entry_count",
+];
 
 export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   ...attachmentContractSchemas,
@@ -4993,6 +5032,104 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   MyHoursReportEnvelope: envelope("MyHoursReport"),
+  TimeReportAmount: {
+    type: "object",
+    required: ["currency", "billable_cents", "uninvoiced_cents"],
+    properties: {
+      currency: stringSchema,
+      billable_cents: signedIntegerSchema,
+      // The part of billable_cents not yet invoiced, on the uninvoiced report's
+      // own predicate -- so the summary strip and that report agree.
+      uninvoiced_cents: signedIntegerSchema,
+    },
+    additionalProperties: false,
+  },
+  TimeReportTotals: {
+    type: "object",
+    required: [...timeReportTotalsRequired],
+    properties: { ...timeReportTotalsProperties },
+    additionalProperties: false,
+  },
+  TimeReportClientRow: {
+    type: "object",
+    required: [...timeReportTotalsRequired, "client_id", "client_name"],
+    properties: {
+      ...timeReportTotalsProperties,
+      client_id: integerSchema,
+      client_name: stringSchema,
+    },
+    additionalProperties: false,
+  },
+  TimeReportProjectRow: {
+    type: "object",
+    required: [
+      ...timeReportTotalsRequired,
+      "project_id",
+      "project_name",
+      "project_code",
+      "client_id",
+      "client_name",
+    ],
+    properties: {
+      ...timeReportTotalsProperties,
+      project_id: integerSchema,
+      project_name: stringSchema,
+      // Never null: projects.code is NOT NULL DEFAULT '', so a project with no
+      // code carries the empty string and the row renders as the bare name.
+      project_code: stringSchema,
+      client_id: integerSchema,
+      client_name: stringSchema,
+    },
+    additionalProperties: false,
+  },
+  TimeReportTaskRow: {
+    type: "object",
+    required: [...timeReportTotalsRequired, "task_id", "task_name"],
+    properties: {
+      ...timeReportTotalsProperties,
+      task_id: integerSchema,
+      task_name: stringSchema,
+    },
+    additionalProperties: false,
+  },
+  TimeReportTeammateRow: {
+    type: "object",
+    required: [
+      ...timeReportTotalsRequired,
+      "user_id",
+      "user_name",
+      "is_contractor",
+      "capacity_seconds",
+      "utilization_ppm",
+    ],
+    properties: {
+      ...timeReportTotalsProperties,
+      user_id: integerSchema,
+      user_name: stringSchema,
+      is_contractor: { type: "boolean" },
+      // Weekly capacity prorated across the reported days, carried so the
+      // screen can say what the utilization was divided by.
+      capacity_seconds: { type: "integer", minimum: 0 },
+      // Null where capacity is zero: no utilization can be stated.
+      utilization_ppm: nullable(signedIntegerSchema),
+    },
+    additionalProperties: false,
+  },
+  TimeReport: {
+    type: "object",
+    required: ["from", "to", "totals", "clients", "projects", "tasks", "teammates"],
+    properties: {
+      from: dateSchema,
+      to: dateSchema,
+      totals: reference("TimeReportTotals"),
+      clients: { type: "array", items: reference("TimeReportClientRow") },
+      projects: { type: "array", items: reference("TimeReportProjectRow") },
+      tasks: { type: "array", items: reference("TimeReportTaskRow") },
+      teammates: { type: "array", items: reference("TimeReportTeammateRow") },
+    },
+    additionalProperties: false,
+  },
+  TimeReportEnvelope: envelope("TimeReport"),
   UninvoicedCurrencyTotal: {
     type: "object",
     required: [

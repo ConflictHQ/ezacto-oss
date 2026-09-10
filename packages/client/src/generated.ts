@@ -1749,6 +1749,86 @@ export type MyHoursReportEnvelope = {
   "links": Links;
 };
 
+export type TimeReportAmount = {
+  "currency": string;
+  "billable_cents": number;
+  "uninvoiced_cents": number;
+};
+
+export type TimeReportTotals = {
+  "seconds": number;
+  "rounded_seconds": number;
+  "billable_seconds": number;
+  "time_entry_count": number;
+  "unpriced_billable_entry_count": number;
+  "amounts"?: Array<TimeReportAmount>;
+};
+
+export type TimeReportClientRow = {
+  "seconds": number;
+  "rounded_seconds": number;
+  "billable_seconds": number;
+  "time_entry_count": number;
+  "unpriced_billable_entry_count": number;
+  "amounts"?: Array<TimeReportAmount>;
+  "client_id": number;
+  "client_name": string;
+};
+
+export type TimeReportProjectRow = {
+  "seconds": number;
+  "rounded_seconds": number;
+  "billable_seconds": number;
+  "time_entry_count": number;
+  "unpriced_billable_entry_count": number;
+  "amounts"?: Array<TimeReportAmount>;
+  "project_id": number;
+  "project_name": string;
+  "project_code": string;
+  "client_id": number;
+  "client_name": string;
+};
+
+export type TimeReportTaskRow = {
+  "seconds": number;
+  "rounded_seconds": number;
+  "billable_seconds": number;
+  "time_entry_count": number;
+  "unpriced_billable_entry_count": number;
+  "amounts"?: Array<TimeReportAmount>;
+  "task_id": number;
+  "task_name": string;
+};
+
+export type TimeReportTeammateRow = {
+  "seconds": number;
+  "rounded_seconds": number;
+  "billable_seconds": number;
+  "time_entry_count": number;
+  "unpriced_billable_entry_count": number;
+  "amounts"?: Array<TimeReportAmount>;
+  "user_id": number;
+  "user_name": string;
+  "is_contractor": boolean;
+  "capacity_seconds": number;
+  "utilization_ppm": number | null;
+};
+
+export type TimeReport = {
+  "from": string;
+  "to": string;
+  "totals": TimeReportTotals;
+  "clients": Array<TimeReportClientRow>;
+  "projects": Array<TimeReportProjectRow>;
+  "tasks": Array<TimeReportTaskRow>;
+  "teammates": Array<TimeReportTeammateRow>;
+};
+
+export type TimeReportEnvelope = {
+  "data": TimeReport;
+  "links": Links;
+};
+
 export type UninvoicedCurrencyTotal = {
   "currency": string;
   "rounded_seconds": number;
@@ -3675,6 +3755,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<MyHoursReportEnvelope>("GET", "/api/v1/reports/my-hours", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getTimeReport(args: { query: { "from": string; "to": string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimeReportEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimeReportEnvelope>("GET", "/api/v1/reports/time", {
       query: args.query,
       signal: args.signal,
       headers,
