@@ -109,6 +109,54 @@ export interface ProjectBudgetSummaryRecord {
   unpricedEntryCount: number
 }
 
+/**
+ * One member's own tracked time, grouped by the project it was booked to.
+ *
+ * `userId` is a filter the caller supplies, never a field the request carries:
+ * the route reads it off the authenticated principal, so no value a member can
+ * edit widens the report to somebody else's hours. The other reports here
+ * answer firm-wide questions and gate the *fields* they return; this one
+ * answers a personal question, so the row set is the thing that has to be
+ * scoped, and it is scoped in the query rather than after it.
+ */
+export interface MemberHoursFilter extends ReportDateRange {
+  userId: number
+  projectId?: number
+}
+
+/**
+ * Both durations, because they answer different questions and a member reading
+ * one while meaning the other is the confusion this report exists to remove.
+ * `seconds` is what the week grid totals -- the number they were paging the
+ * timesheet to add up -- and `roundedSeconds` is what every other report and
+ * every invoice counts once the account's rounding rule has been applied. On an
+ * account that does not round the two are equal; on one that does, reporting
+ * only the rounded figure makes this screen disagree with the timesheet beside
+ * it for no reason the reader can see.
+ */
+export interface MemberHoursProjectRecord {
+  projectId: number
+  projectName: string
+  projectCode: string | null
+  clientId: number
+  clientName: string
+  seconds: number
+  roundedSeconds: number
+  /** Rounded seconds on billable entries; the remainder is internal work. */
+  billableSeconds: number
+  timeEntryCount: number
+}
+
+export interface MemberHoursReportRecord extends ReportDateRange {
+  userId: number
+  projectId: number | null
+  seconds: number
+  roundedSeconds: number
+  billableSeconds: number
+  timeEntryCount: number
+  projects: readonly MemberHoursProjectRecord[]
+}
+
 export interface ProjectReportViewer {
   userId: number
   profile: UserProfile
@@ -153,6 +201,7 @@ export interface ContractorCostReportRecord {
 
 export interface ReportRepository {
   contractorCost(range: Readonly<ReportDateRange>): Promise<ContractorCostReportRecord>
+  memberHours(filter: Readonly<MemberHoursFilter>): Promise<MemberHoursReportRecord>
   uninvoiced(filter: Readonly<UninvoicedReportFilter>): Promise<UninvoicedReportRecord>
   clientRollup(
     clientId: number,
@@ -1024,6 +1073,86 @@ interface ContractorCostQueryRow {
   costRateCents: number | null
 }
 
+interface MemberHoursQueryRow {
+  projectId: number
+  projectName: string
+  projectCode: string | null
+  clientId: number
+  clientName: string
+  seconds: number
+  roundedSeconds: number
+  billable: number
+}
+
+/**
+ * The person is a WHERE clause, not a filter applied to a wider result. Reading
+ * every entry in the range and keeping this member's afterwards would leave a
+ * personal report one forgotten line away from being firm-wide, so the query
+ * never touches a row that is not theirs.
+ *
+ * Archived projects stay in. Time booked to a project that has since closed is
+ * still time this person worked, which is the opposite of the uninvoiced
+ * report's rule and deliberately so: that report answers what can still be
+ * billed, this one answers what was done.
+ */
+const memberHoursReport = async (
+  database: Database,
+  filter: Readonly<MemberHoursFilter>,
+): Promise<MemberHoursReportRecord> => {
+  assertId(filter.userId, 'report member user id')
+  if (filter.projectId !== undefined) assertId(filter.projectId, 'project id')
+  assertRange(filter)
+  const rows = await database.all<MemberHoursQueryRow>(sql`
+    SELECT project.id AS "projectId", project.name AS "projectName",
+      project.code AS "projectCode", client.id AS "clientId",
+      client.name AS "clientName", entry.seconds AS "seconds",
+      entry.rounded_seconds AS "roundedSeconds", entry.billable AS "billable"
+    FROM time_entries entry
+    JOIN projects project ON project.id = entry.project_id
+    JOIN clients client ON client.id = project.client_id
+    WHERE entry.user_id = ${filter.userId}
+      AND entry.spent_date BETWEEN ${filter.from} AND ${filter.to}
+      AND ${filter.projectId === undefined ? sql`1` : sql`entry.project_id = ${filter.projectId}`}
+    ORDER BY client.name, project.name, project.id, entry.id
+  `)
+  const projects = new Map<number, MemberHoursProjectRecord>()
+  let seconds = 0
+  let roundedSeconds = 0
+  let billableSeconds = 0
+  for (const row of rows) {
+    const existing = projects.get(row.projectId) ?? {
+      projectId: row.projectId,
+      projectName: row.projectName,
+      projectCode: row.projectCode,
+      clientId: row.clientId,
+      clientName: row.clientName,
+      seconds: 0,
+      roundedSeconds: 0,
+      billableSeconds: 0,
+      timeEntryCount: 0,
+    }
+    existing.seconds += row.seconds
+    existing.roundedSeconds += row.roundedSeconds
+    if (row.billable === 1) existing.billableSeconds += row.roundedSeconds
+    existing.timeEntryCount += 1
+    projects.set(row.projectId, existing)
+    seconds += row.seconds
+    roundedSeconds += row.roundedSeconds
+    if (row.billable === 1) billableSeconds += row.roundedSeconds
+  }
+  return {
+    from: filter.from,
+    to: filter.to,
+    userId: filter.userId,
+    projectId: filter.projectId ?? null,
+    seconds,
+    roundedSeconds,
+    billableSeconds,
+    timeEntryCount: rows.length,
+    projects: [...projects.values()],
+  }
+}
+
 /**
  * What each person cost over a period, for the payroll hand-off.
  *
@@ -1093,6 +1222,7 @@ const contractorCostReport = async (
 
 export const createReportRepository = (database: Database): ReportRepository => ({
   contractorCost: (range) => contractorCostReport(database, range),
+  memberHours: (filter) => memberHoursReport(database, filter),
   uninvoiced: (filter) => uninvoicedReport(database, filter),
   clientRollup: (clientId, range) => clientRollupReport(database, clientId, range),
   projectBudgetSummaries: (range, viewer) =>

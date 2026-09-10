@@ -29,9 +29,22 @@ describe('Reports Stage 1 model', () => {
     expect(reportFiltersUrl(filters)).toBe(
       '/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31&client_id=3&project_id=9',
     )
+    // A profile without the financial reports lands on its own hours: the one
+    // kind that answers without a client or project chosen first.
     expect(
       reportFiltersFromUrl(new URL('https://example.test/reports'), '2026-09-17', false),
-    ).toMatchObject({ kind: 'project-budget', from: '2026-09-01', to: '2026-09-17' })
+    ).toMatchObject({ kind: 'my-hours', from: '2026-09-01', to: '2026-09-17' })
+    expect(
+      reportFiltersUrl({
+        kind: 'my-hours',
+        from: '2026-09-01',
+        to: '2026-09-17',
+        clientId: 4,
+        projectId: 9,
+      }),
+      // The project narrows it; the client does not, because the endpoint has
+      // no client axis and a URL carrying one would imply it did.
+    ).toBe('/reports?report=my-hours&from=2026-09-01&to=2026-09-17&project_id=9')
     expect(
       reportFiltersFromUrl(
         new URL('https://example.test/reports?from=not-a-date&to=2026-09-17&client_id=nope'),
@@ -92,7 +105,7 @@ describe('Reports Stage 1 model', () => {
     expect(formatReportCents(undefined)).toBe('—')
   })
 
-  it('[unit] maps catalogs and all three reports to generated-client operations', async () => {
+  it('[unit] maps catalogs and all four reports to generated-client operations', async () => {
     const page = { data: [], links: {}, page: { next_cursor: null } }
     const generated = {
       listClients: vi.fn(async () => page),
@@ -100,6 +113,7 @@ describe('Reports Stage 1 model', () => {
       getUninvoicedReport: vi.fn(async () => ({ data: { totals: [] } })),
       getClientRollupReport: vi.fn(async () => ({ data: { nodes: [] } })),
       getProjectBudgetReport: vi.fn(async () => ({ data: { grains: [] } })),
+      getMyHoursReport: vi.fn(async () => ({ data: { projects: [] } })),
     }
     const api = createShellApi(generated as unknown as EzactoClient)
     const signal = new AbortController().signal
@@ -114,6 +128,7 @@ describe('Reports Stage 1 model', () => {
     }, signal)
     await api.getClientRollupReport!(3, { from: '2026-08-01', to: '2026-08-31' }, signal)
     await api.getProjectBudgetReport!(7, { from: '2026-08-01', to: '2026-08-31' }, signal)
+    await api.getMyHoursReport!({ from: '2026-08-01', to: '2026-08-31' }, signal)
 
     expect(generated.listClients).toHaveBeenCalledWith({
       query: { per_page: 200, cursor: 'clients-next' },
@@ -139,6 +154,11 @@ describe('Reports Stage 1 model', () => {
     })
     expect(generated.getProjectBudgetReport).toHaveBeenCalledWith({
       projectId: 7,
+      query: { from: '2026-08-01', to: '2026-08-31' },
+      signal,
+    })
+    // Nothing identifies the person: the session the request is made on does.
+    expect(generated.getMyHoursReport).toHaveBeenCalledWith({
       query: { from: '2026-08-01', to: '2026-08-31' },
       signal,
     })

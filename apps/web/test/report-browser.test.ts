@@ -77,6 +77,17 @@ const baseApi = (overrides: Partial<ReportWorkspaceApi> = {}): Partial<ReportWor
     to: '2026-08-31',
     grains: [],
   })),
+  getMyHoursReport: vi.fn(async () => ({
+    from: '2026-08-01',
+    to: '2026-08-31',
+    user_id: 1,
+    project_id: null,
+    seconds: 0,
+    rounded_seconds: 0,
+    billable_seconds: 0,
+    time_entry_count: 0,
+    projects: [],
+  })),
   ...overrides,
 })
 
@@ -629,18 +640,24 @@ describe('Reports Stage 1 browser controller', () => {
 
     const tabs = [...document.querySelectorAll<HTMLAnchorElement>('.tabstrip a[href^="/reports"]')]
     expect(tabs.map((tab) => tab.textContent)).toEqual([
+      'My hours',
       'Uninvoiced work',
       'Client rollup',
       'Project budget',
     ])
-    expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual(['page', null, null])
+    expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual([
+      null,
+      'page',
+      null,
+      null,
+    ])
     // Every tab is a real address, and it carries the range being looked at.
-    expect(tabs[1]?.getAttribute('href')).toBe(
+    expect(tabs[2]?.getAttribute('href')).toBe(
       '/reports?report=client-rollup&from=2026-08-01&to=2026-08-31',
     )
 
     document.querySelector<HTMLSelectElement>('[data-report-client]')!.value = '1'
-    tabs[1]?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    tabs[2]?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     await vi.waitFor(() => expect(getClientRollupReport).toHaveBeenCalledTimes(1))
     expect(getClientRollupReport).toHaveBeenCalledWith(
       1,
@@ -650,7 +667,12 @@ describe('Reports Stage 1 browser controller', () => {
     expect(`${window.location.pathname}${window.location.search}`).toBe(
       '/reports?report=client-rollup&from=2026-08-01&to=2026-08-31&client_id=1',
     )
-    expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual([null, 'page', null])
+    expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual([
+      null,
+      null,
+      'page',
+      null,
+    ])
     expect(document.querySelector<HTMLElement>('[data-report-project-field]')?.hidden).toBe(true)
     session.abort()
   })
@@ -700,7 +722,7 @@ describe('Reports Stage 1 browser controller', () => {
       [...document.querySelectorAll('.tabstrip a[href^="/reports"]')].map(
         (tab) => tab.textContent,
       ),
-    ).toEqual(['Project budget'])
+    ).toEqual(['My hours', 'Project budget'])
     const results = document.querySelector('[data-report-results]')!
     // No catalog resolves an assignment, so its id stays; the project has one.
     expect(results.textContent).toContain('Task assignment #22')
@@ -745,15 +767,17 @@ describe('Reports Stage 1 browser controller', () => {
     )
 
     const tabs = [...document.querySelectorAll('.tabstrip a[href^="/reports"]')]
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['Project budget'])
-    // The surviving tab is the marked one, rather than nothing being marked.
-    expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual(['page'])
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['My hours', 'Project budget'])
+    // A surviving tab is the marked one, rather than nothing being marked. The
+    // fallback is the personal report because it is the one that answers with
+    // nothing else chosen.
+    expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual(['page', null])
     // ...and the filter card is dressed for that same report.
     expect(document.querySelector<HTMLElement>('[data-report-client-field]')?.hidden).toBe(
       true,
     )
     expect(document.querySelector('[data-report-project-label]')?.textContent).toBe(
-      'Project',
+      'Project (optional)',
     )
     // The denial is unchanged: no request went out, and the reason is named.
     expect(getUninvoicedReport).not.toHaveBeenCalled()
@@ -899,5 +923,124 @@ describe('Reports Stage 1 browser controller', () => {
       ),
     )
     expect(status.textContent).toBe('Report loaded.')
+  })
+
+  it("[security] gives a member their own hours with no control that could ask for anyone else's", async () => {
+    writeDocument('/reports?report=my-hours&from=2026-08-01&to=2026-08-31')
+    const getMyHoursReport = vi.fn(async () => ({
+      from: '2026-08-01',
+      to: '2026-08-31',
+      user_id: 4,
+      project_id: null,
+      seconds: 9_000,
+      rounded_seconds: 10_800,
+      billable_seconds: 7_200,
+      time_entry_count: 3,
+      projects: [
+        {
+          project_id: 7,
+          project_name: 'Launch',
+          project_code: 'WEB',
+          client_id: 2,
+          client_name: 'Studio',
+          seconds: 5_400,
+          rounded_seconds: 7_200,
+          billable_seconds: 7_200,
+          time_entry_count: 2,
+        },
+        {
+          project_id: 9,
+          project_name: 'Internal',
+          project_code: null,
+          client_id: 1,
+          client_name: 'Parent',
+          seconds: 3_600,
+          rounded_seconds: 3_600,
+          billable_seconds: 0,
+          time_entry_count: 1,
+        },
+      ],
+    }))
+    const getUninvoicedReport = vi.fn()
+    const session = new AbortController()
+
+    await createReportsController(
+      baseApi({ getMyHoursReport, getUninvoicedReport }),
+    ).activate(identity('member'), session.signal, () => false)
+
+    // The request carries a range and nothing else. There is no user argument
+    // to send, so there is no request a member could edit into somebody else's
+    // week -- the session decides whose hours come back.
+    expect(getMyHoursReport).toHaveBeenCalledTimes(1)
+    expect(getMyHoursReport).toHaveBeenCalledWith(
+      { from: '2026-08-01', to: '2026-08-31' },
+      expect.anything(),
+    )
+    expect(getUninvoicedReport).not.toHaveBeenCalled()
+    // And no person picker on the card that could suggest otherwise.
+    expect(document.querySelector<HTMLElement>('[data-report-client-field]')?.hidden).toBe(
+      true,
+    )
+    expect(document.querySelector('[data-report-user]')).toBeNull()
+
+    const results = document.querySelector('[data-report-results]')!
+    expect(results.textContent).toContain('My hours')
+    // Cell by cell, because tracked and rounded differ per row on an account
+    // that rounds: a table that put the rounded figure in the tracked column
+    // would still total correctly underneath and still be the wrong table.
+    const cells = (row: Element): (string | null)[] =>
+      [...row.querySelectorAll('th, td')].map((cell) => cell.textContent)
+    expect([...results.querySelectorAll('tbody tr')].map(cells)).toEqual([
+      ['Studio', '[WEB] Launch', '1.5 h', '2 h', '2 h', '2'],
+      ['Parent', 'Internal', '1 h', '1 h', '0 h', '1'],
+    ])
+    expect([...results.querySelectorAll('tfoot tr')].map(cells)).toEqual([
+      ['Total', '2.5 h', '3 h', '2 h', '3'],
+    ])
+    expect(results.querySelector('tbody tr th a')?.getAttribute('href')).toBe('/clients/2')
+    // Tracked and rounded are both named above the table too.
+    expect(results.textContent).toContain('Tracked time')
+    expect(results.textContent).toContain('Rounded time')
+    session.abort()
+  })
+
+  it('[browser] narrows my hours to a chosen project and says so in the address', async () => {
+    writeDocument('/reports?report=my-hours&from=2026-08-01&to=2026-08-31')
+    const getMyHoursReport = vi.fn(async () => ({
+      from: '2026-08-01',
+      to: '2026-08-31',
+      user_id: 4,
+      project_id: 7,
+      seconds: 0,
+      rounded_seconds: 0,
+      billable_seconds: 0,
+      time_entry_count: 0,
+      projects: [],
+    }))
+    const session = new AbortController()
+    await createReportsController(baseApi({ getMyHoursReport })).activate(
+      identity('member'),
+      session.signal,
+      () => false,
+    )
+    expect(getMyHoursReport).toHaveBeenCalledTimes(1)
+
+    document.querySelector<HTMLSelectElement>('[data-report-project]')!.value = '7'
+    document.querySelector<HTMLFormElement>('[data-report-form]')!.dispatchEvent(
+      new Event('submit', { cancelable: true }),
+    )
+    await vi.waitFor(() => expect(getMyHoursReport).toHaveBeenCalledTimes(2))
+
+    expect(getMyHoursReport).toHaveBeenLastCalledWith(
+      { from: '2026-08-01', to: '2026-08-31', project_id: 7 },
+      expect.anything(),
+    )
+    expect(window.location.search).toBe(
+      '?report=my-hours&from=2026-08-01&to=2026-08-31&project_id=7',
+    )
+    expect(document.querySelector('[data-report-results]')?.textContent).toContain(
+      'You logged no time in this period.',
+    )
+    session.abort()
   })
 })

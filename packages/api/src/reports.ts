@@ -104,12 +104,40 @@ export interface ProjectBudgetReportRecord extends ReportDateRange {
   grains: readonly ProjectBudgetGrainRecord[];
 }
 
+export interface MyHoursProjectRecord {
+  projectId: number;
+  projectName: string;
+  projectCode: string | null;
+  clientId: number;
+  clientName: string;
+  seconds: number;
+  roundedSeconds: number;
+  billableSeconds: number;
+  timeEntryCount: number;
+}
+
+export interface MyHoursReportRecord extends ReportDateRange {
+  userId: number;
+  projectId: number | null;
+  seconds: number;
+  roundedSeconds: number;
+  billableSeconds: number;
+  timeEntryCount: number;
+  projects: readonly MyHoursProjectRecord[];
+}
+
 export interface ProjectReportViewer {
   userId: number;
   profile: UserPrincipal["profile"];
 }
 
 export interface ReportReader {
+  memberHours(filter: {
+    from: string;
+    to: string;
+    userId: number;
+    projectId?: number;
+  }): Promise<MyHoursReportRecord>;
   uninvoiced(filter: {
     from: string;
     to: string;
@@ -133,6 +161,10 @@ export interface ReportReader {
 
 const reportKeys = new Set(["from", "to"]);
 const uninvoicedKeys = new Set([...reportKeys, "client_id", "project_id"]);
+// Deliberately no user_id. The strict parser refuses every key that is not on
+// this list, so `?user_id=7` is a 422 rather than a report of somebody else's
+// week -- and even if it were accepted, the repository is handed the principal.
+const myHoursKeys = new Set([...reportKeys, "project_id"]);
 
 const rangeFrom = (
   url: URL,
@@ -165,6 +197,35 @@ const rangeFrom = (
   }
   return { range: { from: from!, to: to! }, params, errors };
 };
+
+/**
+ * No money fields, and so no `canViewMoneyField` gating: this report answers
+ * "how long did I work and against what", and the rate that turns those hours
+ * into an amount is not a member's to see. Adding cents here would mean adding
+ * the redaction that every other report carries, for a figure the screen does
+ * not ask for.
+ */
+const serializeMyHours = (report: Readonly<MyHoursReportRecord>) => ({
+  from: report.from,
+  to: report.to,
+  user_id: report.userId,
+  project_id: report.projectId,
+  seconds: report.seconds,
+  rounded_seconds: report.roundedSeconds,
+  billable_seconds: report.billableSeconds,
+  time_entry_count: report.timeEntryCount,
+  projects: report.projects.map((project) => ({
+    project_id: project.projectId,
+    project_name: project.projectName,
+    project_code: project.projectCode,
+    client_id: project.clientId,
+    client_name: project.clientName,
+    seconds: project.seconds,
+    rounded_seconds: project.roundedSeconds,
+    billable_seconds: project.billableSeconds,
+    time_entry_count: project.timeEntryCount,
+  })),
+});
 
 const serializeUninvoiced = (
   report: Readonly<UninvoicedReportRecord>,
@@ -333,6 +394,41 @@ export const installReportRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   reports: ReportReader,
 ): void => {
+  api.get("/reports/my-hours", async (context) => {
+    // `time_entries:read`, not `reports:read`. The firm-wide reports are gated
+    // to the three reporting profiles; these are the acting user's own entries
+    // aggregated, so the authority is the one that already lets them read their
+    // own time. Gating this on `reports:read` would hand a member a Reports
+    // screen with nothing on it -- the gap #492 opens with.
+    requireApiScope(context, "time_entries:read");
+    const parsed = rangeFrom(new URL(context.req.url), myHoursKeys);
+    const projectId = queryPositiveInteger(
+      parsed.params,
+      "project_id",
+      parsed.errors,
+    );
+    assertFields(parsed.errors);
+    const principal = context.get("principal");
+    // The one place whose hours these are is decided, and it is not the
+    // request. A project narrows the rows; it cannot change the person.
+    const report = await reports.memberHours({
+      ...parsed.range,
+      userId: principal.userId,
+      ...(projectId === undefined ? {} : { projectId }),
+    });
+    return context.json(
+      {
+        data: serializeMyHours(report),
+        links: {
+          self:
+            new URL(context.req.url).pathname + new URL(context.req.url).search,
+        },
+      },
+      200,
+      { "cache-control": "no-store" },
+    );
+  });
+
   api.get("/reports/uninvoiced", async (context) => {
     requireApiScope(context, "reports:read");
     const parsed = rangeFrom(new URL(context.req.url), uninvoicedKeys);
@@ -441,6 +537,7 @@ export const installReportRoutes = <Bindings extends object>(
 
 export {
   serializeClientRollup,
+  serializeMyHours,
   serializeProjectBudget,
   serializeProjectBudgetSummary,
   serializeUninvoiced,

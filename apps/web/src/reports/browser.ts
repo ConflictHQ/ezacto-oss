@@ -3,6 +3,7 @@ import {
   type ClientRollupMetrics,
   type ClientRollupReport,
   type GeneralResource,
+  type MyHoursReport,
   type ProjectBudgetReport,
   type UninvoicedReport,
   type Whoami,
@@ -21,6 +22,17 @@ import {
   type ReportKind,
   type ReportWorkspaceApi,
 } from './model.js'
+
+/**
+ * The kinds that are not the financial surface. `my-hours` is here because it
+ * returns the acting user's own rows and nothing else -- the API decides whose
+ * they are -- and `project-budget` because a project's own budget is visible
+ * wherever the project is.
+ */
+const openToEveryProfile: ReadonlySet<ReportKind> = new Set<ReportKind>([
+  'my-hours',
+  'project-budget',
+])
 
 const required = <ElementType extends Element>(selector: string): ElementType => {
   const element = document.querySelector<ElementType>(selector)
@@ -140,6 +152,90 @@ const reportHeading = (
   description.append(...detail)
   header.append(textElement('h2', title, 'report-result-title'), description)
   return header
+}
+
+/**
+ * One row per project, and both durations on each. The tracked column is the
+ * number the week grid shows, so the report and the timesheet a member came
+ * from agree; the rounded column is what the same hours are worth to a budget
+ * or an invoice. Where the account does not round they read the same, which is
+ * the answer to "why are there two", not a reason to drop one.
+ */
+const renderMyHours = (report: Readonly<MyHoursReport>): DocumentFragment => {
+  const fragment = document.createDocumentFragment()
+  fragment.append(reportHeading('My hours', `${report.from} through ${report.to}`))
+  if (report.projects.length === 0) {
+    fragment.append(
+      textElement('p', 'You logged no time in this period.', 'report-empty'),
+    )
+    return fragment
+  }
+  const facts = element('dl', 'report-facts')
+  facts.append(
+    fact('Tracked time', formatReportHours(report.seconds)),
+    fact('Rounded time', formatReportHours(report.rounded_seconds)),
+    fact('Billable time', formatReportHours(report.billable_seconds)),
+    fact('Time entries', report.time_entry_count.toLocaleString('en-US')),
+  )
+  const wrapper = element('div', 'report-table-wrap')
+  const table = element('table', 'report-table')
+  const head = element('thead')
+  const headerRow = element('tr')
+  for (const label of [
+    'Client',
+    'Project',
+    'Tracked',
+    'Rounded',
+    'Billable',
+    'Entries',
+  ]) {
+    const cell = textElement('th', label)
+    cell.scope = 'col'
+    headerRow.append(cell)
+  }
+  head.append(headerRow)
+  const body = element('tbody')
+  for (const project of report.projects) {
+    const row = element('tr')
+    const client = element('th')
+    client.scope = 'row'
+    client.append(linkElement(`/clients/${project.client_id}`, project.client_name))
+    const name = element('td')
+    name.append(
+      linkElement(
+        `/projects/${project.project_id}`,
+        project.project_code === null
+          ? project.project_name
+          : `[${project.project_code}] ${project.project_name}`,
+      ),
+    )
+    row.append(
+      client,
+      name,
+      textElement('td', formatReportHours(project.seconds)),
+      textElement('td', formatReportHours(project.rounded_seconds)),
+      textElement('td', formatReportHours(project.billable_seconds)),
+      textElement('td', project.time_entry_count.toLocaleString('en-US')),
+    )
+    body.append(row)
+  }
+  const foot = element('tfoot')
+  const totalRow = element('tr')
+  const totalLabel = textElement('th', 'Total')
+  totalLabel.scope = 'row'
+  totalLabel.colSpan = 2
+  totalRow.append(
+    totalLabel,
+    textElement('td', formatReportHours(report.seconds)),
+    textElement('td', formatReportHours(report.rounded_seconds)),
+    textElement('td', formatReportHours(report.billable_seconds)),
+    textElement('td', report.time_entry_count.toLocaleString('en-US')),
+  )
+  foot.append(totalRow)
+  table.append(head, body, foot)
+  wrapper.append(table)
+  fragment.append(facts, wrapper)
+  return fragment
 }
 
 const renderUninvoiced = (report: Readonly<UninvoicedReport>): DocumentFragment => {
@@ -484,7 +580,7 @@ export const createReportsController = (
    * message naming the denial are unchanged.
    */
   const presentedKind = (requested: ReportKind, financial: boolean): ReportKind =>
-    financial || requested === 'project-budget' ? requested : 'project-budget'
+    financial || openToEveryProfile.has(requested) ? requested : 'my-hours'
 
   const setKind = (next: ReportKind): void => {
     kind = next
@@ -505,7 +601,10 @@ export const createReportsController = (
   }
 
   const updateVisibleFilters = (): void => {
-    clientField.hidden = kind === 'project-budget'
+    // My hours has no client picker: the report is the acting user's own rows,
+    // narrowed by project or not at all, and a client control would suggest a
+    // second axis the endpoint does not take.
+    clientField.hidden = kind === 'project-budget' || kind === 'my-hours'
     projectField.hidden = kind === 'client-rollup'
     clientLabel.textContent = kind === 'client-rollup' ? 'Root client' : 'Client (optional)'
     required<HTMLElement>('[data-report-project-label]').textContent =
@@ -555,9 +654,11 @@ export const createReportsController = (
 
   const renderReport = (
     filters: Readonly<ReportFilters>,
-    report: UninvoicedReport | ClientRollupReport | ProjectBudgetReport,
+    report: UninvoicedReport | ClientRollupReport | ProjectBudgetReport | MyHoursReport,
   ): void => {
-    if (filters.kind === 'uninvoiced') {
+    if (filters.kind === 'my-hours') {
+      results.replaceChildren(renderMyHours(report as MyHoursReport))
+    } else if (filters.kind === 'uninvoiced') {
       results.replaceChildren(renderUninvoiced(report as UninvoicedReport))
     } else if (filters.kind === 'client-rollup') {
       results.replaceChildren(renderClientRollup(report as ClientRollupReport, clients))
@@ -581,7 +682,10 @@ export const createReportsController = (
       status.textContent = validation
       return
     }
-    if (filters.kind !== 'project-budget' && !canReadFinancialReports(active.identity.profile)) {
+    if (
+      !openToEveryProfile.has(filters.kind) &&
+      !canReadFinancialReports(active.identity.profile)
+    ) {
       clearReportPresentation()
       status.textContent = 'Your profile does not have access to this financial report.'
       return
@@ -589,7 +693,8 @@ export const createReportsController = (
     if (
       api.getUninvoicedReport === undefined ||
       api.getClientRollupReport === undefined ||
-      api.getProjectBudgetReport === undefined
+      api.getProjectBudgetReport === undefined ||
+      api.getMyHoursReport === undefined
     ) {
       clearReportPresentation()
       status.textContent = 'Reports are unavailable in this build.'
@@ -605,7 +710,15 @@ export const createReportsController = (
     try {
       const range = { from: filters.from, to: filters.to }
       const report =
-        filters.kind === 'uninvoiced'
+        filters.kind === 'my-hours'
+        ? await api.getMyHoursReport(
+            {
+              ...range,
+              ...(filters.projectId === null ? {} : { project_id: filters.projectId }),
+            },
+            active.signal,
+          )
+        : filters.kind === 'uninvoiced'
           ? await api.getUninvoicedReport(
               {
                 ...range,
@@ -742,7 +855,7 @@ export const createReportsController = (
       // second session in the same document gets the strip its profile earns.
       kindStrip?.replaceChildren(
         ...[...kindTabs]
-          .filter(([tabKind]) => financial || tabKind === 'project-budget')
+          .filter(([tabKind]) => financial || openToEveryProfile.has(tabKind))
           .map(([, anchor]) => anchor),
       )
       if (api.listReportClients === undefined || api.listReportProjects === undefined) {
