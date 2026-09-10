@@ -204,8 +204,120 @@ export interface ContractorCostReportRecord {
   rows: ContractorCostRow[]
 }
 
+/**
+ * The Show control on the detailed time report. `uninvoiced` is billable work
+ * no invoice has claimed yet -- the figure the summary leads with -- and is a
+ * narrower set than `billable` rather than another name for it.
+ */
+export type DetailedTimeHours = 'all' | 'billable' | 'non_billable' | 'uninvoiced'
+
+export interface DetailedTimeFilter extends ReportDateRange {
+  clientId?: number
+  projectId?: number
+  hours?: DetailedTimeHours
+  /**
+   * Harvest's "Active projects only" checkbox, off by default. This report
+   * answers what was worked on, and a project archived last week still absorbed
+   * hours last month. The uninvoiced reader takes the opposite default for the
+   * opposite reason: it answers what can still be billed.
+   */
+  activeProjectsOnly?: boolean
+}
+
+/**
+ * One line of the report's table: a date, a task, and the person who worked it.
+ *
+ * This is the grain the screen draws, not the raw entry, because two entries a
+ * person books to the same task on the same day have always been one line on
+ * this report. Grouping the table by client, project, task or person is then a
+ * re-fold of these rows in the browser rather than another query, which is the
+ * reason the reader returns a grain rather than a shape.
+ */
+export interface DetailedTimeRowRecord {
+  spentDate: string
+  clientId: number
+  clientName: string
+  projectId: number
+  projectName: string
+  /**
+   * Never null: `projects.code` is NOT NULL DEFAULT '', so a project with no
+   * code carries the empty string and a null check renders `[] Name`.
+   */
+  projectCode: string
+  taskId: number
+  taskName: string
+  userId: number
+  userName: string
+  /** Every role the person holds, name-ordered; empty when they hold none. */
+  roles: readonly string[]
+  /** The project's billing currency, falling back to its client's. */
+  currency: string
+  /**
+   * Tracked seconds, as the timesheet recorded them: the Hours column is what
+   * the person entered. The money beside it is priced off `roundedSeconds`,
+   * which is what an invoice would charge. On an account that does not round
+   * the two agree; on one that does, this report must not quietly restate
+   * somebody's timesheet.
+   */
+  seconds: number
+  roundedSeconds: number
+  billableSeconds: number
+  uninvoicedBillableSeconds: number
+  timeEntryCount: number
+  /**
+   * Null when any billable entry folded into this row has no resolved rate, on
+   * the contractor report's reasoning: a total that silently drops unpriced
+   * hours reads as complete and is not.
+   */
+  billableAmountCents: number | null
+  entriesWithoutBillableRate: number
+}
+
+export interface DetailedTimeCurrencyRecord {
+  currency: string
+  billableAmountCents: number | null
+  entriesWithoutBillableRate: number
+}
+
+export interface DetailedTimeReportRecord extends ReportDateRange {
+  clientId: number | null
+  projectId: number | null
+  hours: DetailedTimeHours
+  activeProjectsOnly: boolean
+  seconds: number
+  roundedSeconds: number
+  billableSeconds: number
+  uninvoicedBillableSeconds: number
+  timeEntryCount: number
+  currencies: readonly DetailedTimeCurrencyRecord[]
+  rows: readonly DetailedTimeRowRecord[]
+}
+
+/**
+ * Refusing is the answer to a range too wide to read, rather than a page of it.
+ *
+ * A truncated table under totals covering the whole period is the failure this
+ * avoids: the column would not add up to the Total beneath it and nothing on
+ * screen could say why. Reports carry no pagination surface to fall back on, so
+ * the report says the range is too wide and the period control beside it is how
+ * you narrow it. Returned as a value rather than thrown because the API owns
+ * this seam by shape, not by exception class -- it does not depend on this
+ * package.
+ */
+export type DetailedTimeReportResult =
+  | { kind: 'report'; report: DetailedTimeReportRecord }
+  | { kind: 'too_many_entries'; limit: number }
+
+/**
+ * Entries read for one detailed time report. Past what anybody reads on a
+ * screen -- roughly a twenty-person year -- and small enough that the worst
+ * case is a few megabytes of rows rather than an unbounded scan.
+ */
+export const DETAILED_TIME_ENTRY_LIMIT = 20_000
+
 export interface ReportRepository {
   contractorCost(range: Readonly<ReportDateRange>): Promise<ContractorCostReportRecord>
+  detailedTime(filter: Readonly<DetailedTimeFilter>): Promise<DetailedTimeReportResult>
   memberHours(filter: Readonly<MemberHoursFilter>): Promise<MemberHoursReportRecord>
   uninvoiced(filter: Readonly<UninvoicedReportFilter>): Promise<UninvoicedReportRecord>
   clientRollup(
@@ -1230,8 +1342,231 @@ const contractorCostReport = async (
   return { from: range.from, to: range.to, rows: [...grouped.values()] }
 }
 
+interface DetailedTimeQueryRow {
+  spentDate: string
+  clientId: number
+  clientName: string
+  projectId: number
+  projectName: string
+  projectCode: string
+  taskId: number
+  taskName: string
+  userId: number
+  userName: string
+  currency: string
+  seconds: number
+  roundedSeconds: number
+  billable: number
+  invoiceId: number | null
+  billableRateCents: number | null
+}
+
+const detailedTimeHoursFilter = (hours: DetailedTimeHours) => {
+  if (hours === 'billable') return sql`entry.billable = 1`
+  if (hours === 'non_billable') return sql`entry.billable = 0`
+  if (hours === 'uninvoiced') return sql`entry.billable = 1 AND entry.invoice_id IS NULL`
+  return sql`1`
+}
+
+const detailedTimeCurrency = (
+  totals: Map<string, DetailedTimeCurrencyRecord>,
+  currency: string,
+): DetailedTimeCurrencyRecord => {
+  let total = totals.get(currency)
+  if (total === undefined) {
+    total = { currency, billableAmountCents: 0, entriesWithoutBillableRate: 0 }
+    totals.set(currency, total)
+  }
+  return total
+}
+
+/**
+ * Every tracked hour in a period, at the grain the report's table draws.
+ *
+ * Two queries, whatever the row count: the entries, then the role membership
+ * table whole. Roles are a per-person attribute, so a correlated subquery would
+ * re-run the same lookup once per entry to answer a question that has as many
+ * answers as there are people.
+ *
+ * Running timers stay in, unlike the uninvoiced reader which excludes them.
+ * That reader feeds invoice generation, where a still-moving number must not be
+ * billed; this one answers what has been worked on, and dropping the row
+ * somebody is tracking against right now would make the report disagree with
+ * the timesheet they just came from.
+ */
+const detailedTimeReport = async (
+  database: Database,
+  filter: Readonly<DetailedTimeFilter>,
+): Promise<DetailedTimeReportResult> => {
+  assertRange(filter)
+  if (filter.clientId !== undefined) assertId(filter.clientId, 'client id')
+  if (filter.projectId !== undefined) assertId(filter.projectId, 'project id')
+  const hours = filter.hours ?? 'all'
+  const activeProjectsOnly = filter.activeProjectsOnly ?? false
+  const rows = await database.all<DetailedTimeQueryRow>(sql`
+    SELECT entry.spent_date AS "spentDate",
+      client.id AS "clientId", client.name AS "clientName",
+      project.id AS "projectId", project.name AS "projectName",
+      project.code AS "projectCode",
+      task.id AS "taskId", task.name AS "taskName",
+      person.id AS "userId",
+      trim(person.first_name || ' ' || person.last_name) AS "userName",
+      upper(coalesce(project.billing_currency, client.currency)) AS "currency",
+      entry.seconds AS "seconds", entry.rounded_seconds AS "roundedSeconds",
+      entry.billable AS "billable", entry.invoice_id AS "invoiceId",
+      entry.billable_rate_cents AS "billableRateCents"
+    FROM time_entries entry
+    JOIN projects project ON project.id = entry.project_id
+    JOIN clients client ON client.id = project.client_id
+    JOIN tasks task ON task.id = entry.task_id
+    JOIN users person ON person.id = entry.user_id
+    WHERE entry.spent_date BETWEEN ${filter.from} AND ${filter.to}
+      AND ${detailedTimeHoursFilter(hours)}
+      AND ${activeProjectsOnly ? sql`project.is_active = 1` : sql`1`}
+      AND ${filter.projectId === undefined ? sql`1` : sql`project.id = ${filter.projectId}`}
+      AND ${clientFilter(filter.clientId)}
+    ORDER BY entry.spent_date, client.name, client.id, project.name, project.id,
+      task.name, task.id, person.first_name, person.last_name, person.id, entry.id
+    LIMIT ${DETAILED_TIME_ENTRY_LIMIT + 1}
+  `)
+  if (rows.length > DETAILED_TIME_ENTRY_LIMIT) {
+    return { kind: 'too_many_entries', limit: DETAILED_TIME_ENTRY_LIMIT }
+  }
+  const roleRows =
+    rows.length === 0
+      ? []
+      : await database.all<{ userId: number; name: string }>(sql`
+          SELECT membership.user_id AS "userId", role.name AS "name"
+          FROM user_roles membership
+          JOIN roles role ON role.id = membership.role_id
+          ORDER BY membership.user_id, role.name, role.id
+        `)
+  const roles = new Map<number, string[]>()
+  for (const role of roleRows) {
+    const held = roles.get(role.userId)
+    if (held === undefined) roles.set(role.userId, [role.name])
+    else held.push(role.name)
+  }
+
+  const grain = new Map<string, DetailedTimeRowRecord>()
+  const currencies = new Map<string, DetailedTimeCurrencyRecord>()
+  let seconds = 0
+  let roundedSeconds = 0
+  let billableSeconds = 0
+  let uninvoicedBillableSeconds = 0
+  for (const row of rows) {
+    const key = `${row.spentDate}|${row.projectId}|${row.taskId}|${row.userId}`
+    const line: DetailedTimeRowRecord = grain.get(key) ?? {
+      spentDate: row.spentDate,
+      clientId: row.clientId,
+      clientName: row.clientName,
+      projectId: row.projectId,
+      projectName: row.projectName,
+      projectCode: row.projectCode,
+      taskId: row.taskId,
+      taskName: row.taskName,
+      userId: row.userId,
+      userName: row.userName,
+      roles: roles.get(row.userId) ?? [],
+      currency: row.currency,
+      seconds: 0,
+      roundedSeconds: 0,
+      billableSeconds: 0,
+      uninvoicedBillableSeconds: 0,
+      timeEntryCount: 0,
+      billableAmountCents: 0,
+      entriesWithoutBillableRate: 0,
+    }
+    line.seconds = checkedAdd(line.seconds, row.seconds, 'detailed time seconds')
+    line.roundedSeconds = checkedAdd(
+      line.roundedSeconds,
+      row.roundedSeconds,
+      'detailed time rounded seconds',
+    )
+    line.timeEntryCount += 1
+    seconds = checkedAdd(seconds, row.seconds, 'detailed time seconds')
+    roundedSeconds = checkedAdd(
+      roundedSeconds,
+      row.roundedSeconds,
+      'detailed time rounded seconds',
+    )
+    if (row.billable === 1) {
+      line.billableSeconds = checkedAdd(
+        line.billableSeconds,
+        row.seconds,
+        'detailed time billable seconds',
+      )
+      billableSeconds = checkedAdd(
+        billableSeconds,
+        row.seconds,
+        'detailed time billable seconds',
+      )
+      if (row.invoiceId === null) {
+        line.uninvoicedBillableSeconds = checkedAdd(
+          line.uninvoicedBillableSeconds,
+          row.seconds,
+          'detailed time uninvoiced billable seconds',
+        )
+        uninvoicedBillableSeconds = checkedAdd(
+          uninvoicedBillableSeconds,
+          row.seconds,
+          'detailed time uninvoiced billable seconds',
+        )
+      }
+      const total = detailedTimeCurrency(currencies, row.currency)
+      if (row.billableRateCents === null) {
+        line.entriesWithoutBillableRate += 1
+        line.billableAmountCents = null
+        total.entriesWithoutBillableRate += 1
+        total.billableAmountCents = null
+      } else {
+        // Priced per entry, not off the folded row's seconds: the half-cent
+        // rounds once per entry, so pricing a sum would drift from what an
+        // invoice built from those same entries charges.
+        const cents = trackedAmountCents(row.roundedSeconds, row.billableRateCents)
+        if (line.billableAmountCents !== null) {
+          line.billableAmountCents = checkedAdd(
+            line.billableAmountCents,
+            cents,
+            'detailed time billable amount',
+          )
+        }
+        if (total.billableAmountCents !== null) {
+          total.billableAmountCents = checkedAdd(
+            total.billableAmountCents,
+            cents,
+            'detailed time billable amount',
+          )
+        }
+      }
+    }
+    grain.set(key, line)
+  }
+  return {
+    kind: 'report',
+    report: {
+      from: filter.from,
+      to: filter.to,
+      clientId: filter.clientId ?? null,
+      projectId: filter.projectId ?? null,
+      hours,
+      activeProjectsOnly,
+      seconds,
+      roundedSeconds,
+      billableSeconds,
+      uninvoicedBillableSeconds,
+      timeEntryCount: rows.length,
+      currencies: [...currencies.values()].sort((left, right) =>
+        left.currency.localeCompare(right.currency),
+      ),
+      rows: [...grain.values()],
+    },
+  }
+}
+
 export const createReportRepository = (database: Database): ReportRepository => ({
   contractorCost: (range) => contractorCostReport(database, range),
+  detailedTime: (filter) => detailedTimeReport(database, filter),
   memberHours: (filter) => memberHoursReport(database, filter),
   uninvoiced: (filter) => uninvoicedReport(database, filter),
   clientRollup: (clientId, range) => clientRollupReport(database, clientId, range),

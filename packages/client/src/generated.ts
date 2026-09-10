@@ -1749,6 +1749,55 @@ export type MyHoursReportEnvelope = {
   "links": Links;
 };
 
+export type DetailedTimeRow = {
+  "spent_date": string;
+  "client_id": number;
+  "client_name": string;
+  "project_id": number;
+  "project_name": string;
+  "project_code": string;
+  "task_id": number;
+  "task_name": string;
+  "user_id": number;
+  "user_name": string;
+  "roles": Array<string>;
+  "currency": string;
+  "seconds": number;
+  "rounded_seconds": number;
+  "billable_seconds": number;
+  "uninvoiced_billable_seconds": number;
+  "time_entry_count": number;
+  "billable_amount_cents"?: number | null;
+  "entries_without_billable_rate": number;
+};
+
+export type DetailedTimeCurrencyTotal = {
+  "currency": string;
+  "billable_amount_cents"?: number | null;
+  "entries_without_billable_rate": number;
+};
+
+export type DetailedTimeReport = {
+  "from": string;
+  "to": string;
+  "client_id": number | null;
+  "project_id": number | null;
+  "hours": "all" | "billable" | "non_billable" | "uninvoiced";
+  "active_projects_only": boolean;
+  "seconds": number;
+  "rounded_seconds": number;
+  "billable_seconds": number;
+  "uninvoiced_billable_seconds": number;
+  "time_entry_count": number;
+  "currencies": Array<DetailedTimeCurrencyTotal>;
+  "rows": Array<DetailedTimeRow>;
+};
+
+export type DetailedTimeReportEnvelope = {
+  "data": DetailedTimeReport;
+  "links": Links;
+};
+
 export type UninvoicedCurrencyTotal = {
   "currency": string;
   "rounded_seconds": number;
@@ -3695,6 +3744,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<UninvoicedReportEnvelope>("GET", "/api/v1/reports/uninvoiced", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getDetailedTimeReport(args: { query: { "from": string; "to": string; "client_id"?: number; "project_id"?: number; "hours"?: "all" | "billable" | "non_billable" | "uninvoiced"; "active_projects_only"?: boolean }; signal?: AbortSignal; headers?: HeadersInit }): Promise<DetailedTimeReportEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<DetailedTimeReportEnvelope>("GET", "/api/v1/reports/detailed-time", {
       query: args.query,
       signal: args.signal,
       headers,

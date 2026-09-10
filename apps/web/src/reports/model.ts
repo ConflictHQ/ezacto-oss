@@ -2,6 +2,8 @@ import { canViewMoneyField } from '@ezacto/core'
 import type {
   ClientRollupReport,
   ContractorCostReport,
+  DetailedTimeReport,
+  DetailedTimeRow,
   GeneralResource,
   MyHoursReport,
   ProjectBudgetReport,
@@ -16,6 +18,25 @@ export type ReportKind =
   | 'client-rollup'
   | 'project-budget'
   | 'contractor-cost'
+  | 'detailed-time'
+
+export type DetailedTimeHours = DetailedTimeReport['hours']
+
+/** The Group by control. Date is the default because the table bands by it. */
+export type DetailedTimeGrouping = 'date' | 'client' | 'project' | 'task' | 'person'
+
+/**
+ * The three controls that sit above the detailed table rather than in the
+ * filter card, kept out of `ReportFilters` because only one kind has them and a
+ * shared shape carrying four unused fields on every other report is how a
+ * filter ends up half-applied. They travel in the address all the same: a
+ * report you send somebody has to arrive grouped the way you were reading it.
+ */
+export interface DetailedTimeOptions {
+  readonly hours: DetailedTimeHours
+  readonly grouping: DetailedTimeGrouping
+  readonly activeProjectsOnly: boolean
+}
 
 export interface ReportCatalogPage {
   readonly data: readonly GeneralResource[]
@@ -75,6 +96,17 @@ export interface ReportWorkspaceApi {
     filter: { readonly from: string; readonly to: string },
     signal?: AbortSignal,
   ): Promise<ContractorCostReport>
+  getDetailedTimeReport(
+    filter: {
+      readonly from: string
+      readonly to: string
+      readonly client_id?: number
+      readonly project_id?: number
+      readonly hours?: DetailedTimeHours
+      readonly active_projects_only?: boolean
+    },
+    signal?: AbortSignal,
+  ): Promise<DetailedTimeReport>
 }
 
 export interface ReportFilters {
@@ -91,6 +123,7 @@ const reportKinds = new Set<ReportKind>([
   'client-rollup',
   'project-budget',
   'contractor-cost',
+  'detailed-time',
 ])
 
 export const isReportKind = (value: string): value is ReportKind =>
@@ -157,14 +190,53 @@ export const reportFiltersFromUrl = (
   }
 }
 
-export const reportFiltersUrl = (filters: Readonly<ReportFilters>): string => {
+const detailedTimeHours: ReadonlySet<string> = new Set<DetailedTimeHours>([
+  'all',
+  'billable',
+  'non_billable',
+  'uninvoiced',
+])
+
+const detailedTimeGroupings: ReadonlySet<string> = new Set<DetailedTimeGrouping>([
+  'date',
+  'client',
+  'project',
+  'task',
+  'person',
+])
+
+/**
+ * Read separately from the filters because an unreadable value here is a
+ * display preference, not a filter: a stray `group=colour` should fall back to
+ * the default grouping and draw the report, where a stray `from=yesterday`
+ * has to stop and say so.
+ */
+export const detailedTimeOptionsFromUrl = (url: URL): DetailedTimeOptions => {
+  const hours = url.searchParams.get('hours')
+  const grouping = url.searchParams.get('group')
+  return {
+    hours: hours !== null && detailedTimeHours.has(hours) ? (hours as DetailedTimeHours) : 'all',
+    grouping:
+      grouping !== null && detailedTimeGroupings.has(grouping)
+        ? (grouping as DetailedTimeGrouping)
+        : 'date',
+    activeProjectsOnly: url.searchParams.get('active_only') === 'true',
+  }
+}
+
+export const reportFiltersUrl = (
+  filters: Readonly<ReportFilters>,
+  options?: Readonly<DetailedTimeOptions>,
+): string => {
   const params = new URLSearchParams({
     report: filters.kind,
     from: filters.from,
     to: filters.to,
   })
   if (
-    (filters.kind === 'uninvoiced' || filters.kind === 'client-rollup') &&
+    (filters.kind === 'uninvoiced' ||
+      filters.kind === 'client-rollup' ||
+      filters.kind === 'detailed-time') &&
     filters.clientId !== null
   ) {
     params.set('client_id', String(filters.clientId))
@@ -172,10 +244,16 @@ export const reportFiltersUrl = (filters: Readonly<ReportFilters>): string => {
   if (
     (filters.kind === 'uninvoiced' ||
       filters.kind === 'project-budget' ||
-      filters.kind === 'my-hours') &&
+      filters.kind === 'my-hours' ||
+      filters.kind === 'detailed-time') &&
     filters.projectId !== null
   ) {
     params.set('project_id', String(filters.projectId))
+  }
+  if (filters.kind === 'detailed-time' && options !== undefined) {
+    params.set('hours', options.hours)
+    params.set('group', options.grouping)
+    params.set('active_only', String(options.activeProjectsOnly))
   }
   return `/reports?${params.toString()}`
 }
@@ -225,6 +303,149 @@ export const formatReportHours = (seconds: number | null | undefined): string =>
   seconds === null || seconds === undefined
     ? '—'
     : `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(seconds / 3_600)} h`
+
+export const detailedTimeProjectLabel = (row: Readonly<DetailedTimeRow>): string =>
+  row.project_code.trim() === ''
+    ? row.project_name
+    : `[${row.project_code.trim()}] ${row.project_name}`
+
+export interface DetailedTimeBand {
+  readonly key: string
+  readonly label: string
+  readonly seconds: number
+  readonly rows: readonly DetailedTimeRow[]
+}
+
+const bandKey = (
+  row: Readonly<DetailedTimeRow>,
+  grouping: DetailedTimeGrouping,
+): { key: string; label: string } => {
+  switch (grouping) {
+    case 'client':
+      return { key: `client:${row.client_id}`, label: row.client_name }
+    case 'project':
+      return { key: `project:${row.project_id}`, label: detailedTimeProjectLabel(row) }
+    case 'task':
+      return { key: `task:${row.task_id}`, label: row.task_name }
+    case 'person':
+      return { key: `person:${row.user_id}`, label: row.user_name }
+    default:
+      return { key: `date:${row.spent_date}`, label: row.spent_date }
+  }
+}
+
+/**
+ * Group by changes the table's shape, not its data: the rows are the ones the
+ * one request already returned, re-folded here. Issuing a query per grouping
+ * would make five ways of asking the same question, and four of them could
+ * disagree with the summary above the table.
+ *
+ * Bands are ordered by their own label, and rows inside a band keep the
+ * report's reading order -- date, then client, project, task, person -- so
+ * changing the grouping moves the bands and never reshuffles what is in them.
+ */
+export const groupDetailedTimeRows = (
+  rows: readonly DetailedTimeRow[],
+  grouping: DetailedTimeGrouping,
+): readonly DetailedTimeBand[] => {
+  const bands = new Map<string, { label: string; seconds: number; rows: DetailedTimeRow[] }>()
+  for (const row of rows) {
+    const identity = bandKey(row, grouping)
+    const band = bands.get(identity.key) ?? { label: identity.label, seconds: 0, rows: [] }
+    band.seconds += row.seconds
+    band.rows.push(row)
+    bands.set(identity.key, band)
+  }
+  return [...bands]
+    .map(([key, band]) => ({ key, label: band.label, seconds: band.seconds, rows: band.rows }))
+    .sort((left, right) =>
+      // Dates sort as dates because they are canonical; every other label is a
+      // name, and localeCompare is what the pickers beside them already use.
+      grouping === 'date'
+        ? left.label.localeCompare(right.label)
+        : left.label.localeCompare(right.label) || left.key.localeCompare(right.key),
+    )
+}
+
+/** Decimal hours, the unit every Harvest export and every invoice line uses. */
+export const decimalHours = (seconds: number): string => (seconds / 3_600).toFixed(2)
+
+/**
+ * A leading =, +, - or @ makes a spreadsheet treat the cell as a formula, so a
+ * project someone named `=cmd|...` becomes an instruction the moment the export
+ * is opened. Quoting alone does not stop it; the apostrophe does, and survives
+ * as a visible character rather than silently changing the value.
+ */
+/**
+ * A plain decimal, positive or negative, and nothing else: no exponent, no
+ * thousands separator, no currency symbol. Deliberately narrow, because the only
+ * job here is to recognise a cell the formula guard must leave alone.
+ */
+const looksNumeric = (value: string): boolean => /^-?\d+(?:\.\d+)?$/u.test(value)
+
+/**
+ * The guard exists because a cell opening with `=`, `+`, `-`, `@` or a control
+ * character is executed as a formula by Excel and Sheets, and a leading
+ * apostrophe forces it to text instead.
+ *
+ * It must not fire on a number. Negative time entries are supported and real --
+ * 0002_projects_time carries the correction that overstated a contractor's month
+ * -- so `-0.50` reaching the guard came back as `'-0.50`, which Excel reads as
+ * text. Those rows then drop silently out of a SUM of the Hours column, and a
+ * period that nets negative gets a text Total. That is a column not adding up to
+ * the total beneath it, which is the defect this report was written to avoid,
+ * relocated into the export where it is harder to notice.
+ *
+ * Numbers are exempted rather than the guard being applied per column: a column
+ * list has to be kept in step with the header every time one is added, and the
+ * failure is silent when it is not.
+ */
+const csvCell = (value: string): string => {
+  const guarded = !looksNumeric(value) && /^[=+\-@\t\r]/u.test(value) ? `'${value}` : value
+  return `"${guarded.replaceAll('"', '""')}"`
+}
+
+/**
+ * The export is built from the rows already on screen -- never from a second
+ * request -- so a reader who was served no `billable_amount_cents` cannot get
+ * one by pressing Export. The money columns appear only when the fetched rows
+ * carry the field, which is the same test the table renders by.
+ */
+export const detailedTimeCsv = (
+  report: Readonly<DetailedTimeReport>,
+  grouping: DetailedTimeGrouping,
+): string => {
+  const money = report.rows.some((row) => row.billable_amount_cents !== undefined)
+  const header = ['Date', 'Client', 'Project', 'Task', 'Roles', 'Person', 'Hours']
+  if (money) header.push('Currency', 'Billable amount')
+  const lines = [header.map(csvCell).join(',')]
+  for (const band of groupDetailedTimeRows(report.rows, grouping)) {
+    for (const row of band.rows) {
+      const cells = [
+        row.spent_date,
+        row.client_name,
+        detailedTimeProjectLabel(row),
+        row.task_name,
+        row.roles.join('; '),
+        row.user_name,
+        decimalHours(row.seconds),
+      ]
+      if (money) {
+        cells.push(
+          row.currency,
+          row.billable_amount_cents === null || row.billable_amount_cents === undefined
+            ? ''
+            : (row.billable_amount_cents / 100).toFixed(2),
+        )
+      }
+      lines.push(cells.map(csvCell).join(','))
+    }
+  }
+  const totals = ['Total', '', '', '', '', '', decimalHours(report.seconds)]
+  if (money) totals.push('', '')
+  lines.push(totals.map(csvCell).join(','))
+  return `${lines.join('\r\n')}\r\n`
+}
 
 /** The project-budget endpoint identifies cents but does not identify their currency. */
 export const formatReportCents = (cents: number | null | undefined): string =>

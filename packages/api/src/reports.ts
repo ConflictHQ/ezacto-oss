@@ -6,7 +6,9 @@ import { ApiError, type FieldError } from "./errors.js";
 import {
   assertFields,
   notFound,
+  queryBoolean,
   queryDate,
+  queryEnum,
   queryPositiveInteger,
   resourceId,
   strictSearchParams,
@@ -146,6 +148,65 @@ export interface MyHoursReportRecord extends ReportDateRange {
   projects: readonly MyHoursProjectRecord[];
 }
 
+export type DetailedTimeHours =
+  | "all"
+  | "billable"
+  | "non_billable"
+  | "uninvoiced";
+
+export interface DetailedTimeRowRecord {
+  spentDate: string;
+  clientId: number;
+  clientName: string;
+  projectId: number;
+  projectName: string;
+  /** NOT NULL DEFAULT '' in the schema: an uncoded project carries "". */
+  projectCode: string;
+  taskId: number;
+  taskName: string;
+  userId: number;
+  userName: string;
+  roles: readonly string[];
+  currency: string;
+  seconds: number;
+  roundedSeconds: number;
+  billableSeconds: number;
+  uninvoicedBillableSeconds: number;
+  timeEntryCount: number;
+  /** Null when any billable entry folded into the row has no resolved rate. */
+  billableAmountCents: number | null;
+  entriesWithoutBillableRate: number;
+}
+
+export interface DetailedTimeCurrencyRecord {
+  currency: string;
+  billableAmountCents: number | null;
+  entriesWithoutBillableRate: number;
+}
+
+export interface DetailedTimeReportRecord extends ReportDateRange {
+  clientId: number | null;
+  projectId: number | null;
+  hours: DetailedTimeHours;
+  activeProjectsOnly: boolean;
+  seconds: number;
+  roundedSeconds: number;
+  billableSeconds: number;
+  uninvoicedBillableSeconds: number;
+  timeEntryCount: number;
+  currencies: readonly DetailedTimeCurrencyRecord[];
+  rows: readonly DetailedTimeRowRecord[];
+}
+
+/**
+ * The reader refuses a range whose entry count it will not read, and says so as
+ * a value rather than an exception: this package holds no dependency on the
+ * database package, so the seam is a shape both sides agree on.
+ */
+export type DetailedTimeReportResult =
+  | { kind: "report"; report: DetailedTimeReportRecord }
+  | { kind: "too_many_entries"; limit: number };
+
 export interface ProjectReportViewer {
   userId: number;
   profile: UserPrincipal["profile"];
@@ -159,6 +220,14 @@ export interface ReportReader {
     projectId?: number;
   }): Promise<MyHoursReportRecord>;
   contractorCost(range: Readonly<ReportDateRange>): Promise<ContractorCostReportRecord>;
+  detailedTime(filter: {
+    from: string;
+    to: string;
+    clientId?: number;
+    projectId?: number;
+    hours?: DetailedTimeHours;
+    activeProjectsOnly?: boolean;
+  }): Promise<DetailedTimeReportResult>;
   uninvoiced(filter: {
     from: string;
     to: string;
@@ -186,6 +255,17 @@ const uninvoicedKeys = new Set([...reportKeys, "client_id", "project_id"]);
 // this list, so `?user_id=7` is a 422 rather than a report of somebody else's
 // week -- and even if it were accepted, the repository is handed the principal.
 const myHoursKeys = new Set([...reportKeys, "project_id"]);
+const detailedTimeKeys = new Set([
+  ...uninvoicedKeys,
+  "hours",
+  "active_projects_only",
+]);
+const detailedTimeHours: readonly DetailedTimeHours[] = [
+  "all",
+  "billable",
+  "non_billable",
+  "uninvoiced",
+];
 
 const rangeFrom = (
   url: URL,
@@ -297,6 +377,65 @@ const serializeContractorCost = (report: Readonly<ContractorCostReportRecord>) =
     entries_without_rate: row.entriesWithoutRate,
   })),
 });
+
+/**
+ * Hours are the report; money is an extra column on it, so the report is served
+ * to every profile that may read reports and the amounts are dropped per field
+ * rather than the whole response refused. That is the opposite call from the
+ * contractor report above, and for a reason that survives reading: a detailed
+ * time report without amounts still answers who worked on what and for how
+ * long, while a contractor *cost* report without costs answers nothing.
+ *
+ * `entries_without_billable_rate` is not gated. It counts entries, not money,
+ * and it is what stops a reader who can see amounts from mistaking a partial
+ * total for a complete one -- withholding it alongside the amount would leave
+ * the amount unexplained for everybody else's benefit.
+ */
+const serializeDetailedTime = (
+  report: Readonly<DetailedTimeReportRecord>,
+  viewer: Readonly<UserPrincipal>,
+) => {
+  const money = canViewMoneyField(viewer, "billable_rate");
+  return {
+    from: report.from,
+    to: report.to,
+    client_id: report.clientId,
+    project_id: report.projectId,
+    hours: report.hours,
+    active_projects_only: report.activeProjectsOnly,
+    seconds: report.seconds,
+    rounded_seconds: report.roundedSeconds,
+    billable_seconds: report.billableSeconds,
+    uninvoiced_billable_seconds: report.uninvoicedBillableSeconds,
+    time_entry_count: report.timeEntryCount,
+    currencies: report.currencies.map((currency) => ({
+      currency: currency.currency,
+      entries_without_billable_rate: currency.entriesWithoutBillableRate,
+      ...(money ? { billable_amount_cents: currency.billableAmountCents } : {}),
+    })),
+    rows: report.rows.map((row) => ({
+      spent_date: row.spentDate,
+      client_id: row.clientId,
+      client_name: row.clientName,
+      project_id: row.projectId,
+      project_name: row.projectName,
+      project_code: row.projectCode,
+      task_id: row.taskId,
+      task_name: row.taskName,
+      user_id: row.userId,
+      user_name: row.userName,
+      roles: [...row.roles],
+      currency: row.currency,
+      seconds: row.seconds,
+      rounded_seconds: row.roundedSeconds,
+      billable_seconds: row.billableSeconds,
+      uninvoiced_billable_seconds: row.uninvoicedBillableSeconds,
+      time_entry_count: row.timeEntryCount,
+      entries_without_billable_rate: row.entriesWithoutBillableRate,
+      ...(money ? { billable_amount_cents: row.billableAmountCents } : {}),
+    })),
+  };
+};
 
 const serializeRollupMetrics = (
   metrics: Readonly<ClientRollupMetricsRecord>,
@@ -506,6 +645,68 @@ export const installReportRoutes = <Bindings extends object>(
     );
   });
 
+  api.get("/reports/detailed-time", async (context) => {
+    requireApiScope(context, "reports:read");
+    const parsed = rangeFrom(new URL(context.req.url), detailedTimeKeys);
+    const clientId = queryPositiveInteger(
+      parsed.params,
+      "client_id",
+      parsed.errors,
+    );
+    const projectId = queryPositiveInteger(
+      parsed.params,
+      "project_id",
+      parsed.errors,
+    );
+    const hours = queryEnum(
+      parsed.params,
+      "hours",
+      detailedTimeHours,
+      parsed.errors,
+    );
+    const activeProjectsOnly = queryBoolean(
+      parsed.params,
+      "active_projects_only",
+      parsed.errors,
+    );
+    assertFields(parsed.errors);
+    const result = await reports.detailedTime({
+      ...parsed.range,
+      ...(clientId === undefined ? {} : { clientId }),
+      ...(projectId === undefined ? {} : { projectId }),
+      ...(hours === undefined ? {} : { hours }),
+      ...(activeProjectsOnly === undefined ? {} : { activeProjectsOnly }),
+    });
+    // 422 on the range rather than a partial body: the response has no field
+    // that could say "these rows are some of the rows", and a caller that got
+    // 200 would total the page it was handed and publish the answer.
+    if (result.kind === "too_many_entries") {
+      throw new ApiError({
+        status: 422,
+        code: "validation_failed",
+        message: "The request contains invalid fields.",
+        fields: [
+          {
+            field: "to",
+            code: "range_too_wide",
+            message: `from and to cover more than ${result.limit} time entries; narrow the period or the client and project filters`,
+          },
+        ],
+      });
+    }
+    return context.json(
+      {
+        data: serializeDetailedTime(result.report, context.get("principal")),
+        links: {
+          self:
+            new URL(context.req.url).pathname + new URL(context.req.url).search,
+        },
+      },
+      200,
+      { "cache-control": "no-store" },
+    );
+  });
+
   api.get("/reports/uninvoiced", async (context) => {
     requireApiScope(context, "reports:read");
     const parsed = rangeFrom(new URL(context.req.url), uninvoicedKeys);
@@ -614,6 +815,7 @@ export const installReportRoutes = <Bindings extends object>(
 
 export {
   serializeClientRollup,
+  serializeDetailedTime,
   serializeMyHours,
   serializeProjectBudget,
   serializeProjectBudgetSummary,

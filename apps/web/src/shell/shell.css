@@ -870,6 +870,72 @@
   font-size: 11px;
 }
 
+/*
+ * The detailed report is five text columns and one number, where every other
+ * report table here is one label and a row of figures. Right-aligning names
+ * would leave the reader tracking a ragged left edge down the longest table on
+ * the screen, so the alignment is reversed and Hours opts back in.
+ */
+.report-detailed-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  gap: 20px;
+  align-items: start;
+}
+.report-detailed-summary .report-facts {
+  margin-block: 0;
+}
+.report-detailed-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+.report-detailed-controls select {
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.report-detailed-active {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+.report-detailed-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+.report-detailed-actions button {
+  min-height: 44px;
+  padding-inline: 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.report-detailed-table th,
+.report-detailed-table td {
+  text-align: left;
+}
+.report-detailed-table .report-numeric {
+  text-align: right;
+}
+.report-detailed-table .report-band-row th,
+.report-detailed-table .report-band-row td {
+  background: var(--ez-surface);
+  font-weight: 600;
+}
+.report-detailed-table tfoot th,
+.report-detailed-table tfoot td {
+  font-weight: 600;
+}
 .invoice-generation {
   width: min(880px, 100%);
   margin-inline: auto;
@@ -5021,7 +5087,12 @@ dialog textarea {
   @page {
     margin: 16mm;
   }
-  /* Application chrome, on every screen: none of it is the page. */
+  /* Application chrome, on every screen: none of it is the page. Print is one
+     of the detailed report's two exports, so its controls belong here with the
+     rest of the chrome rather than in a print block of their own -- the invoice
+     test lifts the FIRST `@media print` it finds as the paper stylesheet, so a
+     second block earlier in the file silently became the whole of it. */
+  .report-detailed-controls,
   .topbar,
   .tabstrip,
   .build-stamp,

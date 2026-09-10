@@ -6,6 +6,7 @@ const reportKindNames: readonly { readonly kind: ReportKind; readonly label: str
   // client or project chosen, and for a member it is the whole section.
   { kind: 'my-hours', label: 'My hours' },
   { kind: 'uninvoiced', label: 'Uninvoiced work' },
+  { kind: 'detailed-time', label: 'Detailed time' },
   { kind: 'client-rollup', label: 'Client rollup' },
   { kind: 'project-budget', label: 'Project budget' },
   // Last, and the only kind the browser drops for a profile that reads the
