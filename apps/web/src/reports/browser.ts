@@ -2,6 +2,8 @@ import {
   EzactoApiError,
   type ClientRollupMetrics,
   type ClientRollupReport,
+  type ContractorCostReport,
+  type ContractorCostRow,
   type GeneralResource,
   type MyHoursReport,
   type ProjectBudgetReport,
@@ -10,6 +12,7 @@ import {
 } from '@ezacto/client'
 import { createPeriodControl } from '../components/period.js'
 import {
+  canReadCostReports,
   canReadFinancialReports,
   formatReportCents,
   formatReportHours,
@@ -34,6 +37,20 @@ const openToEveryProfile: ReadonlySet<ReportKind> = new Set<ReportKind>([
   'my-hours',
   'project-budget',
 ])
+
+/**
+ * Three tiers, not two. `contractor-cost` is all cost, and the route refuses it
+ * to anybody but an administrator, so treating it as one more financial kind
+ * would hand accounting and an executive manager a tab that 403s -- the failure
+ * the strip already avoids for a member.
+ */
+const canReadKind = (
+  kind: ReportKind,
+  identity: Pick<Whoami, 'profile' | 'manager_grants'>,
+): boolean =>
+  kind === 'contractor-cost'
+    ? canReadCostReports(identity)
+    : openToEveryProfile.has(kind) || canReadFinancialReports(identity.profile)
 
 const required = <ElementType extends Element>(selector: string): ElementType => {
   const element = document.querySelector<ElementType>(selector)
@@ -473,6 +490,128 @@ const renderProjectBudget = (
   return fragment
 }
 
+/**
+ * The three columns Harvest's own contractor report carries -- person, total
+ * hours, cost -- rather than a wider one of our own. Two departures, both
+ * forced by what the endpoint answers with:
+ *
+ * One table per currency instead of one table. A row states the currency its
+ * cost is in, so rows in two currencies are two different questions;
+ * `contractorCostReport` in packages/db refuses to add them because this system
+ * holds no exchange rate, and a single table with a currency column is an
+ * invitation to add them anyway. Separate tables cannot be totalled by eye.
+ *
+ * The person column says contractor or employee. The endpoint has no
+ * `is_contractor` filter -- it totals everybody who tracked time in the range,
+ * and `is_contractor` is a flag on the row -- so a column headed "Contractor"
+ * would be naming employees as contractors.
+ */
+const renderContractorCost = (
+  report: Readonly<ContractorCostReport>,
+): DocumentFragment => {
+  const fragment = document.createDocumentFragment()
+  fragment.append(
+    reportHeading(
+      'Contractor cost',
+      `${report.from} through ${report.to} · everybody who tracked time`,
+    ),
+  )
+  if (report.rows.length === 0) {
+    fragment.append(
+      textElement('p', 'Nobody tracked time in this period.', 'report-empty'),
+    )
+    return fragment
+  }
+  const byCurrency = new Map<string, ContractorCostRow[]>()
+  for (const row of report.rows) {
+    const bucket = byCurrency.get(row.currency)
+    if (bucket === undefined) byCurrency.set(row.currency, [row])
+    else bucket.push(row)
+  }
+  for (const [currency, rows] of byCurrency) {
+    const section = element('section', 'report-cost-currency')
+    section.append(textElement('h3', currency))
+    const wrapper = element('div', 'report-table-wrap')
+    const table = element('table', 'report-table')
+    const head = element('thead')
+    const headerRow = element('tr')
+    for (const label of ['Person', 'Total hours', 'Cost']) {
+      const cell = textElement('th', label)
+      cell.scope = 'col'
+      headerRow.append(cell)
+    }
+    head.append(headerRow)
+    const body = element('tbody')
+    let seconds = 0
+    let cents: number | null = 0
+    let entriesWithoutRate = 0
+    let peopleWithoutRate = 0
+    for (const row of rows) {
+      seconds += row.rounded_seconds
+      entriesWithoutRate += row.entries_without_rate
+      const person = element('th')
+      person.scope = 'row'
+      person.append(
+        linkElement(`/team/${row.user_id}`, row.name),
+        textElement(
+          'span',
+          row.is_contractor ? 'Contractor' : 'Employee',
+          'report-cost-note',
+        ),
+      )
+      const cost = element('td')
+      if (row.cost_cents === null) {
+        peopleWithoutRate += 1
+        cents = null
+        // Not an em dash and not a zero. Both read as "nothing to pay" against
+        // hours that were worked; this says the total does not exist, and the
+        // line under it says how many entries are the reason.
+        cost.append(
+          textElement('span', 'Not costed'),
+          textElement(
+            'span',
+            `${countLabel(row.entries_without_rate, 'entry', 'entries')} without a cost rate`,
+            'report-cost-note',
+          ),
+        )
+      } else {
+        if (cents !== null) cents += row.cost_cents
+        cost.textContent = formatReportMoney(row.cost_cents, currency)
+      }
+      const line = element('tr')
+      line.append(person, textElement('td', formatReportHours(row.rounded_seconds)), cost)
+      body.append(line)
+    }
+    const foot = element('tfoot')
+    const totalRow = element('tr')
+    const totalLabel = textElement('th', 'Total')
+    totalLabel.scope = 'row'
+    // The hours total whatever the rates say: seconds carry no rate and no
+    // currency, so they are the one figure an uncosted row does not take away.
+    totalRow.append(
+      totalLabel,
+      textElement('td', formatReportHours(seconds)),
+      textElement(
+        'td',
+        cents === null ? 'Not costed' : formatReportMoney(cents, currency),
+      ),
+    )
+    foot.append(totalRow)
+    table.append(head, body, foot)
+    wrapper.append(table)
+    section.append(wrapper)
+    if (entriesWithoutRate > 0) {
+      section.append(
+        warning(
+          `${countLabel(entriesWithoutRate, 'entry', 'entries')} across ${countLabel(peopleWithoutRate, 'person', 'people')} ${entriesWithoutRate === 1 ? 'has' : 'have'} no cost rate, so ${currency} has no total.`,
+        ),
+      )
+    }
+    fragment.append(section)
+  }
+  return fragment
+}
+
 interface ActiveSession {
   readonly identity: Whoami
   readonly signal: AbortSignal
@@ -601,8 +740,10 @@ export const createReportsController = (
    * still receives the kind the URL asked for, so the withheld API call and the
    * message naming the denial are unchanged.
    */
-  const presentedKind = (requested: ReportKind, financial: boolean): ReportKind =>
-    financial || openToEveryProfile.has(requested) ? requested : 'my-hours'
+  const presentedKind = (
+    requested: ReportKind,
+    identity: Pick<Whoami, 'profile' | 'manager_grants'>,
+  ): ReportKind => (canReadKind(requested, identity) ? requested : 'my-hours')
 
   const setKind = (next: ReportKind): void => {
     kind = next
@@ -625,9 +766,11 @@ export const createReportsController = (
   const updateVisibleFilters = (): void => {
     // My hours has no client picker: the report is the acting user's own rows,
     // narrowed by project or not at all, and a client control would suggest a
-    // second axis the endpoint does not take.
-    clientField.hidden = kind === 'project-budget' || kind === 'my-hours'
-    projectField.hidden = kind === 'client-rollup'
+    // second axis the endpoint does not take. Contractor cost has neither: it
+    // takes a range alone, and a picker it would ignore is worse than no picker.
+    clientField.hidden =
+      kind === 'project-budget' || kind === 'my-hours' || kind === 'contractor-cost'
+    projectField.hidden = kind === 'client-rollup' || kind === 'contractor-cost'
     clientLabel.textContent = kind === 'client-rollup' ? 'Root client' : 'Client (optional)'
     required<HTMLElement>('[data-report-project-label]').textContent =
       kind === 'project-budget' ? 'Project' : 'Project (optional)'
@@ -676,12 +819,19 @@ export const createReportsController = (
 
   const renderReport = (
     filters: Readonly<ReportFilters>,
-    report: UninvoicedReport | ClientRollupReport | ProjectBudgetReport | MyHoursReport,
+    report:
+      | UninvoicedReport
+      | ClientRollupReport
+      | ProjectBudgetReport
+      | MyHoursReport
+      | ContractorCostReport,
   ): void => {
     if (filters.kind === 'my-hours') {
       results.replaceChildren(renderMyHours(report as MyHoursReport))
     } else if (filters.kind === 'uninvoiced') {
       results.replaceChildren(renderUninvoiced(report as UninvoicedReport))
+    } else if (filters.kind === 'contractor-cost') {
+      results.replaceChildren(renderContractorCost(report as ContractorCostReport))
     } else if (filters.kind === 'client-rollup') {
       results.replaceChildren(renderClientRollup(report as ClientRollupReport, clients))
     } else {
@@ -704,19 +854,24 @@ export const createReportsController = (
       status.textContent = validation
       return
     }
-    if (
-      !openToEveryProfile.has(filters.kind) &&
-      !canReadFinancialReports(active.identity.profile)
-    ) {
+    if (!canReadKind(filters.kind, active.identity)) {
       clearReportPresentation()
-      status.textContent = 'Your profile does not have access to this financial report.'
+      // Named rather than folded into the financial refusal: accounting reads
+      // the financial reports and is still refused this one, so "your profile
+      // does not have access to this financial report" would leave them
+      // hunting for a permission that does not exist.
+      status.textContent =
+        filters.kind === 'contractor-cost'
+          ? 'Only an administrator can read the contractor cost report.'
+          : 'Your profile does not have access to this financial report.'
       return
     }
     if (
       api.getUninvoicedReport === undefined ||
       api.getClientRollupReport === undefined ||
       api.getProjectBudgetReport === undefined ||
-      api.getMyHoursReport === undefined
+      api.getMyHoursReport === undefined ||
+      api.getContractorCostReport === undefined
     ) {
       clearReportPresentation()
       status.textContent = 'Reports are unavailable in this build.'
@@ -749,9 +904,11 @@ export const createReportsController = (
               },
               active.signal,
             )
-          : filters.kind === 'client-rollup'
-            ? await api.getClientRollupReport(filters.clientId!, range, active.signal)
-            : await api.getProjectBudgetReport(filters.projectId!, range, active.signal)
+          : filters.kind === 'contractor-cost'
+            ? await api.getContractorCostReport(range, active.signal)
+            : filters.kind === 'client-rollup'
+              ? await api.getClientRollupReport(filters.clientId!, range, active.signal)
+              : await api.getProjectBudgetReport(filters.projectId!, range, active.signal)
       if (currentSession() !== active) return
       if (queuedLocationFilters !== null) return
       renderReport(filters, report)
@@ -782,7 +939,7 @@ export const createReportsController = (
       localToday(),
       canReadFinancialReports(active.identity.profile),
     )
-    setKind(presentedKind(filters.kind, canReadFinancialReports(active.identity.profile)))
+    setKind(presentedKind(filters.kind, active.identity))
     period.setRange(filters)
     populateCatalog(filters)
     updateVisibleFilters()
@@ -865,8 +1022,7 @@ export const createReportsController = (
         localToday(),
         canReadFinancialReports(identity.profile),
       )
-      const financial = canReadFinancialReports(identity.profile)
-      setKind(presentedKind(initial.kind, financial))
+      setKind(presentedKind(initial.kind, identity))
       period.setRange(initial)
       updateVisibleFilters()
       // A kind this profile cannot read leaves the strip rather than sitting in
@@ -875,7 +1031,7 @@ export const createReportsController = (
       // second session in the same document gets the strip its profile earns.
       kindStrip?.replaceChildren(
         ...[...kindTabs]
-          .filter(([tabKind]) => financial || openToEveryProfile.has(tabKind))
+          .filter(([tabKind]) => canReadKind(tabKind, identity))
           .map(([, anchor]) => anchor),
       )
       if (api.listReportClients === undefined || api.listReportProjects === undefined) {
@@ -907,7 +1063,7 @@ export const createReportsController = (
           projects = loadedProjects
           const next = queuedLocationFilters ?? initial
           queuedLocationFilters = null
-          setKind(presentedKind(next.kind, financial))
+          setKind(presentedKind(next.kind, identity))
           // Before the range, so the range is read under the organisation's own
           // week rather than under Monday and then re-read.
           if (settings !== null) period.setWeekStartDay(settings.week_start_day)
