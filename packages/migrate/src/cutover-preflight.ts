@@ -1,8 +1,17 @@
 import { readFile } from 'node:fs/promises'
 import BetterSqlite3 from 'better-sqlite3'
-import { assertCutoverMigrationLedger, type MigrationLedgerRow } from '@ezacto/db'
+import {
+  assertCutoverMigrationLedger,
+  assertUpgradeMigrationLedger,
+  type MigrationLedgerRow,
+} from '@ezacto/db'
 
-export const runCutoverPreflight = async (options: { databasePath?: string; inputPath?: string }): Promise<number> => {
+export const runCutoverPreflight = async (options: {
+  databasePath?: string
+  inputPath?: string
+  /** An ordinary deploy, where the build being ahead of the database is normal. */
+  upgrade?: boolean
+}): Promise<{ ledgerRows: number; pending: readonly string[] }> => {
   if ((options.databasePath === undefined) === (options.inputPath === undefined)) {
     throw new Error('preflight-migrations requires exactly one of --database or --input (wrangler --json output)')
   }
@@ -29,6 +38,9 @@ export const runCutoverPreflight = async (options: { databasePath?: string; inpu
       (row.statements_sha256 === null || typeof row.statements_sha256 === 'string'))) {
     throw new Error('cutover_migration_ledger_invalid: malformed migration rows')
   }
+  if (options.upgrade === true) {
+    return { ledgerRows: rows.length, pending: assertUpgradeMigrationLedger(rows as MigrationLedgerRow[]) }
+  }
   assertCutoverMigrationLedger(rows as MigrationLedgerRow[])
-  return rows.length
+  return { ledgerRows: rows.length, pending: [] }
 }
