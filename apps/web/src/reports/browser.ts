@@ -407,6 +407,7 @@ export const createReportsController = (
   const kindStrip = [...kindTabs.values()][0]?.parentElement ?? null
   const fromInput = required<HTMLInputElement>('[data-report-from]')
   const toInput = required<HTMLInputElement>('[data-report-to]')
+  const catalogInput = required<HTMLSelectElement>('[data-report-catalog]')
   const clientField = required<HTMLElement>('[data-report-client-field]')
   const clientLabel = required<HTMLElement>('[data-report-client-label]')
   const clientInput = required<HTMLSelectElement>('[data-report-client]')
@@ -422,6 +423,18 @@ export const createReportsController = (
   let kind: ReportKind = 'uninvoiced'
   let clients: readonly GeneralResource[] = []
   let projects: readonly GeneralResource[] = []
+  /**
+   * Reporting on an archived client or project is the point -- the year you are
+   * closing is mostly work that has since finished -- so the catalogs are still
+   * fetched whole and this narrows the two pickers rather than the requests
+   * behind them. On the account #495 was raised from, 66 of 78 projects are
+   * archived, which is a picker six parts noise to one part signal; the same
+   * active/all distinction the client and project directories carry answers it,
+   * defaulting to what you can still book work against. It is one control for
+   * both pickers because a card whose Project list hid archived work while the
+   * Client list beside it did not would be lying about what it holds.
+   */
+  let catalogFilter: 'active' | 'all' = 'active'
   let pending = false
   let retryAction: (() => void) | null = null
   let queuedLocationFilters: ReportFilters | null = null
@@ -434,6 +447,7 @@ export const createReportsController = (
     run.disabled = value
     fromInput.disabled = value
     toInput.disabled = value
+    catalogInput.disabled = value
     clientInput.disabled = value
     projectInput.disabled = value
     if (value) results.setAttribute('aria-busy', 'true')
@@ -505,6 +519,21 @@ export const createReportsController = (
     return item
   }
 
+  /**
+   * The narrowed list keeps whatever the filters already name, archived or not:
+   * that resource is the report on screen, and an option that vanished from
+   * under it would retarget the report to "all" without anybody asking.
+   */
+  const listed = (
+    resources: readonly GeneralResource[],
+    selected: number | null,
+  ): readonly GeneralResource[] =>
+    catalogFilter === 'all'
+      ? resources
+      : resources.filter(
+          (resource) => resource['is_active'] !== false || resource.id === selected,
+        )
+
   const populateCatalog = (filters: Readonly<ReportFilters>): void => {
     const optional = (label: string): HTMLOptionElement => {
       const item = document.createElement('option')
@@ -512,8 +541,14 @@ export const createReportsController = (
       item.textContent = label
       return item
     }
-    clientInput.replaceChildren(optional('All clients'), ...clients.map(option))
-    projectInput.replaceChildren(optional('All projects'), ...projects.map(option))
+    clientInput.replaceChildren(
+      optional('All clients'),
+      ...listed(clients, filters.clientId).map(option),
+    )
+    projectInput.replaceChildren(
+      optional('All projects'),
+      ...listed(projects, filters.projectId).map(option),
+    )
     clientInput.value = filters.clientId === null ? '' : String(filters.clientId)
     projectInput.value = filters.projectId === null ? '' : String(filters.projectId)
   }
@@ -634,6 +669,12 @@ export const createReportsController = (
       void loadReport(filtersFromForm(), true)
     })
   }
+  // Widening the catalogs re-dresses the pickers and nothing else: the report on
+  // screen was run against the filters it names, and those are untouched here.
+  catalogInput.addEventListener('change', () => {
+    catalogFilter = catalogInput.value === 'all' ? 'all' : 'active'
+    populateCatalog(filtersFromForm())
+  })
   form.addEventListener('submit', (event) => {
     event.preventDefault()
     void loadReport(filtersFromForm(), true)
@@ -647,11 +688,14 @@ export const createReportsController = (
       session = { identity, signal, onSessionFailure }
       clients = []
       projects = []
+      catalogFilter = 'active'
       pending = false
       retryAction = null
       queuedLocationFilters = null
+      catalogInput.value = 'active'
       fromInput.disabled = false
       toInput.disabled = false
+      catalogInput.disabled = false
       clientInput.disabled = false
       projectInput.disabled = false
       run.disabled = false
