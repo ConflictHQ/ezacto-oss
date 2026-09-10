@@ -1635,6 +1635,8 @@ export type RecurringFixedLine = {
   "taxed": boolean;
   "taxed2": boolean;
   "project_id": number | null;
+  "through"?: string | null;
+  "installments"?: number | null;
 };
 
 export type RecurringAmountConfig = {

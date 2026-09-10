@@ -1299,6 +1299,18 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  createRecurringInvoice: async (body, idempotencyKey, signal) =>
+    (
+      await client.createRecurringInvoice({
+        'Idempotency-Key': idempotencyKey,
+        body,
+        ...withSignal(signal),
+      })
+    ).data,
+  updateRecurringInvoice: async (id, body, signal) =>
+    (await client.updateRecurringInvoice({ id, body, ...withSignal(signal) })).data,
+  deleteRecurringInvoice: (id, signal) =>
+    client.deleteRecurringInvoice({ id, ...withSignal(signal) }),
   // Unfiltered for the same reason the retainer lists below are: a recurring
   // definition outlives the archiving of the client it bills.
   listRecurringClients: (cursor, signal) =>

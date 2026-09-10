@@ -463,6 +463,107 @@ for (const [runtime, factory] of factories) {
       ).toEqual([{ count: 0 }])
     })
 
+    /**
+     * The keys 0041 and 0044 added, checked against both gates that guard them.
+     *
+     * The editor on `/invoices/recurring` is the only thing in the product that
+     * writes `through` and `installments`, and it emits this exact config. The
+     * browser test that produces the literal cannot reach either gate: it stops
+     * at the request body. So the same shape is run past the TypeScript
+     * assertion and past the trigger here, where both live.
+     */
+    it('[unit] accepts a finite counted line and refuses one with nothing to count back from', async () => {
+      database = await factory()
+      await seedClients(database)
+      await insertProject(database, 7, 1)
+      const finite = {
+        schema_version: 1 as const,
+        type: 'fixed_lines' as const,
+        line_items: [
+          {
+            kind: 'Credit',
+            description: 'CREDIT %line_installment_number% of %line_installment_total%',
+            quantity: 1,
+            // Negative on purpose: the lines that count themselves off are the
+            // credits and the discounts, and the editor sends the sign through.
+            unit_price_cents: -45_000,
+            taxed: false,
+            taxed2: false,
+            project_id: 7,
+            through: '2026-12-15',
+            installments: 4,
+          },
+        ],
+      }
+      publicDatabase.assertRecurringAmountConfig(finite)
+      const stored = await createRecurringInvoiceDefinition(
+        database.orm,
+        createInput({ amountConfig: finite }),
+      )
+      expect(stored.amountConfig).toEqual(finite)
+
+      // The same line without its end date. `installments` is counted backwards
+      // from `through`, so a total with no end would print the same ordinal on
+      // every invoice forever -- which is the failure 0044 exists to remove.
+      const unbounded = {
+        schema_version: 1 as const,
+        type: 'fixed_lines' as const,
+        line_items: [
+          {
+            kind: 'Credit',
+            description: 'CREDIT %line_installment_number% of %line_installment_total%',
+            quantity: 1,
+            unit_price_cents: -45_000,
+            taxed: false,
+            taxed2: false,
+            project_id: 7,
+            installments: 4,
+          },
+        ],
+      }
+      expect(() => publicDatabase.assertRecurringAmountConfig(unbounded)).toThrow(
+        'amountConfig.line_items[0].installments requires amountConfig.line_items[0].through',
+      )
+      // And through the door the API actually uses, which is the one the editor
+      // is now behind: `createRecurring` and `updateRecurring` both run the
+      // assertion before any SQL is built, so the refusal is a 422 rather than
+      // a trigger abort.
+      await expect(
+        createRecurringInvoiceDefinition(
+          database.orm,
+          createInput({ amountConfig: unbounded }),
+        ),
+      ).rejects.toThrow('installments requires')
+      // The trigger refuses the spelling that says `null` out loud. It does not
+      // refuse the one that omits the key -- `optionalInstallments` in 0044
+      // asks `json_type(line, '$.through') = 'text'`, which is NULL rather than
+      // false for an absent key, and a NULL disjunct in the `NOT EXISTS`
+      // rejection filter matches no row. Recorded, not fixed, here: the hole is
+      // in a migration already applied in production, closing it needs a
+      // trigger-replacing migration of its own, and nothing can reach it while
+      // both writers in front of it refuse the config outright.
+      await expect(
+        database.run(
+          `INSERT INTO recurring_invoices (
+            id, client_id, definition_status, subject_template, notes_template,
+            every_n_months, day_of_month, next_issue_on, amount_config,
+            created_at, updated_at
+          ) VALUES (200, 1, 'complete', 'Subject', '', 1, 1, '2026-09-01', ?, ?, ?)`,
+          JSON.stringify({
+            ...unbounded,
+            line_items: [{ ...unbounded.line_items[0]!, through: null }],
+          }),
+          timestamp,
+          timestamp,
+        ),
+      ).rejects.toThrow()
+      // One row, the accepted one. Counted so the refusals above cannot pass by
+      // having written nothing at all.
+      expect(
+        await database.rows<{ count: number }>(`SELECT count(*) AS count FROM recurring_invoices`),
+      ).toEqual([{ count: 1 }])
+    })
+
     it('[unit] rejects divergent duplicate names at every physical JSON object layer', async () => {
       database = await factory()
       await seedClients(database)
