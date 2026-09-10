@@ -421,6 +421,45 @@ describe('S-1 through S-5 application shell', () => {
     expect(html).toContain('data-auth-action disabled')
   })
 
+  it('[e2e] gives the top bar a layout for every width between phone and full', () => {
+    // The bar's contents come to 1325px on one row, and for a long time the only
+    // breakpoint in the stylesheet was 720px. Everything between -- most laptops,
+    // every tablet in landscape -- drew the account over itself and pushed the
+    // page sideways. Each band below has to keep existing, and each has to leave
+    // the bar less to carry than the width it starts at.
+    expect(webAssets.stylesheet).toMatch(
+      /@media \(min-width: 721px\) and \(max-width: 1139px\)[\s\S]*\.primary-nav \{[\s\S]*display: none;/u,
+    )
+    expect(webAssets.stylesheet).toMatch(
+      /@media \(min-width: 721px\) and \(max-width: 1139px\)[\s\S]*\.menu-trigger \{[\s\S]*display: block;/u,
+    )
+    expect(webAssets.stylesheet).toMatch(
+      /@media \(min-width: 721px\) and \(max-width: 1339px\)[\s\S]*\.identity-text \{[\s\S]*display: none;/u,
+    )
+    // The drawer the nav folds into carries the same links, so nothing is lost.
+    const html = renderAppShell({ environment: 'test', release: 'abcdef012345' })
+    expect(html).toContain('data-menu-dialog')
+    expect(html).toContain('aria-label="Mobile primary"')
+    // Phone keeps its name: down there the account has a row to itself.
+    expect(webAssets.stylesheet).not.toMatch(
+      /@media \(max-width: 720px\)[\s\S]{0,4000}\.identity-text \{[\s\S]{0,80}display: none;/u,
+    )
+  })
+
+  it('[e2e] truncates the account name rather than painting it over the controls', () => {
+    // `identity-text` is overflow: visible, so a name with nowhere to go does not
+    // stop at its box -- it paints over the Settings button beside it. And a
+    // control that shrinks is a control that wraps: "Sign out" was arriving on
+    // two lines. Both are the bar telling you it ran out of room, in the two
+    // places that matter least and cost most.
+    expect(webAssets.stylesheet).toMatch(
+      /\.identity-name,\s*\.identity-meta \{[\s\S]*text-overflow: ellipsis;/u,
+    )
+    expect(webAssets.stylesheet).toMatch(
+      /\.identity-settings,\s*\.identity-signout \{[\s\S]*flex: none;[\s\S]*white-space: nowrap;/u,
+    )
+  })
+
   it('[e2e:phone-week] swaps the seven-day table for a touch-sized day switcher', () => {
     const html = renderAppShell({ environment: 'test', release: 'abcdef012345' })
     expect(html).toContain('class="day-switcher"')

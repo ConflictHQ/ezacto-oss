@@ -1776,6 +1776,17 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
+/*
+ * Four across needs 802px; the widest field is Amount, which wants 165px and
+ * was being handed 145. Below that the row pairs up rather than clipping the
+ * one field on the form where a cut-off value would be read as a real number.
+ */
+@media (min-width: 721px) and (max-width: 801px) {
+  .expense-form,
+  .expense-filter-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 .expense-form label,
 .expense-filter-form label,
 .expense-attachments form label {
@@ -1802,6 +1813,13 @@
   border-radius: var(--ez-radius);
   background: var(--ez-ground);
   color: var(--ez-ink);
+  /*
+   * A control in a grid cell starts at `min-width: auto`, which for a select is
+   * its longest option -- "All reimbursement states" is wider than the column it
+   * sits in, so the box pushed out of its cell rather than sitting inside it.
+   * Zero lets the cell decide, which is what the four-up grid is for.
+   */
+  min-width: 0;
 }
 .expense-form textarea {
   resize: vertical;
@@ -2919,6 +2937,19 @@ dialog h2,
   min-width: 0;
   line-height: 1.25;
 }
+/*
+ * Both lines truncate. `identity-text` is `overflow: visible`, so a name with
+ * nowhere to go does not stop at its box -- it paints straight over whatever
+ * is beside it, which here is the Settings button. An ellipsis is the honest
+ * failure: the profile name is decoration, and the two controls next to it are
+ * the only route into a person's own account.
+ */
+.identity-name,
+.identity-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .identity-name {
   font-weight: 600;
   text-transform: capitalize;
@@ -3041,6 +3072,58 @@ dialog h2,
   color: var(--ez-ink);
   font-size: 13px;
 }
+/* Neither is allowed to shrink or wrap: "Sign out" broken across two lines was
+   how the bar announced it had run out of room, and it is a control, not copy. */
+.identity-settings,
+.identity-signout {
+  flex: none;
+  white-space: nowrap;
+}
+/*
+ * Between the phone bar and the width the full bar actually needs, there was
+ * nothing at all -- one breakpoint at 720px, and a top bar whose contents come
+ * to 1325px laid out on one row. Everything from 721px to 1324px, which is to
+ * say most laptops and every tablet in landscape, drew the account on top of
+ * itself and pushed the page into a sideways scroll.
+ *
+ * Two steps close it, and the widths are what the parts measure rather than
+ * round numbers:
+ *
+ *   >= 1340px  everything, as designed (needs 1325)
+ *   1140-1339  the full nav on tighter padding; the search chip goes and the
+ *              account keeps only its avatar (1075)
+ *   721-1139   the nav folds into the Menu drawer that phone width already
+ *              uses -- same links, same dialog (639)
+ *
+ * Each band has room to spare at the width it starts at, so the bar is never
+ * asked to lay out in less space than it needs. The account gives up its name
+ * below 1340 rather than truncating it: the profile and user number are
+ * decoration, and Settings -- which stays -- is the page that states both.
+ */
+/* Phone is excluded: down there the account has a whole row to itself and the
+   name fits, which is the one thing the 720px layout already got right. */
+@media (min-width: 721px) and (max-width: 1339px) {
+  .command-trigger {
+    display: none;
+  }
+  .identity-text {
+    display: none;
+  }
+}
+@media (min-width: 721px) and (max-width: 1139px) {
+  .primary-nav {
+    display: none;
+  }
+  .menu-trigger {
+    display: block;
+  }
+}
+@media (min-width: 1140px) and (max-width: 1339px) {
+  .primary-nav a {
+    padding: 0 10px;
+  }
+}
+
 /* There is no corner to sit in at phone width: brand, timer and menu already
    fill the bar, so the account wraps onto its own row inside the header rather
    than overflowing it. Sign out is a required 44px tap target there. */
