@@ -468,6 +468,41 @@ for (const [runtime, factory] of factories) {
       }
     });
 
+    it("[security] serves contractor cost to an administrator and to nobody else", async () => {
+      // Every column of this report is a cost, and cost authority is the
+      // administrator's alone. Refusing the whole report beats serving one with
+      // its numbers stripped, where a person with no rate and a rate the reader
+      // may not see would look identical.
+      harness = await factory();
+
+      const allowed = await harness.request(
+        "/reports/contractor?from=2026-08-01&to=2026-08-31",
+      );
+      expect(allowed.status, await allowed.clone().text()).toBe(200);
+      const body = (await allowed.json()) as {
+        data: { from: string; to: string; rows: { cost_cents: number | null }[] };
+      };
+      expect(body.data.from).toBe("2026-08-01");
+      expect(body.data.to).toBe("2026-08-31");
+      // The fixture has tracked time, so this must not be vacuously empty --
+      // an empty set would satisfy every assertion below without measuring one.
+      expect(body.data.rows.length).toBeGreaterThan(0);
+
+      for (const profile of [
+        "member",
+        "project_manager",
+        "people_admin",
+        "accounting",
+        "executive_manager",
+      ] as const) {
+        const refused = await harness.request(
+          "/reports/contractor?from=2026-08-01&to=2026-08-31",
+          profile,
+        );
+        expect(refused.status, `${profile} reached the contractor report`).toBe(403);
+      }
+    });
+
     it("[unit] keeps uninvoiced totals identical to the generation preview to the cent", async () => {
       harness = await factory();
       const response = await harness.request(

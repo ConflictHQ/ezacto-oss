@@ -43,6 +43,8 @@ const tokenService: ApiTokenService = {
 }
 
 const reports: ReportReader = {
+  // Not exercised here; present because ReportReader requires it.
+  contractorCost: async (range) => ({ from: range.from, to: range.to, rows: [] }),
   // Not exercised here; present because ReportReader requires it. Returning an
   // empty shape rather than throwing keeps a fixture that is about something
   // else from failing loudly if a future test does reach it.

@@ -2,7 +2,7 @@ import { canViewMoneyField } from "@ezacto/core";
 import type { Hono } from "hono";
 import { requireApiScope } from "./auth.js";
 import type { ApiContext, UserPrincipal } from "./context.js";
-import type { FieldError } from "./errors.js";
+import { ApiError, type FieldError } from "./errors.js";
 import {
   assertFields,
   notFound,
@@ -15,6 +15,26 @@ import {
 export interface ReportDateRange {
   from: string;
   to: string;
+}
+
+export interface ContractorCostRowRecord {
+  userId: number;
+  name: string;
+  /** A proposal for matching the person at a payout provider, never the join. */
+  payrollEmail: string | null;
+  isContractor: boolean;
+  /** Always the organization's currency: a cost rate carries none of its own. */
+  currency: string;
+  roundedSeconds: number;
+  /** Null when any entry in the row has no cost rate. */
+  costCents: number | null;
+  entriesWithoutRate: number;
+}
+
+export interface ContractorCostReportRecord {
+  from: string;
+  to: string;
+  rows: readonly ContractorCostRowRecord[];
 }
 
 export interface UninvoicedCurrencyRecord {
@@ -138,6 +158,7 @@ export interface ReportReader {
     userId: number;
     projectId?: number;
   }): Promise<MyHoursReportRecord>;
+  contractorCost(range: Readonly<ReportDateRange>): Promise<ContractorCostReportRecord>;
   uninvoiced(filter: {
     from: string;
     to: string;
@@ -248,6 +269,32 @@ const serializeUninvoiced = (
           total_cents: total.totalCents,
         }
       : {}),
+  })),
+});
+
+/**
+ * Every figure here is a cost, so the report is administrator-only as a whole
+ * rather than served with its numbers stripped. A "contractor cost" report
+ * without costs is an hours report under a name that promises otherwise, and a
+ * reader could not tell a person with no rate from a person whose rate they are
+ * not allowed to see.
+ *
+ * `cost_cents` stays null exactly where the reader made it null -- any entry in
+ * the row without a rate -- and `entries_without_rate` carries the count, so the
+ * screen names the gap instead of showing a total that quietly omits hours.
+ */
+const serializeContractorCost = (report: Readonly<ContractorCostReportRecord>) => ({
+  from: report.from,
+  to: report.to,
+  rows: report.rows.map((row) => ({
+    user_id: row.userId,
+    name: row.name,
+    payroll_email: row.payrollEmail,
+    is_contractor: row.isContractor,
+    currency: row.currency,
+    rounded_seconds: row.roundedSeconds,
+    cost_cents: row.costCents,
+    entries_without_rate: row.entriesWithoutRate,
   })),
 });
 
@@ -419,6 +466,36 @@ export const installReportRoutes = <Bindings extends object>(
     return context.json(
       {
         data: serializeMyHours(report),
+        links: {
+          self:
+            new URL(context.req.url).pathname + new URL(context.req.url).search,
+        },
+      },
+      200,
+      { "cache-control": "no-store" },
+    );
+  });
+
+  api.get("/reports/contractor", async (context) => {
+    requireApiScope(context, "reports:read");
+    const principal = context.get("principal");
+    // The whole report is cost, and cost authority belongs to the administrator
+    // alone. Refused here rather than by omitting the fields, because that
+    // alternative serves a report with every column missing and no statement of
+    // why.
+    if (!canViewMoneyField(principal, "cost_rate")) {
+      throw new ApiError({
+        status: 403,
+        code: "profile_forbidden",
+        message: "The acting user profile cannot perform this operation.",
+      });
+    }
+    const parsed = rangeFrom(new URL(context.req.url), reportKeys);
+    assertFields(parsed.errors);
+    const report = await reports.contractorCost(parsed.range);
+    return context.json(
+      {
+        data: serializeContractorCost(report),
         links: {
           self:
             new URL(context.req.url).pathname + new URL(context.req.url).search,

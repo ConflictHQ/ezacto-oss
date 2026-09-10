@@ -1234,6 +1234,16 @@ const reportOperations: ApiContractOperation[] = [
   },
   {
     method: "get",
+    path: "/api/v1/reports/contractor",
+    operationId: "getContractorCostReport",
+    summary: "Total what each person cost over a period",
+    tag: "reports",
+    responseStatus: 200,
+    responseSchema: "ContractorCostReportEnvelope",
+    parameters: [...requiredReportRange],
+  },
+  {
+    method: "get",
     path: "/api/v1/reports/uninvoiced",
     operationId: "getUninvoicedReport",
     summary: "Report uninvoiced tracked time and expenses",
@@ -5008,6 +5018,46 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   UninvoicedReportEnvelope: envelope("UninvoicedReport"),
+  ContractorCostRow: {
+    type: "object",
+    required: [
+      "user_id",
+      "name",
+      "payroll_email",
+      "is_contractor",
+      "currency",
+      "rounded_seconds",
+      "cost_cents",
+      "entries_without_rate",
+    ],
+    properties: {
+      user_id: integerSchema,
+      name: stringSchema,
+      // A proposal for matching the person at a payout provider, never the join
+      // itself -- see #421. Null where the person has no primary address.
+      payroll_email: nullable(stringSchema),
+      is_contractor: { type: "boolean" },
+      // The organization's currency, always: a cost rate carries none of its own.
+      currency: stringSchema,
+      rounded_seconds: { type: "integer", minimum: 0 },
+      // Null when any entry in the row has no cost rate. A number that silently
+      // omitted those hours would look payable and underpay.
+      cost_cents: nullable(signedIntegerSchema),
+      entries_without_rate: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  ContractorCostReport: {
+    type: "object",
+    required: ["from", "to", "rows"],
+    properties: {
+      from: stringSchema,
+      to: stringSchema,
+      rows: { type: "array", items: { $ref: "#/components/schemas/ContractorCostRow" } },
+    },
+    additionalProperties: false,
+  },
+  ContractorCostReportEnvelope: envelope("ContractorCostReport"),
   ClientRollupCurrency: {
     type: "object",
     required: ["currency", "expense_cents"],
