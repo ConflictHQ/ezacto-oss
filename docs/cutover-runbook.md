@@ -72,6 +72,21 @@ first request after cutover (`entries/worker/src/runtime.ts`), so the first
 minute of the cutover is a schema migration rather than a read. That is
 survivable but it is not something to discover.
 
+After load and again before import, run the named, read-only release gate:
+
+```sh
+node packages/migrate/dist/cli.js preflight-migrations --database ./cutover.db
+```
+
+It must report `pending migrations: 0`. This compares exact migration IDs **and
+statement checksums**, rejecting missing/extra IDs, duplicate evidence, old
+unverifiable checksums, and changed migration text. Counts alone cannot pass it.
+The production deployment workflow repeats this gate against the bound remote
+D1 database before deploying. Rebuild an outdated artifact from the exact deploy
+commit and reapply saved worksheet input; never use the first live request to
+repair the artifact. Preserve the old database and filled worksheet files until
+the replacement has passed this gate and reconciliation.
+
 ### What this runbook does not cover
 
 The database and its attachments. Sign-in and outbound mail are separate
@@ -333,8 +348,9 @@ sqlite3 ./cutover.db "
          (SELECT count(*) FROM _ezacto_worksheet_completions) AS completions;"
 ```
 
-`incomplete_definitions` must be 0 and `retainer_ledger_rows` must be non-zero
-(the opening entry is only written when the balance is above zero). Derive the
+`incomplete_definitions` must be 0. For the documented zero retainer balance,
+`retainer_ledger_rows` may be zero: the completion evidence, not a fabricated
+zero ledger entry, proves it was handled. Derive the
 expected completion count from the stubs — one per `retainers` row with a
 `harvest_id`, one per `recurring_invoices` row — rather than hardcoding 4.
 

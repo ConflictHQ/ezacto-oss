@@ -2,7 +2,7 @@ import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
-import { migrateContainer, migrateD1 } from '../src/migrate.js'
+import { assertCutoverMigrationLedger, migrateContainer, migrateD1, migrationIds, type MigrationLedgerRow } from '../src/migrate.js'
 import { orgPeopleMigration } from '../src/migrations/0000_org_people.js'
 import { projectsTimeMigration } from '../src/migrations/0002_projects_time.js'
 
@@ -78,6 +78,24 @@ for (const [runtime, factory] of factories) {
     let database: TestDatabase | undefined
 
     afterEach(async () => database?.close())
+
+    it('[security #468] requires exact source ids and checksums before cutover', async () => {
+      const db = await factory()
+      database = db
+      await db.migrate()
+      const rows = await db.rows<MigrationLedgerRow>('SELECT id, statements_sha256 FROM _ezacto_migrations ORDER BY id')
+      expect(() => assertCutoverMigrationLedger(rows)).not.toThrow()
+      expect(() => assertCutoverMigrationLedger(rows.slice(0, -6))).toThrow(`missing=${migrationIds.slice(-6).join(',')}`)
+      // A same-count ledger with the wrong id cannot satisfy set equality.
+      expect(() => assertCutoverMigrationLedger([...rows.slice(0, -1), { ...rows.at(-1)!, id: '9999_unknown' }])).toThrow(/unexpected=9999_unknown/)
+      expect(() => assertCutoverMigrationLedger([...rows, rows[0]!])).toThrow(/duplicates=0000_org_people/)
+      expect(() => assertCutoverMigrationLedger(rows.map((row, i) => i === 0 ? { ...row, statements_sha256: null } : row))).toThrow(/unverifiable=0000_org_people/)
+      expect(() => assertCutoverMigrationLedger(rows.map((row, i) => i === 0 ? { ...row, statements_sha256: '0'.repeat(64) } : row))).toThrow(/changed=0000_org_people/)
+      // Readiness on an admitted artifact applies no additional migrations.
+      const before = await db.rows('SELECT * FROM _ezacto_migrations ORDER BY id')
+      await db.migrate()
+      expect(await db.rows('SELECT * FROM _ezacto_migrations ORDER BY id')).toEqual(before)
+    })
 
     it('[unit] records the statements it applied for every migration', async () => {
       const db = await factory()

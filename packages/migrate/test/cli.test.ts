@@ -89,8 +89,18 @@ describe('ezacto-migrate CLI entrypoint', () => {
     expect(stdout).toContain('verify')
     expect(stdout).toContain('load')
     expect(stdout).toContain('reconcile')
+    expect(stdout).toContain('preflight-migrations')
     expect(stdout).toContain('finish-retainers')
     expect(stdout).toContain('finish-recurring-invoices')
+  })
+
+  it('[security #468] runs the cutover preflight without Harvest credentials', async () => {
+    const input = join(dir, 'ledger.json')
+    await writeFile(input, JSON.stringify([{ success: true, results: [] }]))
+    const { code, stderr } = await runNode(cliPath, ['preflight-migrations', '--input', input], { cwd: dir })
+    expect(code).toBe(1)
+    expect(stderr).toContain('cutover_migration_ledger_mismatch')
+    expect(stderr).not.toContain('HARVEST_PAT')
   })
 
   it('[unit] reconcile is offline and requires only the snapshot and database paths', async () => {

@@ -68,7 +68,7 @@ const ledgerChecksumColumn = `ALTER TABLE _ezacto_migrations ADD COLUMN statemen
 const statementsChecksum = (statements: readonly string[]): string =>
   bytesToHex(sha256(utf8ToBytes(statements.join('\u0000'))))
 
-interface MigrationLedgerRow {
+export interface MigrationLedgerRow {
   id: string
   statements_sha256: string | null
 }
@@ -1444,6 +1444,19 @@ const migrations = [
 // Frozen because it is exported: a consumer that sorted it in place would corrupt every
 // fixture derived from it in the same module graph.
 export const migrationIds: readonly string[] = Object.freeze(migrations.map(({ id }) => id))
+
+/** Cutover is stricter than an upgrade: no pending, unknown, or unverifiable DDL. */
+export const assertCutoverMigrationLedger = (rows: readonly MigrationLedgerRow[]): void => {
+  const expected = new Map<string, string>(migrations.map(({ id, statements }) => [id, statementsChecksum(statements)]))
+  const actual = new Set(rows.map(({ id }) => id))
+  const missing = migrationIds.filter((id) => !actual.has(id))
+  const unexpected = rows.filter(({ id }) => !expected.has(id)).map(({ id }) => id)
+  const unverifiable = rows.filter(({ statements_sha256 }) => statements_sha256 === null).map(({ id }) => id)
+  const changed = rows.filter(({ id, statements_sha256 }) => expected.has(id) && statements_sha256 !== null && expected.get(id) !== statements_sha256).map(({ id }) => id)
+  const duplicates = rows.filter(({ id }, index) => rows.findIndex((row) => row.id === id) !== index).map(({ id }) => id)
+  if ([missing, unexpected, unverifiable, changed, duplicates].every((ids) => ids.length === 0)) return
+  throw new Error(`cutover_migration_ledger_mismatch: missing=${missing.join(',') || 'none'}; unexpected=${unexpected.join(',') || 'none'}; unverifiable=${unverifiable.join(',') || 'none'}; changed=${changed.join(',') || 'none'}; duplicates=${duplicates.join(',') || 'none'}. Rebuild from the exact deployment source; do not migrate on first live request.`)
+}
 
 // The ledger records that an id ran, never what ran, so amending a shipped
 // migration reaches a fresh database and no other: two databases with identical
