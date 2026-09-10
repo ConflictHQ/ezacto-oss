@@ -952,6 +952,20 @@ describe('Reports Stage 1 browser controller', () => {
       '?report=uninvoiced&from=2026-07-01&to=2026-07-31',
     )
     expect(document.querySelector('[data-period-summary]')?.textContent).toBe('July 2026')
+
+    // Back is the other half of stepping: the control has to follow the address
+    // it lands on, or the label names a period the results below it are not.
+    window.history.back()
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-period-summary]')?.textContent).toBe(
+        'August 2026',
+      ),
+    )
+    expect(getUninvoicedReport).toHaveBeenLastCalledWith(
+      { from: '2026-08-01', to: '2026-08-31' },
+      expect.any(AbortSignal),
+    )
   })
 
   it('[browser] reads a whole week as a week under the organisation week start', async () => {

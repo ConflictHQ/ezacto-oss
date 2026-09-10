@@ -413,12 +413,17 @@ export const createReportsController = (
    * it after every arrow would turn "last quarter, the one before, the one
    * before that" into six clicks. A hand-edited custom range still waits for
    * the button, because half a range is not a range.
+   *
+   * The callback ignores the range it is handed: the control has already
+   * written it to its own inputs, which is where `filtersFromForm` reads the
+   * range from, and taking it from the argument instead would be a second copy
+   * of the same dates that could disagree with the pickers beside them.
    */
   const period = createPeriodControl({
     label: 'Period',
     today: localToday,
-    onChange: (range) => {
-      void loadReport({ ...filtersFromForm(), ...range }, true)
+    onChange: () => {
+      void loadReport(filtersFromForm(), true)
     },
   })
   required<HTMLElement>('[data-report-period]').appendChild(period.element)
