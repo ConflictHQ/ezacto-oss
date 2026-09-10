@@ -62,7 +62,38 @@ describe('demo reset', () => {
     expect([...filled].sort()).toEqual([...PRESERVED_TABLES].sort())
   })
 
-  it('[unit] leaves D1\u2019s own bookkeeping table alone', async () => {
+  it('[security] puts the triggers back when the wipe fails halfway through', async () => {
+    // The wipe drops every trigger before it empties anything, so if the drops
+    // commit and the rest does not, what is left is a live database with no
+    // write guards on it -- and nothing says so. That is what happened to
+    // ezacto.io: one refused DELETE, and three hundred triggers gone until
+    // somebody thought to count them. One transaction is the whole defence.
+    const { client, driver } = harness()
+    migrateContainer(client)
+    const triggers = () =>
+      (client.prepare(`SELECT count(*) AS n FROM sqlite_master WHERE type = 'trigger'`).get() as {
+        n: number
+      }).n
+    const before = triggers()
+    // A table in the list that is not in the database. Any statement of the
+    // wipe failing earns the same rollback; this is the cheapest one to stage.
+    const failing: DemoResetDriver = {
+      ...driver,
+      schemaObjects: async () => {
+        const objects = await driver.schemaObjects()
+        return { ...objects, tables: [...objects.tables, 'table_that_is_not_there'] }
+      },
+    }
+
+    await expect(
+      wipeAndSeedDemo(failing, { now, years, confirm: 'wipe-and-reload' }),
+    ).rejects.toThrow()
+
+    expect(before).toBeGreaterThan(300)
+    expect(triggers()).toBe(before)
+  })
+
+  it('[unit] leaves the bookkeeping table D1 keeps for itself alone', async () => {
     // The wipe reads its table list out of sqlite_master, and on D1 that list
     // includes `_cf_KV`, which D1's authorizer refuses every statement against.
     // A DELETE against it does not empty a table -- it fails the batch with
