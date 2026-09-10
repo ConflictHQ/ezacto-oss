@@ -1,39 +1,27 @@
 # Build Process & Quality Discipline
 
-The discipline layer for running an engagement with this kit. The portal
-([README](README.md)) is the knowledge surface; this file is *how the work gets
-done underneath it* — the build cycle, the quality gates, and the git conventions
-that keep a delivery shippable.
+How work gets done in this repo — the build cycle, the quality gates, and the
+git conventions that keep the default branch shippable. [README.md](README.md)
+says what ezacto is; [bootstrap.md](bootstrap.md) says what it is for and what
+the constraints are; this file is the discipline underneath both.
 
-It applies to **Tier 2 — Full Engagement** (portal + product build + infra) and
-**Tier 3 — Managed Project** (running an existing/ongoing build through the portal's
-project surfaces). Tier 1 (portal only) doesn't need it. The process is generic and
-reusable across engagements, languages, and teams.
-
-> **Rides on the scaffolding, doesn't reinvent it.** Repos here start from a
-> project template that already ships the toolchain: auth, billing, jobs, email,
-> Docker, **CI/CD**, design system, and IaC, plus AI-agent shims. So most of the
-> quality scaffolding below already exists in the repo from day one. This process
-> is the *human/agent discipline* that runs on top of that scaffolding — not a
-> second copy of it.
+It applies to everything that lands here, whether a person or an agent runs it.
+[CONTRIBUTING.md](CONTRIBUTING.md) is the shorter front door for a first patch.
 
 ## Core shape: plan top-down, build bottom-up
 
 Two directions, deliberately opposite.
 
 - **Plan top-down.** Decompose from the outcome down to executable units:
-  `phase → epic → feature → story`. This is exactly the structured plan the portal
-  already renders (`specs/` tree + Plan page — see
-  [docs/patterns/information-architecture.md](docs/patterns/information-architecture.md)).
+  `phase → epic → feature → story`. [PLAN.md](PLAN.md) carries that decomposition.
   The plan exists *before* the build; a story is the smallest unit an agent or person
   picks up and finishes in one cycle.
 - **Build bottom-up.** Implement from the leaves up: data model and primitives before
   the feature that composes them, the feature before the screen that uses it.
   Integrate continuously — never leave a layer half-wired waiting on a layer above it.
 
-The portal's project surfaces are the live mirror of this: the plan, roadmap,
-deliverables, and trackers show *what's planned*; the build cycle below produces *what's
-done*; the two should always agree.
+The issue tracker is the live mirror of this: open issues show *what's planned*,
+the build cycle below produces *what's done*, and the two should always agree.
 
 ## The build cycle: issue → branch → PR → review → merge
 
@@ -42,8 +30,7 @@ Every unit of work runs the same loop. No work lands outside it.
 1. **Issue.** One issue per story/feature. It states the goal, the acceptance
    criteria, and how it will be verified. Issues map back to the plan. Follow the
    issue workflow: move it to **in-progress** when you start, update it as you go,
-   close the loop when done — including in Tier 3, where the issue tracker *is* the
-   management surface.
+   and close the loop when done.
 2. **Branch.** Cut a branch off the default branch, named for the issue
    (e.g. `feat/<id>-short-slug`, `fix/<id>-short-slug`). Never commit features
    directly to the default branch.
@@ -55,8 +42,7 @@ Every unit of work runs the same loop. No work lands outside it.
 5. **Review.** At least one review before merge. Review checks correctness against
    the acceptance criteria, then reuse/simplicity. CI must be green (next section).
 6. **Merge.** Merge to the default branch (squash or merge commit — **never rebase**,
-   see git conventions). Close the issue. The deliverable/tracker on the portal moves
-   to done.
+   see git conventions). Close the issue.
 
 This is the same loop whether a person or an AI agent runs it; agents get the
 acceptance criteria as their success condition and the quality gates as their stop
@@ -69,10 +55,8 @@ A story is **done** when it is real. Not when it compiles around a `TODO`.
 - No stubbed functions, no `return null /* implement later */`, no mock data shipped
   as if it were real, no commented-out "will finish next sprint" blocks on the
   default branch.
-- An empty state is fine *when it's a designed empty state* (the portal does this
-  deliberately — see
-  [docs/practices/filling-in-a-new-engagement.md](docs/practices/filling-in-a-new-engagement.md)).
-  A placeholder pretending to be a feature is not.
+- An empty state is fine *when it's a designed empty state*. A placeholder
+  pretending to be a feature is not.
 - If a story is too big to finish for real, split it in the plan — don't half-ship it.
 
 **Done when:** every changed line traces to the issue, the feature works end to end,
@@ -121,35 +105,15 @@ formatter can settle it.
   "Generated with" or `Co-Authored-By` trailers for an assistant.
 - **Meaningful commits.** Each commit is a coherent step with a message that says
   *why*, not just *what*. No `wip`/`fix`/`asdf` noise on the default branch.
-- **Private repos.** Engagement code, infra, and the portal are private by default.
 - **One branch per issue**, merged via PR; the default branch is always shippable.
-- **Submodules first.** If the workspace mounts product repos as submodules (see
-  [docs/patterns/workspace-metarepo.md](docs/patterns/workspace-metarepo.md)), push
-  submodule changes before the parent repo so the parent never points at an unpushed
-  commit.
-
-## How the process feeds the portal
-
-The discipline above isn't separate from the knowledge surface — it produces it.
-
-- Each closed issue is a **deliverable** and a tracker update on the portal.
-- The **plan** (`specs/` tree) is the top-down decomposition the build cycle consumes.
-- Code context for agents working the build comes from an **indexed graph of the
-  repo** — structure, call graph, imports — rather than from whatever a grep
-  happened to turn up.
-- Meeting decisions that change the plan come in through the **recording
-  pipeline** and surface as action items and decisions.
-
-The point of the whole kit: template + scaffolding + this process + agents = skip
-months of setup and toolchain wiring, and start the loop on features on day one.
+- **Submodules first.** Where a repo mounts another as a submodule, push the
+  submodule before the parent, so the parent never points at an unpushed commit.
 
 ## Related
 
-- [README.md](README.md) — the portal and the kit overview.
-- [docs/practices/adversarial-review-and-acceptance.md](docs/practices/adversarial-review-and-acceptance.md)
-  — break your own claims before the PR; acceptance means the running system.
-- [docs/patterns/information-architecture.md](docs/patterns/information-architecture.md)
-  — the plan/deliverables/tracker surfaces this process drives.
-- [docs/patterns/workspace-metarepo.md](docs/patterns/workspace-metarepo.md) — product
-  repos as submodules under the portal.
-- [docs/practices/deployment.md](docs/practices/deployment.md) — shipping the portal.
+- [README.md](README.md) — what ezacto is and how to run it.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — the short path to a first patch, and the CLA.
+- [bootstrap.md](bootstrap.md) — scope, constraints, and the decisions behind them.
+- [PLAN.md](PLAN.md) — the top-down decomposition this cycle consumes.
+- [docs/testing-strategy.md](docs/testing-strategy.md) — what the gates below actually run.
+- [docs/architecture.md](docs/architecture.md) — the runtime the build targets.
