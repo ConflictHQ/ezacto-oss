@@ -159,6 +159,12 @@ export const teamGeneralResourceAccessSql = (
     if (kind === 'clients') return memberClientAccessSql(viewer, column('clients', 'id'))
     if (kind === 'contacts')
       return memberClientAccessSql(viewer, column('contacts', 'client_id'))
+    // Task assignments name a project on every row. Left open they hand back
+    // the project ids, task ids, active flags and budgeted hours of work the
+    // three predicates above have just withheld, which reassembles the firm's
+    // project roster one table over -- so the same entitlement applies here.
+    if (kind === 'task-assignments')
+      return memberProjectAccessSql(viewer, column('task_assignments', 'project_id'))
   }
   if (kind === 'users') return teamPersonAccessSql(viewer)
   if (kind !== 'user-assignments') return sql`1`
