@@ -25608,7 +25608,8 @@
             "type": "string",
             "enum": [
               "approval",
-              "expenses"
+              "expenses",
+              "own_money"
             ]
           },
           "enabled": {

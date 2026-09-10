@@ -341,6 +341,18 @@ export const createContainerRuntime = async (
           .get() as { enabled: number } | undefined
         return row?.enabled === 1
       },
+      // The #520 setting, read the same way the module gates beside it are.
+      // Absent key means off, so a container that upgrades keeps every rate
+      // where it was.
+      isOwnMoneyVisible: async () => {
+        const row = database
+          .prepare(
+            `SELECT COALESCE(json_extract(modules, '$.own_money'), 0) AS enabled
+             FROM organizations WHERE id = 1`,
+          )
+          .get() as { enabled: number } | undefined
+        return row?.enabled === 1
+      },
       isTeamModuleEnabled: async () => {
         const row = database
           .prepare(
