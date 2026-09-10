@@ -594,6 +594,19 @@ export const createRuntimeServices = async (
     },
     moduleSettings: createModuleSettingsRepository(drizzle),
     ssoProvisioningDomains: createD1SsoProvisioningDomainStore(database),
+    // The #520 organisation setting, read the same way the other two module
+    // gates are. Default off is the absence of the key: an instance that
+    // upgrades has no `own_money` in its modules JSON and COALESCE answers 0,
+    // so nobody starts seeing their rates because a deploy happened.
+    isOwnMoneyVisible: async () => {
+      const row = await database
+        .prepare(
+          `SELECT COALESCE(json_extract(modules, '$.own_money'), 0) AS enabled
+           FROM organizations WHERE id = 1`,
+        )
+        .first<{ enabled: number | boolean }>();
+      return row?.enabled === 1 || row?.enabled === true;
+    },
     isTeamModuleEnabled: async () => {
       const row = await database
         .prepare(
