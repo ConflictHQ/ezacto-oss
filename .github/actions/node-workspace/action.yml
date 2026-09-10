@@ -1,6 +1,9 @@
 name: node workspace
 description: Node at the pinned version with the workspace installed. Assumes the repository is already checked out.
 inputs:
+  node-version:
+    description: Override the pinned Node version for compatibility checks.
+    default: ''
   playwright:
     description: Install the Chromium shell for browser acceptance.
     default: 'false'
@@ -9,7 +12,8 @@ runs:
   steps:
     - uses: actions/setup-node@v4
       with:
-        node-version-file: .nvmrc
+        node-version: ${{ inputs.node-version }}
+        node-version-file: ${{ inputs.node-version == '' && '.nvmrc' || '' }}
         cache: npm
     - name: install
       shell: bash
