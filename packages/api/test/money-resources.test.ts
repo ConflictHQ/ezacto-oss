@@ -1906,6 +1906,11 @@ for (const [runtime, factory] of factories) {
             userId: 1,
             profile: "accounting",
             managerGrants: [],
+            // #520 put the own-money setting on the principal, and this
+            // assertion is deliberately exact -- it exists to prove the identity
+            // reaches the engine unaltered, so a new field belongs in it rather
+            // than being matched around.
+            ownMoneyVisible: false,
             authentication: {
               kind: "token",
               tokenId: 2,
