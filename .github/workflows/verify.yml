@@ -183,7 +183,15 @@ jobs:
 
   container:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 30, because this job started finishing at 20m18s and the ceiling was 20.
+    # GitHub cancels the job at the ceiling, a cancelled job fails the run, and
+    # `deploy` runs only after `verify` -- so three consecutive production
+    # deployments were skipped by a build that was merely slow. Raising a budget
+    # is not usually a fix, and it is not one here either: the job builds a
+    # Docker image, runs first-run, then a physical backup and restore, and it
+    # has grown into its old limit rather than regressed into it. The ceiling
+    # buys room while the build itself is made faster.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
