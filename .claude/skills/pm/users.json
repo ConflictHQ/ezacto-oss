@@ -1,0 +1,5 @@
+{
+  "$comment": "PM skill (/pm) user + channel map — a deployment fills this in; it ships EMPTY (zero identities). `github_to_slack` maps a GitHub login to that person's Slack identity, e.g. \"octocat\": { \"slack_id\": \"U<member-id>\", \"name\": \"Display Name\" } — slack_id is the member ID (Profile -> More -> Copy member ID). `channels` maps a friendly channel name to its Slack channel ID, e.g. \"standup\": \"C<channel-id>\" — pull/broadcast accept a name and resolve it here (or dynamically via the Slack API). No people, channels, or workspace are hardcoded in the skill — everything deployment-specific lives in this file, which is why it is committed empty and stays that way upstream. Single source of truth: both the .claude and .codex pm skills read this one file.",
+  "github_to_slack": {},
+  "channels": {}
+}
