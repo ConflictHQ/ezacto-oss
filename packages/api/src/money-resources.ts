@@ -502,7 +502,11 @@ export interface RecurringGenerationPort {
   generate(
     definitionId: number,
     asOfDate: string,
-    principal: { userId: number; profile: string },
+    // Tagged because the engine writes the tag into the command ledger as
+    // `actor_type`, and the untagged shape this port used to declare would
+    // reach the engine as neither branch. A route always has a user; the
+    // scheduled pass, which is the other writer, does not go through here.
+    principal: { type: "user"; userId: number; profile: string },
   ): Promise<{
     invoiceId: number;
     definitionId: number;
@@ -2855,7 +2859,7 @@ const installRecurring = <Bindings extends object>(
       result = await options.recurringGeneration.generate(
         id,
         options.clock().slice(0, 10),
-        { userId: principal.userId, profile: principal.profile },
+        { type: "user", userId: principal.userId, profile: principal.profile },
       );
     } catch (error) {
       return translateMoneyError(error);

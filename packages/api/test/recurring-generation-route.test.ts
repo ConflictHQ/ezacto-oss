@@ -90,9 +90,11 @@ describe('recurring invoice generation route', () => {
       next_issue_on: '2026-10-01',
     })
     // A date, not a timestamp, and the acting principal rather than a fixed
-    // one -- the engine refuses a caller whose profile does not match.
+    // one -- the engine refuses a caller whose profile does not match. The tag
+    // is what the engine records as the ledger's actor_type, and a route is
+    // always a user: the only writer that is not comes from the cron.
     expect(calls).toEqual([
-      [3, '2026-09-09', { userId: 7, profile: 'accounting' }],
+      [3, '2026-09-09', { type: 'user', userId: 7, profile: 'accounting' }],
     ])
   })
 

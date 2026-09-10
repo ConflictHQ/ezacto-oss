@@ -160,7 +160,8 @@ const createInput = (
   ...overrides,
 })
 
-const principal = { userId: 1, profile: 'administrator' }
+const principal = { type: 'user', userId: 1, profile: 'administrator' } as const
+const systemPrincipal = { type: 'system' } as const
 
 describe('anchoredDate', () => {
   it('[unit] handles month-end anchors across short months', () => {
@@ -586,7 +587,7 @@ for (const [runtime, factory] of factories) {
       })
 
       await expect(
-        engine.generate(definition.id, '2026-08-31', { userId: 1, profile: 'member' }),
+        engine.generate(definition.id, '2026-08-31', { type: 'user', userId: 1, profile: 'member' }),
       ).rejects.toThrow(RecurringEngineError)
     })
 
@@ -668,6 +669,172 @@ for (const [runtime, factory] of factories) {
       expect(lineItems[0]!.amount_cents).toBe(600_000)
       expect(lineItems[1]!.description).toBe('Hosting')
       expect(lineItems[1]!.amount_cents).toBe(5_000)
+    })
+
+    it('[unit] the scheduled sweep issues what is due and leaves the rest alone', async () => {
+      // The gap this closes: nothing on any cron ever looked at these, so a
+      // definition whose date had passed sat there until a person opened the
+      // Recurring screen and pressed Generate.
+      database = await factory()
+      await seedDatabase(database)
+      const due = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({ nextIssueOn: '2026-08-31', dayOfMonth: 31 }),
+      )
+      const later = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({ clientId: 2, nextIssueOn: '2026-09-30', dayOfMonth: 30 }),
+      )
+
+      const sweep = await createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-08-31T03:00:00.000Z',
+      }).generateDue('2026-08-31', systemPrincipal)
+
+      expect(sweep.failed).toEqual([])
+      expect(sweep.generated.map((result) => result.definitionId)).toEqual([due.id])
+      const issued = await database.rows<{ recurring_invoice_id: number }>(
+        `SELECT recurring_invoice_id FROM invoices ORDER BY id`,
+      )
+      expect(issued.map((invoice) => invoice.recurring_invoice_id)).toEqual([due.id])
+      // The one that is not due keeps its date rather than being nudged by a
+      // pass that walked past it.
+      const untouched = await database.rows<{ next_issue_on: string }>(
+        `SELECT next_issue_on FROM recurring_invoices WHERE id = ?`,
+        later.id,
+      )
+      expect(untouched[0]!.next_issue_on).toBe('2026-09-30')
+    })
+
+    it('[unit] attributes a scheduled issue to the system and a pressed one to the user', async () => {
+      // Both branches in one test, because the fact being asserted is that they
+      // differ. Either alone passes against an engine that writes one constant.
+      database = await factory()
+      await seedDatabase(database)
+      const definition = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({ nextIssueOn: '2026-08-31', dayOfMonth: 31 }),
+      )
+      const engine = createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-08-31T03:00:00.000Z',
+      })
+
+      const sweep = await engine.generateDue('2026-08-31', systemPrincipal)
+      expect(sweep.failed).toEqual([])
+      const scheduled = sweep.generated[0]!
+
+      expect(
+        await database.rows<{ actor_type: string; actor_id: number | null }>(
+          `SELECT actor_type, actor_id FROM invoice_command_ledger WHERE invoice_id = ?`,
+          scheduled.invoiceId,
+        ),
+      ).toEqual([{ actor_type: 'system', actor_id: null }])
+      // Nobody's name on the invoice either -- the column is nullable precisely
+      // so that an issue with no person behind it can say so.
+      expect(
+        (
+          await database.rows<{ created_by_user_id: number | null }>(
+            `SELECT created_by_user_id FROM invoices WHERE id = ?`,
+            scheduled.invoiceId,
+          )
+        )[0]!.created_by_user_id,
+      ).toBeNull()
+      const events = await database.rows<{ payload_json: string }>(
+        `SELECT payload_json FROM event_outbox
+         WHERE aggregate_type = 'invoice' AND aggregate_id = ?`,
+        scheduled.invoiceId,
+      )
+      expect(
+        (JSON.parse(events[0]!.payload_json) as { actor: unknown }).actor,
+      ).toEqual({ type: 'system', id: null })
+
+      const pressed = await engine.generate(definition.id, '2026-09-30', principal)
+      expect(
+        await database.rows<{ actor_type: string; actor_id: number | null }>(
+          `SELECT actor_type, actor_id FROM invoice_command_ledger WHERE invoice_id = ?`,
+          pressed.invoiceId,
+        ),
+      ).toEqual([{ actor_type: 'user', actor_id: principal.userId }])
+    })
+
+    it('[unit] a second sweep over the same day does not issue a second invoice', async () => {
+      // What makes the sweep safe to run without a lock of its own: two crons
+      // that overlap, a retry after a half-finished run, or a catch-up after
+      // days of downtime all key on the same ledger command.
+      database = await factory()
+      await seedDatabase(database)
+      const definition = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({ nextIssueOn: '2026-08-31', dayOfMonth: 31 }),
+      )
+      const engine = createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-08-31T03:00:00.000Z',
+      })
+
+      const first = await engine.generateDue('2026-08-31', systemPrincipal)
+      // Tomorrow's cron, or this one re-run by hand: the date moved on, so the
+      // definition is not even selected.
+      const second = await engine.generateDue('2026-08-31', systemPrincipal)
+      expect(second.generated).toEqual([])
+
+      // And the case the ledger is actually there for -- a pass that sees the
+      // definition still due, because it overlapped one already running or
+      // because the run before it died between writing the invoice and moving
+      // the date. It returns the invoice that exists rather than a second one.
+      await database.run(
+        `UPDATE recurring_invoices SET next_issue_on = '2026-08-31' WHERE id = ?`,
+        definition.id,
+      )
+      const overlapping = await engine.generateDue('2026-08-31', systemPrincipal)
+      expect(overlapping.failed).toEqual([])
+      expect(overlapping.generated[0]!.invoiceId).toBe(first.generated[0]!.invoiceId)
+
+      const invoices = await database.rows<{ count: number }>(
+        `SELECT count(*) AS count FROM invoices WHERE recurring_invoice_id = ?`,
+        definition.id,
+      )
+      expect(invoices[0]!.count).toBe(1)
+    })
+
+    it('[unit] one definition that throws does not stop the ones behind it', async () => {
+      // A definition can be broken in ways that belong to it alone. If that
+      // aborted the pass, one bad definition would silently stop every client
+      // behind it in the id order from being invoiced at all -- and the failure
+      // would show up as an invoice nobody sent rather than as an error.
+      database = await factory()
+      await seedDatabase(database)
+      const broken = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({
+          nextIssueOn: '2026-08-31',
+          dayOfMonth: 31,
+          amountConfig: {
+            ...fixedAmountConfig,
+            line_items: [decayingLine('2026-01-31')],
+          },
+        }),
+      )
+      const behind = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({ clientId: 2, nextIssueOn: '2026-08-31', dayOfMonth: 31 }),
+      )
+      expect(broken.id).toBeLessThan(behind.id)
+
+      const sweep = await createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-08-31T03:00:00.000Z',
+      }).generateDue('2026-08-31', systemPrincipal)
+
+      expect(sweep.failed).toEqual([
+        {
+          definitionId: broken.id,
+          code: 'invalid_definition',
+          message: 'every line on this definition has passed its through date',
+        },
+      ])
+      expect(sweep.generated.map((result) => result.definitionId)).toEqual([behind.id])
+      const issued = await database.rows<{ recurring_invoice_id: number }>(
+        `SELECT recurring_invoice_id FROM invoices ORDER BY id`,
+      )
+      expect(issued.map((invoice) => invoice.recurring_invoice_id)).toEqual([behind.id])
     })
   })
 }
