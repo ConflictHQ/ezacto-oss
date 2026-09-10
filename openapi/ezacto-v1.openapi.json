@@ -24277,6 +24277,28 @@
                 "type": "null"
               }
             ]
+          },
+          "through": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "installments": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false

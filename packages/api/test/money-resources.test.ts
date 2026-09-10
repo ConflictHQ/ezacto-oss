@@ -2796,5 +2796,97 @@ for (const [runtime, factory] of factories) {
           .status,
       ).toBe(404);
     });
+
+    it("[api] accepts a line that stops and counts itself, and refuses one that cannot", async () => {
+      const test = await setup();
+      const line = {
+        kind: "Credit",
+        description:
+          "CREDIT %line_installment_number% of %line_installment_total%",
+        quantity: 1,
+        unit_price_cents: -45_000,
+        taxed: false,
+        taxed2: false,
+        project_id: null,
+      };
+      const input = {
+        client_id: 1,
+        subject_template: "Platform and credit",
+        notes_template: "",
+        every_n_months: 1,
+        day_of_month: 1,
+        next_issue_on: "2026-10-01",
+        amount_config: {
+          schema_version: 1,
+          type: "fixed_lines",
+          line_items: [{ ...line, through: "2026-12-01", installments: 4 }],
+        },
+        can_draw_from_retainer_id: null,
+      };
+      // The request body the editor sends. Before `through` and `installments`
+      // were named in the contract this was a 422 on two unknown keys --
+      // `RecurringFixedLine` is `additionalProperties: false` -- so storage had
+      // accepted these since 0041 and 0044 and no HTTP client could send them.
+      const created = await test.request(
+        "/api/v1/recurring-invoices",
+        jsonRequest("POST", input, "recurring-counted-create"),
+      );
+      expect(created.status).toBe(201);
+      const stored = await responseData<{
+        id: number;
+        amount_config: { line_items: Record<string, unknown>[] };
+      }>(created);
+      expect(stored.amount_config.line_items).toHaveLength(1);
+      // Read back off the wire, not off the request: a key the serializer drops
+      // is a key the editor cannot show on the next edit, and a `PATCH` is a
+      // replace, so it would then be written away.
+      expect(stored.amount_config.line_items[0]).toMatchObject({
+        through: "2026-12-01",
+        installments: 4,
+      });
+
+      // The one the validator must refuse: a total with no end date has nothing
+      // to count back from, so it would print the same ordinal forever.
+      const unbounded = await test.request(
+        "/api/v1/recurring-invoices",
+        jsonRequest(
+          "POST",
+          {
+            ...input,
+            amount_config: {
+              schema_version: 1,
+              type: "fixed_lines",
+              line_items: [{ ...line, installments: 4 }],
+            },
+          },
+          "recurring-counted-unbounded",
+        ),
+      );
+      expect(unbounded.status).toBe(422);
+      // And a through date of the right shape that is not a day on the calendar.
+      const impossible = await test.request(
+        "/api/v1/recurring-invoices",
+        jsonRequest(
+          "POST",
+          {
+            ...input,
+            amount_config: {
+              schema_version: 1,
+              type: "fixed_lines",
+              line_items: [{ ...line, through: "2026-02-31" }],
+            },
+          },
+          "recurring-counted-impossible",
+        ),
+      );
+      expect(impossible.status).toBe(422);
+      // Counted, so the two refusals cannot pass by having written nothing at
+      // all -- the accepted definition is the only row there is.
+      expect(
+        await responseData<{ id: number }[]>(
+          await test.request("/api/v1/recurring-invoices"),
+        ),
+      ).toEqual([expect.objectContaining({ id: stored.id })]);
+    });
   });
 }

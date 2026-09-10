@@ -1,21 +1,28 @@
 import { describe, expect, it } from 'vitest'
-import type { GeneralResource, RecurringInvoice } from '@ezacto/client'
+import type { GeneralResource, RecurringInvoice, Whoami } from '@ezacto/client'
 import {
   recurringAmountLabel,
   recurringBasisLabel,
+  recurringBlankFormValues,
+  recurringBlankLine,
   recurringCadenceLabel,
   recurringClientLabel,
   recurringCurrency,
   recurringDayLabel,
+  recurringDefinitionInput,
   recurringDueLabel,
   recurringDueState,
   recurringFixedTotalCents,
+  recurringFormValuesFromDefinition,
   recurringGenerationOutcome,
+  recurringIdentityCanWrite,
   recurringIssuedMessage,
   recurringListOrder,
   recurringMatchesSearch,
   recurringSelectionFromUrl,
   recurringWorkspaceUrl,
+  type RecurringDefinitionFormValues,
+  type RecurringLineFormValues,
 } from '../src/recurring/model.js'
 
 const timestamp = '2026-09-09T12:00:00.000Z'
@@ -231,5 +238,282 @@ describe('recurring invoice model', () => {
         recurringSelectionFromUrl(new URL(`https://x.test/invoices/recurring?definition=${raw}`)),
       ).toBeNull()
     }
+  })
+})
+
+const line = (
+  overrides: Partial<RecurringLineFormValues> = {},
+): RecurringLineFormValues => ({
+  ...recurringBlankLine(),
+  kind: 'Service',
+  description: 'Retainer',
+  quantity: '1',
+  unitPriceCents: '1620000',
+  ...overrides,
+})
+
+const form = (
+  overrides: Partial<RecurringDefinitionFormValues> = {},
+): RecurringDefinitionFormValues => ({
+  ...recurringBlankFormValues(),
+  clientId: '4',
+  subjectTemplate: 'Managed services',
+  notesTemplate: 'Thank you.',
+  everyNMonths: '1',
+  dayOfMonth: '1',
+  nextIssueOn: '2026-10-01',
+  lines: [line()],
+  ...overrides,
+})
+
+const identity = (profile: Whoami['profile']): Whoami => ({
+  user_id: 1,
+  profile,
+  manager_grants: [],
+  authentication: { kind: 'session' },
+})
+
+describe('recurring definition editor input', () => {
+  it('[unit] emits exactly the keys the strict validator allows, and no more', () => {
+    // `assertRecurringAmountConfig` compares the key set, not just the values:
+    // a config with one key it does not recognise is refused whole, and so is a
+    // config missing one. So the assertion is on the key set itself.
+    const input = recurringDefinitionInput(form())
+    expect(input.amount_config.type).toBe('fixed_lines')
+    const config = input.amount_config as { line_items: Record<string, unknown>[] }
+    expect(config.line_items).toHaveLength(1)
+    expect(Object.keys(config.line_items[0]!).sort()).toEqual([
+      'description',
+      'kind',
+      'project_id',
+      'quantity',
+      'taxed',
+      'taxed2',
+      'unit_price_cents',
+    ])
+    expect(input).toEqual({
+      client_id: 4,
+      subject_template: 'Managed services',
+      notes_template: 'Thank you.',
+      every_n_months: 1,
+      day_of_month: 1,
+      next_issue_on: '2026-10-01',
+      amount_config: {
+        schema_version: 1,
+        type: 'fixed_lines',
+        line_items: [
+          {
+            kind: 'Service',
+            description: 'Retainer',
+            quantity: 1,
+            unit_price_cents: 1_620_000,
+            taxed: false,
+            taxed2: false,
+            project_id: null,
+          },
+        ],
+      },
+      can_draw_from_retainer_id: null,
+    })
+  })
+
+  it('[unit] carries a through date and an installment total onto the line', () => {
+    const input = recurringDefinitionInput(
+      form({
+        lines: [
+          line({
+            kind: 'Credit',
+            description: 'CREDIT %line_installment_number% of %line_installment_total%',
+            unitPriceCents: '-45000',
+            through: '2026-12-01',
+            installments: '4',
+            projectId: '7',
+            taxed: true,
+          }),
+        ],
+      }),
+    )
+    const config = input.amount_config as { line_items: Record<string, unknown>[] }
+    expect(config.line_items).toHaveLength(1)
+    expect(config.line_items[0]).toEqual({
+      kind: 'Credit',
+      description: 'CREDIT %line_installment_number% of %line_installment_total%',
+      quantity: 1,
+      // Signed, because the lines that count themselves off are the discounts
+      // and credits, and those are negative unit prices.
+      unit_price_cents: -45_000,
+      taxed: true,
+      taxed2: false,
+      project_id: 7,
+      through: '2026-12-01',
+      installments: 4,
+    })
+  })
+
+  it('[unit] refuses an installment total with nothing to count back from', () => {
+    // The same rule the 0044 trigger enforces. Said here so the sentence names
+    // the line: a trigger abort reaches the browser as "amount config is
+    // invalid" and nothing more.
+    expect(() =>
+      recurringDefinitionInput(form({ lines: [line(), line({ installments: '4' })] })),
+    ).toThrow('Line 2 needs a through date before it can count installments.')
+  })
+
+  it('[unit] refuses a through date the calendar does not have', () => {
+    // 2026-02-31 is the right shape and not a day. A line that expires on a day
+    // that never comes never expires.
+    expect(() =>
+      recurringDefinitionInput(form({ lines: [line({ through: '2026-02-31' })] })),
+    ).toThrow('Line 1 has a through date that is not a day on the calendar.')
+    expect(() =>
+      recurringDefinitionInput(form({ nextIssueOn: '2026-02-31' })),
+    ).toThrow('Next issue date must be a day on the calendar.')
+  })
+
+  it('[unit] refuses the definition-level values the API parser bounds', () => {
+    expect(() => recurringDefinitionInput(form({ subjectTemplate: '   ' }))).toThrow(
+      'Enter a subject',
+    )
+    expect(() => recurringDefinitionInput(form({ dayOfMonth: '32' }))).toThrow(
+      'Day of month must be from 1 through 31.',
+    )
+    expect(() => recurringDefinitionInput(form({ everyNMonths: '0' }))).toThrow(
+      'Months between issues must be 1 or more.',
+    )
+    expect(() => recurringDefinitionInput(form({ clientId: '' }))).toThrow(
+      'Client must be a whole number.',
+    )
+    expect(() => recurringDefinitionInput(form({ lines: [] }))).toThrow(
+      'A fixed definition needs at least one line.',
+    )
+    expect(() =>
+      recurringDefinitionInput(form({ lines: [line({ quantity: '0' })] })),
+    ).toThrow('Line 1 needs a quantity greater than zero.')
+    expect(() =>
+      recurringDefinitionInput(form({ lines: [line({ unitPriceCents: '12.50' })] })),
+    ).toThrow('Line 1 unit price must be a whole number of cents.')
+  })
+
+  it('[unit] builds each sweep variant the contract has a shape for', () => {
+    const sweepForm = (overrides: Partial<RecurringDefinitionFormValues>) =>
+      recurringDefinitionInput(
+        form({ amountType: 'line_items_import', projectIds: ['7', '9'], ...overrides }),
+      ).amount_config
+    expect(sweepForm({ importTime: true, importExpenses: false })).toEqual({
+      schema_version: 1,
+      type: 'line_items_import',
+      project_ids: [7, 9],
+      time: { summary_type: 'project' },
+    })
+    expect(
+      sweepForm({ importTime: false, importExpenses: true, expenseSummary: 'detailed' }),
+    ).toEqual({
+      schema_version: 1,
+      type: 'line_items_import',
+      project_ids: [7, 9],
+      expenses: { summary_type: 'detailed' },
+    })
+    expect(
+      sweepForm({ importTime: true, timeSummary: 'task', importExpenses: true }),
+    ).toEqual({
+      schema_version: 1,
+      type: 'line_items_import',
+      project_ids: [7, 9],
+      time: { summary_type: 'task' },
+      expenses: { summary_type: 'category' },
+    })
+  })
+
+  it('[unit] refuses a sweep that would sweep nothing, or the same project twice', () => {
+    const sweep = (overrides: Partial<RecurringDefinitionFormValues>) => () =>
+      recurringDefinitionInput(
+        form({ amountType: 'line_items_import', projectIds: ['7'], ...overrides }),
+      )
+    expect(sweep({ importTime: false, importExpenses: false })).toThrow(
+      'A sweep must bill uninvoiced time, uninvoiced expenses, or both.',
+    )
+    expect(sweep({ projectIds: [] })).toThrow('Choose at least one project to sweep.')
+    expect(sweep({ projectIds: ['7', '7'] })).toThrow('A project can only be swept once.')
+  })
+
+  it('[unit] round-trips a stored definition through the form unchanged', () => {
+    // PATCH replaces the whole definition, so an edit that touches only the day
+    // of month still sends the amount config back. If the form loses a key on
+    // the way in, the save silently rewrites what it was not asked to change --
+    // which is how a line's through date disappears on a date correction.
+    const stored = definition({
+      can_draw_from_retainer_id: 3,
+      amount_config: {
+        schema_version: 1,
+        type: 'fixed_lines',
+        line_items: [
+          {
+            kind: 'Service',
+            description: 'Retainer',
+            quantity: 1.5,
+            unit_price_cents: 1_620_000,
+            taxed: true,
+            taxed2: false,
+            project_id: 7,
+          },
+          {
+            kind: 'Credit',
+            description: 'CREDIT %line_installment_number% of %line_installment_total%',
+            quantity: 1,
+            unit_price_cents: -45_000,
+            taxed: false,
+            taxed2: false,
+            project_id: null,
+            through: '2026-12-01',
+            installments: 4,
+          },
+        ],
+      },
+    })
+    const values = recurringFormValuesFromDefinition(stored)
+    expect(values.lines).toHaveLength(2)
+    // The first line has neither key, and reads back as two empty boxes rather
+    // than as the string "null".
+    expect(values.lines[0]!.through).toBe('')
+    expect(values.lines[0]!.installments).toBe('')
+    expect(values.lines[1]!.through).toBe('2026-12-01')
+    expect(values.lines[1]!.installments).toBe('4')
+    const input = recurringDefinitionInput({ ...values, dayOfMonth: '15' })
+    expect(input.amount_config).toEqual(stored.amount_config)
+    expect(input.day_of_month).toBe(15)
+    expect(input.client_id).toBe(stored.client_id)
+    expect(input.notes_template).toBe(stored.notes_template)
+    expect(input.can_draw_from_retainer_id).toBe(3)
+  })
+
+  it('[unit] round-trips a sweep without turning it into an empty fixed definition', () => {
+    const stored = sweep()
+    const values = recurringFormValuesFromDefinition(stored)
+    expect(values.amountType).toBe('line_items_import')
+    expect(values.projectIds).toEqual(['7', '9'])
+    expect(recurringDefinitionInput(values).amount_config).toEqual(stored.amount_config)
+  })
+
+  it('[unit] lets exactly the profiles that may write invoices write definitions', () => {
+    // A standing instruction that raises invoices is an invoice-writing power.
+    expect(recurringIdentityCanWrite(identity('administrator'))).toBe(true)
+    expect(recurringIdentityCanWrite(identity('accounting'))).toBe(true)
+    expect(recurringIdentityCanWrite(identity('executive_manager'))).toBe(true)
+    expect(recurringIdentityCanWrite(identity('member'))).toBe(false)
+    expect(recurringIdentityCanWrite(identity('project_manager'))).toBe(false)
+    expect(recurringIdentityCanWrite(identity('people_admin'))).toBe(false)
+    // A token has to carry the scope; a session already does.
+    expect(
+      recurringIdentityCanWrite({
+        ...identity('accounting'),
+        authentication: { kind: 'token', token_id: 1, scopes: ['invoices:read'] },
+      }),
+    ).toBe(false)
+    expect(
+      recurringIdentityCanWrite({
+        ...identity('accounting'),
+        authentication: { kind: 'token', token_id: 1, scopes: ['invoices:write'] },
+      }),
+    ).toBe(true)
   })
 })

@@ -19,7 +19,14 @@
  * it reads its client's, the same fallback chain the retainer screen uses.
  */
 
-import type { GeneralResource, RecurringInvoice } from '@ezacto/client'
+import type {
+  GeneralResource,
+  RecurringAmountConfig,
+  RecurringFixedLine,
+  RecurringInvoice,
+  RecurringInvoiceInput,
+} from '@ezacto/client'
+import { invoiceIdentityCanWrite } from '../invoices/model.js'
 
 export interface RecurringCursorPage<Resource> {
   readonly data: readonly Resource[]
@@ -54,6 +61,25 @@ export interface RecurringWorkspaceApi {
     cursor?: string,
     signal?: AbortSignal,
   ): Promise<RecurringCursorPage<GeneralResource>>
+  /**
+   * Creating and replacing take the whole definition, because `PATCH` on this
+   * resource is a replace: the API parser requires every field and the store
+   * writes every column. So the editor loads the definition it is changing and
+   * sends it back entire -- there is no partial save to be had here, and
+   * pretending otherwise is how a notes template disappears on a day-of-month
+   * edit.
+   */
+  createRecurringInvoice(
+    input: RecurringInvoiceInput,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<RecurringInvoice>
+  updateRecurringInvoice(
+    id: number,
+    input: RecurringInvoiceInput,
+    signal?: AbortSignal,
+  ): Promise<RecurringInvoice>
+  deleteRecurringInvoice(id: number, signal?: AbortSignal): Promise<void>
 }
 
 export type RecurringDueState = 'overdue' | 'due' | 'scheduled'
@@ -313,4 +339,358 @@ export const recurringMatchesSearch = (
     .join(' ')
     .toLowerCase()
     .includes(needle)
+}
+
+/**
+ * The editor's own vocabulary: every field a string, exactly as a form element
+ * hands it over.
+ *
+ * Nothing here is typed as a number, because a form has no numbers -- it has
+ * text that may or may not be one, and an empty box is a different answer from
+ * a zero. Parsing happens once, in `recurringDefinitionInput`, so the one place
+ * that can reject a value is the one place that produces the request.
+ */
+export interface RecurringLineFormValues {
+  readonly kind: string
+  readonly description: string
+  readonly quantity: string
+  readonly unitPriceCents: string
+  readonly taxed: boolean
+  readonly taxed2: boolean
+  readonly projectId: string
+  readonly through: string
+  readonly installments: string
+}
+
+export type RecurringAmountType = 'fixed_lines' | 'line_items_import'
+
+export interface RecurringDefinitionFormValues {
+  readonly clientId: string
+  readonly subjectTemplate: string
+  readonly notesTemplate: string
+  readonly everyNMonths: string
+  readonly dayOfMonth: string
+  readonly nextIssueOn: string
+  readonly retainerId: string
+  readonly amountType: RecurringAmountType
+  readonly lines: readonly RecurringLineFormValues[]
+  readonly projectIds: readonly string[]
+  readonly importTime: boolean
+  readonly timeSummary: string
+  readonly importExpenses: boolean
+  readonly expenseSummary: string
+}
+
+/**
+ * Only the profiles that may write invoices may write the instructions that
+ * raise them. Borrowed from the invoice screen rather than restated: it is one
+ * authority -- `invoices:write` -- and two copies of it would drift.
+ */
+export const recurringIdentityCanWrite = invoiceIdentityCanWrite
+
+const centsLimit = 9_000_000_000_000
+
+/**
+ * A real day on the calendar, not merely ten characters shaped like one.
+ *
+ * `2026-02-31` passes every pattern and is not a date, and a line that expires
+ * on a day the calendar does not have never expires. The trigger from 0044
+ * makes the same distinction with `date()`; making it here too is what turns a
+ * server abort into a sentence beside the field that caused it.
+ */
+const isCalendarDate = (value: string): boolean =>
+  /^\d{4}-\d{2}-\d{2}$/u.test(value) &&
+  new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value
+
+const wholeNumber = (raw: string, label: string): number => {
+  const value = raw.trim()
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(value)) {
+    throw new Error(`${label} must be a whole number.`)
+  }
+  const parsed = Number(value)
+  if (!Number.isSafeInteger(parsed)) throw new Error(`${label} is too large.`)
+  return parsed
+}
+
+const wholeNumberAbove = (raw: string, label: string): number => {
+  const parsed = wholeNumber(raw, label)
+  if (parsed < 1) throw new Error(`${label} must be 1 or more.`)
+  return parsed
+}
+
+const signedCents = (raw: string, label: string): number => {
+  const value = raw.trim()
+  // Signed on purpose. A discount or a credit line is a negative unit price,
+  // and it is exactly those lines that carry `through` and `installments`;
+  // `assertRecurringAmountConfig` bounds the magnitude and not the sign.
+  if (!/^-?(?:0|[1-9][0-9]*)$/u.test(value)) {
+    throw new Error(`${label} must be a whole number of cents.`)
+  }
+  const parsed = Number(value)
+  if (!Number.isSafeInteger(parsed) || Math.abs(parsed) > centsLimit) {
+    throw new Error(`${label} is too large.`)
+  }
+  return parsed
+}
+
+const fixedLine = (
+  values: Readonly<RecurringLineFormValues>,
+  position: number,
+): RecurringFixedLine => {
+  const where = `Line ${position + 1}`
+  const kind = values.kind.trim()
+  if (kind === '') throw new Error(`${where} needs a kind.`)
+  const description = values.description.trim()
+  const quantity = Number(values.quantity.trim())
+  if (
+    values.quantity.trim() === '' ||
+    !Number.isFinite(quantity) ||
+    quantity <= 0 ||
+    quantity > Number.MAX_SAFE_INTEGER
+  ) {
+    throw new Error(`${where} needs a quantity greater than zero.`)
+  }
+  const through = values.through.trim()
+  if (through !== '' && !isCalendarDate(through)) {
+    throw new Error(`${where} has a through date that is not a day on the calendar.`)
+  }
+  const installments = values.installments.trim()
+  if (installments !== '' && through === '') {
+    // Counting "2 of 4" counts backwards from the end, so a total with no end
+    // has nothing to count back from. The TypeScript assertion and the trigger
+    // both refuse it; saying so here is what names the field responsible.
+    throw new Error(`${where} needs a through date before it can count installments.`)
+  }
+  const projectId = values.projectId.trim()
+  return {
+    kind,
+    // An empty box means the line has no description of its own, which is null
+    // in storage. Sending "" instead would put a blank line on the invoice.
+    description: description === '' ? null : description,
+    quantity,
+    unit_price_cents: signedCents(values.unitPriceCents, `${where} unit price`),
+    taxed: values.taxed,
+    taxed2: values.taxed2,
+    project_id: projectId === '' ? null : wholeNumberAbove(projectId, `${where} project`),
+    // Omitted rather than sent as null when unset. `assertExactKeys` permits the
+    // key and the trigger tolerates a JSON null, so either would store; a config
+    // carrying only the keys it means is the one the loader script wrote and the
+    // one already in storage, and it stays identical across a save that changed
+    // nothing else.
+    ...(through === '' ? {} : { through }),
+    ...(installments === ''
+      ? {}
+      : { installments: wholeNumberAbove(installments, `${where} installments`) }),
+  }
+}
+
+const summaryType = <Allowed extends string>(
+  raw: string,
+  allowed: readonly Allowed[],
+  label: string,
+): Allowed => {
+  const found = allowed.find((candidate) => candidate === raw)
+  if (found === undefined) throw new Error(`Choose how ${label} are summarised.`)
+  return found
+}
+
+const importConfig = (
+  values: Readonly<RecurringDefinitionFormValues>,
+): RecurringAmountConfig => {
+  const projectIds = values.projectIds.map((raw, index) =>
+    wholeNumberAbove(raw, `Project ${index + 1}`),
+  )
+  if (projectIds.length === 0) throw new Error('Choose at least one project to sweep.')
+  if (new Set(projectIds).size !== projectIds.length) {
+    throw new Error('A project can only be swept once.')
+  }
+  const time = values.importTime
+    ? {
+        summary_type: summaryType(
+          values.timeSummary,
+          ['project', 'task', 'people', 'detailed'] as const,
+          'hours',
+        ),
+      }
+    : null
+  const expenses = values.importExpenses
+    ? {
+        summary_type: summaryType(
+          values.expenseSummary,
+          ['project', 'category', 'people', 'detailed'] as const,
+          'expenses',
+        ),
+      }
+    : null
+  // Three separate literals rather than one object assembled from spreads,
+  // because the contract's union has `time` and `expenses` as required keys of
+  // three different variants. Written this way, "at least one of them" is
+  // something the compiler checks rather than something a comment claims.
+  if (time !== null && expenses !== null) {
+    return {
+      schema_version: 1,
+      type: 'line_items_import',
+      project_ids: projectIds,
+      time,
+      expenses,
+    }
+  }
+  if (time !== null) {
+    return { schema_version: 1, type: 'line_items_import', project_ids: projectIds, time }
+  }
+  if (expenses !== null) {
+    return { schema_version: 1, type: 'line_items_import', project_ids: projectIds, expenses }
+  }
+  throw new Error('A sweep must bill uninvoiced time, uninvoiced expenses, or both.')
+}
+
+/**
+ * The form, turned into the request body -- or an `Error` carrying the sentence
+ * the person editing needs to read.
+ *
+ * Every rule restated here is one `assertRecurringAmountConfig` and the trigger
+ * from 0044 already enforce, and the duplication is deliberate: the server
+ * stays the authority, but its 422 says "amount config is invalid" without
+ * saying which line, and the trigger's abort says less than that.
+ */
+export const recurringDefinitionInput = (
+  values: Readonly<RecurringDefinitionFormValues>,
+): RecurringInvoiceInput => {
+  const subjectTemplate = values.subjectTemplate.trim()
+  if (subjectTemplate === '') throw new Error('Enter a subject for the invoices this raises.')
+  const dayOfMonth = wholeNumber(values.dayOfMonth, 'Day of month')
+  if (dayOfMonth < 1 || dayOfMonth > 31) {
+    throw new Error('Day of month must be from 1 through 31.')
+  }
+  const nextIssueOn = values.nextIssueOn.trim()
+  if (!isCalendarDate(nextIssueOn)) {
+    throw new Error('Next issue date must be a day on the calendar.')
+  }
+  const retainerId = values.retainerId.trim()
+  const amountConfig =
+    values.amountType === 'fixed_lines'
+      ? ((): RecurringAmountConfig => {
+          if (values.lines.length === 0) {
+            throw new Error('A fixed definition needs at least one line.')
+          }
+          return {
+            schema_version: 1,
+            type: 'fixed_lines',
+            line_items: values.lines.map(fixedLine),
+          }
+        })()
+      : importConfig(values)
+  return {
+    client_id: wholeNumberAbove(values.clientId, 'Client'),
+    subject_template: subjectTemplate,
+    notes_template: values.notesTemplate,
+    every_n_months: wholeNumberAbove(values.everyNMonths, 'Months between issues'),
+    day_of_month: dayOfMonth,
+    next_issue_on: nextIssueOn,
+    amount_config: amountConfig,
+    can_draw_from_retainer_id:
+      retainerId === '' ? null : wholeNumberAbove(retainerId, 'Retainer'),
+  }
+}
+
+export const recurringBlankLine = (): RecurringLineFormValues => ({
+  kind: 'Service',
+  description: '',
+  quantity: '1',
+  unitPriceCents: '',
+  taxed: false,
+  taxed2: false,
+  projectId: '',
+  through: '',
+  installments: '',
+})
+
+/**
+ * A new definition, seeded with the answers that are right more often than not:
+ * monthly, on the first, one line to fill in. `nextIssueOn` is left empty
+ * because the browser's today is the only clock this form has and a date it
+ * guesses wrong is a date nobody re-reads.
+ */
+export const recurringBlankFormValues = (): RecurringDefinitionFormValues => ({
+  clientId: '',
+  subjectTemplate: '',
+  notesTemplate: '',
+  everyNMonths: '1',
+  dayOfMonth: '1',
+  nextIssueOn: '',
+  retainerId: '',
+  amountType: 'fixed_lines',
+  lines: [recurringBlankLine()],
+  projectIds: [],
+  importTime: true,
+  timeSummary: 'project',
+  importExpenses: false,
+  expenseSummary: 'category',
+})
+
+/**
+ * The stored definition, read back into the form.
+ *
+ * PATCH on this resource is a replace, so the editor has to hold every field a
+ * definition has, including the ones the open tab is not showing. A sweep whose
+ * day of month is being corrected must not come back as an empty fixed
+ * definition, which is what a form seeded only from the visible tab would send.
+ */
+export const recurringFormValuesFromDefinition = (
+  definition: Readonly<RecurringInvoice>,
+): RecurringDefinitionFormValues => {
+  const blank = recurringBlankFormValues()
+  const config = definition.amount_config
+  const shared = {
+    clientId: String(definition.client_id),
+    subjectTemplate: definition.subject_template,
+    notesTemplate: definition.notes_template,
+    everyNMonths: String(definition.every_n_months),
+    dayOfMonth: String(definition.day_of_month),
+    nextIssueOn: definition.next_issue_on.slice(0, 10),
+    retainerId:
+      definition.can_draw_from_retainer_id === null
+        ? ''
+        : String(definition.can_draw_from_retainer_id),
+  }
+  if (config.type === 'fixed_lines') {
+    return {
+      ...blank,
+      ...shared,
+      amountType: 'fixed_lines',
+      lines: config.line_items.map((line) => ({
+        kind: line.kind,
+        description: line.description ?? '',
+        quantity: String(line.quantity),
+        unitPriceCents: String(line.unit_price_cents),
+        taxed: line.taxed,
+        taxed2: line.taxed2,
+        projectId: line.project_id === null ? '' : String(line.project_id),
+        // Both keys are optional in storage, so both are absent on every line
+        // written before 0041 and 0044. An empty box is what "this line does
+        // not stop" and "this line does not count itself" look like.
+        through: line.through ?? '',
+        installments:
+          line.installments === null || line.installments === undefined
+            ? ''
+            : String(line.installments),
+      })),
+    }
+  }
+  const time = 'time' in config ? config.time : undefined
+  const expenses = 'expenses' in config ? config.expenses : undefined
+  return {
+    ...blank,
+    ...shared,
+    amountType: 'line_items_import',
+    // An import definition has no fixed lines. Seeding one blank rather than
+    // none means switching the tab to Fixed lands on the same footing the
+    // create form starts from, instead of on a config that cannot be saved.
+    lines: [recurringBlankLine()],
+    projectIds: config.project_ids.map(String),
+    importTime: time !== undefined,
+    timeSummary: time?.summary_type ?? blank.timeSummary,
+    importExpenses: expenses !== undefined,
+    expenseSummary: expenses?.summary_type ?? blank.expenseSummary,
+  }
 }

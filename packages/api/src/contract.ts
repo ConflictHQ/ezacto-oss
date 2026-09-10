@@ -4807,6 +4807,15 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       taxed: booleanSchema,
       taxed2: booleanSchema,
       project_id: nullable(integerSchema),
+      // Optional because 0041 and 0044 added them that way: a line written
+      // before either migration carries neither key and still means what it
+      // always meant. `additionalProperties: false` was silently making this
+      // document disagree with the storage it describes -- the database has
+      // accepted `through` since 0041 and `installments` since 0044, and a
+      // client generated from this contract could neither read one back nor
+      // send one, which is why no screen could offer either.
+      through: nullable(dateSchema),
+      installments: nullable(integerSchema),
     },
     additionalProperties: false,
   },

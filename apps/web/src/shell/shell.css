@@ -5083,6 +5083,106 @@ dialog textarea {
   min-height: 44px;
   padding: 8px 16px;
 }
+.recurring-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.recurring-detail-actions button {
+  min-height: 44px;
+  padding: 8px 16px;
+}
+/* The editor. A definition is one instruction with a schedule attached, so the
+   scheduling half sits on a grid that collapses to one column and the wording
+   half runs full width underneath it — the fields a person reads across are the
+   ones they set together. */
+.recurring-editor-dialog::backdrop {
+  background: color-mix(in srgb, var(--ez-ink) 45%, transparent);
+}
+.recurring-editor-form {
+  display: grid;
+  gap: 16px;
+  width: min(760px, 92vw);
+  max-height: 80vh;
+  overflow-y: auto;
+}
+.recurring-editor-form header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.recurring-editor-form footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.recurring-editor-form label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--ez-muted);
+}
+.recurring-editor-form input,
+.recurring-editor-form select,
+.recurring-editor-form textarea,
+.recurring-editor-form button {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font: inherit;
+}
+.recurring-editor-form textarea {
+  min-height: 72px;
+}
+.recurring-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  gap: 12px 16px;
+}
+/* A checkbox is not a field with a value below its name, so it opts out of the
+   label grid rather than sitting in a 44px-tall box of its own. */
+.recurring-editor-form label.recurring-editor-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ez-ink);
+  font-size: inherit;
+}
+.recurring-editor-form .recurring-editor-check input {
+  min-height: 0;
+  padding: 0;
+}
+.recurring-editor-line {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
+  gap: 12px 16px;
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+}
+.recurring-editor-line legend {
+  padding: 0 4px;
+  color: var(--ez-muted);
+  font-size: 12px;
+}
+.recurring-editor-lines .hint,
+.recurring-editor-import .hint {
+  max-width: 72ch;
+}
+[data-recurring-editor-result][data-outcome='error'],
+[data-recurring-delete-result][data-outcome='error'] {
+  color: var(--ez-red);
+}
+[data-recurring-editor-result][data-outcome='pending'],
+[data-recurring-delete-result][data-outcome='pending'] {
+  color: var(--ez-muted);
+}
 
 /* Invoice configuration. Two sections on one page, because they answer one
    question between them — what a client sees when an invoice arrives — and an
