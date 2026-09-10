@@ -74,7 +74,7 @@ export const renderExpenseWorkflowPages = (view?: string): string => `
           <div><dt>Approval</dt><dd data-expense-detail-approval-fact>—</dd></div>
           <div><dt>Reimbursement</dt><dd data-expense-detail-reimbursement>—</dd></div>
           <div><dt>Invoice</dt><dd data-expense-detail-invoice>—</dd></div>
-          <div><dt>Total</dt><dd data-expense-detail-total>—</dd></div>
+          <div><dt>Total</dt><dd class="money" data-expense-detail-total>—</dd></div>
         </dl>
       </section>
       <section class="expense-attachments" aria-labelledby="expense-attachments-heading">

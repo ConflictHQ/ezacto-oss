@@ -81,6 +81,7 @@ for (const runtime of runtimes) {
       expect(modules).toEqual([
         { module: 'approval', enabled: false },
         { module: 'expenses', enabled: false },
+        { module: 'own_money', enabled: false },
       ])
     })
 
@@ -90,6 +91,7 @@ for (const runtime of runtimes) {
       const repo = createModuleSettingsRepository(db.orm)
       expect(await repo.get('approval')).toBe(false)
       expect(await repo.get('expenses')).toBe(false)
+      expect(await repo.get('own_money')).toBe(false)
     })
 
     it('enables a module and returns updated list', async () => {
@@ -100,8 +102,39 @@ for (const runtime of runtimes) {
       expect(result).toEqual([
         { module: 'approval', enabled: true },
         { module: 'expenses', enabled: false },
+        { module: 'own_money', enabled: false },
       ])
       expect(await repo.get('approval')).toBe(true)
+    })
+
+    it('enables and disables own_money, the key nothing else exercises', async () => {
+      // Every enable/disable test above uses `approval`, and every assertion
+      // naming own_money asserts it FALSE -- so the write path for this key,
+      // `json_set(modules, '$.own_money', json('true'))`, was asserted nowhere.
+      // It is the key that decides whether a person is shown their own pay, so
+      // "the default is off" is the least interesting half of it.
+      db = await databaseFactory[runtime]()
+      await seedOrganization(db)
+      const repo = createModuleSettingsRepository(db.orm)
+
+      const enabled = await repo.setEnabled('own_money', true, '2024-06-01T12:00:00.000Z')
+      expect(enabled).toEqual([
+        { module: 'approval', enabled: false },
+        { module: 'expenses', enabled: false },
+        { module: 'own_money', enabled: true },
+      ])
+      expect(await repo.get('own_money')).toBe(true)
+      // The neighbours are untouched: this writes one key, not the document.
+      expect(await repo.get('approval')).toBe(false)
+      expect(await repo.get('expenses')).toBe(false)
+
+      const disabled = await repo.setEnabled('own_money', false, '2024-06-02T12:00:00.000Z')
+      expect(disabled).toEqual([
+        { module: 'approval', enabled: false },
+        { module: 'expenses', enabled: false },
+        { module: 'own_money', enabled: false },
+      ])
+      expect(await repo.get('own_money')).toBe(false)
     })
 
     it('disables a previously enabled module', async () => {
@@ -113,6 +146,7 @@ for (const runtime of runtimes) {
       expect(result).toEqual([
         { module: 'approval', enabled: false },
         { module: 'expenses', enabled: false },
+        { module: 'own_money', enabled: false },
       ])
       expect(await repo.get('approval')).toBe(false)
     })
@@ -127,6 +161,30 @@ for (const runtime of runtimes) {
       expect(result).toEqual([
         { module: 'approval', enabled: true },
         { module: 'expenses', enabled: true },
+        { module: 'own_money', enabled: false },
+      ])
+    })
+
+    /**
+     * #520's default-off requirement, stated against a row that predates the
+     * setting: an organization whose modules JSON was written before own_money
+     * existed has no such key, and an instance that upgrades must not start
+     * disclosing people's rates because a deploy happened. The absent key, not
+     * a stored `false`, is what has to answer no.
+     */
+    it('leaves own_money off for an organization row written before it existed', async () => {
+      db = await databaseFactory[runtime]()
+      await db.run(
+        `INSERT INTO organizations (id, name, modules, created_at, updated_at)
+         VALUES (1, 'Upgraded Org', '{"approval":true,"expenses":true}',
+           '2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.000Z')`,
+      )
+      const repo = createModuleSettingsRepository(db.orm)
+      expect(await repo.get('own_money')).toBe(false)
+      expect(await repo.list()).toEqual([
+        { module: 'approval', enabled: true },
+        { module: 'expenses', enabled: true },
+        { module: 'own_money', enabled: false },
       ])
     })
 

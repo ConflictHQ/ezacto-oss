@@ -398,11 +398,11 @@ export interface LoadAnomaly {
 
 /**
  * One person, two Harvest accounts. Harvest happily creates a second user for
- * someone who already exists — CONFLICT's account holds sixty users for
- * fifty-eight people — and nothing in the source marks the pair. So the pairs
- * are handed to the loader rather than inferred by it: a name-and-time
- * heuristic over the same account produced ninety-eight candidates of pure
- * noise, which is precisely why guessing has no place at load time.
+ * someone who already exists — an account of any age carries more user rows
+ * than people — and nothing in the source marks the pair. So the pairs are
+ * handed to the loader rather than inferred by it: a name-and-time heuristic
+ * over one such account produced scores of candidates of pure noise, which is
+ * precisely why guessing has no place at load time.
  */
 export interface UserAlias {
   /** The Harvest user squashed away; no record of it survives the load. */
@@ -3309,7 +3309,7 @@ const estimateStatements = (
   const creatorName = creator === null ? null : stringValue(creator, 'name')
   // Harvest scrubs the name of a deleted user but keeps the creator id, so
   // `{id, name: null}` is real provenance, not a half-written record — one
-  // departed user raised 58 of CONFLICT's invoices this way. Keep the id; only
+  // departed user raised a great many invoices this way. Keep the id; only
   // a name with nothing to anchor it to is incoherent.
   if (creatorId === null && creatorName !== null) {
     throw new Error(`estimate ${harvestId} creator provenance is incomplete`)
@@ -3572,7 +3572,7 @@ const invoiceInput = async (
   const sourceCreatorName = creator === null ? null : stringValue(creator, 'name')
   // Harvest scrubs the name of a deleted user but keeps the creator id, so
   // `{id, name: null}` is real provenance, not a half-written record — one
-  // departed user raised 58 of CONFLICT's invoices this way. Keep the id; only
+  // departed user raised a great many invoices this way. Keep the id; only
   // a name with nothing to anchor it to is incoherent.
   if (sourceCreatorId === null && sourceCreatorName !== null) {
     throw new Error(`invoice ${harvestId} creator provenance is incomplete`)
@@ -4387,8 +4387,8 @@ const loadComplexRow = async (
       })
     // State is derived from the payments that loaded, so a payment this import
     // could not represent silently restates a settled invoice as outstanding.
-    // The importer already raises this; dropping it here is what let seven of
-    // CONFLICT's invoices read `open` against Harvest's `paid` unnoticed.
+    // The importer already raises this; dropping it here is what let settled
+    // invoices read `open` against Harvest's `paid` unnoticed.
     if (diagnostic.code === 'source_state_disagrees')
       anomalies.push({
         resource: 'invoices',

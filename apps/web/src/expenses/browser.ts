@@ -1,4 +1,5 @@
 import { renderDataTable } from '../components/data-table.js'
+import { moneyText } from '../money-display.js'
 import { icon } from '../components/icons.js'
 import { createPeriodControl } from '../components/period.js'
 import {
@@ -562,9 +563,11 @@ export const createExpenseWorkflowController = (
             label: 'Amount',
             numeric: true,
             render: (expense) =>
-              expenseMoney(
-                expense.total_cost_cents,
-                expenseCurrency(expense.project_id, catalog.projects, catalog.clients),
+              moneyText(
+                expenseMoney(
+                  expense.total_cost_cents,
+                  expenseCurrency(expense.project_id, catalog.projects, catalog.clients),
+                ),
               ),
             // The old list closes each week with a Total, which is what makes
             // the band a section rather than a label. Rows can span currencies,
@@ -577,10 +580,14 @@ export const createExpenseWorkflowController = (
                 ),
               )
               const [currency] = [...currencies]
+              // A mixed run's dash is the absence of a total rather than an
+              // amount, so it carries no marker.
               if (currencies.size !== 1 || currency === undefined) return '—'
-              return expenseMoney(
-                rows.reduce((sum, expense) => sum + expense.total_cost_cents, 0),
-                currency,
+              return moneyText(
+                expenseMoney(
+                  rows.reduce((sum, expense) => sum + expense.total_cost_cents, 0),
+                  currency,
+                ),
               )
             },
           },

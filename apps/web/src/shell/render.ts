@@ -416,6 +416,13 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
       <span data-timer-label>Timer</span>
       <span data-timer-elapsed>—</span>
     </button>
+    <!--
+      Masking is a display state, not a permission: the figures still arrive and
+      the screens still total them, and this decides whether they are drawn. It
+      renders pressed-out because shown is the default, and the browser sets it
+      from storage before the first paint.
+    -->
+    <button class="money-toggle" type="button" data-money-toggle data-auth-action disabled aria-pressed="false" aria-label="Hide money amounts ($)" title="Hide money amounts ($)"><span aria-hidden="true">$</span></button>
     <button class="command-trigger" type="button" data-command-trigger data-auth-action disabled aria-haspopup="dialog" aria-label="Search and commands (⌘K)">${iconMarkup('magnifier')}<span aria-hidden="true">⌘K</span></button>
     <button class="menu-trigger" type="button" data-menu-trigger aria-label="Open navigation" aria-haspopup="dialog">Menu</button>
     <div class="account" data-auth-shell data-state="loading">
@@ -606,10 +613,10 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
         </table>
       </div>
       <dl class="invoice-totals">
-        <div><dt>Discount</dt><dd data-invoice-detail-discount>—</dd></div>
-        <div><dt>Tax</dt><dd data-invoice-detail-tax>—</dd></div>
-        <div><dt>Total</dt><dd data-invoice-detail-total>—</dd></div>
-        <div><dt>Amount due</dt><dd data-invoice-detail-due>—</dd></div>
+        <div><dt>Discount</dt><dd class="money" data-invoice-detail-discount>—</dd></div>
+        <div><dt>Tax</dt><dd class="money" data-invoice-detail-tax>—</dd></div>
+        <div><dt>Total</dt><dd class="money" data-invoice-detail-total>—</dd></div>
+        <div><dt>Amount due</dt><dd class="money" data-invoice-detail-due>—</dd></div>
       </dl>
       <section class="invoice-notes" data-invoice-detail-notes-section hidden>
         <h3>Notes</h3><p data-invoice-detail-notes></p>

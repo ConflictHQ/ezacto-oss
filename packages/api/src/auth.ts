@@ -80,6 +80,18 @@ export interface ApiAuthentication {
   twoFactor?: TwoFactorService
   /** Where credential events are recorded. Absent leaves them unrecorded. */
   activity?: ActivityRecorder
+  /**
+   * The #520 organisation setting, read once per request and stamped onto the
+   * principal, because `canViewMoneyField` is a synchronous pure rule and every
+   * serializer that calls it is synchronous too -- there is nowhere further
+   * down to await a database read.
+   *
+   * Resolving it here rather than in each route is what keeps the subject check
+   * in one place: a route that forgot to ask would silently serve the wider
+   * answer. Absent resolver means off, so a deployment that has not composed
+   * one behaves exactly as it did before this shipped.
+   */
+  ownMoneyVisible?(): Promise<boolean>
 }
 
 const unauthorized = <Bindings extends object>(
@@ -143,6 +155,10 @@ export const apiAuthenticationMiddleware =
         userId: authenticated.userId,
         profile: authenticated.profile,
         managerGrants: [...(authenticated.managerGrants ?? [])],
+        // A token acts as its user and gets the same sight of its own money.
+        // Anything else would make `ez` and the UI disagree about what one
+        // person may read about themselves.
+        ownMoneyVisible: (await authentication?.ownMoneyVisible?.()) ?? false,
         authentication: {
           kind: 'token',
           tokenId: authenticated.tokenId,
@@ -168,6 +184,7 @@ export const apiAuthenticationMiddleware =
     context.set('principal', {
       ...principal,
       managerGrants: [...(principal.managerGrants ?? [])],
+      ownMoneyVisible: (await authentication?.ownMoneyVisible?.()) ?? false,
     })
     if ('principal' in resolved && resolved.setCookie !== undefined) {
       context.header('set-cookie', resolved.setCookie, { append: true })

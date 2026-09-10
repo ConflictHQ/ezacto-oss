@@ -1,4 +1,5 @@
-import { renderDataTable } from '../components/data-table.js'
+import { renderDataTable, type CellContent } from '../components/data-table.js'
+import { moneyText } from '../money-display.js'
 import { EzactoApiError, type ExpenseCategory, type Whoami } from '@ezacto/client'
 import {
   expenseCategoryCanWrite,
@@ -258,7 +259,17 @@ export const createExpenseCategoryDirectoryController = (
           {
             key: 'pricing',
             label: 'Pricing',
-            render: (category) => expenseCategoryPricingLabel(category),
+            render: (category): CellContent => {
+              const label = expenseCategoryPricingLabel(category)
+              // A priced category states a unit price, and the unit it is per
+              // is part of the price rather than a separate fact -- so the
+              // phrase masks whole. The other two labels ("Amount entered on
+              // each expense", "Incomplete unit pricing") name a configuration
+              // and carry no figure at all.
+              const priced =
+                category.unit_name !== null && category.unit_price_cents !== null
+              return priced ? moneyText(label) : label
+            },
           },
           {
             key: 'status',

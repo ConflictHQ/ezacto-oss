@@ -1947,7 +1947,7 @@ export type ClientHierarchyListEnvelope = {
 };
 
 export type ModuleState = {
-  "module": "approval" | "expenses";
+  "module": "approval" | "expenses" | "own_money";
   "enabled": boolean;
 };
 

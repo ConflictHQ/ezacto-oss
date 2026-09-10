@@ -1,8 +1,9 @@
 # ezacto-oss — bootstrap
 
-**This repo is the whole ezacto product.** Open-source time tracking & invoicing —
-the Harvest replacement. Single org, free, no billing, no telemetry. Private now;
-**public at the OSS gate** (CONFLICT's real books running on ezacto).
+**This repo is the whole ezacto product.** Open-source time tracking & invoicing,
+built as a Harvest replacement. Single org, free, no billing, no telemetry.
+Private now; **public at the OSS gate**, which is the maintainers running their
+own books on it.
 
 **Current state: active private pre-release build.** The database, native API,
 Worker entry, and generated API client now exist; remaining product lanes build
@@ -12,31 +13,29 @@ carries localized copies of everything needed to build.
 
 ## The thesis
 
-**ezacto is a Harvest replacement.** Harvest shipped a new navigation and put the
-previous one behind a toggle, with a banner saying the legacy look is no longer
-maintained. People who preferred it — including this account's owner — are being
-moved off something they chose. That is the opening.
+Time tracking and invoicing is settled work. People know the shape of it: start
+a timer, tag it to a project, bill the month, chase what is owed. What they do
+not want is that shape changing underneath them, or the price moving with the
+value of the invoices they send.
 
-"Match Harvest" is unbounded and always trailing. "Be the old Harvest" is
-bounded and testable: the reference implementation exists, is captured in
-screenshot inventories, and is frozen because its vendor stopped developing it.
-The spec cannot move underneath us.
+So the target is not novelty. It is a tool that behaves the way experienced
+users already expect, stays still, and costs the same next year. Where the
+established workflow is good we keep it. Where it is bad we say so and depart:
+the DV deviations in `docs/domain-model.md` are that record.
 
 It also settles what `packages/migrate` is for. It is not a nice-to-have import
-path, it is the product's front door — someone who wants the old Harvest back
-needs their thirteen years of data to come with them, which is what D7 already
-says.
+path, it is the product's front door. Nobody moves years of clients, projects,
+time and invoices by hand, so the importer has to be as trustworthy as the
+ledger it writes into, which is what D7 already says.
 
-Two consequences that the build has since decided rather than assumed:
+Two consequences the build has decided rather than assumed:
 
-- **Fidelity is the interaction model, not the visuals.** Where things live, how
-  many clicks, what the week grid does under your hands. The shell carries its
-  own design system rather than copying a vendor's; `apps/web/src/shell` and the
-  theme tokens are the answer to "how far does fidelity go".
-- **Where the old look and the new look disagree, the old wins by default.**
-  Departures are deliberate and listed — the DV deviations in
-  `docs/domain-model.md` are the record of which legacy behaviours were bad
-  enough not to carry forward.
+- **Familiarity is the interaction model, not the visuals.** Where things live,
+  how many clicks, what the week grid does under your hands. The shell carries
+  its own design system rather than borrowing anyone's; `apps/web/src/shell` and
+  the theme tokens are the answer to how far that goes.
+- **Departures are deliberate and listed.** A behaviour is carried forward
+  because it earns its place, not because somebody is used to it.
 
 Still open: where this sits relative to the licence and public-flip work, which
 #95 tracks.

@@ -1,5 +1,7 @@
+import { canViewMoneyField } from '@ezacto/core'
 import type {
   ClientRollupReport,
+  ContractorCostReport,
   DetailedTimeReport,
   DetailedTimeRow,
   GeneralResource,
@@ -15,6 +17,7 @@ export type ReportKind =
   | 'uninvoiced'
   | 'client-rollup'
   | 'project-budget'
+  | 'contractor-cost'
   | 'detailed-time'
 
 export type DetailedTimeHours = DetailedTimeReport['hours']
@@ -83,6 +86,16 @@ export interface ReportWorkspaceApi {
     },
     signal?: AbortSignal,
   ): Promise<MyHoursReport>
+  /**
+   * A range and nothing else. The endpoint takes no person and no project: it
+   * answers for everybody who tracked time, which is what a payroll hand-off
+   * needs, and a person parameter here would suggest the report can be narrowed
+   * to one when the route would ignore it.
+   */
+  getContractorCostReport(
+    filter: { readonly from: string; readonly to: string },
+    signal?: AbortSignal,
+  ): Promise<ContractorCostReport>
   getDetailedTimeReport(
     filter: {
       readonly from: string
@@ -109,6 +122,7 @@ const reportKinds = new Set<ReportKind>([
   'uninvoiced',
   'client-rollup',
   'project-budget',
+  'contractor-cost',
   'detailed-time',
 ])
 
@@ -119,6 +133,24 @@ export const canReadFinancialReports = (profile: Whoami['profile']): boolean =>
   profile === 'accounting' ||
   profile === 'executive_manager' ||
   profile === 'administrator'
+
+/**
+ * Stricter than `canReadFinancialReports`, and deliberately not the same set:
+ * every figure in the contractor cost report is a cost, and cost authority is
+ * the administrator's alone, so accounting and an executive manager read the
+ * other financial kinds but not this one.
+ *
+ * Asked of `canViewMoneyField` rather than restated as a third profile list
+ * here, because the route refuses on exactly that call. A local copy would be
+ * one edit away from a tab that opens a report the API then 403s.
+ */
+export const canReadCostReports = (
+  identity: Pick<Whoami, 'profile' | 'manager_grants'>,
+): boolean =>
+  canViewMoneyField(
+    { profile: identity.profile, managerGrants: identity.manager_grants },
+    'cost_rate',
+  )
 
 export const isCalendarDate = (value: string): boolean => {
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(value)) return false

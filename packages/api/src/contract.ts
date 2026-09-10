@@ -5396,7 +5396,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object",
     required: ["module", "enabled"],
     properties: {
-      module: { type: "string", enum: ["approval", "expenses"] },
+      module: { type: "string", enum: ["approval", "expenses", "own_money"] },
       enabled: booleanSchema,
     },
     additionalProperties: false,

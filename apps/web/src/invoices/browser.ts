@@ -1,4 +1,5 @@
-import { renderDataTable } from '../components/data-table.js'
+import { renderDataTable, type CellContent } from '../components/data-table.js'
+import { markMoney, moneyText } from '../money-display.js'
 import {
   type Attachment,
   EzactoApiError,
@@ -143,12 +144,16 @@ const sharedCurrency = (invoices: readonly Invoice[]): string | null => {
 const columnTotal = (
   invoices: readonly Invoice[],
   amount: (invoice: Readonly<Invoice>) => number,
-): string => {
+): CellContent => {
   const currency = sharedCurrency(invoices)
+  // The dash a mixed-currency page shows is the absence of a total, not an
+  // amount, so it is left unmarked -- masking it would draw dots over nothing.
   if (currency === null) return '—'
-  return money(
-    invoices.reduce((sum, invoice) => sum + amount(invoice), 0),
-    currency,
+  return moneyText(
+    money(
+      invoices.reduce((sum, invoice) => sum + amount(invoice), 0),
+      currency,
+    ),
   )
 }
 
@@ -175,14 +180,14 @@ export const renderInvoiceListItems = (
           key: 'amount',
           label: 'Amount',
           numeric: true,
-          render: (invoice) => money(invoice.amount_cents, invoice.currency),
+          render: (invoice) => moneyText(money(invoice.amount_cents, invoice.currency)),
           total: (rows) => columnTotal(rows, (invoice) => invoice.amount_cents),
         },
         {
           key: 'balance',
           label: 'Balance',
           numeric: true,
-          render: (invoice) => money(invoice.due_amount_cents, invoice.currency),
+          render: (invoice) => moneyText(money(invoice.due_amount_cents, invoice.currency)),
           total: (rows) => columnTotal(rows, (invoice) => invoice.due_amount_cents),
         },
       ],
@@ -270,10 +275,10 @@ export const renderInvoiceDetail = (
         quantity.textContent = invoiceLineQuantityForForm(line)
         const rate = document.createElement('td')
         rate.dataset.label = 'Rate'
-        rate.textContent = money(line.unit_price_cents, invoice.currency)
+        rate.append(moneyText(money(line.unit_price_cents, invoice.currency)))
         const amount = document.createElement('td')
         amount.dataset.label = 'Amount'
-        amount.textContent = money(line.amount_cents, invoice.currency)
+        amount.append(moneyText(money(line.amount_cents, invoice.currency)))
         const controls = document.createElement('td')
         controls.className = 'invoice-line-actions'
         if (actions?.canWrite === true && invoiceCanEditLines(invoice)) {
@@ -326,6 +331,7 @@ export const renderInvoiceDetail = (
           item.dataset.invoicePaymentId = String(payment.id)
           const summary = document.createElement('strong')
           summary.textContent = money(payment.amount_cents, payment.currency)
+          markMoney(summary)
           const date = document.createElement('span')
           date.textContent = paymentDateLabel(payment)
           item.append(summary, date)
@@ -607,17 +613,25 @@ export const createInvoicePaymentController = (
     `web.invoice.line.${kind}:${globalThis.crypto.randomUUID()}`
 
   const syncLinePreview = (): void => {
+    // The dash stands for a quantity or rate that does not parse yet, which is
+    // not an amount, so the marker comes and goes with the figure.
+    const preview = (value: string | null): void => {
+      linePreview.textContent = value ?? '—'
+      markMoney(linePreview, value !== null)
+    }
     if (invoice === null) {
-      linePreview.textContent = '—'
+      preview(null)
       return
     }
     try {
-      linePreview.textContent = money(
-        invoiceLineValues(lineQuantity.value, lineRate.value).amountCents,
-        invoice.currency,
+      preview(
+        money(
+          invoiceLineValues(lineQuantity.value, lineRate.value).amountCents,
+          invoice.currency,
+        ),
       )
     } catch {
-      linePreview.textContent = '—'
+      preview(null)
     }
   }
 
@@ -1067,7 +1081,10 @@ export const createInvoicePaymentController = (
     deletingPayment = payment
     deleteCommandId = null
     deleteResult.textContent = ''
-    deleteSummary.textContent = `${money(payment.amount_cents, payment.currency)} paid ${paymentDateLabel(payment)}`
+    deleteSummary.replaceChildren(
+      moneyText(money(payment.amount_cents, payment.currency)),
+      ` paid ${paymentDateLabel(payment)}`,
+    )
     syncControls()
     deleteDialog.showModal()
     deleteSubmit.focus()
@@ -1119,7 +1136,11 @@ export const createInvoicePaymentController = (
     deletingLine = line
     lineDeleteCommandId = null
     lineDeleteResult.textContent = ''
-    lineDeleteSummary.textContent = `${line.description?.trim() || line.kind} (${money(line.amount_cents, invoice.currency)})`
+    lineDeleteSummary.replaceChildren(
+      `${line.description?.trim() || line.kind} (`,
+      moneyText(money(line.amount_cents, invoice.currency)),
+      ')',
+    )
     syncControls()
     lineDeleteDialog.showModal()
     lineDeleteSubmit.focus()

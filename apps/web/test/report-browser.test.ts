@@ -93,6 +93,11 @@ const baseApi = (overrides: Partial<ReportWorkspaceApi> = {}): Partial<ReportWor
     time_entry_count: 0,
     projects: [],
   })),
+  getContractorCostReport: vi.fn(async () => ({
+    from: '2026-08-01',
+    to: '2026-08-31',
+    rows: [],
+  })),
   getDetailedTimeReport: vi.fn(async () => detailedTimeReport()),
   ...overrides,
 })
@@ -693,10 +698,12 @@ describe('Reports Stage 1 browser controller', () => {
       'Detailed time',
       'Client rollup',
       'Project budget',
+      'Contractor cost',
     ])
     expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual([
       null,
       'page',
+      null,
       null,
       null,
       null,
@@ -722,6 +729,7 @@ describe('Reports Stage 1 browser controller', () => {
       null,
       null,
       'page',
+      null,
       null,
     ])
     expect(document.querySelector<HTMLElement>('[data-report-project-field]')?.hidden).toBe(true)
@@ -1217,6 +1225,191 @@ describe('Reports Stage 1 browser controller', () => {
     session.abort()
   })
 
+  it('[browser] totals contractor cost inside each currency and prices no uncosted row', async () => {
+    // #519. The row shape is the whole test: a cost that is null is not a cost
+    // of zero, the count behind that null is the only way a reader can see
+    // which rows are incomplete, and two rows for one person in two currencies
+    // are two answers rather than one that can be added.
+    writeDocument('/reports?report=contractor-cost&from=2026-08-01&to=2026-08-31')
+    const getContractorCostReport = vi.fn(async () => ({
+      from: '2026-08-01',
+      to: '2026-08-31',
+      rows: [
+        {
+          user_id: 11,
+          name: 'Ada Wren',
+          payroll_email: 'ada@example.test',
+          is_contractor: true,
+          currency: 'USD',
+          rounded_seconds: 144_000,
+          cost_cents: 400_000,
+          entries_without_rate: 0,
+        },
+        {
+          user_id: 12,
+          name: 'Grace Hall',
+          payroll_email: null,
+          is_contractor: false,
+          currency: 'USD',
+          rounded_seconds: 36_000,
+          cost_cents: null,
+          entries_without_rate: 3,
+        },
+        {
+          user_id: 11,
+          name: 'Ada Wren',
+          payroll_email: 'ada@example.test',
+          is_contractor: true,
+          currency: 'EUR',
+          rounded_seconds: 7_200,
+          cost_cents: 20_000,
+          entries_without_rate: 0,
+        },
+      ],
+    }))
+    const session = new AbortController()
+    await createReportsController(baseApi({ getContractorCostReport })).activate(
+      identity('administrator'),
+      session.signal,
+      () => false,
+    )
+
+    // The range is the entire request: no client, no project, nothing that
+    // could narrow a report the endpoint answers whole.
+    expect(getContractorCostReport).toHaveBeenCalledWith(
+      { from: '2026-08-01', to: '2026-08-31' },
+      expect.anything(),
+    )
+    const results = document.querySelector('[data-report-results]')!
+    // Counted before anything is read off them, so a fixture that rendered
+    // nothing cannot pass this test by finding nothing wrong.
+    const sections = results.querySelectorAll('.report-cost-currency')
+    expect(sections.length).toBe(2)
+    const [usd, eur] = [...sections]
+    expect(usd!.querySelector('h3')?.textContent).toBe('USD')
+    expect(eur!.querySelector('h3')?.textContent).toBe('EUR')
+    expect(usd!.querySelectorAll('tbody tr').length).toBe(2)
+    expect(eur!.querySelectorAll('tbody tr').length).toBe(1)
+
+    const usdRows = [...usd!.querySelectorAll('tbody tr')]
+    expect(usdRows[0]!.querySelector('a')?.getAttribute('href')).toBe('/team/11')
+    expect(usdRows[0]!.textContent).toContain('Contractor')
+    expect(usdRows[0]!.querySelectorAll('td')[0]?.textContent).toBe('40 h')
+    expect(usdRows[0]!.querySelectorAll('td')[1]?.textContent).toBe('$4,000.00')
+
+    // Ten hours with no rate behind them. Neither a zero nor a bare dash: both
+    // read as "nothing to pay" for work that was done.
+    const uncosted = usdRows[1]!.querySelectorAll('td')[1]!
+    expect(uncosted.textContent).toContain('Not costed')
+    expect(uncosted.textContent).toContain('3 entries without a cost rate')
+    expect(uncosted.textContent).not.toContain('0.00')
+    expect(usdRows[1]!.textContent).toContain('Employee')
+
+    // Hours still total -- seconds carry no rate -- but the currency's cost
+    // does not, because one of its rows has no cost at all.
+    const usdTotal = usd!.querySelectorAll('tfoot td')
+    expect(usdTotal[0]?.textContent).toBe('50 h')
+    expect(usdTotal[1]?.textContent).toBe('Not costed')
+    expect(usd!.querySelector('.report-warning')?.textContent).toBe(
+      '3 entries across 1 person have no cost rate, so USD has no total.',
+    )
+
+    const eurTotal = eur!.querySelectorAll('tfoot td')
+    expect(eurTotal[0]?.textContent).toBe('2 h')
+    expect(eurTotal[1]?.textContent).toBe('€200.00')
+    expect(eur!.querySelector('.report-warning')).toBeNull()
+    // The same person is in both sections and is never added across them: 42
+    // hours and a combined figure are the two shapes of that mistake.
+    expect(results.textContent).not.toContain('42 h')
+    expect(results.textContent).not.toContain('4,200.00')
+    session.abort()
+  })
+
+  it('[security] keeps the cost report to the administrator, not the financial profiles', async () => {
+    // Stricter than the other financial kinds on purpose: cost_rate is
+    // administrator-only in canViewMoneyField, and the route refuses on that
+    // same call. An accounting profile that saw the tab would get a 403.
+    writeDocument('/reports?report=contractor-cost&from=2026-08-01&to=2026-08-31')
+    const getContractorCostReport = vi.fn()
+
+    await createReportsController(baseApi({ getContractorCostReport })).activate(
+      identity('accounting'),
+      new AbortController().signal,
+      () => false,
+    )
+
+    const tabs = [...document.querySelectorAll('.tabstrip a[href^="/reports"]')]
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      'My hours',
+      'Uninvoiced work',
+      'Detailed time',
+      'Client rollup',
+      'Project budget',
+    ])
+    expect(getContractorCostReport).not.toHaveBeenCalled()
+    // The refusal names the profile that can, rather than repeating the
+    // financial-report wording accounting has already satisfied.
+    expect(document.querySelector('[data-report-status]')?.textContent).toBe(
+      'Only an administrator can read the contractor cost report.',
+    )
+    expect(document.querySelector('[data-report-results]')?.textContent).toBe('')
+    // The strip and the card agree on what is being looked at instead: the
+    // surviving fallback kind is marked, and its filters are the ones shown.
+    expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual([
+      'page',
+      null,
+      null,
+      null,
+      null,
+    ])
+    expect(document.querySelector<HTMLElement>('[data-report-client-field]')?.hidden).toBe(
+      true,
+    )
+  })
+
+  it('[browser] asks for the cost report with the range alone and hides both pickers', async () => {
+    writeDocument('/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31&client_id=1')
+    const getContractorCostReport = vi.fn(async () => ({
+      from: '2026-08-01',
+      to: '2026-08-31',
+      rows: [],
+    }))
+    const session = new AbortController()
+    await createReportsController(baseApi({ getContractorCostReport })).activate(
+      identity('administrator'),
+      session.signal,
+      () => false,
+    )
+
+    const tab = [
+      ...document.querySelectorAll<HTMLAnchorElement>('.tabstrip a[href^="/reports"]'),
+    ].at(-1)!
+    expect(tab.textContent).toBe('Contractor cost')
+    // Neither id follows the kind into the address: the endpoint takes neither.
+    expect(tab.getAttribute('href')).toBe(
+      '/reports?report=contractor-cost&from=2026-08-01&to=2026-08-31',
+    )
+    tab.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(getContractorCostReport).toHaveBeenCalledTimes(1))
+
+    expect(getContractorCostReport).toHaveBeenCalledWith(
+      { from: '2026-08-01', to: '2026-08-31' },
+      expect.anything(),
+    )
+    expect(`${window.location.pathname}${window.location.search}`).toBe(
+      '/reports?report=contractor-cost&from=2026-08-01&to=2026-08-31',
+    )
+    expect(document.querySelector<HTMLElement>('[data-report-client-field]')?.hidden).toBe(
+      true,
+    )
+    expect(document.querySelector<HTMLElement>('[data-report-project-field]')?.hidden).toBe(
+      true,
+    )
+    expect(document.querySelector('[data-report-results]')?.textContent).toContain(
+      'Nobody tracked time in this period.',
+    )
+    session.abort()
+  })
   const detailedFixture = (): DetailedTimeReport =>
     detailedTimeReport({
       seconds: 6_300,

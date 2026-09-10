@@ -4,7 +4,7 @@ import type { ApiContext } from './context.js'
 import { ApiError } from './errors.js'
 import { assertFields, readObjectBody, unknownFieldErrors } from './resources/support.js'
 
-export type ModuleName = 'approval' | 'expenses'
+export type ModuleName = 'approval' | 'expenses' | 'own_money'
 
 export interface ModuleState {
   module: ModuleName
@@ -25,7 +25,7 @@ export interface ModuleSettingsRouteOptions {
   clock(): string
 }
 
-const knownModules = new Set<string>(['approval', 'expenses'])
+const knownModules = new Set<string>(['approval', 'expenses', 'own_money'])
 
 const assertAdministrator = <Bindings extends object>(
   context: Context<ApiContext<Bindings>>,

@@ -91,7 +91,7 @@ describe('minElapsedMs', () => {
     }
   })
 
-  // migration-spec §2.2 puts CONFLICT's account at ~57 invoices, i.e. ~140 requests.
+  // migration-spec §2.2 sizes a mid-sized account's sweep at ~140 requests.
   it('[unit] a correctly-paced run of that size still averages above the sustained budget', async () => {
     const clock = fakeClock()
     const limiter = createRateLimiter({ now: clock.now, sleep: clock.sleep })

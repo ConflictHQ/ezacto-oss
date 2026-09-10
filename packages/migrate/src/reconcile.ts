@@ -765,7 +765,7 @@ const sourceState = async (
 
     // Harvest's uninvoiced report lists active projects only. Recomputing over
     // archived ones manufactured a delta on every archived project that still
-    // had uninvoiced work — three of CONFLICT's, four rows.
+    // had uninvoiced work, and a long-lived account always has some.
     if (
       project.isActive &&
       project.billingMethod !== 'non_billable' &&
