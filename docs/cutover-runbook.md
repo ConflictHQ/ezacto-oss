@@ -1,8 +1,9 @@
 # Harvest cutover runbook
 
-The ordered procedure for moving CONFLICT's Harvest account into the hosted
-prod instance at `app.example.com`. Every command here has been run; the
-row counts, error strings and timings are observed, not estimated.
+The ordered procedure for moving a Harvest account into a hosted prod
+instance. It is not a sketch: it was executed end to end against a real
+production instance, and the row counts, error strings and timings here are
+observed, not estimated.
 
 It assumes one operator working alone. Where a control would normally be "have
 another operator confirm the database name" — as [RESTORE.md](../RESTORE.md)
@@ -25,24 +26,24 @@ of them are cheap to get right and expensive to redo.
 
 ## Outcome
 
-The window ran on 2026-09-10. The names below are what the account holds now,
-and they differ from the `ezacto-prod` names this procedure was written against:
-the resources were renamed during the window so the Worker, its D1 database, its
-Queue and its bucket all share one prefix.
+The window ran to completion. The names below are the shape the account was
+left in — they are placeholders here, and they differ from the `ezacto-prod`
+names this procedure was written against, because the resources were renamed
+during the window so the Worker, its D1 database, its Queue and its bucket all
+share one prefix. Substitute your own throughout.
 
 | Resource | Name | Detail |
 | --- | --- | --- |
-| Worker | `ezacto-prod` | serving `app.example.com` |
-| D1 | `ezacto-prod` | `00000000-0000-0000-0000-000000000000` |
-| Queue | `ezacto-prod-email` | dead-letter `ezacto-prod-email-dlq` |
-| R2 | `ezacto-prod-attachments` | nightly export target |
+| Worker | `example-ezacto` | serving `time.example.com` |
+| D1 | `example-ezacto` | `<your-d1-database-id>` |
+| Queue | `example-ezacto-email` | dead-letter `example-ezacto-email-dlq` |
+| R2 | `example-ezacto-attachments` | nightly export target |
 
-Loaded: REDACTED time entries, 740 invoices, REDACTED line items, 60 users, 30
-clients, 3 recurring definitions, 4 worksheet completions, 44 migrations.
-Outstanding reconciles to Harvest exactly at `$REDACTED` across 10 open
-invoices. The old `ezacto-prod` D1 database was deleted once the new Worker
-answered on the domain, so the rollback of last resort is the Harvest snapshot
-and the reconcile, not Time Travel.
+Every table loaded, and the load was verified row for row against the Harvest
+export; the outstanding balance reconciled to Harvest to the cent. The old
+`ezacto-prod` D1 database was deleted once the new Worker answered on the
+domain, so the rollback of last resort is the Harvest snapshot and the
+reconcile, not Time Travel.
 
 ## 0. Preconditions
 
@@ -58,9 +59,9 @@ npx wrangler whoami
 
 A scoped `CLOUDFLARE_API_TOKEN` in the environment shadows the OAuth session and
 will authenticate as the wrong account, or fail on the D1 write scope. Unset it
-for the whole window rather than per command. `whoami` must report the CONFLICT
-LLC account with Workers and D1 write scopes; the account id above is the one
-this runbook's resources live in.
+for the whole window rather than per command. `whoami` must report the account you
+intend to deploy into, with Workers and D1 write scopes; the account id above is
+the one this runbook's resources live in.
 
 ### Account ceilings that matter
 
@@ -113,8 +114,8 @@ the replacement has passed this gate and reconciliation.
 The database and its attachments. Sign-in and outbound mail are separate
 go-live work and are not gated by anything here:
 
-- no identity provider is configured in prod, and most active people
-  have no password row — SSO provisioning must be scoped before the secrets are
+- no identity provider is configured in prod, and nearly every active person
+  has no password row — SSO provisioning must be scoped before the secrets are
   set (#268, #270);
 - prod has no email transport, so password reset and invoice send both return
   503 (#276);
@@ -297,10 +298,10 @@ the other two fields: a `pending` row needs all three of `balance_cents`,
 `occurred_on` and `notes`, and a row with some but not all is rejected as
 incomplete.
 
-The twelve invoices that built this retainer are #713 (2015-07-02) through #750
-(2016-06-01), all TeamOne, all $2,000, all paid — $24,000 deposited. That is the
-deposit side only; the drawdowns exist nowhere outside the Harvest screen, which
-is the whole reason the balance has to be entered by hand.
+The invoices that built this retainer are a run of equal-value paid invoices to
+one client, and they are easy enough to find and total. That is the deposit side
+only; the drawdowns exist nowhere outside the Harvest screen, which is the whole
+reason the balance has to be entered by hand.
 
 The retainer's project link and nominal size are not worksheet fields and are
 lost by the load. If a `$0.00`-sized, project-less retainer in the UI is not
@@ -309,7 +310,8 @@ retainer triggers, and it is safe in either order relative to the worksheet:
 
 ```sh
 npx wrangler d1 execute <new-database> --remote --command \
-  "UPDATE retainers SET project_id = 52, amount_cents = 2400000,
+  "UPDATE retainers SET project_id = <project id>,
+     amount_cents = <nominal size in cents>,
      updated_at = '<iso8601>' WHERE id = 1;"
 ```
 
@@ -334,8 +336,9 @@ generation engine refuses them. They are live billing, not history: 466138 and
 point at the three stubs. Leaving them incomplete silently stops that.
 
 One transcription rule the schema does not hint at. A Harvest recurring
-definition may carry a credit line at a negative quantity — one in the CONFLICT
-account reads quantity `-1.0` × `$6,250.00`.
+definition may carry a credit line at a negative quantity — one such line reads
+quantity `-1.0` × `$1,000.00` (an illustrative figure; the negative quantity
+against a fixed unit price is the shape that matters).
 Transcribed faithfully the apply aborts:
 
 ```text
@@ -344,7 +347,7 @@ rows[2].amount_config.line_items[1].quantity must be positive and bounded
 
 Quantity must be positive at three separate layers, including a SQL trigger, so
 the encoding to use is **quantity 1 with a negative `unit_price_cents`**
-(`quantity: 1, unit_price_cents: -625000`). That is arithmetically identical —
+(`quantity: 1, unit_price_cents: -100000`). That is arithmetically identical —
 the line total is an integer ratio rounded half away from zero either way — and
 it applies cleanly. Harvest itself uses both encodings elsewhere in the same
 account.
@@ -445,9 +448,8 @@ only from the local path. `executeRemotely` uploads the file byte for byte.
 
 **Second: `unistr()`.** For any TEXT value holding a control character,
 sqlite3 3.51 emits a `unistr('...\u000d\u000a...')` call rather than a plain
-quoted literal. The rehearsal dump held 9,292 such calls across seven tables
-(time entries 4,846; invoice messages 2,360; invoice line items 1,403; invoices
-625; invoice payments 38; clients 18; email template versions 2). D1 refuses the
+quoted literal. The rehearsal dump held thousands of such calls, spread across
+seven tables -- anywhere a stored value carried a newline. D1 refuses the
 function outright:
 
 ```text
@@ -753,7 +755,7 @@ cursor key, migrations:
 
 ```sh
 curl -s -o /tmp/whoami.json -w '%{http_code}\n' \
-  https://app.example.com/api/v1/whoami
+  https://time.example.com/api/v1/whoami
 cat /tmp/whoami.json
 ```
 
@@ -870,9 +872,8 @@ matches 26109   rounding 0   gaps 8   unexplained 0
 ```
 
 The eight are the four rows above. All five corrections in the account loaded,
-carrying their cost — including the 2026-08-02 entry of -1.0h at a $60 cost
-rate, which every previous rehearsal skipped and every previous total therefore
-ran high by.
+carrying their cost — including a -1.0h correction, which every previous
+rehearsal skipped and every previous total therefore ran high by.
 
 That run **exited 0**. Earlier revisions of this page said reconcile would exit 1
 and that this was expected; that has not been true since the gate reached zero
@@ -897,7 +898,7 @@ receipts that settled them load, and all seven read `paid` again.
 
 One consequence is worth stating plainly to whoever signs this off:
 
-- **The 739 archived invoice PDFs and 54 avatars are not imported.** They are
+- **The archived invoice PDFs and the avatars are not imported.** They are
   archived in the snapshot as evidence, not loaded: there is no PDF renderer in
   the product, and `avatar_url` remains the Harvest-hosted URL. If "my old
   invoice PDFs are in the new system" is anyone's expectation, it is unmet, and

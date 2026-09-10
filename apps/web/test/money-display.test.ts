@@ -321,4 +321,40 @@ describe('money display preference', () => {
     expect(drawsMoney.length).toBeGreaterThanOrEqual(10)
     expect(unmarked).toEqual([])
   })
+
+  it('[unit] refuses a currency formatted outside the shared formatters', async () => {
+    // The guard above reads a list of formatter names, so an amount built inline
+    // with `Intl.NumberFormat({ style: 'currency' })` matched nothing and was
+    // invisible to it -- which is how the generated-invoice total shipped drawn
+    // in the clear while every other figure on the screen masked.
+    //
+    // Banning the inline construction is what makes the list above complete:
+    // every amount then goes through a named formatter, and the marker rule
+    // covers all of them. The formatters themselves live in model and helper
+    // modules, not controllers, so this looks only at controllers.
+    const controllers = (await filesUnder(resolve(root, 'src'))).filter(
+      (path) => path.endsWith('browser.ts') && !path.includes('generated'),
+    )
+    expect(controllers.length).toBeGreaterThanOrEqual(10)
+
+    const inlineCurrency: string[] = []
+    for (const path of controllers) {
+      const source = await readFile(path, 'utf8')
+      // `Intl.NumberFormat(...)` whose options reach `style: 'currency'`. Hours,
+      // counts and byte sizes are formatted the same way and are deliberately
+      // none of this rule's business.
+      const pattern = /Intl\.NumberFormat\([^)]*style:\s*'currency'/gsu
+      for (const match of source.matchAll(pattern)) {
+        // A module declaring its own named formatter is the shape we want, and
+        // is what every controller drawing money already does. What this rule
+        // is for is the second one: an amount formatted at the call site, which
+        // no list of formatter names can see and no marker rule then covers.
+        const preceding = source.slice(Math.max(0, match.index - 140), match.index)
+        const isFormatterDeclaration =
+          /const\s+\w+\s*=\s*\([^)]*\)\s*(?::[^=]*)?=>\s*new\s*$/u.test(preceding)
+        if (!isFormatterDeclaration) inlineCurrency.push(path.slice(path.indexOf('/src/') + 1))
+      }
+    }
+    expect(inlineCurrency).toEqual([])
+  })
 })

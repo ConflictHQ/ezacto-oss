@@ -4090,11 +4090,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       .then((invoice) => {
         if (!isSessionCurrent(operation)) return
         required<HTMLElement>('[data-generated-invoice-number]').textContent = invoice.number
-        required<HTMLElement>('[data-generated-invoice-total]').textContent =
-          `${new Intl.NumberFormat('en-US', {
-            style: 'currency',
-            currency: invoice.currency,
-          }).format(invoice.amount_cents / 100)} · ${invoice.line_items.length} ${invoice.line_items.length === 1 ? 'line' : 'lines'}`
+        // The total and the line count share a line, so only the figure carries
+        // the marker -- masking the whole node would take the count with it.
+        // This panel stays on screen until the next generation or a navigation,
+        // so it is a standing headline amount rather than transient prose.
+        const generatedTotal = required<HTMLElement>('[data-generated-invoice-total]')
+        generatedTotal.replaceChildren(
+          moneyText(formatMoney(invoice.amount_cents, invoice.currency)),
+          ` · ${invoice.line_items.length} ${invoice.line_items.length === 1 ? 'line' : 'lines'}`,
+        )
         generatedInvoiceLink.href = `/invoices/${invoice.id}`
         generatedInvoiceLink.hidden = false
         invoiceResult.textContent = 'Draft invoice generated successfully.'

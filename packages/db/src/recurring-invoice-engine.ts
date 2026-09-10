@@ -209,7 +209,7 @@ const runAtomic = async (
  *
  * This applied to the subject alone, and the line descriptions were copied
  * through verbatim -- which is wrong for exactly the definitions this product
- * exists to carry across. A migrated Client A line reads "for the month of
+ * exists to carry across. A migrated client line reads "for the month of
  * September 2026"; frozen, every invoice it raises from October onwards names
  * September, to a client, monthly, with nothing failing. Harvest expands them
  * in descriptions, so a definition brought over from Harvest arrives expecting
