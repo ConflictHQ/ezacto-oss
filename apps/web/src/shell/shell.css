@@ -747,9 +747,8 @@
 .report-table thead th {
   background: var(--ez-surface);
   color: var(--ez-muted);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: 13px;
+  font-weight: 400;
 }
 .report-table tbody tr:hover {
   background: var(--ez-surface);
@@ -3240,9 +3239,7 @@ button[data-auth-action]:disabled {
 
 .day-totals span {
   color: var(--ez-muted);
-  font-size: 12px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: 13px;
 }
 
 .day-totals strong {
@@ -4300,11 +4297,9 @@ dialog textarea {
   background: var(--ez-surface);
   border-bottom: 1px solid var(--ez-border);
   color: var(--ez-muted);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-size: 13px;
+  font-weight: 400;
   text-align: left;
-  text-transform: uppercase;
   white-space: nowrap;
 }
 
