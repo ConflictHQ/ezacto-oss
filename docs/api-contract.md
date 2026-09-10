@@ -104,6 +104,17 @@ by the generator.
 
 The native report slice requires an explicit inclusive `from`/`to` date range:
 
+- `GET /api/v1/reports/my-hours` totals the acting user's own tracked time by
+  project. Whose hours it reports is the authenticated principal and nothing
+  else: there is no `user_id` parameter, and the strict query parser refuses one
+  rather than ignoring it, so the report cannot be widened by editing a request.
+  It is gated on `time_entries:read` rather than `reports:read` -- these are the
+  caller's own entries, so the three reporting profiles are not the ceiling. Rows
+  carry tracked and rounded seconds side by side, because they differ on an
+  account that rounds and only the tracked figure matches the week grid; they
+  carry no money, so nothing here needs the money-field redaction the other
+  reports apply. Archived projects stay in, unlike the uninvoiced report: work
+  booked to a closed project is still work that was done.
 - `GET /api/v1/reports/uninvoiced` prices stopped, billable, unlinked time from
   its stored `rounded_seconds` and rate snapshot, then adds billable unlinked
   expenses. The shared integer-cents generation preview owns this arithmetic;

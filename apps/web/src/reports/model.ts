@@ -1,12 +1,13 @@
 import type {
   ClientRollupReport,
   GeneralResource,
+  MyHoursReport,
   ProjectBudgetReport,
   UninvoicedReport,
   Whoami,
 } from '@ezacto/client'
 
-export type ReportKind = 'uninvoiced' | 'client-rollup' | 'project-budget'
+export type ReportKind = 'my-hours' | 'uninvoiced' | 'client-rollup' | 'project-budget'
 
 export interface ReportCatalogPage {
   readonly data: readonly GeneralResource[]
@@ -35,6 +36,19 @@ export interface ReportWorkspaceApi {
     filter: { readonly from: string; readonly to: string },
     signal?: AbortSignal,
   ): Promise<ProjectBudgetReport>
+  /**
+   * No user takes part in this signature. Whose hours come back is the session's
+   * business, not the caller's, and a parameter here would be the first place a
+   * request could be edited to ask for somebody else's.
+   */
+  getMyHoursReport(
+    filter: {
+      readonly from: string
+      readonly to: string
+      readonly project_id?: number
+    },
+    signal?: AbortSignal,
+  ): Promise<MyHoursReport>
 }
 
 export interface ReportFilters {
@@ -46,6 +60,7 @@ export interface ReportFilters {
 }
 
 const reportKinds = new Set<ReportKind>([
+  'my-hours',
   'uninvoiced',
   'client-rollup',
   'project-budget',
@@ -84,7 +99,7 @@ export const reportFiltersFromUrl = (
       ? (rawKind as ReportKind)
       : financialAccess
         ? 'uninvoiced'
-        : 'project-budget'
+        : 'my-hours'
   const monthStart = `${today.slice(0, 8)}01`
   const from = url.searchParams.get('from')
   const to = url.searchParams.get('to')
@@ -110,7 +125,9 @@ export const reportFiltersUrl = (filters: Readonly<ReportFilters>): string => {
     params.set('client_id', String(filters.clientId))
   }
   if (
-    (filters.kind === 'uninvoiced' || filters.kind === 'project-budget') &&
+    (filters.kind === 'uninvoiced' ||
+      filters.kind === 'project-budget' ||
+      filters.kind === 'my-hours') &&
     filters.projectId !== null
   ) {
     params.set('project_id', String(filters.projectId))

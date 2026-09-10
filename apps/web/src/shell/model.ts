@@ -1052,6 +1052,13 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     }),
+  getMyHoursReport: async (filter, signal) =>
+    (
+      await client.getMyHoursReport({
+        query: filter,
+        ...withSignal(signal),
+      })
+    ).data,
   getUninvoicedReport: async (filter, signal) =>
     (
       await client.getUninvoicedReport({

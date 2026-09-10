@@ -1179,6 +1179,19 @@ const userEmailOperations: ApiContractOperation[] = [
 const reportOperations: ApiContractOperation[] = [
   {
     method: "get",
+    // "my" rather than a `user_id` parameter: whose hours these are comes from
+    // the authenticated principal, so the address a member can edit holds no
+    // value that points the report at anybody else.
+    path: "/api/v1/reports/my-hours",
+    operationId: "getMyHoursReport",
+    summary: "Report the acting user's own tracked hours by project",
+    tag: "reports",
+    responseStatus: 200,
+    responseSchema: "MyHoursReportEnvelope",
+    parameters: [...requiredReportRange, query("project_id", integerSchema)],
+  },
+  {
+    method: "get",
     path: "/api/v1/reports/uninvoiced",
     operationId: "getUninvoicedReport",
     summary: "Report uninvoiced tracked time and expenses",
@@ -4860,6 +4873,64 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  MyHoursProject: {
+    type: "object",
+    required: [
+      "project_id",
+      "project_name",
+      "project_code",
+      "client_id",
+      "client_name",
+      "seconds",
+      "rounded_seconds",
+      "billable_seconds",
+      "time_entry_count",
+    ],
+    properties: {
+      project_id: integerSchema,
+      project_name: stringSchema,
+      project_code: stringSchema,
+      client_id: integerSchema,
+      client_name: stringSchema,
+      // Tracked and rounded both, because they are different numbers on an
+      // account that rounds, and a report holding only the rounded one
+      // disagrees with the timesheet the reader just came from.
+      seconds: signedIntegerSchema,
+      rounded_seconds: signedIntegerSchema,
+      billable_seconds: signedIntegerSchema,
+      time_entry_count: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  MyHoursReport: {
+    type: "object",
+    required: [
+      "from",
+      "to",
+      "user_id",
+      "project_id",
+      "seconds",
+      "rounded_seconds",
+      "billable_seconds",
+      "time_entry_count",
+      "projects",
+    ],
+    properties: {
+      from: dateSchema,
+      to: dateSchema,
+      // Echoed so the response says whose hours it holds. The request cannot
+      // set it; it is the authenticated principal, every time.
+      user_id: integerSchema,
+      project_id: nullable(integerSchema),
+      seconds: signedIntegerSchema,
+      rounded_seconds: signedIntegerSchema,
+      billable_seconds: signedIntegerSchema,
+      time_entry_count: { type: "integer", minimum: 0 },
+      projects: { type: "array", items: reference("MyHoursProject") },
+    },
+    additionalProperties: false,
+  },
+  MyHoursReportEnvelope: envelope("MyHoursReport"),
   UninvoicedCurrencyTotal: {
     type: "object",
     required: [
