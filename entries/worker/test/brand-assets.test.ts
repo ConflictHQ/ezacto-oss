@@ -65,6 +65,10 @@ afterEach(async () => {
 })
 
 describe('worker brand assets (#489)', () => {
+  // 20s, matching `email-queue` and `nightly-export`. Each case below boots a
+  // real D1 and R2 and renders a whole page: ~2.8s on an idle laptop, which the
+  // 5s default swallowed on a loaded CI runner and reported as a failure of the
+  // feature rather than of the budget.
   it('[integration] the sign-in page an anonymous browser gets carries the stored mark', async () => {
     const env = await environment()
     const url = await storeMark(env)
@@ -79,7 +83,7 @@ describe('worker brand assets (#489)', () => {
     expect(served.status).toBe(200)
     expect(served.headers.get('content-type')).toBe('image/png')
     expect(new Uint8Array(await served.arrayBuffer())).toEqual(pngBytes)
-  })
+  }, 20_000)
 
   it('[integration] a deploy-time URL keeps the text wordmark, because the CSP refuses it', async () => {
     // This asserted the opposite -- that the configured URL renders as an <img>
@@ -95,7 +99,7 @@ describe('worker brand assets (#489)', () => {
     expect(response.headers.get('content-security-policy')).toContain("img-src 'self'")
     expect(html).not.toContain('cdn.example')
     expect(html).not.toContain('brand-mark')
-  })
+  }, 20_000)
 
   it('[integration] an uploaded mark displaces the deploy-time URL', async () => {
     const env = await environment({
@@ -107,7 +111,7 @@ describe('worker brand assets (#489)', () => {
     ).text()
     expect(html).toContain(`src="${url}"`)
     expect(html).not.toContain('https://cdn.example/dark.png')
-  })
+  }, 20_000)
 
   it('[integration] a database that has not run 0045 yet still renders the page', async () => {
     // The page path deliberately never runs migrations, so on a database that
