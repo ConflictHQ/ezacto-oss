@@ -852,6 +852,23 @@
 .report-table td:first-child {
   text-align: left;
 }
+/* One block per currency in the contractor cost report, stacked rather than
+   merged into a single table: the costs in two currencies do not add up, and a
+   reader should not be able to run their eye down one column and add them. */
+.report-cost-currency + .report-cost-currency {
+  margin-top: 20px;
+}
+.report-cost-currency h3 {
+  margin: 0;
+}
+/* The second line in a cell: contractor or employee under a name, and the count
+   of entries with no rate under a cost that therefore does not exist. */
+.report-cost-note {
+  display: block;
+  margin-top: 2px;
+  color: var(--ez-muted);
+  font-size: 11px;
+}
 
 .invoice-generation {
   width: min(880px, 100%);

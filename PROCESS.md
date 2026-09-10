@@ -10,13 +10,12 @@ It applies to **Tier 2 — Full Engagement** (portal + product build + infra) an
 project surfaces). Tier 1 (portal only) doesn't need it. The process is generic and
 reusable across engagements, languages, and teams.
 
-> **Rides on Boilerworks, doesn't reinvent it.** The product and platform repos are
-> scaffolded with **[Boilerworks](https://boilerworks.ai)** (`pip install
-> boilerworks`; docs at [boilerworks.dev](https://boilerworks.dev)). Its 26 templates
-> already ship the toolchain: auth, billing, jobs, email, Docker, **CI/CD**, design
-> system, and Terraform IaC, plus AI-agent shims. So most of the quality scaffolding
-> below already exists in the repo from day one. This process is the *human/agent
-> discipline* that runs on top of that scaffolding — not a second copy of it.
+> **Rides on the scaffolding, doesn't reinvent it.** Repos here start from a
+> project template that already ships the toolchain: auth, billing, jobs, email,
+> Docker, **CI/CD**, design system, and IaC, plus AI-agent shims. So most of the
+> quality scaffolding below already exists in the repo from day one. This process
+> is the *human/agent discipline* that runs on top of that scaffolding — not a
+> second copy of it.
 
 ## Core shape: plan top-down, build bottom-up
 
@@ -82,7 +81,7 @@ and there is nothing left to "come back to."
 ## Quality gates
 
 Nothing merges until all four pass. They run locally before the PR and in CI on the PR
-(Boilerworks templates wire the CI; you keep it green).
+(the project template wires the CI; you keep it green).
 
 | Gate | What it proves | Where it runs |
 | --- | --- | --- |
@@ -98,8 +97,8 @@ shell/YAML/path differences), not assumed away because it works locally.
 
 ## Per-language toolchains
 
-Use the **standard, boring toolchain per language** — the one Boilerworks already
-configured for that template. Don't introduce a bespoke linter or formatter; match
+Use the **standard, boring toolchain per language** — the one the project template
+already configured. Don't introduce a bespoke linter or formatter; match
 what the scaffold ships. Typical defaults:
 
 | Language | Format / Lint | Test | Build |
@@ -135,17 +134,14 @@ The discipline above isn't separate from the knowledge surface — it produces i
 
 - Each closed issue is a **deliverable** and a tracker update on the portal.
 - The **plan** (`specs/` tree) is the top-down decomposition the build cycle consumes.
-- Code context for agents working the build comes from
-  **[Navegador](https://navegador.dev)** (see
-  [docs/practices/code-context-navegador.md](docs/practices/code-context-navegador.md)).
-- Meeting decisions that change the plan come in through
-  **[PlanOpticon](https://planopticon.dev)** (see
-  [docs/practices/recording-pipeline.md](docs/practices/recording-pipeline.md)) and
-  surface as action items and decisions.
+- Code context for agents working the build comes from an **indexed graph of the
+  repo** — structure, call graph, imports — rather than from whatever a grep
+  happened to turn up.
+- Meeting decisions that change the plan come in through the **recording
+  pipeline** and surface as action items and decisions.
 
-The point of the whole kit: template + Boilerworks scaffolding + this process +
-agents = skip months of setup and toolchain wiring, and start the loop on features
-on day one.
+The point of the whole kit: template + scaffolding + this process + agents = skip
+months of setup and toolchain wiring, and start the loop on features on day one.
 
 ## Related
 
@@ -156,6 +152,4 @@ on day one.
   — the plan/deliverables/tracker surfaces this process drives.
 - [docs/patterns/workspace-metarepo.md](docs/patterns/workspace-metarepo.md) — product
   repos as submodules under the portal.
-- [docs/practices/code-context-navegador.md](docs/practices/code-context-navegador.md)
-  — structured code context for build agents.
 - [docs/practices/deployment.md](docs/practices/deployment.md) — shipping the portal.

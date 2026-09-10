@@ -8,18 +8,19 @@ type ModuleSettingsDatabase =
   | DrizzleD1Database<typeof schema>
 type NativeClient = BetterSqlite3.Database | D1Database
 
-export type ModuleName = 'approval' | 'expenses'
+export type ModuleName = 'approval' | 'expenses' | 'own_money'
 
 export interface ModuleState {
   module: ModuleName
   enabled: boolean
 }
 
-const knownModules: readonly ModuleName[] = ['approval', 'expenses']
+const knownModules: readonly ModuleName[] = ['approval', 'expenses', 'own_money']
 
 interface RawModulesRow {
   approval: number
   expenses: number
+  own_money: number
 }
 
 const nativeClient = (database: ModuleSettingsDatabase): NativeClient =>
@@ -38,7 +39,8 @@ const first = async <Row>(
 
 const modulesSelect = `SELECT
   COALESCE(json_extract(modules, '$.approval'), 0) AS approval,
-  COALESCE(json_extract(modules, '$.expenses'), 0) AS expenses
+  COALESCE(json_extract(modules, '$.expenses'), 0) AS expenses,
+  COALESCE(json_extract(modules, '$.own_money'), 0) AS own_money
 FROM organizations WHERE id = 1`
 
 const toModuleStates = (row: RawModulesRow): readonly ModuleState[] =>

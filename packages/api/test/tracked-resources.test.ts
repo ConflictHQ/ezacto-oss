@@ -16,8 +16,11 @@ import {
 import { createTimesheetApprovalRepository } from '../../db/src/timesheet-approvals.js'
 import { createApiApp } from '../src/app.js'
 import type { ApiAuthentication } from '../src/auth.js'
-import type { UserProfile } from '../src/context.js'
-import { installTrackedResourceRoutes } from '../src/resources/index.js'
+import type { UserPrincipal, UserProfile } from '../src/context.js'
+import {
+  installTrackedResourceRoutes,
+  serializeTimeEntry,
+} from '../src/resources/index.js'
 import type {
   ResourceTimeBoundary,
   TrackedResourceRepository,
@@ -296,7 +299,22 @@ const userProfiles: ReadonlySet<string> = new Set([
   'administrator',
 ])
 
-const authentication: ApiAuthentication = {
+/**
+ * Two knobs the money cases need and nothing else here does.
+ *
+ * `x-test-user-id` exists because every time-entry route scopes its rows to the
+ * acting user: a harness that could only ever be user 1 cannot tell "my own
+ * entry" from "anybody's", which is the distinction #520 turns on.
+ *
+ * `ownMoneyVisible` is the organisation setting, resolved once per request by
+ * the real middleware exactly as the Worker resolves it from the modules
+ * column. Defaulted to false so that every case written before #520 keeps
+ * asking the question it was written to ask.
+ */
+const authenticationWith = (
+  ownMoneyVisible = false,
+): ApiAuthentication => ({
+  ownMoneyVisible: async () => ownMoneyVisible,
   tokens: {
     authenticate: async (token) => token === 'finance' || token === 'limited-finance' ? {
       tokenId: 1,
@@ -313,9 +331,11 @@ const authentication: ApiAuthentication = {
     resolve: async (request) => {
       const profile = request.headers.get('x-test-profile') ?? 'member'
       if (!userProfiles.has(profile)) return null
+      const requestedUserId = Number(request.headers.get('x-test-user-id') ?? '1')
+      if (!Number.isInteger(requestedUserId) || requestedUserId < 1) return null
       return {
         type: 'user',
-        userId: 1,
+        userId: requestedUserId,
         profile: profile as UserProfile,
         managerGrants: (request.headers.get('x-test-manager-grants') ?? '')
           .split(',')
@@ -327,7 +347,7 @@ const authentication: ApiAuthentication = {
       }
     },
   },
-}
+})
 
 const policyKey = (subject: Readonly<PolicySubject>): string =>
   subject.entityType === 'running_time_entry_replacement'
@@ -347,6 +367,7 @@ const harness = async (
   factory: () => Promise<TestDatabase>,
   interleave?: { sql: string; params: readonly unknown[] },
   policyInterleave?: { sql: string; params: readonly unknown[] },
+  options: { ownMoneyVisible?: boolean } = {},
 ): Promise<Harness> => {
   const database = await factory()
   await seed(database)
@@ -371,7 +392,7 @@ const harness = async (
     time: '09:00',
   }
   const app = createApiApp({
-    authentication,
+    authentication: authenticationWith(options.ownMoneyVisible ?? false),
     installApi: (api) =>
       installTrackedResourceRoutes(api, {
         repository,
@@ -417,6 +438,18 @@ const asProfile = (
     ...(managerGrants.length === 0
       ? {}
       : { 'x-test-manager-grants': managerGrants.join(',') }),
+  },
+})
+
+/** The same request, made by somebody other than the seeded user 1. */
+const asUser = (
+  userId: number,
+  profile: UserProfile,
+  managerGrants: readonly string[] = [],
+): RequestInit => ({
+  headers: {
+    ...(asProfile(profile, managerGrants).headers as Record<string, string>),
+    'x-test-user-id': String(userId),
   },
 })
 
@@ -835,6 +868,10 @@ for (const [runtime, factory] of factories) {
     }, 40_000)
 
     it('[security] redacts both time-entry rate snapshots across all six profiles', async () => {
+      // Unchanged by #520 and deliberately so: this is the instance every
+      // upgrade lands on, where the own-money setting has never been turned on
+      // and nobody's sight of money moved because a deploy happened. The
+      // setting-on half is the case below.
       const test = await setup()
       await test.database.run(
         `INSERT INTO time_entries (
@@ -856,12 +893,17 @@ for (const [runtime, factory] of factories) {
         executive_manager: { billable: true, cost: false },
         administrator: { billable: true, cost: true },
       }
+      expect(Object.keys(matrix)).toHaveLength(6)
       for (const [profile, expected] of Object.entries(matrix) as Array<
         [UserProfile, { billable: boolean; cost: boolean }]
       >) {
-        const serialized = await data<Record<string, unknown>>(
-          await test.request('/api/v1/time-entries/700', asProfile(profile)),
+        const response = await test.request(
+          '/api/v1/time-entries/700',
+          asProfile(profile),
         )
+        expect(response.status, profile).toBe(200)
+        const serialized = await data<Record<string, unknown>>(response)
+        expect(serialized['id'], profile).toBe(700)
         expect(
           Object.hasOwn(serialized, 'billable_rate_cents'),
           `${profile}:billable_rate_cents`,
@@ -881,6 +923,125 @@ for (const [runtime, factory] of factories) {
       expect(grantedManager).toHaveProperty('billable_rate_cents', 15_000)
       expect(grantedManager).not.toHaveProperty('cost_rate_cents')
     })
+
+    /**
+     * #520, the other half. With the organisation setting on, a person reads
+     * the rate and the take-home recorded on their own entries -- and still
+     * reads nothing on anybody else's, which is the part that fails quietly if
+     * the subject the serializer passes is the viewer rather than the row.
+     *
+     * The foreign-row half is asserted twice on purpose. Over the wire it is a
+     * 404, because every route in this file scopes rows to the acting user, and
+     * a test that stopped there would be proving the route's scoping rather
+     * than the money rule -- the redaction would have no way to fail. So the
+     * serializer is also called directly with a real record belonging to
+     * somebody else, which is the only place that question can actually be put
+     * to it, and the one that would notice the day a review or report screen
+     * hands it a row its reader does not own.
+     */
+    it('[security #520] shows a person their own rate snapshots and nobody else’s', async () => {
+      active = await harness(factory, undefined, undefined, {
+        ownMoneyVisible: true,
+      })
+      const test = active
+      await test.database.run(
+        `INSERT INTO time_entries (
+          id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+          spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+          billable_rate_cents, cost_rate_cents, created_at, updated_at
+        ) VALUES
+          (700, 1, 1, 1, 1, 1, '2026-08-28', 3600, 3600, 3600, 1, 15000, 9000, ?, ?),
+          (701, 2, 1, 1, 2, 1, '2026-08-28', 3600, 3600, 3600, 1, 25000, 12000, ?, ?)`,
+        timestamp,
+        timestamp,
+        timestamp,
+        timestamp,
+      )
+      const repository = new DrizzleTrackedResourceRepository(test.database.orm, {
+        isLocked: async () => false,
+      })
+      const viewerIsUserOne: UserPrincipal = {
+        type: 'user',
+        userId: 1,
+        profile: 'member',
+        managerGrants: [],
+        ownMoneyVisible: true,
+        authentication: { kind: 'session', sessionId: 'own-money-test' },
+      }
+
+      // Somebody else's row, put to the serializer directly. The record is read
+      // first and its two rates asserted, so that the absence below is a
+      // redaction rather than a row that never had rates to leak.
+      const foreignRecord = await repository.getTimeEntry(2, 701)
+      expect(foreignRecord.userId).toBe(2)
+      expect(foreignRecord.billableRateCents).toBe(25_000)
+      expect(foreignRecord.costRateCents).toBe(12_000)
+      const foreign = serializeTimeEntry(foreignRecord, viewerIsUserOne)
+      expect(
+        Object.hasOwn(foreign, 'billable_rate_cents'),
+        'user 1 must not read user 2 billable_rate_cents',
+      ).toBe(false)
+      expect(
+        Object.hasOwn(foreign, 'cost_rate_cents'),
+        'user 1 must not read user 2 cost_rate_cents (payroll)',
+      ).toBe(false)
+
+      // The same viewer, the same setting, their own row.
+      const ownRecord = await repository.getTimeEntry(1, 700)
+      const own = serializeTimeEntry(ownRecord, viewerIsUserOne)
+      expect(own).toMatchObject({
+        billable_rate_cents: 15_000,
+        cost_rate_cents: 9_000,
+      })
+
+      // And over the wire: user 2's entry is not user 1's to read at all, which
+      // is why the redaction above is the only thing standing between the two
+      // rows if a route ever stops scoping them.
+      expect(
+        (await test.request('/api/v1/time-entries/701', asProfile('member')))
+          .status,
+      ).toBe(404)
+      expect(
+        (await test.request('/api/v1/time-entries/700', asUser(2, 'member')))
+          .status,
+      ).toBe(404)
+
+      // Every profile, own row, both figures. Counted first so the loop cannot
+      // pass by iterating nothing.
+      const profiles: readonly UserProfile[] = [
+        'member',
+        'project_manager',
+        'people_admin',
+        'accounting',
+        'executive_manager',
+        'administrator',
+      ]
+      expect(profiles).toHaveLength(6)
+      for (const profile of profiles) {
+        const response = await test.request(
+          '/api/v1/time-entries/700',
+          asProfile(profile),
+        )
+        expect(response.status, profile).toBe(200)
+        const serialized = await data<Record<string, unknown>>(response)
+        expect(serialized['id'], profile).toBe(700)
+        expect(serialized['user_id'], profile).toBe(1)
+        expect(serialized['billable_rate_cents'], profile).toBe(15_000)
+        expect(serialized['cost_rate_cents'], profile).toBe(9_000)
+      }
+
+      // User 2 reading user 2's own entry: same grant, different person, and
+      // the figures are that person's own, not the ones above.
+      const theirs = await test.request(
+        '/api/v1/time-entries/701',
+        asUser(2, 'member'),
+      )
+      expect(theirs.status).toBe(200)
+      expect(await data<Record<string, unknown>>(theirs)).toMatchObject({
+        billable_rate_cents: 25_000,
+        cost_rate_cents: 12_000,
+      })
+    }, slowRuntimeTimeout)
 
     it('[api] applies implicit duration start, replacement stop, stop, and restart semantics', async () => {
       const test = await setup()

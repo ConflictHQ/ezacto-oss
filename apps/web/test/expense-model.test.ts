@@ -140,8 +140,8 @@ describe('expense workflow model', () => {
 })
 
 describe('what the approval pill is allowed to claim', () => {
-  // Years of a real book came in from Harvest with REDACTED time
-  // entries and three expenses marked approved. The import keeps that answer
+  // Fourteen years of book came in from Harvest with thousands of time entries
+  // and a handful of expenses marked approved. The import keeps that answer
   // in source_approval_status rather than overwriting the native column,
   // because an instance whose approval module is off resets the native column
   // to unsubmitted for every row. Reading only the native column told a

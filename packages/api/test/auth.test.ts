@@ -100,12 +100,14 @@ const sessionResolver = {
 const createAuthApp = (
   tokens = tokenService(),
   activity?: { capture: (request: unknown) => Promise<void> },
+  ownMoneyVisible?: () => Promise<boolean>,
 ) =>
   createApiApp({
     authentication: {
       tokens,
       sessions: sessionResolver,
       ...(activity === undefined ? {} : { activity: activity as never }),
+      ...(ownMoneyVisible === undefined ? {} : { ownMoneyVisible }),
     },
     installApi(api) {
       api.get('/principal', (context) =>
@@ -217,6 +219,11 @@ describe('API authentication middleware', () => {
         userId: 42,
         profile: 'accounting',
         managerGrants: [],
+        // #520: an app that composed no resolver for the organisation setting
+        // is an instance where it is off, and the principal has to say so
+        // rather than leave the field absent -- `canViewMoneyField` reads it,
+        // and absent must not be a third state anybody has to reason about.
+        ownMoneyVisible: false,
         authentication: { kind: 'token', tokenId: 1, scopes: ['reports:read'] },
       },
     })
@@ -230,8 +237,29 @@ describe('API authentication middleware', () => {
         userId: 42,
         profile: 'administrator',
         managerGrants: [],
+        ownMoneyVisible: false,
         authentication: { kind: 'session', sessionId: 'user-session' },
       },
+    })
+  })
+
+  it('[security] stamps the own-money setting onto both credential sources', async () => {
+    // Both, not one: a token acts as its user, and a rule that read the setting
+    // on browser sessions alone would make `ez` and the UI disagree about what
+    // one person may read about themselves. Asserted per source rather than
+    // once, because a single sampled request cannot tell which path answered.
+    const app = createAuthApp(tokenService(), undefined, async () => true)
+    const viaToken = await app.request('/api/v1/principal', {
+      headers: { authorization: `Bearer ${bearer}` },
+    })
+    expect(await viaToken.json()).toMatchObject({
+      data: { userId: 42, ownMoneyVisible: true },
+    })
+    const viaSession = await app.request('/api/v1/principal', {
+      headers: { cookie: 'session=user' },
+    })
+    expect(await viaSession.json()).toMatchObject({
+      data: { userId: 42, ownMoneyVisible: true },
     })
   })
 
