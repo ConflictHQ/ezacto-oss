@@ -276,6 +276,33 @@ describe('period control', () => {
     expect(ui.summary.textContent).toBe('1 – 20 Sep 2026')
   })
 
+  it('[browser] a moved period tells the form it moved, and a seeded one does not', () => {
+    // Screens around this control listen for `change` on their own form to know
+    // the range moved. The invoice generation wizard makes that a correctness
+    // question rather than a cosmetic one: its listener rotates the idempotency
+    // key, so an arrow step that stayed silent billed a different period under
+    // the key the previous generation had already used, and the server refused
+    // the second invoice outright.
+    const ui = mount({ today: '2026-09-10' })
+    const heard: string[] = []
+    ui.from.addEventListener('change', () => heard.push('from'))
+    ui.to.addEventListener('change', () => heard.push('to'))
+
+    // Seeding is a screen filling the control in, not a person moving it, so it
+    // must stay silent -- otherwise every screen is told the user changed
+    // something before they have touched it.
+    ui.control.setRange(range('2026-09-01', '2026-09-30'))
+    expect(heard).toEqual([])
+
+    ui.previous.click()
+    expect(heard).toEqual(['from', 'to'])
+    expect(ui.control.range()).toEqual(range('2026-08-01', '2026-08-31'))
+
+    heard.length = 0
+    ui.next.click()
+    expect(heard).toEqual(['from', 'to'])
+  })
+
   it('[browser] steps the period on an arrow and reports the range it moved to', () => {
     const ui = mount({ today: '2026-09-10' })
     ui.control.setRange(range('2026-09-01', '2026-09-30'))

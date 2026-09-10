@@ -2180,6 +2180,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     if (!isSessionCurrent(operation) || within !== requestedWithin) return false
     weekStartDay = loadedWeekStartDay
     weekPeriod.setWeekStartDay(loadedWeekStartDay)
+    // The generation wizard offers Week too, and was computing Monday-Sunday
+    // regardless of the setting -- so on a Saturday-start organisation a draft
+    // claimed work across two of its weeks, and the wizard's own label
+    // disagreed with what the timesheet called the same week.
+    invoicePeriod.setWeekStartDay(loadedWeekStartDay)
     snapshot = loaded
     // Publish before anything renders: the week total, approval cards and the
     // running-timer elapsed all format seconds, and all of them run ahead of

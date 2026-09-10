@@ -396,6 +396,21 @@ export const createPeriodControl = (options: PeriodControlOptions): PeriodContro
   const apply = (range: PeriodRange): void => {
     fromInput.value = range.from
     toInput.value = range.to
+    // Assigning `.value` fires nothing, and screens around this control listen
+    // for `change` on their own form to know the range moved. The invoice
+    // generation wizard is the one that makes this a correctness question rather
+    // than a cosmetic one: its listener rotates the idempotency key, so an arrow
+    // step that stayed silent billed a different period under the key the last
+    // generation already used, and the server refused the second invoice with
+    // `command_id_reused`.
+    //
+    // Dispatched from `apply` only, never from `setRange`. `apply` is a person
+    // moving the period; `setRange` is a screen seeding the control, and firing
+    // there would tell every listener the user changed something before they had
+    // touched it.
+    for (const input of [fromInput, toInput]) {
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+    }
     refresh()
     options.onChange(range, kind)
   }
