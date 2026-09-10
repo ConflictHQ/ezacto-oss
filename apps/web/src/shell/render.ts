@@ -443,14 +443,24 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
     </aside>
     <section class="week-surface" aria-labelledby="week-heading">
       <header class="week-toolbar">
-        <div>
-          <p class="eyebrow">Monday–Sunday</p>
-          <h2 id="week-heading">Week of <span data-week-label>—</span></h2>
+        <!--
+          The mount point for the shared period control, which replaces the
+          hand-rolled week stepper that stood here: the "Monday–Sunday" eyebrow
+          (static text, and a lie on an organization whose week starts on
+          Saturday), the "Week of …" label, and the two chevrons either side of
+          the "This week" button. The control is week-only here because the grid
+          below draws seven day columns and a month is not seven of anything.
+
+          The heading stays as the section's accessible name. It is hidden
+          because the control immediately below it says the same thing in a form
+          the reader can also operate, and naming the week twice on one row is
+          the noise §6 asks screens to stop making.
+        -->
+        <div class="week-period" data-week-period>
+          <h2 class="visually-hidden" id="week-heading">Timesheet week</h2>
         </div>
         <div class="week-actions">
-          <button type="button" data-week-previous data-auth-action disabled aria-label="Previous week">${iconMarkup('chevron', { direction: 'left' })}</button>
           <button type="button" data-week-current data-auth-action disabled>${iconMarkup('calendar')}This week</button>
-          <button type="button" data-week-next data-auth-action disabled aria-label="Next week">${iconMarkup('chevron')}</button>
           <button type="button" data-copy-last-week data-auth-action disabled>Copy last week</button>
           <button type="button" data-add-row-trigger data-auth-action disabled>Add row</button>
           <strong data-week-total>—</strong>
@@ -624,10 +634,16 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
         <label for="ez-invoice-client">Client
           <select id="ez-invoice-client" name="client" data-invoice-client required></select>
         </label>
-        <div class="invoice-period">
-          <label for="ez-invoice-from">From<input id="ez-invoice-from" name="from" type="date" required></label>
-          <label for="ez-invoice-to">To<input id="ez-invoice-to" name="to" type="date" required></label>
-        </div>
+        <!--
+          The mount point for the shared period control, which replaces the bare
+          From/To pair that stood here. Empty in the served HTML because the
+          control is DOM the way data-table is DOM: one implementation, built
+          once, rather than a string copy in this renderer to keep in step with
+          the browser one. It takes the fieldset's own date fields, so no band is
+          added to §6's budget of three between the tab strip and the first data
+          row.
+        -->
+        <div class="invoice-period" data-invoice-period></div>
       </fieldset>
       <fieldset>
         <legend>2. Projects</legend>

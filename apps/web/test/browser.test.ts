@@ -545,6 +545,64 @@ describe('week-grid browser behavior', () => {
     expect(week()).toBe(back)
   })
 
+  it('[browser] steps the timesheet week from the shared period control', async () => {
+    // The toolbar used to hand-roll this: two chevrons, a static
+    // "Monday–Sunday" eyebrow and a private `weekLabel`. It is the control the
+    // reports card uses, restricted to weeks because the grid below draws seven
+    // day columns.
+    renderBrowserShell()
+    window.history.replaceState(null, '', '/?week=2026-08-28')
+    await mountShell(browserApi())
+
+    const toolbar = document.querySelector<HTMLElement>('[data-week-period]')!
+    // Counted before anything is read off it: a check that finds no arrows
+    // passes just as happily against a toolbar that renders none.
+    expect(toolbar.querySelectorAll('.period-step')).toHaveLength(2)
+    const summary = toolbar.querySelector<HTMLElement>('[data-period-summary]')!
+    // 2026-08-28 is a Friday; the organisation's week starts on Monday.
+    await vi.waitFor(() => expect(summary.textContent).toBe('24 – 30 Aug 2026'))
+    // No kind menu, because there is no month-shaped grid to put one on.
+    expect(toolbar.querySelectorAll('[data-period-kind]')).toHaveLength(0)
+
+    const week = (): string | null => new URL(globalThis.location.href).searchParams.get('week')
+    toolbar.querySelector<HTMLButtonElement>('[data-period-previous]')!.click()
+    await vi.waitFor(() => expect(week()).toBe('2026-08-17'))
+    // The label follows the week that loaded, not the one that was asked for.
+    expect(summary.textContent).toBe('17 – 23 Aug 2026')
+
+    toolbar.querySelector<HTMLButtonElement>('[data-period-next]')!.click()
+    await vi.waitFor(() => expect(week()).toBe('2026-08-24'))
+    expect(summary.textContent).toBe('24 – 30 Aug 2026')
+  })
+
+  it('[browser] keeps the timesheet period on the organisation week, not on Monday', async () => {
+    // The eyebrow this control replaced read "Monday–Sunday" whatever the
+    // organisation had set, so the one screen that has always known about
+    // `week_start_day` was also the one screen saying the wrong thing about it.
+    renderBrowserShell()
+    window.history.replaceState(null, '', '/?week=2026-08-28')
+    const api = browserApi()
+    api.getTimeEntrySettings = vi.fn(async () => ({
+      time_entry_mode: api.timeEntryMode,
+      time_format: api.timeFormat,
+      clock: api.clock,
+      week_start_day: 'saturday' as const,
+    }))
+    await mountShell(api)
+
+    const toolbar = document.querySelector<HTMLElement>('[data-week-period]')!
+    expect(toolbar.querySelectorAll('.period-step')).toHaveLength(2)
+    const summary = toolbar.querySelector<HTMLElement>('[data-period-summary]')!
+    // 2026-08-28 is a Friday, so a Saturday week holds it from the 22nd.
+    await vi.waitFor(() => expect(summary.textContent).toBe('22 – 28 Aug 2026'))
+
+    toolbar.querySelector<HTMLButtonElement>('[data-period-previous]')!.click()
+    await vi.waitFor(() =>
+      expect(new URL(globalThis.location.href).searchParams.get('week')).toBe('2026-08-15'),
+    )
+    expect(summary.textContent).toBe('15 – 21 Aug 2026')
+  })
+
   it('[browser] opens the add-row dialog on Enter with a modifier, from inside a cell', async () => {
     // Adding a row is the one action taken mid-typing, so it keeps a modifier
     // and has to work while a cell has focus.
@@ -1436,6 +1494,82 @@ describe('invoice generation browser behavior', () => {
     timerChip.click()
     document.querySelector<HTMLButtonElement>('[data-stop-timer]')!.click()
     await vi.waitFor(() => expect(api.stopTimeEntry).toHaveBeenCalledWith(3, expect.anything()))
+  })
+
+  it('[browser] bills the period the wizard stepped to, and refuses a half-typed one', async () => {
+    // The fieldset used to carry two `required` date inputs, so "last month"
+    // meant typing four digits and the browser itself refused an empty range.
+    // The control is the reports card's, and the emptiness check is now ours.
+    renderBrowserShell({ view: 'invoice-generation' })
+    const generateInvoice = vi
+      .fn<NonNullable<ShellApi['generateInvoice']>>()
+      .mockResolvedValue(invoice(21))
+    const api: ShellApi = {
+      ...browserApi(),
+      listClients: async () => ({
+        data: [resource(11, 'Northwind Freight')],
+        page: { next_cursor: null },
+      }),
+      listProjects: async () => ({
+        data: [{ ...resource(1, 'Northpeak'), client_id: 11 }],
+        page: { next_cursor: null },
+      }),
+      generateInvoice,
+    }
+    await mountShell(api)
+
+    const wizard = document.querySelector<HTMLFormElement>('[data-invoice-generation-form]')!
+    const period = wizard.querySelector<HTMLElement>('[data-invoice-period]')!
+    // Counted first, because every assertion below reads one of these.
+    expect(period.querySelectorAll('.period-step')).toHaveLength(2)
+    const from = period.querySelector<HTMLInputElement>('[data-period-from]')!
+    const to = period.querySelector<HTMLInputElement>('[data-period-to]')!
+
+    // Month-to-date, exactly as the wizard has always opened, presented as the
+    // custom range it is rather than silently widened to a whole month.
+    await vi.waitFor(() => expect(from.value).not.toBe(''))
+    expect(to.value).toBe(from.value.slice(0, 8) + to.value.slice(8))
+    expect(from.value.slice(8)).toBe('01')
+    expect(period.querySelector<HTMLSelectElement>('[data-period-kind]')!.value).toBe('custom')
+
+    // Scoped to the wizard: `[name="project"]` unqualified is the time-entry
+    // dialog's project field, which is present in the same shell and would let
+    // every assertion below pass against a wizard that offered no projects.
+    // happy-dom does not adopt the first option as the selection the way a real
+    // browser does, so the client is chosen here rather than assumed.
+    const clientSelect = wizard.querySelector<HTMLSelectElement>('[data-invoice-client]')!
+    await vi.waitFor(() => expect(clientSelect.options.length).toBe(1))
+    clientSelect.value = '11'
+    clientSelect.dispatchEvent(new Event('change'))
+    await vi.waitFor(() =>
+      expect(wizard.querySelectorAll('[data-invoice-projects] [name="project"]').length)
+        .toBeGreaterThan(0),
+    )
+    wizard.querySelector<HTMLInputElement>('[data-invoice-projects] [name="project"]')!.checked =
+      true
+
+    // An empty range no longer reaches the command: nothing marks these inputs
+    // required, because a half-typed custom range is a normal state to be in.
+    from.value = ''
+    wizard.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    expect(generateInvoice).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-invoice-generation-result]')?.textContent).toBe(
+      'Choose a client, date range, and at least one project.',
+    )
+
+    // A whole month, one arrow back from the month it opened on.
+    period.querySelector<HTMLSelectElement>('[data-period-kind]')!.value = 'month'
+    period
+      .querySelector<HTMLSelectElement>('[data-period-kind]')!
+      .dispatchEvent(new Event('change'))
+    period.querySelector<HTMLButtonElement>('[data-period-previous]')!.click()
+    const billed = { from: from.value, to: to.value }
+    wizard.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(generateInvoice).toHaveBeenCalledTimes(1))
+    expect(generateInvoice.mock.calls[0]![1]).toMatchObject(billed)
+    // A whole month, and the one before the month the wizard opened on.
+    expect(billed.from.slice(8)).toBe('01')
+    expect(billed.from < billed.to).toBe(true)
   })
 })
 
@@ -3412,13 +3546,24 @@ describe('native browser authentication', () => {
     document.querySelector<HTMLTextAreaElement>('[data-note-input]')!.value =
       'private first note'
 
-    document.querySelector<HTMLButtonElement>('[data-week-previous]')!.click()
+    // The toolbar's own arrow, now the shared period control's: scoped to the
+    // week mount because the invoice wizard further down the shell has one too.
+    document
+      .querySelector<HTMLButtonElement>('[data-week-period] [data-period-previous]')!
+      .click()
     await vi.waitFor(() => expect(api.listProjects).toHaveBeenCalledTimes(2))
     const logoutButton = document.querySelector<HTMLButtonElement>('[data-logout]')!
     logoutButton.click()
     expect(document.querySelector<HTMLButtonElement>('[data-command-trigger]')?.disabled).toBe(
       true,
     )
+    // The week stepper is the shared control now and builds its own arrows, so
+    // it is out of reach of the `[data-auth-action]` sweep that used to disable
+    // the two the toolbar served. Signed out, they still have to be dead.
+    expect(
+      document.querySelector<HTMLButtonElement>('[data-week-period] [data-period-previous]')
+        ?.disabled,
+    ).toBe(true)
     expect(priorSignal?.aborted).toBe(true)
 
     await vi.waitFor(() =>

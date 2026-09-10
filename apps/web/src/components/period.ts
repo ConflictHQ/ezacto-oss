@@ -240,9 +240,26 @@ const KIND_OPTIONS: readonly { readonly kind: PeriodKind; readonly label: string
   { kind: 'custom', label: 'Custom range' },
 ]
 
+const ALL_KINDS: readonly PeriodKind[] = KIND_OPTIONS.map((entry) => entry.kind)
+
 export interface PeriodControlOptions {
   /** The field label above the control. */
   readonly label: string
+  /**
+   * Which periods this screen is willing to show, in the order they are
+   * offered. Defaults to all five.
+   *
+   * The timesheet passes `['week']`: the week grid draws seven day columns and
+   * a month is not seven of anything, so offering Month there would be a menu
+   * entry that breaks the screen underneath it. Letting the timesheet keep its
+   * own arrows instead was the alternative, and it is the fork this control
+   * exists to prevent — one week-start implementation, one label, one step.
+   *
+   * A single kind drops the select rather than rendering a menu with one
+   * option, which is a control that cannot be operated; the field label then
+   * names the summary, the only thing left on the row to name.
+   */
+  readonly kinds?: readonly PeriodKind[]
   /**
    * Read rather than passed, because a tab left open overnight is a real thing
    * and "this week" has to mean the week it is when the arrow is pressed.
@@ -274,27 +291,37 @@ let controlSequence = 0
 
 export const createPeriodControl = (options: PeriodControlOptions): PeriodControl => {
   let weekStartDay = options.weekStartDay ?? 'monday'
-  let kind: PeriodKind = 'custom'
+  const offered = options.kinds ?? ALL_KINDS
+  if (offered.length === 0) throw new RangeError('a period control must offer a kind')
+  /**
+   * A kind this screen cannot show becomes the first one it can. On a
+   * week-only timesheet that pins every answer to `week`, so an arrow always
+   * steps seven days: falling back to `custom` instead would step by the
+   * range's length, which is the same seven days right up until somebody
+   * arrives on a hand-edited URL and starts walking the grid in fours.
+   */
+  const clamp = (candidate: PeriodKind): PeriodKind =>
+    offered.includes(candidate) ? candidate : offered[0]!
+  let kind: PeriodKind = clamp('custom')
   controlSequence += 1
 
   const element = document.createElement('div')
   element.className = 'period-control'
 
-  const kindSelect = document.createElement('select')
-  kindSelect.className = 'period-kind'
-  kindSelect.id = `ez-period-kind-${controlSequence}`
-  kindSelect.dataset.periodKind = ''
-  for (const entry of KIND_OPTIONS) {
-    const option = document.createElement('option')
-    option.value = entry.kind
-    option.textContent = entry.label
-    kindSelect.appendChild(option)
+  const kindSelect =
+    offered.length === 1 ? null : document.createElement('select')
+  if (kindSelect !== null) {
+    kindSelect.className = 'period-kind'
+    kindSelect.id = `ez-period-kind-${controlSequence}`
+    kindSelect.dataset.periodKind = ''
+    for (const entry of KIND_OPTIONS) {
+      if (!offered.includes(entry.kind)) continue
+      const option = document.createElement('option')
+      option.value = entry.kind
+      option.textContent = entry.label
+      kindSelect.appendChild(option)
+    }
   }
-
-  const fieldLabel = document.createElement('label')
-  fieldLabel.className = 'period-field-label'
-  fieldLabel.htmlFor = kindSelect.id
-  fieldLabel.textContent = options.label
 
   const stepButton = (direction: -1 | 1): HTMLButtonElement => {
     const button = document.createElement('button')
@@ -314,12 +341,21 @@ export const createPeriodControl = (options: PeriodControlOptions): PeriodContro
 
   const summary = document.createElement('output')
   summary.className = 'period-summary'
+  summary.id = `ez-period-summary-${controlSequence}`
   summary.dataset.periodSummary = ''
+
+  const fieldLabel = document.createElement('label')
+  fieldLabel.className = 'period-field-label'
+  // `<output>` is labelable, so the label still points at something real when
+  // the kind menu is gone. Dropping the label with the select would leave the
+  // reader an unnamed value.
+  fieldLabel.htmlFor = kindSelect?.id ?? summary.id
+  fieldLabel.textContent = options.label
 
   const row = document.createElement('div')
   row.className = 'period-row'
   row.appendChild(previous)
-  row.appendChild(kindSelect)
+  if (kindSelect !== null) row.appendChild(kindSelect)
   row.appendChild(summary)
   row.appendChild(next)
 
@@ -350,7 +386,7 @@ export const createPeriodControl = (options: PeriodControlOptions): PeriodContro
     isCalendarDay(range.from) && isCalendarDay(range.to) && range.from <= range.to
 
   const refresh = (): void => {
-    kindSelect.value = kind
+    if (kindSelect !== null) kindSelect.value = kind
     // Hidden rather than removed: the inputs are where the range lives, and the
     // screen reads them back whichever period happens to be showing.
     custom.hidden = kind !== 'custom'
@@ -374,8 +410,10 @@ export const createPeriodControl = (options: PeriodControlOptions): PeriodContro
   previous.addEventListener('click', stepOnClick(-1))
   next.addEventListener('click', stepOnClick(1))
 
-  kindSelect.addEventListener('change', () => {
-    const chosen = KIND_OPTIONS.find((entry) => entry.kind === kindSelect.value)?.kind ?? 'custom'
+  kindSelect?.addEventListener('change', () => {
+    const chosen = clamp(
+      KIND_OPTIONS.find((entry) => entry.kind === kindSelect.value)?.kind ?? 'custom',
+    )
     kind = chosen
     // Custom keeps the range it was handed. Choosing it is a request to edit
     // the dates on screen, not a request for a different set of them.
@@ -393,7 +431,7 @@ export const createPeriodControl = (options: PeriodControlOptions): PeriodContro
       // without this the same 1st-to-30th reads as "September 2026" when it is
       // chosen and as a custom range when it is typed -- one range, two labels,
       // depending on a history the reader cannot see.
-      kind = detectPeriodKind(readRange(), weekStartDay)
+      kind = clamp(detectPeriodKind(readRange(), weekStartDay))
       refresh()
     })
   }
@@ -405,7 +443,7 @@ export const createPeriodControl = (options: PeriodControlOptions): PeriodContro
     setRange(range) {
       fromInput.value = range.from
       toInput.value = range.to
-      kind = detectPeriodKind(range, weekStartDay)
+      kind = clamp(detectPeriodKind(range, weekStartDay))
       refresh()
     },
     setWeekStartDay(startDay) {
@@ -413,13 +451,13 @@ export const createPeriodControl = (options: PeriodControlOptions): PeriodContro
       // The setting usually lands after the first range does, and a week read
       // as `custom` under the default start is a week again once the
       // organisation's own start is known.
-      kind = detectPeriodKind(readRange(), weekStartDay)
+      kind = clamp(detectPeriodKind(readRange(), weekStartDay))
       refresh()
     },
     setDisabled(disabled) {
       previous.disabled = disabled
       next.disabled = disabled
-      kindSelect.disabled = disabled
+      if (kindSelect !== null) kindSelect.disabled = disabled
       fromInput.disabled = disabled
       toInput.disabled = disabled
     },

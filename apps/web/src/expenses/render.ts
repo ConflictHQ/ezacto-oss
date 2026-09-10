@@ -24,8 +24,15 @@ export const renderExpenseWorkflowPages = (view?: string): string => `
       </form>
     </section>
     <form class="expense-filter-form" data-expense-filter-form>
-      <label>From<input name="from" type="date"></label>
-      <label>To<input name="to" type="date"></label>
+      <!--
+        The shared period control replaces the bare From/To pair that stood
+        here. Empty in the served HTML because the control is DOM the way
+        data-table is DOM: one implementation, built once, rather than a string
+        copy in this renderer that has to be kept in step with the browser one.
+        It takes the filter form's own date fields, so §6's three-band budget
+        between the tab strip and the first data row is unchanged.
+      -->
+      <div class="expense-filter-period" data-expense-period></div>
       <label>Client<select name="client_id"><option value="">All clients</option></select></label>
       <label>Project<select name="project_id"><option value="">All projects</option></select></label>
       <label>Category<select name="expense_category_id"><option value="">All categories</option></select></label>

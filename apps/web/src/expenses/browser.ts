@@ -1,5 +1,6 @@
 import { renderDataTable } from '../components/data-table.js'
 import { icon } from '../components/icons.js'
+import { createPeriodControl } from '../components/period.js'
 import {
   EzactoApiError,
   type Attachment,
@@ -187,6 +188,20 @@ export const createExpenseWorkflowController = (
   const listRetry = required<HTMLButtonElement>('[data-expense-list-retry]')
   const filterForm = required<HTMLFormElement>('[data-expense-filter-form]')
   const filterReset = required<HTMLButtonElement>('[data-expense-filter-reset]')
+  /**
+   * The two From/To fields the filter form used to carry, as the shared
+   * control. Unlike reports, an arrow here does not run on its own: the form
+   * already has an Apply button that every other field waits for, and a period
+   * that reloaded while the category beside it was still half-chosen would
+   * apply half a question. Stepping still re-labels and rewrites the range, so
+   * Apply sends the period the reader can see.
+   */
+  const period = createPeriodControl({
+    label: 'Period',
+    today: localDate,
+    onChange: () => {},
+  })
+  required<HTMLElement>('[data-expense-period]').appendChild(period.element)
   const createPanel = required<HTMLElement>('[data-expense-create-panel]')
   const createForm = required<HTMLFormElement>('[data-expense-create-form]')
   const createSubmit = required<HTMLButtonElement>('[data-expense-create-submit]')
@@ -293,7 +308,11 @@ export const createExpenseWorkflowController = (
   }
 
   const applyFilterValues = (): void => {
-    for (const name of ['from', 'to', 'client_id', 'project_id', 'expense_category_id', 'approval_status', 'reimbursement_status']) {
+    // An absent bound reads as the empty string, which the control already
+    // treats as "not a date yet": an unfiltered list is a custom range with
+    // nothing in it, not a period it should invent.
+    period.setRange({ from: currentFilters.from ?? '', to: currentFilters.to ?? '' })
+    for (const name of ['client_id', 'project_id', 'expense_category_id', 'approval_status', 'reimbursement_status']) {
       const field = filterForm.elements.namedItem(name)
       if (!(field instanceof HTMLInputElement) && !(field instanceof HTMLSelectElement)) continue
       const value = currentFilters[name as keyof ExpenseFilters]
@@ -330,6 +349,7 @@ export const createExpenseWorkflowController = (
     nextCursor = null
     listedExpenses = []
     weekStartDay = 'monday'
+    period.setWeekStartDay('monday')
     listPending = false
     mutationPending = false
     attachmentCommand = null
@@ -414,9 +434,11 @@ export const createExpenseWorkflowController = (
 
   const filtersFromForm = (): ExpenseFilters => {
     const data = new FormData(filterForm)
-    const from = data.get('from')
-    const to = data.get('to')
-    if (typeof from === 'string' && typeof to === 'string' && from !== '' && to !== '' && from > to) {
+    // Off the control rather than the FormData: its date inputs carry no
+    // `name`, because the range is the control's state and a second copy in the
+    // form would be a second answer to the same question.
+    const { from, to } = period.range()
+    if (from !== '' && to !== '' && from > to) {
       throw new Error('To date cannot be before From date.')
     }
     const id = (name: string): number | undefined => {
@@ -430,8 +452,8 @@ export const createExpenseWorkflowController = (
     const projectId = id('project_id')
     const categoryId = id('expense_category_id')
     return {
-      ...(typeof from === 'string' && from !== '' ? { from } : {}),
-      ...(typeof to === 'string' && to !== '' ? { to } : {}),
+      ...(from === '' ? {} : { from }),
+      ...(to === '' ? {} : { to }),
       ...(clientId === undefined ? {} : { client_id: clientId }),
       ...(projectId === undefined ? {} : { project_id: projectId }),
       ...(categoryId === undefined ? {} : { expense_category_id: categoryId }),
@@ -747,6 +769,9 @@ export const createExpenseWorkflowController = (
     catalog = { categories, projects, clients }
     catalogReady = true
     weekStartDay = configuredWeekStart
+    // Before `applyFilterValues`, so a Saturday-to-Friday range in the URL is
+    // read as a week rather than as seven arbitrary days and then re-read.
+    period.setWeekStartDay(configuredWeekStart)
     populateCatalogs()
     applyFilterValues()
     createSubmit.disabled =
@@ -949,7 +974,11 @@ export const createExpenseWorkflowController = (
 
   filterReset.addEventListener('click', () => {
     currentFilters = {}
+    // `form.reset()` cannot reach the control's inputs — they have no default
+    // value to return to and the control is what holds the range — so the
+    // period is cleared alongside the fields the form owns.
     filterForm.reset()
+    applyFilterValues()
     updateFilterUrl()
     void loadList()
   })
