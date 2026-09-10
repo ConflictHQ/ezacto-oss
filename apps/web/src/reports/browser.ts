@@ -8,6 +8,7 @@ import {
   type UninvoicedReport,
   type Whoami,
 } from '@ezacto/client'
+import { createPeriodControl } from '../components/period.js'
 import {
   canReadFinancialReports,
   formatReportCents,
@@ -505,8 +506,27 @@ export const createReportsController = (
     kindTabs.set(tabKind, anchor)
   }
   const kindStrip = [...kindTabs.values()][0]?.parentElement ?? null
-  const fromInput = required<HTMLInputElement>('[data-report-from]')
-  const toInput = required<HTMLInputElement>('[data-report-to]')
+  /**
+   * The two From/To fields the card used to carry, as the shared control. An
+   * arrow reloads immediately because stepping is navigation, not filtering:
+   * the run button exists for the pickers beside it, and making somebody press
+   * it after every arrow would turn "last quarter, the one before, the one
+   * before that" into six clicks. A hand-edited custom range still waits for
+   * the button, because half a range is not a range.
+   *
+   * The callback ignores the range it is handed: the control has already
+   * written it to its own inputs, which is where `filtersFromForm` reads the
+   * range from, and taking it from the argument instead would be a second copy
+   * of the same dates that could disagree with the pickers beside them.
+   */
+  const period = createPeriodControl({
+    label: 'Period',
+    today: localToday,
+    onChange: () => {
+      void loadReport(filtersFromForm(), true)
+    },
+  })
+  required<HTMLElement>('[data-report-period]').appendChild(period.element)
   const catalogInput = required<HTMLSelectElement>('[data-report-catalog]')
   const clientField = required<HTMLElement>('[data-report-client-field]')
   const clientLabel = required<HTMLElement>('[data-report-client-label]')
@@ -545,8 +565,7 @@ export const createReportsController = (
   const setPending = (value: boolean): void => {
     pending = value
     run.disabled = value
-    fromInput.disabled = value
-    toInput.disabled = value
+    period.setDisabled(value)
     catalogInput.disabled = value
     clientInput.disabled = value
     projectInput.disabled = value
@@ -568,8 +587,7 @@ export const createReportsController = (
 
   const filtersFromForm = (): ReportFilters => ({
     kind,
-    from: fromInput.value,
-    to: toInput.value,
+    ...period.range(),
     clientId: selectedId(clientInput),
     projectId: selectedId(projectInput),
   })
@@ -765,8 +783,7 @@ export const createReportsController = (
       canReadFinancialReports(active.identity.profile),
     )
     setKind(presentedKind(filters.kind, canReadFinancialReports(active.identity.profile)))
-    fromInput.value = filters.from
-    toInput.value = filters.to
+    period.setRange(filters)
     populateCatalog(filters)
     updateVisibleFilters()
     void loadReport(filters, false)
@@ -810,8 +827,7 @@ export const createReportsController = (
       retryAction = null
       queuedLocationFilters = null
       catalogInput.value = 'active'
-      fromInput.disabled = false
-      toInput.disabled = false
+      period.setDisabled(false)
       catalogInput.disabled = false
       clientInput.disabled = false
       projectInput.disabled = false
@@ -839,6 +855,7 @@ export const createReportsController = (
           results.removeAttribute('aria-busy')
           retry.hidden = true
           run.disabled = true
+          period.setDisabled(true)
           status.textContent = 'Sign in to view reports.'
         },
         { once: true },
@@ -850,8 +867,7 @@ export const createReportsController = (
       )
       const financial = canReadFinancialReports(identity.profile)
       setKind(presentedKind(initial.kind, financial))
-      fromInput.value = initial.from
-      toInput.value = initial.to
+      period.setRange(initial)
       updateVisibleFilters()
       // A kind this profile cannot read leaves the strip rather than sitting in
       // it refusing to work: a disabled control that gives no reason is worse
@@ -877,9 +893,14 @@ export const createReportsController = (
         let loaded = false
         let filtersToLoad: ReportFilters | null = null
         try {
-          const [loadedClients, loadedProjects] = await Promise.all([
+          const [loadedClients, loadedProjects, settings] = await Promise.all([
             collect((cursor) => api.listReportClients!(cursor, signal), signal),
             collect((cursor) => api.listReportProjects!(cursor, signal), signal),
+            // Alongside the catalogs rather than before them, and swallowing
+            // its own failure: the week-start setting decides a label, and a
+            // report that would not open because a display preference was
+            // unreachable is a worse trade than a week called "custom".
+            api.getTimeEntrySettings?.(signal).catch(() => null) ?? Promise.resolve(null),
           ])
           if (currentSession() !== active) return
           clients = loadedClients
@@ -887,8 +908,10 @@ export const createReportsController = (
           const next = queuedLocationFilters ?? initial
           queuedLocationFilters = null
           setKind(presentedKind(next.kind, financial))
-          fromInput.value = next.from
-          toInput.value = next.to
+          // Before the range, so the range is read under the organisation's own
+          // week rather than under Monday and then re-read.
+          if (settings !== null) period.setWeekStartDay(settings.week_start_day)
+          period.setRange(next)
           populateCatalog(next)
           updateVisibleFilters()
           filtersToLoad = next

@@ -31,8 +31,16 @@ export const renderReportsPage = (view?: string): string => `
     </header>
     <p class="reports-intro">Review live operational totals. Each currency remains separate.</p>
     <form class="report-filters" data-report-form>
-      <div class="report-filter-field"><label for="ez-report-from">From</label><input id="ez-report-from" name="from" type="date" data-report-from required></div>
-      <div class="report-filter-field"><label for="ez-report-to">To</label><input id="ez-report-to" name="to" type="date" data-report-to required></div>
+      <!--
+        The mount point for the shared period control, which replaces the two
+        bare From/To fields that stood here. It is empty in the served HTML
+        because the control is DOM the way data-table is DOM: one
+        implementation, built once, rather than a string copy in every screen's
+        renderer that has to be kept in step with the browser one. §6 budgets
+        three bands between the tab strip and the first data row, so the period
+        takes the filter card's date fields rather than a band of its own.
+      -->
+      <div class="report-filter-field report-period-field" data-report-period></div>
       <div class="report-filter-field"><label for="ez-report-catalog">Show</label>
         <select id="ez-report-catalog" name="catalog" data-report-catalog>
           <option value="active">Active only</option>

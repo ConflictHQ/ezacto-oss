@@ -612,6 +612,76 @@
 .report-filters [hidden] {
   display: none;
 }
+/*
+ * The period takes two of the card's five columns because it carries an arrow,
+ * a kind and a label where the fields beside it carry one control each. Two of
+ * five is the width the From and To fields it replaced already had, so the card
+ * keeps its column count and the filter row stays one band — §6 allows three
+ * between the tab strip and the first data row, and reports already spends them
+ * on the heading, the intro and this card.
+ */
+.report-period-field {
+  grid-column: span 2;
+}
+.period-control {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.period-field-label {
+  color: var(--ez-muted);
+  font-size: 12px;
+}
+.period-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.period-step {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  padding: 0;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.period-step:hover:not(:disabled),
+.period-step:focus-visible:not(:disabled) {
+  background: var(--ez-surface-2);
+}
+.period-step:disabled {
+  opacity: 0.5;
+}
+/* The kind sizes to its own words; the shared `.report-filters select` rule
+   would otherwise stretch it across the flex line and leave the label no room. */
+.period-row .period-kind {
+  flex: none;
+  width: auto;
+}
+/*
+ * The label is the control's answer, so it takes whatever the two buttons and
+ * the select leave and truncates rather than wrapping: a second line here grows
+ * the card, and growing the card is how a filter row turns into two bands.
+ */
+.period-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ez-ink);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.period-custom {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  min-width: 0;
+}
 .report-status {
   min-height: 20px;
   margin-top: 16px;
@@ -4235,6 +4305,16 @@ dialog textarea {
   }
   .report-filters button {
     width: 100%;
+  }
+  /* One column here, so a two-column span would invent a second one and push
+     the card off the side of the phone. The arrows stay square: the rule above
+     stretches the card's own buttons, and a full-width chevron is not a
+     stepper. */
+  .report-period-field {
+    grid-column: auto;
+  }
+  .report-filters .period-step {
+    width: 44px;
   }
   .report-result-heading,
   .report-currency-card > header,

@@ -1599,6 +1599,16 @@ test('[e2e:reports-ui] runs uninvoiced, client rollup, and project budget report
   )
   await expect(kindTabs.getByRole('link', { name: 'Client rollup' })).toBeVisible()
   for (const control of [
+    // The period control's own four, which replaced the card's bare date pair:
+    // an arrow that shrinks below the thumb target is the whole reason §6 asks
+    // for this check.
+    reports.getByRole('button', { name: 'Previous period' }),
+    // Exact: `getByLabel` matches on substring, case-insensitively, so a bare
+    // 'Period' also resolves the two arrows either side of it -- 'Previous
+    // period' and 'Next period' -- and Playwright refuses a three-element
+    // locator in strict mode.
+    reports.getByLabel('Period', { exact: true }),
+    reports.getByRole('button', { name: 'Next period' }),
     reports.getByLabel('From'),
     reports.getByLabel('To'),
     reports.getByLabel('Client (optional)'),
