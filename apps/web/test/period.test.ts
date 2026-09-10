@@ -8,6 +8,7 @@ import {
   periodLabel,
   periodRange,
   stepPeriod,
+  type PeriodKind,
   type PeriodRange,
   type WeekStartDay,
 } from '../src/components/period.js'
@@ -18,6 +19,7 @@ const mount = (
   options: {
     readonly today?: string
     readonly weekStartDay?: WeekStartDay
+    readonly kinds?: readonly PeriodKind[]
   } = {},
 ) => {
   document.body.replaceChildren()
@@ -26,6 +28,7 @@ const mount = (
     label: 'Period',
     today: () => options.today ?? '2026-09-10',
     ...(options.weekStartDay === undefined ? {} : { weekStartDay: options.weekStartDay }),
+    ...(options.kinds === undefined ? {} : { kinds: options.kinds }),
     onChange,
   })
   document.body.appendChild(control.element)
@@ -37,6 +40,7 @@ const mount = (
   return {
     control,
     onChange,
+    element: control.element,
     previous: query<HTMLButtonElement>('[data-period-previous]'),
     next: query<HTMLButtonElement>('[data-period-next]'),
     kindSelect: query<HTMLSelectElement>('[data-period-kind]'),
@@ -44,6 +48,31 @@ const mount = (
     custom: query<HTMLElement>('[data-period-custom]'),
     from: query<HTMLInputElement>('[data-period-from]'),
     to: query<HTMLInputElement>('[data-period-to]'),
+  }
+}
+
+/**
+ * A single-kind control has no `[data-period-kind]` to find, so it cannot go
+ * through `mount`, whose whole point is that every part is present.
+ */
+const mountSingle = (kind: PeriodKind, today = '2026-09-10') => {
+  document.body.replaceChildren()
+  const onChange = vi.fn()
+  const control = createPeriodControl({
+    label: 'Week',
+    kinds: [kind],
+    today: () => today,
+    onChange,
+  })
+  document.body.appendChild(control.element)
+  const element = control.element
+  return {
+    control,
+    onChange,
+    element,
+    previous: element.querySelector<HTMLButtonElement>('[data-period-previous]')!,
+    next: element.querySelector<HTMLButtonElement>('[data-period-next]')!,
+    summary: element.querySelector<HTMLElement>('[data-period-summary]')!,
   }
 }
 
@@ -247,6 +276,33 @@ describe('period control', () => {
     expect(ui.summary.textContent).toBe('1 – 20 Sep 2026')
   })
 
+  it('[browser] a moved period tells the form it moved, and a seeded one does not', () => {
+    // Screens around this control listen for `change` on their own form to know
+    // the range moved. The invoice generation wizard makes that a correctness
+    // question rather than a cosmetic one: its listener rotates the idempotency
+    // key, so an arrow step that stayed silent billed a different period under
+    // the key the previous generation had already used, and the server refused
+    // the second invoice outright.
+    const ui = mount({ today: '2026-09-10' })
+    const heard: string[] = []
+    ui.from.addEventListener('change', () => heard.push('from'))
+    ui.to.addEventListener('change', () => heard.push('to'))
+
+    // Seeding is a screen filling the control in, not a person moving it, so it
+    // must stay silent -- otherwise every screen is told the user changed
+    // something before they have touched it.
+    ui.control.setRange(range('2026-09-01', '2026-09-30'))
+    expect(heard).toEqual([])
+
+    ui.previous.click()
+    expect(heard).toEqual(['from', 'to'])
+    expect(ui.control.range()).toEqual(range('2026-08-01', '2026-08-31'))
+
+    heard.length = 0
+    ui.next.click()
+    expect(heard).toEqual(['from', 'to'])
+  })
+
   it('[browser] steps the period on an arrow and reports the range it moved to', () => {
     const ui = mount({ today: '2026-09-10' })
     ui.control.setRange(range('2026-09-01', '2026-09-30'))
@@ -320,6 +376,78 @@ describe('period control', () => {
     ui.control.setDisabled(false)
     for (const element of [ui.previous, ui.next, ui.kindSelect, ui.from, ui.to])
       expect(element.disabled).toBe(false)
+  })
+
+  it('[browser] names both arrows and keeps the mark inside them out of the way', () => {
+    // Moved here from `shell.test.ts`, which used to read the timesheet's two
+    // chevrons out of the served HTML. They are this control's now and are
+    // built in the browser, so the guarantee has to be made against the DOM the
+    // control actually produces. Counted first: a naming check that finds no
+    // buttons passes against a control that renders none.
+    const ui = mount()
+    const arrows = [...ui.element.querySelectorAll<HTMLButtonElement>('.period-step')]
+    expect(arrows).toHaveLength(2)
+    expect(arrows.map((arrow) => arrow.getAttribute('aria-label'))).toEqual([
+      'Previous period',
+      'Next period',
+    ])
+    // Not submit buttons: the control usually sits inside its screen's filter
+    // form, and a bare <button> there reloads the page on every step.
+    expect(arrows.map((arrow) => arrow.type)).toEqual(['button', 'button'])
+    const marks = [...ui.element.querySelectorAll('svg')]
+    expect(marks).toHaveLength(2)
+    for (const mark of marks) {
+      expect(mark.getAttribute('aria-hidden')).toBe('true')
+      expect(mark.getAttribute('role')).not.toBe('img')
+    }
+  })
+
+  it('[browser] drops the kind menu on a screen that can show one period', () => {
+    // The timesheet: the week grid draws seven day columns, so a Month option
+    // would be a menu entry that breaks the screen underneath it. A menu with a
+    // single option is a control that cannot be operated, so there is no menu.
+    const ui = mountSingle('week')
+    expect(ui.element.querySelectorAll('[data-period-kind]')).toHaveLength(0)
+    expect(ui.element.querySelectorAll('.period-step')).toHaveLength(2)
+    // Before any range arrives: a control that opened on a kind its screen
+    // cannot show would be one `setRange` away from stepping by the wrong unit,
+    // and the screen has no way to correct a kind it never chose.
+    expect(ui.control.kind()).toBe('week')
+
+    // The label has to keep naming something real, and the summary is the only
+    // thing left on the row to name.
+    const label = ui.element.querySelector<HTMLLabelElement>('.period-field-label')!
+    expect(label.htmlFor).toBe(ui.summary.id)
+    expect(ui.summary.id).not.toBe('')
+
+    ui.control.setRange(range('2026-08-24', '2026-08-30'))
+    expect(ui.control.kind()).toBe('week')
+    expect(ui.summary.textContent).toBe('24 – 30 Aug 2026')
+    ui.control.setDisabled(true)
+    expect([ui.previous.disabled, ui.next.disabled]).toEqual([true, true])
+  })
+
+  it('[browser] pins an off-week range to whole weeks when weeks are all it offers', () => {
+    // `/?week=2026-08-26` is a hand-editable address, and the four days it
+    // would read as under a five-kind control step by four. On the timesheet
+    // every arrow is seven days or the grid and its label part company.
+    const ui = mountSingle('week')
+    ui.control.setRange(range('2026-08-26', '2026-08-29'))
+    expect(ui.control.kind()).toBe('week')
+    ui.previous.click()
+    expect(ui.control.range()).toEqual(range('2026-08-17', '2026-08-23'))
+    expect(ui.onChange).toHaveBeenLastCalledWith(range('2026-08-17', '2026-08-23'), 'week')
+    ui.next.click()
+    expect(ui.control.range()).toEqual(range('2026-08-24', '2026-08-30'))
+  })
+
+  it('[browser] refuses a screen that offers no period at all', () => {
+    // `kinds` is a list, and a list can be empty. A control built from one has
+    // no kind to fall back to and would step an undefined period; failing where
+    // it is built says which screen asked for it.
+    expect(() =>
+      createPeriodControl({ label: 'Period', kinds: [], today: () => '2026-09-10', onChange: vi.fn() }),
+    ).toThrow(/must offer a kind/u)
   })
 
   it('[browser] gives each control its own label target', () => {

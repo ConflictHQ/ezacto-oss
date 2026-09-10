@@ -357,9 +357,11 @@ describe('S-1 through S-5 application shell', () => {
     expect(marks.filter((mark) => !mark.includes('aria-hidden="true"'))).toEqual([])
     expect(marks.filter((mark) => mark.includes('role="img"'))).toEqual([])
 
-    // …which only holds while the controls really do name themselves.
-    expect(html).toContain('data-week-previous data-auth-action disabled aria-label="Previous week"')
-    expect(html).toContain('data-week-next data-auth-action disabled aria-label="Next week"')
+    // …which only holds while the controls really do name themselves. The week
+    // stepper is not checked here any more: its two chevrons moved into the
+    // shared period control, which builds them in the browser, so there is no
+    // served markup left to read. `period.test.ts` makes the same guarantee
+    // against the DOM the control actually produces.
     expect(html).toContain('data-day-previous data-auth-action disabled aria-label="Previous day"')
     expect(html).toContain('data-day-next data-auth-action disabled aria-label="Next day"')
     expect(html).toContain('aria-label="Search and commands (⌘K)"')

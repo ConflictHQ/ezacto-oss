@@ -1792,8 +1792,24 @@ const exerciseExpenseReceipt = async (page: Page): Promise<void> => {
   expect(Number.isSafeInteger(expenseId)).toBe(true)
 
   const filters = page.locator('[data-expense-filter-form]')
-  await filters.locator('input[name="from"]').fill('2026-08-25')
-  await filters.locator('input[name="to"]').fill('2026-08-25')
+  // The From/To pair moved into the shared period control, which owns the range
+  // and so gives its inputs no `name`. Same two fields, addressed by the marker
+  // the control puts on them.
+  await expect(filters.locator('.period-step')).toHaveCount(2)
+  await filters.locator('[data-period-from]').fill('2026-08-25')
+  await filters.locator('[data-period-to]').fill('2026-08-25')
+  for (const control of [
+    // Exact on the label: `getByLabel` matches on substring, case
+    // insensitively, so a bare 'Period' also resolves 'Previous period' and
+    // 'Next period', and Playwright refuses a three-element locator in strict
+    // mode. An arrow that shrinks below the thumb target is the whole reason
+    // §6 asks for this check.
+    filters.getByRole('button', { name: 'Previous period' }),
+    filters.getByLabel('Period', { exact: true }),
+    filters.getByRole('button', { name: 'Next period' }),
+  ]) {
+    await expectPhoneControl(control)
+  }
   await filters.locator('select[name="client_id"]').selectOption({ label: 'Browser Acceptance Client' })
   await filters.locator('select[name="project_id"]').selectOption({ label: '[BROWSER] Browser Acceptance Project' })
   await filters.locator('select[name="expense_category_id"]').selectOption({ label: 'Travel' })
@@ -1911,6 +1927,13 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await wizard.getByLabel('Expenses').selectOption('')
   for (const control of [
     wizard.getByLabel('Client'),
+    // The period control's own three, which replaced the fieldset's bare date
+    // pair. Exact on the label: `getByLabel` matches on substring, case
+    // insensitively, so a bare 'Period' also resolves 'Previous period' and
+    // 'Next period' and Playwright refuses the three-element locator.
+    wizard.getByRole('button', { name: 'Previous period' }),
+    wizard.getByLabel('Period', { exact: true }),
+    wizard.getByRole('button', { name: 'Next period' }),
     wizard.getByLabel('From'),
     wizard.getByLabel('To'),
     wizard.getByLabel('Time entries'),

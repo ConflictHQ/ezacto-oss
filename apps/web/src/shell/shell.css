@@ -1380,10 +1380,11 @@
   padding-inline: 6px;
   font-weight: 700;
 }
+/* One control now, where two labelled date fields used to sit side by side.
+   The control lays out its own row and its own custom pair. */
 .invoice-period {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  min-width: 0;
 }
 .invoice-projects {
   display: grid;
@@ -1961,6 +1962,22 @@
 .expense-filter-form {
   margin-bottom: 14px;
 }
+/*
+ * Two of the card's four columns, which is exactly what the From and To fields
+ * it replaced already had, so the filter card keeps its column count and the
+ * filter row stays one band. §6 allows three between the tab strip and the
+ * first data row and this screen already spends them on the heading, the intro
+ * and the new-expense panel.
+ */
+.expense-filter-period {
+  grid-column: span 2;
+}
+/* The card pads its own buttons, and it is one class more specific than the
+   control's own rule: a chevron centred in a 44px box with 12px of side padding
+   is a clipped chevron. */
+.expense-filter-form .period-step {
+  padding: 0;
+}
 .expense-filter-actions {
   display: flex;
   align-items: end;
@@ -2341,9 +2358,6 @@
 }
 
 @media (max-width: 720px) {
-  .invoice-period {
-    grid-template-columns: 1fr;
-  }
   .invoice-facts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -3424,6 +3438,36 @@ button[data-auth-action]:disabled {
 .week-surface h2 {
   font-size: 18px;
 }
+/*
+ * The period takes the room the "Week of …" heading had and lets its summary
+ * ellipsize rather than wrap: the toolbar is one band and a second line here is
+ * how a band becomes two.
+ */
+.week-period {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/*
+ * The summary already reads "This week: 24 – 30 Aug 2026", so a "Week" caption
+ * stacked above it spends a line of a 64px band repeating the word the value
+ * opens with. Hidden rather than dropped: it is what names the output for a
+ * reader who cannot see that the two sit together.
+ */
+.week-period .period-field-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.week-period .period-summary {
+  font-size: 18px;
+  font-weight: 600;
+}
 .week-surface [data-week-total] {
   font-family: var(--ez-font-mono), monospace;
   font-variant-numeric: tabular-nums;
@@ -4485,6 +4529,11 @@ dialog textarea {
   .expense-state-facts {
     grid-template-columns: 1fr;
   }
+  /* One column here, so a two-column span would invent a second one and push
+     the card off the side of the phone. */
+  .expense-filter-period {
+    grid-column: auto;
+  }
   .expense-filter-actions,
   .expense-attachments li {
     align-items: stretch;
@@ -4544,7 +4593,14 @@ dialog textarea {
   }
   .week-toolbar {
     align-items: flex-start;
+    flex-wrap: wrap;
     padding: 12px 16px;
+  }
+  /* Its own row on a phone. Sharing the line with the actions leaves the
+     summary about twenty pixels between two 44px arrows and a 220px action
+     column, which is a period control that cannot say which period it is on. */
+  .week-period {
+    flex-basis: 100%;
   }
   .timesheet-status {
     align-items: stretch;

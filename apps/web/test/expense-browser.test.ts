@@ -141,6 +141,90 @@ describe('Expenses V1 browser controller', () => {
     expect(document.querySelector<HTMLButtonElement>('[data-expense-edit-submit]')?.disabled).toBe(true)
   })
 
+  it('[browser] names the address range as a period, and applies the one an arrow steps to', async () => {
+    // The filter form used to carry two bare `type="date"` fields, so nothing
+    // on this screen could answer "and the month before that?" without typing
+    // four digits. It is the control the reports card uses now.
+    // A month safely behind the machine clock, so the label is the period's own
+    // name and not "This month: …", which is what the control says while today
+    // is standing inside the range.
+    writeDocument('expense-list', '/expenses?from=2026-08-01&to=2026-08-31')
+    const listWorkflowExpenses = vi
+      .fn<ExpenseWorkflowApi['listWorkflowExpenses']>()
+      .mockResolvedValue(page([baseExpense]))
+    const controller = createExpenseWorkflowController({ ...catalogs(), listWorkflowExpenses })
+    await controller.activate(identity, new AbortController().signal, () => false)
+
+    const filter = document.querySelector<HTMLFormElement>('[data-expense-filter-form]')!
+    // Counted first: every assertion below reads one of these, and a locator
+    // that finds nothing is happy to agree with anything.
+    expect(filter.querySelectorAll('.period-step')).toHaveLength(2)
+    const summary = filter.querySelector<HTMLElement>('[data-period-summary]')!
+    // The address already said August; it now reads as one, with no second
+    // query parameter learned to say the same thing.
+    expect(summary.textContent).toBe('August 2026')
+    expect(filter.querySelector<HTMLSelectElement>('[data-period-kind]')!.value).toBe('month')
+    expect(filter.querySelector<HTMLElement>('[data-period-custom]')!.hidden).toBe(true)
+
+    // An arrow re-labels and rewrites the range, but this form has an Apply
+    // button that every other field waits for and the period waits with them.
+    filter.querySelector<HTMLButtonElement>('[data-period-previous]')!.click()
+    expect(summary.textContent).toBe('July 2026')
+    expect(listWorkflowExpenses).toHaveBeenCalledTimes(1)
+
+    filter.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(listWorkflowExpenses).toHaveBeenCalledTimes(2))
+    expect(listWorkflowExpenses.mock.calls[1]![0]).toEqual({
+      from: '2026-07-01',
+      to: '2026-07-31',
+    })
+    expect(new URL(globalThis.location.href).searchParams.get('from')).toBe('2026-07-01')
+    expect(new URL(globalThis.location.href).searchParams.get('to')).toBe('2026-07-31')
+
+    // A range typed backwards is refused before it reaches the server, which is
+    // the check the form has always made and now makes against the control.
+    filter.querySelector<HTMLInputElement>('[data-period-from]')!.value = '2026-07-31'
+    filter.querySelector<HTMLInputElement>('[data-period-to]')!.value = '2026-07-01'
+    filter.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    expect(listWorkflowExpenses).toHaveBeenCalledTimes(2)
+    expect(document.querySelector('[data-expense-list-status]')?.textContent).toBe(
+      'To date cannot be before From date.',
+    )
+
+    // Reset has to reach the control too: `form.reset()` cannot, because the
+    // range is the control's state and its inputs have no default to return to.
+    document.querySelector<HTMLButtonElement>('[data-expense-filter-reset]')!.click()
+    await vi.waitFor(() => expect(listWorkflowExpenses).toHaveBeenCalledTimes(3))
+    expect(listWorkflowExpenses.mock.calls[2]![0]).toEqual({})
+    expect(filter.querySelector<HTMLInputElement>('[data-period-from]')!.value).toBe('')
+    expect(summary.textContent).toBe('Choose a range')
+  })
+
+  it('[browser] reads a Saturday week as a week once the organisation setting arrives', async () => {
+    // Under the Monday default a Saturday-to-Friday range is seven arbitrary
+    // days, and stepping it by length happens to land in the same place --
+    // right up until somebody chooses Week and gets a different seven days from
+    // the ones the list is grouped by.
+    writeDocument('expense-list', '/expenses?from=2026-08-22&to=2026-08-28')
+    const listWorkflowExpenses = vi.fn(async () => page([baseExpense]))
+    const controller = createExpenseWorkflowController({
+      ...catalogs(),
+      getExpenseWeekStartDay: vi.fn(async (): Promise<'saturday'> => 'saturday'),
+      listWorkflowExpenses,
+    })
+    await controller.activate(identity, new AbortController().signal, () => false)
+
+    const filter = document.querySelector<HTMLFormElement>('[data-expense-filter-form]')!
+    expect(filter.querySelectorAll('.period-step')).toHaveLength(2)
+    expect(filter.querySelector<HTMLSelectElement>('[data-period-kind]')!.value).toBe('week')
+    expect(filter.querySelector<HTMLElement>('[data-period-summary]')!.textContent).toBe(
+      '22 – 28 Aug 2026',
+    )
+    filter.querySelector<HTMLButtonElement>('[data-period-previous]')!.click()
+    expect(filter.querySelector<HTMLInputElement>('[data-period-from]')!.value).toBe('2026-08-15')
+    expect(filter.querySelector<HTMLInputElement>('[data-period-to]')!.value).toBe('2026-08-21')
+  })
+
   it('[browser] applies every supported filter and renders notes in week-grouped cards', async () => {
     writeDocument(
       'expense-list',
@@ -549,7 +633,7 @@ describe('Expenses V1 browser controller', () => {
     const activation = controller.activate(identity, new AbortController().signal, () => false)
     await vi.waitFor(() => expect(listWorkflowExpenses).toHaveBeenCalledTimes(1))
     const filter = document.querySelector<HTMLFormElement>('[data-expense-filter-form]')!
-    ;(filter.elements.namedItem('from') as HTMLInputElement).value = '2026-09-01'
+    filter.querySelector<HTMLInputElement>('[data-period-from]')!.value = '2026-09-01'
     filter.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
     await vi.waitFor(() => expect(listWorkflowExpenses).toHaveBeenCalledTimes(2))
     expect(listWorkflowExpenses.mock.calls[1]![0]).toEqual({ from: '2026-09-01' })
@@ -578,7 +662,7 @@ describe('Expenses V1 browser controller', () => {
     const session = new AbortController()
     await controller.activate(identity, session.signal, () => false)
     const filter = document.querySelector<HTMLFormElement>('[data-expense-filter-form]')!
-    ;(filter.elements.namedItem('from') as HTMLInputElement).value = '2026-08-01'
+    filter.querySelector<HTMLInputElement>('[data-period-from]')!.value = '2026-08-01'
     filter.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
     await vi.waitFor(() => expect(listWorkflowExpenses).toHaveBeenCalledTimes(2))
 
@@ -589,7 +673,7 @@ describe('Expenses V1 browser controller', () => {
       from: '2026-09-01',
       approval_status: 'submitted',
     })
-    expect((filter.elements.namedItem('from') as HTMLInputElement).value).toBe('2026-09-01')
+    expect(filter.querySelector<HTMLInputElement>('[data-period-from]')!.value).toBe('2026-09-01')
     expect((filter.elements.namedItem('approval_status') as HTMLSelectElement).value).toBe('submitted')
 
     superseded.resolve(page([{ ...baseExpense, notes: 'Superseded history row' }]))

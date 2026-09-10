@@ -20,6 +20,7 @@ import {
   type EntryEditorContext,
   type TimeEntryMode,
 } from '../components/time-entry-editor.js'
+import { createPeriodControl, isCalendarDay } from '../components/period.js'
 import { createClientDirectoryController } from '../clients/browser.js'
 import { createProjectDirectoryController } from '../projects/browser.js'
 import { createActivityController } from '../activity/browser.js'
@@ -240,17 +241,6 @@ const dayHeadingParts = (value: string): readonly [string, string] => {
     timeZone: 'UTC',
   }).format(date)
   return [weekday, day]
-}
-
-const weekLabel = (dates: readonly string[]): string => {
-  const first = dayLabel(dates[0]!, true)
-  const last = new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    timeZone: 'UTC',
-  }).format(parseDate(dates.at(-1)!))
-  return `${first} – ${last}`
 }
 
 const messageFor = (error: unknown): string => {
@@ -1036,6 +1026,20 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const entrySubmit = required<HTMLButtonElement>('[data-entry-submit]')
   const stopTimer = required<HTMLButtonElement>('[data-stop-timer]')
   const invoiceForm = required<HTMLFormElement>('[data-invoice-generation-form]')
+  /**
+   * The From/To pair the generation fieldset used to carry, as the shared
+   * control. Nothing runs on an arrow here: the wizard has no results to
+   * refresh, only a submit that turns the choice into a draft invoice, so a
+   * step is still just a choice. "Last month", one arrow from the month it
+   * opens on, is the whole point -- billing a period is exactly the question
+   * this control was drawn for.
+   */
+  const invoicePeriod = createPeriodControl({
+    label: 'Period',
+    today: localDate,
+    onChange: () => {},
+  })
+  required<HTMLElement>('[data-invoice-period]').appendChild(invoicePeriod.element)
   const invoiceClient = required<HTMLSelectElement>('[data-invoice-client]')
   const invoiceProjects = required<HTMLElement>('[data-invoice-projects]')
   const invoiceResult = required<HTMLElement>('[data-invoice-generation-result]')
@@ -1123,6 +1127,29 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const cellStates = new Map<string, CellSaveState>()
   let within = initialWithin()
   let weekStartDay: WeekStartDay = 'monday'
+  /**
+   * The week stepper the toolbar used to hand-roll: two chevrons, a static
+   * "Monday–Sunday" eyebrow and a "Week of …" label built by a private
+   * `weekLabel`. It is the shared control now, restricted to `week` because the
+   * grid underneath draws seven day columns and cannot draw a month.
+   *
+   * `week_start_day` therefore has one implementation on this screen too: the
+   * control's `week` arithmetic is `weekRange`, the same function
+   * `loadShellSnapshot` and the approval windows already use.
+   *
+   * An arrow loads, because stepping the timesheet has always loaded -- this is
+   * the one screen where the period was already navigation rather than a filter
+   * waiting on a button.
+   */
+  const weekPeriod = createPeriodControl({
+    label: 'Week',
+    kinds: ['week'],
+    today: localDate,
+    onChange: (range) => {
+      moveWeekTo(range.from)
+    },
+  })
+  required<HTMLElement>('[data-week-period]').appendChild(weekPeriod.element)
   let supplementalRows: WeekRowSeed[] = []
   let selectedDay = Math.max(0, weekDates(within, weekStartDay).indexOf(localDate()))
   let snapshot: ShellSnapshot | null = null
@@ -1230,6 +1257,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     for (const control of document.querySelectorAll<HTMLButtonElement>('[data-auth-action]')) {
       control.disabled = !available
     }
+    // Not reachable by the `[data-auth-action]` sweep above: the control builds
+    // its own arrows in the browser, so there is no served markup to mark. The
+    // arrows the sweep used to disable were the ones it replaced.
+    weekPeriod.setDisabled(!available)
   }
 
   const showSignedOutScreen = (): void => {
@@ -1378,9 +1409,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     required<HTMLButtonElement>('[data-timer-chip]').dataset.state = 'signed-out'
     required<HTMLElement>('[data-timer-label]').textContent = 'Sign in required'
     required<HTMLElement>('[data-timer-elapsed]').textContent = '—'
-    required<HTMLElement>('[data-week-label]').textContent = weekLabel(
-      weekDates(within, weekStartDay),
-    )
+    weekPeriod.setRange(weekRange(within, weekStartDay))
     required<HTMLElement>('[data-week-total]').textContent = '—'
     const unavailable = document.createElement('tr')
     const cell = document.createElement('td')
@@ -1400,9 +1429,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     snapshot = null
     grid = null
     cellStates.clear()
-    required<HTMLElement>('[data-week-label]').textContent = weekLabel(
-      weekDates(within, weekStartDay),
-    )
+    weekPeriod.setRange(weekRange(within, weekStartDay))
     required<HTMLElement>('[data-week-total]').textContent = '—'
     const unavailable = document.createElement('tr')
     const cell = document.createElement('td')
@@ -1999,7 +2026,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       availableRows.has(`${row.projectId}:${row.taskId}`),
     )
     grid = buildWeekGrid(snapshot, within, supplementalRows)
-    required<HTMLElement>('[data-week-label]').textContent = weekLabel(grid.dates)
+    // Off the grid's own dates rather than recomputed: a label that disagreed
+    // with the columns beneath it is the failure this control exists to end.
+    weekPeriod.setRange({ from: grid.dates[0]!, to: grid.dates.at(-1)! })
     required<HTMLElement>('[data-week-total]').textContent = formatSeconds(grid.totalSeconds)
     const handlers: GridHandlers = {
       cellStates,
@@ -2150,6 +2179,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     ])
     if (!isSessionCurrent(operation) || within !== requestedWithin) return false
     weekStartDay = loadedWeekStartDay
+    weekPeriod.setWeekStartDay(loadedWeekStartDay)
+    // The generation wizard offers Week too, and was computing Monday-Sunday
+    // regardless of the setting -- so on a Saturday-start organisation a draft
+    // claimed work across two of its weeks, and the wizard's own label
+    // disagreed with what the timesheet called the same week.
+    invoicePeriod.setWeekStartDay(loadedWeekStartDay)
     snapshot = loaded
     // Publish before anything renders: the week total, approval cards and the
     // running-timer elapsed all format seconds, and all of them run ahead of
@@ -2268,11 +2303,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       invoiceClient.replaceChildren(
         ...clients.map((client) => option(client.id, resourceLabel(client))),
       )
+      // Month-to-date, unchanged: the wizard has always opened on the 1st
+      // through today, and the control simply presents that as the custom range
+      // it is. Opening on the whole month instead would silently widen every
+      // draft invoice generated from the default.
       const today = localDate()
-      const from = required<HTMLInputElement>('[name="from"]')
-      const to = required<HTMLInputElement>('[name="to"]')
-      from.value = `${today.slice(0, 8)}01`
-      to.value = today
+      invoicePeriod.setRange({ from: `${today.slice(0, 8)}01`, to: today })
       renderInvoiceProjects()
       if (clients.length === 0) {
         invoiceResult.textContent = 'Create an active client before generating an invoice.'
@@ -3795,10 +3831,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     approvalHistoryLoadMore.hidden = true
   })
 
-  const moveWeek = (days: number): void => {
+  function moveWeekTo(nextWithin: string): void {
     const operation = sessionOperation()
     if (operation === null || operation.userId === null) return
-    within = shiftDate(within, days)
+    within = nextWithin
     supplementalRows = loadSupplementalRows(operation.userId, within, weekStartDay)
     selectedDay = 0
     cellStates.clear()
@@ -3819,8 +3855,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         )
       })
   }
-  required<HTMLButtonElement>('[data-week-previous]').addEventListener('click', () => moveWeek(-7))
-  required<HTMLButtonElement>('[data-week-next]').addEventListener('click', () => moveWeek(7))
+  /**
+   * Kept for the callers that still think in days rather than in periods: the
+   * `[`/`]` shortcuts and the day switcher walking off either end of the week.
+   */
+  const moveWeek = (days: number): void => moveWeekTo(shiftDate(within, days))
   required<HTMLButtonElement>('[data-week-current]').addEventListener('click', () => {
     const operation = sessionOperation()
     if (operation === null || operation.userId === null) return
@@ -3937,8 +3976,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
     const data = new FormData(invoiceForm)
     const clientId = Number(data.get('client'))
-    const from = data.get('from')
-    const to = data.get('to')
+    // Off the control rather than the FormData: its date inputs carry no
+    // `name`, because the range is the control's state and a second copy in the
+    // form would be a second answer to the same question.
+    const { from, to } = invoicePeriod.range()
     const projectIds = data
       .getAll('project')
       .map(Number)
@@ -3950,8 +3991,14 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     if (
       !Number.isSafeInteger(clientId) ||
       clientId < 1 ||
-      typeof from !== 'string' ||
-      typeof to !== 'string' ||
+      // Both ends read as real days, in order. The fields this replaced were
+      // `required` on a `type="date"` input, so an empty range never reached
+      // here -- the browser refused the submit. The control's inputs are not
+      // required, because a half-typed custom range is a normal state to be in
+      // while choosing one, so the check that used to be the browser's is ours.
+      !isCalendarDay(from) ||
+      !isCalendarDay(to) ||
+      from > to ||
       projectIds.length === 0 ||
       typeof rawTimeSummary !== 'string' ||
       typeof rawExpenseSummary !== 'string' ||
