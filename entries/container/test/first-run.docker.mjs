@@ -264,7 +264,32 @@ try {
   const origin = `http://localhost:${appPort}`
   temporaryRoot = await createCanonicalTemporaryDirectory('ezacto-container-restore-')
   const bundle = join(temporaryRoot, 'snapshot')
-  await command('docker', ['build', '--tag', image, '.'])
+  // On a fresh CI runner there is no layer cache to reuse, so the Dockerfile's
+  // dependency layer -- which now survives a source-only edit -- would still be
+  // rebuilt from scratch every run. buildx with the Actions cache is what
+  // carries it between runs; locally the default builder's own cache already
+  // does, so plain `build` stays the path off CI (issue 529).
+  const cached =
+    process.env.ACTIONS_CACHE_URL !== undefined && process.env.ACTIONS_RUNTIME_TOKEN !== undefined
+  await command(
+    'docker',
+    cached
+      ? [
+          'buildx',
+          'build',
+          '--tag',
+          image,
+          '--cache-from',
+          'type=gha,scope=ezacto-container',
+          '--cache-to',
+          'type=gha,mode=max,scope=ezacto-container',
+          // Without this the image stays in the builder and `docker run` below
+          // cannot see it.
+          '--load',
+          '.',
+        ]
+      : ['build', '--tag', image, '.'],
+  )
   await command('docker', ['volume', 'create', volume])
   await runContainer(firstName, appPort, smtpPort, volume)
   await waitForHealth(origin, firstName)
