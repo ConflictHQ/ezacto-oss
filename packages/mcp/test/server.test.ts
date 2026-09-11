@@ -123,6 +123,7 @@ const reportReader: ReportReader = {
       clientId: filter.clientId ?? null,
       projectId: filter.projectId ?? null,
       hours: filter.hours ?? "all",
+      grain: filter.grain ?? "day",
       activeProjectsOnly: filter.activeProjectsOnly ?? false,
       seconds: 0,
       roundedSeconds: 0,
@@ -222,6 +223,7 @@ const reportReader: ReportReader = {
           totalCents: 22_500,
         },
       ],
+      projects: [],
     }
   },
   clientRollup: async (clientId, range) => ({
