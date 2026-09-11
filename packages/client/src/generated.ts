@@ -283,6 +283,35 @@ export type BackupStatusEnvelope = {
   "links": Links;
 };
 
+export type QuickBooksConnection = {
+  "realm_id": string;
+  "company_name": string | null;
+  "scope": string;
+  "allow_online_payment": boolean;
+  "connected_at": string;
+};
+
+export type QuickBooksStatusEnvelope = {
+  "data": {
+  "configured": boolean;
+  "connection": QuickBooksConnection | null;
+};
+};
+
+export type QuickBooksAuthorizeEnvelope = {
+  "data": {
+  "authorize_url": string;
+};
+};
+
+export type QuickBooksConnectionEnvelope = {
+  "data": QuickBooksConnection | null;
+};
+
+export type QuickBooksSettingsInput = {
+  "allow_online_payment": boolean;
+};
+
 export type SenderEvidenceRefreshInput = {
   "expected_evidence_version": number;
 };
@@ -4036,6 +4065,43 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<BackupStatusEnvelope>("GET", "/api/v1/backup/status", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getQuickBooksConnection(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<QuickBooksStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<QuickBooksStatusEnvelope>("GET", "/api/v1/integrations/quickbooks", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async startQuickBooksAuthorization(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<QuickBooksAuthorizeEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<QuickBooksAuthorizeEnvelope>("POST", "/api/v1/integrations/quickbooks/authorize", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateQuickBooksSettings(args: { body: QuickBooksSettingsInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<QuickBooksConnectionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<QuickBooksConnectionEnvelope>("POST", "/api/v1/integrations/quickbooks/settings", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async disconnectQuickBooks(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/integrations/quickbooks", {
       signal: args.signal,
       headers,
     });

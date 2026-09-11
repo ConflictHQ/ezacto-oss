@@ -268,3 +268,9 @@ export {
   type UserEmailRouteOptions,
   type UserEmailService,
 } from './user-emails.js'
+export {
+  installQuickBooksRoutes,
+  type QuickBooksConnectionStatus,
+  type QuickBooksService,
+  type QuickBooksTokenSet,
+} from './quickbooks.js'

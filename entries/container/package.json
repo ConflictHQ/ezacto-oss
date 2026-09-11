@@ -4,7 +4,9 @@
   "description": "Single-process Node container entry for self-hosted Ezacto.",
   "type": "module",
   "private": true,
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
@@ -18,7 +20,8 @@
     "@ezacto/mailer": "0.0.0",
     "@ezacto/web": "0.0.0",
     "@hono/node-server": "^2.1.1",
-    "better-sqlite3": "^13.0.3"
+    "better-sqlite3": "^13.0.3",
+    "@ezacto/integrations": "0.0.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260826.1",

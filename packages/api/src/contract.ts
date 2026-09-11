@@ -1067,6 +1067,85 @@ const backupOperations: ApiContractOperation[] = [
   },
 ];
 
+/**
+ * The QuickBooks connection. Mounted only where the deployment carries Intuit
+ * keys, the way backup status is mounted only where a reader is composed --
+ * offering a connect button that cannot connect is worse than offering none.
+ *
+ * The callback and the webhook are documented too, with `generateClient: false`
+ * -- the same treatment the OIDC redirects get. Neither is a call a generated
+ * client would ever make, but both are surface this deployment answers, and a
+ * surface the document does not mention is one nobody can discover.
+ */
+const quickBooksOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/integrations/quickbooks",
+    operationId: "getQuickBooksConnection",
+    summary: "Whether QuickBooks is configured, and the connected company",
+    tag: "integrations",
+    responseStatus: 200,
+    responseSchema: "QuickBooksStatusEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/integrations/quickbooks/authorize",
+    operationId: "startQuickBooksAuthorization",
+    summary: "Begin connecting a QuickBooks company",
+    tag: "integrations",
+    responseStatus: 200,
+    responseSchema: "QuickBooksAuthorizeEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/integrations/quickbooks/settings",
+    operationId: "updateQuickBooksSettings",
+    summary: "Whether mirrored invoices offer QuickBooks payment links",
+    tag: "integrations",
+    responseStatus: 200,
+    responseSchema: "QuickBooksConnectionEnvelope",
+    requestSchema: "QuickBooksSettingsInput",
+    // The body is the whole request -- without it there is no setting to
+    // change -- and the generator uses this to decide whether the argument is
+    // optional. Omitting it produced a client method whose default `{}` could
+    // not satisfy its own type.
+    requestRequired: true,
+    sessionOnly: true,
+  },
+  {
+    method: "delete",
+    path: "/api/v1/integrations/quickbooks",
+    operationId: "disconnectQuickBooks",
+    summary: "Disconnect the QuickBooks company and revoke the grant",
+    tag: "integrations",
+    responseStatus: 204,
+    sessionOnly: true,
+  },
+  {
+    method: "get",
+    path: "/api/v1/integrations/quickbooks/callback",
+    operationId: "completeQuickBooksAuthorization",
+    summary: "Where Intuit returns an administrator after they approve",
+    tag: "integrations",
+    responseStatus: 302,
+    public: true,
+    parameters: [query("code"), query("state"), query("realmId")],
+    generateClient: false,
+  },
+  {
+    method: "post",
+    path: "/api/v1/integrations/quickbooks/webhook",
+    operationId: "receiveQuickBooksWebhook",
+    summary: "Entity changes pushed by Intuit, authorised by signature alone",
+    tag: "integrations",
+    responseStatus: 200,
+    public: true,
+    generateClient: false,
+  },
+];
+
 const ssoDomainOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -1847,6 +1926,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...reportOperations,
   ...moduleSettingsOperations,
   ...backupOperations,
+  ...quickBooksOperations,
   ...ssoDomainOperations,
   ...brandAssetOperations,
   ...twoFactorOperations,
@@ -2618,6 +2698,65 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       },
       links: reference("Links"),
     },
+    additionalProperties: false,
+  },
+  QuickBooksConnection: {
+    type: "object",
+    required: [
+      "realm_id",
+      "company_name",
+      "scope",
+      "allow_online_payment",
+      "connected_at",
+    ],
+    properties: {
+      realm_id: stringSchema,
+      company_name: nullable(stringSchema),
+      scope: stringSchema,
+      allow_online_payment: { type: "boolean" },
+      connected_at: stringSchema,
+    },
+    additionalProperties: false,
+  },
+  QuickBooksStatusEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["configured", "connection"],
+        properties: {
+          configured: { type: "boolean" },
+          connection: nullable(reference("QuickBooksConnection")),
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  QuickBooksAuthorizeEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["authorize_url"],
+        properties: { authorize_url: stringSchema },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  QuickBooksConnectionEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: nullable(reference("QuickBooksConnection")) },
+    additionalProperties: false,
+  },
+  QuickBooksSettingsInput: {
+    type: "object",
+    required: ["allow_online_payment"],
+    properties: { allow_online_payment: { type: "boolean" } },
     additionalProperties: false,
   },
   SenderEvidenceRefreshInput: {

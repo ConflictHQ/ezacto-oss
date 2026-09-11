@@ -17,6 +17,17 @@ export interface ContainerConfig {
    * than serve them with a weak one. Same rule as the Worker's.
    */
   magicLinkSigningKey?: Uint8Array
+  /**
+   * Intuit credentials. Both are required together: without them the QuickBooks
+   * routes are not mounted, because a connect button that cannot connect is
+   * worse than no button. Same rule as the Worker's.
+   */
+  quickBooks?: {
+    clientId: string
+    clientSecret: string
+    webhookVerifierToken?: string
+    environment?: string
+  }
   smtp: { url: string; from: string }
   appEnv: AppEnv
 }
@@ -129,6 +140,17 @@ export const readContainerConfig = (
   )
   const bootstrapToken = optional(environment, 'EZACTO_BOOTSTRAP_TOKEN', 512)
   const magicLinkKey = optional(environment, 'MAGIC_LINK_SIGNING_KEY', 128)
+  const quickBooksClientId = optional(environment, 'QUICKBOOKS_CLIENT_ID', 512)
+  const quickBooksClientSecret = optional(environment, 'QUICKBOOKS_CLIENT_SECRET', 512)
+  const quickBooksVerifier = optional(environment, 'QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN', 512)
+  const quickBooksEnvironment = optional(environment, 'QUICKBOOKS_ENVIRONMENT', 32)
+  if ((quickBooksClientId === undefined) !== (quickBooksClientSecret === undefined)) {
+    // Half a credential is a deployment that will fail at the token exchange
+    // with a message about Intuit rather than about its own configuration.
+    throw new TypeError(
+      'QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET must be set together',
+    )
+  }
   const brandName = optional(environment, 'BRAND_NAME', 200)
   const brandTagline = optional(environment, 'BRAND_TAGLINE', 500)
   const brandDescription = optional(environment, 'BRAND_DESCRIPTION', 1_000)
@@ -171,6 +193,20 @@ export const readContainerConfig = (
     ...(magicLinkKey === undefined
       ? {}
       : { magicLinkSigningKey: signingKey(magicLinkKey) }),
+    ...(quickBooksClientId === undefined || quickBooksClientSecret === undefined
+      ? {}
+      : {
+          quickBooks: {
+            clientId: quickBooksClientId,
+            clientSecret: quickBooksClientSecret,
+            ...(quickBooksVerifier === undefined
+              ? {}
+              : { webhookVerifierToken: quickBooksVerifier }),
+            ...(quickBooksEnvironment === undefined
+              ? {}
+              : { environment: quickBooksEnvironment }),
+          },
+        }),
     smtp: {
       url: required(environment, 'SMTP_URL', 8_192),
       from: required(environment, 'SMTP_FROM', 320),

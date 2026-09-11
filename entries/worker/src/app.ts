@@ -1,3 +1,4 @@
+import type { QuickBooksService } from "@ezacto/integrations";
 import {
   notFoundResponse,
   createApiApp,
@@ -29,6 +30,7 @@ import {
   installTrackedResourceRoutes,
   installTimesheetApprovalRoutes,
   installBackupStatusRoutes,
+  installQuickBooksRoutes,
   installTimesheetLockPolicyRoutes,
   installTeamRoutes,
   installUserEmailRoutes,
@@ -135,6 +137,16 @@ export type WorkerEnv = AppEnv & {
   /** Optional Cloudflare Access provider; both values are required together. */
   ACCESS_TEAM_DOMAIN?: string
   ACCESS_POLICY_AUD?: string
+  /**
+   * Intuit credentials. Both are Worker secrets; without them the QuickBooks
+   * routes are not mounted at all.
+   */
+  QUICKBOOKS_CLIENT_ID?: string
+  QUICKBOOKS_CLIENT_SECRET?: string
+  /** From the webhooks page in the Intuit portal; without it no delivery is accepted. */
+  QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN?: string
+  /** `sandbox` reaches Intuit's test companies; anything else is live books. */
+  QUICKBOOKS_ENVIRONMENT?: string
   /** SES credentials are Worker secrets; never place them in wrangler vars. */
   AWS_ACCESS_KEY_ID?: string
   AWS_SECRET_ACCESS_KEY?: string
@@ -212,6 +224,13 @@ export interface RuntimeServices {
   /** Where credential events are recorded. Absent leaves them unrecorded. */
   activity?: ActivityRecorder
   backupStatus?: BackupStatusReader
+  /**
+   * The QuickBooks connection. Absent where the deployment has no Intuit keys,
+   * the same way the attachment routes are absent without object storage:
+   * mounting a connect button that cannot connect is worse than not offering
+   * one.
+   */
+  quickBooks?: QuickBooksService
 }
 
 export type Health = {
@@ -343,6 +362,9 @@ export const createApp = (
             installReportRoutes(api, services.reports)
             if (services.backupStatus !== undefined) {
               installBackupStatusRoutes(api, services.backupStatus)
+            }
+            if (services.quickBooks !== undefined) {
+              installQuickBooksRoutes(api, services.quickBooks)
             }
             installModuleSettingsRoutes(api, {
               service: services.moduleSettings,

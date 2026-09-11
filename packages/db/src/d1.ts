@@ -219,3 +219,13 @@ export {
 } from './recurring-invoice-engine.js'
 export { captureActivityEvent } from './activity-log.js'
 export { createD1ReminderScheduler } from './reminders.js'
+
+// The QuickBooks store is type-only against better-sqlite3, so it is safe to
+// reach from the Worker entry -- the native driver never enters the bundle.
+export {
+  createQuickBooksStore,
+  type QuickBooksConnectionRecord,
+  type QuickBooksLinkRecord,
+  type QuickBooksStore,
+} from './quickbooks.js'
+export { createQuickBooksMirrorSource } from './quickbooks-source.js'

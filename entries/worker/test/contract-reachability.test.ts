@@ -36,6 +36,14 @@ describe('Worker contract reachability', () => {
       API_CURSOR_SIGNING_KEY: 'A'.repeat(43),
       ENVIRONMENT: 'test',
       RELEASE: 'contract-reachability-test',
+      // Configured, so the QuickBooks routes are composed and this guard sees
+      // them. Without keys they are not mounted at all, which is the point of
+      // the gating in `entry-surface.ts` -- but a documented operation that is
+      // never mounted anywhere is exactly what this test exists to catch, so
+      // the fixture has to be the configured case.
+      QUICKBOOKS_CLIENT_ID: 'contract-fixture-client-id',
+      QUICKBOOKS_CLIENT_SECRET: 'contract-fixture-client-secret',
+      APP_BASE_URL: 'https://app.example.test',
     }
     // The brand surface is passed the way `index.ts` passes it, or the guard
     // would prove the contract against an app the entry never serves.
@@ -91,7 +99,7 @@ describe('Worker contract reachability', () => {
           (operation) => `${operation.method} ${operation.path}`,
         ),
         'worker',
-        { portal: false },
+        { portal: false, quickBooks: true },
       ),
     )
 
