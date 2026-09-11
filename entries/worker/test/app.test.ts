@@ -538,4 +538,27 @@ describe('worker entry', () => {
     const res = await app.request('/nope', {}, env)
     expect(res.status).toBe(404)
   })
+
+  it('[browser #557] serves an unrouted page path as HTML, and the API as JSON', async () => {
+    // A stale bookmark used to drop the reader onto the API's error object
+    // filling the viewport with no way back.
+    const page = await app.request('/time?view=day', {}, env)
+    expect(page.status).toBe(404)
+    expect(page.headers.get('content-type')).toContain('text/html')
+    const html = await page.text()
+    expect(html).toContain('data-not-found-page')
+    expect(html).toContain('That page does not exist')
+    // The way out is the point: a 404 with no navigation is the same dead end.
+    expect(html).toContain('href="/"')
+    expect(html).not.toContain('"code":"not_found"')
+
+    // The API surface is untouched and still answers in JSON. Unauthenticated
+    // it never reaches the not-found handler at all -- authentication runs
+    // first and refuses -- which is the point worth pinning: the page branch
+    // above must not have moved the API onto the HTML path.
+    const api = await app.request('/api/v1/nonexistent-xyz', {}, env)
+    expect(api.status).toBe(401)
+    expect(api.headers.get('content-type')).toContain('application/json')
+    expect(await api.text()).not.toContain('data-not-found-page')
+  })
 })

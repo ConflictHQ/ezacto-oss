@@ -79,6 +79,7 @@ export interface AppShellOptions {
     | 'settings-activity'
     | 'team-list'
     | 'team-person'
+    | 'not-found'
   /**
    * The level-2 strip under the header. Time supplies its own Week/Day pair
    * when this is absent, which is what every page rendered before the strip was
@@ -331,6 +332,23 @@ const demoCredentials = (accounts: readonly DemoSignInAccount[]): string => {
     `</section>`
   )
 }
+
+/**
+ * What an unrouted path renders (issue 557).
+ *
+ * A stale bookmark or a mistyped URL used to drop the reader onto the API's
+ * JSON error object filling the viewport, with no way back. This is the same
+ * shell every other page gets, so the header and navigation are already there;
+ * the body only has to say what happened and offer the way out.
+ */
+const renderNotFoundPage = (view?: string): string => `
+  <main class="app-content page--grid" data-not-found-page${view === 'not-found' ? '' : ' hidden'}>
+    <header class="context-row">
+      <div><p class="eyebrow">Not found</p><h1>That page does not exist</h1></div>
+    </header>
+    <p class="not-found-intro">The address may be mistyped, or the page may have moved since it was bookmarked.</p>
+    <p><a href="/">Go to Time</a></p>
+  </main>`
 
 export const renderAppShell = (options: AppShellOptions): string => {
   const active = options.activeSection ?? 'Time'
@@ -704,6 +722,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
   ${renderExpenseCategoriesPage(view)}
   ${renderModuleSettingsPage(view)}
   ${renderActivityLogPage(view)}
+  ${renderNotFoundPage(view)}
   ${renderInvoiceComposerDialog()}
   ${renderInvoiceEditDialog()}
   ${renderInvoiceLineDialogs()}
@@ -731,7 +750,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
         <datalist id="entry-task-options" data-entry-task-options></datalist>
       </div>
       <label>Date<input name="spent_date" data-entry-date type="date" required></label>
-      <label data-entry-duration>Duration<input name="duration" data-entry-duration-input inputmode="decimal" autocomplete="off" placeholder="1:30"></label>
+      <label data-entry-duration>Duration<input name="duration" data-entry-duration-input inputmode="decimal" autocomplete="off"></label>
       <div class="entry-times" data-entry-times hidden>
         <label>Start<input name="started_time" data-entry-start autocomplete="off" placeholder="9:00 AM"></label>
         <label>End<input name="ended_time" data-entry-end autocomplete="off" placeholder="5:00 PM"></label>

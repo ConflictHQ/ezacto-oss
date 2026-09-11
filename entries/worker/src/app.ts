@@ -1,4 +1,5 @@
 import {
+  notFoundResponse,
   createApiApp,
   ApiError,
   assertValidCloudflareAccessConfig,
@@ -1158,6 +1159,39 @@ export const createApp = (
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
           200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        )
+      })
+
+      // Last, so every real route above has already claimed its path.
+      //
+      // One handler served both surfaces before this, which meant a browser at
+      // a mistyped address got the API's JSON error object filling the viewport
+      // with no way back (#557). The API keeps that body -- a machine caller
+      // wants the code, not a page -- and everything else gets the shell it
+      // would have got had the path existed.
+      app.notFound(async (context) => {
+        const path = context.req.path
+        if (path === '/api/v1' || path.startsWith('/api/v1/')) {
+          return notFoundResponse(context)
+        }
+        return context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            brand: await shellBrand(context.env),
+            signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+            view: 'not-found',
+          }),
+          404,
           {
             'cache-control': 'no-store',
             'content-security-policy': shellContentSecurityPolicy,

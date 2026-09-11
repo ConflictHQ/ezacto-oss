@@ -642,6 +642,38 @@ export const parseQuickAdd = (value: string): QuickAddCommand => {
   }
 }
 
+/**
+ * What the command bar should say while a `log` line is being typed (issue 556).
+ *
+ * The results panel only searches *go* destinations, so a `log` line can never
+ * match one and the panel read "No destination matches that." for as long as
+ * you typed -- directly under a hint advertising the log form. The natural read
+ * is that the command is wrong, so the operator abandons a command that in fact
+ * works.
+ *
+ * Returns null for anything that is not a log line, so the destination search
+ * keeps the panel for every other query.
+ */
+export const quickAddPreview = (value: string): string | null => {
+  const trimmed = value.trim()
+  if (!/^log(\s|$)/iu.test(trimmed)) return null
+  try {
+    const command = parseQuickAdd(trimmed)
+    const hours = command.seconds / 3_600
+    const duration = `${new Intl.NumberFormat('en-US', {
+      maximumFractionDigits: 2,
+    }).format(hours)}h`
+    // Named parts rather than an echo of the input: the point is to show the
+    // command was understood, which means showing what it was understood AS.
+    const parts = [duration, command.project, command.task]
+    return `Log ${parts.join(' \u00b7 ')}${command.notes === undefined ? '' : ` \u00b7 ${command.notes}`}`
+  } catch {
+    // Recognisably a log line, not yet a complete one. Still not a failed
+    // destination search, so it must not say so.
+    return 'Keep typing: log 2h project task'
+  }
+}
+
 export const navigationDestination = (
   value: string,
   offered: (destination: PaletteDestination) => boolean,

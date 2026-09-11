@@ -70,6 +70,7 @@ import {
   loadShellSnapshot,
   localDate,
   navigationDestination,
+  quickAddPreview,
   isSelfWithdrawn,
   palettePlan,
   type PaletteEntity,
@@ -198,6 +199,12 @@ let activeTimeFormat: 'decimal' | 'hours_minutes' = 'hours_minutes'
 
 const setActiveTimeFormat = (format: 'decimal' | 'hours_minutes'): void => {
   activeTimeFormat = format
+  // The example has to be one the field would actually accept. It was the
+  // literal "1:30" in the served HTML, which on a decimal account is a value
+  // the parser rejects -- the placeholder was teaching the wrong format to
+  // every operator whose organization tracks in decimal (issue 539).
+  const duration = document.querySelector<HTMLInputElement>('[data-entry-duration-input]')
+  if (duration !== null) duration.placeholder = format === 'decimal' ? '1.5' : '1:30'
 }
 
 /**
@@ -3228,7 +3235,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       const empty = document.createElement('p')
       empty.className = 'command-empty'
       empty.dataset.commandEmpty = 'true'
-      empty.textContent = 'No destination matches that.'
+      // A log line searches no destinations, so reporting that none matched is
+      // answering a question nobody asked -- and it reads as "you typed it
+      // wrong" for a command that works.
+      const preview = quickAddPreview(query)
+      empty.textContent = preview ?? 'No destination matches that.'
+      if (preview !== null) empty.dataset.commandPreview = 'true'
       commandResults.replaceChildren(empty)
     } else {
       commandResults.replaceChildren(...groups)

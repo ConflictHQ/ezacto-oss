@@ -4773,4 +4773,25 @@ describe('command palette browser behavior', () => {
     ).toBe('true')
   })
 
+
+  it('[browser #539] shows a duration example the account would actually accept', async () => {
+    // The served HTML carried a literal "1:30". On a decimal account that is a
+    // value the field rejects, so the placeholder was teaching the wrong format
+    // to every operator whose organization tracks in decimal.
+    renderBrowserShell()
+    const decimal = browserApi()
+    decimal.timeFormat = 'decimal'
+    await mountShell(decimal)
+    expect(
+      document.querySelector<HTMLInputElement>('[data-entry-duration-input]')?.placeholder,
+    ).toBe('1.5')
+
+    renderBrowserShell()
+    const clock = browserApi()
+    clock.timeFormat = 'hours_minutes'
+    await mountShell(clock)
+    expect(
+      document.querySelector<HTMLInputElement>('[data-entry-duration-input]')?.placeholder,
+    ).toBe('1:30')
+  })
 })
