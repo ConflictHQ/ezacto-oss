@@ -9,6 +9,7 @@ import {
   generateOpenApiDocument,
   installAttachmentRoutes,
   installBrandAssetRoutes,
+  installBrandRoute,
   installClientTreeRoutes,
   installEmailHealthRoutes,
   installEmailLogRoutes,
@@ -187,6 +188,8 @@ export interface RuntimeServices {
    */
   recurringInvoices: RecurringInvoiceEngine
   reports: ReportReader
+  /** The organisation's name, read fresh: `GET /api/v1/brand` and the mailers. */
+  organizationName(): Promise<string>
   cursorSigningKey: Uint8Array
   passwordAuth: PasswordAuthService
   sessions: ApiSessionService
@@ -351,6 +354,10 @@ export const createApp = (
             if (brandAssets !== undefined) {
               installBrandAssetRoutes(api, brandAssets, () => systemClock.now().instant)
             }
+            installBrandRoute(api, {
+              organizationName: services.organizationName,
+              assets: (env) => (brandAssets === undefined ? Promise.resolve([]) : brandAssets.list(env)),
+            })
             // The provisioning gate is enforced inside the identity store, so
             // this is the only way an instance gets from "provisions nothing"
             // to "provisions from the work domain". Unmounted, migration 0039

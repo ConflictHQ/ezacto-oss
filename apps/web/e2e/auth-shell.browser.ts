@@ -2829,7 +2829,22 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
   await expect(policyLockedCell.locator('input')).toBeDisabled()
   await expect(policyLockedCell.locator('input')).toHaveAttribute('title', 'Locked by policy')
   await expect(policyLockedCell.locator('[data-locked-reason]')).toHaveText('Locked by policy')
-  await expect(policyLockedCell.locator('.cell-note')).toBeDisabled()
+
+  // The note button stays reachable on a locked cell, because the reason is
+  // what it is now for. It opens the entry to be read: every field disabled,
+  // and neither Save nor Delete offered (issue 496).
+  const lockedNote = policyLockedCell.locator('.cell-note')
+  await expect(lockedNote).toBeEnabled()
+  await lockedNote.click()
+  const lockedDialog = page.locator('[data-entry-dialog]')
+  await expect(lockedDialog).toBeVisible()
+  await expect(lockedDialog.locator('[data-entry-result]')).toContainText('Locked by policy')
+  await expect(lockedDialog.locator('[data-entry-note-input]')).toBeDisabled()
+  await expect(lockedDialog.locator('[data-entry-date]')).toBeDisabled()
+  await expect(lockedDialog.locator('[data-entry-submit]')).toBeHidden()
+  await expect(lockedDialog.locator('[data-entry-delete]')).toBeHidden()
+  await lockedDialog.locator('[data-dialog-close]').click()
+  await expect(lockedDialog).toBeHidden()
 
   const refusedEdit = await page.evaluate(async () => {
     const response = await fetch('/api/v1/time-entries/901', {

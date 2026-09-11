@@ -52,6 +52,7 @@ const detailedReport = (fields: Partial<DetailedTimeReport> = {}): DetailedTimeR
   client_id: null,
   project_id: null,
   hours: 'all',
+  grain: 'day',
   active_projects_only: false,
   seconds: 0,
   rounded_seconds: 0,
