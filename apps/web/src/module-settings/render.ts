@@ -47,6 +47,20 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <div class="settings-brand-slots" data-settings-brand-slots hidden></div>
       <p class="form-result" data-settings-brand-result role="status" aria-live="polite"></p>
     </section>
+    <section class="settings-section" data-settings-section="integrations" aria-labelledby="settings-integrations-title">
+      <header><h2 id="settings-integrations-title">Accounting</h2>
+      <p>Invoices raised here are copied into QuickBooks Online, and payments recorded there come back. Your client tree becomes customers and sub-customers, so a subsidiary is filed under its parent rather than beside it. Connecting is a grant over your whole book, so only an administrator can do it.</p></header>
+      <p class="form-result" data-settings-quickbooks-status role="status" aria-live="polite">Loading accounting integrations…</p>
+      <dl class="settings-facts" data-settings-quickbooks-facts hidden></dl>
+      <div class="settings-form" data-settings-quickbooks-actions hidden>
+        <button class="primary-action" type="button" data-quickbooks-connect hidden>Connect to QuickBooks</button>
+        <label class="settings-toggle" data-quickbooks-payment-row hidden>
+          <input type="checkbox" data-quickbooks-allow-payment>Let clients pay mirrored invoices through QuickBooks
+        </label>
+        <button type="button" class="danger-action" data-quickbooks-disconnect hidden>Disconnect QuickBooks</button>
+      </div>
+      <p class="form-result" data-settings-quickbooks-result role="status" aria-live="polite"></p>
+    </section>
     <section class="settings-section" data-settings-section="sso" aria-labelledby="settings-sso-title">
       <header><h2 id="settings-sso-title">SSO provisioning domains</h2>
       <p>Email domains this instance will create an account from on first single sign-on. A domain provisions nobody until its DNS challenge verifies, which is what proves this instance is entitled to the domain.</p></header>

@@ -237,6 +237,14 @@ export const createModuleSettingsController = (
   const brandStatus = required<HTMLElement>('[data-settings-brand-status]')
   const brandSlots = required<HTMLElement>('[data-settings-brand-slots]')
   const brandResult = required<HTMLElement>('[data-settings-brand-result]')
+  const quickBooksStatus = required<HTMLElement>('[data-settings-quickbooks-status]')
+  const quickBooksFacts = required<HTMLElement>('[data-settings-quickbooks-facts]')
+  const quickBooksActions = required<HTMLElement>('[data-settings-quickbooks-actions]')
+  const quickBooksConnect = required<HTMLButtonElement>('[data-quickbooks-connect]')
+  const quickBooksPaymentRow = required<HTMLElement>('[data-quickbooks-payment-row]')
+  const quickBooksAllowPayment = required<HTMLInputElement>('[data-quickbooks-allow-payment]')
+  const quickBooksDisconnect = required<HTMLButtonElement>('[data-quickbooks-disconnect]')
+  const quickBooksResult = required<HTMLElement>('[data-settings-quickbooks-result]')
   const ssoStatus = required<HTMLElement>('[data-settings-sso-status]')
   const ssoDomains = required<HTMLElement>('[data-settings-sso-domains]')
   const ssoForm = required<HTMLFormElement>('[data-sso-domain-form]')
@@ -779,6 +787,65 @@ export const createModuleSettingsController = (
    * asking as an executive manager buys a 403 and tells the operator nothing
    * about why the section is empty.
    */
+  /**
+   * The QuickBooks connection, and the one button that starts one.
+   *
+   * Connecting is a grant over the whole book, so a non-administrator is told
+   * that rather than shown a control the route would refuse. A deployment with
+   * no Intuit keys is told that too -- offering a connect button that answers
+   * 404 is worse than offering none.
+   */
+  const loadQuickBooks = async (identity: Whoami, active: ActiveSession): Promise<void> => {
+    if (identity.profile !== 'administrator') {
+      quickBooksStatus.textContent =
+        'Connecting an accounting system is an administrator action.'
+      return
+    }
+    if (api.getQuickBooksConnection === undefined) {
+      quickBooksStatus.textContent =
+        'This deployment is not configured for QuickBooks.'
+      return
+    }
+    try {
+      const view = await api.getQuickBooksConnection(active.signal)
+      active.present(() => {
+        if (!view.configured) {
+          // Keys are a deployment concern, not something an operator can fix
+          // from this screen, so it says so rather than offering a button.
+          quickBooksStatus.textContent =
+            'This deployment has no Intuit credentials, so QuickBooks cannot be connected here.'
+          return
+        }
+        const connection = view.connection
+        quickBooksActions.hidden = false
+        quickBooksConnect.hidden = connection !== null
+        quickBooksDisconnect.hidden = connection === null
+        quickBooksPaymentRow.hidden = connection === null
+        if (connection === null) {
+          quickBooksFacts.hidden = true
+          quickBooksStatus.textContent = 'Not connected.'
+          return
+        }
+        facts(quickBooksFacts, [
+          ['Company', connection.company_name ?? connection.realm_id],
+          ['Connected', connection.connected_at.slice(0, 10)],
+          ['Access', connection.scope],
+        ])
+        quickBooksFacts.hidden = false
+        quickBooksAllowPayment.checked = connection.allow_online_payment
+        quickBooksStatus.textContent = ''
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        quickBooksStatus.textContent = messageFor(
+          error,
+          'Connecting an accounting system is an administrator action.',
+          'The QuickBooks connection could not be read.',
+        )
+      })
+    }
+  }
+
   const loadBackups = async (identity: Whoami, active: ActiveSession): Promise<void> => {
     if (identity.profile !== 'administrator') {
       backupStatus.textContent = 'Backups are visible to administrators only.'
@@ -896,6 +963,87 @@ export const createModuleSettingsController = (
     }
   }
 
+  quickBooksConnect.addEventListener('click', () => {
+    const active = currentSession()
+    if (active === null || api.startQuickBooksAuthorization === undefined) return
+    quickBooksConnect.disabled = true
+    quickBooksResult.textContent = 'Starting…'
+    void api
+      .startQuickBooksAuthorization(active.signal)
+      .then((started) => {
+        // Sent rather than followed by the fetch: this is a consent screen a
+        // person has to see and answer on Intuit's own domain.
+        window.location.assign(started.authorize_url)
+      })
+      .catch((error: unknown) => {
+        active.presentFailure(error, () => {
+          quickBooksResult.textContent = messageFor(
+            error,
+            'Connecting an accounting system is an administrator action.',
+            'QuickBooks could not be reached.',
+          )
+        })
+      })
+      .finally(() => {
+        if (currentSession() === active) quickBooksConnect.disabled = false
+      })
+  })
+
+  quickBooksAllowPayment.addEventListener('change', () => {
+    const active = currentSession()
+    if (active === null || api.updateQuickBooksSettings === undefined) return
+    const wanted = quickBooksAllowPayment.checked
+    quickBooksAllowPayment.disabled = true
+    void api
+      .updateQuickBooksSettings(wanted, active.signal)
+      .then(() => {
+        quickBooksResult.textContent = wanted
+          ? 'Mirrored invoices will offer QuickBooks payment links.'
+          : 'Mirrored invoices will not offer payment links.'
+      })
+      .catch((error: unknown) => {
+        active.presentFailure(error, () => {
+          // Put back, because the checkbox is showing a state the server did
+          // not accept and a person would otherwise believe it.
+          quickBooksAllowPayment.checked = !wanted
+          quickBooksResult.textContent = messageFor(
+            error,
+            'Connecting an accounting system is an administrator action.',
+            'That setting could not be saved.',
+          )
+        })
+      })
+      .finally(() => {
+        if (currentSession() === active) quickBooksAllowPayment.disabled = false
+      })
+  })
+
+  quickBooksDisconnect.addEventListener('click', () => {
+    const active = currentSession()
+    if (active === null || api.disconnectQuickBooks === undefined) return
+    quickBooksDisconnect.disabled = true
+    void api
+      .disconnectQuickBooks(active.signal)
+      .then(async () => {
+        quickBooksResult.textContent = 'Disconnected.'
+        // Re-read rather than assume: disconnecting also revokes the grant at
+        // Intuit, and what the server now holds is the thing to show.
+        if (session !== null) await loadQuickBooks({ profile: 'administrator' } as Whoami, session)
+      })
+      .catch((error: unknown) => {
+        active.presentFailure(error, () => {
+          quickBooksResult.textContent = messageFor(
+            error,
+            'Connecting an accounting system is an administrator action.',
+            'QuickBooks could not be disconnected.',
+          )
+        })
+      })
+      .finally(() => {
+        if (currentSession() === active) quickBooksDisconnect.disabled = false
+      })
+  })
+
   return {
     async activate(identity, signal, onSessionFailure) {
       clearPrivatePresentation()
@@ -904,6 +1052,7 @@ export const createModuleSettingsController = (
         timeStatus.textContent = ''
         emailStatus.textContent = ''
         brandStatus.textContent = ''
+        quickBooksStatus.textContent = ''
         ssoStatus.textContent = ''
         return
       }
@@ -918,6 +1067,7 @@ export const createModuleSettingsController = (
         loadTimeTracking(active),
         loadEmail(identity, active),
         loadBackups(identity, active),
+        loadQuickBooks(identity, active),
         loadBrandAssets(identity, active),
         loadSsoDomains(identity, active),
       ])

@@ -3992,6 +3992,125 @@ describe('company settings', () => {
     expect(reputation.textContent).toContain('0.24%')
   })
 
+  it('[browser #104] offers one Connect button, and sends the operator to Intuit', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const api = {
+      ...companyApi([senderIdentity()], []),
+      getQuickBooksConnection: vi.fn(async () => ({ configured: true, connection: null })),
+      startQuickBooksAuthorization: vi.fn(async () => ({
+        authorize_url: 'https://appcenter.intuit.com/connect/oauth2?state=abc',
+      })),
+    }
+    const assign = vi.fn()
+    const original = window.location
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { ...original, assign },
+    })
+    try {
+      const controller = createModuleSettingsController(api as never)
+      await controller.activate(identity, new AbortController().signal, () => false)
+
+      const connect = document.querySelector<HTMLButtonElement>('[data-quickbooks-connect]')!
+      await vi.waitFor(() => expect(connect.hidden).toBe(false))
+      // Nothing to disconnect until something is connected.
+      expect(
+        document.querySelector<HTMLButtonElement>('[data-quickbooks-disconnect]')!.hidden,
+      ).toBe(true)
+
+      connect.click()
+      await vi.waitFor(() => expect(assign).toHaveBeenCalledTimes(1))
+      // Sent rather than fetched: the consent screen is a page a person has to
+      // see and answer on Intuit's own domain.
+      expect(assign).toHaveBeenCalledWith(
+        'https://appcenter.intuit.com/connect/oauth2?state=abc',
+      )
+    } finally {
+      Object.defineProperty(window, 'location', { configurable: true, value: original })
+    }
+  })
+
+  it('[browser #104] shows the connected company, and what it is allowed to do', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const api = {
+      ...companyApi([senderIdentity()], []),
+      getQuickBooksConnection: vi.fn(async () => ({
+        configured: true,
+        connection: {
+          realm_id: 'realm-a',
+          company_name: 'Northpeak Books',
+          scope: 'com.intuit.quickbooks.accounting',
+          allow_online_payment: false,
+          connected_at: '2026-09-11T12:00:00.000Z',
+        },
+      })),
+      updateQuickBooksSettings: vi.fn(async () => undefined),
+    }
+    const controller = createModuleSettingsController(api as never)
+    await controller.activate(identity, new AbortController().signal, () => false)
+
+    const facts = document.querySelector<HTMLElement>('[data-settings-quickbooks-facts]')!
+    await vi.waitFor(() => expect(facts.hidden).toBe(false))
+    expect(facts.textContent).toContain('Northpeak Books')
+    // The scope is shown, because "connected" without saying what it can reach
+    // is not informed consent after the fact.
+    expect(facts.textContent).toContain('com.intuit.quickbooks.accounting')
+    expect(document.querySelector<HTMLButtonElement>('[data-quickbooks-connect]')!.hidden).toBe(
+      true,
+    )
+
+    const allow = document.querySelector<HTMLInputElement>('[data-quickbooks-allow-payment]')!
+    expect(allow.checked).toBe(false)
+    allow.checked = true
+    allow.dispatchEvent(new Event('change', { bubbles: true }))
+    await vi.waitFor(() => expect(api.updateQuickBooksSettings).toHaveBeenCalledWith(true, expect.anything()))
+  })
+
+  it('[security #104] offers no connect button to a profile the route would refuse', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const api = {
+      ...companyApi([senderIdentity()], []),
+      getQuickBooksConnection: vi.fn(async () => ({ configured: true, connection: null })),
+      startQuickBooksAuthorization: vi.fn(async () => ({ authorize_url: 'https://example.test' })),
+    }
+    const controller = createModuleSettingsController(api as never)
+    // An executive manager reaches this page; connecting an accounting system
+    // is a grant over the whole book and the route refuses anyone but an
+    // administrator.
+    await controller.activate(
+      { ...identity, profile: 'executive_manager' },
+      new AbortController().signal,
+      () => false,
+    )
+    expect(document.querySelector<HTMLElement>('[data-settings-quickbooks-actions]')!.hidden).toBe(
+      true,
+    )
+    expect(api.getQuickBooksConnection).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('administrator action')
+  })
+
+  it('[browser #104] says so where the deployment has no Intuit credentials', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    const api = {
+      ...companyApi([senderIdentity()], []),
+      getQuickBooksConnection: vi.fn(async () => ({ configured: false, connection: null })),
+    }
+    const controller = createModuleSettingsController(api as never)
+    await controller.activate(identity, new AbortController().signal, () => false)
+    // Keys are a deployment concern, not something fixable from this screen, so
+    // it explains rather than offering a button that would answer 503.
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain('no Intuit credentials'),
+    )
+    expect(document.querySelector<HTMLElement>('[data-settings-quickbooks-actions]')!.hidden).toBe(
+      true,
+    )
+  })
+
   it('[security] clears an administrator\'s email data when a lesser profile signs in', async () => {
     // The page outlives the session: signing out and back in as someone else
     // happens in the same document. The non-privileged branch only rewrote

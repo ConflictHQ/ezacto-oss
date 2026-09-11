@@ -21,6 +21,17 @@ export type BackupStatus = BackupStatusEnvelope['data']
 
 export type { BackupRun }
 
+export interface QuickBooksConnectionView {
+  configured: boolean
+  connection: {
+    realm_id: string
+    company_name: string | null
+    scope: string
+    allow_online_payment: boolean
+    connected_at: string
+  } | null
+}
+
 export interface CompanySettingsApi {
   getTimeEntrySettings(signal?: AbortSignal): Promise<TimeEntrySettings>
   getTimeEntryNoteSettings(signal?: AbortSignal): Promise<TimeEntryNoteSettings>
@@ -35,6 +46,19 @@ export interface CompanySettingsApi {
    * backups are the operator's filesystem, where `RESTORE.md` is the contract.
    */
   getBackupStatus?(signal?: AbortSignal): Promise<BackupStatus>
+
+  /**
+   * The QuickBooks connection. Optional for the same reason backups are: a
+   * deployment with no Intuit keys does not mount the routes, and a screen that
+   * offered a connect button there would offer one that answers 404.
+   */
+  getQuickBooksConnection?(signal?: AbortSignal): Promise<QuickBooksConnectionView>
+  startQuickBooksAuthorization?(signal?: AbortSignal): Promise<{ authorize_url: string }>
+  updateQuickBooksSettings?(
+    allowOnlinePayment: boolean,
+    signal?: AbortSignal,
+  ): Promise<unknown>
+  disconnectQuickBooks?(signal?: AbortSignal): Promise<void>
 
   listSenderIdentities(signal?: AbortSignal): Promise<readonly SenderIdentity[]>
   listSsoDomains(signal?: AbortSignal): Promise<readonly SsoDomain[]>
