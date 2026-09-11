@@ -2305,4 +2305,44 @@ describe('Reports Stage 1 browser controller', () => {
     expect(summary).not.toContain('$125.00')
     session.abort()
   })
+
+  it('[browser #534] names the uninvoiced figure for the three filters that made it', async () => {
+    writeDocument('/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31')
+    const getUninvoicedReport = vi.fn(async () => ({
+      from: '2026-08-01',
+      to: '2026-08-31',
+      client_id: null,
+      project_id: null,
+      totals: [
+        {
+          currency: 'USD',
+          rounded_seconds: 3_245_256,
+          time_entry_count: 120,
+          unpriced_time_entry_count: 0,
+          expense_count: 2,
+          time_cents: 500_000,
+          expense_cents: 1_000,
+          total_cents: 501_000,
+        },
+      ],
+    }))
+    const session = new AbortController()
+    await createReportsController(baseApi({ getUninvoicedReport })).activate(
+      identity('administrator'),
+      session.signal,
+      () => false,
+    )
+
+    const results = document.querySelector('[data-report-results]')!
+    // The figure is the generation preview -- billable, uninvoiced, active
+    // projects -- so calling it tracked time reads as hours the migration lost.
+    expect(results.textContent).toContain('Uninvoiced billable time')
+    expect(results.textContent).not.toContain('Tracked time')
+    // And the card says which hours it counted, since that is the whole reason
+    // the number differs from the one being compared against.
+    const note = results.querySelector('.report-card-note')?.textContent ?? ''
+    expect(note).toContain('not yet invoiced')
+    expect(note).toContain('active projects')
+    session.abort()
+  })
 })
