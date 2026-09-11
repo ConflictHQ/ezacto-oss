@@ -86,7 +86,7 @@ export const renderModuleSettingsPage = (view?: string): string => `
  * offers a tab that answers 403.
  */
 const renderSettingsTabs = (
-  current: 'user' | 'company' | 'activity' | 'templates',
+  current: 'user' | 'company' | 'activity' | 'templates' | 'roles',
 ): string =>
   `<nav class="tabstrip settings-tabs" aria-label="Settings" data-settings-tabs>` +
   `<a href="/settings/user"${current === 'user' ? ' aria-current="page"' : ''}>You</a>` +
@@ -97,6 +97,9 @@ const renderSettingsTabs = (
   // Behind the Company gate too: the wording a client receives is company-wide
   // configuration, and the sender identity beside it is deployment setup.
   `<a href="/settings/templates" data-settings-templates-tab hidden${current === 'templates' ? ' aria-current="page"' : ''}>Templates</a>` +
+  // Behind the same gate: a role is a fact about people, and the list of them
+  // is account-wide configuration rather than daily work.
+  `<a href="/settings/roles" data-settings-roles-tab hidden${current === 'roles' ? ' aria-current="page"' : ''}>Roles</a>` +
   `</nav>`
 
 /**

@@ -35,6 +35,7 @@ import type { ReportWorkspaceApi } from '../reports/model.js'
 import type { ExpenseWorkflowApi } from '../expenses/model.js'
 import type { ExpenseCategoryDirectoryApi } from '../expense-categories/model.js'
 import type { InvoicePaymentApi } from '../invoices/model.js'
+import type { RoleAdminApi } from '../roles/model.js'
 import type { TaskAdminApi } from '../tasks/model.js'
 import type { TeamDirectoryApi } from '../team/model.js'
 import type { CompanySettingsApi } from '../module-settings/model.js'
@@ -68,6 +69,7 @@ export interface ShellApi
     Partial<RecurringWorkspaceApi>,
     Partial<RetainerWorkspaceApi>,
     Partial<InvoicePaymentApi>,
+    Partial<RoleAdminApi>,
     Partial<TaskAdminApi>,
     Partial<TeamDirectoryApi>,
     Partial<CompanySettingsApi> {
@@ -379,6 +381,13 @@ export const paletteDestinations: readonly PaletteDestination[] = [
     group: 'Organize',
     keywords: 'email template reminder thank you password reset verification sender',
     gate: '[data-settings-templates-tab]',
+  },
+  {
+    label: 'Roles',
+    href: '/settings/roles',
+    group: 'Organize',
+    keywords: 'role title people team manage',
+    gate: '[data-settings-roles-tab]',
   },
   {
     label: 'Activity log',
@@ -1209,6 +1218,21 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.updateTaskAssignment({ id, body: input, ...withSignal(signal) })).data,
   archiveProjectTaskAssignment: async (id, signal) => {
     await client.deleteTaskAssignment({ id, ...withSignal(signal) })
+  },
+  listRoles: (cursor, signal) =>
+    client.listRoles({
+      query: { per_page: 200, ...(cursor === undefined ? {} : { cursor }) },
+      ...withSignal(signal),
+    }),
+  // Who holds what, so a delete can say how many people it detaches.
+  listRoleHolders: (signal) =>
+    client.listUsers({ query: { per_page: 200 }, ...withSignal(signal) }),
+  createRole: async (input, signal) =>
+    (await client.createRole({ body: input, ...withSignal(signal) })).data,
+  updateRole: async (id, input, signal) =>
+    (await client.updateRole({ id, body: input, ...withSignal(signal) })).data,
+  deleteRole: async (id, signal) => {
+    await client.deleteRole({ id, ...withSignal(signal) })
   },
   listDirectoryUsers: (cursor, signal) =>
     client.listUsers({
