@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { readContainerConfig } from '../src/config.js'
 
@@ -51,5 +53,50 @@ describe('container configuration', () => {
     ['invalid port', { PORT: '65536' }],
   ])('[security] fails closed for %s', (_name, override) => {
     expect(() => readContainerConfig({ ...valid(), ...override })).toThrow()
+  })
+})
+
+describe('the operator guide and the config it describes', () => {
+  it('[unit] documents exactly the environment the container refuses to start without', async () => {
+    // A self-hoster has the README and nothing else. A variable the container
+    // requires and the README omits is a container that will not start for a
+    // reason the operator cannot see; one the README requires and the container
+    // ignores is a false demand, and either way the document is wrong.
+    //
+    // This is the same failure that shipped in RESTORE.md, where the documented
+    // restore command named a flag the CLI rejects: the guide was asserted to
+    // exist and never compared against the thing it describes (issue 99).
+    const root = fileURLToPath(new URL('..', import.meta.url))
+    const [source, readme] = await Promise.all([
+      readFile(`${root}src/config.ts`, 'utf8'),
+      readFile(`${root}README.md`, 'utf8'),
+    ])
+
+    const enforced = new Set(
+      [...source.matchAll(/required\(environment, '([A-Z_]+)'/gu)].map((match) => match[1]!),
+    )
+    const documented = new Set(
+      [...readme.matchAll(/^([A-Z_]+)=/gmu)].map((match) => match[1]!),
+    )
+
+    // Counted before they are compared, so two empty sets cannot agree.
+    expect(enforced.size).toBeGreaterThan(0)
+    expect([...documented].sort()).toEqual([...enforced].sort())
+  })
+
+  it('[unit] the links the README offers an operator resolve', async () => {
+    // Both are the guide's answer to "what do I do when this goes wrong", and a
+    // dead link is that answer missing.
+    const root = fileURLToPath(new URL('../../../', import.meta.url))
+    const readme = await readFile(
+      fileURLToPath(new URL('../README.md', import.meta.url)),
+      'utf8',
+    )
+    const targets = [...readme.matchAll(/\]\((\.\.[^)]+\.md)\)/gu)].map((match) => match[1]!)
+    expect(targets.length).toBeGreaterThan(0)
+    for (const target of targets) {
+      const resolved = `${root}${target.replace(/^\.\.\/\.\.\//u, '')}`
+      await expect(readFile(resolved, 'utf8')).resolves.toBeTruthy()
+    }
   })
 })

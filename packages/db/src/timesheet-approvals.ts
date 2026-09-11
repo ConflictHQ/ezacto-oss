@@ -11,14 +11,6 @@ type NativeClient = BetterSqlite3.Database | D1Database
 export type TimesheetSubmissionStatus = 'unsubmitted' | 'submitted' | 'approved'
 
 
-/**
- * The reason stored when someone takes back their own week. The CHECK on
- * `timesheet_submissions` requires every unsubmitted row to carry a reason, and
- * this is the one that means "nobody rejected this, the owner withdrew it" --
- * which callers can also tell from the reviewer being the owner.
- */
-export const SELF_WITHDRAWAL_REASON = 'Taken back by the owner before review.'
-
 export interface TimesheetApprovalActor {
   userId: number
   profile:
@@ -939,14 +931,14 @@ export class TimesheetApprovalRepository {
    * this transition -- `timesheet_submissions_update_guard` requires a
    * privileged actor only for `approved -> unsubmitted`.
    *
-   * The row records the person as the one who sent it back, because the table
-   * CHECK requires every unsubmitted row to say who did it and why, and here
-   * the honest answer to both is the owner. Reviewers and the person's own
-   * screen tell this from a rejection by comparing the reviewer to the owner;
-   * `SELF_WITHDRAWAL_REASON` is the recognisable form. Giving this its own
-   * null-reviewer state would mean a fourth branch on that CHECK, which SQLite
-   * can only reach by rebuilding the table and its eleven triggers -- worth
-   * doing, and not worth doing in the same change as the feature.
+   * The row records no reviewer, no review time and no reason, because nobody
+   * reviewed it. That is a state of its own since migration 0047 added a fourth
+   * branch to the table CHECK; before it, every unsubmitted row had to name a
+   * reviewer and a reason, so a withdrawal wrote the owner as their own
+   * reviewer and a fixed sentence as the reason, and callers told the two apart
+   * by matching that sentence. A reviewer who typed it verbatim was misread.
+   * `isSelfWithdrawn` is now "unsubmitted with no reviewer", which nothing
+   * collides with.
    *
    * Only a submission still waiting. An approved week has been acted on by
    * someone else and stays the administrator's to reopen.
@@ -964,19 +956,13 @@ export class TimesheetApprovalRepository {
           // first: a read-then-write pair could approve between the two, and
           // the write would then quietly undo a decision it never saw.
           sql: `UPDATE timesheet_submissions AS submission
-            SET status = 'unsubmitted', reviewed_by_user_id = submission.user_id,
-              reviewed_at = ?, rejection_reason = ?,
+            SET status = 'unsubmitted', reviewed_by_user_id = NULL,
+              reviewed_at = NULL, rejection_reason = NULL,
               version = version + 1, updated_at = ?
             WHERE submission.id = ? AND submission.user_id = ?
               AND submission.status = 'submitted'
             RETURNING id`,
-          params: [
-            occurredAt,
-            SELF_WITHDRAWAL_REASON,
-            occurredAt,
-            submissionId,
-            actor.userId,
-          ],
+          params: [occurredAt, submissionId, actor.userId],
         },
         { sql: `${submissionSelect} WHERE submission.id = ?`, params: [submissionId] },
       )

@@ -2,7 +2,7 @@
  * Storage for the QuickBooks connection, the OAuth handshake, and what has been
  * mirrored where.
  *
- * The rules this enforces are in `0047_quickbooks_connection`; this is the
+ * The rules this enforces are in `0048_quickbooks_connection`; this is the
  * narrow surface the routes and the mirror use, so neither has to know the
  * table shapes.
  */
