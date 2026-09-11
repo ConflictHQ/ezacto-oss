@@ -40,6 +40,14 @@ export const renderProjectDirectoryPages = (view?: string): string => `
         <h2 id="project-facts-heading">Project details</h2>
         <dl data-project-facts></dl>
       </section>
+      <section class="project-team" aria-labelledby="project-team-heading">
+        <header>
+          <div><p class="eyebrow">Staffing</p><h2 id="project-team-heading">Project team</h2></div>
+          <button type="button" data-user-assignment-create data-project-mutation-action data-project-write data-auth-action hidden disabled>Assign person</button>
+        </header>
+        <p class="project-section-status" data-project-team-status role="status" aria-live="polite"></p>
+        <ul data-project-user-assignments></ul>
+      </section>
       <section class="project-tasks" aria-labelledby="project-tasks-heading">
         <header>
           <div><p class="eyebrow">Time entry</p><h2 id="project-tasks-heading">Assigned tasks</h2></div>
@@ -77,6 +85,22 @@ export const renderProjectDirectoryPages = (view?: string): string => `
       <div class="project-form-body" data-task-assignment-form-body></div>
       <p class="form-result" data-task-assignment-form-result role="status" aria-live="polite"></p>
       <button class="primary-action" type="submit" data-task-assignment-form-submit>Save task assignment</button>
+    </form>
+  </dialog>
+  <dialog class="task-assignment-dialog" data-user-assignment-dialog aria-labelledby="user-assignment-title">
+    <form data-user-assignment-form>
+      <header><div><p class="eyebrow">Project staffing</p><h2 id="user-assignment-title" data-user-assignment-title>Assign person</h2></div><button type="button" data-user-assignment-dialog-close aria-label="Close">×</button></header>
+      <div class="project-form-body" data-user-assignment-form-body></div>
+      <p class="form-result" data-user-assignment-form-result role="status" aria-live="polite"></p>
+      <button class="primary-action" type="submit" data-user-assignment-form-submit>Save staffing</button>
+    </form>
+  </dialog>
+  <dialog class="project-archive-dialog" data-user-assignment-archive-dialog aria-labelledby="user-assignment-archive-title">
+    <form method="dialog" data-user-assignment-archive-form>
+      <header><div><p class="eyebrow">Project staffing</p><h2 id="user-assignment-archive-title">Remove this person from the project?</h2></div><button value="cancel" aria-label="Close">×</button></header>
+      <p>Time already tracked is kept. The person will no longer be staffed for new time on this project.</p>
+      <p class="form-result" data-user-assignment-archive-result role="status" aria-live="polite"></p>
+      <div class="project-confirm-actions"><button value="cancel">Cancel</button><button class="danger-action" type="submit" value="confirm" data-user-assignment-archive-confirm>Remove from project</button></div>
     </form>
   </dialog>
   <dialog class="project-archive-dialog" data-project-archive-dialog aria-labelledby="project-archive-title">

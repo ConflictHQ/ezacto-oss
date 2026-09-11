@@ -17,6 +17,8 @@ import {
   projectMoney,
   projectNumber,
   projectText,
+  assignmentRateLabel,
+  personLabel,
   taskLabel,
   type ProjectBudgetSummary,
   type ProjectCapabilities,
@@ -283,6 +285,25 @@ export const createProjectDirectoryController = (
   const assignmentArchiveResult = required<HTMLElement>(
     '[data-task-assignment-archive-result]',
   )
+  const staffingStatus = required<HTMLElement>('[data-project-team-status]')
+  const staffingList = required<HTMLUListElement>('[data-project-user-assignments]')
+  const staffingDialog = required<HTMLDialogElement>('[data-user-assignment-dialog]')
+  const staffingForm = required<HTMLFormElement>('[data-user-assignment-form]')
+  const staffingFormBody = required<HTMLElement>('[data-user-assignment-form-body]')
+  const staffingFormTitle = required<HTMLElement>('[data-user-assignment-title]')
+  const staffingFormResult = required<HTMLElement>('[data-user-assignment-form-result]')
+  const staffingFormSubmit = required<HTMLButtonElement>(
+    '[data-user-assignment-form-submit]',
+  )
+  const staffingArchiveDialog = required<HTMLDialogElement>(
+    '[data-user-assignment-archive-dialog]',
+  )
+  const staffingArchiveForm = required<HTMLFormElement>(
+    '[data-user-assignment-archive-form]',
+  )
+  const staffingArchiveResult = required<HTMLElement>(
+    '[data-user-assignment-archive-result]',
+  )
 
   listPageElement.hidden = !listPage
   detailPageElement.hidden = !detailPage
@@ -299,6 +320,10 @@ export const createProjectDirectoryController = (
   let editingProjectId: number | null = null
   let editingAssignmentId: number | null = null
   let archivingAssignmentId: number | null = null
+  let people: readonly GeneralResource[] = []
+  let staffing: readonly GeneralResource[] = []
+  let editingStaffingId: number | null = null
+  let archivingStaffingId: number | null = null
   let mutationPending = false
   let attachmentCommandId: string | null = null
 
@@ -758,6 +783,189 @@ export const createProjectDirectoryController = (
     taskStatus.textContent = `${assignments.length} ${assignments.length === 1 ? 'task assignment' : 'task assignments'}.`
   }
 
+  /**
+   * Who is staffed on this project, at what rate, active or not.
+   *
+   * Harvest put this on Projects -> Team and 342 rows came across the cutover
+   * with nowhere to land: the API, the client and the table all carried them,
+   * and no screen asked. #485 ranked it the largest gap by data stranded.
+   */
+  const renderStaffing = (): void => {
+    const active = currentSession()
+    if (active === null) return
+    const currency = currentProject === null ? 'USD' : projectCurrency(currentProject, clients)
+    if (staffing.length === 0) {
+      const empty = document.createElement('li')
+      empty.className = 'project-related-empty'
+      empty.textContent = 'Nobody is staffed on this project yet.'
+      staffingList.replaceChildren(empty)
+      staffingStatus.textContent = empty.textContent
+      return
+    }
+    staffingList.replaceChildren(
+      ...staffing.map((assignment) => {
+        const item = document.createElement('li')
+        item.className = 'project-task-card'
+        item.dataset.userAssignmentId = String(assignment.id)
+        const details = document.createElement('div')
+        const heading = document.createElement('strong')
+        heading.textContent = personLabel(projectNumber(assignment, 'user_id') ?? 0, people)
+        const metadata = document.createElement('p')
+        // Same construction as the task card: built from nodes so the rate can
+        // be masked on its own without taking the staffing facts beside it,
+        // which carry no money and are nobody's secret.
+        const parts: (string | Node)[] = [
+          assignment['is_active'] === false ? 'Not staffed' : 'Staffed',
+          projectBoolean(assignment, 'is_project_manager') ? 'Project manager' : 'Member',
+          `Budget ${projectHours(projectNumber(assignment, 'budget_seconds'))}`,
+        ]
+        if (active.capabilities.canViewBillableMoney) {
+          parts.push(rateFragment('Rate ', assignmentRateLabel(assignment, currency)))
+        }
+        metadata.append(...parts.flatMap((part, index) => (index === 0 ? [part] : [' · ', part])))
+        details.append(heading, metadata)
+        item.append(details)
+        if (active.capabilities.canWrite) {
+          const actions = document.createElement('div')
+          const edit = document.createElement('button')
+          edit.type = 'button'
+          edit.dataset.projectMutationAction = ''
+          edit.disabled = mutationPending
+          edit.textContent = assignment['is_active'] === false ? 'Edit or restaff' : 'Edit'
+          edit.addEventListener('click', () => openStaffingForm(assignment))
+          actions.append(edit)
+          if (assignment['is_active'] !== false) {
+            const remove = document.createElement('button')
+            remove.type = 'button'
+            remove.dataset.projectMutationAction = ''
+            remove.disabled = mutationPending
+            remove.textContent = 'Remove'
+            remove.addEventListener('click', () => {
+              archivingStaffingId = assignment.id
+              staffingArchiveResult.textContent = ''
+              staffingArchiveDialog.showModal()
+            })
+            actions.append(remove)
+          }
+          item.append(actions)
+        }
+        return item
+      }),
+    )
+    const staffed = staffing.filter((row) => row['is_active'] !== false).length
+    staffingStatus.textContent =
+      staffed === staffing.length
+        ? `${staffing.length} ${staffing.length === 1 ? 'person' : 'people'} staffed.`
+        : `${staffed} of ${staffing.length} staffed.`
+  }
+
+  const buildStaffingForm = (assignment: GeneralResource | null): void => {
+    const active = currentSession()
+    if (active === null || !active.capabilities.canWrite) return
+    if (assignment === null) {
+      const staffedIds = new Set(
+        staffing.map((candidate) => projectNumber(candidate, 'user_id')),
+      )
+      const personSelect = select(
+        'user_id',
+        people
+          .filter((person) => projectIsActive(person) && !staffedIds.has(person.id))
+          .map((person) => [String(person.id), personLabel(person.id, people)]),
+      )
+      personSelect.required = true
+      staffingFormBody.append(label('Person', personSelect))
+    } else {
+      const personName = document.createElement('p')
+      personName.className = 'project-assignment-task-name'
+      personName.textContent = personLabel(projectNumber(assignment, 'user_id') ?? 0, people)
+      staffingFormBody.append(personName)
+    }
+    staffingFormBody.append(
+      checkbox('is_active', 'Staffed and available for new time'),
+      checkbox('is_project_manager', 'Project manager on this project'),
+      label('Hours budget', input('budget_seconds', { type: 'number', min: '0', step: '0.01' })),
+    )
+    if (active.capabilities.canViewBillableMoney) {
+      // The switch is offered above the amount it governs, because the amount
+      // is only consulted when the switch is off and a form that asked for the
+      // number first would invite one that is never read.
+      staffingFormBody.append(
+        checkbox('use_default_rates', "Bill at the person's default rate"),
+        label('Project hourly rate', input('hourly_rate_cents', { type: 'number', min: '0', step: '0.01' })),
+      )
+    }
+    formCheckbox(staffingForm, 'is_active').checked = assignment?.['is_active'] !== false
+    formCheckbox(staffingForm, 'is_project_manager').checked = projectBoolean(
+      assignment ?? ({} as GeneralResource),
+      'is_project_manager',
+    )
+    formField(staffingForm, 'budget_seconds').value = hoursValue(assignment, 'budget_seconds')
+    if (active.capabilities.canViewBillableMoney) {
+      const useDefault = formCheckbox(staffingForm, 'use_default_rates')
+      const rate = formField(staffingForm, 'hourly_rate_cents')
+      useDefault.checked = assignment === null || assignment['use_default_rates'] !== false
+      rate.value = centsValue(assignment, 'hourly_rate_cents')
+      const syncRate = (): void => {
+        rate.disabled = useDefault.checked
+      }
+      syncRate()
+      useDefault.addEventListener('change', syncRate)
+    }
+  }
+
+  const openStaffingForm = (assignment: GeneralResource | null): void => {
+    const active = currentSession()
+    if (
+      active === null ||
+      !active.capabilities.canWrite ||
+      currentProject === null ||
+      mutationPending
+    ) return
+    editingStaffingId = assignment?.id ?? null
+    staffingFormBody.replaceChildren()
+    staffingFormTitle.textContent = assignment === null ? 'Assign person' : 'Edit project staffing'
+    staffingFormSubmit.textContent = assignment === null ? 'Assign person' : 'Save staffing'
+    staffingFormResult.textContent = ''
+    buildStaffingForm(assignment)
+    const personControl = staffingForm.elements.namedItem('user_id')
+    const available =
+      assignment !== null ||
+      (personControl instanceof HTMLSelectElement && personControl.options.length > 0)
+    staffingFormSubmit.disabled = !available
+    if (!available) {
+      staffingFormResult.textContent = 'Everyone active is already staffed on this project.'
+    }
+    staffingDialog.showModal()
+    formField(staffingForm, assignment === null ? 'user_id' : 'budget_seconds').focus()
+  }
+
+  const staffingPayload = (): Record<string, unknown> => {
+    const active = currentSession()
+    if (active === null || currentProject === null) throw new Error('Sign in is required.')
+    const data = new FormData(staffingForm)
+    const payload: Record<string, unknown> = {
+      is_active: data.has('is_active'),
+      is_project_manager: data.has('is_project_manager'),
+      budget_seconds: hoursSeconds(data, 'budget_seconds'),
+    }
+    if (editingStaffingId === null) {
+      payload.project_id = currentProject.id
+      payload.user_id = requiredId(data, 'user_id')
+    }
+    if (active.capabilities.canViewBillableMoney) {
+      const useDefault = data.has('use_default_rates')
+      payload.use_default_rates = useDefault
+      // Null rather than whatever the disabled field still held: a stored
+      // amount that the switch says is never consulted is the row that reads
+      // one way on this screen and bills another.
+      payload.hourly_rate_cents = useDefault ? null : moneyCents(data, 'hourly_rate_cents')
+      if (!useDefault && payload.hourly_rate_cents === null) {
+        throw new Error('Set a project hourly rate, or bill at the default rate.')
+      }
+    }
+    return payload
+  }
+
   const renderAttachments = (): void => {
     if (currentProject === null) return
     if (attachments.length === 0) {
@@ -1145,7 +1353,9 @@ export const createProjectDirectoryController = (
       api.getDirectoryProject === undefined ||
       api.listProjectClients === undefined ||
       api.listDirectoryTasks === undefined ||
-      api.listProjectTaskAssignments === undefined
+      api.listProjectTaskAssignments === undefined ||
+      api.listDirectoryUsers === undefined ||
+      api.listProjectUserAssignments === undefined
     ) {
       detailStatus.textContent = 'Project detail is unavailable in this build.'
       return
@@ -1153,12 +1363,17 @@ export const createProjectDirectoryController = (
     detailStatus.textContent = 'Loading project…'
     detailRetry.hidden = true
     try {
-      ;[currentProject, clients, tasks, assignments] = await Promise.all([
+      ;[currentProject, clients, tasks, assignments, people, staffing] = await Promise.all([
         api.getDirectoryProject(projectId, active.signal),
         collect((cursor) => api.listProjectClients!(cursor, active.signal), active.signal),
         collect((cursor) => api.listDirectoryTasks!(cursor, active.signal), active.signal),
         collect(
           (cursor) => api.listProjectTaskAssignments!(projectId, cursor, active.signal),
+          active.signal,
+        ),
+        collect((cursor) => api.listDirectoryUsers!(cursor, active.signal), active.signal),
+        collect(
+          (cursor) => api.listProjectUserAssignments!(projectId, cursor, active.signal),
           active.signal,
         ),
       ])
@@ -1168,6 +1383,7 @@ export const createProjectDirectoryController = (
       detailStatus.textContent = projectIsActive(currentProject) ? 'Project loaded.' : 'Archived project loaded.'
       syncStatusActions()
       renderFacts()
+      renderStaffing()
       renderAssignments()
       attachmentForm.hidden = !active.capabilities.canWrite
       await loadAttachmentData(active, projectId)
@@ -1220,6 +1436,8 @@ export const createProjectDirectoryController = (
         if (currentSession() === active) setMutationPending(false)
       })
   })
+  required<HTMLButtonElement>('[data-user-assignment-create]').addEventListener('click', () => openStaffingForm(null))
+  required<HTMLButtonElement>('[data-user-assignment-dialog-close]').addEventListener('click', () => staffingDialog.close())
   required<HTMLButtonElement>('[data-task-assignment-create]').addEventListener('click', () => openAssignmentForm(null))
   required<HTMLButtonElement>('[data-project-dialog-close]').addEventListener('click', () => projectDialog.close())
   required<HTMLButtonElement>('[data-task-assignment-dialog-close]').addEventListener('click', () => assignmentDialog.close())
@@ -1289,6 +1507,86 @@ export const createProjectDirectoryController = (
         if (currentSession() === active) {
           setMutationPending(false)
           projectFormSubmit.disabled = false
+        }
+      })
+  })
+
+  staffingForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const active = currentSession()
+    if (active === null || !active.capabilities.canWrite || mutationPending) return
+    const create = editingStaffingId === null
+    const operation = create
+      ? api.createProjectUserAssignment
+      : api.updateProjectUserAssignment
+    if (operation === undefined) return
+    let payload: Record<string, unknown>
+    try {
+      payload = staffingPayload()
+    } catch (error) {
+      staffingFormResult.textContent = messageFor(error)
+      return
+    }
+    setMutationPending(true)
+    staffingFormSubmit.disabled = true
+    staffingFormResult.textContent = create ? 'Assigning person…' : 'Saving staffing…'
+    const request = create
+      ? api.createProjectUserAssignment!(payload, active.signal)
+      : api.updateProjectUserAssignment!(editingStaffingId!, payload, active.signal)
+    void request
+      .then(async () => {
+        if (currentSession() !== active) return
+        staffingDialog.close()
+        editingStaffingId = null
+        await loadDetail(active)
+        if (currentSession() === active) {
+          staffingStatus.textContent = create ? 'Person assigned.' : 'Staffing saved.'
+        }
+      })
+      .catch((error: unknown) => {
+        active.presentFailure(error, () => {
+          staffingFormResult.textContent = messageFor(error)
+        })
+      })
+      .finally(() => {
+        if (currentSession() === active) {
+          setMutationPending(false)
+          staffingFormSubmit.disabled = false
+        }
+      })
+  })
+
+  staffingArchiveForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const active = currentSession()
+    if (
+      active === null ||
+      archivingStaffingId === null ||
+      !active.capabilities.canWrite ||
+      mutationPending ||
+      api.archiveProjectUserAssignment === undefined
+    ) return
+    const confirm = required<HTMLButtonElement>('[data-user-assignment-archive-confirm]')
+    confirm.disabled = true
+    setMutationPending(true)
+    staffingArchiveResult.textContent = 'Removing…'
+    void api.archiveProjectUserAssignment(archivingStaffingId, active.signal)
+      .then(async () => {
+        if (currentSession() !== active) return
+        archivingStaffingId = null
+        staffingArchiveDialog.close()
+        await loadDetail(active)
+        if (currentSession() === active) staffingStatus.textContent = 'Removed from project.'
+      })
+      .catch((error: unknown) => {
+        active.presentFailure(error, () => {
+          staffingArchiveResult.textContent = messageFor(error)
+        })
+      })
+      .finally(() => {
+        if (currentSession() === active) {
+          setMutationPending(false)
+          confirm.disabled = false
         }
       })
   })

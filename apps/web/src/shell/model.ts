@@ -1157,6 +1157,27 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   archiveProjectTaskAssignment: async (id, signal) => {
     await client.deleteTaskAssignment({ id, ...withSignal(signal) })
   },
+  listDirectoryUsers: (cursor, signal) =>
+    client.listUsers({
+      query: { per_page: 200, ...(cursor === undefined ? {} : { cursor }) },
+      ...withSignal(signal),
+    }),
+  listProjectUserAssignments: (projectId, cursor, signal) =>
+    client.listUserAssignments({
+      query: {
+        project_id: projectId,
+        per_page: 200,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
+  createProjectUserAssignment: async (input, signal) =>
+    (await client.createUserAssignment({ body: input, ...withSignal(signal) })).data,
+  updateProjectUserAssignment: async (id, input, signal) =>
+    (await client.updateUserAssignment({ id, body: input, ...withSignal(signal) })).data,
+  archiveProjectUserAssignment: async (id, signal) => {
+    await client.deleteUserAssignment({ id, ...withSignal(signal) })
+  },
   listDirectoryProjectAttachments: async (projectId, signal) =>
     (await client.listProjectAttachments({ projectId, ...withSignal(signal) })).data,
   uploadDirectoryProjectAttachment: async (projectId, commandId, body, signal) =>
