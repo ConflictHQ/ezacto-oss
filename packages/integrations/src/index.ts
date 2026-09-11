@@ -83,3 +83,11 @@ export {
   type MirrorInvoiceLine,
   type PlannedCustomer,
 } from './quickbooks/mapping.js'
+export {
+  QuickBooksWebhookError,
+  canonicalLastUpdated,
+  parseWebhookNotification,
+  verifyWebhookSignature,
+  type QuickBooksEntityChange,
+  type VerifyWebhookInput,
+} from './quickbooks/webhook.js'

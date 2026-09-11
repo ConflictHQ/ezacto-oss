@@ -125,8 +125,9 @@ describe('client tree to QuickBooks customers', () => {
     // somebody else's account, which is a money error rather than untidiness.
     const elsewhere = { ...correct, ParentRef: { value: 'qb-99' } } as QuickBooksCustomer
     expect(customerMatches(elsewhere, planned)).toBe(false)
-    const orphan = { ...correct, ParentRef: undefined } as QuickBooksCustomer
-    expect(customerMatches(orphan, planned)).toBe(false)
+    const orphan: Record<string, unknown> = { ...correct }
+    delete orphan['ParentRef']
+    expect(customerMatches(orphan as unknown as QuickBooksCustomer, planned)).toBe(false)
   })
 
   it('[unit] refuses a tree deeper than QuickBooks accepts, naming the client', () => {
@@ -247,8 +248,11 @@ describe('deciding what to do with one invoice', () => {
     // directly. Updating it would destroy a document nobody asked us to touch.
     const theirs = qboInvoice({ PrivateNote: 'Raised by hand for the September work' })
     expect(planInvoiceMirror(invoice(), null, theirs)).toMatchObject({ kind: 'conflict' })
-    const unnoted = qboInvoice({ PrivateNote: undefined })
-    expect(planInvoiceMirror(invoice(), null, unnoted)).toMatchObject({ kind: 'conflict' })
+    const unnoted: Record<string, unknown> = { ...qboInvoice() }
+    delete unnoted['PrivateNote']
+    expect(planInvoiceMirror(invoice(), null, unnoted as unknown as QuickBooksInvoice)).toMatchObject({
+      kind: 'conflict',
+    })
     // And it says which invoice, because the operator has to resolve it.
     const conflict = planInvoiceMirror(invoice(), null, theirs)
     expect(conflict.kind === 'conflict' && conflict.reason).toContain('1315')
