@@ -180,6 +180,49 @@ describe('Clients V1 browser controller', () => {
     expect(api.archiveDirectoryClient).not.toHaveBeenCalled()
   })
 
+  it('[browser #522] puts a client on another currency from the screen', async () => {
+    // `clients.currency` is what decides the currency of every invoice raised
+    // for that client, and reports group by it rather than summing across it.
+    // Without a control an operator has to reach the database to change it.
+    writeDocument()
+    const updateDirectoryClient = vi.fn(async (_id, input) => ({ ...child, ...input }))
+    const controller = createClientDirectoryController({
+      listDirectoryClients: async () => page([parent, child]),
+      getDirectoryClient: async () => child,
+      listClientContacts: async () => page([contact]),
+      listClientProjects: async () => page([project]),
+      updateDirectoryClient,
+      createClientContact: vi.fn(),
+      createDirectoryClient: vi.fn(),
+      updateClientContact: vi.fn(),
+    })
+    const identity: Whoami = {
+      user_id: 1,
+      profile: 'administrator',
+      manager_grants: [],
+      authentication: { kind: 'session' },
+    }
+    await controller.activate(identity, new AbortController().signal, () => false)
+
+    document.querySelector<HTMLButtonElement>('[data-client-edit]')!.click()
+    const form = document.querySelector<HTMLFormElement>('[data-client-form]')!
+    const currency = form.elements.namedItem('currency') as HTMLInputElement
+    // The control is there, and constrained to the shape the column expects --
+    // three letters, which `estimates.currency` already checks canonically.
+    expect(currency.pattern).toBe('[A-Za-z]{3}')
+    expect(currency.maxLength).toBe(3)
+
+    // Typed lower case, because people do.
+    currency.value = 'eur'
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() => expect(updateDirectoryClient).toHaveBeenCalledTimes(1))
+    // Upper-cased on the way out: 'eur' and 'EUR' are the same currency, and two
+    // spellings in the column would group as two in every report that groups by
+    // it.
+    expect(updateDirectoryClient.mock.calls[0]![1]).toMatchObject({ currency: 'EUR' })
+  })
+
   it('[browser #486] restores an archived client from the detail header', async () => {
     // 25 of this account's 30 clients arrived archived, so the archived detail
     // page is a normal destination rather than a mistake to be undone once.
