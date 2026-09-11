@@ -133,7 +133,17 @@ describe('Worker SSO provisioning domains', () => {
       password,
     })
     cookie = signedIn.headers.get('set-cookie')!.split(';', 1)[0]!
-  })
+    // 30s, against vitest's 10s default. This hook boots Miniflare, builds the
+    // runtime services, then signs up, verifies an email and signs in -- and
+    // that sign-in pays for an Argon2id verify. Alone it takes about 6.8s, so
+    // the default left roughly three seconds of headroom, and on a two-vCPU
+    // runner with the other suites alongside it that is not enough: it has
+    // failed twice as "Hook timed out in 10000ms", which reads as a broken
+    // worker rather than a busy machine.
+    //
+    // The siblings that do comparable work already say so -- brand-assets and
+    // email-queue at 20s, money-isolation at 60s. This one never did.
+  }, 30_000)
 
   afterAll(async () => miniflare.dispose())
 
