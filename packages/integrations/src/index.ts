@@ -1,4 +1,24 @@
 export {
+  inboundPayments as billInboundPayments,
+  mirrorInvoice as mirrorBillInvoice,
+  type BillDelivery,
+  type BillInboundPayment,
+  type BillLink,
+  type BillLinkKind,
+  type BillLinkStore,
+  type BillMirrorOutcome,
+  type MirrorBill,
+} from './bill/mirror.js'
+export {
+  createBillMirrorSubscriber,
+  createBillRuntime,
+  type BillConfig,
+  type BillConnectionStatus,
+  type BillMirrorSource,
+  type BillRuntime,
+  type BillRuntimeOptions,
+} from './bill/runtime.js'
+export {
   BILL_PRODUCTION_BASE_URL,
   BILL_SANDBOX_BASE_URL,
   BILL_SESSION_IDLE_SECONDS,
