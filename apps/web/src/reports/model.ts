@@ -3,6 +3,7 @@ import type {
   ActivityLog,
   ClientRollupReport,
   ContractorCostReport,
+  DetailedExpenseReport,
   DetailedTimeReport,
   DetailedTimeRow,
   GeneralResource,
@@ -25,6 +26,7 @@ export type ReportKind =
   | 'detailed-time'
   | 'activity-log'
   | 'profitability'
+  | 'detailed-expense'
 
 /**
  * The Time report's four sub-tabs. They are folds of one response, so the tab
@@ -169,6 +171,15 @@ export interface ReportWorkspaceApi {
     filter: { readonly from: string; readonly to: string },
     signal?: AbortSignal,
   ): Promise<ProfitabilityReport>
+  getDetailedExpenseReport?(
+    filter: {
+      readonly from: string
+      readonly to: string
+      readonly client_id?: number
+      readonly project_id?: number
+    },
+    signal?: AbortSignal,
+  ): Promise<DetailedExpenseReport>
   getDetailedTimeReport(
     filter: {
       readonly from: string
@@ -213,6 +224,7 @@ const reportKinds = new Set<ReportKind>([
   'detailed-time',
   'activity-log',
   'profitability',
+  'detailed-expense',
 ])
 
 const timeReportTabs = new Set<TimeReportTab>([

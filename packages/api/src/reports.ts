@@ -80,6 +80,41 @@ export interface ProfitabilityReportRecord {
   previousTotals: Readonly<ProfitabilityTotals>;
 }
 
+export interface DetailedExpenseRowRecord {
+  expenseId: number;
+  spentDate: string;
+  clientId: number;
+  clientName: string;
+  projectId: number;
+  projectName: string;
+  projectCode: string;
+  categoryId: number;
+  categoryName: string;
+  userId: number;
+  userName: string;
+  notes: string | null;
+  units: number | null;
+  billable: boolean;
+  reimbursable: boolean;
+  invoiceId: number | null;
+  currency: string;
+  totalCostCents: number;
+}
+
+export interface DetailedExpenseReportRecord {
+  from: string;
+  to: string;
+  clientId: number | null;
+  projectId: number | null;
+  billableOnly: boolean;
+  rows: readonly DetailedExpenseRowRecord[];
+  totals: readonly {
+    currency: string;
+    expenseCount: number;
+    totalCostCents: number;
+  }[];
+}
+
 export interface UninvoicedCurrencyRecord {
   currency: string;
   roundedSeconds: number;
@@ -312,6 +347,13 @@ export interface ReportReader {
     projectId?: number;
   }): Promise<MyHoursReportRecord>;
   contractorCost(range: Readonly<ReportDateRange>): Promise<ContractorCostReportRecord>;
+  detailedExpense(filter: {
+    from: string;
+    to: string;
+    clientId?: number;
+    projectId?: number;
+    billableOnly?: boolean;
+  }): Promise<DetailedExpenseReportRecord>;
   profitability(range: Readonly<ReportDateRange>): Promise<ProfitabilityReportRecord>;
   timeReport(range: Readonly<ReportDateRange>): Promise<TimeReportRecord>;
   detailedTime(filter: {
@@ -349,6 +391,7 @@ const uninvoicedKeys = new Set([...reportKeys, "client_id", "project_id"]);
 // this list, so `?user_id=7` is a 422 rather than a report of somebody else's
 // week -- and even if it were accepted, the repository is handed the principal.
 const myHoursKeys = new Set([...reportKeys, "project_id"]);
+const detailedExpenseKeys = new Set([...uninvoicedKeys, "billable_only"]);
 const detailedTimeKeys = new Set([
   ...uninvoicedKeys,
   "hours",
@@ -521,6 +564,62 @@ const serializeProfitability = (report: Readonly<ProfitabilityReportRecord>) => 
  * total for a complete one -- withholding it alongside the amount would leave
  * the amount unexplained for everybody else's benefit.
  */
+/**
+ * Amounts are dropped per field rather than the response refused, the same call
+ * the detailed time report makes and for the same reason: a list of expenses
+ * without amounts still answers who expensed what, when and against which
+ * project, while a refusal answers nothing.
+ *
+ * Gated on `billable_rate` rather than `cost_rate`. An expense total is money
+ * the firm paid, but it is the figure billed on to the client and the one an
+ * invoice line for it carries, so it belongs with the billable authority.
+ *
+ * No profile reaches this branch today: `reports:read` is exactly accounting,
+ * executive manager and administrator, and all three pass that check. It is
+ * written anyway, and stated here rather than left to be discovered, because
+ * `serializeDetailedTime` carries the identical branch for the identical
+ * reason -- the day a profile is granted reports without billable money, the
+ * report that drops amounts is the one that keeps working.
+ */
+const serializeDetailedExpense = (
+  report: Readonly<DetailedExpenseReportRecord>,
+  viewer: Readonly<UserPrincipal>,
+) => {
+  const money = canViewMoneyField(viewer, "billable_rate");
+  return {
+    from: report.from,
+    to: report.to,
+    client_id: report.clientId,
+    project_id: report.projectId,
+    billable_only: report.billableOnly,
+    totals: report.totals.map((total) => ({
+      currency: total.currency,
+      expense_count: total.expenseCount,
+      ...(money ? { total_cost_cents: total.totalCostCents } : {}),
+    })),
+    rows: report.rows.map((row) => ({
+      expense_id: row.expenseId,
+      spent_date: row.spentDate,
+      client_id: row.clientId,
+      client_name: row.clientName,
+      project_id: row.projectId,
+      project_name: row.projectName,
+      project_code: row.projectCode,
+      category_id: row.categoryId,
+      category_name: row.categoryName,
+      user_id: row.userId,
+      user_name: row.userName,
+      notes: row.notes,
+      units: row.units,
+      billable: row.billable,
+      reimbursable: row.reimbursable,
+      invoice_id: row.invoiceId,
+      currency: row.currency,
+      ...(money ? { total_cost_cents: row.totalCostCents } : {}),
+    })),
+  };
+};
+
 const serializeDetailedTime = (
   report: Readonly<DetailedTimeReportRecord>,
   viewer: Readonly<UserPrincipal>,
@@ -946,6 +1045,44 @@ export const installReportRoutes = <Bindings extends object>(
     return context.json(
       {
         data: serializeProfitability(report),
+        links: {
+          self:
+            new URL(context.req.url).pathname + new URL(context.req.url).search,
+        },
+      },
+      200,
+      { "cache-control": "no-store" },
+    );
+  });
+
+  api.get("/reports/detailed-expense", async (context) => {
+    requireApiScope(context, "reports:read");
+    const parsed = rangeFrom(new URL(context.req.url), detailedExpenseKeys);
+    const clientId = queryPositiveInteger(
+      parsed.params,
+      "client_id",
+      parsed.errors,
+    );
+    const projectId = queryPositiveInteger(
+      parsed.params,
+      "project_id",
+      parsed.errors,
+    );
+    const billableOnly = queryBoolean(
+      parsed.params,
+      "billable_only",
+      parsed.errors,
+    );
+    assertFields(parsed.errors);
+    const report = await reports.detailedExpense({
+      ...parsed.range,
+      ...(clientId === undefined ? {} : { clientId }),
+      ...(projectId === undefined ? {} : { projectId }),
+      ...(billableOnly === undefined ? {} : { billableOnly }),
+    });
+    return context.json(
+      {
+        data: serializeDetailedExpense(report, context.get("principal")),
         links: {
           self:
             new URL(context.req.url).pathname + new URL(context.req.url).search,

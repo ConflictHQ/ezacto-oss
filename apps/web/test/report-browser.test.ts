@@ -130,6 +130,15 @@ const baseApi = (overrides: Partial<ReportWorkspaceApi> = {}): Partial<ReportWor
   getDetailedTimeReport: vi.fn(async () => detailedTimeReport()),
   getTimeReport: vi.fn(async () => emptyTimeReport),
   getActivityLog: vi.fn(async () => []),
+  getDetailedExpenseReport: vi.fn(async () => ({
+    from: '2026-08-01',
+    to: '2026-08-31',
+    client_id: null,
+    project_id: null,
+    billable_only: false,
+    totals: [],
+    rows: [],
+  })),
   getProfitabilityReport: vi.fn(async () => ({
     from: '2026-08-01',
     to: '2026-08-31',
@@ -738,6 +747,7 @@ describe('Reports Stage 1 browser controller', () => {
       'Time',
       'Uninvoiced work',
       'Detailed time',
+      'Detailed expense',
       'Client rollup',
       'Activity log',
       'Project budget',
@@ -754,14 +764,16 @@ describe('Reports Stage 1 browser controller', () => {
       null,
       null,
       null,
+      null,
     ])
     // Every tab is a real address, and it carries the range being looked at.
-    expect(tabs[4]?.getAttribute('href')).toBe(
+    const rollupTab = tabs.find((tab) => tab.textContent === 'Client rollup')!
+    expect(rollupTab.getAttribute('href')).toBe(
       '/reports?report=client-rollup&from=2026-08-01&to=2026-08-31',
     )
 
     document.querySelector<HTMLSelectElement>('[data-report-client]')!.value = '1'
-    tabs[4]?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    rollupTab.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     await vi.waitFor(() => expect(getClientRollupReport).toHaveBeenCalledTimes(1))
     expect(getClientRollupReport).toHaveBeenCalledWith(
       1,
@@ -772,6 +784,7 @@ describe('Reports Stage 1 browser controller', () => {
       '/reports?report=client-rollup&from=2026-08-01&to=2026-08-31&client_id=1',
     )
     expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual([
+      null,
       null,
       null,
       null,
@@ -1742,6 +1755,7 @@ describe('Reports Stage 1 browser controller', () => {
       'Time',
       'Uninvoiced work',
       'Detailed time',
+      'Detailed expense',
       'Client rollup',
       'Activity log',
       'Project budget',
@@ -1757,6 +1771,7 @@ describe('Reports Stage 1 browser controller', () => {
     // surviving fallback kind is marked, and its filters are the ones shown.
     expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual([
       'page',
+      null,
       null,
       null,
       null,
@@ -2217,5 +2232,77 @@ describe('Reports Stage 1 browser controller', () => {
       ).toBe(false)
       session.abort()
     }
+  })
+
+  it('[browser #519] lists expenses and keeps each currency to its own total', async () => {
+    writeDocument('/reports?report=detailed-expense&from=2026-08-01&to=2026-08-31')
+    const getDetailedExpenseReport = vi.fn(async () => ({
+      from: '2026-08-01',
+      to: '2026-08-31',
+      client_id: null,
+      project_id: null,
+      billable_only: false,
+      totals: [
+        { currency: 'USD', expense_count: 2, total_cost_cents: 3_500 },
+        { currency: 'EUR', expense_count: 1, total_cost_cents: 9_000 },
+      ],
+      rows: [
+        {
+          expense_id: 201, spent_date: '2026-08-13', client_id: 1, client_name: 'Parent',
+          project_id: 7, project_name: 'Launch', project_code: 'WEB',
+          category_id: 1, category_name: 'Travel', user_id: 1, user_name: 'Ada Byron',
+          notes: null, units: null, billable: true, reimbursable: false,
+          invoice_id: null, currency: 'USD', total_cost_cents: 2_500,
+        },
+        {
+          expense_id: 202, spent_date: '2026-08-11', client_id: 1, client_name: 'Parent',
+          project_id: 7, project_name: 'Launch', project_code: 'WEB',
+          category_id: 2, category_name: 'Software', user_id: 1, user_name: 'Ada Byron',
+          notes: null, units: null, billable: false, reimbursable: true,
+          invoice_id: null, currency: 'USD', total_cost_cents: 1_000,
+        },
+        {
+          expense_id: 203, spent_date: '2026-08-09', client_id: 2, client_name: 'Studio',
+          project_id: 9, project_name: 'Continental', project_code: '',
+          category_id: 1, category_name: 'Travel', user_id: 1, user_name: 'Ada Byron',
+          notes: null, units: null, billable: true, reimbursable: false,
+          invoice_id: null, currency: 'EUR', total_cost_cents: 9_000,
+        },
+      ],
+    }))
+    const session = new AbortController()
+    await createReportsController(baseApi({ getDetailedExpenseReport })).activate(
+      identity('administrator'),
+      session.signal,
+      () => false,
+    )
+
+    expect(getDetailedExpenseReport).toHaveBeenCalledWith(
+      { from: '2026-08-01', to: '2026-08-31' },
+      expect.anything(),
+    )
+    const rows = [...document.querySelectorAll('[data-report-results] tbody tr')]
+    expect(rows).toHaveLength(3)
+    expect(rows.map((row) => row.querySelector('th')?.textContent)).toEqual([
+      '2026-08-13',
+      '2026-08-11',
+      '2026-08-09',
+    ])
+    // Each amount in the currency of its own expense, never relabelled.
+    const amounts = rows.map((row) => row.querySelectorAll('td')[4]?.textContent)
+    expect(amounts).toEqual(['$25.00', '$10.00', '\u20ac90.00'])
+    // Non-billable and reimbursable are facts about the expense, not money, and
+    // sit beside the category rather than in the amount column.
+    expect(rows[1]!.querySelectorAll('td')[2]?.textContent).toContain('Non-billable')
+    expect(rows[1]!.querySelectorAll('td')[2]?.textContent).toContain('Reimbursable')
+
+    // Two currencies, two totals, never one figure over both.
+    const summary = document.querySelector('.report-expense-totals')?.textContent ?? ''
+    expect(summary).toContain('2 expenses')
+    expect(summary).toContain('$35.00')
+    expect(summary).toContain('1 expense ')
+    expect(summary).toContain('\u20ac90.00')
+    expect(summary).not.toContain('$125.00')
+    session.abort()
   })
 })

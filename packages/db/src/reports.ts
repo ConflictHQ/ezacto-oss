@@ -415,6 +415,9 @@ export interface ReportRepository {
   contractorCost(range: Readonly<ReportDateRange>): Promise<ContractorCostReportRecord>
   profitability(range: Readonly<ReportDateRange>): Promise<ProfitabilityReportRecord>
   detailedTime(filter: Readonly<DetailedTimeFilter>): Promise<DetailedTimeReportResult>
+  detailedExpense(
+    filter: Readonly<DetailedExpenseFilter>,
+  ): Promise<DetailedExpenseReportRecord>
   timeReport(range: Readonly<ReportDateRange>): Promise<TimeReportRecord>
   memberHours(filter: Readonly<MemberHoursFilter>): Promise<MemberHoursReportRecord>
   uninvoiced(filter: Readonly<UninvoicedReportFilter>): Promise<UninvoicedReportRecord>
@@ -1681,6 +1684,165 @@ const profitabilityReport = async (
   }
 }
 
+export interface DetailedExpenseRow {
+  expenseId: number
+  spentDate: string
+  clientId: number
+  clientName: string
+  projectId: number
+  projectName: string
+  /** Never null: projects.code is NOT NULL DEFAULT ''. */
+  projectCode: string
+  categoryId: number
+  categoryName: string
+  userId: number
+  userName: string
+  notes: string | null
+  units: number | null
+  billable: boolean
+  reimbursable: boolean
+  /** Null while the expense sits on no invoice. */
+  invoiceId: number | null
+  /**
+   * The project's billing currency, falling back to its client's. An expense
+   * total is a cost the firm paid, but it is billed on in this currency, which
+   * is the one an invoice line for it would carry.
+   */
+  currency: string
+  totalCostCents: number
+}
+
+export interface DetailedExpenseReportRecord extends ReportDateRange {
+  clientId: number | null
+  projectId: number | null
+  billableOnly: boolean
+  rows: DetailedExpenseRow[]
+  /** Per currency, because expense totals in two currencies do not add. */
+  totals: { currency: string; expenseCount: number; totalCostCents: number }[]
+}
+
+export interface DetailedExpenseFilter extends ReportDateRange {
+  clientId?: number
+  projectId?: number
+  billableOnly?: boolean
+}
+
+interface DetailedExpenseQueryRow {
+  expenseId: number
+  spentDate: string
+  clientId: number
+  clientName: string
+  projectId: number
+  projectName: string
+  projectCode: string
+  categoryId: number
+  categoryName: string
+  userId: number
+  userName: string
+  notes: string | null
+  units: number | null
+  billable: number
+  reimbursable: number
+  invoiceId: number | null
+  currency: string
+  totalCostCents: number
+}
+
+/**
+ * Every expense in a period, one row each, the way the detailed time report
+ * lists entries.
+ *
+ * Totals are per currency and never summed across them, for the same reason the
+ * uninvoiced report keeps them apart: two amounts in different currencies are
+ * two numbers, and one figure over them would be arithmetic on unlike units.
+ */
+const detailedExpenseReport = async (
+  database: Database,
+  filter: Readonly<DetailedExpenseFilter>,
+): Promise<DetailedExpenseReportRecord> => {
+  const organization = await database.all<{ currency: string }>(
+    sql`SELECT upper(currency) AS "currency" FROM organizations WHERE id = 1`,
+  )
+  const organizationCurrency = organization[0]?.currency
+  if (organizationCurrency === undefined) {
+    throw new Error('organization must exist before reports are read')
+  }
+  const clientId = filter.clientId ?? null
+  const projectId = filter.projectId ?? null
+  const billableOnly = filter.billableOnly === true
+  const rows = await database.all<DetailedExpenseQueryRow>(sql`
+    SELECT expense.id AS "expenseId",
+      expense.spent_date AS "spentDate",
+      client.id AS "clientId",
+      client.name AS "clientName",
+      project.id AS "projectId",
+      project.name AS "projectName",
+      project.code AS "projectCode",
+      category.id AS "categoryId",
+      category.name AS "categoryName",
+      person.id AS "userId",
+      person.first_name || ' ' || person.last_name AS "userName",
+      expense.notes AS "notes",
+      expense.units AS "units",
+      expense.billable AS "billable",
+      expense.reimbursable AS "reimbursable",
+      expense.invoice_id AS "invoiceId",
+      upper(coalesce(project.billing_currency, client.currency, ${organizationCurrency}))
+        AS "currency",
+      expense.total_cost_cents AS "totalCostCents"
+    FROM expenses expense
+    JOIN projects project ON project.id = expense.project_id
+    JOIN clients client ON client.id = project.client_id
+    JOIN expense_categories category ON category.id = expense.expense_category_id
+    JOIN users person ON person.id = expense.user_id
+    WHERE expense.spent_date BETWEEN ${filter.from} AND ${filter.to}
+      AND (${clientId} IS NULL OR client.id = ${clientId})
+      AND (${projectId} IS NULL OR project.id = ${projectId})
+      AND (${billableOnly ? 1 : 0} = 0 OR expense.billable = 1)
+    ORDER BY expense.spent_date DESC, expense.id DESC
+  `)
+  const totals = new Map<string, { currency: string; expenseCount: number; totalCostCents: number }>()
+  const mapped = rows.map((row) => {
+    const bucket = totals.get(row.currency) ?? {
+      currency: row.currency,
+      expenseCount: 0,
+      totalCostCents: 0,
+    }
+    bucket.expenseCount += 1
+    bucket.totalCostCents += row.totalCostCents
+    totals.set(row.currency, bucket)
+    return {
+      expenseId: row.expenseId,
+      spentDate: row.spentDate,
+      clientId: row.clientId,
+      clientName: row.clientName,
+      projectId: row.projectId,
+      projectName: row.projectName,
+      projectCode: row.projectCode,
+      categoryId: row.categoryId,
+      categoryName: row.categoryName,
+      userId: row.userId,
+      userName: row.userName,
+      notes: row.notes,
+      units: row.units,
+      billable: row.billable === 1,
+      reimbursable: row.reimbursable === 1,
+      invoiceId: row.invoiceId,
+      currency: row.currency,
+      totalCostCents: row.totalCostCents,
+    }
+  })
+  return {
+    from: filter.from,
+    to: filter.to,
+    clientId,
+    projectId,
+    billableOnly,
+    rows: mapped,
+    totals: [...totals.values()],
+  }
+}
+
 interface DetailedTimeQueryRow {
   spentDate: string
   clientId: number
@@ -2183,6 +2345,7 @@ export const createReportRepository = (database: Database): ReportRepository => 
   contractorCost: (range) => contractorCostReport(database, range),
   profitability: (range) => profitabilityReport(database, range),
   detailedTime: (filter) => detailedTimeReport(database, filter),
+  detailedExpense: (filter) => detailedExpenseReport(database, filter),
   timeReport: (range) => timeReport(database, range),
   memberHours: (filter) => memberHoursReport(database, filter),
   uninvoiced: (filter) => uninvoicedReport(database, filter),

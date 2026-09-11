@@ -65,6 +65,16 @@ const reports: ReportReader = {
   // Not exercised here; present because ReportReader requires it.
   contractorCost: async (range) => ({ from: range.from, to: range.to, rows: [] }),
   // Not exercised here; present because ReportReader requires it.
+  detailedExpense: async (filter) => ({
+    from: filter.from,
+    to: filter.to,
+    clientId: filter.clientId ?? null,
+    projectId: filter.projectId ?? null,
+    billableOnly: filter.billableOnly === true,
+    rows: [],
+    totals: [],
+  }),
+  // Not exercised here; present because ReportReader requires it.
   profitability: async (range) => ({
     from: range.from,
     to: range.to,

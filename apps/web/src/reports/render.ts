@@ -10,6 +10,7 @@ const reportKindNames: readonly { readonly kind: ReportKind; readonly label: str
   { kind: 'time', label: 'Time' },
   { kind: 'uninvoiced', label: 'Uninvoiced work' },
   { kind: 'detailed-time', label: 'Detailed time' },
+  { kind: 'detailed-expense', label: 'Detailed expense' },
   { kind: 'client-rollup', label: 'Client rollup' },
   // Not a table of figures but a feed of what happened, which is why it sits
   // after the reports that answer "how much" rather than among them.
