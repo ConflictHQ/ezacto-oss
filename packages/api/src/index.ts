@@ -46,6 +46,7 @@ export {
   brandAssetSegment,
   installBrandAssetRoutes,
   installPublicBrandAssetRoutes,
+  installBrandRoute,
   MAX_BRAND_ASSET_BYTES,
   sniffBrandAssetType,
   type BrandAssetObject,

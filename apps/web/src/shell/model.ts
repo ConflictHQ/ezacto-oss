@@ -423,39 +423,31 @@ export const paletteDestinations: readonly PaletteDestination[] = [
 ]
 
 /**
- * Mirrors `SELF_WITHDRAWAL_REASON` in `packages/db/src/timesheet-approvals.ts`,
- * which is where the value is written. `apps/web` depends only on the generated
- * client, so the literal is stated twice; a test in that package pins the same
- * string so the pair cannot drift apart quietly.
- */
-export const SELF_WITHDRAWAL_REASON = 'Taken back by the owner before review.'
-
-/**
  * Whether an unsubmitted week was sent back by its own owner rather than by a
- * reviewer. Both write the same three columns, because the table requires every
- * unsubmitted row to say who returned it and why.
+ * reviewer.
  *
- * Identity alone is not enough, and a browser test is what proved it: an
- * administrator rejecting their *own* week is also a row whose reviewer is its
- * owner, and reading that as a self-withdrawal hid a real rejection. The reason
- * is what actually separates the two. A reviewer who types this exact sentence
- * as their rejection reason would be misread, which costs a label and nothing
- * else.
+ * The row says so directly: a rejection names a reviewer and a reason, and a
+ * withdrawal names neither, because nobody reviewed it. That became expressible
+ * in migration 0047, which gave the table a fourth CHECK branch for it.
+ *
+ * Before that, every unsubmitted row had to carry a reviewer and a reason, so a
+ * withdrawal wrote the owner as their own reviewer and a fixed sentence as the
+ * reason -- and this function had to match that sentence, restated here because
+ * `apps/web` depends only on the generated client. Identity alone was not
+ * enough, as a browser test proved: an administrator rejecting their *own* week
+ * is also a row whose reviewer is its owner, and reading that as a withdrawal
+ * hid a real rejection. A reviewer who typed the sentence verbatim was misread
+ * the other way. Neither can happen now -- a rejection always has a reviewer.
  *
  * Worth a named function rather than an inline comparison: getting it wrong
  * shows someone "Changes requested" for a correction they made themselves.
  */
 export const isSelfWithdrawn = (
-  submission: Pick<
-    TimesheetSubmission,
-    'status' | 'user_id' | 'reviewed_by_user_id' | 'rejection_reason'
-  > | null,
+  submission: Pick<TimesheetSubmission, 'status' | 'reviewed_by_user_id'> | null,
 ): boolean =>
   submission !== null &&
   submission.status === 'unsubmitted' &&
-  submission.reviewed_by_user_id !== null &&
-  submission.reviewed_by_user_id === submission.user_id &&
-  submission.rejection_reason === SELF_WITHDRAWAL_REASON
+  submission.reviewed_by_user_id === null
 
 const paletteGroups: readonly PaletteGroup[] = ['Track', 'Organize', 'Bill', 'Review']
 

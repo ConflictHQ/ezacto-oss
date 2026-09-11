@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import BetterSqlite3 from 'better-sqlite3'
 import { mkdtemp, readFile, rm, stat, mkdir, writeFile, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -333,6 +335,80 @@ describe('ez backup / restore / verify', () => {
     expect(verifyResult.errors).toEqual([])
   })
 
+  it('[e2e:backup-restore] runs the ez restore command both RESTORE.md files print', async () => {
+    // RESTORE.md ships inside every bundle and is the only instruction a
+    // self-hoster has. Asserting it exists and reads well -- which the bundle
+    // test above does -- does not catch it naming a flag the CLI rejects.
+    //
+    // There are two of these documents and they had drifted apart: the one in
+    // this package was right, and the one the Worker writes into R2 said
+    // `ez restore --from <dir>`, which parses `--from` as the report-range flag,
+    // leaves no positional argument, and exits on the usage line. Both are read
+    // here so neither can drift alone (issue 99).
+    const backup = await createBackup({
+      databasePath,
+      attachmentDirectory,
+      outputDirectory: directory,
+      now: new Date('2026-08-30T12:00:00.000Z'),
+    })
+    const bundleDoc = await readFile(join(backup.bundleDirectory, 'RESTORE.md'), 'utf8')
+    const workerDoc = await readFile(
+      fileURLToPath(new URL('../../db/src/backup.ts', import.meta.url)),
+      'utf8',
+    )
+
+    const documented = [...bundleDoc.matchAll(/ez restore [^`\n]+/gu)].map((m) => m[0].trim())
+    const fromWorker = [...workerDoc.matchAll(/ez restore [^`\n]+/gu)].map((m) => m[0].trim())
+    expect(documented.length).toBeGreaterThan(0)
+    expect(fromWorker.length).toBeGreaterThan(0)
+
+    const cliPath = fileURLToPath(new URL('../dist/cli.js', import.meta.url))
+    let attempt = 0
+    for (const command of [...documented, ...fromWorker]) {
+      attempt += 1
+      const target = join(directory, `restored-${String(attempt)}.sqlite`)
+      const args = command
+        .split(/\s+/u)
+        .slice(1)
+        .map((token) =>
+          token.startsWith('<path') || token === '<bundle-path>'
+            ? backup.bundleDirectory
+            : token === '<target.sqlite>'
+              ? target
+              : token,
+        )
+
+      const result = await new Promise<{ code: number; stderr: string }>((resolve, reject) => {
+        const child = spawn(process.execPath, [cliPath, ...args], {
+          env: { ...process.env, EZACTO_CONFIG: join(directory, 'config.json') },
+          stdio: ['pipe', 'pipe', 'pipe'],
+        })
+        let stderr = ''
+        child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
+          stderr += chunk
+        })
+        child.once('error', reject)
+        child.once('close', (code) => resolve({ code: code ?? 1, stderr }))
+        child.stdin.end('')
+      })
+
+      expect(`${command} -> ${result.stderr}`).not.toContain('usage:')
+      expect(`${command} -> exit ${String(result.code)}`).toContain('exit 0')
+
+      // Exited 0 having actually written a database, rather than having done
+      // nothing quietly.
+      const restored = new BetterSqlite3(target, { readonly: true })
+      try {
+        const row = restored
+          .prepare('SELECT count(*) AS n FROM organizations')
+          .get() as { n: number }
+        expect(row.n).toBeGreaterThan(0)
+      } finally {
+        restored.close()
+      }
+    }
+  }, 60_000)
+
   it('[e2e:backup-restore] every field RESTORE.md names is in the manifest it points at', async () => {
     // The restore command is executed above. The rest of RESTORE.md is a set of
     // factual claims about manifest.json -- which fields to compare, and what
@@ -386,6 +462,7 @@ describe('ez backup / restore / verify', () => {
       await expect(stat(join(backup.bundleDirectory, relative))).resolves.toBeDefined()
     }
   }, 60_000)
+
 
   it('[unit] restore refuses to overwrite an existing database', async () => {
     const backup = await createBackup({

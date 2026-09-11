@@ -52,6 +52,7 @@ const reports: ReportReader = {
       clientId: filter.clientId ?? null,
       projectId: filter.projectId ?? null,
       hours: filter.hours ?? "all",
+      grain: filter.grain ?? 'day',
       activeProjectsOnly: filter.activeProjectsOnly ?? false,
       seconds: 0,
       roundedSeconds: 0,
@@ -151,6 +152,7 @@ const reports: ReportReader = {
           totalCents: 40_000,
         },
       ],
+      projects: [],
     }
   },
   clientRollup: async () => null,

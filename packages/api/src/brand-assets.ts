@@ -341,6 +341,44 @@ export const installBrandAssetRoutes = <Bindings extends object>(
  * hash and therefore the URL, which is why the cache lifetime can be a year
  * without an operator having to wait one to see their new logo.
  */
+/**
+ * The brand as any signed-in principal may read it: the organisation's name
+ * and the marks it has stored. The settings list above is for the
+ * administrator who changes the marks; this is for a portal or integration
+ * that has a token and wants to wear the tenant's brand. It carries nothing
+ * the public mark URLs do not already reveal.
+ */
+export const installBrandRoute = <Bindings extends object>(
+  api: Hono<ApiContext<Bindings>>,
+  options: {
+    organizationName: () => Promise<string>
+    assets: (env: Bindings) => Promise<readonly StoredBrandAsset[]>
+  },
+): void => {
+  api.get('/brand', async (context) => {
+    const [organizationName, assets] = await Promise.all([
+      options.organizationName(),
+      options.assets(context.env),
+    ])
+    return context.json(
+      {
+        data: {
+          organization_name: organizationName,
+          assets: assets.map((asset) => ({
+            slot: asset.slot,
+            url: brandAssetPath(asset.slot, asset.contentHash),
+            content_type: asset.contentType,
+            updated_at: asset.updatedAt,
+          })),
+        },
+        links: { self: '/api/v1/brand' },
+      },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+}
+
 export const installPublicBrandAssetRoutes = <Bindings extends object>(
   app: Hono<ApiContext<Bindings>>,
   surface: BrandAssetSurface<Bindings>,
