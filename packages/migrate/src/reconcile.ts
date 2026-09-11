@@ -2061,6 +2061,25 @@ const stubChecks = (
       .pluck()
       .all() as number[],
   )
+  // What the operator has actually finished, so the report can tell a closed
+  // gap from an open one. `_ezacto_worksheet_completions` exists for exactly
+  // this -- migration 0024 says it is there "to distinguish a confirmed zero
+  // balance from an untouched stub" -- and until now nothing outside the
+  // worksheet tool ever read it, so these two notes were emitted for every
+  // source id regardless and the report said the same thing before and after
+  // the manual work (issue 288).
+  const completed = (kind: 'retainer_balance' | 'recurring_invoice_definition'): Set<number> =>
+    new Set(
+      database
+        .prepare(
+          `SELECT harvest_id FROM _ezacto_worksheet_completions WHERE kind = ?`,
+        )
+        .pluck()
+        .all(kind) as number[],
+    )
+  const completedRetainers = completed('retainer_balance')
+  const completedRecurring = completed('recurring_invoice_definition')
+
   for (const id of new Set([...source.retainerIds, ...loadedRetainers])) {
     checks.compare(
       'B',
@@ -2070,13 +2089,13 @@ const stubChecks = (
       source.retainerIds.has(id) ? 1 : 0,
       loadedRetainers.has(id) ? 1 : 0,
     )
-    if (source.retainerIds.has(id)) {
+    if (source.retainerIds.has(id) && !completedRetainers.has(id)) {
       checks.note(
         'B',
         'retainer_balance',
         `retainer:${id}`,
         'gap',
-        'Harvest exposes this retainer identifier on an invoice but no balance API',
+        'Harvest exposes this retainer identifier on an invoice but no balance API, and no worksheet completion has been recorded for it',
         MIGRATION_SPEC_GAP_CITATIONS.retainersNoApi,
       )
     }
@@ -2090,13 +2109,13 @@ const stubChecks = (
       source.recurringInvoiceIds.has(id) ? 1 : 0,
       loadedRecurring.has(id) ? 1 : 0,
     )
-    if (source.recurringInvoiceIds.has(id)) {
+    if (source.recurringInvoiceIds.has(id) && !completedRecurring.has(id)) {
       checks.note(
         'B',
         'recurring_invoice_definition',
         `recurring_invoice:${id}`,
         'gap',
-        'Harvest exposes this recurring invoice identifier but no definition API',
+        'Harvest exposes this recurring invoice identifier but no definition API, and no worksheet completion has been recorded for it',
         MIGRATION_SPEC_GAP_CITATIONS.recurringInvoicesNoApi,
       )
     }
