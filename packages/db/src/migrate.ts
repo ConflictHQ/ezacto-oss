@@ -1614,20 +1614,25 @@ const migrateD1Plan = async (
       if (!(await ledgerRecordsChecksums(database))) throw error
     }
   }
-  assertLedgerMatchesStatements(
-    (
-      await database
-        .prepare('SELECT id, statements_sha256 FROM _ezacto_migrations')
-        .all<MigrationLedgerRow>()
-    ).results,
-  )
+  const ledgerRows = (
+    await database
+      .prepare('SELECT id, statements_sha256 FROM _ezacto_migrations')
+      .all<MigrationLedgerRow>()
+  ).results
+  assertLedgerMatchesStatements(ledgerRows)
+  // The ledger just read, rather than a `SELECT 1` per migration. That select
+  // was a round trip each for all 47 of them, and on a fresh database every one
+  // of them answers "no" -- which is most of what a migrate costs against D1,
+  // where the DDL itself is already one batch per migration.
+  //
+  // It is only ever an optimisation. What actually makes this safe against two
+  // isolates migrating at once is the unique ledger insert leading each batch,
+  // and the catch below re-reading the ledger to tell that race from a real
+  // failure. A stale set here costs one rejected batch, which is the case that
+  // was already handled.
+  const applied = new Set(ledgerRows.map((row) => row.id))
   for (const migration of migrations) {
-    if (
-      await database
-        .prepare('SELECT 1 FROM _ezacto_migrations WHERE id = ?')
-        .bind(migration.id)
-        .first()
-    ) {
+    if (applied.has(migration.id)) {
       if (migration.id === through) return
       continue
     }
