@@ -1699,7 +1699,27 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     return [kept, ...options]
   }
 
-  const updateEntrySuggestions = (): void => {
+  /**
+   * `wanted` is the assignment an entry already has, as opposed to whatever the
+   * two controls happen to be showing.
+   *
+   * The editor is one instance reused for every entry, so when it opens on a
+   * second entry the task list is still narrowed to the *previous* entry's
+   * project. Assigning `entryTask.value` first and reading it back here -- which
+   * is what this did -- loses the assignment silently, because a select drops a
+   * value it does not offer. The entry then opened with an empty activity, and
+   * on a project whose list is one task long it read as the control refusing to
+   * take a selection (issue 494).
+   *
+   * Passing it in also separates the two reasons this runs. Opening an entry
+   * shows what that entry *is*, archived assignment and all -- `withHeldValue`
+   * keeps it and marks it unavailable. Changing the project is a person saying
+   * they want something else, and there the old task must go.
+   */
+  const updateEntrySuggestions = (wanted?: {
+    readonly project: string
+    readonly task: string
+  }): void => {
     if (snapshot === null) return
     const projectIds = new Set(
       snapshot.catalog.timeEntryOptions.map((entry) => entry.project_id),
@@ -1707,7 +1727,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const projects = snapshot.catalog.projects.filter((resource) =>
       projectIds.has(resource.id),
     )
-    const heldProject = entryProject.value
+    const heldProject = wanted?.project ?? entryProject.value
     entryProject.replaceChildren(
       ...withHeldValue(
         projects.map((resource) => suggestion(resourceLabel(resource))),
@@ -1731,15 +1751,16 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     // Decided before the options are built, not after. A task the chosen
     // project does not offer must not survive as an option -- keeping it is how
     // an entry gets submitted against a project that never had that task.
+    const currentTask = wanted?.task ?? entryTask.value
     const heldTask =
+      wanted === undefined &&
       matched !== undefined &&
-      entryTask.value.trim() !== '' &&
+      currentTask.trim() !== '' &&
       !available.some(
-        (resource) =>
-          resourceLabel(resource).toLowerCase() === entryTask.value.trim().toLowerCase(),
+        (resource) => resourceLabel(resource).toLowerCase() === currentTask.trim().toLowerCase(),
       )
         ? ''
-        : entryTask.value
+        : currentTask
     entryTask.replaceChildren(
       ...withHeldValue(
         available.map((resource) => suggestion(resourceLabel(resource))),
@@ -2977,12 +2998,14 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     )
     const project = snapshot.catalog.projects.find((resource) => resource.id === next.projectId)
     const task = snapshot.catalog.tasks.find((resource) => resource.id === next.taskId)
-    entryProject.value = project === undefined ? String(next.projectId) : resourceLabel(project)
-    entryTask.value = task === undefined ? String(next.taskId) : resourceLabel(task)
-    // Rebuilt for the assignment just set, because a select cannot display a
-    // value it does not offer and the task list narrows to the chosen project.
-    // Setting .value fires no event, so nothing else would do this.
-    updateEntrySuggestions()
+    // The options are built for this entry's assignment and the values set from
+    // the same pair, rather than assigned here and read back: the task list is
+    // still narrowed to whichever project the editor last showed, and a select
+    // drops a value it does not offer.
+    updateEntrySuggestions({
+      project: project === undefined ? String(next.projectId) : resourceLabel(project),
+      task: task === undefined ? String(next.taskId) : resourceLabel(task),
+    })
     entryDate.value = next.spentDate
     entryDurationInput.value = initialDurationValue
     entryStart.value =
