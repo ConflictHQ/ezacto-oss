@@ -130,8 +130,11 @@ sha256sum tables/*.csv
 
 ## Restore with ezacto
 
+The bundle path is positional, and the database to write is required -- a
+restore never guesses which instance it is for.
+
 \`\`\`
-ez restore --from <path-to-this-directory>
+ez restore <path-to-this-directory> --database <target.sqlite>
 \`\`\`
 
 ## Restore without ezacto
