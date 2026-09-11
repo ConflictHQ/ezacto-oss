@@ -21,10 +21,25 @@ export interface UninvoicedReportFilter extends ReportDateRange {
   projectId?: number
 }
 
+/**
+ * One project's share of the uninvoiced work, priced by the same generation
+ * preview as the top-level totals, so the rows sum to them to the cent.
+ */
+export interface UninvoicedProjectRecord {
+  clientId: number
+  clientName: string
+  projectId: number
+  projectName: string
+  projectCode: string
+  totals: readonly UninvoicedCurrencyTotal[]
+}
+
 export interface UninvoicedReportRecord extends ReportDateRange {
   clientId: number | null
   projectId: number | null
   totals: readonly UninvoicedCurrencyTotal[]
+  /** Ordered by client name, project name, then id. */
+  projects: readonly UninvoicedProjectRecord[]
 }
 
 export interface ClientRollupCurrencyRecord {
@@ -307,10 +322,20 @@ export interface ContractorCostReportRecord {
  */
 export type DetailedTimeHours = 'all' | 'billable' | 'non_billable' | 'uninvoiced'
 
+/**
+ * `day` is the screen's grain: one line per date, task and person. `entry` is
+ * one line per time entry, carrying the entry's id and notes, for a reader
+ * that needs what was done rather than how much -- the client portal, an
+ * export. The folded grain cannot carry notes: two entries on one line have
+ * two of them.
+ */
+export type DetailedTimeGrain = 'day' | 'entry'
+
 export interface DetailedTimeFilter extends ReportDateRange {
   clientId?: number
   projectId?: number
   hours?: DetailedTimeHours
+  grain?: DetailedTimeGrain
   /**
    * Harvest's "Active projects only" checkbox, off by default. This report
    * answers what was worked on, and a project archived last week still absorbed
@@ -367,6 +392,10 @@ export interface DetailedTimeRowRecord {
    */
   billableAmountCents: number | null
   entriesWithoutBillableRate: number
+  /** The entry behind the row at `entry` grain; null at `day` grain. */
+  timeEntryId: number | null
+  /** The entry's notes at `entry` grain; null at `day` grain. */
+  notes: string | null
 }
 
 export interface DetailedTimeCurrencyRecord {
@@ -379,6 +408,7 @@ export interface DetailedTimeReportRecord extends ReportDateRange {
   clientId: number | null
   projectId: number | null
   hours: DetailedTimeHours
+  grain: DetailedTimeGrain
   activeProjectsOnly: boolean
   seconds: number
   roundedSeconds: number
@@ -470,8 +500,10 @@ const checkedAdd = (left: number, right: number, field: string): number => {
 export interface UninvoicedTimeCandidateRow {
   id: number
   clientId: number
+  clientName: string
   projectId: number
   projectName: string
+  projectCode: string
   taskId: number
   taskName: string
   userId: number
@@ -487,8 +519,10 @@ export interface UninvoicedTimeCandidateRow {
 export interface UninvoicedExpenseCandidateRow {
   id: number
   clientId: number
+  clientName: string
   projectId: number
   projectName: string
+  projectCode: string
   categoryId: number
   categoryName: string
   userId: number
@@ -559,8 +593,8 @@ export const readUninvoicedCandidates = async (
   const projectWhere = projectFilter(filter)
   const clientWhere = clientFilter(filter.clientId)
   const timeEntries = await database.all<UninvoicedTimeCandidateRow>(sql`
-    SELECT entry.id AS "id", project.client_id AS "clientId",
-      project.id AS "projectId", project.name AS "projectName",
+    SELECT entry.id AS "id", project.client_id AS "clientId", client.name AS "clientName",
+      project.id AS "projectId", project.name AS "projectName", project.code AS "projectCode",
       task.id AS "taskId", task.name AS "taskName", user.id AS "userId",
       trim(user.first_name || ' ' || coalesce(user.last_name, '')) AS "userName",
       entry.spent_date AS "spentDate", entry.notes AS "notes",
@@ -580,8 +614,8 @@ export const readUninvoicedCandidates = async (
     ORDER BY entry.id
   `)
   const expenses = await database.all<UninvoicedExpenseCandidateRow>(sql`
-    SELECT expense.id AS "id", project.client_id AS "clientId",
-      project.id AS "projectId", project.name AS "projectName",
+    SELECT expense.id AS "id", project.client_id AS "clientId", client.name AS "clientName",
+      project.id AS "projectId", project.name AS "projectName", project.code AS "projectCode",
       category.id AS "categoryId", category.name AS "categoryName",
       user.id AS "userId",
       trim(user.first_name || ' ' || coalesce(user.last_name, '')) AS "userName",
@@ -615,7 +649,55 @@ const uninvoicedReport = async (
     clientId: filter.clientId ?? null,
     projectId: filter.projectId ?? null,
     totals: uninvoicedGenerationPreview(candidates),
+    projects: uninvoicedByProject(candidates),
   }
+}
+
+/**
+ * The same candidates regrouped per project and priced by the same preview,
+ * rather than a second query with its own arithmetic that could drift from
+ * the figure invoice generation would charge.
+ */
+const uninvoicedByProject = (candidates: {
+  timeEntries: readonly UninvoicedTimeCandidateRow[]
+  expenses: readonly UninvoicedExpenseCandidateRow[]
+}): UninvoicedProjectRecord[] => {
+  const groups = new Map<
+    number,
+    Omit<UninvoicedProjectRecord, 'totals'> & {
+      timeEntries: UninvoicedTimeCandidateRow[]
+      expenses: UninvoicedExpenseCandidateRow[]
+    }
+  >()
+  const groupFor = (row: UninvoicedTimeCandidateRow | UninvoicedExpenseCandidateRow) => {
+    let group = groups.get(row.projectId)
+    if (group === undefined) {
+      group = {
+        clientId: row.clientId,
+        clientName: row.clientName,
+        projectId: row.projectId,
+        projectName: row.projectName,
+        projectCode: row.projectCode,
+        timeEntries: [],
+        expenses: [],
+      }
+      groups.set(row.projectId, group)
+    }
+    return group
+  }
+  for (const entry of candidates.timeEntries) groupFor(entry).timeEntries.push(entry)
+  for (const expense of candidates.expenses) groupFor(expense).expenses.push(expense)
+  return [...groups.values()]
+    .sort(
+      (left, right) =>
+        left.clientName.localeCompare(right.clientName) ||
+        left.projectName.localeCompare(right.projectName) ||
+        left.projectId - right.projectId,
+    )
+    .map(({ timeEntries, expenses, ...project }) => ({
+      ...project,
+      totals: uninvoicedGenerationPreview({ timeEntries, expenses }),
+    }))
 }
 
 interface ClientNodeRow {
@@ -1860,6 +1942,8 @@ interface DetailedTimeQueryRow {
   billable: number
   invoiceId: number | null
   billableRateCents: number | null
+  timeEntryId: number
+  notes: string | null
 }
 
 const detailedTimeHoursFilter = (hours: DetailedTimeHours) => {
@@ -1903,9 +1987,11 @@ const detailedTimeReport = async (
   if (filter.clientId !== undefined) assertId(filter.clientId, 'client id')
   if (filter.projectId !== undefined) assertId(filter.projectId, 'project id')
   const hours = filter.hours ?? 'all'
+  const grain = filter.grain ?? 'day'
   const activeProjectsOnly = filter.activeProjectsOnly ?? false
   const rows = await database.all<DetailedTimeQueryRow>(sql`
-    SELECT entry.spent_date AS "spentDate",
+    SELECT entry.id AS "timeEntryId", entry.notes AS "notes",
+      entry.spent_date AS "spentDate",
       client.id AS "clientId", client.name AS "clientName",
       project.id AS "projectId", project.name AS "projectName",
       project.code AS "projectCode",
@@ -1949,15 +2035,18 @@ const detailedTimeReport = async (
     else held.push(role.name)
   }
 
-  const grain = new Map<string, DetailedTimeRowRecord>()
+  const lines = new Map<string, DetailedTimeRowRecord>()
   const currencies = new Map<string, DetailedTimeCurrencyRecord>()
   let seconds = 0
   let roundedSeconds = 0
   let billableSeconds = 0
   let uninvoicedBillableSeconds = 0
   for (const row of rows) {
-    const key = `${row.spentDate}|${row.projectId}|${row.taskId}|${row.userId}`
-    const line: DetailedTimeRowRecord = grain.get(key) ?? {
+    const key =
+      grain === 'entry'
+        ? `entry|${row.timeEntryId}`
+        : `${row.spentDate}|${row.projectId}|${row.taskId}|${row.userId}`
+    const line: DetailedTimeRowRecord = lines.get(key) ?? {
       spentDate: row.spentDate,
       clientId: row.clientId,
       clientName: row.clientName,
@@ -1977,6 +2066,8 @@ const detailedTimeReport = async (
       timeEntryCount: 0,
       billableAmountCents: 0,
       entriesWithoutBillableRate: 0,
+      timeEntryId: grain === 'entry' ? row.timeEntryId : null,
+      notes: grain === 'entry' ? row.notes : null,
     }
     line.seconds = checkedAdd(line.seconds, row.seconds, 'detailed time seconds')
     line.roundedSeconds = checkedAdd(
@@ -2041,7 +2132,7 @@ const detailedTimeReport = async (
         }
       }
     }
-    grain.set(key, line)
+    lines.set(key, line)
   }
   return {
     kind: 'report',
@@ -2051,6 +2142,7 @@ const detailedTimeReport = async (
       clientId: filter.clientId ?? null,
       projectId: filter.projectId ?? null,
       hours,
+      grain,
       activeProjectsOnly,
       seconds,
       roundedSeconds,
@@ -2060,7 +2152,7 @@ const detailedTimeReport = async (
       currencies: [...currencies.values()].sort((left, right) =>
         left.currency.localeCompare(right.currency),
       ),
-      rows: [...grain.values()],
+      rows: [...lines.values()],
     },
   }
 }
