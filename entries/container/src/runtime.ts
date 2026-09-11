@@ -372,6 +372,7 @@ export const createContainerRuntime = async (
       },
       reports: createReportRepository(drizzle),
       moduleSettings: createModuleSettingsRepository(drizzle),
+      organizationName,
       ssoProvisioningDomains:
         createContainerSsoProvisioningDomainStore(database),
       twoFactor: createTwoFactorService({
