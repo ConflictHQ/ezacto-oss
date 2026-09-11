@@ -1069,6 +1069,100 @@ for (const [runtime, factory] of factories) {
       expect(body.data.totals.entries_without_billable_rate).toBe(1);
     });
 
+    it("[unit] lists every expense in the period with per-currency totals", async () => {
+      harness = await factory();
+      const response = await harness.request(
+        "/reports/detailed-expense?from=2026-08-01&to=2026-08-31",
+      );
+      expect(response.status, await response.clone().text()).toBe(200);
+      const body = (await response.json()) as {
+        data: {
+          rows: {
+            expense_id: number;
+            spent_date: string;
+            category_name: string;
+            currency: string;
+            total_cost_cents?: number;
+          }[];
+          totals: { currency: string; expense_count: number; total_cost_cents?: number }[];
+        };
+      };
+      // The fixture seeds four expenses; an empty set would satisfy the shape
+      // assertions below without measuring one.
+      expect(body.data.rows).toHaveLength(4);
+      // Newest first, so the period reads the way it is scanned.
+      expect(body.data.rows.map((row) => row.spent_date)).toEqual([
+        "2026-08-13",
+        "2026-08-12",
+        "2026-08-11",
+        "2026-08-10",
+      ]);
+      expect(body.data.rows[0]!.category_name).toBe("Travel");
+      const usd = body.data.totals.find((total) => total.currency === "USD")!;
+      expect(usd.expense_count).toBe(4);
+      // 2500 + 1000 + 500 + 700, hand-added rather than derived from the code.
+      expect(usd.total_cost_cents).toBe(4_700);
+    });
+
+    it("[unit] narrows by project and by billable, and totals only what it kept", async () => {
+      harness = await factory();
+      // A non-billable expense the billable filter must exclude from both the
+      // rows and the total, not merely from the rows.
+      await harness.run(
+        `INSERT INTO expenses
+           (id, user_id, project_id, expense_category_id, spent_date,
+            total_cost_cents, billable, created_at, updated_at)
+         VALUES (299, 1, 1, 1, '2026-08-14', 9900, 0, ?, ?)`,
+        [now, now],
+      );
+
+      const all = await harness.request(
+        "/reports/detailed-expense?from=2026-08-01&to=2026-08-31&project_id=1",
+      );
+      const allBody = (await all.json()) as {
+        data: { rows: unknown[]; totals: { total_cost_cents?: number }[] };
+      };
+      expect(allBody.data.rows).toHaveLength(2);
+      expect(allBody.data.totals[0]!.total_cost_cents).toBe(12_400);
+
+      const billable = await harness.request(
+        "/reports/detailed-expense?from=2026-08-01&to=2026-08-31&project_id=1&billable_only=true",
+      );
+      const billableBody = (await billable.json()) as {
+        data: {
+          billable_only: boolean;
+          rows: { expense_id: number }[];
+          totals: { total_cost_cents?: number }[];
+        };
+      };
+      expect(billableBody.data.billable_only).toBe(true);
+      expect(billableBody.data.rows.map((row) => row.expense_id)).toEqual([201]);
+      // 2500, not 12400: the total is of what survived the filter.
+      expect(billableBody.data.totals[0]!.total_cost_cents).toBe(2_500);
+    });
+
+    it("[security] refuses the detailed expense report to profiles without reports:read", async () => {
+      harness = await factory();
+      const path = "/reports/detailed-expense?from=2026-08-01&to=2026-08-31";
+      // The same three-and-three split the detailed time report enforces. The
+      // amount-dropping branch in the serializer is deliberately not asserted
+      // here: every profile that reaches this route also passes the billable
+      // money check, so there is no profile that would exercise it, and a test
+      // that pretended otherwise would be asserting its own fixture.
+      for (const profile of ["member", "project_manager", "people_admin"] as const) {
+        const response = await harness.request(path, profile);
+        expect(response.status, profile).toBe(403);
+      }
+      for (const profile of [
+        "accounting",
+        "executive_manager",
+        "administrator",
+      ] as const) {
+        const response = await harness.request(path, profile);
+        expect(response.status, profile).toBe(200);
+      }
+    });
+
     it("[unit] keeps uninvoiced totals identical to the generation preview to the cent", async () => {
       harness = await factory();
       const response = await harness.request(

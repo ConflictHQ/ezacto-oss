@@ -4,6 +4,7 @@ import {
   type ClientRollupReport,
   type ContractorCostReport,
   type ContractorCostRow,
+  type DetailedExpenseReport,
   type DetailedTimeReport,
   type DetailedTimeRow,
   type GeneralResource,
@@ -737,6 +738,90 @@ const renderProfitability = (
     line.append(moneyCell(row.revenue_cents, row.currency))
     line.append(moneyCell(row.cost_cents, currency))
     line.append(moneyCell(row.profit_cents, currency))
+    body.append(line)
+  }
+  table.append(head, body)
+  wrapper.append(table)
+  fragment.append(wrapper)
+  return fragment
+}
+
+/**
+ * Every expense in the period, one row each.
+ *
+ * Totals stay per currency and are never added together, the same rule the
+ * uninvoiced report follows: two amounts in different currencies are two
+ * numbers, and one figure over them would be arithmetic on unlike units.
+ *
+ * Amounts may be absent rather than null -- the route omits the field for a
+ * viewer refused billable money -- so the money column reads an undefined the
+ * same way it reads a missing figure, as an em dash rather than a zero.
+ */
+const renderDetailedExpense = (
+  report: Readonly<DetailedExpenseReport>,
+): DocumentFragment => {
+  const fragment = document.createDocumentFragment()
+  fragment.append(
+    reportHeading('Detailed expense', `${report.from} through ${report.to}`),
+  )
+  if (report.rows.length === 0) {
+    fragment.append(
+      textElement('p', 'No expenses were recorded in this period.', 'report-empty'),
+    )
+    return fragment
+  }
+  const summary = element('p', 'report-expense-totals')
+  summary.append(
+    ...report.totals.flatMap((total, index) => {
+      const label = `${total.expense_count} ${
+        total.expense_count === 1 ? 'expense' : 'expenses'
+      } · `
+      const parts: (string | Node)[] = [
+        label,
+        reportMoney(total.total_cost_cents, total.currency),
+      ]
+      return index === 0 ? parts : [' · ', ...parts]
+    }),
+  )
+  fragment.append(summary)
+
+  const wrapper = element('div', 'report-table-wrap')
+  const table = element('table', 'report-table')
+  const head = element('thead')
+  const headerRow = element('tr')
+  for (const label of ['Date', 'Client', 'Project', 'Category', 'Person', 'Amount']) {
+    const cell = textElement('th', label)
+    cell.scope = 'col'
+    headerRow.append(cell)
+  }
+  head.append(headerRow)
+  const body = element('tbody')
+  for (const row of report.rows) {
+    const line = element('tr')
+    const date = element('th')
+    date.scope = 'row'
+    date.textContent = row.spent_date
+    line.append(date, textElement('td', row.client_name))
+    const project = element('td')
+    project.append(
+      linkElement(
+        `/projects/${row.project_id}`,
+        row.project_code === '' ? row.project_name : `[${row.project_code}] ${row.project_name}`,
+      ),
+    )
+    line.append(project)
+    const category = element('td')
+    category.append(textElement('span', row.category_name))
+    // Non-billable and reimbursable are facts about the expense, not money, so
+    // they stay readable beside an amount that may be withheld.
+    if (!row.billable) {
+      category.append(textElement('span', 'Non-billable', 'report-cost-note'))
+    }
+    if (row.reimbursable) {
+      category.append(textElement('span', 'Reimbursable', 'report-cost-note'))
+    }
+    line.append(category, textElement('td', row.user_name))
+    line.append(moneyCell(row.total_cost_cents, row.currency))
     body.append(line)
   }
   table.append(head, body)
@@ -1786,6 +1871,7 @@ export const createReportsController = (
       | MyHoursReport
       | ContractorCostReport
       | DetailedTimeReport
+      | DetailedExpenseReport
       | ProfitabilityReport
       | TimeReport
       | readonly ActivityLogEntry[],
@@ -1808,6 +1894,8 @@ export const createReportsController = (
       )
     } else if (filters.kind === 'profitability') {
       results.replaceChildren(renderProfitability(report as ProfitabilityReport))
+    } else if (filters.kind === 'detailed-expense') {
+      results.replaceChildren(renderDetailedExpense(report as DetailedExpenseReport))
     } else if (filters.kind === 'contractor-cost') {
       results.replaceChildren(renderContractorCost(report as ContractorCostReport))
     } else if (filters.kind === 'client-rollup') {
@@ -1855,7 +1943,8 @@ export const createReportsController = (
       api.getDetailedTimeReport === undefined ||
       api.getTimeReport === undefined ||
       api.getActivityLog === undefined ||
-      api.getProfitabilityReport === undefined
+      api.getProfitabilityReport === undefined ||
+      api.getDetailedExpenseReport === undefined
     ) {
       clearReportPresentation()
       status.textContent = 'Reports are unavailable in this build.'
@@ -1901,6 +1990,15 @@ export const createReportsController = (
             )
         : filters.kind === 'activity-log'
           ? await api.getActivityLog({ from: filters.from, to: filters.to }, active.signal)
+        : filters.kind === 'detailed-expense'
+          ? await api.getDetailedExpenseReport(
+              {
+                ...range,
+                ...(filters.clientId === null ? {} : { client_id: filters.clientId }),
+                ...(filters.projectId === null ? {} : { project_id: filters.projectId }),
+              },
+              active.signal,
+            )
         : filters.kind === 'uninvoiced'
           ? await api.getUninvoicedReport(
               {
