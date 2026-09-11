@@ -779,6 +779,7 @@ describe('S-1 through S-5 application shell', () => {
     expect(detail).toContain('data-invoice-line-delete-dialog')
     expect(detail).toContain('data-invoice-detail-payments')
     expect(detail).toContain('data-invoice-payment-record')
+    expect(detail).toContain('data-invoice-payment-settle')
     expect(detail).toContain('data-invoice-payment-dialog')
     expect(detail).toContain('data-invoice-payment-delete-dialog')
     expect(detail).toContain('No email or thank-you message will be sent.')

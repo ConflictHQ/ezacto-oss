@@ -4,6 +4,7 @@ export const renderInvoicePaymentSection = (): string => `
       <section class="invoice-history invoice-payment-history" aria-labelledby="invoice-payment-heading">
         <header class="invoice-payment-heading">
           <div><h3 id="invoice-payment-heading">Payments</h3><p>Effective payments applied to this invoice.</p></div>
+          <button type="button" data-invoice-payment-settle data-auth-action disabled>Mark paid</button>
           <button type="button" data-invoice-payment-record data-auth-action disabled>Record payment</button>
         </header>
         <p class="hint" data-invoice-payment-readonly hidden>You have read-only invoice access. Payment changes require the invoices:write scope.</p>

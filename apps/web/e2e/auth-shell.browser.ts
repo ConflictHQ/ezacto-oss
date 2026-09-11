@@ -2362,7 +2362,7 @@ test('[e2e:invoice-lines] adds, edits, and deletes exact lines through the real 
   expect(persistedDeleted.data.line_items.some((line) => line.id === createdLine.id)).toBe(false)
 })
 
-test('[e2e:invoice-cycle] records a final payment and restores the open balance on delete', async ({
+test('[e2e:invoice-cycle] records a final payment, restores the open balance on delete, and settles it from Mark paid', async ({
   context,
   page,
 }) => {
@@ -2516,6 +2516,38 @@ test('[e2e:invoice-cycle] records a final payment and restores the open balance 
   await expect(detail.locator('[data-invoice-detail-payments]')).toContainText(
     'No payments recorded.',
   )
+
+  // The balance is open again, which is the state Mark paid exists for: settle
+  // the whole of it without answering three questions the invoice already knows
+  // the answers to. Same route, same 201 -- the shortcut is in the browser, not
+  // in a second way for the server to call an invoice paid.
+  const settle = detail.getByRole('button', { name: 'Mark paid' })
+  await expect(settle).toHaveText('Mark paid \u00b7 $75.00')
+  await expectPhoneControl(settle)
+  await expectNoPageOverflow(page)
+  const settled = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/invoices/${openedInvoice.id}/payments` &&
+      response.request().method() === 'POST',
+  )
+  await settle.click()
+  const settledResponse = await settled
+  expect(settledResponse.status()).toBe(201)
+  const settledBody = settledResponse.request().postDataJSON() as {
+    expected_version: number
+    paid_date: string
+  }
+  expect(settledBody).toMatchObject({ amount_cents: 7_500, currency: 'USD', notes: null })
+  // Today, whenever the suite runs, so the shape is what is pinned here.
+  expect(settledBody.paid_date).toMatch(/^\d{4}-\d{2}-\d{2}$/u)
+  expect(settledBody.expected_version).toBeGreaterThan(openedInvoice.version)
+  // Never the dialog: the whole point is that it does not open.
+  await expect(paymentDialog).toBeHidden()
+  await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Paid')
+  await expect(detail.locator('[data-invoice-detail-due]')).toHaveText('$0.00')
+  await expect(detail.locator('[data-invoice-payment-id]')).toContainText('$75.00')
+  await expect(settle).toBeDisabled()
+  await expect(record).toBeDisabled()
 })
 
 test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, policy-locks, and unlocks a real D1 timesheet', async ({

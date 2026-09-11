@@ -8,6 +8,7 @@ import {
   type InvoiceLineInput,
   type InvoiceLineUpdateInput,
   type InvoicePayment,
+  type InvoicePaymentInput,
   type InvoiceTransitionInput,
   type Whoami,
 } from '@ezacto/client'
@@ -1079,6 +1080,90 @@ describe('invoice payment controller', () => {
       false,
     )
     expect(document.querySelector('[data-invoice-detail-payments]')?.textContent).toBe('')
+  })
+
+  it('[e2e:invoice-payment] settles the whole balance from the button and retries under one command id', async () => {
+    renderDetail()
+    let currentInvoice = invoice('SETTLE', { amount_cents: 100_000, due_amount_cents: 62_500 })
+    const recorded: InvoicePayment[] = []
+    let failNext = true
+    const recordInvoicePayment = vi.fn(
+      async (_invoiceId: number, _commandId: string, input: InvoicePaymentInput) => {
+        if (failNext) {
+          failNext = false
+          throw new EzactoApiError(
+            500,
+            { error: { code: 'internal_error', message: 'the ledger is unavailable', fields: [] } },
+            null,
+          )
+        }
+        // The input is a union of the two timings; the button always sends a date.
+        const paidDate = 'paid_date' in input ? input.paid_date : null
+        recorded.push(payment({ amount_cents: input.amount_cents, paid_date: paidDate }))
+        currentInvoice = {
+          ...currentInvoice,
+          due_amount_cents: currentInvoice.due_amount_cents - input.amount_cents,
+          state: 'paid',
+          paid_date: paidDate,
+          version: input.expected_version + 1,
+        }
+        return currentInvoice
+      },
+    )
+    const controller = createInvoicePaymentController({
+      getInvoice: vi.fn(async () => currentInvoice),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => recorded),
+      recordInvoicePayment,
+    })
+    await controller.activate(identity(1), new AbortController().signal, () => false)
+
+    const settle = document.querySelector<HTMLButtonElement>('[data-invoice-payment-settle]')!
+    // The sum is on the button, so the reader knows what the click costs before
+    // it happens rather than after.
+    expect(settle.hidden).toBe(false)
+    expect(settle.disabled).toBe(false)
+    expect(settle.textContent).toBe('Mark paid \u00b7 $625.00')
+
+    settle.click()
+    await vi.waitFor(() => expect(recordInvoicePayment).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(settle.disabled).toBe(false))
+    // A failed settle is one attempt, not a recorded payment, and it never routes
+    // through the dialog.
+    expect(document.querySelector<HTMLDialogElement>('[data-invoice-payment-dialog]')?.open).toBe(
+      false,
+    )
+    expect(document.querySelector('[data-invoice-payment-status]')?.textContent).toContain(
+      'the ledger is unavailable',
+    )
+
+    settle.click()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-payment-status]')?.textContent).toBe(
+        'Invoice marked paid.',
+      ),
+    )
+    expect(recordInvoicePayment).toHaveBeenCalledTimes(2)
+    const [first, second] = recordInvoicePayment.mock.calls
+    // Held, not rotated: the retry is the same intent, so the server sees one
+    // command and settles the balance once even if the first attempt landed.
+    expect(second![1]).toBe(first![1])
+    expect(second![1]).toMatch(/^web\.invoice\.payment\.record:/u)
+    expect(second![2]).toEqual({
+      expected_version: 1,
+      amount_cents: 62_500,
+      currency: 'USD',
+      paid_date: new Date().toLocaleDateString('en-CA'),
+      notes: null,
+    })
+    expect(document.querySelector('[data-invoice-detail-state]')?.textContent).toBe('Paid')
+    // Nothing is left due, so the button that settles a balance is refused --
+    // and says the same reason Record payment does, on the same pass.
+    expect(settle.disabled).toBe(true)
+    expect(settle.title).toBe('This invoice has no remaining amount due.')
+    expect(document.querySelector<HTMLButtonElement>('[data-invoice-payment-record]')!.title).toBe(
+      settle.title,
+    )
   })
 
   it('[e2e:invoice-state] issues write off from the overflow and gates every other verb', async () => {
