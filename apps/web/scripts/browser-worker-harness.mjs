@@ -76,8 +76,12 @@ const miniflare = new Miniflare({
   script: bundle.outputFiles[0].text,
 })
 
+// https, because the Worker now refuses cleartext on a real hostname (#548) and
+// this probe is the one request the harness makes under its own name rather
+// than through the loopback proxy below. Answering a 301 here would send the
+// probe at DNS for a host that does not exist.
 const migrationProbe = await miniflare.dispatchFetch(
-  'http://worker.test/api/v1/whoami',
+  'https://worker.test/api/v1/whoami',
 )
 if (migrationProbe.status !== 401) {
   throw new Error('browser fixture migration probe did not fail closed')
