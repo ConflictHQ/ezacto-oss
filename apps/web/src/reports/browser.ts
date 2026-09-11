@@ -336,13 +336,29 @@ const renderUninvoiced = (report: Readonly<UninvoicedReport>): DocumentFragment 
     header.append(textElement('h3', total.currency), headline)
     const facts = element('dl', 'report-facts')
     facts.append(
-      fact('Tracked time', formatReportHours(total.rounded_seconds)),
+      // Not "Tracked time", which this is not. The figure is the generation
+      // preview: billable only, uninvoiced only, active projects only. Labelled
+      // as tracked time it reads as hours the migration lost -- 901 against
+      // Harvest's 1,275 for the same month -- and that is exactly the wrong
+      // conclusion to hand somebody deciding whether to trust the books. The
+      // heading already says "Uninvoiced work", so repeating the word here is
+      // the disambiguation rather than a redundancy (issue 534).
+      fact('Uninvoiced billable time', formatReportHours(total.rounded_seconds)),
       fact('Time amount', reportMoney(total.time_cents, total.currency)),
       fact('Expense amount', reportMoney(total.expense_cents, total.currency)),
       fact('Time entries', total.time_entry_count.toLocaleString('en-US')),
       fact('Expenses', total.expense_count.toLocaleString('en-US')),
     )
     card.append(header, facts)
+    // Said once per card, because the three filters are the whole reason the
+    // number differs from the one an operator is comparing it against.
+    card.append(
+      textElement(
+        'p',
+        'Billable, not yet invoiced, on active projects. Invoiced and non-billable time and archived projects are excluded.',
+        'report-card-note',
+      ),
+    )
     if (total.unpriced_time_entry_count > 0) {
       card.append(
         warning(
@@ -359,6 +375,10 @@ const renderUninvoiced = (report: Readonly<UninvoicedReport>): DocumentFragment 
 const metricsFacts = (metrics: Readonly<ClientRollupMetrics>): HTMLDListElement => {
   const facts = element('dl', 'report-facts report-rollup-facts')
   facts.append(
+    // Genuinely tracked time here, and correct: the rollup counts every entry
+    // and reports billable separately on the next line. Issue 534 asked whether
+    // this borrowed the same wrong label; it does not, and the pair of facts is
+    // what makes it unambiguous.
     fact('Tracked time', formatReportHours(metrics.rounded_seconds)),
     fact('Billable time', formatReportHours(metrics.billable_seconds)),
     fact('Time entries', metrics.time_entry_count.toLocaleString('en-US')),

@@ -882,7 +882,14 @@
   gap: 20px;
   align-items: start;
 }
-.report-detailed-summary .report-facts {
+.report-detailed-summary /* The line that says which hours the card counted. Quiet, because it explains
+   a figure rather than competing with it. */
+.report-card-note {
+  margin: 8px 0 0;
+  color: var(--ez-muted);
+  font-size: 12px;
+}
+.report-facts {
   margin-block: 0;
 }
 .report-detailed-controls {
