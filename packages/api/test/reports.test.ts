@@ -1163,6 +1163,61 @@ for (const [runtime, factory] of factories) {
       }
     });
 
+    it("[api] breaks uninvoiced work down per project, priced by the same preview as the totals", async () => {
+      harness = await factory();
+      // Fixture 102 lives on Child (client 2); 101 and 103 on Root and Leaf.
+      // Archived project 4 is out, as it is from the totals.
+      const response = await harness.request(
+        "/reports/uninvoiced?from=2026-08-01&to=2026-08-31",
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        data: {
+          totals: Array<{ total_cents: number; rounded_seconds: number; expense_count: number }>;
+          projects: Array<{
+            client_id: number;
+            client_name: string;
+            project_id: number;
+            project_name: string;
+            project_code: string;
+            totals: Array<{ currency: string; total_cents: number; rounded_seconds: number; expense_count: number }>;
+          }>;
+        };
+      };
+      // Client name, then project name: Child, Leaf, Root.
+      expect(
+        body.data.projects.map((project) => [project.client_name, project.project_code]),
+      ).toEqual([
+        ["Child", "CHILD"],
+        ["Leaf", "LEAF"],
+        ["Root", "ROOT"],
+      ]);
+      const child = body.data.projects[0]!;
+      expect(child).toMatchObject({ client_id: 2, project_id: 2, project_name: "Child project" });
+      expect(child.totals).toEqual([
+        expect.objectContaining({
+          currency: "USD",
+          rounded_seconds: 1800,
+          expense_count: 1,
+          // 0.5h at 123.45 = 61.73 (half-cent up), plus the 10.00 expense.
+          total_cents: 6173 + 1000,
+        }),
+      ]);
+      // The rows are a partition of the totals.
+      const sum = (pick: (row: { total_cents: number; rounded_seconds: number; expense_count: number }) => number) =>
+        body.data.projects.reduce((acc, project) => acc + pick(project.totals[0]!), 0);
+      expect(sum((row) => row.total_cents)).toBe(body.data.totals[0]!.total_cents);
+      expect(sum((row) => row.rounded_seconds)).toBe(body.data.totals[0]!.rounded_seconds);
+      expect(sum((row) => row.expense_count)).toBe(body.data.totals[0]!.expense_count);
+
+      // A project filter narrows the breakdown with the totals.
+      const one = await harness.request(
+        "/reports/uninvoiced?from=2026-08-01&to=2026-08-31&project_id=3",
+      );
+      const oneBody = (await one.json()) as { data: { projects: Array<{ project_id: number }> } };
+      expect(oneBody.data.projects.map((project) => project.project_id)).toEqual([3]);
+    });
+
     it("[unit] keeps uninvoiced totals identical to the generation preview to the cent", async () => {
       harness = await factory();
       const response = await harness.request(
@@ -1615,6 +1670,65 @@ for (const [runtime, factory] of factories) {
       ]);
     });
 
+    it("[db] entry grain is one row per entry with its id and notes; day grain carries neither", async () => {
+      harness = await factory();
+      await seedDetailedDay(harness);
+      await harness.run(`UPDATE time_entries SET notes = 'wrote the thing' WHERE id = 111`, []);
+      const entries = await harness.reports.detailedTime({
+        from: "2026-08-10",
+        to: "2026-08-10",
+        projectId: 1,
+        grain: "entry",
+      });
+      if (entries.kind !== "report") throw new Error("expected a report");
+      expect(entries.report.grain).toBe("entry");
+      // The same three entries the fold test collapses into one line.
+      expect(entries.report.rows).toHaveLength(3);
+      expect(entries.report.rows.map((row) => row.timeEntryId)).toEqual([101, 111, 112]);
+      expect(entries.report.rows.map((row) => row.notes)).toEqual([null, "wrote the thing", null]);
+      // Each row is priced on its own entry; the totals are the fold's totals.
+      expect(entries.report.rows.map((row) => row.billableAmountCents)).toEqual([10_000, 5_000, 0]);
+      expect(entries.report.seconds).toBe(6300);
+      expect(entries.report.timeEntryCount).toBe(3);
+
+      const day = await harness.reports.detailedTime({
+        from: "2026-08-10",
+        to: "2026-08-10",
+        projectId: 1,
+      });
+      if (day.kind !== "report") throw new Error("expected a report");
+      expect(day.report.grain).toBe("day");
+      expect(day.report.rows).toHaveLength(1);
+      expect(day.report.rows[0]).toMatchObject({ timeEntryId: null, notes: null });
+    });
+
+    it("[api] emits time_entry_id and notes at entry grain only, and refuses an unknown grain", async () => {
+      harness = await factory();
+      await seedDetailedDay(harness);
+      await harness.run(`UPDATE time_entries SET notes = 'wrote the thing' WHERE id = 111`, []);
+      const base = "/reports/detailed-time?from=2026-08-10&to=2026-08-10&project_id=1";
+
+      const entry = await harness.request(`${base}&grain=entry`);
+      expect(entry.status).toBe(200);
+      const entryBody = (await entry.json()) as {
+        data: { grain: string; rows: Array<Record<string, unknown>> };
+      };
+      expect(entryBody.data.grain).toBe("entry");
+      expect(entryBody.data.rows).toHaveLength(3);
+      expect(entryBody.data.rows[1]).toMatchObject({ time_entry_id: 111, notes: "wrote the thing" });
+
+      const day = await harness.request(base);
+      const dayBody = (await day.json()) as {
+        data: { grain: string; rows: Array<Record<string, unknown>> };
+      };
+      expect(dayBody.data.grain).toBe("day");
+      expect(dayBody.data.rows).toHaveLength(1);
+      expect(dayBody.data.rows[0]).not.toHaveProperty("time_entry_id");
+      expect(dayBody.data.rows[0]).not.toHaveProperty("notes");
+
+      expect((await harness.request(`${base}&grain=week`)).status).toBe(422);
+    });
+
     it("[api] serves the detailed report and echoes the filters it was run with", async () => {
       harness = await factory();
       await seedDetailedDay(harness);
@@ -1761,6 +1875,7 @@ describe("detailed time serialization", () => {
     clientId: null,
     projectId: null,
     hours: "all",
+    grain: "entry",
     activeProjectsOnly: false,
     seconds: 3600,
     roundedSeconds: 3600,
@@ -1791,6 +1906,8 @@ describe("detailed time serialization", () => {
         timeEntryCount: 1,
         billableAmountCents: 10_000,
         entriesWithoutBillableRate: 1,
+        timeEntryId: 101,
+        notes: "wrote the thing",
       },
     ],
   };
@@ -1807,6 +1924,8 @@ describe("detailed time serialization", () => {
     expect(redacted.rows).toHaveLength(1);
     expect(redacted.rows[0]).not.toHaveProperty("billable_amount_cents");
     expect(redacted.currencies[0]).not.toHaveProperty("billable_amount_cents");
+    // Redaction is about money; what was done stays readable at entry grain.
+    expect(redacted.rows[0]).toMatchObject({ time_entry_id: 101, notes: "wrote the thing" });
     // Hours survive: this report answers who worked on what and for how long,
     // and stripping that alongside the money would leave nothing.
     expect(redacted.rows[0]).toMatchObject({ seconds: 3600, roles: ["Delivery"] });

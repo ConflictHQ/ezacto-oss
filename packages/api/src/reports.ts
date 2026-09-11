@@ -126,10 +126,20 @@ export interface UninvoicedCurrencyRecord {
   totalCents: number;
 }
 
+export interface UninvoicedProjectRecord {
+  clientId: number;
+  clientName: string;
+  projectId: number;
+  projectName: string;
+  projectCode: string;
+  totals: readonly UninvoicedCurrencyRecord[];
+}
+
 export interface UninvoicedReportRecord extends ReportDateRange {
   clientId: number | null;
   projectId: number | null;
   totals: readonly UninvoicedCurrencyRecord[];
+  projects: readonly UninvoicedProjectRecord[];
 }
 
 export interface ClientRollupCurrencyRecord {
@@ -230,6 +240,9 @@ export type DetailedTimeHours =
   | "non_billable"
   | "uninvoiced";
 
+/** `day` folds entries per date, task and person; `entry` is one row each. */
+export type DetailedTimeGrain = "day" | "entry";
+
 export interface DetailedTimeRowRecord {
   spentDate: string;
   clientId: number;
@@ -252,6 +265,9 @@ export interface DetailedTimeRowRecord {
   /** Null when any billable entry folded into the row has no resolved rate. */
   billableAmountCents: number | null;
   entriesWithoutBillableRate: number;
+  /** Set at `entry` grain only. */
+  timeEntryId: number | null;
+  notes: string | null;
 }
 
 export interface DetailedTimeCurrencyRecord {
@@ -264,6 +280,7 @@ export interface DetailedTimeReportRecord extends ReportDateRange {
   clientId: number | null;
   projectId: number | null;
   hours: DetailedTimeHours;
+  grain: DetailedTimeGrain;
   activeProjectsOnly: boolean;
   seconds: number;
   roundedSeconds: number;
@@ -362,6 +379,7 @@ export interface ReportReader {
     clientId?: number;
     projectId?: number;
     hours?: DetailedTimeHours;
+    grain?: DetailedTimeGrain;
     activeProjectsOnly?: boolean;
   }): Promise<DetailedTimeReportResult>;
   uninvoiced(filter: {
@@ -395,8 +413,10 @@ const detailedExpenseKeys = new Set([...uninvoicedKeys, "billable_only"]);
 const detailedTimeKeys = new Set([
   ...uninvoicedKeys,
   "hours",
+  "grain",
   "active_projects_only",
 ]);
+const detailedTimeGrains: readonly DetailedTimeGrain[] = ["day", "entry"];
 const detailedTimeHours: readonly DetailedTimeHours[] = [
   "all",
   "billable",
@@ -465,29 +485,46 @@ const serializeMyHours = (report: Readonly<MyHoursReportRecord>) => ({
   })),
 });
 
-const serializeUninvoiced = (
-  report: Readonly<UninvoicedReportRecord>,
-  viewer: Readonly<UserPrincipal>,
-) => ({
-  from: report.from,
-  to: report.to,
-  client_id: report.clientId,
-  project_id: report.projectId,
-  totals: report.totals.map((total) => ({
+const serializeUninvoicedTotals = (
+  totals: readonly UninvoicedCurrencyRecord[],
+  money: boolean,
+) =>
+  totals.map((total) => ({
     currency: total.currency,
     rounded_seconds: total.roundedSeconds,
     time_entry_count: total.timeEntryCount,
     unpriced_time_entry_count: total.unpricedTimeEntryCount,
     expense_count: total.expenseCount,
-    ...(canViewMoneyField(viewer, "billable_rate")
+    ...(money
       ? {
           time_cents: total.timeCents,
           expense_cents: total.expenseCents,
           total_cents: total.totalCents,
         }
       : {}),
-  })),
-});
+  }));
+
+const serializeUninvoiced = (
+  report: Readonly<UninvoicedReportRecord>,
+  viewer: Readonly<UserPrincipal>,
+) => {
+  const money = canViewMoneyField(viewer, "billable_rate");
+  return {
+    from: report.from,
+    to: report.to,
+    client_id: report.clientId,
+    project_id: report.projectId,
+    totals: serializeUninvoicedTotals(report.totals, money),
+    projects: report.projects.map((project) => ({
+      client_id: project.clientId,
+      client_name: project.clientName,
+      project_id: project.projectId,
+      project_name: project.projectName,
+      project_code: project.projectCode,
+      totals: serializeUninvoicedTotals(project.totals, money),
+    })),
+  };
+};
 
 /**
  * Every figure here is a cost, so the report is administrator-only as a whole
@@ -631,6 +668,7 @@ const serializeDetailedTime = (
     client_id: report.clientId,
     project_id: report.projectId,
     hours: report.hours,
+    grain: report.grain,
     active_projects_only: report.activeProjectsOnly,
     seconds: report.seconds,
     rounded_seconds: report.roundedSeconds,
@@ -662,6 +700,9 @@ const serializeDetailedTime = (
       time_entry_count: row.timeEntryCount,
       entries_without_billable_rate: row.entriesWithoutBillableRate,
       ...(money ? { billable_amount_cents: row.billableAmountCents } : {}),
+      ...(report.grain === "entry"
+        ? { time_entry_id: row.timeEntryId, notes: row.notes }
+        : {}),
     })),
   };
 };
@@ -982,6 +1023,12 @@ export const installReportRoutes = <Bindings extends object>(
       detailedTimeHours,
       parsed.errors,
     );
+    const grain = queryEnum(
+      parsed.params,
+      "grain",
+      detailedTimeGrains,
+      parsed.errors,
+    );
     const activeProjectsOnly = queryBoolean(
       parsed.params,
       "active_projects_only",
@@ -993,6 +1040,7 @@ export const installReportRoutes = <Bindings extends object>(
       ...(clientId === undefined ? {} : { clientId }),
       ...(projectId === undefined ? {} : { projectId }),
       ...(hours === undefined ? {} : { hours }),
+      ...(grain === undefined ? {} : { grain }),
       ...(activeProjectsOnly === undefined ? {} : { activeProjectsOnly }),
     });
     // 422 on the range rather than a partial body: the response has no field

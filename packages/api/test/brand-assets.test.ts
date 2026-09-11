@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createApiApp,
   installBrandAssetRoutes,
+  installBrandRoute,
   installPublicBrandAssetRoutes,
   MAX_BRAND_ASSET_BYTES,
   type ApiAuthentication,
@@ -20,6 +21,17 @@ const clock = '2026-09-09T12:00:00.000Z'
 const sameOrigin = 'http://localhost'
 
 const authentication: ApiAuthentication = {
+  tokens: {
+    authenticate: async (token) =>
+      token === 'portal-token'
+        ? { tokenId: 1, userId: 8, profile: 'member', scopes: ['clients:read'] }
+        : null,
+    issue: async () => {
+      throw new Error('not used')
+    },
+    list: async () => [],
+    revoke: async () => null,
+  },
   sessions: {
     resolve: async (request) => {
       const profile = request.headers.get('x-test-profile') as UserProfile | null
@@ -72,7 +84,13 @@ const harness = () => {
   const app = createApiApp<Record<string, never>>({
     authentication,
     installApp: (application) => installPublicBrandAssetRoutes(application, store.port),
-    installApi: (api) => installBrandAssetRoutes(api, store.port, () => clock),
+    installApi: (api) => {
+      installBrandAssetRoutes(api, store.port, () => clock)
+      installBrandRoute(api, {
+        organizationName: async () => 'Northpeak Studio',
+        assets: (env) => store.port.list(env),
+      })
+    },
   })
   const upload = (segment: string, bytes: Uint8Array, type: string, name = 'logo.png') => {
     const body = new FormData()
@@ -248,5 +266,39 @@ describe('brand asset routes (#489)', () => {
     const runtime = harness()
     expect((await runtime.app.request('/brand/wordmark-huge/deadbeef')).status).toBe(404)
     expect((await runtime.upload('wordmark-huge', png('x'), 'image/png')).status).toBe(404)
+  })
+
+  it('[unit] GET /brand gives any principal the organisation name and the stored marks (#590)', async () => {
+    const runtime = harness()
+    await runtime.upload('wordmark-dark', png('dark mark'), 'image/png')
+    await runtime.upload('favicon', png('icon'), 'image/png')
+
+    // A member holding only clients:read, over a token: no admin, no session,
+    // no brand scope. The marks are public and the name is on every invoice.
+    const response = await runtime.app.request('/api/v1/brand', {
+      headers: { authorization: 'Bearer portal-token' },
+    })
+    expect(response.status).toBe(200)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    const body = (await response.json()) as {
+      data: { organization_name: string; assets: Array<Record<string, unknown>> }
+      links: { self: string }
+    }
+    expect(body.links.self).toBe('/api/v1/brand')
+    expect(body.data.organization_name).toBe('Northpeak Studio')
+    expect(body.data.assets.map((asset) => asset.slot).sort()).toEqual(['favicon', 'wordmark_dark'])
+    const mark = body.data.assets.find((asset) => asset.slot === 'wordmark_dark')!
+    expect(mark.url).toMatch(/^\/brand\/wordmark-dark\/[0-9a-f]{64}$/u)
+    expect(mark.content_type).toBe('image/png')
+    expect(mark).not.toHaveProperty('content_hash')
+    expect(mark).not.toHaveProperty('byte_size')
+    // The URL it hands out is the one the public route serves.
+    expect((await runtime.app.request(mark.url as string)).status).toBe(200)
+
+    // Session principals read it too; nobody else does.
+    expect(
+      (await runtime.app.request('/api/v1/brand', { headers: { 'x-test-profile': 'member' } })).status,
+    ).toBe(200)
+    expect((await runtime.app.request('/api/v1/brand')).status).toBe(401)
   })
 })

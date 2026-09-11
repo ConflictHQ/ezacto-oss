@@ -1769,6 +1769,8 @@ export type DetailedTimeRow = {
   "time_entry_count": number;
   "billable_amount_cents"?: number | null;
   "entries_without_billable_rate": number;
+  "time_entry_id"?: number;
+  "notes"?: string | null;
 };
 
 export type DetailedTimeCurrencyTotal = {
@@ -1783,6 +1785,7 @@ export type DetailedTimeReport = {
   "client_id": number | null;
   "project_id": number | null;
   "hours": "all" | "billable" | "non_billable" | "uninvoiced";
+  "grain": "day" | "entry";
   "active_projects_only": boolean;
   "seconds": number;
   "rounded_seconds": number;
@@ -1889,12 +1892,22 @@ export type UninvoicedCurrencyTotal = {
   "total_cents"?: number;
 };
 
+export type UninvoicedProjectRow = {
+  "client_id": number;
+  "client_name": string;
+  "project_id": number;
+  "project_name": string;
+  "project_code": string;
+  "totals": Array<UninvoicedCurrencyTotal>;
+};
+
 export type UninvoicedReport = {
   "from": string;
   "to": string;
   "client_id": number | null;
   "project_id": number | null;
   "totals": Array<UninvoicedCurrencyTotal>;
+  "projects": Array<UninvoicedProjectRow>;
 };
 
 export type UninvoicedReportEnvelope = {
@@ -2160,6 +2173,23 @@ export type BrandAsset = {
 
 export type BrandAssetListEnvelope = {
   "data": Array<BrandAsset>;
+  "links": Links;
+};
+
+export type BrandMark = {
+  "slot": "wordmark_light" | "wordmark_dark" | "favicon";
+  "url": string;
+  "content_type": "image/png" | "image/jpeg" | "image/webp";
+  "updated_at": string;
+};
+
+export type Brand = {
+  "organization_name": string;
+  "assets": Array<BrandMark>;
+};
+
+export type BrandEnvelope = {
+  "data": Brand;
   "links": Links;
 };
 
@@ -3943,7 +3973,7 @@ export class EzactoClient {
     });
   }
 
-  async getDetailedTimeReport(args: { query: { "from": string; "to": string; "client_id"?: number; "project_id"?: number; "hours"?: "all" | "billable" | "non_billable" | "uninvoiced"; "active_projects_only"?: boolean }; signal?: AbortSignal; headers?: HeadersInit }): Promise<DetailedTimeReportEnvelope> {
+  async getDetailedTimeReport(args: { query: { "from": string; "to": string; "client_id"?: number; "project_id"?: number; "hours"?: "all" | "billable" | "non_billable" | "uninvoiced"; "grain"?: "day" | "entry"; "active_projects_only"?: boolean }; signal?: AbortSignal; headers?: HeadersInit }): Promise<DetailedTimeReportEnvelope> {
     const headers = new Headers(args.headers);
 
     return this.request<DetailedTimeReportEnvelope>("GET", "/api/v1/reports/detailed-time", {
@@ -4043,6 +4073,15 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<SsoDomainCheckEnvelope>("POST", "/api/v1/settings/sso-domains/:id/verify".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getBrand(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<BrandEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BrandEnvelope>("GET", "/api/v1/brand", {
       signal: args.signal,
       headers,
     });
