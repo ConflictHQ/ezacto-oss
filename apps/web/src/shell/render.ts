@@ -65,7 +65,6 @@ export interface AppShellOptions {
     | 'invoice-generation'
     | 'invoice-recurring'
     | 'invoice-retainers'
-    | 'invoice-configure'
     | 'client-list'
     | 'client-detail'
     | 'project-list'
@@ -78,6 +77,7 @@ export interface AppShellOptions {
     | 'settings-user'
     | 'settings-company'
     | 'settings-activity'
+    | 'settings-templates'
     | 'settings-roles'
     | 'team-list'
     | 'team-person'
@@ -182,7 +182,11 @@ const invoiceDestinations = [
   ['Overview', '/invoices', 'invoice-list'],
   ['Recurring', '/invoices/recurring', 'invoice-recurring'],
   ['Retainers', '/invoices/retainers', 'invoice-retainers'],
-  ['Configure', '/invoices/configure', 'invoice-configure'],
+  // Configure left this strip for Settings. Two of the five templates it edits
+  // -- the email-verification and password-reset messages -- are account mail
+  // with nothing to do with invoicing, and it sits beside sender identity and
+  // DNS, which is company-wide setup (issue 546). /invoices/configure still
+  // resolves; it redirects.
 ] as const
 
 export const invoiceTabs = (view: AppShellOptions['view']): readonly ShellTab[] =>
@@ -747,10 +751,8 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
     <form data-timer-form novalidate data-entry-form data-note-form>
       <header><div><p class="eyebrow" data-entry-context>Time entry</p><h2 id="entry-title" data-entry-title data-note-title>Log time</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
       <div class="entry-assignment">
-        <label>Project<input name="project" data-entry-project autocomplete="off" list="entry-project-options" required></label>
-        <datalist id="entry-project-options" data-entry-project-options></datalist>
-        <label>Task<input name="task" data-entry-task autocomplete="off" list="entry-task-options" required></label>
-        <datalist id="entry-task-options" data-entry-task-options></datalist>
+        <label>Project<select name="project" data-entry-project data-entry-project-options required></select></label>
+        <label>Task<select name="task" data-entry-task data-entry-task-options required></select></label>
       </div>
       <label>Date<input name="spent_date" data-entry-date type="date" required></label>
       <label data-entry-duration>Duration<input name="duration" data-entry-duration-input inputmode="decimal" autocomplete="off"></label>

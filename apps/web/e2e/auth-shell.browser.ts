@@ -942,11 +942,13 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
     name: 'Start timer',
     exact: true,
   })
-  // The picker offers what the command line made you type exactly. Tasks narrow
-  // to the project once it resolves.
+  // Real selects now, not text boxes with a datalist: the popup was unusable
+  // once the field held a complete value, because a browser filters a datalist
+  // by what is typed (issues 497 and 506). Picked, not typed. Tasks narrow to
+  // the chosen project.
   await expect(page.locator('[data-entry-project-options] option')).not.toHaveCount(0)
-  await timerProject.fill('SECONDARY')
-  await timerTask.fill('Browser Secondary Task')
+  await timerProject.selectOption('Browser Secondary Project')
+  await timerTask.selectOption('Browser Secondary Task')
   await startTimer.click()
   await expect(page.locator('[data-timer-result]')).toContainText(
     'at least 8 characters',
@@ -955,8 +957,8 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   await expect(timerNote).toHaveAttribute('minlength', '8')
   expect(timeEntryWrites).toHaveLength(writesBeforeTimer)
 
-  await timerProject.fill('BROWSER')
-  await timerTask.fill('Browser Acceptance Task')
+  await timerProject.selectOption('Browser Acceptance Project')
+  await timerTask.selectOption('Browser Acceptance Task')
   await expect(timerNote).not.toHaveAttribute('required', '')
   await expect(timerNote).toHaveAttribute('minlength', '0')
   const timerStarted = page.waitForResponse(

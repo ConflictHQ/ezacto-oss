@@ -376,6 +376,13 @@ export const paletteDestinations: readonly PaletteDestination[] = [
     gate: '[data-settings-company-tab]',
   },
   {
+    label: 'Email templates',
+    href: '/settings/templates',
+    group: 'Organize',
+    keywords: 'email template reminder thank you password reset verification sender',
+    gate: '[data-settings-templates-tab]',
+  },
+  {
     label: 'Roles',
     href: '/settings/roles',
     group: 'Organize',

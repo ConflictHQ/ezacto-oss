@@ -50,10 +50,10 @@ describe('worker entry', () => {
       '/invoices/new',
       '/invoices/recurring',
       '/invoices/retainers',
-      '/invoices/configure',
       '/reports',
       '/settings/user',
       '/settings/company',
+      '/settings/templates',
     ]
     for (const path of paths) {
       const res = await app.request(path, {}, branded)
@@ -153,7 +153,6 @@ describe('worker entry', () => {
   it.each([
     ['/invoices/recurring', 'invoice-recurring'],
     ['/invoices/retainers', 'invoice-retainers'],
-    ['/invoices/configure', 'invoice-configure'],
   ])(
     '[acceptance] serves %s under the Invoices strip',
     async (path, view) => {
@@ -168,6 +167,16 @@ describe('worker entry', () => {
       expect(html).toContain('<a href="/invoices">Overview</a>')
     },
   )
+
+  it('[acceptance] keeps /invoices/configure ahead of the invoice-id route', async () => {
+    // It redirects to Settings now (issue 546), but the ordering concern it was
+    // written for is unchanged: this path has to be matched before
+    // /invoices/:invoiceId, or "configure" is read as an invoice number that
+    // failed to parse and the redirect becomes a 404.
+    const res = await app.request('/invoices/configure', {}, env)
+    expect(res.status).toBe(301)
+    expect(res.headers.get('location')).toBe('/settings/templates')
+  })
 
   it('[acceptance] serves the Clients V1 list and numeric detail shells', async () => {
     const list = await app.request('/clients', {}, env)
@@ -560,5 +569,26 @@ describe('worker entry', () => {
     expect(api.status).toBe(401)
     expect(api.headers.get('content-type')).toContain('application/json')
     expect(await api.text()).not.toContain('data-not-found-page')
+  })
+
+  it('[acceptance #546] serves templates from Settings and keeps the old invoice URL working', async () => {
+    const page = await app.request('/settings/templates', {}, env)
+    expect(page.status).toBe(200)
+    const html = await page.text()
+    expect(html).toContain('data-app-view="settings-templates"')
+    // The screen itself, not a placeholder: the same pane, now under Settings.
+    expect(html).toContain('data-invoice-configure-page')
+    expect(html).toContain('Email templates')
+    // Reached from the Settings strip, behind the same gate as Company.
+    expect(html).toContain('data-settings-templates-tab')
+
+    // Every link and bookmark that shipped still resolves.
+    const moved = await app.request('/invoices/configure', {}, env)
+    expect(moved.status).toBe(301)
+    expect(moved.headers.get('location')).toBe('/settings/templates')
+
+    // And Invoices no longer offers it, so there is one place to look.
+    const invoices = await app.request('/invoices', {}, env)
+    expect(await invoices.text()).not.toContain('/invoices/configure')
   })
 })

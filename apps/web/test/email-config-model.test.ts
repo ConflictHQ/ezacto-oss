@@ -200,15 +200,15 @@ describe('email configuration model', () => {
   })
 
   it('[unit] round-trips the open template through the URL', () => {
-    expect(emailConfigUrl()).toBe('/invoices/configure')
-    expect(emailConfigUrl('reminder')).toBe('/invoices/configure?template=reminder')
+    expect(emailConfigUrl()).toBe('/settings/templates')
+    expect(emailConfigUrl('reminder')).toBe('/settings/templates?template=reminder')
     expect(
-      emailConfigTemplateFromUrl(new URL('https://x.test/invoices/configure?template=reminder')),
+      emailConfigTemplateFromUrl(new URL('https://x.test/settings/templates?template=reminder')),
     ).toBe('reminder')
     // A kind that is not one opens the list rather than an editor over nothing.
     expect(
-      emailConfigTemplateFromUrl(new URL('https://x.test/invoices/configure?template=nope')),
+      emailConfigTemplateFromUrl(new URL('https://x.test/settings/templates?template=nope')),
     ).toBeNull()
-    expect(emailConfigTemplateFromUrl(new URL('https://x.test/invoices/configure'))).toBeNull()
+    expect(emailConfigTemplateFromUrl(new URL('https://x.test/settings/templates'))).toBeNull()
   })
 })

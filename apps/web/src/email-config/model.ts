@@ -126,7 +126,7 @@ export const emailConfigTemplateFromUrl = (url: URL): EmailTemplateKind | null =
 }
 
 export const emailConfigUrl = (kind: EmailTemplateKind | null = null): string =>
-  kind === null ? '/invoices/configure' : `/invoices/configure?template=${kind}`
+  kind === null ? '/settings/templates' : `/settings/templates?template=${kind}`
 
 export type SenderEvidenceState = 'verified' | 'pending' | 'failed' | 'unknown'
 

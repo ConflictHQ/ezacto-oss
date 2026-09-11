@@ -753,28 +753,11 @@ export const createApp = (
         ),
       )
 
-      app.get('/invoices/configure', async (context) =>
-        context.html(
-          renderAppShell({
-            environment: context.env.ENVIRONMENT,
-            release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
-            activeSection: 'Invoices',
-            view: 'invoice-configure',
-            tabs: invoiceTabs('invoice-configure'),
-            signInProviders: configuredSignInProviders(context.env),
-            demoAccounts: publishedDemoAccounts(context.env),
-            sessionCookiePresent: hasSessionCookie(context.req.raw),
-          }),
-          200,
-          {
-            'cache-control': 'no-store',
-            'content-security-policy': shellContentSecurityPolicy,
-            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
-            'referrer-policy': 'same-origin',
-            'x-content-type-options': 'nosniff',
-          },
-        ),
+      // Moved to Settings (issue 546). A bookmark and every link that shipped
+      // still work: 301, the same way /settings/modules kept working when it
+      // folded into /settings/company.
+      app.get('/invoices/configure', (context) =>
+        context.redirect('/settings/templates', 301),
       )
 
       app.get('/clients', async (context) =>
@@ -972,6 +955,29 @@ export const createApp = (
             brand: await shellBrand(context.env),
             activeSection: 'Settings',
             view: 'settings-company',
+            signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/settings/templates', async (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            brand: await shellBrand(context.env),
+            activeSection: 'Settings',
+            view: 'settings-templates',
             signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),

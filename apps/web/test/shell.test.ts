@@ -261,7 +261,7 @@ describe('S-1 through S-5 application shell', () => {
     expect(noTabs).not.toContain('class="tabstrip"')
   })
 
-  it('[acceptance] gives Invoices four destinations and a labelled pane behind each', () => {
+  it('[acceptance] gives Invoices three destinations and a labelled pane behind each', () => {
     // Invoices was one flat list while /api/v1/recurring-invoices,
     // /api/v1/retainers and the sender-identity endpoints sat behind nothing at
     // all. The strip ships ahead of the screens on purpose: a labelled empty
@@ -279,8 +279,7 @@ describe('S-1 through S-5 application shell', () => {
     expect(stripOf(overview)).toBe(
       '<a href="/invoices" aria-current="page">Overview</a>' +
         '<a href="/invoices/recurring">Recurring</a>' +
-        '<a href="/invoices/retainers">Retainers</a>' +
-        '<a href="/invoices/configure">Configure</a>',
+        '<a href="/invoices/retainers">Retainers</a>',
     )
 
     const recurring = renderAppShell({
@@ -324,8 +323,8 @@ describe('S-1 through S-5 application shell', () => {
       environment: 'test',
       release: 'abcdef012345',
       activeSection: 'Invoices',
-      view: 'invoice-configure',
-      tabs: invoiceTabs('invoice-configure'),
+      view: 'settings-templates',
+      tabs: invoiceTabs('settings-templates'),
     })
     expect(configure).toContain('data-invoice-configure-page>')
     // The last placeholder is gone: the pane is the sender table and the
