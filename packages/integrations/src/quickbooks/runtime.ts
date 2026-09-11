@@ -376,7 +376,8 @@ export const createQuickBooksRuntime = (
           baseUrl,
         }).companyName();
       } catch {
-        companyName = null;
+        // Already null. The name is decoration, and failing to read it is not
+        // a reason to refuse a connection that otherwise works.
       }
       await store.saveConnection({
         realmId,

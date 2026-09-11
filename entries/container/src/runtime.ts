@@ -302,27 +302,6 @@ export const createContainerRuntime = async (
       config.smtp.from,
     )
     const reminders = createContainerReminderScheduler(database)
-    const outbox = createContainerOutboxService(database, {
-      additionalSubscribers: [
-        createInvoiceEmailOutboxSubscriber(moneyResources, organizationMailer),
-        reminders.subscriber,
-      ],
-    })
-    const organizationName = async () => {
-      const row = database
-        .prepare('SELECT name FROM organizations WHERE id = 1')
-        .get() as { name: string } | undefined
-      return row?.name ?? 'Ezacto'
-    }
-    outboxScheduler = new ContainerOutboxScheduler(outbox)
-    const objects = await createDiskAttachmentObjectStore(
-      config.attachmentDirectory,
-    )
-    const brandAssets = await createContainerBrandAssetSurface(
-      database,
-      config.brandDirectory,
-    )
-
     // The same connection the Worker composes. A self-hoster's QuickBooks is
     // the same QuickBooks, and the only thing this needs that the Worker has is
     // an outbound fetch.
@@ -342,6 +321,30 @@ export const createContainerRuntime = async (
             fetch: (request: Request) => fetch(request),
             now: () => new Date(),
           })
+
+    const outbox = createContainerOutboxService(database, {
+      additionalSubscribers: [
+        createInvoiceEmailOutboxSubscriber(moneyResources, organizationMailer),
+        reminders.subscriber,
+        // Without this the container would connect to QuickBooks and never
+        // mirror anything -- the routes would work and no invoice would move.
+        ...(quickBooks === null ? [] : [createQuickBooksMirrorSubscriber(quickBooks)]),
+      ],
+    })
+    const organizationName = async () => {
+      const row = database
+        .prepare('SELECT name FROM organizations WHERE id = 1')
+        .get() as { name: string } | undefined
+      return row?.name ?? 'Ezacto'
+    }
+    outboxScheduler = new ContainerOutboxScheduler(outbox)
+    const objects = await createDiskAttachmentObjectStore(
+      config.attachmentDirectory,
+    )
+    const brandAssets = await createContainerBrandAssetSurface(
+      database,
+      config.brandDirectory,
+    )
 
     const services: RuntimeServices = {
       bootstrap: (input) => bootstrapInstanceContainer(database, input),
