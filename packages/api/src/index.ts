@@ -55,6 +55,14 @@ export {
   type StoredBrandAsset,
 } from './brand-assets.js'
 export {
+  installInstanceThemeRoutes,
+  installInstanceThemeStylesheetRoute,
+  instanceThemeCssVariable,
+  INSTANCE_THEME_STYLESHEET_PATH,
+  type InstanceThemeRecord,
+  type InstanceThemeSurface,
+} from './instance-theme.js'
+export {
   apiContractOperations,
   apiContractSchemas,
   generateOpenApiDocument,

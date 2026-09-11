@@ -3461,6 +3461,68 @@ dialog h2,
   color: var(--ez-muted);
 }
 
+/* The instance palette editor (issue 591). Grouped rather than one long list: the
+   contrast rule means a dark palette needs most of the slots set, so the whole
+   token set is offered, and the grouping is what keeps that from reading as a
+   wall of pickers. */
+.settings-theme {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.theme-group {
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+.theme-group legend {
+  padding: 0 6px;
+  font-weight: 600;
+}
+.theme-slot {
+  display: grid;
+  grid-template-columns: 1fr auto 10ch;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 6px 0;
+}
+.theme-slot + .theme-slot {
+  border-top: 1px solid var(--ez-border);
+}
+.theme-slot label {
+  grid-column: 1;
+}
+/* The hint belongs to the row above it, so it spans the whole row rather than
+   squeezing into the label column and pushing the controls out of line. */
+.theme-slot .field-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 13px;
+  color: var(--ez-muted);
+}
+.theme-slot input[type='color'] {
+  width: 40px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: none;
+}
+/* Tabular figures and a monospace face, because these are read character by
+   character when one is compared against a brand document. */
+.theme-hex {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font-family: var(--ez-font-mono);
+  font-size: 13px;
+}
+
 .settings-brand-slots {
   display: grid;
   gap: 16px;

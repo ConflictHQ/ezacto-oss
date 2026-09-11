@@ -15282,6 +15282,170 @@
         ]
       }
     },
+    "/api/v1/settings/theme": {
+      "get": {
+        "operationId": "getInstanceTheme",
+        "summary": "The palette this instance wears, or null for the built-in theme",
+        "tags": [
+          "instance-theme"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceThemeEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/settings/theme",
+        "x-ezacto-generate-client": true
+      },
+      "post": {
+        "operationId": "setInstanceTheme",
+        "summary": "Replace the instance palette, subject to the contrast rule",
+        "tags": [
+          "instance-theme"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceThemeEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/settings/theme",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstanceThemeInput"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "clearInstanceTheme",
+        "summary": "Return this instance to the built-in theme",
+        "tags": [
+          "instance-theme"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/settings/theme",
+        "x-ezacto-generate-client": true
+      }
+    },
     "/api/v1/two-factor": {
       "get": {
         "operationId": "getTwoFactorStatus",
@@ -27833,6 +27997,9 @@
             "items": {
               "$ref": "#/components/schemas/BrandMark"
             }
+          },
+          "palette": {
+            "$ref": "#/components/schemas/InstancePalette"
           }
         },
         "additionalProperties": false
@@ -27874,6 +28041,61 @@
           "file": {
             "type": "string",
             "format": "binary"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InstancePalette": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string",
+          "pattern": "^#[0-9A-F]{6}$"
+        }
+      },
+      "InstanceTheme": {
+        "type": "object",
+        "required": [
+          "palette",
+          "updated_at"
+        ],
+        "properties": {
+          "palette": {
+            "$ref": "#/components/schemas/InstancePalette"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InstanceThemeEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InstanceTheme"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "InstanceThemeInput": {
+        "type": "object",
+        "required": [
+          "palette"
+        ],
+        "properties": {
+          "palette": {
+            "$ref": "#/components/schemas/InstancePalette"
           }
         },
         "additionalProperties": false

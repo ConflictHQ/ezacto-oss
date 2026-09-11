@@ -353,12 +353,23 @@ export const installBrandRoute = <Bindings extends object>(
   options: {
     organizationName: () => Promise<string>
     assets: (env: Bindings) => Promise<readonly StoredBrandAsset[]>
+    /**
+     * The instance palette (#591), so a portal can wear the same colours as the
+     * app rather than approximating them from a screenshot. Absent where the
+     * entry composes no theme surface; `{}` where the instance is on the
+     * built-in theme, which is the honest answer to "what has been overridden?"
+     * and is what lets a caller tell "nothing set" from "not available".
+     */
+    palette?: (env: Bindings) => Promise<Readonly<Record<string, string>> | null>
   },
 ): void => {
   api.get('/brand', async (context) => {
-    const [organizationName, assets] = await Promise.all([
+    const [organizationName, assets, palette] = await Promise.all([
       options.organizationName(),
       options.assets(context.env),
+      options.palette === undefined
+        ? Promise.resolve(undefined)
+        : options.palette(context.env),
     ])
     return context.json(
       {
@@ -370,6 +381,7 @@ export const installBrandRoute = <Bindings extends object>(
             content_type: asset.contentType,
             updated_at: asset.updatedAt,
           })),
+          ...(palette === undefined ? {} : { palette: palette ?? {} }),
         },
         links: { self: '/api/v1/brand' },
       },

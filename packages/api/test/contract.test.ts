@@ -5,6 +5,7 @@ import {
   installQuickBooksRoutes,
   installBrandAssetRoutes,
   installBrandRoute,
+  installInstanceThemeRoutes,
   apiContractOperations,
   createApiApp,
   generateOpenApiDocument,
@@ -206,6 +207,15 @@ const documentedApp = () =>
       installBrandRoute(api, {
         organizationName: async () => "Contract Fixture",
         assets: (env) => brandAssets.list(env),
+      });
+      installInstanceThemeRoutes(api, {
+        surface: {
+          read: async () => null,
+          write: async () => ({ palette: {}, updatedAt: "2026-08-28T12:00:00.000Z" }),
+          clear: async () => false,
+        },
+        contract: { slots: ["ground"], base: { ground: "#FFFFFF" }, requirements: [] },
+        clock: () => "2026-08-28T12:00:00.000Z",
       });
       installUserEmailRoutes(api, {
         service: userEmails,

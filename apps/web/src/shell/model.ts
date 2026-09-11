@@ -1013,6 +1013,28 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.getEmailHealth(withSignal(signal))).data,
   getBackupStatus: async (signal) =>
     (await client.getBackupStatus(withSignal(signal))).data,
+  // Issue 593 shipped the Accounting settings section reading these four and
+  // nothing supplying them, so the screen reported "not configured" on every
+  // deployment and the connect button never appeared. The suite did not catch
+  // it because the settings tests inject their own API; this adapter is the
+  // only place the real client is bound to that screen.
+  getQuickBooksConnection: async (signal) =>
+    (await client.getQuickBooksConnection(withSignal(signal))).data,
+  startQuickBooksAuthorization: async (signal) =>
+    (await client.startQuickBooksAuthorization(withSignal(signal))).data,
+  updateQuickBooksSettings: async (allowOnlinePayment, signal) =>
+    (
+      await client.updateQuickBooksSettings({
+        body: { allow_online_payment: allowOnlinePayment },
+        ...withSignal(signal),
+      })
+    ).data,
+  disconnectQuickBooks: (signal) => client.disconnectQuickBooks(withSignal(signal)),
+  getInstanceTheme: async (signal) =>
+    (await client.getInstanceTheme(withSignal(signal))).data,
+  setInstanceTheme: async (palette, signal) =>
+    (await client.setInstanceTheme({ body: { palette }, ...withSignal(signal) })).data,
+  clearInstanceTheme: (signal) => client.clearInstanceTheme(withSignal(signal)),
   listSenderIdentities: async (signal) =>
     (await client.listSenderIdentities(withSignal(signal))).data,
   listSsoDomains: async (signal) =>

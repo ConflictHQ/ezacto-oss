@@ -5,12 +5,15 @@ import {
   type Whoami,
 } from '@ezacto/client'
 import { renderDataTable } from '../components/data-table.js'
+import { defaultTheme, themeManifest } from '../theme.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
 import {
   apiErrorMessage,
   brandAssetAccept,
   brandAssetRejection,
   brandAssetSlotCopy,
+  themeSlotCopy,
+  themeSlotGroups,
   noteSettingsPatch,
   ratePercentage,
   senderVerificationLabel,
@@ -19,6 +22,7 @@ import {
   ssoVerificationMessage,
   timeTrackingFacts,
   type CompanySettingsApi,
+  type InstanceThemeView,
   type BackupRun,
 } from './model.js'
 
@@ -158,6 +162,13 @@ const facts = (
  * executive manager, email health to an administrator alone. Saying which is the
  * difference between a section an operator can act on and one that looks broken.
  */
+/**
+ * The built-in colours, as the swatch to show for a slot the operator has not
+ * set. Read from the shipped theme rather than restated, so a retuned token
+ * moves the control with it.
+ */
+const themeBaseline: Readonly<Record<string, string>> = themeManifest[defaultTheme].colors
+
 const messageFor = (error: unknown, forbidden: string, fallback: string): string => {
   if (error instanceof EzactoApiError && error.status === 403) return forbidden
   return error instanceof Error ? error.message : fallback
@@ -245,6 +256,13 @@ export const createModuleSettingsController = (
   const quickBooksAllowPayment = required<HTMLInputElement>('[data-quickbooks-allow-payment]')
   const quickBooksDisconnect = required<HTMLButtonElement>('[data-quickbooks-disconnect]')
   const quickBooksResult = required<HTMLElement>('[data-settings-quickbooks-result]')
+  const themeStatus = required<HTMLElement>('[data-settings-theme-status]')
+  const themeSlots = required<HTMLElement>('[data-settings-theme-slots]')
+  const themeActions = required<HTMLElement>('[data-settings-theme-actions]')
+  const themeSave = required<HTMLButtonElement>('[data-theme-save]')
+  const themeRevert = required<HTMLButtonElement>('[data-theme-revert]')
+  const themeReset = required<HTMLButtonElement>('[data-theme-reset]')
+  const themeResult = required<HTMLElement>('[data-settings-theme-result]')
   const ssoStatus = required<HTMLElement>('[data-settings-sso-status]')
   const ssoDomains = required<HTMLElement>('[data-settings-sso-domains]')
   const ssoForm = required<HTMLFormElement>('[data-sso-domain-form]')
@@ -259,6 +277,14 @@ export const createModuleSettingsController = (
   let ssoBusy = false
   let brandState: readonly BrandAssetState[] = []
   let brandBusy = false
+
+  // What the server holds, and what the operator has typed since. Kept apart so
+  // "undo my changes" is a real answer and so a save sends the whole palette --
+  // the contrast rule is a property of the palette, not of one colour, so a
+  // partial send could only be checked against whatever happened to be stored.
+  let themeStored: Readonly<Record<string, string>> = {}
+  let themeDraft: Record<string, string> = {}
+  let themeBusy = false
 
   // The form is wired once, not on every activation: a sign-out and a sign-in
   // back into the page would otherwise leave two listeners on it and send the
@@ -795,6 +821,121 @@ export const createModuleSettingsController = (
    * no Intuit keys is told that too -- offering a connect button that answers
    * 404 is worse than offering none.
    */
+  /**
+   * One colour control per slot, grouped.
+   *
+   * Two inputs bound to one value: the swatch is how a colour is picked and the
+   * text box is how a brand hex is pasted, which is the way an operator
+   * actually arrives here -- with a value out of a brand document rather than a
+   * wish to hunt for it in a picker. Neither is authoritative; the draft is.
+   */
+  const renderThemeSlots = (): void => {
+    themeSlots.replaceChildren(
+      ...themeSlotGroups.flatMap((group) => {
+        const slots = themeSlotCopy.filter((copy) => copy.group === group)
+        if (slots.length === 0) return []
+        const section = document.createElement('fieldset')
+        section.className = 'theme-group'
+        const legend = document.createElement('legend')
+        legend.textContent = group
+        section.append(legend)
+
+        for (const copy of slots) {
+          const row = document.createElement('div')
+          row.className = 'theme-slot'
+          row.dataset.themeSlot = copy.slot
+
+          const label = document.createElement('label')
+          label.htmlFor = `ez-theme-${copy.slot}`
+          label.textContent = copy.label
+
+          const swatch = document.createElement('input')
+          swatch.type = 'color'
+          swatch.id = `ez-theme-${copy.slot}`
+          swatch.dataset.themeSwatch = copy.slot
+
+          const hex = document.createElement('input')
+          hex.type = 'text'
+          hex.className = 'theme-hex'
+          hex.dataset.themeHex = copy.slot
+          hex.spellcheck = false
+          hex.setAttribute('aria-label', `${copy.label} hex value`)
+          hex.placeholder = themeBaseline[copy.slot] ?? '#000000'
+
+          const value = themeDraft[copy.slot] ?? themeBaseline[copy.slot] ?? '#000000'
+          swatch.value = value.toLowerCase()
+          hex.value = themeDraft[copy.slot] ?? ''
+
+          swatch.addEventListener('input', () => {
+            themeDraft[copy.slot] = swatch.value.toUpperCase()
+            hex.value = swatch.value.toUpperCase()
+          })
+          hex.addEventListener('input', () => {
+            const typed = hex.value.trim()
+            if (typed === '') {
+              // Emptying the box is how one slot goes back to the built-in
+              // colour without retyping the rest of the palette.
+              delete themeDraft[copy.slot]
+              swatch.value = (themeBaseline[copy.slot] ?? '#000000').toLowerCase()
+              return
+            }
+            themeDraft[copy.slot] = typed.toUpperCase()
+            if (/^#[0-9A-Fa-f]{6}$/u.test(typed)) swatch.value = typed.toLowerCase()
+          })
+
+          row.append(label, swatch, hex)
+          if (copy.hint !== undefined) {
+            const hint = document.createElement('p')
+            hint.className = 'field-hint'
+            hint.textContent = copy.hint
+            row.append(hint)
+          }
+          section.append(row)
+        }
+        return [section]
+      }),
+    )
+  }
+
+  const showTheme = (view: InstanceThemeView): void => {
+    themeStored = view?.palette ?? {}
+    themeDraft = { ...themeStored }
+    themeSlots.hidden = false
+    themeActions.hidden = false
+    themeReset.hidden = view === null
+    themeStatus.textContent =
+      view === null
+        ? 'This instance uses the built-in colours.'
+        : 'This instance has colours of its own.'
+    renderThemeSlots()
+  }
+
+  const loadInstanceTheme = async (
+    identity: Whoami,
+    active: ActiveSession,
+  ): Promise<void> => {
+    if (identity.profile !== 'administrator') {
+      themeStatus.textContent = 'Changing how this instance looks is an administrator action.'
+      return
+    }
+    if (api.getInstanceTheme === undefined) {
+      themeStatus.textContent = 'This deployment does not store an instance theme.'
+      return
+    }
+    try {
+      const view = await api.getInstanceTheme(active.signal)
+      active.present(() => showTheme(view))
+    } catch (error) {
+      active.presentFailure(error, () => {
+        themeStatus.textContent = messageFor(
+          error,
+          'Changing how this instance looks is an administrator action.',
+          'The instance theme could not be read.',
+        )
+      })
+    }
+  }
+
   const loadQuickBooks = async (identity: Whoami, active: ActiveSession): Promise<void> => {
     if (identity.profile !== 'administrator') {
       quickBooksStatus.textContent =
@@ -1018,6 +1159,75 @@ export const createModuleSettingsController = (
       })
   })
 
+  themeSave.addEventListener('click', () => {
+    const active = currentSession()
+    if (active === null || themeBusy || api.setInstanceTheme === undefined) return
+    themeBusy = true
+    themeSave.disabled = true
+    themeResult.textContent = 'Saving…'
+    void api
+      .setInstanceTheme({ ...themeDraft }, active.signal)
+      .then((view) => {
+        active.present(() => {
+          showTheme(view)
+          themeResult.textContent =
+            'Saved. Reload to see the new colours.'
+        })
+      })
+      .catch((error: unknown) => {
+        active.presentFailure(error, () => {
+          // The draft is left exactly as typed. A refused palette is one the
+          // operator is part way through fixing, and throwing it away would
+          // make them start the whole palette again to correct one slot.
+          themeResult.textContent = messageFor(
+            error,
+            'Changing how this instance looks is an administrator action.',
+            'Those colours could not be saved.',
+          )
+        })
+      })
+      .finally(() => {
+        themeBusy = false
+        if (currentSession() === active) themeSave.disabled = false
+      })
+  })
+
+  themeRevert.addEventListener('click', () => {
+    if (themeBusy) return
+    themeDraft = { ...themeStored }
+    renderThemeSlots()
+    themeResult.textContent = 'Your unsaved changes have been discarded.'
+  })
+
+  themeReset.addEventListener('click', () => {
+    const active = currentSession()
+    if (active === null || themeBusy || api.clearInstanceTheme === undefined) return
+    themeBusy = true
+    themeReset.disabled = true
+    void api
+      .clearInstanceTheme(active.signal)
+      .then(() => {
+        active.present(() => {
+          showTheme(null)
+          themeResult.textContent =
+            'Back to the built-in colours. Reload to see them.'
+        })
+      })
+      .catch((error: unknown) => {
+        active.presentFailure(error, () => {
+          themeResult.textContent = messageFor(
+            error,
+            'Changing how this instance looks is an administrator action.',
+            'The instance theme could not be reset.',
+          )
+        })
+      })
+      .finally(() => {
+        themeBusy = false
+        if (currentSession() === active) themeReset.disabled = false
+      })
+  })
+
   quickBooksDisconnect.addEventListener('click', () => {
     const active = currentSession()
     if (active === null || api.disconnectQuickBooks === undefined) return
@@ -1068,6 +1278,7 @@ export const createModuleSettingsController = (
         loadEmail(identity, active),
         loadBackups(identity, active),
         loadQuickBooks(identity, active),
+        loadInstanceTheme(identity, active),
         loadBrandAssets(identity, active),
         loadSsoDomains(identity, active),
       ])

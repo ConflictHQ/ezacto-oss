@@ -1243,6 +1243,42 @@ const brandAssetOperations: ApiContractOperation[] = [
   },
 ];
 
+const instanceThemeOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/settings/theme",
+    operationId: "getInstanceTheme",
+    summary: "The palette this instance wears, or null for the built-in theme",
+    tag: "instance-theme",
+    responseStatus: 200,
+    responseSchema: "InstanceThemeEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/settings/theme",
+    operationId: "setInstanceTheme",
+    summary: "Replace the instance palette, subject to the contrast rule",
+    tag: "instance-theme",
+    responseStatus: 200,
+    responseSchema: "InstanceThemeEnvelope",
+    requestSchema: "InstanceThemeInput",
+    // The palette is the whole request, and the generator reads this to decide
+    // whether the client argument may default to `{}`.
+    requestRequired: true,
+    sessionOnly: true,
+  },
+  {
+    method: "delete",
+    path: "/api/v1/settings/theme",
+    operationId: "clearInstanceTheme",
+    summary: "Return this instance to the built-in theme",
+    tag: "instance-theme",
+    responseStatus: 204,
+    sessionOnly: true,
+  },
+];
+
 const twoFactorOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -1929,6 +1965,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...quickBooksOperations,
   ...ssoDomainOperations,
   ...brandAssetOperations,
+  ...instanceThemeOperations,
   ...twoFactorOperations,
   ...userEmailOperations,
   ...teamOperations,
@@ -6040,6 +6077,10 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: {
       organization_name: stringSchema,
       assets: { type: "array", items: reference("BrandMark") },
+      // Present only where the instance composes a theme surface, so a caller
+      // can tell "this instance has set nothing" (`{}`) from "this deployment
+      // cannot tell me" (absent).
+      palette: reference("InstancePalette"),
     },
     additionalProperties: false,
   },
@@ -6054,6 +6095,36 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object",
     required: ["file"],
     properties: { file: { type: "string", format: "binary" } },
+    additionalProperties: false,
+  },
+  // Slot name to colour. The slot names are the web shell's design tokens and
+  // are deliberately not enumerated here: the shell owns that list, and a copy
+  // in the contract would be a second source able to drift from the stylesheet
+  // a browser actually loads. The value pattern is enumerable and is enforced,
+  // in the route, in the schema, and again on the way out.
+  InstancePalette: {
+    type: "object",
+    additionalProperties: { type: "string", pattern: "^#[0-9A-F]{6}$" },
+  },
+  InstanceTheme: {
+    type: "object",
+    required: ["palette", "updated_at"],
+    properties: {
+      palette: reference("InstancePalette"),
+      updated_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  InstanceThemeEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: nullable(reference("InstanceTheme")) },
+    additionalProperties: false,
+  },
+  InstanceThemeInput: {
+    type: "object",
+    required: ["palette"],
+    properties: { palette: reference("InstancePalette") },
     additionalProperties: false,
   },
   SsoDomainInput: {

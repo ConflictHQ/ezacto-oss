@@ -39,7 +39,7 @@ const main = async (): Promise<void> => {
   process.umask(0o077)
   const config = readContainerConfig(process.env)
   const runtime = await createContainerRuntime(config)
-  const app = createApp(runtime.services, runtime.brandAssets)
+  const app = createApp(runtime.services, runtime.brandAssets, runtime.instanceTheme)
   const server = serve({
     fetch: (request, bindings) =>
       app.fetch(externalRequest(request, bindings, config), config.appEnv),

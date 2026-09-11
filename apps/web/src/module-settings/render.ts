@@ -47,6 +47,18 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <div class="settings-brand-slots" data-settings-brand-slots hidden></div>
       <p class="form-result" data-settings-brand-result role="status" aria-live="polite"></p>
     </section>
+    <section class="settings-section" data-settings-section="appearance" aria-labelledby="settings-appearance-title">
+      <header><h2 id="settings-appearance-title">Appearance</h2>
+      <p>The colours this instance wears, for everyone who uses it. Leave them alone and it looks the way it shipped. Every palette is checked for readability before it is saved &mdash; a colour that would leave text unreadable against what sits behind it is refused, and the message says which one and why.</p></header>
+      <p class="form-result" data-settings-theme-status role="status" aria-live="polite">Loading appearance&hellip;</p>
+      <div class="settings-theme" data-settings-theme-slots hidden></div>
+      <div class="settings-form" data-settings-theme-actions hidden>
+        <button class="primary-action" type="button" data-theme-save>Save colours</button>
+        <button type="button" data-theme-revert>Undo my changes</button>
+        <button type="button" class="danger-action" data-theme-reset hidden>Back to the built-in theme</button>
+      </div>
+      <p class="form-result" data-settings-theme-result role="status" aria-live="polite"></p>
+    </section>
     <section class="settings-section" data-settings-section="integrations" aria-labelledby="settings-integrations-title">
       <header><h2 id="settings-integrations-title">Accounting</h2>
       <p>Invoices raised here are copied into QuickBooks Online, and payments recorded there come back. Your client tree becomes customers and sub-customers, so a subsidiary is filed under its parent rather than beside it. Connecting is a grant over your whole book, so only an administrator can do it.</p></header>
