@@ -1178,6 +1178,13 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   archiveProjectUserAssignment: async (id, signal) => {
     await client.deleteUserAssignment({ id, ...withSignal(signal) })
   },
+  getActivityLog: async (range, signal) =>
+    (
+      await client.listActivityLog({
+        query: { from: range.from, to: range.to, per_page: 200 },
+        ...withSignal(signal),
+      })
+    ).data,
   listDirectoryProjectAttachments: async (projectId, signal) =>
     (await client.listProjectAttachments({ projectId, ...withSignal(signal) })).data,
   uploadDirectoryProjectAttachment: async (projectId, commandId, body, signal) =>

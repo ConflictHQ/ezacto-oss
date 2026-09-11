@@ -1,5 +1,6 @@
 import { canViewMoneyField } from '@ezacto/core'
 import type {
+  ActivityLog,
   ClientRollupReport,
   ContractorCostReport,
   DetailedTimeReport,
@@ -21,6 +22,7 @@ export type ReportKind =
   | 'project-budget'
   | 'contractor-cost'
   | 'detailed-time'
+  | 'activity-log'
 
 /**
  * The Time report's four sub-tabs. They are folds of one response, so the tab
@@ -47,6 +49,45 @@ export interface DetailedTimeOptions {
   readonly hours: DetailedTimeHours
   readonly grouping: DetailedTimeGrouping
   readonly activeProjectsOnly: boolean
+}
+
+/**
+ * The activity log is a feed, not a table of figures: it answers "what
+ * happened" over a range rather than "how much". It carries no money at all,
+ * which is why it needs no money gate of its own -- the route asks for
+ * `reports:read` and the financial-profile check the strip already applies is
+ * the whole of it.
+ */
+export interface ActivityLogEntry {
+  readonly event_id: string
+  readonly event_type: string
+  readonly occurred_at: string
+  readonly aggregate: ActivityLog['aggregate']
+  readonly payload: Readonly<Record<string, unknown>>
+}
+
+/**
+ * `invoice.payment.recorded` reads as "Invoice payment recorded".
+ *
+ * Built from the wire value rather than a hand-kept map, because the events are
+ * emitted by the outbox and a map here would silently print a raw dotted string
+ * the first time somebody adds one -- which is the moment the log is most worth
+ * reading.
+ */
+export const activityEventLabel = (eventType: string): string => {
+  const words = eventType.split('.').join(' ').split('_').join(' ').trim()
+  if (words === '') return 'Event'
+  return words[0]!.toLocaleUpperCase('en-US') + words.slice(1)
+}
+
+/** `invoice` + `1314` -> `Invoice #1314`, the way the rest of the app says it. */
+export const activitySubjectLabel = (
+  aggregate: Readonly<ActivityLog['aggregate']>,
+): string => {
+  const kind = String(aggregate.type ?? '').trim()
+  const id = aggregate.id
+  const name = kind === '' ? 'Record' : kind[0]!.toLocaleUpperCase('en-US') + kind.slice(1)
+  return id === undefined || id === null ? name : `${name} #${String(id)}`
 }
 
 export interface ReportCatalogPage {
@@ -118,6 +159,10 @@ export interface ReportWorkspaceApi {
     },
     signal?: AbortSignal,
   ): Promise<DetailedTimeReport>
+  getActivityLog?(
+    range: { readonly from: string; readonly to: string },
+    signal?: AbortSignal,
+  ): Promise<readonly ActivityLogEntry[]>
   /**
    * No grouping parameter: the response carries all four foldings, because
    * they are one dataset and asking four times invites four answers.
@@ -145,6 +190,7 @@ const reportKinds = new Set<ReportKind>([
   'project-budget',
   'contractor-cost',
   'detailed-time',
+  'activity-log',
 ])
 
 const timeReportTabs = new Set<TimeReportTab>([

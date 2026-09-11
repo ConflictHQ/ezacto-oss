@@ -11,6 +11,9 @@ const reportKindNames: readonly { readonly kind: ReportKind; readonly label: str
   { kind: 'uninvoiced', label: 'Uninvoiced work' },
   { kind: 'detailed-time', label: 'Detailed time' },
   { kind: 'client-rollup', label: 'Client rollup' },
+  // Not a table of figures but a feed of what happened, which is why it sits
+  // after the reports that answer "how much" rather than among them.
+  { kind: 'activity-log', label: 'Activity log' },
   { kind: 'project-budget', label: 'Project budget' },
   // Last, and the only kind the browser drops for a profile that reads the
   // financial ones: it is entirely cost, so the administrator alone keeps it.

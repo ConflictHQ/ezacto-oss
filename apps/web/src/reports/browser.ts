@@ -28,6 +28,8 @@ import { teamCapabilities, teamUtilization } from '../team/model.js'
 import {
   billablePercent,
   canReadCostReports,
+  activityEventLabel,
+  activitySubjectLabel,
   canReadFinancialReports,
   decimalHours,
   detailedTimeCsv,
@@ -46,6 +48,7 @@ import {
   type DetailedTimeHours,
   type DetailedTimeOptions,
   type ReportFilters,
+  type ActivityLogEntry,
   type ReportKind,
   type ReportWorkspaceApi,
   type TimeReportTab,
@@ -560,6 +563,63 @@ const renderProjectBudget = (
  * and `is_contractor` is a flag on the row -- so a column headed "Contractor"
  * would be naming employees as contractors.
  */
+/**
+ * What happened, newest first.
+ *
+ * A feed rather than a table of figures, so it is read down a column of times
+ * instead of across one of amounts. It carries no money, which is why nothing
+ * here is masked: the whole log is the same class of fact as the tab that
+ * reaches it.
+ */
+const renderActivityLog = (
+  entries: readonly ActivityLogEntry[],
+  range: { readonly from: string; readonly to: string },
+): DocumentFragment => {
+  const fragment = document.createDocumentFragment()
+  fragment.append(
+    reportHeading('Activity log', `${range.from} through ${range.to} · newest first`),
+  )
+  if (entries.length === 0) {
+    fragment.append(
+      textElement('p', 'Nothing was recorded in this period.', 'report-empty'),
+    )
+    return fragment
+  }
+  const wrapper = element('div', 'report-table-wrap')
+  const table = element('table', 'report-table')
+  const head = element('thead')
+  const headerRow = element('tr')
+  for (const label of ['When', 'Event', 'Subject']) {
+    const cell = textElement('th', label)
+    cell.scope = 'col'
+    headerRow.append(cell)
+  }
+  head.append(headerRow)
+  const body = element('tbody')
+  // Sorted here rather than trusted from the wire: the route orders by the
+  // recorded time and the column shown is the occurred time, and for a replayed
+  // or back-dated event those disagree.
+  const ordered = [...entries].sort((left, right) =>
+    right.occurred_at.localeCompare(left.occurred_at),
+  )
+  for (const entry of ordered) {
+    const row = element('tr')
+    const when = element('th')
+    when.scope = 'row'
+    const stamp = element('time')
+    stamp.dateTime = entry.occurred_at
+    stamp.textContent = entry.occurred_at.replace('T', ' ').slice(0, 19)
+    when.append(stamp)
+    row.append(when, textElement('td', activityEventLabel(entry.event_type)))
+    row.append(textElement('td', activitySubjectLabel(entry.aggregate)))
+    body.append(row)
+  }
+  table.append(head, body)
+  wrapper.append(table)
+  fragment.append(wrapper)
+  return fragment
+}
+
 const renderContractorCost = (
   report: Readonly<ContractorCostReport>,
 ): DocumentFragment => {
@@ -1455,9 +1515,13 @@ export const createReportsController = (
       kind === 'project-budget' ||
       kind === 'my-hours' ||
       kind === 'contractor-cost' ||
+      kind === 'activity-log' ||
       kind === 'time'
     projectField.hidden =
-      kind === 'client-rollup' || kind === 'contractor-cost' || kind === 'time'
+      kind === 'client-rollup' ||
+      kind === 'contractor-cost' ||
+      kind === 'activity-log' ||
+      kind === 'time'
     // The catalog switch exists to widen those two pickers. With neither on
     // screen it is a control that changes nothing, which is worse than an
     // absent one: the first person to move it waits for something to happen.
@@ -1595,7 +1659,8 @@ export const createReportsController = (
       | MyHoursReport
       | ContractorCostReport
       | DetailedTimeReport
-      | TimeReport,
+      | TimeReport
+      | readonly ActivityLogEntry[],
   ): void => {
     if (filters.kind === 'time') {
       lastTimeReport = report as TimeReport
@@ -1609,6 +1674,10 @@ export const createReportsController = (
       results.replaceChildren(renderMyHours(report as MyHoursReport))
     } else if (filters.kind === 'uninvoiced') {
       results.replaceChildren(renderUninvoiced(report as UninvoicedReport))
+    } else if (filters.kind === 'activity-log') {
+      results.replaceChildren(
+        renderActivityLog(report as readonly ActivityLogEntry[], filters),
+      )
     } else if (filters.kind === 'contractor-cost') {
       results.replaceChildren(renderContractorCost(report as ContractorCostReport))
     } else if (filters.kind === 'client-rollup') {
@@ -1652,7 +1721,8 @@ export const createReportsController = (
       api.getMyHoursReport === undefined ||
       api.getContractorCostReport === undefined ||
       api.getDetailedTimeReport === undefined ||
-      api.getTimeReport === undefined
+      api.getTimeReport === undefined ||
+      api.getActivityLog === undefined
     ) {
       clearReportPresentation()
       status.textContent = 'Reports are unavailable in this build.'
@@ -1696,6 +1766,8 @@ export const createReportsController = (
               },
               active.signal,
             )
+        : filters.kind === 'activity-log'
+          ? await api.getActivityLog({ from: filters.from, to: filters.to }, active.signal)
         : filters.kind === 'uninvoiced'
           ? await api.getUninvoicedReport(
               {
