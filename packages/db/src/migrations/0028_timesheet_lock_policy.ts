@@ -52,6 +52,74 @@ const withdrawnImportedOverride = `EXISTS (
     AND submission.version > 0 AND submission.rejection_reason IS NOT NULL
 )`
 
+export const timesheetSubmissionsUpdateGuard = `CREATE TRIGGER timesheet_submissions_update_guard
+    BEFORE UPDATE ON timesheet_submissions
+    BEGIN
+      SELECT CASE
+        WHEN COALESCE((SELECT json_extract(modules, '$.approval') FROM organizations WHERE id = 1), 0) <> 1
+          THEN RAISE(ABORT, 'timesheet approval module is disabled')
+        WHEN OLD.id <> NEW.id OR OLD.user_id <> NEW.user_id
+          OR OLD.period_start <> NEW.period_start OR OLD.period_end <> NEW.period_end
+          OR OLD.origin <> NEW.origin OR OLD.source_status IS NOT NEW.source_status
+          OR OLD.source_observed_at IS NOT NEW.source_observed_at
+          OR (OLD.submitted_by_user_id IS NOT NEW.submitted_by_user_id AND NOT (
+            OLD.status = 'unsubmitted' AND NEW.status = 'submitted'
+            AND OLD.submitted_by_user_id IS NULL AND NEW.submitted_by_user_id = NEW.user_id
+          )) OR OLD.created_at <> NEW.created_at
+          THEN RAISE(ABORT, 'timesheet submission identity is immutable')
+        WHEN NEW.version <> OLD.version + 1
+          THEN RAISE(ABORT, 'timesheet submission version must advance once')
+        WHEN NOT ((OLD.status = 'unsubmitted' AND NEW.status = 'submitted')
+          OR (OLD.status = 'submitted' AND NEW.status IN ('unsubmitted','approved'))
+          OR (OLD.status = 'approved' AND NEW.status = 'unsubmitted'))
+          THEN RAISE(ABORT, 'invalid timesheet submission transition')
+        WHEN OLD.status = 'approved' AND NEW.status = 'unsubmitted' AND NOT (
+          ${privilegedActor('NEW.reviewed_by_user_id')}
+        ) THEN RAISE(ABORT, 'timesheet withdrawal actor is not an organization policy administrator')
+        WHEN OLD.status = 'unsubmitted' AND NEW.status = 'submitted' AND EXISTS (
+          SELECT 1 FROM time_entries entry WHERE entry.user_id = NEW.user_id
+            AND entry.spent_date BETWEEN NEW.period_start AND NEW.period_end
+            AND (entry.timer_started_at IS NOT NULL
+              OR (entry.started_time IS NOT NULL AND entry.ended_time IS NULL))
+        ) THEN RAISE(ABORT, 'running time entries cannot be submitted')
+        WHEN OLD.status = 'unsubmitted' AND NEW.status = 'submitted'
+          AND NOT EXISTS (SELECT 1 FROM time_entries entry WHERE entry.user_id = NEW.user_id
+            AND entry.spent_date BETWEEN NEW.period_start AND NEW.period_end
+            AND entry.approval_status = 'unsubmitted')
+          AND NOT EXISTS (SELECT 1 FROM expenses expense WHERE expense.user_id = NEW.user_id
+            AND expense.spent_date BETWEEN NEW.period_start AND NEW.period_end
+            AND expense.approval_status = 'unsubmitted')
+          THEN RAISE(ABORT, 'timesheet period has no unsubmitted entries')
+        WHEN OLD.status = 'submitted' AND NEW.status = 'approved' AND (
+          (NOT EXISTS (SELECT 1 FROM time_entries entry
+            WHERE entry.timesheet_submission_id = NEW.id AND entry.approval_status = 'submitted')
+           AND NOT EXISTS (SELECT 1 FROM expenses expense
+            WHERE expense.timesheet_submission_id = NEW.id AND expense.approval_status = 'submitted'))
+          OR EXISTS (SELECT 1 FROM time_entries entry WHERE entry.user_id = NEW.user_id
+            AND entry.spent_date BETWEEN NEW.period_start AND NEW.period_end
+            AND (entry.timesheet_submission_id IS NOT NEW.id
+              OR entry.approval_status <> 'submitted' OR entry.timer_started_at IS NOT NULL
+              OR (entry.started_time IS NOT NULL AND entry.ended_time IS NULL)))
+          OR EXISTS (SELECT 1 FROM expenses expense WHERE expense.user_id = NEW.user_id
+            AND expense.spent_date BETWEEN NEW.period_start AND NEW.period_end
+            AND (expense.timesheet_submission_id IS NOT NEW.id
+              OR expense.approval_status <> 'submitted'))
+        ) THEN RAISE(ABORT, 'timesheet period changed before approval')
+      END;
+    END`
+
+export const timesheetSubmissionsRejectEntries = `CREATE TRIGGER timesheet_submissions_reject_entries
+    AFTER UPDATE OF status ON timesheet_submissions
+    WHEN OLD.status IN ('submitted','approved') AND NEW.status = 'unsubmitted'
+    BEGIN
+      UPDATE time_entries SET approval_status = 'unsubmitted', updated_at = NEW.updated_at
+      WHERE timesheet_submission_id = NEW.id
+        AND approval_status = CASE OLD.status WHEN 'approved' THEN 'approved' ELSE 'submitted' END;
+      UPDATE expenses SET approval_status = 'unsubmitted', updated_at = NEW.updated_at
+      WHERE timesheet_submission_id = NEW.id
+        AND approval_status = CASE OLD.status WHEN 'approved' THEN 'approved' ELSE 'submitted' END;
+    END`
+
 /**
  * Durable organization-wide policy facts. A manual fact is a global inclusive
  * cutoff (all tracked dates through period_end); an automatic fact is one exact
@@ -170,7 +238,6 @@ export const timesheetLockPolicyMigration = [
   `CREATE TRIGGER timesheet_lock_windows_delete_guard
     BEFORE DELETE ON timesheet_lock_windows
     BEGIN SELECT RAISE(ABORT, 'timesheet lock facts are append-only'); END`,
-
   `CREATE TRIGGER time_entries_policy_lock_insert_guard
     BEFORE INSERT ON time_entries
     WHEN ${activeLockFor('NEW.spent_date')}
@@ -199,7 +266,6 @@ export const timesheetLockPolicyMigration = [
     BEFORE DELETE ON expenses
     WHEN ${activeLockFor('OLD.spent_date')}
     BEGIN SELECT RAISE(ABORT, 'expense date is locked by timesheet policy'); END`,
-
   `CREATE TRIGGER timesheet_lock_windows_event_insert
     AFTER INSERT ON timesheet_lock_windows
     BEGIN
@@ -286,7 +352,6 @@ export const timesheetLockPolicyMigration = [
     BEFORE DELETE ON event_outbox
     WHEN OLD.aggregate_type = 'timesheet_lock'
     BEGIN SELECT RAISE(ABORT, 'timesheet lock events are immutable'); END`,
-
   `DROP TRIGGER time_entries_source_approval_insert_guard`,
   `CREATE TRIGGER time_entries_source_approval_insert_guard
     BEFORE INSERT ON time_entries
@@ -463,75 +528,10 @@ export const timesheetLockPolicyMigration = [
         AND source_approval_status = NEW.source_approval_status
         AND approval_status = 'unsubmitted';
     END`,
-
   `DROP TRIGGER timesheet_submissions_update_guard`,
-  `CREATE TRIGGER timesheet_submissions_update_guard
-    BEFORE UPDATE ON timesheet_submissions
-    BEGIN
-      SELECT CASE
-        WHEN COALESCE((SELECT json_extract(modules, '$.approval') FROM organizations WHERE id = 1), 0) <> 1
-          THEN RAISE(ABORT, 'timesheet approval module is disabled')
-        WHEN OLD.id <> NEW.id OR OLD.user_id <> NEW.user_id
-          OR OLD.period_start <> NEW.period_start OR OLD.period_end <> NEW.period_end
-          OR OLD.origin <> NEW.origin OR OLD.source_status IS NOT NEW.source_status
-          OR OLD.source_observed_at IS NOT NEW.source_observed_at
-          OR (OLD.submitted_by_user_id IS NOT NEW.submitted_by_user_id AND NOT (
-            OLD.status = 'unsubmitted' AND NEW.status = 'submitted'
-            AND OLD.submitted_by_user_id IS NULL AND NEW.submitted_by_user_id = NEW.user_id
-          )) OR OLD.created_at <> NEW.created_at
-          THEN RAISE(ABORT, 'timesheet submission identity is immutable')
-        WHEN NEW.version <> OLD.version + 1
-          THEN RAISE(ABORT, 'timesheet submission version must advance once')
-        WHEN NOT ((OLD.status = 'unsubmitted' AND NEW.status = 'submitted')
-          OR (OLD.status = 'submitted' AND NEW.status IN ('unsubmitted','approved'))
-          OR (OLD.status = 'approved' AND NEW.status = 'unsubmitted'))
-          THEN RAISE(ABORT, 'invalid timesheet submission transition')
-        WHEN OLD.status = 'approved' AND NEW.status = 'unsubmitted' AND NOT (
-          ${privilegedActor('NEW.reviewed_by_user_id')}
-        ) THEN RAISE(ABORT, 'timesheet withdrawal actor is not an organization policy administrator')
-        WHEN OLD.status = 'unsubmitted' AND NEW.status = 'submitted' AND EXISTS (
-          SELECT 1 FROM time_entries entry WHERE entry.user_id = NEW.user_id
-            AND entry.spent_date BETWEEN NEW.period_start AND NEW.period_end
-            AND (entry.timer_started_at IS NOT NULL
-              OR (entry.started_time IS NOT NULL AND entry.ended_time IS NULL))
-        ) THEN RAISE(ABORT, 'running time entries cannot be submitted')
-        WHEN OLD.status = 'unsubmitted' AND NEW.status = 'submitted'
-          AND NOT EXISTS (SELECT 1 FROM time_entries entry WHERE entry.user_id = NEW.user_id
-            AND entry.spent_date BETWEEN NEW.period_start AND NEW.period_end
-            AND entry.approval_status = 'unsubmitted')
-          AND NOT EXISTS (SELECT 1 FROM expenses expense WHERE expense.user_id = NEW.user_id
-            AND expense.spent_date BETWEEN NEW.period_start AND NEW.period_end
-            AND expense.approval_status = 'unsubmitted')
-          THEN RAISE(ABORT, 'timesheet period has no unsubmitted entries')
-        WHEN OLD.status = 'submitted' AND NEW.status = 'approved' AND (
-          (NOT EXISTS (SELECT 1 FROM time_entries entry
-            WHERE entry.timesheet_submission_id = NEW.id AND entry.approval_status = 'submitted')
-           AND NOT EXISTS (SELECT 1 FROM expenses expense
-            WHERE expense.timesheet_submission_id = NEW.id AND expense.approval_status = 'submitted'))
-          OR EXISTS (SELECT 1 FROM time_entries entry WHERE entry.user_id = NEW.user_id
-            AND entry.spent_date BETWEEN NEW.period_start AND NEW.period_end
-            AND (entry.timesheet_submission_id IS NOT NEW.id
-              OR entry.approval_status <> 'submitted' OR entry.timer_started_at IS NOT NULL
-              OR (entry.started_time IS NOT NULL AND entry.ended_time IS NULL)))
-          OR EXISTS (SELECT 1 FROM expenses expense WHERE expense.user_id = NEW.user_id
-            AND expense.spent_date BETWEEN NEW.period_start AND NEW.period_end
-            AND (expense.timesheet_submission_id IS NOT NEW.id
-              OR expense.approval_status <> 'submitted'))
-        ) THEN RAISE(ABORT, 'timesheet period changed before approval')
-      END;
-    END`,
+  timesheetSubmissionsUpdateGuard,
   `DROP TRIGGER timesheet_submissions_reject_entries`,
-  `CREATE TRIGGER timesheet_submissions_reject_entries
-    AFTER UPDATE OF status ON timesheet_submissions
-    WHEN OLD.status IN ('submitted','approved') AND NEW.status = 'unsubmitted'
-    BEGIN
-      UPDATE time_entries SET approval_status = 'unsubmitted', updated_at = NEW.updated_at
-      WHERE timesheet_submission_id = NEW.id
-        AND approval_status = CASE OLD.status WHEN 'approved' THEN 'approved' ELSE 'submitted' END;
-      UPDATE expenses SET approval_status = 'unsubmitted', updated_at = NEW.updated_at
-      WHERE timesheet_submission_id = NEW.id
-        AND approval_status = CASE OLD.status WHEN 'approved' THEN 'approved' ELSE 'submitted' END;
-    END`,
+  timesheetSubmissionsRejectEntries,
   `DROP TRIGGER timesheet_submissions_event_update`,
   `CREATE TRIGGER timesheet_submissions_event_update
     AFTER UPDATE OF status ON timesheet_submissions

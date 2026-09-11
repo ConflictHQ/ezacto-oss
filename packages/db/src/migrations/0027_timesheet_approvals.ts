@@ -64,19 +64,7 @@ SELECT resource_kind, id, code FROM violations
 WHERE code = (SELECT code FROM selected)
 ORDER BY resource_kind, id LIMIT 11`
 
-/**
- * Person-period approval aggregate. Time and expense entries retain the public
- * three-axis status while this row preserves the batch identity and latest
- * review reason.
- */
-export const timesheetApprovalsMigration = [
-  `CREATE TABLE _ezacto_0027_timesheet_approvals_preflight_guard (
-    value INTEGER NOT NULL CHECK (value = 0)
-  ) STRICT`,
-  `INSERT INTO _ezacto_0027_timesheet_approvals_preflight_guard (value)
-   SELECT 1 FROM (${timesheetApprovalsPreflight}) LIMIT 1`,
-  `DROP TABLE _ezacto_0027_timesheet_approvals_preflight_guard`,
-  `CREATE TABLE timesheet_submissions (
+export const timesheetSubmissionsTable = `CREATE TABLE timesheet_submissions (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     period_start TEXT NOT NULL,
@@ -128,11 +116,211 @@ export const timesheetApprovalsMigration = [
       OR (origin <> 'native' AND source_status IS NOT NULL
         AND source_observed_at IS NOT NULL)
     )
+  ) STRICT`
+
+export const timesheetSubmissionsUserPeriodUniqueIndex = `CREATE UNIQUE INDEX timesheet_submissions_user_period_unique
+    ON timesheet_submissions(user_id, period_start, period_end)`
+
+export const timesheetSubmissionsQueueIndex = `CREATE INDEX timesheet_submissions_queue
+    ON timesheet_submissions(status, coalesce(submitted_at, source_observed_at), id)`
+
+export const timesheetSubmissionsInsertGuard = `CREATE TRIGGER timesheet_submissions_insert_guard
+    BEFORE INSERT ON timesheet_submissions
+    BEGIN
+      SELECT CASE
+        WHEN NOT (${approvalModuleEnabled})
+          THEN RAISE(ABORT, 'timesheet approval module is disabled')
+        WHEN NEW.origin = 'legacy_backfill'
+          THEN RAISE(ABORT, 'legacy timesheet backfill is migration-only')
+        WHEN NEW.origin = 'native' AND (
+          NEW.status <> 'submitted' OR NEW.version <> 0
+          OR NEW.reviewed_by_user_id IS NOT NULL OR NEW.reviewed_at IS NOT NULL
+          OR NEW.rejection_reason IS NOT NULL OR NEW.submitted_by_user_id IS NULL
+          OR NEW.submitted_at IS NULL
+        )
+          THEN RAISE(ABORT, 'timesheet submission must start submitted')
+        WHEN NEW.origin = 'harvest_import' AND (
+          NEW.status IS NOT NEW.source_status OR NEW.version <> 0
+          OR NEW.source_status NOT IN ('submitted','approved')
+          OR NEW.source_observed_at IS NULL OR NEW.submitted_by_user_id IS NOT NULL
+          OR NEW.submitted_at IS NOT NULL OR NEW.reviewed_by_user_id IS NOT NULL
+          OR NEW.reviewed_at IS NOT NULL OR NEW.rejection_reason IS NOT NULL
+          OR NEW.period_end <> date(NEW.period_start, '+6 days')
+          OR NOT EXISTS (
+            SELECT 1 FROM time_entries entry
+            WHERE entry.user_id = NEW.user_id
+              AND entry.spent_date BETWEEN NEW.period_start AND NEW.period_end
+              AND entry.harvest_id IS NOT NULL
+              AND entry.source_approval_status = NEW.source_status
+              AND entry.approval_status = 'unsubmitted'
+          ) AND NOT EXISTS (
+            SELECT 1 FROM expenses expense
+            WHERE expense.user_id = NEW.user_id
+              AND expense.spent_date BETWEEN NEW.period_start AND NEW.period_end
+              AND expense.harvest_id IS NOT NULL
+              AND expense.source_approval_status = NEW.source_status
+              AND expense.approval_status = 'unsubmitted'
+          ) OR EXISTS (
+            SELECT 1 FROM time_entries entry
+            WHERE entry.user_id = NEW.user_id
+              AND entry.spent_date BETWEEN NEW.period_start AND NEW.period_end
+              AND entry.source_approval_status IS NOT NEW.source_status
+          ) OR EXISTS (
+            SELECT 1 FROM expenses expense
+            WHERE expense.user_id = NEW.user_id
+              AND expense.spent_date BETWEEN NEW.period_start AND NEW.period_end
+              AND expense.source_approval_status IS NOT NEW.source_status
+          )
+        ) THEN RAISE(ABORT, 'Harvest timesheet source period is inconsistent')
+        WHEN EXISTS (
+          SELECT 1 FROM timesheet_submissions existing
+          WHERE existing.user_id = NEW.user_id
+            AND existing.period_start <= NEW.period_end
+            AND existing.period_end >= NEW.period_start
+            AND NOT (existing.period_start = NEW.period_start
+              AND existing.period_end = NEW.period_end)
+        ) THEN RAISE(ABORT, 'timesheet submission period overlaps an existing period')
+        WHEN EXISTS (
+          SELECT 1 FROM time_entries entry
+          WHERE entry.user_id = NEW.user_id
+            AND entry.spent_date BETWEEN NEW.period_start AND NEW.period_end
+            AND (entry.timer_started_at IS NOT NULL
+              OR (entry.started_time IS NOT NULL AND entry.ended_time IS NULL))
+        ) THEN RAISE(ABORT, 'running time entries cannot be submitted')
+        WHEN NOT EXISTS (
+          SELECT 1 FROM time_entries entry
+          WHERE entry.user_id = NEW.user_id
+            AND entry.spent_date BETWEEN NEW.period_start AND NEW.period_end
+            AND entry.approval_status = 'unsubmitted'
+        ) AND NOT EXISTS (
+          SELECT 1 FROM expenses expense
+          WHERE expense.user_id = NEW.user_id
+            AND expense.spent_date BETWEEN NEW.period_start AND NEW.period_end
+            AND expense.approval_status = 'unsubmitted'
+        ) THEN RAISE(ABORT, 'timesheet period has no unsubmitted entries')
+      END;
+    END`
+
+export const timesheetSubmissionsRejectDelete = `CREATE TRIGGER timesheet_submissions_reject_delete
+    BEFORE DELETE ON timesheet_submissions
+    BEGIN SELECT RAISE(ABORT, 'timesheet submissions are durable workflow records'); END`
+
+export const timesheetSubmissionsSubmitEntriesInsert = `CREATE TRIGGER timesheet_submissions_submit_entries_insert
+    AFTER INSERT ON timesheet_submissions
+    WHEN NEW.origin = 'native'
+    BEGIN
+      UPDATE time_entries
+      SET approval_status = 'submitted', timesheet_submission_id = NEW.id,
+        updated_at = NEW.updated_at
+      WHERE user_id = NEW.user_id
+        AND spent_date BETWEEN NEW.period_start AND NEW.period_end
+        AND approval_status = 'unsubmitted';
+      UPDATE expenses
+      SET approval_status = 'submitted', timesheet_submission_id = NEW.id,
+        updated_at = NEW.updated_at
+      WHERE user_id = NEW.user_id
+        AND spent_date BETWEEN NEW.period_start AND NEW.period_end
+        AND approval_status = 'unsubmitted';
+    END`
+
+export const timesheetSubmissionsSubmitEntriesUpdate = `CREATE TRIGGER timesheet_submissions_submit_entries_update
+    AFTER UPDATE OF status ON timesheet_submissions
+    WHEN OLD.status = 'unsubmitted' AND NEW.status = 'submitted'
+    BEGIN
+      UPDATE time_entries
+      SET approval_status = 'submitted', timesheet_submission_id = NEW.id,
+        updated_at = NEW.updated_at
+      WHERE user_id = NEW.user_id
+        AND spent_date BETWEEN NEW.period_start AND NEW.period_end
+        AND approval_status = 'unsubmitted';
+      UPDATE expenses
+      SET approval_status = 'submitted', timesheet_submission_id = NEW.id,
+        updated_at = NEW.updated_at
+      WHERE user_id = NEW.user_id
+        AND spent_date BETWEEN NEW.period_start AND NEW.period_end
+        AND approval_status = 'unsubmitted';
+    END`
+
+export const timesheetSubmissionsApproveEntries = `CREATE TRIGGER timesheet_submissions_approve_entries
+    AFTER UPDATE OF status ON timesheet_submissions
+    WHEN OLD.status = 'submitted' AND NEW.status = 'approved'
+    BEGIN
+      UPDATE time_entries
+      SET approval_status = 'approved', updated_at = NEW.updated_at
+      WHERE timesheet_submission_id = NEW.id AND approval_status = 'submitted';
+      UPDATE expenses
+      SET approval_status = 'approved', updated_at = NEW.updated_at
+      WHERE timesheet_submission_id = NEW.id AND approval_status = 'submitted';
+    END`
+
+export const timesheetSubmissionsEventInsert = `CREATE TRIGGER timesheet_submissions_event_insert
+    AFTER INSERT ON timesheet_submissions
+    WHEN NEW.origin = 'native'
+    BEGIN
+      INSERT INTO event_outbox (
+        id, aggregate_type, aggregate_id, aggregate_sequence, event_type,
+        payload_json, occurred_at, available_at, attempt_count
+      ) SELECT
+        event.id, 'timesheet_submission', NEW.id, NEW.version + 1,
+        'timesheet.submitted',
+        json_object(
+          'schema_version', 1, 'event_id', event.id,
+          'event_type', 'timesheet.submitted', 'occurred_at', NEW.updated_at,
+          'aggregate', json_object(
+            'type', 'timesheet_submission', 'id', NEW.id, 'sequence', NEW.version + 1
+          ),
+          'actor', json_object('type', 'user', 'id', NEW.submitted_by_user_id),
+          'timesheet_submission', json_object(
+            'user_id', NEW.user_id, 'period_start', NEW.period_start,
+            'period_end', NEW.period_end, 'before_status', NULL,
+            'after_status', NEW.status, 'rejection_reason', NULL
+          )
+        ),
+        NEW.updated_at, NEW.updated_at, 0
+      FROM (SELECT lower(hex(randomblob(16))) AS id) event;
+    END`
+
+export const timesheetSubmissionsImportEventInsert = `CREATE TRIGGER timesheet_submissions_import_event_insert
+    AFTER INSERT ON timesheet_submissions
+    WHEN NEW.origin = 'harvest_import'
+    BEGIN
+      INSERT INTO event_outbox (
+        id, aggregate_type, aggregate_id, aggregate_sequence, event_type,
+        payload_json, occurred_at, available_at, attempt_count
+      ) SELECT
+        event.id, 'timesheet_submission', NEW.id, 1, 'timesheet.status_imported',
+        json_object(
+          'schema_version', 1, 'event_id', event.id,
+          'event_type', 'timesheet.status_imported', 'occurred_at', NEW.source_observed_at,
+          'aggregate', json_object(
+            'type', 'timesheet_submission', 'id', NEW.id, 'sequence', 1
+          ),
+          'actor', json_object('type', 'system'),
+          'timesheet_submission', json_object(
+            'user_id', NEW.user_id, 'period_start', NEW.period_start,
+            'period_end', NEW.period_end, 'before_status', NULL,
+            'after_status', NEW.status, 'rejection_reason', NULL,
+            'origin', NEW.origin, 'source_status', NEW.source_status
+          )
+        ), NEW.source_observed_at, NEW.source_observed_at, 0
+      FROM (SELECT lower(hex(randomblob(16))) AS id) event;
+    END`
+
+/**
+ * Person-period approval aggregate. Time and expense entries retain the public
+ * three-axis status while this row preserves the batch identity and latest
+ * review reason.
+ */
+export const timesheetApprovalsMigration = [
+  `CREATE TABLE _ezacto_0027_timesheet_approvals_preflight_guard (
+    value INTEGER NOT NULL CHECK (value = 0)
   ) STRICT`,
-  `CREATE UNIQUE INDEX timesheet_submissions_user_period_unique
-    ON timesheet_submissions(user_id, period_start, period_end)`,
-  `CREATE INDEX timesheet_submissions_queue
-    ON timesheet_submissions(status, coalesce(submitted_at, source_observed_at), id)`,
+  `INSERT INTO _ezacto_0027_timesheet_approvals_preflight_guard (value)
+   SELECT 1 FROM (${timesheetApprovalsPreflight}) LIMIT 1`,
+  `DROP TABLE _ezacto_0027_timesheet_approvals_preflight_guard`,
+  timesheetSubmissionsTable,
+  timesheetSubmissionsUserPeriodUniqueIndex,
+  timesheetSubmissionsQueueIndex,
   `ALTER TABLE time_entries ADD COLUMN timesheet_submission_id INTEGER
     REFERENCES timesheet_submissions(id) ON DELETE RESTRICT`,
   `ALTER TABLE time_entries ADD COLUMN source_approval_status TEXT
@@ -213,83 +401,7 @@ export const timesheetApprovalsMigration = [
     ON time_entries(timesheet_submission_id) WHERE timesheet_submission_id IS NOT NULL`,
   `CREATE INDEX expenses_timesheet_submission_id
     ON expenses(timesheet_submission_id) WHERE timesheet_submission_id IS NOT NULL`,
-
-  `CREATE TRIGGER timesheet_submissions_insert_guard
-    BEFORE INSERT ON timesheet_submissions
-    BEGIN
-      SELECT CASE
-        WHEN NOT (${approvalModuleEnabled})
-          THEN RAISE(ABORT, 'timesheet approval module is disabled')
-        WHEN NEW.origin = 'legacy_backfill'
-          THEN RAISE(ABORT, 'legacy timesheet backfill is migration-only')
-        WHEN NEW.origin = 'native' AND (
-          NEW.status <> 'submitted' OR NEW.version <> 0
-          OR NEW.reviewed_by_user_id IS NOT NULL OR NEW.reviewed_at IS NOT NULL
-          OR NEW.rejection_reason IS NOT NULL OR NEW.submitted_by_user_id IS NULL
-          OR NEW.submitted_at IS NULL
-        )
-          THEN RAISE(ABORT, 'timesheet submission must start submitted')
-        WHEN NEW.origin = 'harvest_import' AND (
-          NEW.status IS NOT NEW.source_status OR NEW.version <> 0
-          OR NEW.source_status NOT IN ('submitted','approved')
-          OR NEW.source_observed_at IS NULL OR NEW.submitted_by_user_id IS NOT NULL
-          OR NEW.submitted_at IS NOT NULL OR NEW.reviewed_by_user_id IS NOT NULL
-          OR NEW.reviewed_at IS NOT NULL OR NEW.rejection_reason IS NOT NULL
-          OR NEW.period_end <> date(NEW.period_start, '+6 days')
-          OR NOT EXISTS (
-            SELECT 1 FROM time_entries entry
-            WHERE entry.user_id = NEW.user_id
-              AND entry.spent_date BETWEEN NEW.period_start AND NEW.period_end
-              AND entry.harvest_id IS NOT NULL
-              AND entry.source_approval_status = NEW.source_status
-              AND entry.approval_status = 'unsubmitted'
-          ) AND NOT EXISTS (
-            SELECT 1 FROM expenses expense
-            WHERE expense.user_id = NEW.user_id
-              AND expense.spent_date BETWEEN NEW.period_start AND NEW.period_end
-              AND expense.harvest_id IS NOT NULL
-              AND expense.source_approval_status = NEW.source_status
-              AND expense.approval_status = 'unsubmitted'
-          ) OR EXISTS (
-            SELECT 1 FROM time_entries entry
-            WHERE entry.user_id = NEW.user_id
-              AND entry.spent_date BETWEEN NEW.period_start AND NEW.period_end
-              AND entry.source_approval_status IS NOT NEW.source_status
-          ) OR EXISTS (
-            SELECT 1 FROM expenses expense
-            WHERE expense.user_id = NEW.user_id
-              AND expense.spent_date BETWEEN NEW.period_start AND NEW.period_end
-              AND expense.source_approval_status IS NOT NEW.source_status
-          )
-        ) THEN RAISE(ABORT, 'Harvest timesheet source period is inconsistent')
-        WHEN EXISTS (
-          SELECT 1 FROM timesheet_submissions existing
-          WHERE existing.user_id = NEW.user_id
-            AND existing.period_start <= NEW.period_end
-            AND existing.period_end >= NEW.period_start
-            AND NOT (existing.period_start = NEW.period_start
-              AND existing.period_end = NEW.period_end)
-        ) THEN RAISE(ABORT, 'timesheet submission period overlaps an existing period')
-        WHEN EXISTS (
-          SELECT 1 FROM time_entries entry
-          WHERE entry.user_id = NEW.user_id
-            AND entry.spent_date BETWEEN NEW.period_start AND NEW.period_end
-            AND (entry.timer_started_at IS NOT NULL
-              OR (entry.started_time IS NOT NULL AND entry.ended_time IS NULL))
-        ) THEN RAISE(ABORT, 'running time entries cannot be submitted')
-        WHEN NOT EXISTS (
-          SELECT 1 FROM time_entries entry
-          WHERE entry.user_id = NEW.user_id
-            AND entry.spent_date BETWEEN NEW.period_start AND NEW.period_end
-            AND entry.approval_status = 'unsubmitted'
-        ) AND NOT EXISTS (
-          SELECT 1 FROM expenses expense
-          WHERE expense.user_id = NEW.user_id
-            AND expense.spent_date BETWEEN NEW.period_start AND NEW.period_end
-            AND expense.approval_status = 'unsubmitted'
-        ) THEN RAISE(ABORT, 'timesheet period has no unsubmitted entries')
-      END;
-    END`,
+  timesheetSubmissionsInsertGuard,
   `CREATE TRIGGER timesheet_submissions_update_guard
     BEFORE UPDATE ON timesheet_submissions
     BEGIN
@@ -359,55 +471,10 @@ export const timesheetApprovalsMigration = [
         ) THEN RAISE(ABORT, 'timesheet period changed before approval')
       END;
     END`,
-  `CREATE TRIGGER timesheet_submissions_reject_delete
-    BEFORE DELETE ON timesheet_submissions
-    BEGIN SELECT RAISE(ABORT, 'timesheet submissions are durable workflow records'); END`,
-
-  `CREATE TRIGGER timesheet_submissions_submit_entries_insert
-    AFTER INSERT ON timesheet_submissions
-    WHEN NEW.origin = 'native'
-    BEGIN
-      UPDATE time_entries
-      SET approval_status = 'submitted', timesheet_submission_id = NEW.id,
-        updated_at = NEW.updated_at
-      WHERE user_id = NEW.user_id
-        AND spent_date BETWEEN NEW.period_start AND NEW.period_end
-        AND approval_status = 'unsubmitted';
-      UPDATE expenses
-      SET approval_status = 'submitted', timesheet_submission_id = NEW.id,
-        updated_at = NEW.updated_at
-      WHERE user_id = NEW.user_id
-        AND spent_date BETWEEN NEW.period_start AND NEW.period_end
-        AND approval_status = 'unsubmitted';
-    END`,
-  `CREATE TRIGGER timesheet_submissions_submit_entries_update
-    AFTER UPDATE OF status ON timesheet_submissions
-    WHEN OLD.status = 'unsubmitted' AND NEW.status = 'submitted'
-    BEGIN
-      UPDATE time_entries
-      SET approval_status = 'submitted', timesheet_submission_id = NEW.id,
-        updated_at = NEW.updated_at
-      WHERE user_id = NEW.user_id
-        AND spent_date BETWEEN NEW.period_start AND NEW.period_end
-        AND approval_status = 'unsubmitted';
-      UPDATE expenses
-      SET approval_status = 'submitted', timesheet_submission_id = NEW.id,
-        updated_at = NEW.updated_at
-      WHERE user_id = NEW.user_id
-        AND spent_date BETWEEN NEW.period_start AND NEW.period_end
-        AND approval_status = 'unsubmitted';
-    END`,
-  `CREATE TRIGGER timesheet_submissions_approve_entries
-    AFTER UPDATE OF status ON timesheet_submissions
-    WHEN OLD.status = 'submitted' AND NEW.status = 'approved'
-    BEGIN
-      UPDATE time_entries
-      SET approval_status = 'approved', updated_at = NEW.updated_at
-      WHERE timesheet_submission_id = NEW.id AND approval_status = 'submitted';
-      UPDATE expenses
-      SET approval_status = 'approved', updated_at = NEW.updated_at
-      WHERE timesheet_submission_id = NEW.id AND approval_status = 'submitted';
-    END`,
+  timesheetSubmissionsRejectDelete,
+  timesheetSubmissionsSubmitEntriesInsert,
+  timesheetSubmissionsSubmitEntriesUpdate,
+  timesheetSubmissionsApproveEntries,
   `CREATE TRIGGER timesheet_submissions_reject_entries
     AFTER UPDATE OF status ON timesheet_submissions
     WHEN OLD.status = 'submitted' AND NEW.status = 'unsubmitted'
@@ -564,7 +631,6 @@ export const timesheetApprovalsMigration = [
     BEFORE DELETE ON time_entries
     WHEN OLD.approval_status = 'approved'
     BEGIN SELECT RAISE(ABORT, 'approved timesheet entries cannot be deleted'); END`,
-
   `CREATE TRIGGER expenses_source_approval_insert_guard
     BEFORE INSERT ON expenses
     WHEN (NEW.harvest_id IS NULL) <> (NEW.source_approval_status IS NULL)
@@ -696,57 +762,8 @@ export const timesheetApprovalsMigration = [
     BEFORE DELETE ON expenses
     WHEN OLD.approval_status = 'approved'
     BEGIN SELECT RAISE(ABORT, 'approved timesheet expenses cannot be deleted'); END`,
-  `CREATE TRIGGER timesheet_submissions_event_insert
-    AFTER INSERT ON timesheet_submissions
-    WHEN NEW.origin = 'native'
-    BEGIN
-      INSERT INTO event_outbox (
-        id, aggregate_type, aggregate_id, aggregate_sequence, event_type,
-        payload_json, occurred_at, available_at, attempt_count
-      ) SELECT
-        event.id, 'timesheet_submission', NEW.id, NEW.version + 1,
-        'timesheet.submitted',
-        json_object(
-          'schema_version', 1, 'event_id', event.id,
-          'event_type', 'timesheet.submitted', 'occurred_at', NEW.updated_at,
-          'aggregate', json_object(
-            'type', 'timesheet_submission', 'id', NEW.id, 'sequence', NEW.version + 1
-          ),
-          'actor', json_object('type', 'user', 'id', NEW.submitted_by_user_id),
-          'timesheet_submission', json_object(
-            'user_id', NEW.user_id, 'period_start', NEW.period_start,
-            'period_end', NEW.period_end, 'before_status', NULL,
-            'after_status', NEW.status, 'rejection_reason', NULL
-          )
-        ),
-        NEW.updated_at, NEW.updated_at, 0
-      FROM (SELECT lower(hex(randomblob(16))) AS id) event;
-    END`,
-  `CREATE TRIGGER timesheet_submissions_import_event_insert
-    AFTER INSERT ON timesheet_submissions
-    WHEN NEW.origin = 'harvest_import'
-    BEGIN
-      INSERT INTO event_outbox (
-        id, aggregate_type, aggregate_id, aggregate_sequence, event_type,
-        payload_json, occurred_at, available_at, attempt_count
-      ) SELECT
-        event.id, 'timesheet_submission', NEW.id, 1, 'timesheet.status_imported',
-        json_object(
-          'schema_version', 1, 'event_id', event.id,
-          'event_type', 'timesheet.status_imported', 'occurred_at', NEW.source_observed_at,
-          'aggregate', json_object(
-            'type', 'timesheet_submission', 'id', NEW.id, 'sequence', 1
-          ),
-          'actor', json_object('type', 'system'),
-          'timesheet_submission', json_object(
-            'user_id', NEW.user_id, 'period_start', NEW.period_start,
-            'period_end', NEW.period_end, 'before_status', NULL,
-            'after_status', NEW.status, 'rejection_reason', NULL,
-            'origin', NEW.origin, 'source_status', NEW.source_status
-          )
-        ), NEW.source_observed_at, NEW.source_observed_at, 0
-      FROM (SELECT lower(hex(randomblob(16))) AS id) event;
-    END`,
+  timesheetSubmissionsEventInsert,
+  timesheetSubmissionsImportEventInsert,
   `CREATE TRIGGER timesheet_submissions_event_update
     AFTER UPDATE OF status ON timesheet_submissions
     BEGIN

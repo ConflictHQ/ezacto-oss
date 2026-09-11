@@ -3,6 +3,10 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import BetterSqlite3 from 'better-sqlite3'
+import {
+  applyRetainerWorksheet,
+  generateRetainerWorksheet,
+} from '../src/worksheets.js'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { runLoad } from '../src/load.js'
 import {
@@ -365,6 +369,58 @@ describe('three-way reconciliation', () => {
   }, 60_000)
 
   afterEach(async () => rm(dir, { recursive: true, force: true }))
+
+  it('[integration] [issue 288] stops reporting a worksheet gap once the worksheet is done', async () => {
+    // The two manual gaps -- a retainer balance and a recurring definition --
+    // can only be closed by a person reading the Harvest UI. The report used to
+    // list them for every source id regardless of whether that had happened, so
+    // it said exactly the same thing before and after the work, and a reader
+    // had no way to tell a closed gap from an untouched stub.
+    //
+    // `_ezacto_worksheet_completions` was built to record it -- migration 0024
+    // says so in as many words -- and nothing outside the worksheet tool ever
+    // read it. Now reconcile does.
+    const before = await runReconcile({ snapshotDir, databasePath })
+    const retainerGaps = before.report.gaps.filter((row) => row.check === 'retainer_balance')
+    const recurringBefore = before.report.gaps.filter(
+      (row) => row.check === 'recurring_invoice_definition',
+    ).length
+    expect(retainerGaps.length).toBeGreaterThan(0)
+
+    // Completed through the real worksheet path, not by writing the marker:
+    // migration 0024 binds a completion to its opening ledger entry and to the
+    // import authority behind it, so a hand-written marker is refused. Going
+    // the long way round is what makes this a test of the thing operators do.
+    const worksheet = await generateRetainerWorksheet({ snapshotDir, databasePath })
+    const inputPath = join(dir, 'retainers-288.json')
+    await writeFile(
+      inputPath,
+      JSON.stringify({
+        ...worksheet,
+        rows: worksheet.rows.map((row) => ({
+          ...row,
+          balance_cents: 125_500,
+          occurred_on: '2026-08-27',
+          notes: 'Opening balance confirmed during migration',
+        })),
+      }),
+    )
+    const applied = await applyRetainerWorksheet({ snapshotDir, databasePath, inputPath })
+    expect(applied.completed).toBeGreaterThan(0)
+
+    const after = await runReconcile({ snapshotDir, databasePath })
+    const stillOpen = after.report.gaps.filter((row) => row.check === 'retainer_balance')
+    // The gap the worksheet closed is gone, and the count moved by exactly what
+    // was applied -- so this cannot pass by the check disappearing wholesale.
+    expect(stillOpen.length).toBe(retainerGaps.length - applied.completed)
+    // The recurring side is untouched: the marker is keyed on kind as well as
+    // id, so closing one does not silently close the other.
+    expect(
+      after.report.gaps.filter((row) => row.check === 'recurring_invoice_definition').length,
+    ).toBe(recurringBefore)
+    // And closing a gap did not turn anything into an unexplained delta.
+    expect(after.report.unexplained).toEqual([])
+  }, 60_000)
 
   it('[integration] [inv-14] reports zero unexplained deltas and proves monthly seconds at source grain', async () => {
     const first = await runReconcile({ snapshotDir, databasePath })
