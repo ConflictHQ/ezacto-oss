@@ -16,6 +16,11 @@
 # so the current fixture is four characters; the historical occurrence is pinned
 # here because the full history is scanned.
 c39dd69f59d2baddb8a7108b7269badbb93d22e3:packages/migrate/test/cli.test.ts:harvest-pat-assignment:79
+# The same reviewed fixture again, re-attributed by history traversal to the
+# extract-engine merge. The repoint dropped this one on the reading that the
+# rewrite had collapsed the re-attribution; it did not, so it is pinned back at
+# the merge's new fingerprint rather than left to fail every branch scan.
+08833a4ad443e3ecdc11caca8d971a7e631085dc:packages/migrate/test/cli.test.ts:harvest-pat-assignment:91
 
 # A historical test-only synthetic JWT fixture; current source constructs the
 # detector-shaped value from separate segments.
