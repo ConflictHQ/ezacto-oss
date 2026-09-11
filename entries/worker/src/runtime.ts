@@ -7,6 +7,8 @@ import {
   createD1IdentityStore,
   createD1OidcTransactionStore,
   createD1OutboxService,
+  createQuickBooksMirrorSource,
+  createQuickBooksStore,
   createGeneralResourceRepository,
   createMoneyResourceRepository,
   listClientAncestors,
@@ -59,6 +61,10 @@ import {
 } from "@ezacto/mailer";
 import type { RuntimeServices } from "./app.js";
 import { cloudflareAccessConfig, type WorkerEnv } from "./app.js";
+import {
+  createQuickBooksMirrorSubscriber,
+  createQuickBooksRuntime,
+} from "@ezacto/integrations";
 import {
   createWorkerDeploymentAuthMailer,
   createWorkerOrganizationMailer,
@@ -550,10 +556,33 @@ export const createRuntimeServices = async (
   // paid or written off. Unsubscribed, `reminder_policy` is accepted and stored
   // and `scheduled_reminders` stays permanently empty.
   const reminders = createD1ReminderScheduler(database);
+
+  // Composed only where the deployment carries Intuit keys. Without them the
+  // QuickBooks routes are not mounted at all, because a connect button that
+  // cannot connect is worse than no button -- `entry-surface.ts` declares that
+  // gating so both halves of the contract guard know about it.
+  const quickBooks =
+    env.QUICKBOOKS_CLIENT_ID === undefined || env.QUICKBOOKS_CLIENT_SECRET === undefined
+      ? null
+      : createQuickBooksRuntime({
+          config: {
+            clientId: env.QUICKBOOKS_CLIENT_ID,
+            clientSecret: env.QUICKBOOKS_CLIENT_SECRET,
+            webhookVerifierToken: env.QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN,
+            environment: env.QUICKBOOKS_ENVIRONMENT,
+            appBaseUrl: env.APP_BASE_URL,
+          },
+          store: createQuickBooksStore(drizzle),
+          source: createQuickBooksMirrorSource(drizzle, () => new Date()),
+          fetch: (request: Request) => fetch(request),
+          now: () => new Date(),
+        });
+
   const outbox = createD1OutboxService(database, {
     additionalSubscribers: [
       createInvoiceEmailOutboxSubscriber(moneyResources, organizationMailer),
       reminders.subscriber,
+      ...(quickBooks === null ? [] : [createQuickBooksMirrorSubscriber(quickBooks)]),
     ],
   });
   return {
@@ -677,6 +706,11 @@ export const createRuntimeServices = async (
     backupStatus: {
       latestRuns: (limit: number) => getLatestBackupRuns(database, limit),
     },
+    // Composed only where the deployment carries Intuit keys. Without them the
+    // routes are not mounted, because a connect button that cannot connect is
+    // worse than no button -- `entry-surface.ts` declares that gating so both
+    // halves of the contract guard know about it.
+    ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
     identities,
     oidcTransactions: createD1OidcTransactionStore(database),
     ...(deploymentAuthMailer === undefined ? {} : { deploymentAuthMailer }),

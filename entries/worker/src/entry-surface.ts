@@ -39,6 +39,24 @@ export const UNDOCUMENTED_ROUTES: readonly string[] = [
 ]
 
 /**
+ * Mounted only where the deployment carries Intuit keys.
+ *
+ * Four of the six are in the contract, so a generated client can call them; the
+ * two above are not, for the reason given there. They are gated together
+ * because they are one feature: a callback with no connect button behind it is
+ * a URL nobody can reach, and a connect button with no callback is a handshake
+ * that cannot finish.
+ */
+export const QUICKBOOKS_ROUTES: readonly string[] = [
+  'get /api/v1/integrations/quickbooks',
+  'post /api/v1/integrations/quickbooks/authorize',
+  'get /api/v1/integrations/quickbooks/callback',
+  'post /api/v1/integrations/quickbooks/settings',
+  'delete /api/v1/integrations/quickbooks',
+  'post /api/v1/integrations/quickbooks/webhook',
+]
+
+/**
  * Mounted by the Worker and not by the container.
  *
  * `backup/status` reads the R2 export the nightly Worker cron writes. The
@@ -93,10 +111,11 @@ export const mountedApiRoutes = (
 export const expectedApiRoutes = (
   documented: readonly string[],
   entry: 'worker' | 'container',
-  options: { readonly portal: boolean },
+  options: { readonly portal: boolean; readonly quickBooks?: boolean },
 ): ReadonlySet<string> => {
   const gatedOff = new Set([
     ...(options.portal ? [] : PORTAL_ROUTES),
+    ...(options.quickBooks === true ? [] : QUICKBOOKS_ROUTES),
     ...(entry === 'worker' ? CONTAINER_ONLY_ROUTES : WORKER_ONLY_ROUTES),
   ])
   return new Set(

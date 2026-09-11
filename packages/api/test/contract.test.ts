@@ -2,6 +2,7 @@ import type { GeneralResourceRepository, TeamRepository } from "@ezacto/core";
 import { describe, expect, it } from "vitest";
 import {
   installBackupStatusRoutes,
+  installQuickBooksRoutes,
   installBrandAssetRoutes,
   apiContractOperations,
   createApiApp,
@@ -135,6 +136,21 @@ const documentedApp = () =>
     },
     installApi: (api) => {
       installSessionRoutes(api, sessions);
+      installQuickBooksRoutes(api, {
+        clientId: () => "contract-fixture",
+        callbackUrl: () => "https://app.example.test/cb",
+        settingsUrl: () => "/settings/integrations",
+        authorizeUrl: () => "https://appcenter.intuit.com/connect/oauth2",
+        beginAuthorization: async () => undefined,
+        completeAuthorization: async () => {
+          throw new Error("not used by the contract fixture");
+        },
+        readStatus: async () => null,
+        setAllowOnlinePayment: async () => undefined,
+        disconnect: async () => undefined,
+        receiveWebhook: async () => ({ accepted: true }),
+        newState: () => "contract-fixture-state",
+      });
       installEmailLogRoutes(api, emailLog);
       installEmailHealthRoutes(api, emailLog);
       installEmailConfigurationRoutes(api, {

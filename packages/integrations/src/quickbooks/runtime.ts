@@ -7,8 +7,6 @@
  * about the others. The wiring is here so that stays true.
  */
 
-import type { QuickBooksConnectionStatus, QuickBooksService } from "@ezacto/api";
-import type { QuickBooksStore } from "@ezacto/db";
 import {
   QUICKBOOKS_ACCOUNTING_SCOPE,
   QUICKBOOKS_PRODUCTION_BASE_URL,
@@ -27,7 +25,125 @@ import {
   type MirrorClient,
   type MirrorInvoice,
   type MirrorOutcome,
-} from "@ezacto/integrations";
+} from "../index.js";
+
+
+/**
+ * The connection as a caller sees it. Structurally the same shape the API
+ * package's route contract expects -- stated here rather than imported, because
+ * this package must not depend on the one that serves it.
+ */
+export interface QuickBooksConnectionStatus {
+  realmId: string;
+  companyName: string | null;
+  scope: string;
+  allowOnlinePayment: boolean;
+  connectedAt: string;
+}
+
+/** Likewise structural: what the routes call, without importing the routes. */
+export interface QuickBooksService {
+  clientId(): string | null;
+  callbackUrl(): string | null;
+  settingsUrl(): string;
+  authorizeUrl(input: { state: string; redirectUri: string }): string;
+  beginAuthorization(input: {
+    state: string;
+    userId: number;
+    redirectUri: string;
+  }): Promise<void>;
+  completeAuthorization(input: {
+    state: string;
+    code: string;
+    realmId: string;
+  }): Promise<QuickBooksConnectionStatus>;
+  readStatus(): Promise<QuickBooksConnectionStatus | null>;
+  setAllowOnlinePayment(allow: boolean): Promise<void>;
+  disconnect(): Promise<void>;
+  receiveWebhook(input: {
+    payload: string;
+    signature: string | null;
+  }): Promise<{ accepted: boolean; reason?: string }>;
+  newState(): string;
+}
+
+/**
+ * Where the connection and its links are kept. The database package implements
+ * this; naming it structurally keeps the dependency pointing one way.
+ */
+export interface QuickBooksConnectionStore {
+  readConnection(): Promise<
+    | (QuickBooksConnectionStatus & {
+        accessToken: string;
+        refreshToken: string;
+        accessTokenExpiresAt: string;
+        refreshTokenExpiresAt: string;
+      })
+    | null
+  >;
+  beginAuthorization(input: {
+    state: string;
+    userId: number;
+    redirectUri: string;
+    now: string;
+    expiresAt: string;
+  }): Promise<void>;
+  consumeAuthorization(input: {
+    state: string;
+    now: string;
+  }): Promise<{ userId: number; redirectUri: string } | null>;
+  saveConnection(input: {
+    realmId: string;
+    accessToken: string;
+    refreshToken: string;
+    accessTokenExpiresAt: string;
+    refreshTokenExpiresAt: string;
+    scope: string;
+    connectedByUserId: number;
+    companyName: string | null;
+    now: string;
+  }): Promise<void>;
+  saveTokens(input: {
+    realmId: string;
+    accessToken: string;
+    refreshToken: string;
+    accessTokenExpiresAt: string;
+    refreshTokenExpiresAt: string;
+    now: string;
+  }): Promise<void>;
+  setAllowOnlinePayment(input: { allow: boolean; now: string }): Promise<void>;
+  disconnect(input: { now: string }): Promise<void>;
+  readLink(input: {
+    realmId: string;
+    kind: "customer" | "invoice";
+    ezactoId: number;
+  }): Promise<{ quickBooksId: string; syncToken: string } | null>;
+  saveLink(input: {
+    realmId: string;
+    kind: "customer" | "invoice";
+    ezactoId: number;
+    quickBooksId: string;
+    syncToken: string;
+    now: string;
+  }): Promise<void>;
+  claimWebhookDelivery(input: {
+    realmId: string;
+    entityName: string;
+    entityId: string;
+    operation: string;
+    lastUpdated: string;
+    now: string;
+  }): Promise<boolean>;
+  completeWebhookDelivery(input: {
+    realmId: string;
+    entityName: string;
+    entityId: string;
+    operation: string;
+    lastUpdated: string;
+    now: string;
+    skippedReason?: string;
+  }): Promise<void>;
+}
 
 export interface QuickBooksConfig {
   readonly clientId: string | undefined;
@@ -53,13 +169,15 @@ export interface QuickBooksMirrorSource {
     invoiceId: number;
     amountCents: number;
     paidOn: string | null;
-    reference: string;
+    realmId: string;
+    /** QuickBooks' own id for the payment; the receipt's provider reference. */
+    quickBooksPaymentId: string;
   }): Promise<void>;
 }
 
 export interface QuickBooksRuntimeOptions {
   readonly config: QuickBooksConfig;
-  readonly store: QuickBooksStore;
+  readonly store: QuickBooksConnectionStore;
   readonly source: QuickBooksMirrorSource;
   readonly fetch: (request: Request) => Promise<Response>;
   readonly now: () => Date;
@@ -373,9 +491,8 @@ export const createQuickBooksRuntime = (
             invoiceId: row.ezactoInvoiceId,
             amountCents: row.amountCents,
             paidOn: row.paidOn,
-            // The QuickBooks payment id, so a person reading the invoice can
-            // find the document this came from.
-            reference: `QuickBooks payment ${row.quickBooksPaymentId}`,
+            realmId: change.realmId,
+            quickBooksPaymentId: row.quickBooksPaymentId,
           });
         }
         await complete(ours.length === 0 ? "no line settles an invoice we mirrored" : undefined);
@@ -386,3 +503,35 @@ export const createQuickBooksRuntime = (
 
   return { service, mirror };
 };
+
+/**
+ * The subscriber that mirrors an invoice when it becomes a real document.
+ *
+ * `invoice.sent` and nothing else. A draft is not a document of record -- it
+ * can still be edited or thrown away -- and mirroring one would put an invoice
+ * in somebody's books that they may never raise. A later edit to a sent invoice
+ * arrives as its own `invoice.sent` when it is re-sent, which the mirror
+ * handles as an update because the link already exists.
+ *
+ * Failures throw. The outbox retries, and the mirror is safe to retry: that is
+ * what the adopt path and the link table are for.
+ */
+export const createQuickBooksMirrorSubscriber = (
+  runtime: Readonly<QuickBooksRuntime>,
+): {
+  readonly id: "quickbooks_mirror";
+  deliver(event: Readonly<{ eventType: string; aggregateType: string; aggregateId: number }>): Promise<void>;
+} => ({
+  id: "quickbooks_mirror",
+  async deliver(event) {
+    if (event.aggregateType !== "invoice" || event.eventType !== "invoice.sent") return;
+    const outcome = await runtime.mirror(event.aggregateId);
+    if (outcome.kind === "refused") {
+      // A refusal is a decision, not a failure: no connection, or a document in
+      // QuickBooks this mirror did not write. Retrying cannot change either, so
+      // it is recorded rather than thrown -- the outbox would otherwise retry
+      // it until it gave up and called a correct decision an error.
+      return;
+    }
+  },
+});

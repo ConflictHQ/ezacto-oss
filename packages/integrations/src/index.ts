@@ -102,3 +102,14 @@ export {
   type MirrorOutcome,
   type MirrorQuickBooks,
 } from './quickbooks/mirror.js'
+export {
+  createQuickBooksMirrorSubscriber,
+  createQuickBooksRuntime,
+  type QuickBooksConfig,
+  type QuickBooksConnectionStatus,
+  type QuickBooksConnectionStore,
+  type QuickBooksMirrorSource,
+  type QuickBooksRuntime,
+  type QuickBooksRuntimeOptions,
+  type QuickBooksService,
+} from './quickbooks/runtime.js'

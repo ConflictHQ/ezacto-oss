@@ -1,12 +1,14 @@
 import BetterSqlite3 from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createContainerDatabase, createQuickBooksStore, migrateContainer } from "@ezacto/db";
 import type { MirrorClient, MirrorInvoice } from "@ezacto/integrations";
 import {
   createQuickBooksRuntime,
   type QuickBooksMirrorSource,
   type QuickBooksRuntime,
-} from "../src/quickbooks.js";
+} from "@ezacto/integrations";
+import { createContainerDatabase } from "../src/adapters.js";
+import { migrateContainer } from "../src/migrate.js";
+import { createQuickBooksStore } from "../src/quickbooks.js";
 
 const t = (minute: number): string => `2026-09-11T12:${String(minute).padStart(2, "0")}:00.000Z`;
 
@@ -36,7 +38,12 @@ const clients = new Map<number, MirrorClient>(
   ].map((row) => [row.id, row]),
 );
 
-const recordedPayments: { invoiceId: number; amountCents: number; reference: string }[] = [];
+const recordedPayments: {
+  invoiceId: number;
+  amountCents: number;
+  quickBooksPaymentId: string;
+  realmId: string;
+}[] = [];
 
 const source = (overrides: Partial<QuickBooksMirrorSource> = {}): QuickBooksMirrorSource => ({
   readInvoice: vi.fn(async () => invoice),
@@ -46,7 +53,8 @@ const source = (overrides: Partial<QuickBooksMirrorSource> = {}): QuickBooksMirr
     recordedPayments.push({
       invoiceId: input.invoiceId,
       amountCents: input.amountCents,
-      reference: input.reference,
+      quickBooksPaymentId: input.quickBooksPaymentId,
+      realmId: input.realmId,
     });
   }),
   ...overrides,
@@ -334,9 +342,11 @@ describe("payments coming back", () => {
       {
         invoiceId: 41,
         amountCents: 250_000,
-        // The QuickBooks id, so a person reading the invoice can find the
-        // document this came from.
-        reference: "QuickBooks payment qb-pay-1",
+        // The QuickBooks id, which becomes the payment's provider reference --
+        // so a person reading the invoice can find the document it came from,
+        // and a second delivery cannot record it twice.
+        quickBooksPaymentId: "qb-pay-1",
+        realmId: "realm-a",
       },
     ]);
   });

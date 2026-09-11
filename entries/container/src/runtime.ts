@@ -35,6 +35,8 @@ import {
   listClientAncestors,
   listClientDescendants,
   migrateContainer,
+  createQuickBooksMirrorSource,
+  createQuickBooksStore,
 } from '@ezacto/db'
 import {
   createApiSessionService,
@@ -55,6 +57,10 @@ import {
 import { SmtpMailer } from '@ezacto/mailer/smtp'
 import type { BrandAssetSurface } from '@ezacto/api'
 import type { AppEnv, RuntimeServices } from '../../worker/src/app.js'
+import {
+  createQuickBooksMirrorSubscriber,
+  createQuickBooksRuntime,
+} from '@ezacto/integrations'
 import type { ContainerConfig } from './config.js'
 import { createContainerBrandAssetSurface } from './brand-assets.js'
 import { createDiskAttachmentObjectStore } from './disk-attachments.js'
@@ -317,6 +323,26 @@ export const createContainerRuntime = async (
       config.brandDirectory,
     )
 
+    // The same connection the Worker composes. A self-hoster's QuickBooks is
+    // the same QuickBooks, and the only thing this needs that the Worker has is
+    // an outbound fetch.
+    const quickBooks =
+      config.quickBooks === undefined
+        ? null
+        : createQuickBooksRuntime({
+            config: {
+              clientId: config.quickBooks.clientId,
+              clientSecret: config.quickBooks.clientSecret,
+              webhookVerifierToken: config.quickBooks.webhookVerifierToken,
+              environment: config.quickBooks.environment,
+              appBaseUrl: config.appBaseUrl,
+            },
+            store: createQuickBooksStore(drizzle),
+            source: createQuickBooksMirrorSource(drizzle, () => new Date()),
+            fetch: (request: Request) => fetch(request),
+            now: () => new Date(),
+          })
+
     const services: RuntimeServices = {
       bootstrap: (input) => bootstrapInstanceContainer(database, input),
       enrollOwnerPassword: (input) =>
@@ -363,6 +389,7 @@ export const createContainerRuntime = async (
         return row?.enabled === 1
       },
       moneyResources,
+      ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
       invoiceGeneration: createInvoiceGenerationService(drizzle),
       recurringInvoices: createRecurringInvoiceEngine(drizzle),
       activity: {

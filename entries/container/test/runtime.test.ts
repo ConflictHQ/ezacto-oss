@@ -42,6 +42,13 @@ const config = (root: string): ContainerConfig => ({
   brandDirectory: join(root, 'brand'),
   appBaseUrl: 'http://localhost:3000',
   cursorSigningKey: new Uint8Array(32).fill(0x43),
+  // Configured, so the QuickBooks routes are composed here the way they are on
+  // the Worker. A documented operation that is mounted nowhere is exactly what
+  // these guards exist to catch, so the fixture has to be the configured case.
+  quickBooks: {
+    clientId: 'container-fixture-client-id',
+    clientSecret: 'container-fixture-client-secret',
+  },
   smtp: {
     url: 'smtp://127.0.0.1:2525',
     from: 'billing@example.test',
@@ -503,7 +510,7 @@ describe('container runtime composition', () => {
             (operation) => `${operation.method} ${operation.path}`,
           ),
           'container',
-          { portal: false },
+          { portal: false, quickBooks: true },
         ),
       )
 
