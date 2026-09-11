@@ -2215,6 +2215,7 @@ export type BrandMark = {
 export type Brand = {
   "organization_name": string;
   "assets": Array<BrandMark>;
+  "palette"?: InstancePalette;
 };
 
 export type BrandEnvelope = {
@@ -2228,6 +2229,23 @@ export type BrandAssetEnvelope = {
 
 export type BrandAssetUploadInput = {
   "file": string;
+};
+
+export type InstancePalette = {
+  [key: string]: string;
+};
+
+export type InstanceTheme = {
+  "palette": InstancePalette;
+  "updated_at": string;
+};
+
+export type InstanceThemeEnvelope = {
+  "data": InstanceTheme | null;
+};
+
+export type InstanceThemeInput = {
+  "palette": InstancePalette;
 };
 
 export type SsoDomainInput = {
@@ -4166,6 +4184,34 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<void>("DELETE", "/api/v1/settings/brand-assets/:slot".replace(":slot", encodeURIComponent(String(args["slot"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getInstanceTheme(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<InstanceThemeEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InstanceThemeEnvelope>("GET", "/api/v1/settings/theme", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async setInstanceTheme(args: { body: InstanceThemeInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<InstanceThemeEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InstanceThemeEnvelope>("POST", "/api/v1/settings/theme", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async clearInstanceTheme(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/settings/theme", {
       signal: args.signal,
       headers,
     });

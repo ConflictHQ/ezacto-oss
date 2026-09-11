@@ -1,5 +1,6 @@
 import { shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
 import { iconMarkup } from '../components/icons.js'
+import { INSTANCE_THEME_STYLESHEET_PATH } from '../instance-theme.js'
 import { defaultTheme, themeManifest } from '../theme.js'
 import { type DeploymentBrand, resolveDeploymentBrand } from '../brand.js'
 import { renderClientDirectoryPages } from '../clients/render.js'
@@ -40,6 +41,13 @@ export interface AppShellOptions {
   readonly environment: string
   readonly release: string
   readonly brand?: Partial<DeploymentBrand>
+  /**
+   * Whether this instance has a palette of its own (issue 591). Only a flag: the
+   * colours themselves are served as a stylesheet, because the shell's
+   * `style-src` admits no inline style, and linking a stylesheet that would be
+   * empty costs every page load a request for nothing.
+   */
+  readonly instanceTheme?: boolean
   readonly activeSection?:
     // 'Settings' matches no nav item on purpose. Without it the default lands
     // on 'Time', so the module settings page marked Time as the page you were
@@ -383,7 +391,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="${escapeHtml(themeManifest.precision.fontStylesheet)}">
 ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <link rel="stylesheet" href="/assets/ezacto.css">
-  <script type="module" src="/assets/ezacto.js"></script>
+${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_PATH}">\n` : ''}  <script type="module" src="/assets/ezacto.js"></script>
 </head>
 <body>
   <section class="auth-gateway" data-auth-gateway data-state="checking" aria-label="${escapeHtml(brand)} sign in" aria-busy="true"${resumeSession ? ' hidden' : ''}>

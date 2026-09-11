@@ -1,6 +1,7 @@
 import type { QueuedEmailJob } from '@ezacto/mailer'
 import { createApp, type WorkerEnv } from './app.js'
 import { workerBrandAssetSurface } from './brand-assets.js'
+import { workerInstanceThemeSurface } from './instance-theme.js'
 import { consumeCloudflareEmailBatch } from './email-queue.js'
 import { runDemoMaintenance } from './demo.js'
 import { runNightlyExport } from './nightly-export.js'
@@ -9,7 +10,7 @@ import {
   createWorkerMailProvider,
 } from './runtime.js'
 
-const publicApp = createApp(undefined, workerBrandAssetSurface)
+const publicApp = createApp(undefined, workerBrandAssetSurface, workerInstanceThemeSurface)
 
 const isDataRequest = (request: Request): boolean => {
   const path = new URL(request.url).pathname
@@ -136,7 +137,7 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
       const services = await createRuntimeServices(env)
       return withStrictTransport(
         request,
-        await createApp(services, workerBrandAssetSurface).fetch(
+        await createApp(services, workerBrandAssetSurface, workerInstanceThemeSurface).fetch(
           request,
           env,
           executionContext,

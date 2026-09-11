@@ -11,6 +11,8 @@ import {
   installAttachmentRoutes,
   installBrandAssetRoutes,
   installBrandRoute,
+  installInstanceThemeRoutes,
+  installInstanceThemeStylesheetRoute,
   installClientTreeRoutes,
   installEmailHealthRoutes,
   installEmailLogRoutes,
@@ -42,6 +44,7 @@ import {
   type AttachmentRouteOptions,
   type AuthMailer,
   type BrandAssetSurface,
+  type InstanceThemeSurface,
   type ClientTreeReader,
   type CloudflareAccessVerifierConfig,
   type ApiSessionService,
@@ -79,6 +82,7 @@ import {
 } from '@ezacto/db/d1'
 import {
   brandFromSources,
+  instancePaletteContract,
   invoiceTabs,
   renderAppShell,
   reportKindTabs,
@@ -273,6 +277,7 @@ const hasSessionCookie = (request: Request): boolean =>
 export const createApp = (
   services?: RuntimeServices,
   brandAssets?: BrandAssetSurface<AppEnv>,
+  instanceTheme?: InstanceThemeSurface<AppEnv>,
 ) => {
   const shellBrand = async (env: AppEnv) => {
     const stored = brandAssets === undefined ? [] : await brandAssets.list(env)
@@ -284,6 +289,26 @@ export const createApp = (
       })),
     )
   }
+  /**
+   * Everything a shell render needs from storage, read once and in parallel.
+   *
+   * Two lookups, and the page path is the one place in this app that must not
+   * grow a serial database round trip per feature: the marks and the palette
+   * are independent, so they are asked for together. `instanceTheme` is the
+   * fact and not the colours -- the shell cannot carry those inline under its
+   * own `style-src`, so it links a stylesheet, and it only links one where
+   * there is a palette to serve.
+   */
+  const shellChrome = async (env: AppEnv) => {
+    const [brand, themed] = await Promise.all([
+      shellBrand(env),
+      instanceTheme === undefined
+        ? Promise.resolve(null)
+        : instanceTheme.read(env),
+    ])
+    return { brand, instanceTheme: themed !== null }
+  }
+
   return createApiApp<AppEnv>({
     ...(services === undefined
       ? {}
@@ -376,9 +401,25 @@ export const createApp = (
             if (brandAssets !== undefined) {
               installBrandAssetRoutes(api, brandAssets, () => systemClock.now().instant)
             }
+            // Mounted only where the entry composes a theme surface, the same
+            // way the brand routes are: without one there is nowhere for a
+            // palette to go.
+            if (instanceTheme !== undefined) {
+              installInstanceThemeRoutes(api, {
+                surface: instanceTheme,
+                contract: instancePaletteContract,
+                clock: () => systemClock.now().instant,
+              })
+            }
             installBrandRoute(api, {
               organizationName: services.organizationName,
               assets: (env) => (brandAssets === undefined ? Promise.resolve([]) : brandAssets.list(env)),
+              ...(instanceTheme === undefined
+                ? {}
+                : {
+                    palette: async (env) =>
+                      (await instanceTheme.read(env))?.palette ?? {},
+                  }),
             })
             // The provisioning gate is enforced inside the identity store, so
             // this is the only way an instance gets from "provisions nothing"
@@ -405,6 +446,11 @@ export const createApp = (
       // wordmark on the sign-in page is fetched by a browser that has none.
       if (brandAssets !== undefined) {
         installPublicBrandAssetRoutes(app, brandAssets)
+      }
+      // Linked from the sign-in page, which is fetched without a session, so it
+      // sits outside the API surface for the same reason the marks do.
+      if (instanceTheme !== undefined) {
+        installInstanceThemeStylesheetRoute(app, instanceTheme)
       }
       if (services !== undefined) {
         installOidcRoutes(app, {
@@ -617,7 +663,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
@@ -641,7 +687,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Home',
             view: 'dashboard',
             signInProviders: configuredSignInProviders(context.env),
@@ -664,7 +710,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Invoices',
             view: 'invoice-generation',
             signInProviders: configuredSignInProviders(context.env),
@@ -687,7 +733,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Approvals',
             view: 'timesheet-approvals',
             signInProviders: configuredSignInProviders(context.env),
@@ -710,7 +756,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Invoices',
             view: 'invoice-list',
             tabs: invoiceTabs('invoice-list'),
@@ -739,7 +785,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Invoices',
             view: 'invoice-recurring',
             tabs: invoiceTabs('invoice-recurring'),
@@ -763,7 +809,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Invoices',
             view: 'invoice-retainers',
             tabs: invoiceTabs('invoice-retainers'),
@@ -794,7 +840,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Clients',
             view: 'client-list',
             signInProviders: configuredSignInProviders(context.env),
@@ -817,7 +863,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Projects',
             view: 'project-list',
             signInProviders: configuredSignInProviders(context.env),
@@ -840,7 +886,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Team',
             view: 'team-list',
             signInProviders: configuredSignInProviders(context.env),
@@ -863,7 +909,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Tasks',
             view: 'task-list',
             signInProviders: configuredSignInProviders(context.env),
@@ -886,7 +932,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Reports',
             view: 'reports',
             tabs: reportKindTabs(context.req.query('report') ?? null),
@@ -910,7 +956,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Expenses',
             view: 'expense-list',
             signInProviders: configuredSignInProviders(context.env),
@@ -933,7 +979,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Expenses',
             view: 'expense-categories',
             signInProviders: configuredSignInProviders(context.env),
@@ -959,7 +1005,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Settings',
             view: 'settings-user',
             signInProviders: configuredSignInProviders(context.env),
@@ -981,7 +1027,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Settings',
             view: 'settings-company',
             signInProviders: configuredSignInProviders(context.env),
@@ -1004,7 +1050,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Settings',
             view: 'settings-templates',
             signInProviders: configuredSignInProviders(context.env),
@@ -1027,7 +1073,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Settings',
             view: 'settings-roles',
             signInProviders: configuredSignInProviders(context.env),
@@ -1050,7 +1096,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Settings',
             view: 'settings-activity',
             signInProviders: configuredSignInProviders(context.env),
@@ -1085,7 +1131,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Expenses',
             view: 'expense-detail',
             signInProviders: configuredSignInProviders(context.env),
@@ -1116,7 +1162,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Projects',
             view: 'project-detail',
             signInProviders: configuredSignInProviders(context.env),
@@ -1147,7 +1193,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Team',
             view: 'team-person',
             signInProviders: configuredSignInProviders(context.env),
@@ -1178,7 +1224,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Clients',
             view: 'client-detail',
             signInProviders: configuredSignInProviders(context.env),
@@ -1209,7 +1255,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             activeSection: 'Invoices',
             view: 'invoice-detail',
             signInProviders: configuredSignInProviders(context.env),
@@ -1243,7 +1289,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            brand: await shellBrand(context.env),
+            ...(await shellChrome(context.env)),
             signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),

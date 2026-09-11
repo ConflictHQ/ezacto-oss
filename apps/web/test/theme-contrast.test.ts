@@ -203,3 +203,32 @@ describe('D16 theme AA contrast gate', () => {
     }
   })
 })
+
+describe('the two copies of the WCAG arithmetic', () => {
+  it('[unit] agree, so a palette is readable by one standard and not two', async () => {
+    // `scripts/check-theme-contrast.mjs` imports the shell's copy directly so
+    // the CI gate needs no build step, which is why this file does not simply
+    // import `@ezacto/core`'s. What duplication risks is the two disagreeing
+    // about whether a palette is readable -- the shipped theme held to one and
+    // an operator's palette to the other -- so they are held to each other
+    // here, across the range rather than on a lucky pair.
+    const { contrastRatio: shared } = await import('@ezacto/core')
+    const samples = [
+      '#000000', '#FFFFFF', '#1D1D1D', '#282828', '#F4F4F4', '#DB394C',
+      '#16794A', '#14161A', '#676C74', '#F1B34A', '#2F5AE0', '#7F7F7F',
+    ]
+    for (const first of samples) {
+      for (const second of samples) {
+        expect(shared(first, second)).toBeCloseTo(contrastRatio(first, second), 12)
+      }
+    }
+  })
+
+  it('[unit] reject the same malformed input', async () => {
+    const { contrastRatio: shared } = await import('@ezacto/core')
+    for (const bad of ['#abc', 'red', '', '#GGGGGG']) {
+      expect(() => contrastRatio(bad, '#FFFFFF')).toThrow()
+      expect(() => shared(bad, '#FFFFFF')).toThrow()
+    }
+  })
+})

@@ -115,6 +115,22 @@ export const precisionContrastRequirements: readonly ThemeContrastRequirement[] 
   },
 ]
 
+/*
+ * This module carries its own WCAG arithmetic, and `@ezacto/core` carries a
+ * second copy for the instance-palette rule (issue 591). That duplication is
+ * deliberate and it is held together by a test rather than by an import.
+ *
+ * `scripts/check-theme-contrast.mjs` is the CI gate for the shipped theme, and
+ * it imports this file directly so that Node's type stripping runs it with no
+ * build step -- the point being that editing a token and learning the answer
+ * are one step. Importing the shared package would put `@ezacto/core`'s
+ * compiled output between those two, and a clean checkout would fail the gate
+ * with a missing module rather than a contrast figure.
+ *
+ * The risk duplication actually carries is the two disagreeing about whether a
+ * palette is readable, and `test/theme-contrast.test.ts` holds them to each
+ * other across the range instead.
+ */
 const channel = (value: number): number => {
   const normalized = value / 255
   return normalized <= 0.04045

@@ -143,6 +143,12 @@ export {
   type BrandAssetWrite,
 } from './brand-assets.js'
 export {
+  createD1InstanceThemeStore,
+  type InstanceThemeRecord,
+  type InstanceThemeStore,
+  type InstanceThemeWrite,
+} from './instance-theme.js'
+export {
   createD1SsoProvisioningDomainStore,
   SsoProvisioningDomainError,
   type SsoProvisioningDomainErrorCode,

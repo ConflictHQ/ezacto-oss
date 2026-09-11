@@ -32,6 +32,12 @@ export interface QuickBooksConnectionView {
   } | null
 }
 
+/** The palette as `/api/v1/settings/theme` reports it; null is the built-in theme. */
+export type InstanceThemeView = {
+  palette: Readonly<Record<string, string>>
+  updated_at: string
+} | null
+
 export interface CompanySettingsApi {
   getTimeEntrySettings(signal?: AbortSignal): Promise<TimeEntrySettings>
   getTimeEntryNoteSettings(signal?: AbortSignal): Promise<TimeEntryNoteSettings>
@@ -59,6 +65,19 @@ export interface CompanySettingsApi {
     signal?: AbortSignal,
   ): Promise<unknown>
   disconnectQuickBooks?(signal?: AbortSignal): Promise<void>
+
+  /**
+   * The instance palette (#591). Optional for the same reason the two above
+   * are: a deployment that composes no theme surface does not mount the
+   * routes, and a screen offering colour pickers there would be offering
+   * controls that answer 404.
+   */
+  getInstanceTheme?(signal?: AbortSignal): Promise<InstanceThemeView>
+  setInstanceTheme?(
+    palette: Readonly<Record<string, string>>,
+    signal?: AbortSignal,
+  ): Promise<InstanceThemeView>
+  clearInstanceTheme?(signal?: AbortSignal): Promise<void>
 
   listSenderIdentities(signal?: AbortSignal): Promise<readonly SenderIdentity[]>
   listSsoDomains(signal?: AbortSignal): Promise<readonly SsoDomain[]>
@@ -285,3 +304,59 @@ export const apiErrorMessage = (error: unknown, fallback: string): string => {
   }
   return error instanceof Error ? error.message : fallback
 }
+
+/**
+ * The palette an administrator edits (#591), in the order it is presented.
+ *
+ * Every slot the shell declares is here, and that is deliberate rather than
+ * generous. A dark palette is not four colours: set a near-black ground and the
+ * status bands, the row tint and the destructive red are all still tuned for
+ * white, and the contrast rule refuses the palette until they are dealt with.
+ * Offering only an accent and a ground would therefore be offering a dark mode
+ * that can never be saved.
+ *
+ * The grouping is what keeps that from reading as a wall of pickers: the first
+ * group is the four the issue names and the ink they are unreadable without,
+ * and the rest are ordered by how rarely they are touched.
+ *
+ * Two slots are deliberately absent. `money` and `ink_2` are declared and the
+ * stylesheet spends neither (#437), so a control for them would change a stored
+ * value and nothing on the screen -- and naming one here would be inventing the
+ * purpose that issue exists to ask for. `apps/web/test/module-settings.test.ts`
+ * holds this to the stylesheet, so a token that gains a job gains a control.
+ */
+export interface ThemeSlotCopy {
+  slot: string
+  label: string
+  group: 'Core' | 'Accent' | 'Status' | 'Surfaces'
+  hint?: string
+}
+
+export const themeSlotCopy: readonly ThemeSlotCopy[] = [
+  { slot: 'ground', label: 'Page background', group: 'Core', hint: 'The colour behind everything.' },
+  { slot: 'surface', label: 'Card background', group: 'Core', hint: 'Panels and cards that sit on the page.' },
+  { slot: 'ink', label: 'Body text', group: 'Core', hint: 'Must stay readable on the page background.' },
+  { slot: 'muted', label: 'Secondary text', group: 'Core', hint: 'Labels and captions.' },
+  { slot: 'border', label: 'Borders', group: 'Core' },
+  { slot: 'action', label: 'Accent', group: 'Accent', hint: 'Buttons and links. Your brand colour goes here.' },
+  { slot: 'action_fg', label: 'Text on the accent', group: 'Accent', hint: 'The label written on an accent button.' },
+  { slot: 'data', label: 'Links and row actions', group: 'Accent' },
+  { slot: 'row_hover', label: 'Hovered table row', group: 'Accent' },
+  { slot: 'live', label: 'Running timer', group: 'Status', hint: 'The dot and rule that mark time being tracked.' },
+  { slot: 'live_text', label: 'Running timer, as words', group: 'Status' },
+  { slot: 'red', label: 'Destructive actions', group: 'Status' },
+  { slot: 'amber', label: 'Warning', group: 'Status' },
+  { slot: 'amber_bg', label: 'Warning background', group: 'Status' },
+  { slot: 'status_fg', label: 'Status text', group: 'Status' },
+  { slot: 'status_bg', label: 'Status background', group: 'Status' },
+  { slot: 'surface_2', label: 'Nested panel', group: 'Surfaces', hint: 'A panel inside a card.' },
+  { slot: 'orange_tint', label: 'Orange tint', group: 'Surfaces' },
+  { slot: 'blue_light', label: 'Pale blue', group: 'Surfaces' },
+]
+
+export const themeSlotGroups: readonly ThemeSlotCopy['group'][] = [
+  'Core',
+  'Accent',
+  'Status',
+  'Surfaces',
+]

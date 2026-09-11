@@ -94,7 +94,7 @@ describe('container runtime composition', () => {
     const first = await createContainerRuntime(configuration, {
       emailProvider: provider(captured),
     })
-    const firstApp = createApp(first.services, first.brandAssets)
+    const firstApp = createApp(first.services, first.brandAssets, first.instanceTheme)
     const request = (path: string, init: RequestInit = {}) =>
       firstApp.request(
         `${configuration.appBaseUrl}${path}`,
@@ -415,7 +415,7 @@ describe('container runtime composition', () => {
     const second = await createContainerRuntime(configuration, {
       emailProvider: provider(captured),
     })
-    const secondApp = createApp(second.services, second.brandAssets)
+    const secondApp = createApp(second.services, second.brandAssets, second.instanceTheme)
     const restored = await secondApp.request(
       `${configuration.appBaseUrl}/api/v1/time-entries/${entry.id}`,
       { headers: { cookie } },
@@ -442,7 +442,7 @@ describe('container runtime composition', () => {
     })
     try {
       const mounted = new Set(
-        createApp(runtime.services, runtime.brandAssets)
+        createApp(runtime.services, runtime.brandAssets, runtime.instanceTheme)
           .routes.filter((route) => route.method !== 'ALL')
           .map((route) => `${route.method.toLowerCase()} ${route.path}`),
       )
@@ -480,7 +480,7 @@ describe('container runtime composition', () => {
           (operation) => `${operation.method} ${operation.path}`,
         ),
       )
-      const surplus = [...mountedApiRoutes(createApp(runtime.services, runtime.brandAssets).routes)]
+      const surplus = [...mountedApiRoutes(createApp(runtime.services, runtime.brandAssets, runtime.instanceTheme).routes)]
         .filter(
           (route) => !documented.has(route) && !UNDOCUMENTED_ROUTES.includes(route),
         )
@@ -504,7 +504,7 @@ describe('container runtime composition', () => {
     })
     try {
       const difference = routeDifference(
-        mountedApiRoutes(createApp(runtime.services, runtime.brandAssets).routes),
+        mountedApiRoutes(createApp(runtime.services, runtime.brandAssets, runtime.instanceTheme).routes),
         expectedApiRoutes(
           apiContractOperations.map(
             (operation) => `${operation.method} ${operation.path}`,
@@ -532,7 +532,7 @@ describe('container runtime composition', () => {
       // Absent means off, not off-by-default-with-a-weak-secret: the routes
       // hand out sessions, so "configured badly" and "not configured" must not
       // look the same.
-      expect(mountedApiRoutes(createApp(withoutKey.services, withoutKey.brandAssets).routes)).not.toContain(
+      expect(mountedApiRoutes(createApp(withoutKey.services, withoutKey.brandAssets, withoutKey.instanceTheme).routes)).not.toContain(
         'post /portal/magic-link',
       )
     } finally {
@@ -545,7 +545,7 @@ describe('container runtime composition', () => {
       { emailProvider: provider([]) },
     )
     try {
-      const mounted = mountedApiRoutes(createApp(withKey.services, withKey.brandAssets).routes)
+      const mounted = mountedApiRoutes(createApp(withKey.services, withKey.brandAssets, withKey.instanceTheme).routes)
       expect(mounted).toContain('post /portal/magic-link')
       expect(mounted).toContain('get /portal/verify')
       expect(mounted).toContain('get /portal/statements')

@@ -55,7 +55,7 @@ import {
   type HttpEmailProvider,
 } from '@ezacto/mailer'
 import { SmtpMailer } from '@ezacto/mailer/smtp'
-import type { BrandAssetSurface } from '@ezacto/api'
+import type { BrandAssetSurface, InstanceThemeSurface } from '@ezacto/api'
 import type { AppEnv, RuntimeServices } from '../../worker/src/app.js'
 import {
   createQuickBooksMirrorSubscriber,
@@ -63,6 +63,7 @@ import {
 } from '@ezacto/integrations'
 import type { ContainerConfig } from './config.js'
 import { createContainerBrandAssetSurface } from './brand-assets.js'
+import { createContainerInstanceThemeSurface } from './instance-theme.js'
 import { createDiskAttachmentObjectStore } from './disk-attachments.js'
 import { ContainerEmailQueue } from './email-queue.js'
 import { ContainerOutboxScheduler } from './outbox-scheduler.js'
@@ -175,6 +176,7 @@ export interface ContainerRuntime {
   services: RuntimeServices
   /** Passed to `createApp` beside the services; see `brand-assets.ts`. */
   brandAssets: BrandAssetSurface<AppEnv>
+  instanceTheme: InstanceThemeSurface<AppEnv>
   drainOutbox(): ReturnType<RuntimeServices['outbox']['drain']>
   close(timeoutMs?: number): Promise<void>
 }
@@ -345,6 +347,7 @@ export const createContainerRuntime = async (
       database,
       config.brandDirectory,
     )
+    const instanceTheme = createContainerInstanceThemeSurface(database)
 
     const services: RuntimeServices = {
       bootstrap: (input) => bootstrapInstanceContainer(database, input),
@@ -478,6 +481,7 @@ export const createContainerRuntime = async (
       database,
       services,
       brandAssets,
+      instanceTheme,
       drainOutbox: () => outboxScheduler!.drain(),
       async close(timeoutMs) {
         if (closed) return
