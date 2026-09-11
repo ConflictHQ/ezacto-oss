@@ -55,11 +55,24 @@ describe('demo seed', () => {
     expect(count(client, 'expense_categories')).toBe(6)
     expect(count(client, 'time_entries')).toBeGreaterThan(500)
     expect(count(client, 'expenses')).toBeGreaterThan(0)
-  })
+    // 30s. This builds the whole migration ledger -- 46 migrations -- before it
+    // asserts anything, and takes about 5.7s doing it against vitest's 5s
+    // default. It has been failing on main for that reason, which reads as a
+    // broken seed rather than a slow one. Same shape as issue 568.
+  }, 30_000)
 
-  it('[unit] holds no address that could reach a real person', () => {
-    // example.com is reserved by RFC 2606 and can never be registered, so a
-    // demo instance that sends mail cannot deliver it to someone real.
+  it('[unit] holds no address that could reach a stranger', () => {
+    // Every seeded address is on ezacto.io, a domain this project owns.
+    //
+    // They were example.com, which RFC 2606 reserves so it can never be
+    // registered -- undeliverable by construction, and therefore also
+    // unobservable. Now that the demo has a real sending transport, a domain we
+    // control is the better containment: what it sends lands somewhere we can
+    // read, and it still cannot reach someone outside.
+    //
+    // The assertion is the containment, not the spelling: one address on a
+    // domain nobody here owns is the whole failure, so this fails on the first
+    // one rather than counting them.
     const client = sharedDemo()
     const addresses = client
       .prepare('SELECT address FROM user_emails')
@@ -67,7 +80,7 @@ describe('demo seed', () => {
 
     expect(addresses).toHaveLength(20)
     for (const { address } of addresses) {
-      expect(address).toMatch(/@example\.com$/)
+      expect(address).toMatch(/@ezacto\.io$/)
     }
   })
 

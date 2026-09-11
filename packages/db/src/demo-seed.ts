@@ -4,8 +4,14 @@
  * ezacto.io is the demo anyone can click through, so it cannot hold CONFLICT's
  * own books: real client names, postal addresses and the statement keys that
  * open a client's statement are not things to publish. Everything here is
- * invented. Addresses use example.com, which RFC 2606 reserves precisely so it
- * can never belong to a real person, so a demo that sends mail cannot reach one.
+ * invented.
+ *
+ * Addresses are on ezacto.io, a domain this project owns. They were example.com,
+ * which RFC 2606 reserves so it can never belong to anyone -- unreachable by
+ * construction, and therefore also unobservable. A domain we control is the
+ * better containment for a demo that can now actually send: mail the demo emits
+ * lands somewhere we can read rather than being swallowed, so what it sends is
+ * checkable, and it still cannot reach a stranger.
  *
  * Ids sit in the 9000s. A bootstrapped instance owns user 1 (instance-bootstrap
  * creates the owner and nothing else), so the seed adds a team around that owner
@@ -80,7 +86,7 @@ const people: readonly Person[] = [
 /**
  * The two accounts the demo publishes on its own sign-in page. They are ordinary
  * users with ordinary passwords -- nothing here relaxes the password policy, so
- * the credentials are long enough to pass it. The addresses are example.com for
+ * the credentials are long enough to pass it. The addresses are on ezacto.io for
  * the same reason everyone else's are.
  *
  * `admin` is the instance owner, which bootstrap already created as user 1;
@@ -99,14 +105,14 @@ export const demoAccounts: readonly DemoAccount[] = [
   {
     label: 'Administrator',
     userId: 1,
-    email: 'admin@example.com',
+    email: 'admin@ezacto.io',
     password: 'folding-forks-admin',
     describes: 'Everything: team, projects, invoices, reports, settings.',
   },
   {
     label: 'Teammate',
     userId: 9006,
-    email: 'user@example.com',
+    email: 'user@ezacto.io',
     password: 'folding-forks-user',
     describes: 'One person’s own week, and the projects they are assigned to.',
   },
@@ -339,7 +345,7 @@ export const demoSeedStatements = (
         person.id,
         person.id,
         published?.email ??
-          `${person.first.toLowerCase()}.${person.last.toLowerCase().replace(/[^a-z]/g, '')}@example.com`,
+          `${person.first.toLowerCase()}.${person.last.toLowerCase().replace(/[^a-z]/g, '')}@ezacto.io`,
         now,
         now,
         now,
