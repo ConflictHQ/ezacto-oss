@@ -850,6 +850,7 @@ describe('S-1 through S-5 application shell', () => {
     expect(list).toContain('href="/projects" data-directory-nav hidden aria-current="page"')
     expect(detail).toContain('data-project-detail-page')
     expect(detail).toContain('data-project-task-assignments')
+    expect(detail).toContain('data-project-user-assignments')
     expect(detail).toContain('data-project-attachment-form hidden')
     expect(detail).toContain('<div class="project-form-body" data-project-form-body></div>')
     expect(detail).not.toContain('name="hourly_rate_cents"')

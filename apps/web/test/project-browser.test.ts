@@ -62,6 +62,60 @@ const assignment: GeneralResource = {
   created_at: timestamp,
   updated_at: timestamp,
 }
+const owner: GeneralResource = {
+  id: 4,
+  first_name: 'Dana',
+  last_name: 'Reyes',
+  email: 'dana@example.test',
+  is_active: true,
+  created_at: timestamp,
+  updated_at: timestamp,
+}
+const contractor: GeneralResource = {
+  id: 5,
+  first_name: 'Sam',
+  last_name: 'Okafor',
+  email: 'sam@example.test',
+  is_active: true,
+  created_at: timestamp,
+  updated_at: timestamp,
+}
+/** Active and not on this project, so there is somebody left to assign. */
+const unstaffed: GeneralResource = {
+  id: 6,
+  first_name: 'Rae',
+  last_name: 'Lindqvist',
+  email: 'rae@example.test',
+  is_active: true,
+  created_at: timestamp,
+  updated_at: timestamp,
+}
+/** Bills at the person's own default: hourly_rate_cents is set but unread. */
+const defaultRateStaffing: GeneralResource = {
+  id: 31,
+  project_id: 7,
+  user_id: 4,
+  is_active: true,
+  is_project_manager: true,
+  use_default_rates: true,
+  hourly_rate_cents: 99_999,
+  budget_seconds: 36_000,
+  created_at: timestamp,
+  updated_at: timestamp,
+}
+/** Bills at a project-specific rate, which is 243 of the 342 migrated rows. */
+const projectRateStaffing: GeneralResource = {
+  id: 32,
+  project_id: 7,
+  user_id: 5,
+  is_active: true,
+  is_project_manager: false,
+  use_default_rates: false,
+  hourly_rate_cents: 12_500,
+  budget_seconds: null,
+  created_at: timestamp,
+  updated_at: timestamp,
+}
 const attachment: Attachment = {
   id: 17,
   name: 'scope.txt',
@@ -109,6 +163,13 @@ const detailApi = (overrides: Partial<ProjectDirectoryApi> = {}): Partial<Projec
   listProjectClients: vi.fn(async () => page([client])),
   listDirectoryTasks: vi.fn(async () => page([task])),
   listProjectTaskAssignments: vi.fn(async () => page([assignment])),
+  listDirectoryUsers: vi.fn(async () => page([owner, contractor, unstaffed])),
+  listProjectUserAssignments: vi.fn(async () =>
+    page([defaultRateStaffing, projectRateStaffing]),
+  ),
+  createProjectUserAssignment: vi.fn(async (input) => ({ ...projectRateStaffing, ...input })),
+  updateProjectUserAssignment: vi.fn(async (_id, input) => ({ ...projectRateStaffing, ...input })),
+  archiveProjectUserAssignment: vi.fn(async () => undefined),
   listDirectoryProjectAttachments: vi.fn(async () => [attachment]),
   updateDirectoryProject: vi.fn(async (_id, patch) => ({ ...project, ...patch })),
   createProjectTaskAssignment: vi.fn(async (input) => ({ ...assignment, ...input })),
@@ -153,6 +214,98 @@ describe('Projects V1 browser controller', () => {
     expect(projectForm.elements.namedItem('notes')).toBeNull()
     expect(projectForm.elements.namedItem('hourly_rate_cents')).toBeNull()
     expect(api.updateDirectoryProject).not.toHaveBeenCalled()
+  })
+
+  it('[browser #485] shows who is staffed, and at which of the two rates', async () => {
+    writeDocument('project-detail', '/projects/7')
+    const controller = createProjectDirectoryController(detailApi())
+
+    await controller.activate(identity('administrator'), new AbortController().signal, () => false)
+
+    const cards = document.querySelectorAll<HTMLElement>(
+      '[data-project-user-assignments] [data-user-assignment-id]',
+    )
+    expect(cards).toHaveLength(2)
+    expect(cards[0]!.textContent).toContain('Dana Reyes')
+    expect(cards[0]!.textContent).toContain('Project manager')
+    // use_default_rates is on, so the stored 99_999 is never charged and must
+    // not be shown as though it were.
+    expect(cards[0]!.textContent).toContain("The person's default rate")
+    expect(cards[0]!.textContent).not.toContain('$999.99')
+    expect(cards[1]!.textContent).toContain('Sam Okafor')
+    expect(cards[1]!.textContent).toContain('Member')
+    expect(cards[1]!.textContent).toContain('$125.00')
+    expect(document.querySelector('[data-project-team-status]')?.textContent).toBe(
+      '2 people staffed.',
+    )
+  })
+
+  it('[security] keeps project staffing rates away from a viewer refused billable money', async () => {
+    writeDocument('project-detail', '/projects/7')
+    const controller = createProjectDirectoryController(detailApi())
+
+    await controller.activate(identity('member'), new AbortController().signal, () => false)
+
+    const team = document.querySelector('[data-project-user-assignments]')?.textContent ?? ''
+    // Who is on the project is not money and stays readable; what they cost is.
+    expect(team).toContain('Dana Reyes')
+    expect(team).toContain('Sam Okafor')
+    expect(team).not.toContain('$125.00')
+    expect(team).not.toContain('Rate')
+    expect(
+      document.querySelector<HTMLButtonElement>('[data-user-assignment-create]')?.hidden,
+    ).toBe(true)
+  })
+
+  it('[browser #485] submits a project rate only when the default switch is off', async () => {
+    writeDocument('project-detail', '/projects/7')
+    const api = detailApi()
+    const controller = createProjectDirectoryController(api)
+    await controller.activate(identity('administrator'), new AbortController().signal, () => false)
+
+    document.querySelector<HTMLButtonElement>('[data-user-assignment-create]')!.click()
+    const form = document.querySelector<HTMLFormElement>('[data-user-assignment-form]')!
+    const useDefault = form.elements.namedItem('use_default_rates') as HTMLInputElement
+    const rate = form.elements.namedItem('hourly_rate_cents') as HTMLInputElement
+    // A new assignment opens on the default rate, and the amount it would not
+    // read is not editable while that is true.
+    expect(useDefault.checked).toBe(true)
+    expect(rate.disabled).toBe(true)
+
+    useDefault.checked = false
+    useDefault.dispatchEvent(new Event('change', { bubbles: true }))
+    expect(rate.disabled).toBe(false)
+    rate.value = '80'
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(api.createProjectUserAssignment).toHaveBeenCalled())
+    expect(vi.mocked(api.createProjectUserAssignment!).mock.calls[0]![0]).toMatchObject({
+      project_id: 7,
+      user_id: 6,
+      use_default_rates: false,
+      hourly_rate_cents: 8_000,
+    })
+  })
+
+  it('[browser #485] sends no rate at all when the person bills at their default', async () => {
+    writeDocument('project-detail', '/projects/7')
+    const api = detailApi()
+    const controller = createProjectDirectoryController(api)
+    await controller.activate(identity('administrator'), new AbortController().signal, () => false)
+
+    document.querySelector<HTMLButtonElement>('[data-user-assignment-create]')!.click()
+    const form = document.querySelector<HTMLFormElement>('[data-user-assignment-form]')!
+    const rate = form.elements.namedItem('hourly_rate_cents') as HTMLInputElement
+    // Typed, then the switch turned back on. The amount is stale the moment the
+    // switch says it is not consulted, so it must not be stored.
+    rate.disabled = false
+    rate.value = '80'
+    ;(form.elements.namedItem('use_default_rates') as HTMLInputElement).checked = true
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(api.createProjectUserAssignment).toHaveBeenCalled())
+    expect(vi.mocked(api.createProjectUserAssignment!).mock.calls[0]![0]).toMatchObject({
+      use_default_rates: true,
+      hourly_rate_cents: null,
+    })
   })
 
   it('[security] keeps unauthorized money and note fields out of a manager DOM and PATCH', async () => {

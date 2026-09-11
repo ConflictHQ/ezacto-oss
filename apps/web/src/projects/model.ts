@@ -71,6 +71,25 @@ export interface ProjectDirectoryApi {
     signal?: AbortSignal,
   ): Promise<GeneralResource>
   archiveProjectTaskAssignment(id: number, signal?: AbortSignal): Promise<void>
+  listDirectoryUsers(
+    cursor?: string,
+    signal?: AbortSignal,
+  ): Promise<ProjectDirectoryPage>
+  listProjectUserAssignments(
+    projectId: number,
+    cursor?: string,
+    signal?: AbortSignal,
+  ): Promise<ProjectDirectoryPage>
+  createProjectUserAssignment(
+    input: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<GeneralResource>
+  updateProjectUserAssignment(
+    id: number,
+    input: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<GeneralResource>
+  archiveProjectUserAssignment(id: number, signal?: AbortSignal): Promise<void>
   listDirectoryProjectAttachments(
     projectId: number,
     signal?: AbortSignal,
@@ -178,6 +197,36 @@ export const taskLabel = (
   return task === undefined
     ? `Task #${taskId}`
     : projectText(task, 'name') ?? `Task #${taskId}`
+}
+
+export const personLabel = (
+  userId: number,
+  people: readonly GeneralResource[],
+): string => {
+  const person = people.find((candidate) => candidate.id === userId)
+  if (person === undefined) return `Person #${userId}`
+  const first = projectText(person, 'first_name')
+  const last = projectText(person, 'last_name')
+  const name = [first, last].filter((part) => part !== null).join(' ')
+  return name === '' ? projectText(person, 'email') ?? `Person #${userId}` : name
+}
+
+/**
+ * What a staffed person is actually billed at.
+ *
+ * `use_default_rates` is the switch and `hourly_rate_cents` is only consulted
+ * when it is off, so reading the rate column alone misreports every row that
+ * leaves the switch on -- which in the migrated data is most of them. The two
+ * are reported together here so the screen cannot show a number the system
+ * would not charge.
+ */
+export const assignmentRateLabel = (
+  assignment: Readonly<GeneralResource>,
+  currency: string,
+): string => {
+  if (assignment['use_default_rates'] !== false) return "The person's default rate"
+  const cents = projectNumber(assignment, 'hourly_rate_cents')
+  return cents === null ? 'Project rate not set' : projectMoney(cents, currency)
 }
 
 export const projectMoney = (cents: number | null, currency: string): string => {
