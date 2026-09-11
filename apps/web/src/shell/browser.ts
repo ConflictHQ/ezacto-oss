@@ -446,18 +446,36 @@ const renderCellControl = (
   note.type = 'button'
   note.className = 'cell-note'
   note.dataset.noteCell = cell.key
-  note.ariaLabel = `${cell.entries.length === 0 ? 'Add time' : currentNotes === null ? 'Add note' : 'Edit note'} for ${noteContext} on ${dayLabel(cell.date)}${minimumNoteLength > 0 ? `; at least ${minimumNoteLength} characters required` : ''}`
-  note.title = currentNotes ?? (minimumNoteLength > 0 ? noteHint(minimumNoteLength) : cell.entries.length === 0 ? 'Add time' : 'Add note')
+  // A locked cell opens to be read, not written, and the label says so: naming
+  // it `Edit note` offered an edit the dialog then refuses in six disabled
+  // fields.
+  const noteAction = cell.isLocked
+    ? 'Show why this is locked'
+    : cell.entries.length === 0
+      ? 'Add time'
+      : currentNotes === null
+        ? 'Add note'
+        : 'Edit note'
+  note.ariaLabel = `${noteAction} for ${noteContext} on ${dayLabel(cell.date)}${minimumNoteLength > 0 && !cell.isLocked ? `; at least ${minimumNoteLength} characters required` : ''}`
+  note.title = cell.isLocked
+    ? (cell.lockedReason ?? noteAction)
+    : (currentNotes ?? (minimumNoteLength > 0 ? noteHint(minimumNoteLength) : cell.entries.length === 0 ? 'Add time' : 'Add note'))
   note.textContent = currentNotes === null ? '+' : '•'
   // Every cell already has a tab stop: its input. Putting the note and retry
   // affordances in the sequence made a week row fourteen stops to cross when
   // seven is the whole point of a grid. Both stay reachable by click and by
   // the row's own focus, and neither is the way anyone enters time.
   note.tabIndex = -1
+  // A locked cell still opens, read-only, so long as there is exactly one entry
+  // to explain. Refusing to open it left the reason -- invoiced, approved, an
+  // archived project -- written nowhere a person could read it: the cell said
+  // `Locked` and the only control that could say more was disabled. Locked with
+  // nothing in it stays shut, because there is no entry to describe and the
+  // route would refuse a new one anyway (issue 496).
   note.disabled =
     cell.entries.length > 1 ||
     cell.isConflict ||
-    cell.isLocked ||
+    (cell.isLocked && cell.entries.length !== 1) ||
     state?.state === 'saving'
   note.addEventListener('click', () => handlers.openEntry(cell, view))
   wrapper.append(note)
@@ -1042,6 +1060,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const entryResult = required<HTMLElement>('[data-entry-result]')
   const entrySubmit = required<HTMLButtonElement>('[data-entry-submit]')
   const stopTimer = required<HTMLButtonElement>('[data-stop-timer]')
+  const deleteEntry = required<HTMLButtonElement>('[data-entry-delete]')
   const invoiceForm = required<HTMLFormElement>('[data-invoice-generation-form]')
   /**
    * The From/To pair the generation fieldset used to carry, as the shared
@@ -1680,7 +1699,27 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     return [kept, ...options]
   }
 
-  const updateEntrySuggestions = (): void => {
+  /**
+   * `wanted` is the assignment an entry already has, as opposed to whatever the
+   * two controls happen to be showing.
+   *
+   * The editor is one instance reused for every entry, so when it opens on a
+   * second entry the task list is still narrowed to the *previous* entry's
+   * project. Assigning `entryTask.value` first and reading it back here -- which
+   * is what this did -- loses the assignment silently, because a select drops a
+   * value it does not offer. The entry then opened with an empty activity, and
+   * on a project whose list is one task long it read as the control refusing to
+   * take a selection (issue 494).
+   *
+   * Passing it in also separates the two reasons this runs. Opening an entry
+   * shows what that entry *is*, archived assignment and all -- `withHeldValue`
+   * keeps it and marks it unavailable. Changing the project is a person saying
+   * they want something else, and there the old task must go.
+   */
+  const updateEntrySuggestions = (wanted?: {
+    readonly project: string
+    readonly task: string
+  }): void => {
     if (snapshot === null) return
     const projectIds = new Set(
       snapshot.catalog.timeEntryOptions.map((entry) => entry.project_id),
@@ -1688,7 +1727,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const projects = snapshot.catalog.projects.filter((resource) =>
       projectIds.has(resource.id),
     )
-    const heldProject = entryProject.value
+    const heldProject = wanted?.project ?? entryProject.value
     entryProject.replaceChildren(
       ...withHeldValue(
         projects.map((resource) => suggestion(resourceLabel(resource))),
@@ -1712,15 +1751,16 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     // Decided before the options are built, not after. A task the chosen
     // project does not offer must not survive as an option -- keeping it is how
     // an entry gets submitted against a project that never had that task.
+    const currentTask = wanted?.task ?? entryTask.value
     const heldTask =
+      wanted === undefined &&
       matched !== undefined &&
-      entryTask.value.trim() !== '' &&
+      currentTask.trim() !== '' &&
       !available.some(
-        (resource) =>
-          resourceLabel(resource).toLowerCase() === entryTask.value.trim().toLowerCase(),
+        (resource) => resourceLabel(resource).toLowerCase() === currentTask.trim().toLowerCase(),
       )
         ? ''
-        : entryTask.value
+        : currentTask
     entryTask.replaceChildren(
       ...withHeldValue(
         available.map((resource) => suggestion(resourceLabel(resource))),
@@ -2958,12 +2998,14 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     )
     const project = snapshot.catalog.projects.find((resource) => resource.id === next.projectId)
     const task = snapshot.catalog.tasks.find((resource) => resource.id === next.taskId)
-    entryProject.value = project === undefined ? String(next.projectId) : resourceLabel(project)
-    entryTask.value = task === undefined ? String(next.taskId) : resourceLabel(task)
-    // Rebuilt for the assignment just set, because a select cannot display a
-    // value it does not offer and the task list narrows to the chosen project.
-    // Setting .value fires no event, so nothing else would do this.
-    updateEntrySuggestions()
+    // The options are built for this entry's assignment and the values set from
+    // the same pair, rather than assigned here and read back: the task list is
+    // still narrowed to whichever project the editor last showed, and a select
+    // drops a value it does not offer.
+    updateEntrySuggestions({
+      project: project === undefined ? String(next.projectId) : resourceLabel(project),
+      task: task === undefined ? String(next.taskId) : resourceLabel(task),
+    })
     entryDate.value = next.spentDate
     entryDurationInput.value = initialDurationValue
     entryStart.value =
@@ -3001,8 +3043,21 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
           ? 'Log time'
           : 'Save entry'
     stopTimer.hidden = !running
+    // Only where there is something to delete, and never on a running timer --
+    // that one is stopped, not deleted. A locked entry shows neither Save nor
+    // Delete: the dialog is open to say why it cannot change, and a control that
+    // can only refuse is worse than no control beside a sentence that already
+    // explains itself (issue 496).
+    deleteEntry.hidden = next.entry === null || running || next.entry.is_locked
     entryResult.textContent = message
     open(entryDialog)
+    // A locked entry disables every field and hides both actions, so the usual
+    // targets are all unfocusable and `.focus()` would quietly do nothing,
+    // leaving the keyboard behind the modal.
+    if (next.entry?.is_locked === true) {
+      entryDialog.querySelector<HTMLButtonElement>('[data-dialog-close]')?.focus()
+      return
+    }
     ;(running ||
     (next.minimumNoteLength > 0 && timeEntryNoteLength(next.notes) < next.minimumNoteLength)
       ? entryNoteInput
@@ -3025,12 +3080,20 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       state?.state === 'saving' ||
       cell.entries.length > 1 ||
       cell.isConflict ||
-      cell.isLocked ||
+      (cell.isLocked && cell.entries.length !== 1) ||
       snapshot === null
     )
       return
     const minimumNoteLength = effectiveMinimumNoteLength(cell, state)
     const entry = cell.entries[0] ?? null
+    // The reason is the entry's own. `deriveLockReasonCode` names it -- invoiced,
+    // approved, policy_locked, an archived client, project or task -- and it is
+    // the whole point of opening a locked entry, so it is said on arrival rather
+    // than waiting for someone to press a control and be refused.
+    const lockedMessage =
+      entry?.is_locked === true
+        ? `This entry cannot be changed: ${entry.locked_reason ?? 'it is locked'}.`
+        : message
     configureEntryEditor(
       {
         context: view === 'phone' ? 'day' : entry === null ? 'week-cell' : 'edit',
@@ -3050,7 +3113,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
           state.rawValue !==
             formatCellHours(cell.totalSeconds, snapshot.timeEntrySettings.time_format),
       },
-      message,
+      lockedMessage,
       state?.rawValue,
     )
   }
@@ -3594,6 +3657,38 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       })
       .finally(() => {
         if (isSessionCurrent(operation)) stopTimer.disabled = false
+      })
+  })
+
+  deleteEntry.addEventListener('click', () => {
+    const operation = sessionOperation()
+    const existing = activeEntry?.entry
+    if (operation === null || existing === undefined || existing === null) return
+    // The button is already hidden in both of the cases it could be pressed in
+    // error, so this is belt and braces -- but only one of them has a second
+    // line. `deleteTimeEntry` refuses a locked entry in the tracked-mutation
+    // predicate, and would say so itself; nothing in it refuses a running one,
+    // so this is the only thing standing between a running timer and deletion.
+    if (existing.is_running === true) {
+      entryResult.textContent = 'Stop the running timer before deleting this entry.'
+      return
+    }
+    entryResult.textContent = 'Deleting entry…'
+    deleteEntry.disabled = true
+    void api
+      .deleteTimeEntry(existing.id, operation.signal)
+      .then(async () => {
+        if (!isSessionCurrent(operation)) return
+        if (!(await refresh(operation))) return
+        entryDialog.close()
+        activeEntry = null
+      })
+      .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
+        entryResult.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (isSessionCurrent(operation)) deleteEntry.disabled = false
       })
   })
 
