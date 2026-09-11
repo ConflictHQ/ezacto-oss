@@ -107,13 +107,23 @@ for (const [runtime, factory] of factories) {
     it('[unit] seeds all template types and appends immutable idempotent versions', async () => {
       harness = await factory()
       const templates = await harness.store.listTemplates()
+      // Account mail stays at the seeded version; the three client-facing
+      // kinds advanced in 0046, which put the invoice number in their subjects
+      // instead of the primary key.
       expect(templates.map(({ kind, version }) => [kind, version])).toEqual([
         ['auth_email_verification', 1],
         ['auth_password_reset', 1],
-        ['invoice', 1],
-        ['reminder', 1],
-        ['thank_you', 1],
+        ['invoice', 2],
+        ['reminder', 2],
+        ['thank_you', 2],
       ])
+      // Everything below appends onto whatever is current rather than assuming
+      // a number: this test is about append-immutability and idempotency, and
+      // it should not fail every time a migration touches a template.
+      const headOf = (kind: string): number =>
+        templates.find((template) => template.kind === kind)!.version
+      const invoiceHead = headOf('invoice')
+      const thankYouHead = headOf('thank_you')
       for (const seeded of templates) {
         expect([
           ...inspectEmailTemplateVariables(seeded.kind, seeded.subjectTemplate),
@@ -126,7 +136,7 @@ for (const [runtime, factory] of factories) {
 
       const input = {
         kind: 'invoice' as const,
-        expectedVersion: 1,
+        expectedVersion: invoiceHead,
         subjectTemplate: 'Invoice #%invoice_id% from %company_name%',
         textTemplate: 'Invoice %invoice_number% totals %invoice_amount%.',
         htmlTemplate: '<p>Invoice %invoice_number% totals %invoice_amount%.</p>',
@@ -136,8 +146,12 @@ for (const [runtime, factory] of factories) {
       }
       const created = await harness.store.createTemplateVersion(input)
       await expect(harness.store.createTemplateVersion(input)).resolves.toEqual(created)
-      expect(created).toMatchObject({ kind: 'invoice', version: 2, createdByUserId: 1 })
-      expect(await harness.store.listTemplateVersions('invoice')).toHaveLength(2)
+      expect(created).toMatchObject({
+        kind: 'invoice',
+        version: invoiceHead + 1,
+        createdByUserId: 1,
+      })
+      expect(await harness.store.listTemplateVersions('invoice')).toHaveLength(invoiceHead + 1)
 
       await expect(
         harness.store.createTemplateVersion({
@@ -149,16 +163,16 @@ for (const [runtime, factory] of factories) {
         harness.store.createTemplateVersion({
           ...input,
           commandId: 'unknown-variable',
-          expectedVersion: 2,
+          expectedVersion: invoiceHead + 1,
           subjectTemplate: 'Invoice %invented_harvest_variable%',
         }),
       ).rejects.toMatchObject({ code: 'invalid_input' })
-      expect(await harness.store.listTemplateVersions('invoice')).toHaveLength(2)
+      expect(await harness.store.listTemplateVersions('invoice')).toHaveLength(invoiceHead + 1)
 
       await expect(
         harness.store.createTemplateVersion({
           kind: 'thank_you',
-          expectedVersion: 1,
+          expectedVersion: thankYouHead,
           subjectTemplate: 'Thanks for %invoice_id%',
           textTemplate: 'Imported literal: %future_harvest_variable%',
           unknownVariablePolicy: 'literal',
@@ -168,7 +182,7 @@ for (const [runtime, factory] of factories) {
         }),
       ).resolves.toMatchObject({
         kind: 'thank_you',
-        version: 2,
+        version: thankYouHead + 1,
         unknownVariablePolicy: 'literal',
       })
 
@@ -214,9 +228,16 @@ for (const [runtime, factory] of factories) {
 
     it('[concurrency] serializes version races and preserves the winner exactly', async () => {
       harness = await factory()
+      // Both racers append onto the current head, whatever it is. Pinning 1
+      // made this test fail when 0046 advanced the reminder template -- and it
+      // failed as "no winner", which reads as a broken lock rather than a stale
+      // expectation.
+      const reminderHead = (await harness.store.listTemplates()).find(
+        (template) => template.kind === 'reminder',
+      )!.version
       const base = {
         kind: 'reminder' as const,
-        expectedVersion: 1,
+        expectedVersion: reminderHead,
         subjectTemplate: 'Reminder for %invoice_number%',
         textTemplate: 'Due %invoice_due_date%.',
         actorUserId: 1,
@@ -234,7 +255,9 @@ for (const [runtime, factory] of factories) {
       expect(settled.filter(({ status }) => status === 'rejected')).toHaveLength(1)
       const rejected = settled.find(({ status }) => status === 'rejected')
       expect(rejected).toMatchObject({ reason: { code: 'version_conflict' } })
-      expect(await harness.store.listTemplateVersions('reminder')).toHaveLength(2)
+      expect(await harness.store.listTemplateVersions('reminder')).toHaveLength(
+        reminderHead + 1,
+      )
 
       await harness.store.createSenderIdentity({
         id: 77,

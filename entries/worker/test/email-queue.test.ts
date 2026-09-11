@@ -458,11 +458,19 @@ describe('Worker email queue composition', () => {
 
       await services.outbox.drain()
       expect(jobs).toHaveLength(2)
+      // The version comes from the live head rather than a literal. What this
+      // asserts is that the job names the template that rendered it; which
+      // number that is belongs to the migration ledger, and pinning it here
+      // made this test fail when 0046 appended a version.
+      const head = await database
+        .prepare(`SELECT current_version FROM email_template_heads WHERE template_kind = 'invoice'`)
+        .first<{ current_version: number }>()
+      expect(head?.current_version).toBeGreaterThanOrEqual(1)
       expect(jobs[1]).toMatchObject({
         message: {
           from: { email: 'billing@example.test', name: 'Invoice Delivery Billing' },
           to: [{ email: 'client@example.net', name: 'Client' }],
-          template: 'invoice:1',
+          template: `invoice:${head!.current_version}`,
         },
       })
       const queueMessage = {
