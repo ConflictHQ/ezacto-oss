@@ -6,9 +6,41 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+
+# Manifests first, source second, and the order is the whole point.
+#
+# `COPY . .` sat above `npm ci`, so every source edit invalidated the
+# dependency layer and the full workspace install -- wrangler and esbuild
+# included -- ran again on a build that had changed one line of TypeScript. The
+# job grew to 20m18s against a 20-minute ceiling, GitHub cancelled it, a
+# cancelled job fails the run, and `deploy` runs only after `verify`: three
+# production deployments were skipped by a build that was merely slow (issue
+# 529).
+#
+# A workspace install needs every workspace's manifest present to resolve the
+# tree, so they are copied as manifests rather than as whole packages. This
+# layer now changes only when a package.json or the lockfile does.
+COPY package.json package-lock.json ./
+COPY apps/web/package.json ./apps/web/
+COPY entries/container/package.json ./entries/container/
+COPY entries/worker/package.json ./entries/worker/
+COPY packages/api/package.json ./packages/api/
+COPY packages/cli/package.json ./packages/cli/
+COPY packages/client/package.json ./packages/client/
+COPY packages/core/package.json ./packages/core/
+COPY packages/db/package.json ./packages/db/
+COPY packages/integrations/package.json ./packages/integrations/
+COPY packages/mailer/package.json ./packages/mailer/
+COPY packages/mcp/package.json ./packages/mcp/
+COPY packages/migrate/package.json ./packages/migrate/
+
+# `--ignore-scripts` so a prepare hook cannot run before the source it builds
+# is present. The build steps below run explicitly.
+RUN npm ci --include=dev --ignore-scripts
+
 COPY . .
-RUN npm ci --include=dev \
-  && npm run build -w @ezacto/web \
+
+RUN npm run build -w @ezacto/web \
   && npm run build -w ezacto-container \
   && npm prune --omit=dev
 
