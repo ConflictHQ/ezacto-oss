@@ -269,7 +269,7 @@ tolerable is that nothing done to it survives the night.
 | | |
 | --- | --- |
 | Brand | **Folding Forks** — an invented firm; none of it is anyone's real book. The sign-in page and the brand tagline are where it says so |
-| Sign-in | `admin@example.com` / `folding-forks-admin`, `user@example.com` / `folding-forks-user` |
+| Sign-in | `admin@ezacto.io` / `folding-forks-admin`, `user@ezacto.io` / `folding-forks-user` |
 | Data | 20 people, 8 clients, 16 projects, three years of hours, expenses and invoices — all invented, all `@example.com` (RFC 2606, so demo mail can never reach a real person) |
 | Rebuild | `0 3 * * *` empties and reseeds; the every-minute cron bills the backlog ten client-months at a time |
 
