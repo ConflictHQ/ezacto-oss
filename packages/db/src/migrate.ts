@@ -50,6 +50,7 @@ import { worksheetLineThroughMigration } from './migrations/0043_worksheet_line_
 import { recurringLineInstallmentsMigration } from './migrations/0044_recurring_line_installments.js'
 import { brandAssetsMigration } from './migrations/0045_brand_assets.js'
 import { invoiceSubjectNumberMigration } from './migrations/0046_invoice_subject_number.js'
+import { timesheetSelfWithdrawalMigration } from './migrations/0047_timesheet_self_withdrawal.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL, statements_sha256 TEXT
@@ -1443,6 +1444,7 @@ const migrations = [
   { id: '0044_recurring_line_installments', statements: recurringLineInstallmentsMigration },
   { id: '0045_brand_assets', statements: brandAssetsMigration },
   { id: '0046_invoice_subject_number', statements: invoiceSubjectNumberMigration },
+  { id: '0047_timesheet_self_withdrawal', statements: timesheetSelfWithdrawalMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

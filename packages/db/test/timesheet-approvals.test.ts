@@ -11,7 +11,6 @@ import {
 import { createStoppedTimeEntry, startTimeEntry } from '../src/time-entries.js'
 import {
   createTimesheetApprovalRepository,
-  SELF_WITHDRAWAL_REASON,
   TimesheetApprovalError,
   type TimesheetApprovalActor,
 } from '../src/timesheet-approvals.js'
@@ -119,6 +118,7 @@ const t0 = '2026-08-31T12:00:00.000Z'
 const t1 = '2026-08-31T12:01:00.000Z'
 const t2 = '2026-08-31T12:02:00.000Z'
 const t3 = '2026-08-31T12:03:00.000Z'
+const t4 = '2026-08-31T12:04:00.000Z'
 const periodStart = '2026-08-24'
 const periodEnd = '2026-08-30'
 
@@ -315,12 +315,37 @@ for (const [runtime, factory] of factories) {
 
     afterEach(async () => database?.close())
 
-    it('[unit] pins the self-withdrawal reason that apps/web reads', () => {
-      // `apps/web` depends only on the generated client, so it restates this
-      // literal in `shell/model.ts` to tell a self-withdrawal from a rejection.
-      // Changing it here alone would make every taken-back week read as
-      // "Changes requested" and nothing would fail in this package.
-      expect(SELF_WITHDRAWAL_REASON).toBe('Taken back by the owner before review.')
+    it('[db] tells a withdrawal from a rejection by the row, not by the reason', async () => {
+      // The point of migration 0047. Both are unsubmitted weeks; before it,
+      // both also carried a reviewer and a reason, and the only thing telling
+      // them apart was whether the reason matched a fixed sentence. A reviewer
+      // who typed that sentence was misread as a withdrawal, and an
+      // administrator rejecting their own week was too, because the reviewer
+      // was also the owner.
+      database = await factory()
+      await installFixture(database)
+      const approvals = createTimesheetApprovalRepository(database.orm)
+
+      const submitted = await approvals.submit(1, periodStart, periodEnd, t1)
+      const rejected = await approvals.reject(
+        actor(2, 'administrator'),
+        submitted.id,
+        'Clarify the delivery detail.',
+        t2,
+      )
+      expect(rejected).toMatchObject({
+        status: 'unsubmitted',
+        reviewedByUserId: 2,
+        rejectionReason: 'Clarify the delivery detail.',
+      })
+
+      const resubmitted = await approvals.submit(1, periodStart, periodEnd, t3)
+      const withdrawn = await approvals.unsubmit(actor(1, 'member'), resubmitted.id, t4)
+
+      // Same status, opposite shape. No string is read to tell them apart.
+      expect(withdrawn.status).toBe(rejected.status)
+      expect(withdrawn.reviewedByUserId).toBeNull()
+      expect(rejected.reviewedByUserId).not.toBeNull()
     })
 
     it('[db] lets a person take back their own week and edit it again', async () => {
@@ -338,12 +363,14 @@ for (const [runtime, factory] of factories) {
       const taken = await approvals.unsubmit(actor(1, 'member'), submitted.id, t2)
       expect(taken).toMatchObject({
         status: 'unsubmitted',
-        // The owner is recorded as the one who sent it back, which is what
-        // separates this from a rejection: a reader compares the reviewer to
-        // the owner rather than guessing from a free-text reason.
-        reviewedByUserId: 1,
         userId: 1,
-        rejectionReason: SELF_WITHDRAWAL_REASON,
+        // Nobody reviewed it, and the row now says so rather than naming the
+        // owner as their own reviewer with a sentence standing in for a reason.
+        // That is what separates a withdrawal from a rejection, and no free
+        // text can collide with it.
+        reviewedByUserId: null,
+        reviewedAt: null,
+        rejectionReason: null,
       })
       expect((await tracked.getTimeEntry(1, 1)).state).toMatchObject({
         approvalStatus: 'unsubmitted',

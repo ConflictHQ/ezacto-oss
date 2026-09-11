@@ -126,7 +126,7 @@ assertOnce(historicalEventUpdate, payloadClosing)
 
 // json_patch with an empty object returns its target byte for byte, so an
 // approval outside a command keeps exactly the payload 0028 wrote.
-const timesheetSubmissionsEventUpdate = historicalEventUpdate
+export const timesheetSubmissionsEventUpdate = historicalEventUpdate
   .replace(
     eventColumns,
     `        payload_json, command_id, event_index, occurred_at, available_at, attempt_count\n`,
@@ -155,7 +155,7 @@ assertOnce(historicalSubmissionGuard, guardCausation)
  * submission by this actor at this instant — and still refuses everything else,
  * including a payload that claims a command the column does not carry.
  */
-const eventOutboxTimesheetSubmissionInsertGuard = historicalSubmissionGuard.replace(
+export const eventOutboxTimesheetSubmissionInsertGuard = historicalSubmissionGuard.replace(
   guardCausation,
   `      SELECT CASE WHEN (NEW.command_id IS NULL) <> (NEW.event_index IS NULL)
         OR (NEW.command_id IS NULL AND json_type(NEW.payload_json, '$.command') IS NOT NULL)
