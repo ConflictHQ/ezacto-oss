@@ -221,6 +221,24 @@ describe("Worker operator bootstrap", () => {
       ]),
     })
 
+    // Read the live head rather than assuming it: the seeded invoice template
+    // is no longer version 1, because 0046 appended a version that names the
+    // invoice number in the subject. Hardcoding a version here made this test
+    // fail the moment a migration touched the template, which is the wrong
+    // thing for it to be sensitive to -- it is about append-and-idempotency,
+    // not about which version happens to be current.
+    const currentInvoiceVersion = async (): Promise<number> => {
+      const response = await request('/api/v1/email-templates', {
+        headers: { cookie: sessionCookie },
+      })
+      const body = (await response.json()) as {
+        data: { kind: string; version: number }[]
+      }
+      const invoice = body.data.filter((template) => template.kind === 'invoice')
+      return Math.max(...invoice.map((template) => template.version))
+    }
+    const headVersion = await currentInvoiceVersion()
+
     const appendTemplate = () =>
       request('/api/v1/email-templates/invoice/versions', {
         method: 'POST',
@@ -231,8 +249,8 @@ describe("Worker operator bootstrap", () => {
           'idempotency-key': 'miniflare-template-invoice-v2',
         },
         body: JSON.stringify({
-          expected_version: 1,
-          subject_template: 'Invoice %invoice_id% from %company_name%',
+          expected_version: headVersion,
+          subject_template: 'Invoice %invoice_number% from %company_name%',
           text_template: 'Invoice %invoice_number% is due %invoice_due_date%.',
           html_template: null,
         }),
