@@ -65,6 +65,33 @@ const reports: ReportReader = {
   // Not exercised here; present because ReportReader requires it.
   contractorCost: async (range) => ({ from: range.from, to: range.to, rows: [] }),
   // Not exercised here; present because ReportReader requires it.
+  profitability: async (range) => ({
+    from: range.from,
+    to: range.to,
+    organizationCurrency: 'USD',
+    rows: [],
+    totals: {
+      roundedSeconds: 0,
+      revenueCents: 0,
+      costCents: 0,
+      profitCents: 0,
+      entriesWithoutBillableRate: 0,
+      entriesWithoutCostRate: 0,
+      projectsNotConverted: 0,
+    },
+    previousFrom: range.from,
+    previousTo: range.to,
+    previousTotals: {
+      roundedSeconds: 0,
+      revenueCents: 0,
+      costCents: 0,
+      profitCents: 0,
+      entriesWithoutBillableRate: 0,
+      entriesWithoutCostRate: 0,
+      projectsNotConverted: 0,
+    },
+  }),
+  // Not exercised here; present because ReportReader requires it.
   timeReport: async (range) => ({
     from: range.from,
     to: range.to,

@@ -1254,6 +1254,16 @@ const reportOperations: ApiContractOperation[] = [
   },
   {
     method: "get",
+    path: "/api/v1/reports/profitability",
+    operationId: "getProfitabilityReport",
+    summary: "Revenue, cost and profit per project against the window before it",
+    tag: "reports",
+    responseStatus: 200,
+    responseSchema: "ProfitabilityReportEnvelope",
+    parameters: [...requiredReportRange],
+  },
+  {
+    method: "get",
     path: "/api/v1/reports/uninvoiced",
     operationId: "getUninvoicedReport",
     summary: "Report uninvoiced tracked time and expenses",
@@ -5329,6 +5339,97 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   ContractorCostReportEnvelope: envelope("ContractorCostReport"),
+  ProfitabilityRow: {
+    type: "object",
+    required: [
+      "project_id",
+      "project_name",
+      "project_code",
+      "client_id",
+      "client_name",
+      "currency",
+      "rounded_seconds",
+      "revenue_cents",
+      "cost_cents",
+      "profit_cents",
+      "entries_without_billable_rate",
+      "entries_without_cost_rate",
+    ],
+    properties: {
+      project_id: integerSchema,
+      project_name: stringSchema,
+      project_code: stringSchema,
+      client_id: integerSchema,
+      client_name: stringSchema,
+      // The project's billing currency; revenue is denominated in it.
+      currency: stringSchema,
+      rounded_seconds: { type: "integer", minimum: 0 },
+      // Null when any billable entry has no rate. A number that silently
+      // omitted those hours would read as a healthier margin than the account
+      // has.
+      revenue_cents: nullable(signedIntegerSchema),
+      // The organization's currency, always: a cost rate carries none of its
+      // own. Null when any entry has no cost rate.
+      cost_cents: nullable(signedIntegerSchema),
+      // Null when either side is missing, and also when the project bills in a
+      // currency the cost figure is not denominated in -- that subtraction
+      // would cross units. See #522.
+      profit_cents: nullable(signedIntegerSchema),
+      entries_without_billable_rate: { type: "integer", minimum: 0 },
+      entries_without_cost_rate: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  ProfitabilityTotals: {
+    type: "object",
+    required: [
+      "rounded_seconds",
+      "revenue_cents",
+      "cost_cents",
+      "profit_cents",
+      "entries_without_billable_rate",
+      "entries_without_cost_rate",
+      "projects_not_converted",
+    ],
+    properties: {
+      rounded_seconds: { type: "integer", minimum: 0 },
+      revenue_cents: nullable(signedIntegerSchema),
+      cost_cents: nullable(signedIntegerSchema),
+      profit_cents: nullable(signedIntegerSchema),
+      entries_without_billable_rate: { type: "integer", minimum: 0 },
+      entries_without_cost_rate: { type: "integer", minimum: 0 },
+      // How much of the account the headline leaves out, so a total that
+      // excludes another currency's projects cannot be read as the whole firm.
+      projects_not_converted: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  ProfitabilityReport: {
+    type: "object",
+    required: [
+      "from",
+      "to",
+      "organization_currency",
+      "rows",
+      "totals",
+      "previous_from",
+      "previous_to",
+      "previous_totals",
+    ],
+    properties: {
+      from: dateSchema,
+      to: dateSchema,
+      organization_currency: stringSchema,
+      rows: { type: "array", items: { $ref: "#/components/schemas/ProfitabilityRow" } },
+      totals: { $ref: "#/components/schemas/ProfitabilityTotals" },
+      // The window of equal length ending the day before this one starts.
+      previous_from: dateSchema,
+      previous_to: dateSchema,
+      previous_totals: { $ref: "#/components/schemas/ProfitabilityTotals" },
+    },
+    additionalProperties: false,
+  },
+  ProfitabilityReportEnvelope: envelope("ProfitabilityReport"),
   ClientRollupCurrency: {
     type: "object",
     required: ["currency", "expense_cents"],

@@ -17,6 +17,7 @@ const reportKindNames: readonly { readonly kind: ReportKind; readonly label: str
   { kind: 'project-budget', label: 'Project budget' },
   // Last, and the only kind the browser drops for a profile that reads the
   // financial ones: it is entirely cost, so the administrator alone keeps it.
+  { kind: 'profitability', label: 'Profitability' },
   { kind: 'contractor-cost', label: 'Contractor cost' },
 ]
 

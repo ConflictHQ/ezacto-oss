@@ -77,6 +77,16 @@ const emptyTimeReport: TimeReport = {
   teammates: [],
 }
 
+const emptyProfitTotals = {
+  rounded_seconds: 0,
+  revenue_cents: 0,
+  cost_cents: 0,
+  profit_cents: 0,
+  entries_without_billable_rate: 0,
+  entries_without_cost_rate: 0,
+  projects_not_converted: 0,
+}
+
 const baseApi = (overrides: Partial<ReportWorkspaceApi> = {}): Partial<ReportWorkspaceApi> => ({
   listReportClients: vi.fn(async () => page([client(1, 'Parent'), client(2, 'Studio', { parent_client_id: 1, currency: 'EUR' })])),
   listReportProjects: vi.fn(async () => page([project(7, 'Launch', { code: 'WEB', client_id: 2 })])),
@@ -120,6 +130,16 @@ const baseApi = (overrides: Partial<ReportWorkspaceApi> = {}): Partial<ReportWor
   getDetailedTimeReport: vi.fn(async () => detailedTimeReport()),
   getTimeReport: vi.fn(async () => emptyTimeReport),
   getActivityLog: vi.fn(async () => []),
+  getProfitabilityReport: vi.fn(async () => ({
+    from: '2026-08-01',
+    to: '2026-08-31',
+    organization_currency: 'USD',
+    rows: [],
+    totals: emptyProfitTotals,
+    previous_from: '2026-07-01',
+    previous_to: '2026-07-31',
+    previous_totals: emptyProfitTotals,
+  })),
   ...overrides,
 })
 
@@ -721,12 +741,14 @@ describe('Reports Stage 1 browser controller', () => {
       'Client rollup',
       'Activity log',
       'Project budget',
+      'Profitability',
       'Contractor cost',
     ])
     expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual([
       null,
       null,
       'page',
+      null,
       null,
       null,
       null,
@@ -755,6 +777,7 @@ describe('Reports Stage 1 browser controller', () => {
       null,
       null,
       'page',
+      null,
       null,
       null,
       null,
@@ -2073,5 +2096,126 @@ describe('Reports Stage 1 browser controller', () => {
         tab.textContent?.includes('Activity log'),
       ),
     ).toBe(false)
+  })
+
+  it('[browser #519] leads with the worst margin and blanks what cannot be stated', async () => {
+    writeDocument('/reports?report=profitability&from=2026-08-01&to=2026-08-31')
+    const getProfitabilityReport = vi.fn(async () => ({
+      from: '2026-08-01',
+      to: '2026-08-31',
+      organization_currency: 'USD',
+      rows: [
+        // Healthy, and deliberately first on the wire so a renderer that kept
+        // the response order would lead with the wrong project.
+        {
+          project_id: 7, project_name: 'Launch', project_code: 'WEB',
+          client_id: 1, client_name: 'Parent', currency: 'USD',
+          rounded_seconds: 3600, revenue_cents: 10_000, cost_cents: 4_000,
+          profit_cents: 6_000,
+          entries_without_billable_rate: 0, entries_without_cost_rate: 0,
+        },
+        // Losing money: this is what the report is opened to find.
+        {
+          project_id: 8, project_name: 'Rescue', project_code: '',
+          client_id: 1, client_name: 'Parent', currency: 'USD',
+          rounded_seconds: 7200, revenue_cents: 5_000, cost_cents: 9_000,
+          profit_cents: -4_000,
+          entries_without_billable_rate: 0, entries_without_cost_rate: 0,
+        },
+        // Bills in EUR: both sides real, margin unstateable.
+        {
+          project_id: 9, project_name: 'Continental', project_code: 'CONT',
+          client_id: 2, client_name: 'Studio', currency: 'EUR',
+          rounded_seconds: 3600, revenue_cents: 20_000, cost_cents: 4_000,
+          profit_cents: null,
+          entries_without_billable_rate: 0, entries_without_cost_rate: 0,
+        },
+      ],
+      totals: {
+        rounded_seconds: 14_400, revenue_cents: 15_000, cost_cents: 13_000,
+        profit_cents: 2_000, entries_without_billable_rate: 0,
+        entries_without_cost_rate: 0, projects_not_converted: 1,
+      },
+      previous_from: '2026-07-01',
+      previous_to: '2026-07-31',
+      previous_totals: {
+        rounded_seconds: 7200, revenue_cents: 10_000, cost_cents: 9_000,
+        profit_cents: 1_000, entries_without_billable_rate: 0,
+        entries_without_cost_rate: 0, projects_not_converted: 0,
+      },
+    }))
+    const session = new AbortController()
+    await createReportsController(baseApi({ getProfitabilityReport })).activate(
+      identity('administrator'),
+      session.signal,
+      () => false,
+    )
+
+    expect(getProfitabilityReport).toHaveBeenCalledWith(
+      { from: '2026-08-01', to: '2026-08-31' },
+      expect.anything(),
+    )
+    const rows = [...document.querySelectorAll('[data-report-results] tbody tr')]
+    expect(rows).toHaveLength(3)
+    // Worst first, blank margin last: a project whose margin is a question
+    // sorts after every project that has an answer.
+    expect(rows.map((row) => row.querySelector('th a')?.textContent)).toEqual([
+      'Rescue',
+      '[WEB] Launch',
+      '[CONT] Continental',
+    ])
+    // The EUR row shows both sides and no margin -- an em dash, not a number.
+    const continental = [...rows[2]!.querySelectorAll('td')].map((cell) => cell.textContent)
+    expect(continental[2]).toBe('\u20ac200.00')
+    // Cost is the organization's currency on the same line, deliberately.
+    expect(continental[3]).toBe('$40.00')
+    expect(continental[4]).toBe('\u2014')
+
+    // Profit 2,000 against 1,000 the window before is +100%.
+    const deltas = [...document.querySelectorAll('.report-profit-delta')].map(
+      (node) => node.textContent,
+    )
+    expect(deltas).toEqual(['+50%', '+44.4%', '+100%'])
+
+    const warnings = [...document.querySelectorAll('.report-warning')].map(
+      (node) => node.textContent ?? '',
+    )
+    // It says how much of the account the headline leaves out, so a partial
+    // total cannot be read as the whole firm.
+    expect(warnings.some((text) => text.includes('1 project bills in another currency'))).toBe(
+      true,
+    )
+  })
+
+  it('[security] keeps profitability to the administrator, not the financial profiles', async () => {
+    for (const profile of ['accounting', 'executive_manager'] as const) {
+      writeDocument('/reports?report=profitability&from=2026-08-01&to=2026-08-31')
+      const getProfitabilityReport = vi.fn(async () => ({
+        from: '2026-08-01', to: '2026-08-31', organization_currency: 'USD',
+        rows: [], totals: emptyProfitTotals,
+        previous_from: '2026-07-01', previous_to: '2026-07-31',
+        previous_totals: emptyProfitTotals,
+      }))
+      const session = new AbortController()
+      await createReportsController(baseApi({ getProfitabilityReport })).activate(
+        identity(profile),
+        session.signal,
+        () => false,
+      )
+
+      // A margin is the cost figure with one subtraction applied, so a profile
+      // refused the cost report is refused this one on the same authority.
+      expect(getProfitabilityReport, profile).not.toHaveBeenCalled()
+      expect(document.querySelector('[data-report-status]')?.textContent).toBe(
+        'Only an administrator can read the profitability report.',
+      )
+      expect(
+        [...document.querySelectorAll('[data-shell-tab]')].some((tab) =>
+          tab.textContent?.includes('Profitability'),
+        ),
+        profile,
+      ).toBe(false)
+      session.abort()
+    }
   })
 })
