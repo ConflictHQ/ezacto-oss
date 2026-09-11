@@ -37,8 +37,8 @@ Two consequences the build has decided rather than assumed:
 - **Departures are deliberate and listed.** A behaviour is carried forward
   because it earns its place, not because somebody is used to it.
 
-Still open: where this sits relative to the licence and public-flip work, which
-#95 tracks.
+The licence and the public flip are settled: AGPL-3.0-only, with the source
+public. #95 tracks what remains of the release checklist.
 
 ## What gets built here (D2, D7)
 
@@ -86,7 +86,8 @@ Tenancy: **one organization = one database**; no `org_id` columns exist.
 - **Open-core direction:** this repo is upstream. ezacto-platform consumes it as a
   versioned package; anything platform needs must land here as public API first.
 - **No stubs.** A story is done when it is real (PROCESS.md).
-- Licence: **undecided (D8)** — repo stays private until chosen at the v1.0 flip.
+- Licence: **AGPL-3.0-only** (D8). See LICENSE and NOTICE; CONFLICT LLC holds the
+  copyright and also offers ezacto under separate commercial terms.
 - Git: no rebases; no AI attribution in commits.
 - Compat quirks (locale times, decimal hours, silent drops) live **only in the
   `/harvest/v2` serializer** — storage stays canonical (docs/domain-model.md §7).
