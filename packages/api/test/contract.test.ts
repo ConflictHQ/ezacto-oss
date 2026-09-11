@@ -4,6 +4,7 @@ import {
   installBackupStatusRoutes,
   installQuickBooksRoutes,
   installBrandAssetRoutes,
+  installBrandRoute,
   apiContractOperations,
   createApiApp,
   generateOpenApiDocument,
@@ -202,6 +203,10 @@ const documentedApp = () =>
         clock: () => "2026-08-28T12:00:00.000Z",
       });
       installBrandAssetRoutes(api, brandAssets, () => "2026-08-28T12:00:00.000Z");
+      installBrandRoute(api, {
+        organizationName: async () => "Contract Fixture",
+        assets: (env) => brandAssets.list(env),
+      });
       installUserEmailRoutes(api, {
         service: userEmails,
         deploymentMailer: authMailer,

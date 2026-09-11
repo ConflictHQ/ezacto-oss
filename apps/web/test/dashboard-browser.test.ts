@@ -199,6 +199,7 @@ const uninvoicedReport = (withMoney: boolean): UninvoicedReport => ({
       ...(withMoney ? { time_cents: 125_000, expense_cents: 0, total_cents: 125_000 } : {}),
     },
   ],
+  projects: [],
 })
 
 const dashboardApi = (

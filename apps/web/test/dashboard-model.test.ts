@@ -66,6 +66,7 @@ const uninvoiced = (
   client_id: null,
   project_id: null,
   totals,
+  projects: [],
 })
 
 describe('dashboard model', () => {

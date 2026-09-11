@@ -622,6 +622,7 @@ export const createRuntimeServices = async (
       return row?.enabled === 1 || row?.enabled === true;
     },
     moduleSettings: createModuleSettingsRepository(drizzle),
+    organizationName,
     ssoProvisioningDomains: createD1SsoProvisioningDomainStore(database),
     // The #520 organisation setting, read the same way the other two module
     // gates are. Default off is the absence of the key: an instance that

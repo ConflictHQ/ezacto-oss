@@ -1194,6 +1194,15 @@ const ssoDomainOperations: ApiContractOperation[] = [
 const brandAssetOperations: ApiContractOperation[] = [
   {
     method: "get",
+    path: "/api/v1/brand",
+    operationId: "getBrand",
+    summary: "Get the organisation name and brand marks for any principal",
+    tag: "brand-assets",
+    responseStatus: 200,
+    responseSchema: "BrandEnvelope",
+  },
+  {
+    method: "get",
     path: "/api/v1/settings/brand-assets",
     operationId: "listBrandAssets",
     summary: "List the brand marks stored on this instance",
@@ -1384,6 +1393,9 @@ const reportOperations: ApiContractOperation[] = [
         type: "string",
         enum: ["all", "billable", "non_billable", "uninvoiced"],
       }),
+      // `entry` is one row per time entry with its id and notes; `day` (the
+      // default) is the folded grain the report screen draws.
+      query("grain", { type: "string", enum: ["day", "entry"] }),
       query("active_projects_only", booleanSchema),
     ],
   },
@@ -5260,6 +5272,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       // entry folded into the row carries no rate at all.
       billable_amount_cents: nullable(signedIntegerSchema),
       entries_without_billable_rate: { type: "integer", minimum: 0 },
+      // Present at `entry` grain only: the row is that one entry.
+      time_entry_id: integerSchema,
+      notes: nullable(stringSchema),
     },
     additionalProperties: false,
   },
@@ -5281,6 +5296,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "client_id",
       "project_id",
       "hours",
+      "grain",
       "active_projects_only",
       "seconds",
       "rounded_seconds",
@@ -5301,6 +5317,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         type: "string",
         enum: ["all", "billable", "non_billable", "uninvoiced"],
       },
+      grain: { type: "string", enum: ["day", "entry"] },
       active_projects_only: booleanSchema,
       seconds: signedIntegerSchema,
       rounded_seconds: signedIntegerSchema,
@@ -5435,15 +5452,39 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  UninvoicedProjectRow: {
+    type: "object",
+    required: [
+      "client_id",
+      "client_name",
+      "project_id",
+      "project_name",
+      "project_code",
+      "totals",
+    ],
+    properties: {
+      client_id: integerSchema,
+      client_name: stringSchema,
+      project_id: integerSchema,
+      project_name: stringSchema,
+      // Empty string, never null: `projects.code` is NOT NULL DEFAULT ''.
+      project_code: stringSchema,
+      totals: { type: "array", items: reference("UninvoicedCurrencyTotal") },
+    },
+    additionalProperties: false,
+  },
   UninvoicedReport: {
     type: "object",
-    required: ["from", "to", "client_id", "project_id", "totals"],
+    required: ["from", "to", "client_id", "project_id", "totals", "projects"],
     properties: {
       from: dateSchema,
       to: dateSchema,
       client_id: nullable(integerSchema),
       project_id: nullable(integerSchema),
       totals: { type: "array", items: reference("UninvoicedCurrencyTotal") },
+      // The same candidates per project, priced by the same preview, so the
+      // rows sum to `totals` to the cent. Client name, project name, id order.
+      projects: { type: "array", items: reference("UninvoicedProjectRow") },
     },
     additionalProperties: false,
   },
@@ -5975,6 +6016,29 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  // The mark as a consumer wears it: no hash or byte size beyond what the
+  // public URL already carries.
+  BrandMark: {
+    type: "object",
+    required: ["slot", "url", "content_type", "updated_at"],
+    properties: {
+      slot: { enum: ["wordmark_light", "wordmark_dark", "favicon"] },
+      url: stringSchema,
+      content_type: { enum: ["image/png", "image/jpeg", "image/webp"] },
+      updated_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  Brand: {
+    type: "object",
+    required: ["organization_name", "assets"],
+    properties: {
+      organization_name: stringSchema,
+      assets: { type: "array", items: reference("BrandMark") },
+    },
+    additionalProperties: false,
+  },
+  BrandEnvelope: envelope("Brand"),
   BrandAssetEnvelope: {
     type: "object",
     required: ["data"],
