@@ -119,6 +119,7 @@ const baseApi = (overrides: Partial<ReportWorkspaceApi> = {}): Partial<ReportWor
   })),
   getDetailedTimeReport: vi.fn(async () => detailedTimeReport()),
   getTimeReport: vi.fn(async () => emptyTimeReport),
+  getActivityLog: vi.fn(async () => []),
   ...overrides,
 })
 
@@ -718,6 +719,7 @@ describe('Reports Stage 1 browser controller', () => {
       'Uninvoiced work',
       'Detailed time',
       'Client rollup',
+      'Activity log',
       'Project budget',
       'Contractor cost',
     ])
@@ -725,6 +727,7 @@ describe('Reports Stage 1 browser controller', () => {
       null,
       null,
       'page',
+      null,
       null,
       null,
       null,
@@ -752,6 +755,7 @@ describe('Reports Stage 1 browser controller', () => {
       null,
       null,
       'page',
+      null,
       null,
       null,
     ])
@@ -1716,6 +1720,7 @@ describe('Reports Stage 1 browser controller', () => {
       'Uninvoiced work',
       'Detailed time',
       'Client rollup',
+      'Activity log',
       'Project budget',
     ])
     expect(getContractorCostReport).not.toHaveBeenCalled()
@@ -1729,6 +1734,7 @@ describe('Reports Stage 1 browser controller', () => {
     // surviving fallback kind is marked, and its filters are the ones shown.
     expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual([
       'page',
+      null,
       null,
       null,
       null,
@@ -1985,5 +1991,87 @@ describe('Reports Stage 1 browser controller', () => {
     revokeObjectURL.mockRestore()
     click.mockRestore()
     session.abort()
+  })
+
+  it('[browser #519] draws the activity log newest first over the range alone', async () => {
+    writeDocument('/reports?report=activity-log&from=2026-08-01&to=2026-08-31')
+    // Deliberately out of order on the wire, and the middle one back-dated, so
+    // a renderer that trusted the response order would show these three in a
+    // different sequence than the column of times reads.
+    const getActivityLog = vi.fn(async () => [
+      {
+        event_id: 'b',
+        event_type: 'invoice.payment.recorded',
+        occurred_at: '2026-08-14T09:30:00.000Z',
+        aggregate: { type: 'invoice', id: 1314, sequence: 41 },
+        payload: {},
+      },
+      {
+        event_id: 'a',
+        event_type: 'invoice.sent',
+        occurred_at: '2026-08-20T17:05:00.000Z',
+        aggregate: { type: 'invoice', id: 1315, sequence: 42 },
+        payload: {},
+      },
+      {
+        event_id: 'c',
+        event_type: 'timesheet_approved',
+        occurred_at: '2026-08-02T08:00:00.000Z',
+        aggregate: { type: 'timesheet', id: 9, sequence: 12 },
+        payload: {},
+      },
+    ])
+    const session = new AbortController()
+    await createReportsController(baseApi({ getActivityLog })).activate(
+      identity('administrator'),
+      session.signal,
+      () => false,
+    )
+
+    // The range is the whole request: the endpoint takes no client or project,
+    // and a picker it would ignore is worse than no picker.
+    expect(getActivityLog).toHaveBeenCalledWith(
+      { from: '2026-08-01', to: '2026-08-31' },
+      expect.anything(),
+    )
+    expect(document.querySelector<HTMLElement>('[data-report-client-field]')?.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-report-project-field]')?.hidden).toBe(true)
+
+    const rows = [...document.querySelectorAll('[data-report-results] tbody tr')]
+    // Counted first, so a fixture that drew nothing cannot pass by finding
+    // nothing wrong.
+    expect(rows).toHaveLength(3)
+    expect(rows.map((row) => row.querySelector('time')?.getAttribute('datetime'))).toEqual([
+      '2026-08-20T17:05:00.000Z',
+      '2026-08-14T09:30:00.000Z',
+      '2026-08-02T08:00:00.000Z',
+    ])
+    const cells = [...rows[0]!.querySelectorAll('td')].map((cell) => cell.textContent)
+    // Built from the wire value, so an event nobody taught this screen about
+    // still reads as words rather than a raw dotted string.
+    expect(cells).toEqual(['Invoice sent', 'Invoice #1315'])
+    expect(
+      [...rows[2]!.querySelectorAll('td')].map((cell) => cell.textContent),
+    ).toEqual(['Timesheet approved', 'Timesheet #9'])
+  })
+
+  it('[security] keeps the activity log off a member\u2019s tab strip', async () => {
+    writeDocument('/reports?report=activity-log&from=2026-08-01&to=2026-08-31')
+    const getActivityLog = vi.fn(async () => [])
+    const session = new AbortController()
+    await createReportsController(baseApi({ getActivityLog })).activate(
+      identity('member'),
+      session.signal,
+      () => false,
+    )
+
+    // The log is not money, but it is the whole account's history, and a member
+    // reads their own hours and nothing else in this section.
+    expect(getActivityLog).not.toHaveBeenCalled()
+    expect(
+      [...document.querySelectorAll('[data-shell-tab]')].some((tab) =>
+        tab.textContent?.includes('Activity log'),
+      ),
+    ).toBe(false)
   })
 })
