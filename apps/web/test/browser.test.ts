@@ -987,6 +987,70 @@ describe('week-grid browser behavior', () => {
   })
 
 
+  it('[browser #494] offers the right activity when the editor reopens on another project', async () => {
+    renderBrowserShell()
+    const api = browserApi()
+    await mountShell(api)
+
+    const dialog = document.querySelector<HTMLDialogElement>('[data-entry-dialog]')!
+    const task = document.querySelector<HTMLSelectElement>('[data-entry-task]')!
+    const openVia = async (command: string): Promise<void> => {
+      document.querySelector<HTMLButtonElement>('[data-command-trigger]')!.click()
+      const box = document.querySelector<HTMLInputElement>('[name="command"]')!
+      box.value = command
+      document
+        .querySelector<HTMLFormElement>('[data-command-form]')!
+        .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      await vi.waitFor(() => expect(dialog.open).toBe(true))
+    }
+
+    await openVia('log 1h northpeak development notes enough')
+    expect(task.value).toBe('Development')
+    dialog.querySelector<HTMLButtonElement>('[data-dialog-close]')!.click()
+
+    // The second entry belongs to a different project. Its activity is the one
+    // the editor must show -- a select can only hold a value it offers, and the
+    // task list is still narrowed to the previous project.
+    await openVia('log 1h acme design notes enough')
+    expect(task.value).toBe('Design')
+  })
+
+  it('[browser #494] still shows an activity whose assignment has been archived', async () => {
+    // 177 of 358 task assignments arrived from the import already archived, so
+    // an existing entry can sit on a pair the catalogue no longer offers. The
+    // editor has to show what the entry *is*; blanking it would turn opening a
+    // week into silently reassigning it.
+    renderBrowserShell()
+    const api = browserApi()
+    api.entries.splice(
+      0,
+      api.entries.length,
+      timeEntry(1, {
+        project_id: 1,
+        task_id: 2,
+        spent_date: '2026-08-28',
+        seconds: 3_600,
+        notes: 'On an archived assignment',
+      }),
+    )
+    await mountShell(api)
+
+    const note = document.querySelector<HTMLButtonElement>(
+      '[data-week-grid] [data-cell-key="1:2:2026-08-28"] .cell-note',
+    )
+    // The row exists because the entry does, even though no option offers it.
+    expect(note).not.toBeNull()
+    note!.click()
+
+    const task = document.querySelector<HTMLSelectElement>('[data-entry-task]')!
+    expect(task.value).toBe('Design')
+    // Offered, but marked -- so a person can see the pair is no longer current
+    // rather than wondering why it is missing from the list.
+    expect(
+      task.querySelector<HTMLOptionElement>('option[data-entry-unavailable]')?.value,
+    ).toBe('Design')
+  })
+
   it('[e2e:track-week] routes week, Day, K-bar, and edit through one editor instance', async () => {
     renderBrowserShell()
     const api = browserApi()
