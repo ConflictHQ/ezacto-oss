@@ -64,7 +64,6 @@ export interface AppShellOptions {
     | 'invoice-generation'
     | 'invoice-recurring'
     | 'invoice-retainers'
-    | 'invoice-configure'
     | 'client-list'
     | 'client-detail'
     | 'project-list'
@@ -77,6 +76,7 @@ export interface AppShellOptions {
     | 'settings-user'
     | 'settings-company'
     | 'settings-activity'
+    | 'settings-templates'
     | 'team-list'
     | 'team-person'
     | 'not-found'
@@ -180,7 +180,11 @@ const invoiceDestinations = [
   ['Overview', '/invoices', 'invoice-list'],
   ['Recurring', '/invoices/recurring', 'invoice-recurring'],
   ['Retainers', '/invoices/retainers', 'invoice-retainers'],
-  ['Configure', '/invoices/configure', 'invoice-configure'],
+  // Configure left this strip for Settings. Two of the five templates it edits
+  // -- the email-verification and password-reset messages -- are account mail
+  // with nothing to do with invoicing, and it sits beside sender identity and
+  // DNS, which is company-wide setup (issue 546). /invoices/configure still
+  // resolves; it redirects.
 ] as const
 
 export const invoiceTabs = (view: AppShellOptions['view']): readonly ShellTab[] =>

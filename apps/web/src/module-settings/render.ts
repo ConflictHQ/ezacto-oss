@@ -85,13 +85,18 @@ export const renderModuleSettingsPage = (view?: string): string => `
  * to see. The strip is hidden for a viewer with no company access, so it never
  * offers a tab that answers 403.
  */
-const renderSettingsTabs = (current: 'user' | 'company' | 'activity'): string =>
+const renderSettingsTabs = (
+  current: 'user' | 'company' | 'activity' | 'templates',
+): string =>
   `<nav class="tabstrip settings-tabs" aria-label="Settings" data-settings-tabs>` +
   `<a href="/settings/user"${current === 'user' ? ' aria-current="page"' : ''}>You</a>` +
   `<a href="/settings/company" data-settings-company-tab hidden${current === 'company' ? ' aria-current="page"' : ''}>Company</a>` +
   // Behind the same gate as Company. The log names who did what, which is not
   // everyone's to read, and a tab that answers 403 is worse than no tab.
   `<a href="/settings/activity" data-settings-activity-tab hidden${current === 'activity' ? ' aria-current="page"' : ''}>Activity</a>` +
+  // Behind the Company gate too: the wording a client receives is company-wide
+  // configuration, and the sender identity beside it is deployment setup.
+  `<a href="/settings/templates" data-settings-templates-tab hidden${current === 'templates' ? ' aria-current="page"' : ''}>Templates</a>` +
   `</nav>`
 
 /**

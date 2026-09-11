@@ -91,8 +91,8 @@ const writeDocument = (path = '/invoices/configure'): void => {
       environment: 'test',
       release: 'email-config-test',
       activeSection: 'Invoices',
-      view: 'invoice-configure',
-      tabs: invoiceTabs('invoice-configure'),
+      view: 'settings-templates',
+      tabs: invoiceTabs('settings-templates'),
     })
       .replace(
         / {2}<link[^>]+(?:fonts\.googleapis|fonts\.gstatic|\/assets\/ezacto\.css)[^>]*>\n/gu,
