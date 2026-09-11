@@ -889,10 +889,10 @@ describe('week-grid browser behavior', () => {
       '[data-timer-dialog]',
     )!
     expect(timerDialog.open).toBe(true)
-    const timerProject = document.querySelector<HTMLInputElement>(
+    const timerProject = document.querySelector<HTMLSelectElement>(
       '[data-timer-form] [name="project"]',
     )!
-    const timerTask = document.querySelector<HTMLInputElement>(
+    const timerTask = document.querySelector<HTMLSelectElement>(
       '[data-timer-form] [name="task"]',
     )!
     const timerNote = document.querySelector<HTMLTextAreaElement>(
@@ -903,18 +903,17 @@ describe('week-grid browser behavior', () => {
         .querySelector<HTMLFormElement>('[data-timer-form]')!
         .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
     }
-    timerProject.value = 'northpeak'
-    timerTask.value = 'design'
-    timerNote.value = 'enough detail'
-    submitTimer()
-    await vi.waitFor(() =>
-      expect(document.querySelector('[data-timer-result]')?.textContent).toContain(
-        'combination is not available',
-      ),
-    )
+    // The assignment controls are selects now, so an unavailable project/task
+    // pair cannot be assembled here at all: choosing the project narrows the
+    // task list to the tasks that project actually offers. What used to be a
+    // refusal after submitting is a combination the form no longer lets you
+    // build (issues 497 and 506).
+    timerProject.value = 'Northpeak'
+    timerProject.dispatchEvent(new Event('change', { bubbles: true }))
+    expect([...timerTask.options].map((option) => option.value)).toEqual(['Development'])
+    expect(timerTask.value).toBe('Development')
     expect(api.createTimeEntry).toHaveBeenCalledTimes(1)
 
-    timerTask.value = 'development'
     timerNote.value = ''
     submitTimer()
     await vi.waitFor(() => expect(timerNote.minLength).toBe(5))
@@ -957,15 +956,15 @@ describe('week-grid browser behavior', () => {
     const entryDialog = document.querySelector<HTMLDialogElement>('[data-entry-dialog]')!
     await vi.waitFor(() => expect(entryDialog.open).toBe(true))
 
-    const project = document.querySelector<HTMLInputElement>('[data-entry-project]')!
-    const task = document.querySelector<HTMLInputElement>('[data-entry-task]')!
+    const project = document.querySelector<HTMLSelectElement>('[data-entry-project]')!
+    const task = document.querySelector<HTMLSelectElement>('[data-entry-task]')!
     expect(project.value).toBe('Northpeak')
     expect(task.value).toBe('Development')
 
     // Acme offers Design and nothing else. Development has to go, or it is
     // submitted against a project that never had it.
     project.value = 'Acme'
-    project.dispatchEvent(new Event('input', { bubbles: true }))
+    project.dispatchEvent(new Event('change', { bubbles: true }))
     expect(task.value).toBe('')
     expect(
       [...document.querySelectorAll('[data-entry-task-options] option')].map(
@@ -976,7 +975,7 @@ describe('week-grid browser behavior', () => {
     // A task the project does offer survives the same keystrokes: this clears
     // what is wrong, not whatever is there.
     task.value = 'Design'
-    project.dispatchEvent(new Event('input', { bubbles: true }))
+    project.dispatchEvent(new Event('change', { bubbles: true }))
     expect(task.value).toBe('Design')
   })
 
@@ -4793,5 +4792,28 @@ describe('command palette browser behavior', () => {
     expect(
       document.querySelector<HTMLInputElement>('[data-entry-duration-input]')?.placeholder,
     ).toBe('1:30')
+  })
+
+  it('[browser #497 #506] offers the project and task lists the moment the timer dialog opens', async () => {
+    renderBrowserShell()
+    await mountShell(browserApi())
+
+    document.querySelector<HTMLButtonElement>('[data-timer-chip]')!.click()
+
+    const projects = [
+      ...document.querySelectorAll<HTMLOptionElement>('[data-entry-project-options] option'),
+    ].map((node) => node.value)
+    const tasks = [
+      ...document.querySelectorAll<HTMLOptionElement>('[data-entry-task-options] option'),
+    ].map((node) => node.value)
+    const project = document.querySelector<HTMLSelectElement>('[data-entry-project]')!
+
+    // Counted before anything is read off them: an empty catalogue would
+    // satisfy every assertion below without measuring one.
+    expect(projects.length).toBeGreaterThan(0)
+    expect(project.value).not.toBe('')
+    // The dialog pre-fills a project, so the task list must already be the one
+    // for THAT project -- not whatever was computed while the box was empty.
+    expect(tasks.length).toBeGreaterThan(0)
   })
 })

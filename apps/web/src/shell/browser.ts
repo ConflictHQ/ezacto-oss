@@ -1024,8 +1024,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const rowForm = required<HTMLFormElement>('[data-row-form]')
   const rejectionForm = required<HTMLFormElement>('[data-rejection-form]')
   const withdrawalForm = required<HTMLFormElement>('[data-withdrawal-form]')
-  const entryProject = required<HTMLInputElement>('[data-entry-project]')
-  const entryTask = required<HTMLInputElement>('[data-entry-task]')
+  const entryProject = required<HTMLSelectElement>('[data-entry-project]')
+  const entryTask = required<HTMLSelectElement>('[data-entry-task]')
   const entryDate = required<HTMLInputElement>('[data-entry-date]')
   const entryDuration = required<HTMLElement>('[data-entry-duration]')
   const entryDurationInput = required<HTMLInputElement>('[data-entry-duration-input]')
@@ -1418,6 +1418,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     snapshot = null
     grid = null
     cellStates.clear()
+    // The assignment controls hold the previous account's project and task
+    // names. They were a datalist rebuilt from the snapshot; as selects they
+    // keep their options until something replaces them, and "until something
+    // replaces them" spans a sign-out.
+    entryProject.replaceChildren()
+    entryTask.replaceChildren()
     if (timerInterval !== undefined) globalThis.clearInterval(timerInterval)
     required<HTMLButtonElement>('[data-timer-chip]').dataset.state = 'signed-out'
     required<HTMLElement>('[data-timer-label]').textContent = 'Sign in required'
@@ -1633,15 +1639,40 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   }
 
   /**
-   * The Add-row form offers real selects; the timer and entry dialog took free
-   * text, so starting work meant typing the project and task as exact strings.
-   * A datalist keeps the free typing the validation depends on and offers the
-   * list underneath it.
+   * Real selects, as the Add-row form in this same file has always used.
+   *
+   * These were text inputs with a datalist, and the popup was unusable for the
+   * reason a datalist always is once the box holds a complete value: the
+   * browser filters the list by what is typed, so a field pre-filled with the
+   * exact label offers the one option already chosen and reads as empty. Both
+   * reports say so -- the project list "not displaying when clicked" and the
+   * task dropdown showing "no options" while a value sits in the box (issues
+   * 497 and 506). No DOM test can see it; the popup is chrome, not markup.
+   *
+   * The option value stays the label rather than the id, so everything reading
+   * `entryProject.value` downstream is untouched -- the control changed, the
+   * contract did not.
    */
   const suggestion = (label: string): HTMLOptionElement => {
     const element = document.createElement('option')
     element.value = label
+    element.textContent = label
     return element
+  }
+
+  /**
+   * A select can only hold a value it offers. An entry on an archived
+   * assignment would otherwise silently reset to the first project in the list,
+   * which is a wrong entry rather than a refused one.
+   */
+  const withHeldValue = (
+    options: readonly HTMLOptionElement[],
+    held: string,
+  ): HTMLOptionElement[] => {
+    if (held === '' || options.some((option) => option.value === held)) return [...options]
+    const kept = suggestion(held)
+    kept.dataset.entryUnavailable = 'true'
+    return [kept, ...options]
   }
 
   const updateEntrySuggestions = (): void => {
@@ -1652,9 +1683,14 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const projects = snapshot.catalog.projects.filter((resource) =>
       projectIds.has(resource.id),
     )
-    required<HTMLElement>('[data-entry-project-options]').replaceChildren(
-      ...projects.map((resource) => suggestion(resourceLabel(resource))),
+    const heldProject = entryProject.value
+    entryProject.replaceChildren(
+      ...withHeldValue(
+        projects.map((resource) => suggestion(resourceLabel(resource))),
+        heldProject,
+      ),
     )
+    entryProject.value = heldProject
     // Tasks narrow to the typed project when it resolves, and otherwise offer
     // every task that is assigned somewhere — better than nothing while the
     // project box is still empty.
@@ -1668,29 +1704,28 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         .map((entry) => entry.task_id),
     )
     const available = snapshot.catalog.tasks.filter((resource) => taskIds.has(resource.id))
-    required<HTMLElement>('[data-entry-task-options]').replaceChildren(
-      ...available.map((resource) => suggestion(resourceLabel(resource))),
+    // Decided before the options are built, not after. A task the chosen
+    // project does not offer must not survive as an option -- keeping it is how
+    // an entry gets submitted against a project that never had that task.
+    const heldTask =
+      matched !== undefined &&
+      entryTask.value.trim() !== '' &&
+      !available.some(
+        (resource) =>
+          resourceLabel(resource).toLowerCase() === entryTask.value.trim().toLowerCase(),
+      )
+        ? ''
+        : entryTask.value
+    entryTask.replaceChildren(
+      ...withHeldValue(
+        available.map((resource) => suggestion(resourceLabel(resource))),
+        heldTask,
+      ),
     )
-    // Narrowing the list underneath is not enough. These are text inputs with a
-    // datalist, not selects, so the task box keeps whatever was typed for the
-    // previous project: switch project and the old activity is still sitting
-    // there, no longer offered and no longer valid. The pair check then refuses
-    // the entry with "That project/task combination is not available", which
-    // reads as "I picked a different activity and it would not take".
-    //
-    // Only once the project resolves. While it is still being typed every task
-    // looks wrong, and clearing on each keystroke would take the box away from
-    // someone who filled it in first. The Add-row form needs none of this: it
-    // uses real selects and repopulates them on `change`.
-    if (matched !== undefined && entryTask.value.trim() !== '') {
-      const held = entryTask.value.trim().toLowerCase()
-      if (!available.some((resource) => resourceLabel(resource).toLowerCase() === held)) {
-        entryTask.value = ''
-      }
-    }
+    entryTask.value = heldTask
   }
 
-  entryProject.addEventListener('input', () => updateEntrySuggestions())
+  entryProject.addEventListener('change', () => updateEntrySuggestions())
 
   const updateRowOptions = (): void => {
     if (snapshot === null) return
@@ -2911,6 +2946,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const task = snapshot.catalog.tasks.find((resource) => resource.id === next.taskId)
     entryProject.value = project === undefined ? String(next.projectId) : resourceLabel(project)
     entryTask.value = task === undefined ? String(next.taskId) : resourceLabel(task)
+    // Rebuilt for the assignment just set, because a select cannot display a
+    // value it does not offer and the task list narrows to the chosen project.
+    // Setting .value fires no event, so nothing else would do this.
+    updateEntrySuggestions()
     entryDate.value = next.spentDate
     entryDurationInput.value = initialDurationValue
     entryStart.value =
@@ -3477,40 +3516,43 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       })
   })
 
+  /**
+   * The note rule belongs to the project/task pair, so it follows the pair.
+   *
+   * This used to hang off the `input` event of every text field in the form and
+   * test whether the field was one of the two assignment boxes. They are selects
+   * now, which that loop does not reach and which fire `change` rather than
+   * `input`, so it is attached to the two controls it is actually about.
+   */
+  const syncAssignmentNoteRule = (): void => {
+    if (activeEntry === null || snapshot === null) return
+    const projectId = editorResourceId('project', entryProject.value, activeEntry.projectId)
+    const taskId = editorResourceId('task', entryTask.value, activeEntry.taskId)
+    const option = snapshot.catalog.timeEntryOptions.find(
+      (candidate) => candidate.project_id === projectId && candidate.task_id === taskId,
+    )
+    if (option === undefined) return
+    activeEntry = {
+      ...activeEntry,
+      projectId: option.project_id,
+      taskId: option.task_id,
+      minimumNoteLength: option.minimum_note_length,
+    }
+    configureNoteInput(entryNoteInput, entryNoteHint, option.minimum_note_length)
+  }
+
+  for (const control of [entryProject, entryTask]) {
+    control.addEventListener('change', () => {
+      entryResult.textContent = ''
+      syncAssignmentNoteRule()
+    })
+  }
+
   for (const input of entryForm.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
     'input, textarea',
   )) {
     input.addEventListener('input', () => {
       entryResult.textContent = ''
-      if (
-        activeEntry !== null &&
-        snapshot !== null &&
-        (input === entryProject || input === entryTask)
-      ) {
-        const projectId = editorResourceId(
-          'project',
-          entryProject.value,
-          activeEntry.projectId,
-        )
-        const taskId = editorResourceId('task', entryTask.value, activeEntry.taskId)
-        const option = snapshot.catalog.timeEntryOptions.find(
-          (candidate) =>
-            candidate.project_id === projectId && candidate.task_id === taskId,
-        )
-        if (option !== undefined) {
-          activeEntry = {
-            ...activeEntry,
-            projectId: option.project_id,
-            taskId: option.task_id,
-            minimumNoteLength: option.minimum_note_length,
-          }
-          configureNoteInput(
-            entryNoteInput,
-            entryNoteHint,
-            option.minimum_note_length,
-          )
-        }
-      }
     })
   }
 
