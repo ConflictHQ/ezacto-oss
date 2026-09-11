@@ -73,6 +73,33 @@ const apply = <ThemeId extends string>(
   }
 }
 
+export const THEME_STORAGE_KEY = 'ezacto.theme'
+
+/**
+ * The stored user choice, if the browser will keep one.
+ *
+ * Mirrors `browserDensityStore`: storage throws in a private window and in a
+ * browser set to block site data, and a lost display preference must never be
+ * the reason a shell fails to render.
+ */
+export const browserThemeStore = (storage: Storage): ThemePreferenceStore => ({
+  read: () => {
+    try {
+      return storage.getItem(THEME_STORAGE_KEY)
+    } catch {
+      return null
+    }
+  },
+  write: (theme) => {
+    try {
+      if (theme === null) storage.removeItem(THEME_STORAGE_KEY)
+      else storage.setItem(THEME_STORAGE_KEY, theme)
+    } catch {
+      // Preference lost on this machine; the shell still renders.
+    }
+  },
+})
+
 /**
  * Keeps interactive preference and document branding separate. Deployments may
  * inject additional themes into the registry; the OSS bundle itself still ships

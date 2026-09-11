@@ -12,6 +12,8 @@ import {
   type Whoami,
 } from '@ezacto/client'
 import { browserDensityStore, createDensityRuntime, type Density } from '../density.js'
+import { browserThemeStore, createThemeRuntime } from '../theme-preference.js'
+import { defaultTheme, themeManifest } from '../theme.js'
 import {
   browserMoneyDisplayStore,
   createMoneyDisplayRuntime,
@@ -4246,6 +4248,42 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
   }
   syncDensityChoice(density.start())
+
+  // The theme runtime resolved a stored choice against an organization default
+  // and kept the document theme separate from it, and nothing had ever
+  // constructed it -- the shell wrote the theme name as a literal in three
+  // places instead, so a user could not choose a theme and an invoice could not
+  // keep the organization's while the shell wore someone else's (issue 459).
+  //
+  // Applied beside density and for the same reason: it is a display preference
+  // with nothing to wait for, so it runs before the session resolves.
+  //
+  // The policy is the generated default on both slots today. That is the honest
+  // value -- the OSS bundle ships one theme -- rather than an invented second
+  // one; carrying an organization's own default on the deployment is the seam
+  // issue 67's settings screen attaches to.
+  const theme = createThemeRuntime({
+    registry: themeManifest,
+    policy: { orgDefaultTheme: defaultTheme, orgDocumentTheme: defaultTheme },
+    preference: browserThemeStore(globalThis.localStorage),
+    applicationRoot: document.documentElement,
+    // Every invoice or document shell on the page, so the thing a client
+    // receives keeps the organization's theme whatever the operator picked.
+    documentRoots: [...document.querySelectorAll<HTMLElement>('[data-document-shell]')],
+  })
+  const syncThemeChoice = (current: string): void => {
+    for (const button of document.querySelectorAll<HTMLButtonElement>('[data-theme-choice]')) {
+      button.setAttribute('aria-pressed', String(button.dataset.themeChoice === current))
+    }
+  }
+  syncThemeChoice(theme.start().application)
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-theme-choice]')) {
+    button.addEventListener('click', () => {
+      const chosen = button.dataset.themeChoice
+      if (chosen === undefined || !Object.hasOwn(themeManifest, chosen)) return
+      syncThemeChoice(theme.switchUserTheme(chosen as keyof typeof themeManifest).application)
+    })
+  }
   for (const button of document.querySelectorAll<HTMLButtonElement>('[data-density-choice]')) {
     button.addEventListener('click', () => {
       const chosen = button.dataset.densityChoice

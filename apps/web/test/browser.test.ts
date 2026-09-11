@@ -23,7 +23,14 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createModuleSettingsController } from '../src/module-settings/browser.js'
 import { mountShell } from '../src/shell/browser.js'
-import { invoiceTabs, renderAppShell, webAssets, type ShellApi } from '../src/index.js'
+import {
+  defaultTheme,
+  invoiceTabs,
+  renderAppShell,
+  themeManifest,
+  webAssets,
+  type ShellApi,
+} from '../src/index.js'
 
 const timestamp = '2026-08-28T12:00:00.000Z'
 
@@ -4793,5 +4800,34 @@ describe('command palette browser behavior', () => {
     expect(
       document.querySelector<HTMLInputElement>('[data-entry-duration-input]')?.placeholder,
     ).toBe('1:30')
+  })
+
+  it('[browser #459] applies the theme through the runtime, and keeps documents on the org theme', async () => {
+    // The module resolved a stored choice against an organization default and
+    // kept the document theme separate, and nothing constructed it -- the shell
+    // wrote the name as a literal in three places. A unit test of the module
+    // could not catch that: the only thing constructing it was the test.
+    renderBrowserShell()
+
+    // Stripped first, deliberately. The served HTML carries the same value the
+    // runtime resolves, so leaving the attributes in place lets a shell that
+    // never starts the runtime pass by doing nothing -- which is exactly the
+    // bug. Blank means only the runtime can put them back.
+    document.documentElement.removeAttribute('data-ez-theme')
+    const documents = [...document.querySelectorAll<HTMLElement>('[data-document-shell]')]
+    expect(documents.length).toBeGreaterThan(0)
+    for (const node of documents) node.removeAttribute('data-ez-theme')
+
+    await mountShell(browserApi())
+
+    const applied = document.documentElement.getAttribute('data-ez-theme')
+    expect(applied).not.toBeNull()
+    expect(Object.hasOwn(themeManifest, applied!)).toBe(true)
+    // Every document shell carries the organization's document theme, which is
+    // the separation the module exists for: an invoice a client receives must
+    // not change because somebody picked a different shell.
+    for (const node of documents) {
+      expect(node.getAttribute('data-ez-theme')).toBe(defaultTheme)
+    }
   })
 })
