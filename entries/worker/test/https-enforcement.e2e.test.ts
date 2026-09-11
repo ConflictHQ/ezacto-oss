@@ -5,11 +5,15 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 /**
  * Does the deployed Worker actually refuse to talk in cleartext?
  *
- * #548 was found against the live site, not against this file: http://
- * app.example.com/ answered 200 with a password field, and the form's
- * action is relative, so a browser would have posted the password over the
- * same cleartext link. A unit test of a helper would not have caught it,
- * because nothing was wrong with a helper -- the entry simply never asked.
+ * #548 was found against a deployed site, not against this file: plain http
+ * answered 200 with a password field, and the form's action is relative, so a
+ * browser would have posted the password over the same cleartext link. A unit
+ * test of a helper would not have caught it, because nothing was wrong with a
+ * helper -- the entry simply never asked.
+ *
+ * The host below is a documentation name on purpose. What the rule turns on is
+ * "not loopback", so any real hostname does, and naming a deployment here would
+ * put an operational fact in a file that is published.
  *
  * So this suite calls no helper. It bundles the real Worker entry, runs it in
  * Miniflare, and dispatches URLs whose scheme is the thing under test. The
