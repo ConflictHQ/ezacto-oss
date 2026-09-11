@@ -1924,6 +1924,47 @@ export type ContractorCostReportEnvelope = {
   "links": Links;
 };
 
+export type ProfitabilityRow = {
+  "project_id": number;
+  "project_name": string;
+  "project_code": string;
+  "client_id": number;
+  "client_name": string;
+  "currency": string;
+  "rounded_seconds": number;
+  "revenue_cents": number | null;
+  "cost_cents": number | null;
+  "profit_cents": number | null;
+  "entries_without_billable_rate": number;
+  "entries_without_cost_rate": number;
+};
+
+export type ProfitabilityTotals = {
+  "rounded_seconds": number;
+  "revenue_cents": number | null;
+  "cost_cents": number | null;
+  "profit_cents": number | null;
+  "entries_without_billable_rate": number;
+  "entries_without_cost_rate": number;
+  "projects_not_converted": number;
+};
+
+export type ProfitabilityReport = {
+  "from": string;
+  "to": string;
+  "organization_currency": string;
+  "rows": Array<ProfitabilityRow>;
+  "totals": ProfitabilityTotals;
+  "previous_from": string;
+  "previous_to": string;
+  "previous_totals": ProfitabilityTotals;
+};
+
+export type ProfitabilityReportEnvelope = {
+  "data": ProfitabilityReport;
+  "links": Links;
+};
+
 export type ClientRollupCurrency = {
   "currency": string;
   "expense_cents": number;
@@ -3824,6 +3865,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<ContractorCostReportEnvelope>("GET", "/api/v1/reports/contractor", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getProfitabilityReport(args: { query: { "from": string; "to": string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<ProfitabilityReportEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ProfitabilityReportEnvelope>("GET", "/api/v1/reports/profitability", {
       query: args.query,
       signal: args.signal,
       headers,

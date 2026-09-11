@@ -413,6 +413,7 @@ export const DETAILED_TIME_ENTRY_LIMIT = 20_000
 
 export interface ReportRepository {
   contractorCost(range: Readonly<ReportDateRange>): Promise<ContractorCostReportRecord>
+  profitability(range: Readonly<ReportDateRange>): Promise<ProfitabilityReportRecord>
   detailedTime(filter: Readonly<DetailedTimeFilter>): Promise<DetailedTimeReportResult>
   timeReport(range: Readonly<ReportDateRange>): Promise<TimeReportRecord>
   memberHours(filter: Readonly<MemberHoursFilter>): Promise<MemberHoursReportRecord>
@@ -1439,6 +1440,247 @@ const contractorCostReport = async (
   return { from: range.from, to: range.to, rows: [...grouped.values()] }
 }
 
+export interface ProfitabilityRow {
+  projectId: number
+  projectName: string
+  projectCode: string
+  clientId: number
+  clientName: string
+  /** The project's billing currency. Revenue is denominated in it. */
+  currency: string
+  roundedSeconds: number
+  /** Null when any billable entry on the project has no rate. */
+  revenueCents: number | null
+  /** Organization currency, always. Null when any entry has no cost rate. */
+  costCents: number | null
+  /**
+   * Null whenever it cannot be stated honestly: either side missing, or a
+   * project that bills in a currency the cost rates are not denominated in.
+   * See `profitabilityReport` for why the second case is not a subtraction.
+   */
+  profitCents: number | null
+  entriesWithoutBillableRate: number
+  entriesWithoutCostRate: number
+}
+
+export interface ProfitabilityTotals {
+  roundedSeconds: number
+  revenueCents: number | null
+  costCents: number | null
+  profitCents: number | null
+  entriesWithoutBillableRate: number
+  entriesWithoutCostRate: number
+  /** Projects left out of profit because they bill in another currency. */
+  projectsNotConverted: number
+}
+
+export interface ProfitabilityReportRecord {
+  from: string
+  to: string
+  organizationCurrency: string
+  rows: ProfitabilityRow[]
+  totals: ProfitabilityTotals
+  /** The immediately preceding window of equal length, for the delta. */
+  previousFrom: string
+  previousTo: string
+  previousTotals: ProfitabilityTotals
+}
+
+interface ProfitabilityQueryRow {
+  projectId: number
+  projectName: string
+  projectCode: string
+  clientId: number
+  clientName: string
+  currency: string
+  billable: number
+  roundedSeconds: number
+  billableRateCents: number | null
+  costRateCents: number | null
+}
+
+const dayCount = (from: string, to: string): number => {
+  const start = Date.parse(`${from}T00:00:00.000Z`)
+  const end = Date.parse(`${to}T00:00:00.000Z`)
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    throw new RangeError('profitability range must be two calendar dates')
+  }
+  return Math.floor((end - start) / 86_400_000) + 1
+}
+
+const shiftDate = (date: string, days: number): string =>
+  new Date(Date.parse(`${date}T00:00:00.000Z`) + days * 86_400_000)
+    .toISOString()
+    .slice(0, 10)
+
+/**
+ * The window of equal length ending the day before this one starts. A month
+ * compared against the month before it, a week against the week before, without
+ * the caller having to say so.
+ */
+export const previousProfitabilityRange = (
+  range: Readonly<ReportDateRange>,
+): ReportDateRange => {
+  const days = dayCount(range.from, range.to)
+  return { from: shiftDate(range.from, -days), to: shiftDate(range.from, -1) }
+}
+
+const emptyProfitabilityTotals = (): ProfitabilityTotals => ({
+  roundedSeconds: 0,
+  revenueCents: 0,
+  costCents: 0,
+  profitCents: 0,
+  entriesWithoutBillableRate: 0,
+  entriesWithoutCostRate: 0,
+  projectsNotConverted: 0,
+})
+
+const profitabilityRows = async (
+  database: Database,
+  range: Readonly<ReportDateRange>,
+  organizationCurrency: string,
+): Promise<ProfitabilityRow[]> => {
+  const rows = await database.all<ProfitabilityQueryRow>(sql`
+    SELECT project.id AS "projectId",
+      project.name AS "projectName",
+      coalesce(project.code, '') AS "projectCode",
+      client.id AS "clientId",
+      client.name AS "clientName",
+      upper(coalesce(project.billing_currency, client.currency, ${organizationCurrency}))
+        AS "currency",
+      entry.billable AS "billable",
+      entry.rounded_seconds AS "roundedSeconds",
+      entry.billable_rate_cents AS "billableRateCents",
+      entry.cost_rate_cents AS "costRateCents"
+    FROM time_entries entry
+    JOIN projects project ON project.id = entry.project_id
+    JOIN clients client ON client.id = project.client_id
+    WHERE entry.spent_date BETWEEN ${range.from} AND ${range.to}
+    ORDER BY project.id, entry.id
+  `)
+  const grouped = new Map<number, ProfitabilityRow>()
+  for (const row of rows) {
+    const existing = grouped.get(row.projectId) ?? {
+      projectId: row.projectId,
+      projectName: row.projectName,
+      projectCode: row.projectCode,
+      clientId: row.clientId,
+      clientName: row.clientName,
+      currency: row.currency,
+      roundedSeconds: 0,
+      revenueCents: 0,
+      costCents: 0,
+      profitCents: 0,
+      entriesWithoutBillableRate: 0,
+      entriesWithoutCostRate: 0,
+    }
+    existing.roundedSeconds += row.roundedSeconds
+    // Non-billable time earns nothing and still costs: it is dead weight on the
+    // margin, which is the whole reason to look at this report, so it is absent
+    // from revenue and present in cost rather than skipped on both sides.
+    if (row.billable === 1) {
+      if (row.billableRateCents === null) {
+        existing.entriesWithoutBillableRate += 1
+        existing.revenueCents = null
+      } else if (existing.revenueCents !== null) {
+        existing.revenueCents += trackedAmountCents(row.roundedSeconds, row.billableRateCents)
+      }
+    }
+    if (row.costRateCents === null) {
+      existing.entriesWithoutCostRate += 1
+      existing.costCents = null
+    } else if (existing.costCents !== null) {
+      existing.costCents += trackedAmountCents(row.roundedSeconds, row.costRateCents)
+    }
+    grouped.set(row.projectId, existing)
+  }
+  for (const row of grouped.values()) {
+    row.profitCents =
+      row.revenueCents === null ||
+      row.costCents === null ||
+      row.currency !== organizationCurrency
+        ? null
+        : row.revenueCents - row.costCents
+  }
+  return [...grouped.values()]
+}
+
+const profitabilityTotals = (
+  rows: readonly ProfitabilityRow[],
+  organizationCurrency: string,
+): ProfitabilityTotals => {
+  const totals = emptyProfitabilityTotals()
+  for (const row of rows) {
+    totals.roundedSeconds += row.roundedSeconds
+    totals.entriesWithoutBillableRate += row.entriesWithoutBillableRate
+    totals.entriesWithoutCostRate += row.entriesWithoutCostRate
+    if (row.currency !== organizationCurrency) {
+      // Its revenue is in another currency, so it can be neither added to the
+      // org-currency total nor subtracted from it. Counted instead, so the
+      // screen can say how much of the account the headline leaves out.
+      totals.projectsNotConverted += 1
+      continue
+    }
+    if (row.revenueCents === null) totals.revenueCents = null
+    else if (totals.revenueCents !== null) totals.revenueCents += row.revenueCents
+    if (row.costCents === null) totals.costCents = null
+    else if (totals.costCents !== null) totals.costCents += row.costCents
+  }
+  totals.profitCents =
+    totals.revenueCents === null || totals.costCents === null
+      ? null
+      : totals.revenueCents - totals.costCents
+  return totals
+}
+
+/**
+ * Revenue, cost and profit per project, against the window before it.
+ *
+ * Revenue is the billable value of tracked time -- what the work was worth at
+ * its billable rate -- not what has been invoiced. Invoicing lags the work by
+ * design here, so an invoiced measure would report a month's margin as the
+ * timing of its billing run rather than as the work done in it.
+ *
+ * The currency rule is the awkward part and is deliberate. A cost rate carries
+ * no currency of its own: there is no cost_currency column, so cost is an
+ * organization-currency figure by construction, while revenue is denominated in
+ * the project's billing currency. For a project billing in another currency the
+ * two are not comparable, and `revenue - cost` would be a subtraction across
+ * units dressed up as a margin. Those projects report both sides and a null
+ * profit, and the totals count them, until #522 supplies a conversion.
+ *
+ * A missing rate nulls its side of the row rather than being skipped, following
+ * the contractor report: a figure that silently omitted unpriced hours would
+ * read as a healthier margin than the account has.
+ */
+const profitabilityReport = async (
+  database: Database,
+  range: Readonly<ReportDateRange>,
+): Promise<ProfitabilityReportRecord> => {
+  const organization = await database.all<{ currency: string }>(
+    sql`SELECT upper(currency) AS "currency" FROM organizations WHERE id = 1`,
+  )
+  const organizationCurrency = organization[0]?.currency
+  if (organizationCurrency === undefined) {
+    throw new Error('organization must exist before reports are read')
+  }
+  const previous = previousProfitabilityRange(range)
+  const [rows, previousRows] = await Promise.all([
+    profitabilityRows(database, range, organizationCurrency),
+    profitabilityRows(database, previous, organizationCurrency),
+  ])
+  return {
+    from: range.from,
+    to: range.to,
+    organizationCurrency,
+    rows,
+    totals: profitabilityTotals(rows, organizationCurrency),
+    previousFrom: previous.from,
+    previousTo: previous.to,
+    previousTotals: profitabilityTotals(previousRows, organizationCurrency),
+  }
+}
+
 interface DetailedTimeQueryRow {
   spentDate: string
   clientId: number
@@ -1939,6 +2181,7 @@ const timeReport = async (
 
 export const createReportRepository = (database: Database): ReportRepository => ({
   contractorCost: (range) => contractorCostReport(database, range),
+  profitability: (range) => profitabilityReport(database, range),
   detailedTime: (filter) => detailedTimeReport(database, filter),
   timeReport: (range) => timeReport(database, range),
   memberHours: (filter) => memberHoursReport(database, filter),

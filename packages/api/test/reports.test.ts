@@ -864,6 +864,211 @@ for (const [runtime, factory] of factories) {
       }
     });
 
+    it("[security] serves profitability to an administrator and to nobody else", async () => {
+      // A margin is the cost figure with one subtraction applied, so it is
+      // refused on the same authority as the contractor report rather than on
+      // the broader financial one.
+      harness = await factory();
+
+      const allowed = await harness.request(
+        "/reports/profitability?from=2026-08-01&to=2026-08-31",
+      );
+      expect(allowed.status, await allowed.clone().text()).toBe(200);
+      const body = (await allowed.json()) as {
+        data: { rows: unknown[] };
+      };
+      // The fixture tracks time on four projects, so an empty set would satisfy
+      // every assertion below without measuring one.
+      expect(body.data.rows.length).toBeGreaterThan(0);
+
+      for (const profile of [
+        "member",
+        "project_manager",
+        "people_admin",
+        "accounting",
+        "executive_manager",
+      ] as const) {
+        const refused = await harness.request(
+          "/reports/profitability?from=2026-08-01&to=2026-08-31",
+          profile,
+        );
+        expect(refused.status, `${profile} reached profitability`).toBe(403);
+      }
+    });
+
+    it("[unit] states revenue, cost and margin per project against the window before", async () => {
+      harness = await factory();
+      const response = await harness.request(
+        "/reports/profitability?from=2026-08-01&to=2026-08-31",
+      );
+      expect(response.status, await response.clone().text()).toBe(200);
+      const body = (await response.json()) as {
+        data: {
+          organization_currency: string;
+          previous_from: string;
+          previous_to: string;
+          rows: {
+            project_id: number;
+            currency: string;
+            revenue_cents: number | null;
+            cost_cents: number | null;
+            profit_cents: number | null;
+          }[];
+          totals: { profit_cents: number | null; projects_not_converted: number };
+        };
+      };
+      expect(body.data.organization_currency).toBe("USD");
+      // August has 31 days, so the window before it is the 31 days ending the
+      // day before it starts -- not "the previous calendar month", which would
+      // compare 31 days against 30 in April.
+      expect(body.data.previous_from).toBe("2026-07-01");
+      expect(body.data.previous_to).toBe("2026-07-31");
+
+      const root = body.data.rows.find((row) => row.project_id === 1)!;
+      // Entry 101 is exactly one hour at a $100.00 billable rate and a $40.00
+      // cost rate. Hand-computed rather than derived from the code under test.
+      expect(root.revenue_cents).toBe(10_000);
+      expect(root.cost_cents).toBe(4_000);
+      expect(root.profit_cents).toBe(6_000);
+
+      // Every priced row in the organization's own currency is the subtraction
+      // and nothing else.
+      for (const row of body.data.rows) {
+        if (
+          row.currency === "USD" &&
+          row.revenue_cents !== null &&
+          row.cost_cents !== null
+        ) {
+          expect(row.profit_cents, `project ${row.project_id}`).toBe(
+            row.revenue_cents - row.cost_cents,
+          );
+        }
+      }
+      expect(body.data.totals.projects_not_converted).toBe(0);
+    });
+
+    it("[unit] refuses to subtract across currencies and says how many it left out", async () => {
+      harness = await factory();
+      // A project billing in EUR. Its revenue is EUR; its cost rate carries no
+      // currency at all and is therefore USD, so the two cannot be subtracted.
+      await harness.run(
+        `INSERT INTO clients (id, name, currency, parent_client_id, created_at, updated_at)
+         VALUES (9, 'Continental', 'EUR', NULL, ?, ?)`,
+        [now, now],
+      );
+      await harness.run(
+        `INSERT INTO projects
+           (id, client_id, name, code, billing_method, bill_by, hourly_rate_cents,
+            budget_by, budget_seconds, cost_budget_cents, cost_budget_include_expenses,
+            report_visibility, billing_currency, created_at, updated_at)
+         VALUES (9, 9, 'Continental build', 'CONT', 'time_materials', 'project', 10000,
+            'project', NULL, NULL, 0, 'managers', 'EUR', ?, ?)`,
+        [now, now],
+      );
+      await harness.run(
+        `INSERT INTO task_assignments
+           (id, project_id, task_id, billable, budget_cents, created_at, updated_at)
+         VALUES (19, 9, 1, 1, NULL, ?, ?)`,
+        [now, now],
+      );
+      await harness.run(
+        `INSERT INTO user_assignments
+           (id, project_id, user_id, is_active, is_project_manager, created_at, updated_at)
+         VALUES (29, 9, 1, 1, 0, ?, ?)`,
+        [now, now],
+      );
+      await harness.run(
+        `INSERT INTO time_entries
+           (id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+            spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+            budgeted, billable_rate_cents, cost_rate_cents, created_at, updated_at)
+         VALUES (199, 1, 9, 1, 29, 19, '2026-08-14', 3600, 3600, 3600, 1, 0,
+            10000, 4000, ?, ?)`,
+        [now, now],
+      );
+
+      const response = await harness.request(
+        "/reports/profitability?from=2026-08-01&to=2026-08-31",
+      );
+      const body = (await response.json()) as {
+        data: {
+          rows: {
+            project_id: number;
+            currency: string;
+            revenue_cents: number | null;
+            cost_cents: number | null;
+            profit_cents: number | null;
+          }[];
+          totals: {
+            revenue_cents: number | null;
+            profit_cents: number | null;
+            projects_not_converted: number;
+          };
+        };
+      };
+      const continental = body.data.rows.find((row) => row.project_id === 9)!;
+      expect(continental.currency).toBe("EUR");
+      // Both sides are reported: the figures are real, they just are not in the
+      // same unit.
+      expect(continental.revenue_cents).toBe(10_000);
+      expect(continental.cost_cents).toBe(4_000);
+      // And the margin is blank rather than a confident wrong number.
+      expect(continental.profit_cents).toBeNull();
+
+      // The headline leaves it out entirely and says so, so a total that covers
+      // part of the account cannot be read as the whole firm.
+      expect(body.data.totals.projects_not_converted).toBe(1);
+      const usdRevenue = body.data.rows
+        .filter((row) => row.currency === "USD")
+        .reduce((sum, row) => sum + (row.revenue_cents ?? 0), 0);
+      expect(body.data.totals.revenue_cents).toBe(usdRevenue);
+    });
+
+    it("[unit] blanks the side a missing rate makes incomplete, and counts it", async () => {
+      harness = await factory();
+      // One unpriced billable hour on project 1, which otherwise prices cleanly.
+      await harness.run(
+        `INSERT INTO time_entries
+           (id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+            spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+            budgeted, billable_rate_cents, cost_rate_cents, created_at, updated_at)
+         VALUES (198, 1, 1, 1, 21, 11, '2026-08-15', 3600, 3600, 3600, 1, 0,
+            NULL, 4000, ?, ?)`,
+        [now, now],
+      );
+
+      const response = await harness.request(
+        "/reports/profitability?from=2026-08-01&to=2026-08-31",
+      );
+      const body = (await response.json()) as {
+        data: {
+          rows: {
+            project_id: number;
+            revenue_cents: number | null;
+            cost_cents: number | null;
+            profit_cents: number | null;
+            entries_without_billable_rate: number;
+          }[];
+          totals: {
+            revenue_cents: number | null;
+            profit_cents: number | null;
+            entries_without_billable_rate: number;
+          };
+        };
+      };
+      const root = body.data.rows.find((row) => row.project_id === 1)!;
+      // Not 10_000 with the unpriced hour quietly dropped, which would read as
+      // a healthier margin than the account has.
+      expect(root.revenue_cents).toBeNull();
+      expect(root.profit_cents).toBeNull();
+      // The cost side still priced, so it still reports.
+      expect(root.cost_cents).toBe(8_000);
+      expect(root.entries_without_billable_rate).toBe(1);
+      expect(body.data.totals.revenue_cents).toBeNull();
+      expect(body.data.totals.profit_cents).toBeNull();
+      expect(body.data.totals.entries_without_billable_rate).toBe(1);
+    });
+
     it("[unit] keeps uninvoiced totals identical to the generation preview to the cent", async () => {
       harness = await factory();
       const response = await harness.request(

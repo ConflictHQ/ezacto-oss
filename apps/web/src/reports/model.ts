@@ -7,6 +7,7 @@ import type {
   DetailedTimeRow,
   GeneralResource,
   MyHoursReport,
+  ProfitabilityReport,
   ProjectBudgetReport,
   TimeReport,
   UninvoicedReport,
@@ -23,6 +24,7 @@ export type ReportKind =
   | 'contractor-cost'
   | 'detailed-time'
   | 'activity-log'
+  | 'profitability'
 
 /**
  * The Time report's four sub-tabs. They are folds of one response, so the tab
@@ -90,6 +92,21 @@ export const activitySubjectLabel = (
   return id === undefined || id === null ? name : `${name} #${String(id)}`
 }
 
+/**
+ * The change against the window before, as a fraction of that window.
+ *
+ * Null where it cannot be stated: either side missing, or a previous window of
+ * zero. Growth from nothing is not a percentage -- it is a first month, and
+ * printing "infinite" or "100%" for it would be inventing a denominator.
+ */
+export const profitabilityDelta = (
+  current: number | null,
+  previous: number | null,
+): number | null => {
+  if (current === null || previous === null || previous === 0) return null
+  return (current - previous) / Math.abs(previous)
+}
+
 export interface ReportCatalogPage {
   readonly data: readonly GeneralResource[]
   readonly page: { readonly next_cursor: string | null }
@@ -148,6 +165,10 @@ export interface ReportWorkspaceApi {
     filter: { readonly from: string; readonly to: string },
     signal?: AbortSignal,
   ): Promise<ContractorCostReport>
+  getProfitabilityReport?(
+    filter: { readonly from: string; readonly to: string },
+    signal?: AbortSignal,
+  ): Promise<ProfitabilityReport>
   getDetailedTimeReport(
     filter: {
       readonly from: string
@@ -191,6 +212,7 @@ const reportKinds = new Set<ReportKind>([
   'contractor-cost',
   'detailed-time',
   'activity-log',
+  'profitability',
 ])
 
 const timeReportTabs = new Set<TimeReportTab>([

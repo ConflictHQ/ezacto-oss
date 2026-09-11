@@ -253,7 +253,14 @@ describe('worker entry', () => {
     expect(html).not.toContain('data-time-views')
     expect(html).toContain('Each currency remains separate.')
     expect(html).not.toContain('Export')
-    expect(html).not.toContain('Profit')
+    // The strip carries a Profitability tab now, so the bare word appears as a
+    // navigation label -- the same way Contractor cost has always appeared to
+    // every profile, with the browser dropping the unreadable kinds once whoami
+    // answers. What must still be absent is profit CONTENT: this route serves
+    // the section skeleton and no report's figures.
+    expect(html).toContain('<a href="/reports?report=profitability">Profitability</a>')
+    expect(html).not.toContain('report-profit-summary')
+    expect(html).not.toContain('report-profit-figure')
   })
 
   it.each(['/projects/0', '/projects/nope', '/projects/9007199254740992'])(

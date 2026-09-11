@@ -8,6 +8,7 @@ import {
   type DetailedTimeRow,
   type GeneralResource,
   type MyHoursReport,
+  type ProfitabilityReport,
   type ProjectBudgetReport,
   type TimeReport,
   type TimeReportAmount,
@@ -31,6 +32,7 @@ import {
   activityEventLabel,
   activitySubjectLabel,
   canReadFinancialReports,
+  profitabilityDelta,
   decimalHours,
   detailedTimeCsv,
   detailedTimeOptionsFromUrl,
@@ -75,7 +77,7 @@ const canReadKind = (
   kind: ReportKind,
   identity: Pick<Whoami, 'profile' | 'manager_grants'>,
 ): boolean =>
-  kind === 'contractor-cost'
+  kind === 'contractor-cost' || kind === 'profitability'
     ? canReadCostReports(identity)
     : openToEveryProfile.has(kind) || canReadFinancialReports(identity.profile)
 
@@ -613,6 +615,129 @@ const renderActivityLog = (
     row.append(when, textElement('td', activityEventLabel(entry.event_type)))
     row.append(textElement('td', activitySubjectLabel(entry.aggregate)))
     body.append(row)
+  }
+  table.append(head, body)
+  wrapper.append(table)
+  fragment.append(wrapper)
+  return fragment
+}
+
+/** A signed percentage, or an em dash where the change cannot be stated. */
+const deltaLabel = (fraction: number | null): string => {
+  if (fraction === null) return '\u2014'
+  const percent = new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: 1,
+    signDisplay: 'exceptZero',
+  }).format(fraction * 100)
+  return `${percent}%`
+}
+
+/**
+ * Revenue, cost and margin, against the window before.
+ *
+ * Three things here are deliberately blank rather than confident. A project
+ * billing in another currency reports both sides and no margin, because its
+ * revenue and the organization-currency cost are not the same unit. A missing
+ * rate blanks its side rather than dropping the hours, which would read as a
+ * healthier margin than the account has. And a delta against a period of zero
+ * is blank, because growth from nothing has no denominator.
+ */
+const renderProfitability = (
+  report: Readonly<ProfitabilityReport>,
+): DocumentFragment => {
+  const fragment = document.createDocumentFragment()
+  const currency = report.organization_currency
+  fragment.append(
+    reportHeading(
+      'Profitability',
+      `${report.from} through ${report.to} \u00b7 against ${report.previous_from} through ${report.previous_to}`,
+    ),
+  )
+
+  const summary = element('div', 'report-profit-summary')
+  const totals = report.totals
+  const previous = report.previous_totals
+  for (const [label, value, before] of [
+    ['Revenue', totals.revenue_cents, previous.revenue_cents],
+    ['Cost', totals.cost_cents, previous.cost_cents],
+    ['Profit', totals.profit_cents, previous.profit_cents],
+  ] as const) {
+    const tile = element('div', 'report-profit-tile')
+    tile.append(textElement('p', label, 'report-profit-label'))
+    const figure = element('p', 'report-profit-figure')
+    figure.append(reportMoney(value, currency))
+    tile.append(
+      figure,
+      textElement('p', deltaLabel(profitabilityDelta(value, before)), 'report-profit-delta'),
+    )
+    summary.append(tile)
+  }
+  fragment.append(summary)
+
+  if (totals.projects_not_converted > 0) {
+    const count = totals.projects_not_converted
+    fragment.append(
+      warning(
+        `${count} ${count === 1 ? 'project bills' : 'projects bill'} in another currency and ${
+          count === 1 ? 'is' : 'are'
+        } not in these totals. Cost is held in ${currency}; converting revenue is not yet supported.`,
+      ),
+    )
+  }
+  if (totals.entries_without_billable_rate > 0 || totals.entries_without_cost_rate > 0) {
+    fragment.append(
+      warning(
+        `${totals.entries_without_billable_rate} tracked ${
+          totals.entries_without_billable_rate === 1 ? 'entry has' : 'entries have'
+        } no billable rate and ${totals.entries_without_cost_rate} ${
+          totals.entries_without_cost_rate === 1 ? 'has' : 'have'
+        } no cost rate. Any figure they affect is left blank rather than understated.`,
+      ),
+    )
+  }
+
+  if (report.rows.length === 0) {
+    fragment.append(textElement('p', 'No time was tracked in this period.', 'report-empty'))
+    return fragment
+  }
+
+  const wrapper = element('div', 'report-table-wrap')
+  const table = element('table', 'report-table')
+  const head = element('thead')
+  const headerRow = element('tr')
+  for (const label of ['Project', 'Client', 'Hours', 'Revenue', 'Cost', 'Profit']) {
+    const cell = textElement('th', label)
+    cell.scope = 'col'
+    headerRow.append(cell)
+  }
+  head.append(headerRow)
+  const body = element('tbody')
+  // Worst margin first: the report is opened to find what is losing money, and
+  // a blank margin sorts last because it is a question rather than an answer.
+  const ordered = [...report.rows].sort((left, right) => {
+    if (left.profit_cents === null) return right.profit_cents === null ? 0 : 1
+    if (right.profit_cents === null) return -1
+    return left.profit_cents - right.profit_cents
+  })
+  for (const row of ordered) {
+    const line = element('tr')
+    const project = element('th')
+    project.scope = 'row'
+    project.append(
+      linkElement(
+        `/projects/${row.project_id}`,
+        row.project_code === '' ? row.project_name : `[${row.project_code}] ${row.project_name}`,
+      ),
+    )
+    line.append(project, textElement('td', row.client_name))
+    line.append(textElement('td', formatReportHours(row.rounded_seconds)))
+    // Revenue in the project's own currency, cost always in the
+    // organization's: labelling both with one currency would relabel a figure
+    // rather than convert it.
+    line.append(moneyCell(row.revenue_cents, row.currency))
+    line.append(moneyCell(row.cost_cents, currency))
+    line.append(moneyCell(row.profit_cents, currency))
+    body.append(line)
   }
   table.append(head, body)
   wrapper.append(table)
@@ -1516,11 +1641,13 @@ export const createReportsController = (
       kind === 'my-hours' ||
       kind === 'contractor-cost' ||
       kind === 'activity-log' ||
+      kind === 'profitability' ||
       kind === 'time'
     projectField.hidden =
       kind === 'client-rollup' ||
       kind === 'contractor-cost' ||
       kind === 'activity-log' ||
+      kind === 'profitability' ||
       kind === 'time'
     // The catalog switch exists to widen those two pickers. With neither on
     // screen it is a control that changes nothing, which is worse than an
@@ -1659,6 +1786,7 @@ export const createReportsController = (
       | MyHoursReport
       | ContractorCostReport
       | DetailedTimeReport
+      | ProfitabilityReport
       | TimeReport
       | readonly ActivityLogEntry[],
   ): void => {
@@ -1678,6 +1806,8 @@ export const createReportsController = (
       results.replaceChildren(
         renderActivityLog(report as readonly ActivityLogEntry[], filters),
       )
+    } else if (filters.kind === 'profitability') {
+      results.replaceChildren(renderProfitability(report as ProfitabilityReport))
     } else if (filters.kind === 'contractor-cost') {
       results.replaceChildren(renderContractorCost(report as ContractorCostReport))
     } else if (filters.kind === 'client-rollup') {
@@ -1711,7 +1841,9 @@ export const createReportsController = (
       status.textContent =
         filters.kind === 'contractor-cost'
           ? 'Only an administrator can read the contractor cost report.'
-          : 'Your profile does not have access to this financial report.'
+          : filters.kind === 'profitability'
+            ? 'Only an administrator can read the profitability report.'
+            : 'Your profile does not have access to this financial report.'
       return
     }
     if (
@@ -1722,7 +1854,8 @@ export const createReportsController = (
       api.getContractorCostReport === undefined ||
       api.getDetailedTimeReport === undefined ||
       api.getTimeReport === undefined ||
-      api.getActivityLog === undefined
+      api.getActivityLog === undefined ||
+      api.getProfitabilityReport === undefined
     ) {
       clearReportPresentation()
       status.textContent = 'Reports are unavailable in this build.'
@@ -1777,6 +1910,8 @@ export const createReportsController = (
               },
               active.signal,
             )
+          : filters.kind === 'profitability'
+            ? await api.getProfitabilityReport(range, active.signal)
           : filters.kind === 'contractor-cost'
             ? await api.getContractorCostReport(range, active.signal)
             : filters.kind === 'client-rollup'

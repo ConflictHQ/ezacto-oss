@@ -39,6 +39,47 @@ export interface ContractorCostReportRecord {
   rows: readonly ContractorCostRowRecord[];
 }
 
+export interface ProfitabilityRowRecord {
+  projectId: number;
+  projectName: string;
+  projectCode: string;
+  clientId: number;
+  clientName: string;
+  /** The project's billing currency. Revenue is denominated in it. */
+  currency: string;
+  roundedSeconds: number;
+  /** Null when any billable entry on the project has no rate. */
+  revenueCents: number | null;
+  /** Organization currency, always. Null when any entry has no cost rate. */
+  costCents: number | null;
+  /** Null when either side is missing, or the project bills in another currency. */
+  profitCents: number | null;
+  entriesWithoutBillableRate: number;
+  entriesWithoutCostRate: number;
+}
+
+export interface ProfitabilityTotals {
+  roundedSeconds: number;
+  revenueCents: number | null;
+  costCents: number | null;
+  profitCents: number | null;
+  entriesWithoutBillableRate: number;
+  entriesWithoutCostRate: number;
+  /** Projects left out of the headline because they bill in another currency. */
+  projectsNotConverted: number;
+}
+
+export interface ProfitabilityReportRecord {
+  from: string;
+  to: string;
+  organizationCurrency: string;
+  rows: readonly ProfitabilityRowRecord[];
+  totals: Readonly<ProfitabilityTotals>;
+  previousFrom: string;
+  previousTo: string;
+  previousTotals: Readonly<ProfitabilityTotals>;
+}
+
 export interface UninvoicedCurrencyRecord {
   currency: string;
   roundedSeconds: number;
@@ -271,6 +312,7 @@ export interface ReportReader {
     projectId?: number;
   }): Promise<MyHoursReportRecord>;
   contractorCost(range: Readonly<ReportDateRange>): Promise<ContractorCostReportRecord>;
+  profitability(range: Readonly<ReportDateRange>): Promise<ProfitabilityReportRecord>;
   timeReport(range: Readonly<ReportDateRange>): Promise<TimeReportRecord>;
   detailedTime(filter: {
     from: string;
@@ -428,6 +470,42 @@ const serializeContractorCost = (report: Readonly<ContractorCostReportRecord>) =
     cost_cents: row.costCents,
     entries_without_rate: row.entriesWithoutRate,
   })),
+});
+
+const serializeProfitabilityTotals = (
+  totals: Readonly<ProfitabilityTotals>,
+) => ({
+  rounded_seconds: totals.roundedSeconds,
+  revenue_cents: totals.revenueCents,
+  cost_cents: totals.costCents,
+  profit_cents: totals.profitCents,
+  entries_without_billable_rate: totals.entriesWithoutBillableRate,
+  entries_without_cost_rate: totals.entriesWithoutCostRate,
+  projects_not_converted: totals.projectsNotConverted,
+});
+
+const serializeProfitability = (report: Readonly<ProfitabilityReportRecord>) => ({
+  from: report.from,
+  to: report.to,
+  organization_currency: report.organizationCurrency,
+  rows: report.rows.map((row) => ({
+    project_id: row.projectId,
+    project_name: row.projectName,
+    project_code: row.projectCode,
+    client_id: row.clientId,
+    client_name: row.clientName,
+    currency: row.currency,
+    rounded_seconds: row.roundedSeconds,
+    revenue_cents: row.revenueCents,
+    cost_cents: row.costCents,
+    profit_cents: row.profitCents,
+    entries_without_billable_rate: row.entriesWithoutBillableRate,
+    entries_without_cost_rate: row.entriesWithoutCostRate,
+  })),
+  totals: serializeProfitabilityTotals(report.totals),
+  previous_from: report.previousFrom,
+  previous_to: report.previousTo,
+  previous_totals: serializeProfitabilityTotals(report.previousTotals),
 });
 
 /**
@@ -838,6 +916,36 @@ export const installReportRoutes = <Bindings extends object>(
     return context.json(
       {
         data: serializeDetailedTime(result.report, context.get("principal")),
+        links: {
+          self:
+            new URL(context.req.url).pathname + new URL(context.req.url).search,
+        },
+      },
+      200,
+      { "cache-control": "no-store" },
+    );
+  });
+
+  api.get("/reports/profitability", async (context) => {
+    requireApiScope(context, "reports:read");
+    const principal = context.get("principal");
+    // Every row states a cost, so this is refused on the same authority as the
+    // contractor report rather than on the broader financial one. A margin is
+    // the cost figure with one subtraction applied; serving it to a profile
+    // refused the cost itself would hand back the same fact rearranged.
+    if (!canViewMoneyField(principal, "cost_rate")) {
+      throw new ApiError({
+        status: 403,
+        code: "profile_forbidden",
+        message: "The acting user profile cannot perform this operation.",
+      });
+    }
+    const parsed = rangeFrom(new URL(context.req.url), reportKeys);
+    assertFields(parsed.errors);
+    const report = await reports.profitability(parsed.range);
+    return context.json(
+      {
+        data: serializeProfitability(report),
         links: {
           self:
             new URL(context.req.url).pathname + new URL(context.req.url).search,

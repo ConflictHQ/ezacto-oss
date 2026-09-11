@@ -13600,6 +13600,84 @@
         ]
       }
     },
+    "/api/v1/reports/profitability": {
+      "get": {
+        "operationId": "getProfitabilityReport",
+        "summary": "Revenue, cost and profit per project against the window before it",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfitabilityReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/reports/profitability",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/reports/uninvoiced": {
       "get": {
         "operationId": "getUninvoicedReport",
@@ -25866,6 +25944,212 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/ContractorCostReport"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProfitabilityRow": {
+        "type": "object",
+        "required": [
+          "project_id",
+          "project_name",
+          "project_code",
+          "client_id",
+          "client_name",
+          "currency",
+          "rounded_seconds",
+          "revenue_cents",
+          "cost_cents",
+          "profit_cents",
+          "entries_without_billable_rate",
+          "entries_without_cost_rate"
+        ],
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "project_code": {
+            "type": "string"
+          },
+          "client_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "client_name": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "rounded_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "revenue_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cost_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "profit_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entries_without_billable_rate": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "entries_without_cost_rate": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProfitabilityTotals": {
+        "type": "object",
+        "required": [
+          "rounded_seconds",
+          "revenue_cents",
+          "cost_cents",
+          "profit_cents",
+          "entries_without_billable_rate",
+          "entries_without_cost_rate",
+          "projects_not_converted"
+        ],
+        "properties": {
+          "rounded_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "revenue_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cost_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "profit_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entries_without_billable_rate": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "entries_without_cost_rate": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "projects_not_converted": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProfitabilityReport": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "organization_currency",
+          "rows",
+          "totals",
+          "previous_from",
+          "previous_to",
+          "previous_totals"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date"
+          },
+          "to": {
+            "type": "string",
+            "format": "date"
+          },
+          "organization_currency": {
+            "type": "string"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfitabilityRow"
+            }
+          },
+          "totals": {
+            "$ref": "#/components/schemas/ProfitabilityTotals"
+          },
+          "previous_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "previous_to": {
+            "type": "string",
+            "format": "date"
+          },
+          "previous_totals": {
+            "$ref": "#/components/schemas/ProfitabilityTotals"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProfitabilityReportEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ProfitabilityReport"
           },
           "links": {
             "$ref": "#/components/schemas/Links"
