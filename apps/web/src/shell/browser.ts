@@ -37,6 +37,7 @@ import { createDashboardController } from '../dashboard/browser.js'
 import { createReportsController } from '../reports/browser.js'
 import { canReadFinancialReports } from '../reports/model.js'
 import { createExpenseWorkflowController } from '../expenses/browser.js'
+import { createRoleAdminController } from '../roles/browser.js'
 import { createTaskAdminController } from '../tasks/browser.js'
 import { createTeamDirectoryController } from '../team/browser.js'
 import { teamCapabilities } from '../team/model.js'
@@ -940,6 +941,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const projectListPage = document.documentElement.dataset.appView === 'project-list'
   const projectDetailPage = document.documentElement.dataset.appView === 'project-detail'
   const taskListPage = document.documentElement.dataset.appView === 'task-list'
+  const roleListPage = document.documentElement.dataset.appView === 'settings-roles'
   const teamListPage = document.documentElement.dataset.appView === 'team-list'
   const teamPersonPage = document.documentElement.dataset.appView === 'team-person'
   const dashboardPage = document.documentElement.dataset.appView === 'dashboard'
@@ -1065,6 +1067,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const clientDirectory = createClientDirectoryController(api)
   const projectDirectory = createProjectDirectoryController(api)
   const taskAdmin = createTaskAdminController(api)
+  const roleAdmin = createRoleAdminController(api)
   const teamDirectory = createTeamDirectoryController(api)
   const calendar = createCalendarController()
   const dashboard = createDashboardController(api)
@@ -1525,7 +1528,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const revealCompanySettings = (identity: Readonly<Whoami>): void => {
     const visible = identity.profile === 'administrator'
     for (const tab of document.querySelectorAll<HTMLElement>(
-      '[data-settings-company-tab], [data-settings-activity-tab]',
+      '[data-settings-company-tab], [data-settings-activity-tab], [data-settings-roles-tab]',
     )) {
       tab.hidden = !visible
     }
@@ -2477,6 +2480,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     } else if (projectListPage || projectDetailPage) {
       await Promise.all([
         projectDirectory.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (roleListPage) {
+      await Promise.all([
+        roleAdmin.activate(
           identity,
           authenticated.signal,
           (error) => handleSessionFailure(error, authenticated),

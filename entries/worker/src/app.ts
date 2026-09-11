@@ -987,6 +987,29 @@ export const createApp = (
         ),
       )
 
+      app.get('/settings/roles', async (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            brand: await shellBrand(context.env),
+            activeSection: 'Settings',
+            view: 'settings-roles',
+            signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
       app.get('/settings/activity', async (context) =>
         context.html(
           renderAppShell({

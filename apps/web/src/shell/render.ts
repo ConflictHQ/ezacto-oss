@@ -3,6 +3,7 @@ import { iconMarkup } from '../components/icons.js'
 import { defaultTheme, themeManifest } from '../theme.js'
 import { type DeploymentBrand, resolveDeploymentBrand } from '../brand.js'
 import { renderClientDirectoryPages } from '../clients/render.js'
+import { renderRoleAdminPage } from '../roles/render.js'
 import { renderProjectDirectoryPages } from '../projects/render.js'
 import { renderDashboardPage } from '../dashboard/render.js'
 import { renderReportsPage } from '../reports/render.js'
@@ -77,6 +78,7 @@ export interface AppShellOptions {
     | 'settings-user'
     | 'settings-company'
     | 'settings-activity'
+    | 'settings-roles'
     | 'team-list'
     | 'team-person'
     | 'not-found'
@@ -722,6 +724,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
   ${renderExpenseCategoriesPage(view)}
   ${renderModuleSettingsPage(view)}
   ${renderActivityLogPage(view)}
+  ${renderRoleAdminPage(view)}
   ${renderNotFoundPage(view)}
   ${renderInvoiceComposerDialog()}
   ${renderInvoiceEditDialog()}
