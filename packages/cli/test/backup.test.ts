@@ -333,6 +333,60 @@ describe('ez backup / restore / verify', () => {
     expect(verifyResult.errors).toEqual([])
   })
 
+  it('[e2e:backup-restore] every field RESTORE.md names is in the manifest it points at', async () => {
+    // The restore command is executed above. The rest of RESTORE.md is a set of
+    // factual claims about manifest.json -- which fields to compare, and what
+    // shape to read them with -- and a wrong field name strands an operator
+    // just as completely as a wrong flag does.
+    //
+    // Asserted against the real bundle rather than by shelling out: `sha256sum`
+    // and `jq` are not on every machine that runs this suite, and their absence
+    // is not what is being tested.
+    const backup = await createBackup({
+      databasePath,
+      attachmentDirectory,
+      outputDirectory: directory,
+      now: new Date('2026-08-30T12:00:00.000Z'),
+    })
+    const doc = await readFile(join(backup.bundleDirectory, 'RESTORE.md'), 'utf8')
+    const manifest = JSON.parse(
+      await readFile(join(backup.bundleDirectory, 'manifest.json'), 'utf8'),
+    ) as BackupManifest
+
+    // "Compare with the database_sha256 field in manifest.json"
+    expect(doc).toContain('database_sha256')
+    expect(manifest.database_sha256).toMatch(/^[0-9a-f]{64}$/u)
+
+    // "Compare with each table's csv_sha256 in manifest.json"
+    expect(doc).toContain('csv_sha256')
+    for (const table of manifest.tables) {
+      expect(table.csv_sha256).toMatch(/^[0-9a-f]{64}$/u)
+    }
+
+    // The jq the document prints is `.tables[] | {name, row_count}`, which only
+    // works if tables is an array whose entries carry both keys.
+    expect(doc).toContain('.tables[] | {name, row_count}')
+    expect(Array.isArray(manifest.tables)).toBe(true)
+    expect(manifest.tables.length).toBeGreaterThan(0)
+    for (const table of manifest.tables) {
+      expect(typeof table.name).toBe('string')
+      expect(typeof table.row_count).toBe('number')
+    }
+
+    // And the checksums are the file's, so comparing them is not busywork.
+    const { createHash } = await import('node:crypto')
+    const dbBytes = await readFile(join(backup.bundleDirectory, 'db.sqlite'))
+    expect(createHash('sha256').update(dbBytes).digest('hex')).toBe(manifest.database_sha256)
+    const first = manifest.tables[0]!
+    const csv = await readFile(join(backup.bundleDirectory, 'tables', `${first.name}.csv`), 'utf8')
+    expect(createHash('sha256').update(csv).digest('hex')).toBe(first.csv_sha256)
+
+    // Every path the document says the bundle contains.
+    for (const relative of ['db.sqlite', 'manifest.json', 'RESTORE.md']) {
+      await expect(stat(join(backup.bundleDirectory, relative))).resolves.toBeDefined()
+    }
+  }, 60_000)
+
   it('[unit] restore refuses to overwrite an existing database', async () => {
     const backup = await createBackup({
       databasePath,
