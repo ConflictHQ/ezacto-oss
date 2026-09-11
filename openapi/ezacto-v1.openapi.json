@@ -13986,6 +13986,18 @@
             }
           },
           {
+            "name": "grain",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "day",
+                "entry"
+              ]
+            }
+          },
+          {
             "name": "active_projects_only",
             "in": "query",
             "required": false,
@@ -14674,6 +14686,64 @@
             }
           }
         ]
+      }
+    },
+    "/api/v1/brand": {
+      "get": {
+        "operationId": "getBrand",
+        "summary": "Get the organisation name and brand marks for any principal",
+        "tags": [
+          "brand-assets"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrandEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/brand",
+        "x-ezacto-generate-client": true
       }
     },
     "/api/v1/settings/brand-assets": {
@@ -25380,6 +25450,20 @@
           "entries_without_billable_rate": {
             "type": "integer",
             "minimum": 0
+          },
+          "time_entry_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -25419,6 +25503,7 @@
           "client_id",
           "project_id",
           "hours",
+          "grain",
           "active_projects_only",
           "seconds",
           "rounded_seconds",
@@ -25466,6 +25551,13 @@
               "billable",
               "non_billable",
               "uninvoiced"
+            ]
+          },
+          "grain": {
+            "type": "string",
+            "enum": [
+              "day",
+              "entry"
             ]
           },
           "active_projects_only": {
@@ -25894,6 +25986,43 @@
         },
         "additionalProperties": false
       },
+      "UninvoicedProjectRow": {
+        "type": "object",
+        "required": [
+          "client_id",
+          "client_name",
+          "project_id",
+          "project_name",
+          "project_code",
+          "totals"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "client_name": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "project_code": {
+            "type": "string"
+          },
+          "totals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UninvoicedCurrencyTotal"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "UninvoicedReport": {
         "type": "object",
         "required": [
@@ -25901,7 +26030,8 @@
           "to",
           "client_id",
           "project_id",
-          "totals"
+          "totals",
+          "projects"
         ],
         "properties": {
           "from": {
@@ -25938,6 +26068,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/UninvoicedCurrencyTotal"
+            }
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UninvoicedProjectRow"
             }
           }
         },
@@ -27173,6 +27309,74 @@
             "items": {
               "$ref": "#/components/schemas/BrandAsset"
             }
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BrandMark": {
+        "type": "object",
+        "required": [
+          "slot",
+          "url",
+          "content_type",
+          "updated_at"
+        ],
+        "properties": {
+          "slot": {
+            "enum": [
+              "wordmark_light",
+              "wordmark_dark",
+              "favicon"
+            ]
+          },
+          "url": {
+            "type": "string"
+          },
+          "content_type": {
+            "enum": [
+              "image/png",
+              "image/jpeg",
+              "image/webp"
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Brand": {
+        "type": "object",
+        "required": [
+          "organization_name",
+          "assets"
+        ],
+        "properties": {
+          "organization_name": {
+            "type": "string"
+          },
+          "assets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrandMark"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "BrandEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Brand"
           },
           "links": {
             "$ref": "#/components/schemas/Links"
