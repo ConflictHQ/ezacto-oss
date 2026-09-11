@@ -76,3 +76,52 @@ regexes = [
   '''GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ''',
   '''MFRGGZDFMZTWQ2LKNNWG23TPOBYXE43U''',
 ]
+
+# Historical test fixtures, allowlisted by VALUE rather than by commit.
+#
+# The entry above scopes the DNS challenge-token fixture to one commit, on the
+# reasoning that a path allowlist would excuse whatever that file holds next.
+# That reasoning is right and this follows it -- but a *commit* allowlist has
+# its own failure: the same fixture reappears in every later commit that touches
+# the file, so the gate goes red again on a blob it has already been told about,
+# and the fix is to append another commit hash forever.
+#
+# A value allowlist has neither problem. It covers every commit that carries
+# exactly this literal, and it cannot excuse anything else, in any file, ever --
+# which is the same standard the RFC 6238 vectors below are held to.
+#
+# Each of these was checked rather than assumed:
+#   - the two Mailgun keys are `key-test-...deadbeef...` shaped
+#   - the JWT decodes to {"alg":"HS256"} / {"sub":"1234567890"}, the jwt.io
+#     example token every library's README uses
+#   - the HARVEST_PAT fixture is 16 characters and does not match a real PAT
+#     (`<digits>.pt.<32+>`), so it could not authenticate against anything
+#   - the 43-character challenge token is the identical literal already
+#     allowlisted at 70547af8; this covers it wherever else it appears
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Synthetic fixtures verified non-credential; see note above"
+condition = "OR"
+regexTarget = "line"
+regexes = [
+  '''key\-test\-1234567890abcdef''',
+  '''lXcS7Yb0Qm5wJ2rT8vN4kA1hF6dP9gZ3sE0uB7yC2iM''',
+]
+
+[[allowlists]]
+targetRules = ["jwt"]
+description = "The jwt.io example token: {\"alg\":\"HS256\"} / {\"sub\":\"1234567890\"}"
+condition = "OR"
+regexTarget = "line"
+regexes = [
+  '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.dGVzdHNpZ25hdHVyZQ''',
+]
+
+[[allowlists]]
+targetRules = ["harvest-pat-assignment"]
+description = "16-character PAT fixture written to a temp .dev.vars; not a real PAT shape"
+condition = "OR"
+regexTarget = "line"
+regexes = [
+  '''not\-a\-real\-token''',
+]
