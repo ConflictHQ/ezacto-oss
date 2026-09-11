@@ -5,7 +5,7 @@ Cloudflare account. One Node.js 22 container stores the organization database in
 `/data/db.sqlite`, content-addressed attachments under `/data/attachments`, and
 delivers authentication mail through your SMTP server.
 
-Ezacto is a private pre-release. Pin a reviewed commit and complete a restore
+Ezacto is pre-1.0. Pin a reviewed commit and complete a restore
 drill before entering production books.
 
 ## Prerequisites

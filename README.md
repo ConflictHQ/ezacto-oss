@@ -2,9 +2,10 @@
 
 Open-source time tracking & invoicing — the Harvest replacement. Single org, free.
 
-**Private pre-release.** This repo goes public at the OSS gate (we run our own
-books on it). The database, native API, Worker entry, versioned OpenAPI contract,
-generated TypeScript client, and `ez` CLI are under active construction per `PLAN.md`.
+**Pre-1.0.** The maintainers run their own books on it. The database, native API,
+Worker entry, versioned OpenAPI contract, generated TypeScript client, and `ez` CLI
+are under active construction per `PLAN.md`. Pin a reviewed commit rather than
+tracking `main`, and complete a restore drill before you trust it with real data.
 Start at [`bootstrap.md`](bootstrap.md).
 
 ## Licence

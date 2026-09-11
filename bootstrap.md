@@ -2,10 +2,10 @@
 
 **This repo is the whole ezacto product.** Open-source time tracking & invoicing,
 built as a Harvest replacement. Single org, free, no billing, no telemetry.
-Private now; **public at the OSS gate**, which is the maintainers running their
+Public, AGPL-3.0. The bar is **the maintainers running their
 own books on it.
 
-**Current state: active private pre-release build.** The database, native API,
+**Current state: active pre-1.0 build.** The database, native API,
 Worker entry, and generated API client now exist; remaining product lanes build
 bottom-up per `PLAN.md`. The umbrella brain
 (`ezacto` (the umbrella)) holds the full research corpus and decision records; this repo

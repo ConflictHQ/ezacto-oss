@@ -6,7 +6,7 @@ GitHub Actions workflows deploy and verify the exact commit that reaches the
 domain. For a deployment with no Cloudflare dependency, use the
 [single-container guide](self-host-container.md).
 
-Ezacto is a private pre-release. Pin a reviewed commit, keep the repository that
+Ezacto is pre-1.0. Pin a reviewed commit, keep the repository that
 holds your deployment configuration private, and test recovery before entering
 production books.
 
