@@ -934,7 +934,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const invoiceRetainersPage =
     document.documentElement.dataset.appView === 'invoice-retainers'
   const invoiceConfigurePage =
-    document.documentElement.dataset.appView === 'invoice-configure'
+    document.documentElement.dataset.appView === 'settings-templates'
   const clientListPage = document.documentElement.dataset.appView === 'client-list'
   const clientDetailPage = document.documentElement.dataset.appView === 'client-detail'
   const projectListPage = document.documentElement.dataset.appView === 'project-list'
@@ -1525,7 +1525,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const revealCompanySettings = (identity: Readonly<Whoami>): void => {
     const visible = identity.profile === 'administrator'
     for (const tab of document.querySelectorAll<HTMLElement>(
-      '[data-settings-company-tab], [data-settings-activity-tab]',
+      '[data-settings-company-tab], [data-settings-activity-tab], [data-settings-templates-tab]',
     )) {
       tab.hidden = !visible
     }

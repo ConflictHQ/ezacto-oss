@@ -78,7 +78,7 @@ export interface EmailConfigurationController {
 export const createEmailConfigurationController = (
   api: Partial<EmailConfigurationApi>,
 ): EmailConfigurationController => {
-  const isPage = document.documentElement.dataset.appView === 'invoice-configure'
+  const isPage = document.documentElement.dataset.appView === 'settings-templates'
   const page = required<HTMLElement>('[data-invoice-configure-page]')
   const senderStatus = required<HTMLElement>('[data-sender-status]')
   const senderWarning = required<HTMLElement>('[data-sender-warning]')

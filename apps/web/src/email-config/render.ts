@@ -15,11 +15,11 @@
  */
 
 export const renderEmailConfigPage = (view?: string): string => `
-  <main class="app-content invoice-workspace email-config-workspace page--grid" data-invoice-configure-page${view === 'invoice-configure' ? '' : ' hidden'}>
+  <main class="app-content invoice-workspace email-config-workspace page--grid" data-invoice-configure-page${view === 'settings-templates' ? '' : ' hidden'}>
     <header class="context-row">
-      <div><p class="eyebrow">Money</p><h1>Configure</h1></div>
+      <div><p class="eyebrow">Settings</p><h1>Email templates</h1></div>
     </header>
-    <p class="invoice-intro">Who invoice mail comes from, and what it says.</p>
+    <p class="invoice-intro">Who mail comes from, and what it says. Two of these templates are account mail rather than invoicing: the address-verification and password-reset messages.</p>
     <section class="email-senders" aria-labelledby="email-senders-heading">
       <h2 id="email-senders-heading">Sender identities</h2>
       <p class="hint">One is the default, and every invoice goes out as it. The provider decides whether it may: a sender whose evidence is failing will be refused or filtered, and a bounce is a late way to find that out.</p>
@@ -45,7 +45,7 @@ export const renderEmailConfigPage = (view?: string): string => `
             <p class="eyebrow" data-template-editor-kind>Template</p>
             <h3 id="email-template-editor-heading" data-template-editor-title>Template</h3>
           </div>
-          <a class="email-template-close" href="/invoices/configure" data-template-close>Close</a>
+          <a class="email-template-close" href="/settings/templates" data-template-close>Close</a>
         </div>
         <p class="hint" data-template-purpose>—</p>
         <form data-template-form novalidate>
