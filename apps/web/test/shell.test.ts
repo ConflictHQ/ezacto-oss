@@ -6,7 +6,6 @@ import {
   loadShellSnapshot,
   maximumTimeEntryNoteLength,
   isSelfWithdrawn,
-  SELF_WITHDRAWAL_REASON,
   navigationDestination,
   palettePlan,
   parseQuickAdd,
@@ -550,26 +549,19 @@ describe('S-1 through S-5 application shell', () => {
   })
 
   it('[unit] tells a week you took back from one a reviewer sent back', () => {
-    // Both write the same three columns, because the table requires every
-    // unsubmitted row to name who returned it and why. Reading them as the same
-    // thing shows someone "Changes requested" for their own correction.
-    const week = {
-      status: 'unsubmitted' as const,
-      user_id: 4,
-      reviewed_by_user_id: 4,
-      rejection_reason: SELF_WITHDRAWAL_REASON,
-    }
+    // The row says which it is, rather than the label being inferred from the
+    // text of a reason. A rejection names a reviewer; a withdrawal names none,
+    // because nobody reviewed it.
+    const week = { status: 'unsubmitted' as const, reviewed_by_user_id: null }
     expect(isSelfWithdrawn(week)).toBe(true)
     expect(isSelfWithdrawn({ ...week, reviewed_by_user_id: 9 })).toBe(false)
-    expect(isSelfWithdrawn({ ...week, reviewed_by_user_id: null })).toBe(false)
-    // An administrator rejecting their own week is also a row whose reviewer is
-    // its owner. Identity alone read that as a self-withdrawal and hid a real
-    // rejection -- a browser test caught it, and this is the regression.
-    expect(
-      isSelfWithdrawn({ ...week, rejection_reason: 'Clarify the delivery detail.' }),
-    ).toBe(false)
+    // An administrator rejecting their *own* week is a row whose reviewer is
+    // its owner. That used to be indistinguishable from a withdrawal without
+    // also comparing the reason, and it read as one -- hiding a real rejection.
+    // A reviewer is a reviewer now, whoever they are.
+    expect(isSelfWithdrawn({ ...week, reviewed_by_user_id: 4 })).toBe(false)
     // Only an unsubmitted week is anyone's to have taken back. An approved one
-    // reviewed by its own owner is a different thing entirely.
+    // is a different thing entirely.
     expect(isSelfWithdrawn({ ...week, status: 'approved' })).toBe(false)
     expect(isSelfWithdrawn(null)).toBe(false)
   })
