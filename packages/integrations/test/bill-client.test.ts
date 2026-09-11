@@ -176,6 +176,26 @@ describe('sending an invoice', () => {
   })
 })
 
+describe('the payment link', () => {
+  it('[api] asks BILL for a link and returns it', async () => {
+    const fetch = vi.fn(async (request: Request) => {
+      expect(request.method).toBe('POST')
+      expect(new URL(request.url).pathname).toBe('/connect/v3/invoices/00e42/payment-link')
+      return json({ paymentLink: 'https://app.bill.com/pay/example-token' })
+    })
+    expect(await client(fetch).paymentLink('00e42')).toBe(
+      'https://app.bill.com/pay/example-token',
+    )
+  })
+
+  it('[api] treats a 200 with no link as a failure rather than emailing an empty one', async () => {
+    // This link goes into an invoice email a client receives. An empty one is a
+    // "pay here" button that goes nowhere.
+    const fetch = vi.fn(async () => json({ paymentLink: '' }))
+    await expect(client(fetch).paymentLink('00e42')).rejects.toThrow(/no payment link/u)
+  })
+})
+
 describe('receivable payments', () => {
   it('[api] pages through with the token BILL returned', async () => {
     const fetch = vi.fn(async (request: Request) => {
@@ -219,6 +239,7 @@ describe('what this client deliberately cannot do', () => {
       'listCustomers',
       'listInvoices',
       'listReceivablePayments',
+      'paymentLink',
       'readInvoice',
       'sendInvoice',
     ])

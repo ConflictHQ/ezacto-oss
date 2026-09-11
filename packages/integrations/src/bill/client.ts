@@ -311,6 +311,34 @@ export class BillClient {
     )
   }
 
+  /**
+   * A URL the client can pay this invoice at.
+   *
+   * This is what makes the integration work without BILL's send permission.
+   * Having BILL email the invoice needs a credential that can also move money;
+   * fetching a link and putting it in the invoice email ezacto already sends
+   * needs nothing of the sort, and the client lands in the same place.
+   *
+   * BILL issues these for customers that are NOT already connected to the
+   * organisation on its own network -- a connected customer receives the
+   * invoice through BILL itself and has no use for one.
+   */
+  async paymentLink(invoiceId: string): Promise<string> {
+    const body = object(
+      await this.#send(
+        this.#request(`/v3/invoices/${encodeURIComponent(invoiceId)}/payment-link`, {
+          method: 'POST',
+        }),
+      ),
+      'payment link',
+    )
+    const link = body['paymentLink']
+    if (typeof link !== 'string' || link === '') {
+      throw new BillResponseError('BILL returned no payment link for the invoice')
+    }
+    return link
+  }
+
   async listReceivablePayments(
     options: {
       readonly filters?: readonly string[]
