@@ -10,6 +10,7 @@ import {
   navigationDestination,
   palettePlan,
   parseQuickAdd,
+  quickAddPreview,
   quickAdd,
   renderAppShell,
   renderDataQualityBanner,
@@ -859,5 +860,24 @@ describe('S-1 through S-5 application shell', () => {
     expect(webAssets.stylesheet).toMatch(
       /@media \(max-width: 720px\)[\s\S]*\.project-detail,[\s\S]*grid-template-columns: 1fr;/u,
     )
+  })
+
+  it('[unit #556] previews a log command instead of reporting a failed destination search', async () => {
+    // The panel only searches go destinations, so a log line can never match
+    // one. Saying so reads as "you typed it wrong" for a command that works.
+    expect(quickAddPreview('log 2h northpeak devops')).toBe('Log 2h \u00b7 northpeak \u00b7 devops')
+    expect(quickAddPreview('log 1.5h northpeak devops reviewed the PR')).toBe(
+      'Log 1.5h \u00b7 northpeak \u00b7 devops \u00b7 reviewed the PR',
+    )
+    // Recognisably a log line, not yet a complete one: still not a failed
+    // destination search, so it must not say one.
+    expect(quickAddPreview('log 2h')).toBe('Keep typing: log 2h project task')
+    expect(quickAddPreview('log')).toBe('Keep typing: log 2h project task')
+    // Everything else keeps the destination search and its message.
+    expect(quickAddPreview('invoices')).toBeNull()
+    expect(quickAddPreview('go approvals')).toBeNull()
+    expect(quickAddPreview('')).toBeNull()
+    // Not a log line just because a word starts with those letters.
+    expect(quickAddPreview('logistics')).toBeNull()
   })
 })
