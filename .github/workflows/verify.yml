@@ -197,5 +197,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
+      # A fresh runner has no layer cache, so the dependency layer the
+      # Dockerfile now keeps across a source edit would still be rebuilt every
+      # run. buildx is what lets the test reach the Actions cache; the test
+      # itself decides whether to use it, and falls back to a plain build off
+      # CI.
+      - uses: docker/setup-buildx-action@v3
       - name: exercise first-run and physical backup/restore
         run: npm run test:container
