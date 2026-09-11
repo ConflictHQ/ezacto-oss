@@ -4852,4 +4852,88 @@ describe('command palette browser behavior', () => {
       expect(node.getAttribute('data-ez-theme')).toBe(defaultTheme)
     }
   })
+
+  it('[browser #496] deletes an entry from the dialog and refuses a billed one by its own reason', async () => {
+    // deleteTimeEntry was wired and reachable only by clearing a cell to zero.
+    // The capability existed; the affordance did not, which is what "no way to
+    // delete a time entry" actually described.
+    renderBrowserShell()
+    const api = browserApi()
+    api.entries.splice(
+      0,
+      api.entries.length,
+      timeEntry(1, {
+        project_id: 1,
+        task_id: 1,
+        spent_date: '2026-08-28',
+        seconds: 3_600,
+        notes: 'Deletable',
+      }),
+    )
+    await mountShell(api)
+
+    const openCell = (): void => {
+      document
+        .querySelector<HTMLButtonElement>(
+          '[data-week-grid] [data-cell-key="1:1:2026-08-28"] .cell-note',
+        )!
+        .click()
+    }
+    const remove = document.querySelector<HTMLButtonElement>('[data-entry-delete]')!
+
+    openCell()
+    expect(remove.hidden).toBe(false)
+    remove.click()
+    await vi.waitFor(() => expect(api.deleteTimeEntry).toHaveBeenCalledWith(1, expect.anything()))
+    expect(api.entries).toHaveLength(0)
+  })
+
+  it('[security #496] opens a billed entry to be read, and offers no way to delete it', async () => {
+    renderBrowserShell()
+    const api = browserApi()
+    api.entries.splice(
+      0,
+      api.entries.length,
+      {
+        // Spread over the helper, which hardcodes is_locked: false.
+        ...timeEntry(1, {
+          project_id: 1,
+          task_id: 1,
+          spent_date: '2026-08-28',
+          seconds: 3_600,
+          notes: 'Billed',
+        }),
+        invoice_id: 4242,
+        is_billed: true,
+        is_locked: true,
+        locked_reason_code: 'invoiced',
+        locked_reason: 'it is on invoice 4242',
+      },
+    )
+    await mountShell(api)
+
+    const note = document.querySelector<HTMLButtonElement>(
+      '[data-week-grid] [data-cell-key="1:1:2026-08-28"] .cell-note',
+    )!
+    expect(note.disabled).toBe(false)
+    expect(note.ariaLabel).toContain('Show why this is locked')
+    note.click()
+
+    const dialog = document.querySelector<HTMLDialogElement>('[data-entry-dialog]')!
+    expect(dialog.open).toBe(true)
+    // The reason is stated on arrival rather than after a refused press, and it
+    // is the entry's own sentence, not a generic "locked".
+    expect(document.querySelector('[data-entry-result]')?.textContent).toContain(
+      'it is on invoice 4242',
+    )
+    // Read-only means read-only: no way in, and no way to remove it either.
+    expect(document.querySelector<HTMLTextAreaElement>('[data-entry-note-input]')!.disabled).toBe(
+      true,
+    )
+    expect(document.querySelector<HTMLSelectElement>('[data-entry-project]')!.disabled).toBe(true)
+    expect(document.querySelector<HTMLButtonElement>('[data-entry-submit]')!.hidden).toBe(true)
+    expect(document.querySelector<HTMLButtonElement>('[data-entry-delete]')!.hidden).toBe(true)
+    expect(api.deleteTimeEntry).not.toHaveBeenCalled()
+    expect(api.entries).toHaveLength(1)
+  })
 })
