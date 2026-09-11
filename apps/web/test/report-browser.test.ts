@@ -96,6 +96,7 @@ const baseApi = (overrides: Partial<ReportWorkspaceApi> = {}): Partial<ReportWor
     client_id: null,
     project_id: null,
     totals: [],
+    projects: [],
   })),
   getClientRollupReport: vi.fn(async () => ({
     root_client_id: 1,
@@ -183,6 +184,7 @@ const detailedTimeReport = (
   client_id: null,
   project_id: null,
   hours: 'all',
+  grain: 'day',
   active_projects_only: false,
   seconds: 0,
   rounded_seconds: 0,
@@ -203,6 +205,7 @@ describe('Reports Stage 1 browser controller', () => {
       client_id: null
       project_id: null
       totals: []
+      projects: []
     }) => void
     const pendingUninvoiced = new Promise<{
       from: string
@@ -210,6 +213,7 @@ describe('Reports Stage 1 browser controller', () => {
       client_id: null
       project_id: null
       totals: []
+      projects: []
     }>((resolve) => {
       resolveUninvoiced = resolve
     })
@@ -255,6 +259,7 @@ describe('Reports Stage 1 browser controller', () => {
       client_id: null,
       project_id: null,
       totals: [],
+      projects: [],
     })
     await activation
     await vi.waitFor(() => expect(getProjectBudgetReport).toHaveBeenCalledTimes(1))
@@ -507,6 +512,7 @@ describe('Reports Stage 1 browser controller', () => {
           total_cents: 12_345,
         },
       ],
+      projects: [],
     }))
     const controller = createReportsController(baseApi({ getUninvoicedReport }))
     const session = new AbortController()
@@ -595,6 +601,7 @@ describe('Reports Stage 1 browser controller', () => {
             total_cents: 10_000,
           },
         ],
+        projects: [],
       })),
     })
     const session = new AbortController()
@@ -652,6 +659,7 @@ describe('Reports Stage 1 browser controller', () => {
           expense_count: 0,
         },
       ],
+      projects: [],
     }))
     const api = baseApi({ listReportClients, getUninvoicedReport })
 
@@ -1055,6 +1063,7 @@ describe('Reports Stage 1 browser controller', () => {
       client_id: null,
       project_id: null,
       totals: [],
+      projects: [],
     }))
     await createReportsController(baseApi({ getUninvoicedReport })).activate(
       identity('administrator'),
@@ -1080,6 +1089,7 @@ describe('Reports Stage 1 browser controller', () => {
       client_id: null,
       project_id: null,
       totals: [],
+      projects: [],
     }))
     await createReportsController(baseApi({ getUninvoicedReport })).activate(
       identity('administrator'),
@@ -1123,6 +1133,7 @@ describe('Reports Stage 1 browser controller', () => {
       client_id: null,
       project_id: null,
       totals: [],
+      projects: [],
     }))
     const getTimeEntrySettings = vi.fn(async () => ({
       time_entry_mode: 'duration' as const,
@@ -1154,6 +1165,7 @@ describe('Reports Stage 1 browser controller', () => {
       client_id: null,
       project_id: null,
       totals: [],
+      projects: [],
     }))
     const getTimeEntrySettings = vi.fn().mockRejectedValue(new Error('settings unavailable'))
     await createReportsController(
@@ -2325,6 +2337,7 @@ describe('Reports Stage 1 browser controller', () => {
           total_cents: 501_000,
         },
       ],
+      projects: [],
     }))
     const session = new AbortController()
     await createReportsController(baseApi({ getUninvoicedReport })).activate(
