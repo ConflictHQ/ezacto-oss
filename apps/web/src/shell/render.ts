@@ -1,6 +1,6 @@
 import { shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
 import { iconMarkup } from '../components/icons.js'
-import { themeManifest } from '../theme.js'
+import { defaultTheme, themeManifest } from '../theme.js'
 import { type DeploymentBrand, resolveDeploymentBrand } from '../brand.js'
 import { renderClientDirectoryPages } from '../clients/render.js'
 import { renderProjectDirectoryPages } from '../projects/render.js'
@@ -235,7 +235,7 @@ export const renderEmptyState = (title: string, detail: string): string =>
 
 export const renderDocumentShell = (title: string, content: string, brand?: Partial<DeploymentBrand>): string => {
   const b = resolveDeploymentBrand(brand)
-  return `<article class="document-shell" data-document-shell data-ez-theme="precision">` +
+  return `<article class="document-shell" data-document-shell data-ez-theme="${defaultTheme}">` +
   `<header><a href="/">← Time</a><span>${wordmark(b.wordmarkLight, b.name)}</span></header>` +
   `<main><h1>${escapeHtml(title)}</h1><div class="document-content">${escapeHtml(content)}</div>` +
   `</main></article>`
@@ -365,7 +365,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
     .join('')
 
   return `<!doctype html>
-<html lang="en" data-ez-theme="precision" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}">
+<html lang="en" data-ez-theme="${defaultTheme}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -606,7 +606,7 @@ ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <li
     </header>
     <p class="form-result invoice-page-status" data-invoice-detail-status role="status" aria-live="polite">Loading invoice…</p>
     <button class="invoice-load-more" type="button" data-invoice-detail-retry hidden>Retry invoice</button>
-    <article class="invoice-document" data-invoice-document data-document-shell data-ez-theme="precision" hidden>
+    <article class="invoice-document" data-invoice-document data-document-shell data-ez-theme="${defaultTheme}" hidden>
       <header class="invoice-document-heading">
         <div>
           <p class="eyebrow">Invoice</p>
