@@ -1107,6 +1107,11 @@ const quickBooksOperations: ApiContractOperation[] = [
     responseStatus: 200,
     responseSchema: "QuickBooksConnectionEnvelope",
     requestSchema: "QuickBooksSettingsInput",
+    // The body is the whole request -- without it there is no setting to
+    // change -- and the generator uses this to decide whether the argument is
+    // optional. Omitting it produced a client method whose default `{}` could
+    // not satisfy its own type.
+    requestRequired: true,
     sessionOnly: true,
   },
   {

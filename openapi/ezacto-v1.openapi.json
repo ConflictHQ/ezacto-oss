@@ -14655,7 +14655,7 @@
         "x-ezacto-runtime-path": "/api/v1/integrations/quickbooks/settings",
         "x-ezacto-generate-client": true,
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {

@@ -4088,7 +4088,7 @@ export class EzactoClient {
     });
   }
 
-  async updateQuickBooksSettings(args: { body: QuickBooksSettingsInput; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<QuickBooksConnectionEnvelope> {
+  async updateQuickBooksSettings(args: { body: QuickBooksSettingsInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<QuickBooksConnectionEnvelope> {
     const headers = new Headers(args.headers);
 
     return this.request<QuickBooksConnectionEnvelope>("POST", "/api/v1/integrations/quickbooks/settings", {
