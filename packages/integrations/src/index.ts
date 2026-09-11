@@ -91,3 +91,14 @@ export {
   type QuickBooksEntityChange,
   type VerifyWebhookInput,
 } from './quickbooks/webhook.js'
+export {
+  inboundPayments,
+  mirrorInvoice,
+  type InboundPayment,
+  type MirrorInvoiceInput,
+  type MirrorLink,
+  type MirrorLinkKind,
+  type MirrorLinkStore,
+  type MirrorOutcome,
+  type MirrorQuickBooks,
+} from './quickbooks/mirror.js'
