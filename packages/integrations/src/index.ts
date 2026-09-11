@@ -1,4 +1,42 @@
 export {
+  BILL_PRODUCTION_BASE_URL,
+  BILL_SANDBOX_BASE_URL,
+  BILL_SESSION_IDLE_SECONDS,
+  BillAuthError,
+  login as billLogin,
+  sessionIsStale as billSessionIsStale,
+  touchSession as touchBillSession,
+  type BillCredentials,
+  type BillSession,
+} from './bill/session.js'
+export {
+  BillApiError,
+  BillClient,
+  BillResponseError,
+  billFilter,
+  type BillCustomer,
+  type BillInvoice,
+  type BillInvoiceStatus,
+  type BillPage,
+  type BillReceivablePayment,
+} from './bill/client.js'
+export {
+  BILL_CUSTOMER_NAME_LIMIT,
+  BILL_INVOICE_NUMBER_LIMIT,
+  BILL_LINE_DESCRIPTION_LIMIT,
+  BillMappingError,
+  customerMatches as billCustomerMatches,
+  customerPayload as billCustomerPayload,
+  invoicePayload as billInvoicePayload,
+  planInvoice as planBillInvoice,
+  settledPayments as billSettledPayments,
+  type BillInvoicePlan,
+  type BillMirrorClient,
+  type BillMirrorInvoice,
+  type BillMirrorInvoiceLine,
+  type BillSettledPayment,
+} from './bill/mapping.js'
+export {
   ACTIVE_DEEL_CONTRACT_STATUS,
   matchPayrollContracts,
   type ContractMatch,
