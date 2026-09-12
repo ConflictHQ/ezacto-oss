@@ -101,6 +101,8 @@ describe('D16 Precision preference policy', () => {
       { name: 'ink/surface-2 text', minimum: 4.5, passes: true },
       { name: 'ink/row-hover text', minimum: 4.5, passes: true },
       { name: 'data/row-hover row action', minimum: 4.5, passes: true },
+      { name: 'ink/money totals figure', minimum: 4.5, passes: true },
+      { name: 'ink-2/money totals label', minimum: 4.5, passes: true },
     ])
     expect(results.map((result) => result.ratio)).toEqual([
       expect.closeTo(18.11, 2),
@@ -118,6 +120,8 @@ describe('D16 Precision preference policy', () => {
       expect.closeTo(15.43, 2),
       expect.closeTo(15.17, 2),
       expect.closeTo(4.81, 2),
+      expect.closeTo(17, 2),
+      expect.closeTo(10.24, 2),
     ])
     expect(() => assertThemeContrast(themeManifest.precision)).not.toThrow()
   })

@@ -113,6 +113,17 @@ export const precisionContrastRequirements: readonly ThemeContrastRequirement[] 
     background: 'row_hover',
     minimum: 4.5,
   },
+  // The money band on an invoice, and the two inks that sit on it. Unlike the
+  // row tint above, this fill does carry meaning -- it is what makes the totals
+  // read as money rather than as one more list -- but the figures and their
+  // labels are text either way, so they are held to the text ratio and stay
+  // legible if the fill never reaches paper.
+  //
+  // `ink_2` rather than `muted` for the labels is the whole distinction between
+  // those two tokens: `muted` is tuned against the page ground, and this ground
+  // is tinted. Checking it here is what keeps that from being a claim.
+  { name: 'ink/money totals figure', foreground: 'ink', background: 'money', minimum: 4.5 },
+  { name: 'ink-2/money totals label', foreground: 'ink_2', background: 'money', minimum: 4.5 },
 ]
 
 /*

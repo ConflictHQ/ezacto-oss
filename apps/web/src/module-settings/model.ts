@@ -352,6 +352,8 @@ export const themeSlotCopy: readonly ThemeSlotCopy[] = [
   { slot: 'surface_2', label: 'Nested panel', group: 'Surfaces', hint: 'A panel inside a card.' },
   { slot: 'orange_tint', label: 'Orange tint', group: 'Surfaces' },
   { slot: 'blue_light', label: 'Pale blue', group: 'Surfaces' },
+  { slot: 'money', label: 'Money band', group: 'Surfaces', hint: 'The band behind the totals on an invoice.' },
+  { slot: 'ink_2', label: 'Text on the money band', group: 'Surfaces', hint: 'The labels beside each total.' },
 ]
 
 export const themeSlotGroups: readonly ThemeSlotCopy['group'][] = [

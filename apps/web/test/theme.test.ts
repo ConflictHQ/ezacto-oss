@@ -147,8 +147,16 @@ describe('D16 theme token contract', () => {
     // `blue_light` came off it with the brand-asset control (#489): the dark
     // preview tile paints `--ez-ink`, and its hint needs a muted colour that
     // stays legible on that ground, which is the job the token was holding a
-    // colour for. `money` and `ink_2` still have none.
-    const awaitingAPurpose = ['money', 'ink_2']
+    // colour for.
+    //
+    // The last two came off together, because their jobs are the same decision:
+    // `money` is the band behind the invoice totals, so the totals read as money
+    // rather than as one more list; `ink_2` is the label ink on that band. That
+    // is what separates it from `muted`, which is tuned against the page ground
+    // -- the distinction the earlier note worried they lacked. The list is now
+    // empty and stays a ratchet: a new name in it is a token that shipped
+    // without a job.
+    const awaitingAPurpose: string[] = []
     const stylesheet = await readFile(resolve(root, 'src', 'shell', 'shell.css'), 'utf8')
     const unspent = themeSlotNames.filter(
       (name) => !stylesheet.includes(`var(${cssCustomProperty(name)})`),
