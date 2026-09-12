@@ -77,6 +77,8 @@ export interface BillMirrorSource {
     billPaymentId: string
     amountCents: number
     paidOn: string | null
+    /** The BILL organisation the money was taken into; the receipt's account. */
+    organizationId: string
   }): Promise<void>
 }
 
@@ -245,6 +247,7 @@ export const createBillRuntime = (
           billPaymentId: payment.billPaymentId,
           amountCents: payment.amountCents,
           paidOn: payment.paidOn,
+          organizationId: credentials.organizationId,
         })
       }
       return settled.length

@@ -149,6 +149,11 @@ export {
   type InstanceThemeWrite,
 } from './instance-theme.js'
 export {
+  createBillLinkStore,
+  createBillMirrorSource,
+  setBillDelivery,
+} from './bill.js'
+export {
   createD1SsoProvisioningDomainStore,
   SsoProvisioningDomainError,
   type SsoProvisioningDomainErrorCode,
