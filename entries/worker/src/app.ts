@@ -1,4 +1,5 @@
 import type { BillRuntime, QuickBooksService } from "@ezacto/integrations";
+import type { StripeService } from "@ezacto/api";
 import type { PayoutAccountService } from "@ezacto/api";
 import {
   notFoundResponse,
@@ -35,6 +36,8 @@ import {
   installBackupStatusRoutes,
   installBillRoutes,
   installPayoutAccountRoutes,
+  installStripeRoutes,
+  installStripeWebhookRoute,
   installQuickBooksRoutes,
   installTimesheetLockPolicyRoutes,
   installTeamRoutes,
@@ -173,6 +176,13 @@ export type WorkerEnv = AppEnv & {
   BILL_REPLY_TO_USER_ID?: string
   /** `sandbox` reaches BILL's test organisation; anything else is the real book. */
   BILL_ENVIRONMENT?: string
+  /**
+   * Stripe. The API key mints payment links; the signing secret is the whole
+   * authorisation on the webhook, so without it every delivery is refused.
+   * Both are Worker secrets.
+   */
+  STRIPE_API_KEY?: string
+  STRIPE_WEBHOOK_SECRET?: string
   /** SES credentials are Worker secrets; never place them in wrangler vars. */
   AWS_ACCESS_KEY_ID?: string
   AWS_SECRET_ACCESS_KEY?: string
@@ -257,6 +267,7 @@ export interface RuntimeServices {
    * one.
    */
   quickBooks?: QuickBooksService
+  stripe?: StripeService
   bill?: BillRuntime
   /**
    * The per-client opt-in. Separate from the runtime because turning it on is a
@@ -414,6 +425,18 @@ export const createApp = (
                       mailer: services.organizationMailer,
                     },
                   }),
+              // The pay link the invoice email carries. Resolved here rather
+              // than inside the money routes so those keep knowing nothing
+              // about a payment provider; a deployment without Stripe passes
+              // nothing and the email renders as it always did.
+              ...(services.stripe === undefined
+                ? {}
+                : {
+                    invoicePaymentUrl: async (invoiceId: number) => {
+                      const result = await services.stripe!.paymentLink(invoiceId)
+                      return result.kind === 'linked' ? result.url : null
+                    },
+                  }),
               cursorSigningKey: services.cursorSigningKey,
               clock: () => systemClock.now().instant,
             })
@@ -428,6 +451,9 @@ export const createApp = (
             // Mounted whether or not BILL is reachable: there is nothing to
             // connect, so the honest answer to "is this configured?" is a
             // route that says so rather than a route that is missing.
+            if (services.stripe !== undefined) {
+              installStripeRoutes(api, services.stripe)
+            }
             if (services.payoutAccounts !== undefined) {
               installPayoutAccountRoutes(api, services.payoutAccounts)
             }
@@ -500,6 +526,11 @@ export const createApp = (
       // sits outside the API surface for the same reason the marks do.
       if (instanceTheme !== undefined) {
         installInstanceThemeStylesheetRoute(app, instanceTheme)
+      }
+      // Stripe has no session with us, so this sits outside the authenticated
+      // surface and the signature is the authorisation.
+      if (services?.stripe !== undefined) {
+        installStripeWebhookRoute(app, services.stripe)
       }
       if (services !== undefined) {
         installOidcRoutes(app, {

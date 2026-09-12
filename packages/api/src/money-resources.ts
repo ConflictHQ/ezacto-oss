@@ -529,6 +529,17 @@ export interface MoneyResourceRouteOptions {
     >;
     mailer: SenderBoundQueuedMailer;
   };
+  /**
+   * Where this invoice can be paid online, resolved just before the email body
+   * is composed (#102).
+   *
+   * Optional, and its absence is ordinary: a deployment with no Stripe key
+   * simply sends the invoice it always sent. It returns null rather than
+   * throwing for an invoice that cannot have one -- nothing owed, or no
+   * provider -- because failing to mint a convenience must never be why an
+   * invoice does not go out.
+   */
+  invoicePaymentUrl?: (invoiceId: number) => Promise<string | null>;
 }
 
 type ResolvedMoneyResourceRouteOptions = Omit<
@@ -2093,6 +2104,14 @@ const installInvoiceDelivery = <Bindings extends object>(
         taxCents: invoice.taxAmountCents + invoice.tax2AmountCents,
       },
     );
+
+    // Minted before the body is composed, because the body is persisted at
+    // send time and the link has to be inside it. A deployment without Stripe,
+    // or an invoice with nothing owed, gets an empty string rather than a
+    // failed send -- collecting online is an option, not a precondition.
+    const paymentUrl = options.invoicePaymentUrl === undefined
+      ? ''
+      : ((await options.invoicePaymentUrl(invoiceId).catch(() => null)) ?? '')
     const values = {
       company_name: invoice.organizationName,
       invoice_id: String(invoice.invoiceId),
@@ -2111,6 +2130,11 @@ const installInvoiceDelivery = <Bindings extends object>(
       invoice_issue_date: invoice.issueDate,
       invoice_due_date: invoice.dueDate,
       client_name: invoice.clientName,
+      // Always supplied, empty when there is no link. The interpolator throws
+      // on a variable it was promised and not given, so a deployment without
+      // Stripe must still hand it something -- and a template that references
+      // it then renders an empty line rather than failing the send.
+      invoice_payment_url: paymentUrl,
       invoice_line_items: lineItems,
     } as const;
     const interpolation = { unknownVariable: template.unknownVariablePolicy } as const;

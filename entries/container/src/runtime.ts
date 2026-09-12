@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import { chmod, lstat, mkdir, realpath, stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import BetterSqlite3 from 'better-sqlite3'
@@ -38,6 +39,8 @@ import {
   createBillLinkStore,
   createBillMirrorSource,
   createPayoutAccountStore,
+  createStripeLinkStore,
+  recordCheckoutPayment,
   setBillDelivery,
   createQuickBooksMirrorSource,
   createQuickBooksStore,
@@ -64,6 +67,7 @@ import type { AppEnv, RuntimeServices } from '../../worker/src/app.js'
 import {
   createBillMirrorSubscriber,
   createBillRuntime,
+  createStripeRuntime,
   createQuickBooksMirrorSubscriber,
   createQuickBooksRuntime,
 } from '@ezacto/integrations'
@@ -345,6 +349,61 @@ export const createContainerRuntime = async (
       now: () => new Date(),
     })
 
+    const stripeLinks = createStripeLinkStore(drizzle)
+    const stripe = createStripeRuntime({
+      config: {
+        apiKey: config.stripe?.apiKey,
+        webhookSecret: config.stripe?.webhookSecret,
+      },
+      source: {
+        readInvoice: async (invoiceId: number) => {
+          const rows = await drizzle.all<{
+            id: number
+            number: string
+            currency: string
+            due: number
+          }>(sql`SELECT id, number, currency, due_amount_cents AS due
+                 FROM invoices WHERE id = ${invoiceId}`)
+          const row = rows[0]
+          return row === undefined
+            ? null
+            : { id: row.id, number: row.number, currency: row.currency, dueAmountCents: row.due }
+        },
+        readLink: (invoiceId: number) =>
+          stripeLinks.read(invoiceId).then((link) =>
+            link === null ? null : { paymentLinkId: link.paymentLinkId, url: link.url },
+          ),
+        saveLink: async (invoiceId: number, link: { paymentLinkId: string; url: string }) => {
+          const saved = await stripeLinks.save({
+            invoiceId,
+            paymentLinkId: link.paymentLinkId,
+            url: link.url,
+            now: new Date().toISOString(),
+          })
+          return { paymentLinkId: saved.paymentLinkId, url: saved.url }
+        },
+        invoiceForLink: (paymentLinkId: string) => stripeLinks.invoiceFor(paymentLinkId),
+        recordPayment: async (input: {
+          invoiceId: number
+          paymentIntentId: string
+          amountCents: number
+        }) => {
+          await recordCheckoutPayment(drizzle, {
+            invoiceId: input.invoiceId,
+            provider: 'stripe',
+            externalAccountId: 'stripe',
+            accountDisplayName: 'Stripe',
+            providerTransactionId: input.paymentIntentId,
+            amountCents: input.amountCents,
+            paidOn: new Date().toISOString().slice(0, 10),
+            now: new Date().toISOString(),
+          })
+        },
+      },
+      fetch: (request: Request) => fetch(request),
+      now: () => new Date(),
+    })
+
     const outbox = createContainerOutboxService(database, {
       additionalSubscribers: [
         createInvoiceEmailOutboxSubscriber(moneyResources, organizationMailer),
@@ -432,6 +491,7 @@ export const createContainerRuntime = async (
           detach: (id: number) => store.detach(id, new Date().toISOString()),
         }
       })(),
+      stripe,
       bill,
       billDelivery: {
         isOptedIn: (clientId: number) =>

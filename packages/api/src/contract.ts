@@ -1279,6 +1279,20 @@ const instanceThemeOperations: ApiContractOperation[] = [
   },
 ];
 
+const stripeOperations: ApiContractOperation[] = [
+  {
+    method: "post",
+    path: "/api/v1/invoices/:id/payment-link",
+    operationId: "getInvoicePaymentLink",
+    summary: "The URL a client pays this invoice at, minted once and reused",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "InvoicePaymentLinkEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+];
+
 const payoutAccountOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -2040,6 +2054,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...ssoDomainOperations,
   ...brandAssetOperations,
   ...instanceThemeOperations,
+  ...stripeOperations,
   ...payoutAccountOperations,
   ...billOperations,
   ...twoFactorOperations,
@@ -6241,6 +6256,19 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object",
     required: ["data"],
     properties: { data: reference("BillClientDelivery") },
+    additionalProperties: false,
+  },
+  InvoicePaymentLinkEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["invoice_id", "url"],
+        properties: { invoice_id: integerSchema, url: stringSchema },
+        additionalProperties: false,
+      },
+    },
     additionalProperties: false,
   },
   PayoutAccount: {

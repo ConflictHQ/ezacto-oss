@@ -38,6 +38,8 @@ import {
   createBillLinkStore,
   createBillMirrorSource,
   createPayoutAccountStore,
+  createStripeLinkStore,
+  recordCheckoutPayment,
   setBillDelivery,
 } from "@ezacto/db/d1";
 import { createPortalSessionService } from "@ezacto/api";
@@ -68,6 +70,7 @@ import { cloudflareAccessConfig, type WorkerEnv } from "./app.js";
 import {
   createBillMirrorSubscriber,
   createBillRuntime,
+  createStripeRuntime,
   createQuickBooksMirrorSubscriber,
   createQuickBooksRuntime,
 } from "@ezacto/integrations";
@@ -603,6 +606,69 @@ export const createRuntimeServices = async (
     now: () => new Date(),
   })
 
+  // Stripe. Composed always -- the runtime answers `configured: false` without
+  // a key, which is what the route reports, rather than the route disappearing.
+  const stripeLinks = createStripeLinkStore(drizzle)
+  const stripe = createStripeRuntime({
+    config: {
+      apiKey: env.STRIPE_API_KEY,
+      webhookSecret: env.STRIPE_WEBHOOK_SECRET,
+    },
+    source: {
+      readInvoice: async (invoiceId: number) => {
+        const rows = await database
+          .prepare(
+            `SELECT id, number, currency, due_amount_cents AS due
+             FROM invoices WHERE id = ?`,
+          )
+          .bind(invoiceId)
+          .all<{ id: number; number: string; currency: string; due: number }>()
+        const row = rows.results[0]
+        return row === undefined
+          ? null
+          : {
+              id: row.id,
+              number: row.number,
+              currency: row.currency,
+              dueAmountCents: row.due,
+            }
+      },
+      readLink: (invoiceId: number) =>
+        stripeLinks.read(invoiceId).then((link) =>
+          link === null ? null : { paymentLinkId: link.paymentLinkId, url: link.url },
+        ),
+      saveLink: async (invoiceId: number, link: { paymentLinkId: string; url: string }) => {
+        const saved = await stripeLinks.save({
+          invoiceId,
+          paymentLinkId: link.paymentLinkId,
+          url: link.url,
+          now: new Date().toISOString(),
+        })
+        return { paymentLinkId: saved.paymentLinkId, url: saved.url }
+      },
+      invoiceForLink: (paymentLinkId: string) => stripeLinks.invoiceFor(paymentLinkId),
+      recordPayment: async (input: {
+        invoiceId: number
+        paymentIntentId: string
+        amountCents: number
+      }) => {
+        await recordCheckoutPayment(drizzle, {
+          invoiceId: input.invoiceId,
+          provider: 'stripe',
+          // One Stripe account per instance, so a constant names it.
+          externalAccountId: 'stripe',
+          accountDisplayName: 'Stripe',
+          providerTransactionId: input.paymentIntentId,
+          amountCents: input.amountCents,
+          paidOn: new Date().toISOString().slice(0, 10),
+          now: new Date().toISOString(),
+        })
+      },
+    },
+    fetch: (request: Request) => fetch(request),
+    now: () => new Date(),
+  })
+
   const outbox = createD1OutboxService(database, {
     additionalSubscribers: [
       createInvoiceEmailOutboxSubscriber(moneyResources, organizationMailer),
@@ -753,6 +819,7 @@ export const createRuntimeServices = async (
         detach: (id: number) => store.detach(id, new Date().toISOString()),
       }
     })(),
+    stripe,
     bill,
     billDelivery: {
       isOptedIn: (clientId: number) =>

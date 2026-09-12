@@ -63,6 +63,11 @@ export {
   type InstanceThemeSurface,
 } from './instance-theme.js'
 export {
+  installStripeRoutes,
+  installStripeWebhookRoute,
+  type StripeService,
+} from './stripe.js'
+export {
   installPayoutAccountRoutes,
   type PayoutAccount,
   type PayoutAccountService,
