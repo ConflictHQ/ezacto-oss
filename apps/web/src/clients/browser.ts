@@ -142,6 +142,16 @@ export const createClientDirectoryController = (
   const detailPageElement = required<HTMLElement>('[data-client-detail-page]')
   const listStatus = required<HTMLElement>('[data-client-list-status]')
   const detailStatus = required<HTMLElement>('[data-client-detail-status]')
+  const deliverySection = required<HTMLElement>('[data-client-delivery]')
+  const deliveryHint = required<HTMLElement>('[data-client-delivery-hint]')
+  const deliveryToggle = required<HTMLInputElement>('[data-client-bill-delivery]')
+  const deliveryResult = required<HTMLElement>('[data-client-delivery-result]')
+
+  // Read once per session rather than per client: whether this deployment can
+  // reach BILL is a property of the deployment, and asking again for every
+  // client would be a request per navigation that always answers the same.
+  let billStatus: { configured: boolean; can_send_from_bill: boolean } | null = null
+  let deliveryBusy = false
   const tree = required<HTMLElement>('[data-client-tree]')
   const search = required<HTMLInputElement>('[data-client-search]')
   const archivedFilter = required<HTMLButtonElement>('[data-client-filter="archived"]')
@@ -489,6 +499,54 @@ export const createClientDirectoryController = (
     )
   }
 
+  /**
+   * The BILL delivery switch for this client.
+   *
+   * Hidden entirely where the deployment cannot reach BILL. A toggle that looks
+   * like a setting and refuses every save is worse than no toggle, and the API
+   * refuses it for the same reason -- so the screen agrees with the route
+   * rather than discovering it on submit.
+   */
+  const renderDelivery = async (): Promise<void> => {
+    const client = currentClient
+    if (client === null || api.getBillClientDelivery === undefined) {
+      deliverySection.hidden = true
+      return
+    }
+    const active = session
+    if (active === null) {
+      deliverySection.hidden = true
+      return
+    }
+    try {
+      billStatus ??= (await api.getBillStatus?.(active.signal)) ?? null
+      if (billStatus === null || !billStatus.configured) {
+        deliverySection.hidden = true
+        return
+      }
+      const id = clientNumber(client, 'id')
+      if (id === null) {
+        deliverySection.hidden = true
+        return
+      }
+      const current = await api.getBillClientDelivery(id, active.signal)
+      if (session !== active || currentClient !== client) return
+      deliverySection.hidden = false
+      deliveryToggle.checked = current.deliver_via_bill
+      deliveryToggle.disabled = !canManageClientTerms(active.identity)
+      // The two deliveries reach the client differently, and an operator
+      // choosing this should know which one they are choosing.
+      deliveryHint.textContent = billStatus.can_send_from_bill
+        ? 'BILL emails the invoice and collects the payment. Payments come back here automatically.'
+        : 'We email the invoice with a BILL payment link, because this deployment cannot send from BILL. Payments still come back here.'
+      deliveryResult.textContent = ''
+    } catch {
+      // A client screen must not fail to render because a third party is
+      // unreachable; the switch is simply not offered.
+      deliverySection.hidden = true
+    }
+  }
+
   const renderDetail = (): void => {
     if (currentClient === null) return
     document.title = `${document.documentElement.dataset.brand ?? 'ezacto'} — ${clientDisplayName(currentClient)}`
@@ -516,6 +574,7 @@ export const createClientDirectoryController = (
       if (element.parentElement!.hidden) element.textContent = ''
     }
     setText('[data-client-detail-address]', clientText(currentClient, 'address') ?? 'None')
+    void renderDelivery()
     renderProjects()
     renderContacts()
     syncStatusActions()
@@ -917,6 +976,42 @@ export const createClientDirectoryController = (
         if (currentSession() === active) {
           mutationPending = false
           submitter.disabled = false
+        }
+      })
+  })
+
+  deliveryToggle.addEventListener('change', () => {
+    const active = session
+    const client = currentClient
+    if (active === null || client === null || deliveryBusy) return
+    if (api.setBillClientDelivery === undefined) return
+    const id = clientNumber(client, 'id')
+    if (id === null) return
+    const wanted = deliveryToggle.checked
+    deliveryBusy = true
+    deliveryToggle.disabled = true
+    deliveryResult.textContent = 'Saving…'
+    void api
+      .setBillClientDelivery(id, wanted, active.signal)
+      .then((result) => {
+        if (session !== active) return
+        deliveryToggle.checked = result.deliver_via_bill
+        deliveryResult.textContent = result.deliver_via_bill
+          ? 'This client will be invoiced through BILL from the next invoice sent.'
+          : 'This client will be invoiced the usual way.'
+      })
+      .catch((error: unknown) => {
+        if (session !== active) return
+        // Put back, because the checkbox is showing a state the server did not
+        // accept and a person would otherwise believe it.
+        deliveryToggle.checked = !wanted
+        deliveryResult.textContent =
+          error instanceof Error ? error.message : 'That setting could not be saved.'
+      })
+      .finally(() => {
+        deliveryBusy = false
+        if (session === active) {
+          deliveryToggle.disabled = !canManageClientTerms(active.identity)
         }
       })
   })

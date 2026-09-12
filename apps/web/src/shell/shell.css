@@ -3596,6 +3596,24 @@ dialog h2,
   color: var(--ez-muted);
 }
 
+/* The BILL delivery switch on a client (issue 542). Its own section rather
+   than a row in the facts list: the facts are what the client IS, and this is a
+   decision about how they are billed. */
+.client-delivery {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+.client-delivery-hint {
+  margin: 0;
+  max-width: 68ch;
+  color: var(--ez-muted);
+}
+
 .settings-toggle {
   display: flex;
   align-items: center;

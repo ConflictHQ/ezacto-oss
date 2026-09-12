@@ -46,6 +46,14 @@ export const renderClientDirectoryPages = (view?: string): string => `
           <div class="client-address"><dt>Address</dt><dd data-client-detail-address>—</dd></div>
         </dl>
       </section>
+      <section class="client-delivery" data-client-delivery aria-labelledby="client-delivery-heading" hidden>
+        <header><div><p class="eyebrow">Money</p><h2 id="client-delivery-heading">Invoice delivery</h2></div></header>
+        <p class="client-delivery-hint" data-client-delivery-hint></p>
+        <label class="settings-toggle">
+          <input type="checkbox" data-client-bill-delivery data-client-write data-auth-action disabled>Send this client's invoices through BILL
+        </label>
+        <p class="form-result" data-client-delivery-result role="status" aria-live="polite"></p>
+      </section>
       <section class="client-projects" aria-labelledby="client-projects-heading">
         <header><div><p class="eyebrow">Work</p><h2 id="client-projects-heading">Associated projects</h2></div></header>
         <div data-client-projects></div>

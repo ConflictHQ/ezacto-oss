@@ -1030,6 +1030,22 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       })
     ).data,
   disconnectQuickBooks: (signal) => client.disconnectQuickBooks(withSignal(signal)),
+  // Bound here because this is the only place the real client reaches the
+  // client screen. Issue 593 shipped a settings section reading four methods
+  // nothing supplied, and the suite stayed green because the tests inject
+  // their own API -- so a method added to an interface without a line here is
+  // a control that silently does nothing.
+  getBillStatus: async (signal) => (await client.getBillStatus(withSignal(signal))).data,
+  getBillClientDelivery: async (clientId, signal) =>
+    (await client.getBillClientDelivery({ id: clientId, ...withSignal(signal) })).data,
+  setBillClientDelivery: async (clientId, deliverViaBill, signal) =>
+    (
+      await client.setBillClientDelivery({
+        id: clientId,
+        body: { deliver_via_bill: deliverViaBill },
+        ...withSignal(signal),
+      })
+    ).data,
   getInstanceTheme: async (signal) =>
     (await client.getInstanceTheme(withSignal(signal))).data,
   setInstanceTheme: async (palette, signal) =>
