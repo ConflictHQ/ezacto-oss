@@ -105,6 +105,17 @@ describe('minting the link an invoice is paid at', () => {
     })
   })
 
+  it('[money] the link it mints confirms the invoice by number to the payer', async () => {
+    const harness = runtime()
+    await harness.runtime.paymentLink(1315)
+    const linkBody = new URLSearchParams(
+      await (harness.server.fetch.mock.calls[1]![0] as Request).clone().text(),
+    )
+    expect(
+      linkBody.get('after_completion[hosted_confirmation][custom_message]'),
+    ).toContain('1315')
+  })
+
   it('[money] reuses the link rather than minting a second one', async () => {
     // The URL that went out in an email has to keep working, and a second mint
     // leaves another Price on the account every time somebody opens the
