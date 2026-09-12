@@ -7,6 +7,7 @@ import {
   installBrandRoute,
   installBillRoutes,
   installPayoutAccountRoutes,
+  installStripeRoutes,
   installInstanceThemeRoutes,
   apiContractOperations,
   createApiApp,
@@ -209,6 +210,11 @@ const documentedApp = () =>
       installBrandRoute(api, {
         organizationName: async () => "Contract Fixture",
         assets: (env) => brandAssets.list(env),
+      });
+      installStripeRoutes(api, {
+        configured: () => false,
+        paymentLink: async () => ({ kind: "refused", reason: "fixture" }),
+        receiveWebhook: async () => ({ kind: "unverified" }),
       });
       installPayoutAccountRoutes(api, {
         listForUser: async () => [],

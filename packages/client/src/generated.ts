@@ -2268,6 +2268,13 @@ export type BillClientDeliveryEnvelope = {
   "data": BillClientDelivery;
 };
 
+export type InvoicePaymentLinkEnvelope = {
+  "data": {
+  "invoice_id": number;
+  "url": string;
+};
+};
+
 export type PayoutAccount = {
   "id": number;
   "user_id": number;
@@ -4259,6 +4266,15 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<void>("DELETE", "/api/v1/settings/theme", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getInvoicePaymentLink(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoicePaymentLinkEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InvoicePaymentLinkEnvelope>("POST", "/api/v1/invoices/:id/payment-link".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });

@@ -22,6 +22,7 @@ export interface ContainerConfig {
    * routes are not mounted, because a connect button that cannot connect is
    * worse than no button. Same rule as the Worker's.
    */
+  stripe?: { apiKey: string; webhookSecret?: string }
   bill?: {
     devKey: string
     companyId: string
@@ -148,6 +149,8 @@ export const readContainerConfig = (
   )
   const bootstrapToken = optional(environment, 'EZACTO_BOOTSTRAP_TOKEN', 512)
   const magicLinkKey = optional(environment, 'MAGIC_LINK_SIGNING_KEY', 128)
+  const stripeApiKey = optional(environment, 'STRIPE_API_KEY', 512)
+  const stripeWebhookSecret = optional(environment, 'STRIPE_WEBHOOK_SECRET', 512)
   const billDevKey = optional(environment, 'BILL_DEV_KEY', 512)
   const billOrganizationId = optional(environment, 'BILL_COMPANY_ID', 128)
   const billUsername = optional(environment, 'BILL_USERNAME', 256)
@@ -216,6 +219,16 @@ export const readContainerConfig = (
     ...(magicLinkKey === undefined
       ? {}
       : { magicLinkSigningKey: signingKey(magicLinkKey) }),
+    ...(stripeApiKey === undefined
+      ? {}
+      : {
+          stripe: {
+            apiKey: stripeApiKey,
+            ...(stripeWebhookSecret === undefined
+              ? {}
+              : { webhookSecret: stripeWebhookSecret }),
+          },
+        }),
     ...(billDevKey === undefined ||
     billOrganizationId === undefined ||
     billUsername === undefined ||
