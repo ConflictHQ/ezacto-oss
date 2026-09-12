@@ -58,6 +58,7 @@ import { payoutTransfersMigration } from './migrations/0051_payout_transfers.js'
 import { stripePaymentLinksMigration } from './migrations/0052_stripe_payment_links.js'
 import { automaticThankYouMigration } from './migrations/0053_automatic_thank_you.js'
 import { releaseInvoicedTimeMigration } from './migrations/0054_release_invoiced_time.js'
+import { invoiceAttachedDocumentsMigration } from './migrations/0055_invoice_attached_documents.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL, statements_sha256 TEXT
@@ -1459,6 +1460,7 @@ const migrations = [
   { id: '0052_stripe_payment_links', statements: stripePaymentLinksMigration },
   { id: '0053_automatic_thank_you', statements: automaticThankYouMigration },
   { id: '0054_release_invoiced_time', statements: releaseInvoicedTimeMigration },
+  { id: '0055_invoice_attached_documents', statements: invoiceAttachedDocumentsMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

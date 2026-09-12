@@ -339,6 +339,7 @@ for (const [runtime, factory] of factories) {
         'recurring_invoice_id',
         'estimate_id',
         'auto_thank_you',
+        'attach_invoice_pdf',
       ])
       expect(
         (await db.rows<{ name: string }>(`PRAGMA table_info(invoice_item_categories)`)).map(
