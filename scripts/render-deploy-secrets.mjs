@@ -120,6 +120,37 @@ export const deploySecretPayload = (environment) => {
       'Configure either Mailgun or SES, not both',
     )
   }
+  /**
+   * The payment integrations. None of these reached a deployment before, which
+   * is why the QuickBooks connect screen reported "not configured" on every
+   * environment however the Intuit app was set up -- the routes were mounted
+   * and the credential never arrived.
+   *
+   * All optional and all explicitly null when absent, for the same reason the
+   * magic-link key is: a secret removed from the environment must reach
+   * Wrangler as a null, or it lingers on the deployment after somebody thought
+   * they had taken it away.
+   */
+  const quickBooksClientId = optionalCredential(environment.QUICKBOOKS_CLIENT_ID)
+  const quickBooksClientSecret = optionalCredential(environment.QUICKBOOKS_CLIENT_SECRET)
+  if ((quickBooksClientId === null) !== (quickBooksClientSecret === null)) {
+    throw new TypeError(
+      'QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET must be configured together',
+    )
+  }
+  const billDevKey = optionalCredential(environment.BILL_DEV_KEY)
+  const billCompanyId = optionalCredential(environment.BILL_COMPANY_ID)
+  const billUsername = optionalCredential(environment.BILL_USERNAME)
+  const billPassword = optionalCredential(environment.BILL_PASSWORD)
+  const billParts = [billDevKey, billCompanyId, billUsername, billPassword]
+  // All four or none: BILL's sign-in takes every one of them, so three is a
+  // configuration that cannot sign in and an operator who believes it can.
+  if (billParts.some((part) => part !== null) && billParts.some((part) => part === null)) {
+    throw new TypeError(
+      'BILL_DEV_KEY, BILL_COMPANY_ID, BILL_USERNAME and BILL_PASSWORD must be configured together',
+    )
+  }
+
   return {
     API_CURSOR_SIGNING_KEY: cursor,
     MAGIC_LINK_SIGNING_KEY: magicLink,
@@ -129,6 +160,18 @@ export const deploySecretPayload = (environment) => {
     AWS_SECRET_ACCESS_KEY: secretAccessKey,
     AWS_SESSION_TOKEN: sessionToken,
     MAILGUN_API_KEY: mailgunApiKey,
+    QUICKBOOKS_CLIENT_ID: quickBooksClientId,
+    QUICKBOOKS_CLIENT_SECRET: quickBooksClientSecret,
+    QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN: optionalCredential(
+      environment.QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN,
+    ),
+    BILL_DEV_KEY: billDevKey,
+    BILL_COMPANY_ID: billCompanyId,
+    BILL_USERNAME: billUsername,
+    BILL_PASSWORD: billPassword,
+    BILL_REPLY_TO_USER_ID: optionalCredential(environment.BILL_REPLY_TO_USER_ID),
+    STRIPE_API_KEY: optionalCredential(environment.STRIPE_API_KEY),
+    STRIPE_WEBHOOK_SECRET: optionalCredential(environment.STRIPE_WEBHOOK_SECRET),
   }
 }
 
