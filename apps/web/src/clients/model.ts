@@ -21,6 +21,25 @@ export interface ClientDirectoryApi {
     signal?: AbortSignal,
   ): Promise<GeneralResource>
   archiveDirectoryClient(id: number, signal?: AbortSignal): Promise<void>
+  /**
+   * Whether this client is billed through BILL (issue 542). Optional because a
+   * deployment that composes no BILL runtime does not mount the routes, and a
+   * control that answers 404 is worse than no control.
+   */
+  getBillClientDelivery?(
+    clientId: number,
+    signal?: AbortSignal,
+  ): Promise<{ deliver_via_bill: boolean }>
+  setBillClientDelivery?(
+    clientId: number,
+    deliverViaBill: boolean,
+    signal?: AbortSignal,
+  ): Promise<{ deliver_via_bill: boolean }>
+  /** Whether this deployment can reach BILL at all, and how it delivers. */
+  getBillStatus?(signal?: AbortSignal): Promise<{
+    configured: boolean
+    can_send_from_bill: boolean
+  }>
   listClientContacts(
     clientId: number,
     cursor?: string,

@@ -625,3 +625,123 @@ describe('Clients V1 browser controller', () => {
     expect(document.body.textContent).not.toContain('Saving the client was refused.')
   })
 })
+
+describe('billing a client through BILL (issue 542)', () => {
+  const base = {
+    listDirectoryClients: async () => page([parent, child]),
+    getDirectoryClient: async () => child,
+    listClientContacts: async () => page([contact]),
+    listClientProjects: async () => page([project]),
+    updateDirectoryClient: vi.fn(),
+    createClientContact: vi.fn(),
+    createDirectoryClient: vi.fn(),
+    updateClientContact: vi.fn(),
+  }
+  const administrator: Whoami = {
+    user_id: 1,
+    profile: 'administrator',
+    manager_grants: [],
+    authentication: { kind: 'session' },
+  }
+
+  const activate = async (api: Partial<ClientDirectoryApi>) => {
+    writeDocument()
+    const controller = createClientDirectoryController({
+      ...base,
+      ...api,
+    } as unknown as ClientDirectoryApi)
+    await controller.activate(administrator, new AbortController().signal, () => false)
+    return controller
+  }
+
+  const section = () => document.querySelector<HTMLElement>('[data-client-delivery]')!
+  const toggle = () =>
+    document.querySelector<HTMLInputElement>('[data-client-bill-delivery]')!
+
+  it('[unit] offers the switch, set to what the server holds', async () => {
+    await activate({
+      getBillStatus: async () => ({ configured: true, can_send_from_bill: true }),
+      getBillClientDelivery: async () => ({ deliver_via_bill: true }),
+      setBillClientDelivery: vi.fn(),
+    })
+    expect(section().hidden).toBe(false)
+    expect(toggle().checked).toBe(true)
+  })
+
+  it('[security] hides it entirely where the deployment cannot reach BILL', async () => {
+    // A toggle that looks like a setting and refuses every save is worse than
+    // no toggle, and the route refuses it for the same reason -- so the screen
+    // agrees with the API rather than discovering it on submit.
+    await activate({
+      getBillStatus: async () => ({ configured: false, can_send_from_bill: false }),
+      getBillClientDelivery: async () => ({ deliver_via_bill: false }),
+      setBillClientDelivery: vi.fn(),
+    })
+    expect(section().hidden).toBe(true)
+  })
+
+  it('[security] hides it on a build that does not supply the methods at all', async () => {
+    await activate({})
+    expect(section().hidden).toBe(true)
+  })
+
+  it('[unit] says which way the invoice will actually reach the client', async () => {
+    // The two deliveries differ, and an operator choosing this should know
+    // which one they are choosing.
+    await activate({
+      getBillStatus: async () => ({ configured: true, can_send_from_bill: false }),
+      getBillClientDelivery: async () => ({ deliver_via_bill: false }),
+      setBillClientDelivery: vi.fn(),
+    })
+    const hint = document.querySelector<HTMLElement>('[data-client-delivery-hint]')!
+    expect(hint.textContent).toContain('We email the invoice with a BILL payment link')
+  })
+
+  it('[unit] saves the change and reports it', async () => {
+    const setBillClientDelivery = vi.fn(async (_id: number, wanted: boolean) => ({
+      deliver_via_bill: wanted,
+    }))
+    await activate({
+      getBillStatus: async () => ({ configured: true, can_send_from_bill: true }),
+      getBillClientDelivery: async () => ({ deliver_via_bill: false }),
+      setBillClientDelivery,
+    })
+    toggle().checked = true
+    toggle().dispatchEvent(new Event('change'))
+    await vi.waitFor(() => {
+      expect(setBillClientDelivery).toHaveBeenCalledWith(11, true, expect.anything())
+    })
+  })
+
+  it('[security] puts the switch back when the save is refused', async () => {
+    // Otherwise the screen shows a state the server did not accept, and the
+    // operator believes this client is billed through BILL when they are not.
+    await activate({
+      getBillStatus: async () => ({ configured: true, can_send_from_bill: true }),
+      getBillClientDelivery: async () => ({ deliver_via_bill: false }),
+      setBillClientDelivery: vi.fn(async () => {
+        throw new EzactoApiError(503, { error: { code: 'service_unavailable' } }, null)
+      }),
+    })
+    toggle().checked = true
+    toggle().dispatchEvent(new Event('change'))
+    await vi.waitFor(() => {
+      expect(toggle().checked).toBe(false)
+    })
+  })
+
+  it('[unit] renders the client screen even when BILL is unreachable', async () => {
+    // A third party being down must not be why a client page fails to render.
+    await activate({
+      getBillStatus: async () => {
+        throw new Error('gateway down')
+      },
+      getBillClientDelivery: async () => ({ deliver_via_bill: false }),
+      setBillClientDelivery: vi.fn(),
+    })
+    expect(section().hidden).toBe(true)
+    expect(
+      document.querySelector<HTMLElement>('[data-client-detail-name]')!.textContent,
+    ).not.toBe('')
+  })
+})
