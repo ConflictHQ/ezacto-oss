@@ -68,6 +68,11 @@ export {
   type StripeService,
 } from './stripe.js'
 export {
+  installInvoiceTimeClaimRoutes,
+  type InvoiceTimeClaimService,
+  type ReleaseTimeOutcome,
+} from './invoice-time-claims.js'
+export {
   installPayoutAccountRoutes,
   type PayoutAccount,
   type PayoutAccountService,

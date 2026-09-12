@@ -178,6 +178,12 @@ export {
   type CheckoutProvider,
 } from './checkout-payments.js'
 export {
+  readTimeEntryClaim,
+  releaseInvoicedTimeEntries,
+  type ReleaseOutcome,
+  type TimeEntryClaim,
+} from './release-invoiced-time.js'
+export {
   createD1SsoProvisioningDomainStore,
   SsoProvisioningDomainError,
   type SsoProvisioningDomainErrorCode,
