@@ -1,10 +1,10 @@
-import { EzactoClient } from '@ezacto/client'
+import { EzactoClient } from '@conflict-hq/ezacto-client'
 import {
   assertOrganizationName,
   readConfig,
   resolveConfigPath,
   selectOrganization,
-} from '@ezacto/cli'
+} from '@conflict-hq/ezacto-cli'
 
 export interface McpCliOptions {
   configPath?: string

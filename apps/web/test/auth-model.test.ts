@@ -1,4 +1,4 @@
-import { EzactoClient } from '@ezacto/client'
+import { EzactoClient } from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import { createShellApi } from '../src/index.js'
 

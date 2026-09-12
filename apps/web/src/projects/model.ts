@@ -1,4 +1,4 @@
-import type { Attachment, GeneralResource, Whoami } from '@ezacto/client'
+import type { Attachment, GeneralResource, Whoami } from '@conflict-hq/ezacto-client'
 import { canManageCommercialTerms } from '@ezacto/core'
 
 export type ProjectDirectoryPage<T = GeneralResource> = {

@@ -1,4 +1,4 @@
-import type { Invoice, UninvoicedReport } from '@ezacto/client'
+import type { Invoice, UninvoicedReport } from '@conflict-hq/ezacto-client'
 import { describe, expect, it } from 'vitest'
 import {
   dashboardCards,

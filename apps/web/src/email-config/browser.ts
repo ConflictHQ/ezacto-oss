@@ -6,7 +6,7 @@ import {
   type EmailTemplateVariableGroup,
   type SenderIdentity,
   type Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import {
   emailConfigTemplateFromUrl,
   emailConfigUrl,

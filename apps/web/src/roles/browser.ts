@@ -1,4 +1,4 @@
-import { EzactoApiError, type GeneralResource, type Whoami } from '@ezacto/client'
+import { EzactoApiError, type GeneralResource, type Whoami } from '@conflict-hq/ezacto-client'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
 import {
   canManageRoles,

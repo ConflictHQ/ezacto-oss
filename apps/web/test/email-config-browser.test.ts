@@ -5,7 +5,7 @@ import type {
   EmailTemplateVariableGroup,
   SenderIdentity,
   Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import { createEmailConfigurationController } from '../src/email-config/browser.js'
 import type { EmailConfigurationApi } from '../src/email-config/model.js'

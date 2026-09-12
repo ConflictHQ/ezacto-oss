@@ -1,4 +1,4 @@
-import type { Expense, ExpenseCategory } from '@ezacto/client'
+import type { Expense, ExpenseCategory } from '@conflict-hq/ezacto-client'
 import { describe, expect, it } from 'vitest'
 import {
   expenseAmountCents,

@@ -11,7 +11,7 @@ import {
   type ExpensePatch,
   type GeneralResource,
   type Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import {
   expenseCategoryLabel,
   expenseClientLabel,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { GeneralResource, RecurringInvoice, Whoami } from '@ezacto/client'
+import type { GeneralResource, RecurringInvoice, Whoami } from '@conflict-hq/ezacto-client'
 import {
   recurringAmountLabel,
   recurringBasisLabel,

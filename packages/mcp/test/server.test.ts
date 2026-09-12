@@ -10,7 +10,7 @@ import {
   type TimeEntryRecord,
   type UserProfile,
 } from '@ezacto/api'
-import { EzactoClient } from '@ezacto/client'
+import { EzactoClient } from '@conflict-hq/ezacto-client'
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client'
 import type { McpServer } from '@modelcontextprotocol/server'
 import { afterEach, describe, expect, it } from 'vitest'

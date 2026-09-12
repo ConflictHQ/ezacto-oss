@@ -6,7 +6,7 @@ import type {
   GeneralResource,
   TimeReport,
   Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import { createReportsController } from '../src/reports/browser.js'
 import type { ReportWorkspaceApi } from '../src/reports/model.js'

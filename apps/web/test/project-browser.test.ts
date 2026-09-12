@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 
-import { EzactoApiError, type Attachment, type GeneralResource, type Whoami } from '@ezacto/client'
+import { EzactoApiError, type Attachment, type GeneralResource, type Whoami } from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import { createProjectDirectoryController } from '../src/projects/browser.js'
 import type { ProjectDirectoryApi } from '../src/projects/model.js'

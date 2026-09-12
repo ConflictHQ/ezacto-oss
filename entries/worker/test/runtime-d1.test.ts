@@ -3,7 +3,7 @@ import {
   createD1Database,
   migrationIds,
 } from "@ezacto/db/d1";
-import { EzactoClient } from "@ezacto/client";
+import { EzactoClient } from "@conflict-hq/ezacto-client";
 import {
   buildWeekGrid,
   createShellApi,

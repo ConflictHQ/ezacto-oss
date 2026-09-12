@@ -1,4 +1,4 @@
-import type { GeneralResource, Whoami } from '@ezacto/client'
+import type { GeneralResource, Whoami } from '@conflict-hq/ezacto-client'
 
 export type ClientDirectoryPage<T = GeneralResource> = {
   readonly data: readonly T[]

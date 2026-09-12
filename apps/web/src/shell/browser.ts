@@ -10,7 +10,7 @@ import {
   type TimesheetSubmission,
   type TimesheetSubmissionDetail,
   type Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import { browserDensityStore, createDensityRuntime, type Density } from '../density.js'
 import { browserThemeStore, createThemeRuntime } from '../theme-preference.js'
 import { defaultTheme, themeManifest } from '../theme.js'

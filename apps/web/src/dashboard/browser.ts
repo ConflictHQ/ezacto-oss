@@ -3,7 +3,7 @@ import {
   type Invoice,
   type TimesheetSubmission,
   type Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import { formatReportHours, formatReportMoney } from '../reports/model.js'
 import { markMoney, moneyText } from '../money-display.js'
 import { localDate, weekRange } from '../shell/model.js'

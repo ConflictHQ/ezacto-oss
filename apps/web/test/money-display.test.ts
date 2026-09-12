@@ -3,7 +3,7 @@
 import { readFile, readdir } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { AuthPrincipal, Session, Whoami } from '@ezacto/client'
+import type { AuthPrincipal, Session, Whoami } from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import { mountShell } from '../src/shell/browser.js'
 import { renderAppShell, type ShellApi } from '../src/index.js'

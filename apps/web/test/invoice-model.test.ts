@@ -1,4 +1,4 @@
-import type { Invoice, InvoiceMessage, InvoicePayment, Whoami } from '@ezacto/client'
+import type { Invoice, InvoiceMessage, InvoicePayment, Whoami } from '@conflict-hq/ezacto-client'
 import { describe, expect, it } from 'vitest'
 import {
   interpolateInvoiceTemplate,

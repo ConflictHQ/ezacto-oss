@@ -12,7 +12,7 @@ import {
   type TeamRateInput,
   type UserRate,
   type Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import {
   parseTeamCapacitySeconds,
   parseTeamMoneyCents,

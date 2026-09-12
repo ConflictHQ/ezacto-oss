@@ -1,6 +1,6 @@
 import { renderDataTable, type CellContent } from '../components/data-table.js'
 import { moneyText } from '../money-display.js'
-import { EzactoApiError, type ExpenseCategory, type Whoami } from '@ezacto/client'
+import { EzactoApiError, type ExpenseCategory, type Whoami } from '@conflict-hq/ezacto-client'
 import {
   expenseCategoryCanWrite,
   expenseCategoryFilterFromUrl,

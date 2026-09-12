@@ -28,7 +28,7 @@ import {
   type TimesheetSubmission,
   type TimesheetSubmissionDetail,
   type Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import { vi } from 'vitest'
 import { createModuleSettingsController } from '../../src/module-settings/browser.js'
 import { mountShell } from '../../src/shell/browser.js'

@@ -20,7 +20,7 @@ import {
   type TimeReportTotals,
   type UninvoicedReport,
   type Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import { createPeriodControl } from '../components/period.js'
 import { moneyText } from '../money-display.js'
 // The team roster's own formatter. Utilization is one figure with one meaning,

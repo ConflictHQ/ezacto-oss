@@ -12,7 +12,7 @@ import {
   type RetainerLedgerMutation,
   type RetainerPatch,
   type Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import { createRetainerWorkspaceController } from '../src/retainers/browser.js'
 import type { RetainerWorkspaceApi } from '../src/retainers/model.js'

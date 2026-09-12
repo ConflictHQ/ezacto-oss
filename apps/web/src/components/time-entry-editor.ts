@@ -1,4 +1,4 @@
-import type { TimeEntry } from '@ezacto/client'
+import type { TimeEntry } from '@conflict-hq/ezacto-client'
 
 export type TimeEntryMode = 'duration' | 'start_end'
 export type OrganizationClock = '12h' | '24h'

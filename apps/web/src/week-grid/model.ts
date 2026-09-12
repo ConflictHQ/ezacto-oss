@@ -1,4 +1,4 @@
-import type { GeneralResource, TimeEntry } from '@ezacto/client'
+import type { GeneralResource, TimeEntry } from '@conflict-hq/ezacto-client'
 import type { DisplayTimeEntry, ShellApi, ShellSnapshot } from '../shell/model.js'
 
 export interface WeekRowSeed {

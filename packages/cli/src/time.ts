@@ -2,7 +2,7 @@ import {
   type EzactoClient,
   type GeneralResource,
   type TimeEntry,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 
 export interface TimeCommandResult {
   json: unknown

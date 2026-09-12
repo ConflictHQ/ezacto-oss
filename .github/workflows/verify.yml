@@ -105,7 +105,7 @@ jobs:
           # arrived with 17 tests that would have been invisible.
           - {
               name: packages,
-              workspaces: -w @ezacto/core -w @ezacto/client -w @ezacto/mailer -w @ezacto/cli -w @ezacto/mcp -w @ezacto/integrations,
+              workspaces: -w @ezacto/core -w @conflict-hq/ezacto-client -w @ezacto/mailer -w @conflict-hq/ezacto-cli -w @ezacto/mcp -w @ezacto/integrations,
             }
           # The only suite that drives a browser, so the only one that pays for
           # Chromium.

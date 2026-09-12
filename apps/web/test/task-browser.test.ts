@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 
-import type { GeneralResource, Whoami } from '@ezacto/client'
+import type { GeneralResource, Whoami } from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import { createTaskAdminController } from '../src/tasks/browser.js'
 import type { TaskAdminApi, TaskAdminFilter } from '../src/tasks/model.js'

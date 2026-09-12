@@ -16,7 +16,7 @@ import {
   type InvoiceRecipient,
   type InvoiceTransitionInput,
   type Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import {
   interpolateInvoiceTemplate,
   invoiceCanEditLines,

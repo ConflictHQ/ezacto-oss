@@ -5,7 +5,7 @@ import type {
   ExpenseInput,
   ExpensePatch,
   GeneralResource,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 
 export type ExpenseApprovalStatus = Expense['approval_status']
 export type ExpenseReimbursementStatus = Expense['reimbursement_status']

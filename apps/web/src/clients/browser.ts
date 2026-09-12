@@ -1,7 +1,7 @@
 import { renderDataTable } from '../components/data-table.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
 import { canManageClientTerms } from '../commercial-terms.js'
-import { EzactoApiError, type GeneralResource, type Whoami } from '@ezacto/client'
+import { EzactoApiError, type GeneralResource, type Whoami } from '@conflict-hq/ezacto-client'
 import {
   clientDisplayName,
   clientHierarchy,

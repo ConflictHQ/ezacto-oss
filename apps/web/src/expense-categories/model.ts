@@ -3,7 +3,7 @@ import type {
   ExpenseCategoryInput,
   ExpenseCategoryPatch,
   Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 
 export type ExpenseCategoryFilter = 'active' | 'all'
 export type ExpenseCategoryMode = 'direct' | 'unit'
