@@ -38,9 +38,11 @@ jobs:
         run: test -n "${NODE_AUTH_TOKEN}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: npm publish -w @conflict-hq/ezacto-client --access public --provenance
+      - name: Provenance only from a public repository
+        run: echo "PROVENANCE=${{ github.event.repository.private && 'false' || 'true' }}" >> "$GITHUB_ENV"
+      - run: npm publish -w @conflict-hq/ezacto-client --access public --provenance="$PROVENANCE"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: npm publish -w @conflict-hq/ezacto-cli --access public --provenance
+      - run: npm publish -w @conflict-hq/ezacto-cli --access public --provenance="$PROVENANCE"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
