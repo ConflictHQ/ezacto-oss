@@ -16,3 +16,11 @@ concurrency:
 jobs:
   verify:
     uses: ./.github/workflows/verify.yml
+  # One check for branch protection to require: green only when every verify
+  # job succeeded. A cancelled or skipped matrix job is not green.
+  green:
+    needs: verify
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.verify.result }}" = "success"
