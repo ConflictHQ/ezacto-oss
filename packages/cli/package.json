@@ -1,12 +1,31 @@
 {
   "name": "@ezacto/cli",
-  "version": "0.0.0",
-  "description": "ez — the native ezacto command-line client.",
+  "version": "0.1.0",
+  "description": "ez \u2014 the native ezacto command-line client.",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ConflictHQ/ezacto-oss.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://ezacto.dev",
+  "bugs": {
+    "url": "https://github.com/ConflictHQ/ezacto-oss/issues"
+  },
+  "keywords": [
+    "ezacto",
+    "time-tracking",
+    "invoicing",
+    "cli"
+  ],
   "type": "module",
   "bin": {
     "ez": "./dist/cli.js"
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "exports": {
     ".": {
       "types": "./src/index.ts",
@@ -14,7 +33,9 @@
       "default": "./dist/index.js"
     }
   },
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
@@ -24,7 +45,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@ezacto/client": "0.0.0",
+    "@ezacto/client": "^0.1.0",
     "better-sqlite3": "^13.0.3"
   },
   "devDependencies": {
@@ -39,5 +60,9 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.68.0",
     "vitest": "^4.1.11"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }

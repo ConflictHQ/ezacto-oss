@@ -147,7 +147,7 @@ const formatCurrencyTotal = (total: UninvoicedCurrencyTotal): string => {
     `${total.expense_count} expenses`,
   ]
   if (total.total_cents !== undefined) {
-    parts.push(`total $${centsToDollars(total.total_cents)}`)
+    parts.push(`total ${centsToDollars(total.total_cents)}`)
   }
   return parts.join(' ')
 }
