@@ -38,6 +38,39 @@ export const resolveAttachPolicy = async (
     : { attach: false, because: 'organization' }
 }
 
+/**
+ * Both answers at once, for a screen that has to show what will happen and why.
+ *
+ * Reading them separately would let the two come from different moments, and an
+ * operator would be shown a precedence that was never true.
+ */
+export const readAttachPreference = async (
+  database: InvoiceStateDatabase,
+  invoiceId: number,
+): Promise<{ invoice: boolean | null; organization: boolean } | null> => {
+  const rows = await database.all<{ invoice: number | null; organization: number | null }>(
+    sql`SELECT invoice.attach_invoice_pdf AS invoice,
+               (SELECT organization.attach_invoice_pdf FROM organizations organization
+                ORDER BY organization.id LIMIT 1) AS organization
+        FROM invoices invoice WHERE invoice.id = ${invoiceId}`,
+  )
+  const row = rows[0]
+  if (row === undefined) return null
+  return {
+    invoice: row.invoice === null ? null : row.invoice === 1,
+    organization: row.organization === 1,
+  }
+}
+
+export const readOrganizationAttachPolicy = async (
+  database: InvoiceStateDatabase,
+): Promise<boolean> => {
+  const rows = await database.all<{ attach: number | null }>(
+    sql`SELECT attach_invoice_pdf AS attach FROM organizations ORDER BY id LIMIT 1`,
+  )
+  return rows[0]?.attach === 1
+}
+
 export const setInvoiceAttachPolicy = async (
   database: InvoiceStateDatabase,
   input: Readonly<{ invoiceId: number; enabled: boolean | null }>,

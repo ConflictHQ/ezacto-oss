@@ -68,6 +68,10 @@ export {
   type StripeService,
 } from './stripe.js'
 export {
+  installInvoiceDocumentPreferenceRoutes,
+  type InvoiceDocumentPreferenceService,
+} from './invoice-document-preference.js'
+export {
   installInvoiceTimeClaimRoutes,
   type InvoiceTimeClaimService,
   type ReleaseTimeOutcome,

@@ -39,6 +39,10 @@ import {
   createBillMirrorSource,
   createPayoutAccountStore,
   createStripeLinkStore,
+  readAttachPreference,
+  readOrganizationAttachPolicy,
+  setInvoiceAttachPolicy,
+  setOrganizationAttachPolicy,
   releaseInvoicedTimeEntries,
   recordCheckoutPayment,
   setBillDelivery,
@@ -853,6 +857,18 @@ export const createRuntimeServices = async (
       }
     })(),
     stripe,
+    // Turning the document on and off. The preference existed before anything
+    // could set it, which is a decision made on the operator's behalf that they
+    // could not revisit (issue 626).
+    invoiceDocumentPreference: {
+      readInvoicePreference: (invoiceId: number) =>
+        readAttachPreference(drizzle, invoiceId),
+      setInvoicePreference: (invoiceId: number, enabled: boolean | null) =>
+        setInvoiceAttachPolicy(drizzle, { invoiceId, enabled }),
+      readOrganizationPreference: () => readOrganizationAttachPolicy(drizzle),
+      setOrganizationPreference: (enabled: boolean) =>
+        setOrganizationAttachPolicy(drizzle, enabled),
+    },
     // Releasing is refused while the invoice stands; the store reports why
     // rather than letting a trigger abort reach the caller as a 500.
     invoiceTimeClaims: {
