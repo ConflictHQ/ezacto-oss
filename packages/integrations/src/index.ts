@@ -198,3 +198,12 @@ export {
   type QuickBooksRuntimeOptions,
   type QuickBooksService,
 } from './quickbooks/runtime.js'
+export {
+  proposeEntriesFromEvents,
+  recordedEventId,
+  type CalendarEvent,
+  type CalendarEventRef,
+  type ProposalOutcome,
+  type ProposalSkip,
+  type ProposedTimeEntry,
+} from './calendar/proposals.js'
