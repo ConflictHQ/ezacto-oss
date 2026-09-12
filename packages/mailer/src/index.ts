@@ -62,6 +62,27 @@ export interface EmailAttachment {
   content: Uint8Array
 }
 
+/**
+ * Where an attachment's bytes actually live.
+ *
+ * A queue job carries these rather than the bytes themselves. A Cloudflare
+ * Queues message is capped at 128 KB and a rendered invoice will not fit inside
+ * one, so the file is written to object storage at send time and the job names
+ * it. The consumer fetches it back immediately before handing the message to a
+ * provider (issue 626).
+ */
+export interface EmailAttachmentRef {
+  /** The object key. Resolved by whatever store the entry composed. */
+  key: string
+  filename: string
+  contentType: string
+}
+
+/** Fetches what a reference points at. Supplied by the entry, not the mailer. */
+export type EmailAttachmentResolver = (
+  reference: EmailAttachmentRef,
+) => Promise<Uint8Array | null>
+
 export interface EmailMessage {
   from: EmailSender
   replyTo?: readonly EmailRecipient[]
@@ -147,6 +168,11 @@ export interface QueuedEmailJob {
   schemaVersion: 1
   deliveryId: number
   message: EmailMessage
+  /**
+   * Files to attach, by reference. Never bytes: this object is serialised onto
+   * a queue with a 128 KB ceiling, and a rendered invoice does not fit.
+   */
+  attachments?: readonly EmailAttachmentRef[]
 }
 
 /** Durable runtime queue producer. It never invokes an email provider inline. */
@@ -556,6 +582,8 @@ export const processQueuedEmail = async (
     providerTimeoutMs?: number
     attemptLeaseSeconds?: number
     createAttemptId?: () => string
+    /** Fetches attachment bytes at send time. The entry supplies the store. */
+    resolveAttachment?: EmailAttachmentResolver
   } = {},
 ): Promise<EmailQueueDisposition> => {
   if (
@@ -569,6 +597,35 @@ export const processQueuedEmail = async (
     throw new RangeError('queue attempt must be a positive safe integer')
   }
   const message = copyMessage(job.message)
+  // Bytes must never have been on the queue. A message that arrives carrying
+  // them means something serialised a file into a 128 KB envelope, and the
+  // failure that produces is a silent truncation somewhere upstream rather than
+  // an error here -- so this refuses instead of sending whatever survived.
+  if (job.message.attachments !== undefined) {
+    throw new TypeError('a queued email job must carry attachments by reference, not by value')
+  }
+  const references = job.attachments ?? []
+  if (references.length > 0) {
+    if (options.resolveAttachment === undefined) {
+      throw new TypeError('a queued email job names attachments and no resolver was supplied')
+    }
+    const resolved: EmailAttachment[] = []
+    for (const reference of references) {
+      const content = await options.resolveAttachment(reference)
+      // A named file that is not there is refused rather than dropped. An
+      // invoice whose body says a document is attached, arriving without one,
+      // is a failure the client discovers and the sender does not.
+      if (content === null || content.byteLength === 0) {
+        throw new Error(`email attachment is missing: ${reference.key}`)
+      }
+      resolved.push({
+        filename: reference.filename,
+        contentType: reference.contentType,
+        content,
+      })
+    }
+    message.attachments = resolved
+  }
   const providerTimeoutMs =
     options.providerTimeoutMs ?? EMAIL_RETRY_POLICY.providerTimeoutMs
   const attemptLeaseSeconds =
