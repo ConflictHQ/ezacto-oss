@@ -12,9 +12,8 @@
  */
 
 import { sql } from 'drizzle-orm'
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import type { DrizzleD1Database } from 'drizzle-orm/d1'
-import type * as schema from './schema.js'
+import { recordCheckoutPayment } from './checkout-payments.js'
+import type { InvoiceStateDatabase } from './invoice-state.js'
 import type {
   BillLink,
   BillLinkKind,
@@ -24,9 +23,9 @@ import type {
   BillMirrorSource,
 } from '@ezacto/integrations'
 
-type Database =
-  | BetterSQLite3Database<typeof schema>
-  | DrizzleD1Database<typeof schema>
+// The command path's own database type: writing a receipt is a command, and
+// `recordCheckoutPayment` needs the transaction seam that carries.
+type Database = InvoiceStateDatabase
 
 interface InvoiceRow {
   id: number
@@ -79,6 +78,14 @@ export const createBillLinkStore = (
         updated_at = excluded.updated_at`)
   },
 })
+
+/**
+ * Names the one `payment_provider_accounts` row BILL payments are filed
+ * against. An instance connects to a single BILL organisation, so this is
+ * stable; it is a constant rather than a value so that two writes cannot
+ * disagree about which account a receipt belongs to.
+ */
+const BILL_ACCOUNT_KEY = 'bill'
 
 export const createBillMirrorSource = (
   database: Database,
@@ -144,24 +151,17 @@ export const createBillMirrorSource = (
   },
 
   /**
-   * Remembers a payment BILL reported against one of our invoices.
+   * Records a payment BILL reported against one of our invoices.
    *
-   * It writes the observation and stops there, and that boundary is deliberate
-   * rather than unfinished. `invoice_payments` is guarded by a trigger --
-   * `invoice_payments_d22_state_insert`, from migration 0023 -- that refuses
-   * any insert without a matching pending `payment.record` row in the invoice
-   * command ledger and an invoice already in `open` or `paid`. A receipt is a
-   * state transition on the invoice, not a row, and this integration is not
-   * entitled to forge one.
+   * Two writes, and both matter. `bill_received_payments` is our own record of
+   * what BILL said -- keyed on the payment and the invoice, so a poll that sees
+   * it again writes nothing -- and `recordCheckoutPayment` turns it into a
+   * receipt on the invoice through the command ledger.
    *
-   * The QuickBooks mirror writes that row directly and would be refused by the
-   * same trigger; nothing caught it because its only test replaces this whole
-   * module with a stub. See issue 595.
-   *
-   * What this does give is the answer the operator asked for -- whether an
-   * invoice sent through BILL has been paid, when, and for how much -- keyed on
-   * the payment and the invoice so that a poll that sees it again records
-   * nothing.
+   * This stopped at the first write until issue 595: `invoice_payments` is
+   * guarded by a trigger requiring a pending `payment.record` command, and a
+   * receipt is a state transition rather than a row, so there was no sanctioned
+   * way to write one. There is now, and both mirrors use it.
    */
   recordPayment: async (input) => {
     const stamp = now().toISOString()
@@ -175,6 +175,22 @@ export const createBillMirrorSource = (
       VALUES (${input.billPaymentId}, ${input.billInvoiceId}, ${input.invoiceId},
         ${input.amountCents}, ${input.paidOn}, ${stamp})
       ON CONFLICT(bill_payment_id, bill_invoice_id) DO NOTHING`)
+
+    await recordCheckoutPayment(database, {
+      invoiceId: input.invoiceId,
+      provider: 'bill_com',
+      // An ezacto instance connects to one BILL organisation, so there is one
+      // account and a constant names it. The company id would be more
+      // descriptive, but it lives in the deployment's configuration and this
+      // module is the database half -- threading a credential in here to make
+      // a label read better is not a trade worth taking.
+      externalAccountId: BILL_ACCOUNT_KEY,
+      accountDisplayName: 'BILL',
+      providerTransactionId: input.billPaymentId,
+      amountCents: input.amountCents,
+      paidOn: input.paidOn,
+      now: stamp,
+    })
   },
 })
 

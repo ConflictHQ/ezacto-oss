@@ -154,6 +154,12 @@ export {
   setBillDelivery,
 } from './bill.js'
 export {
+  recordCheckoutPayment,
+  type CheckoutPaymentInput,
+  type CheckoutPaymentOutcome,
+  type CheckoutProvider,
+} from './checkout-payments.js'
+export {
   createD1SsoProvisioningDomainStore,
   SsoProvisioningDomainError,
   type SsoProvisioningDomainErrorCode,

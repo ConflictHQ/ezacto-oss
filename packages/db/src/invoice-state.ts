@@ -211,8 +211,43 @@ export interface BankDepositInvoicePaymentInput {
   recordedByUserId?: number | null
 }
 
+/**
+ * A payment taken by a payment provider on an invoice we sent them (issue 595).
+ *
+ * `invoice_payments` has described this row since migration 0005 -- `provider`
+ * admits `stripe`, `paypal`, `quickbooks` and `bill_com`, `provider_shape` has
+ * a `checkout` value, and the CHECK requires an account and a transaction id
+ * for any provider that is not `manual`. Nothing could write one: the manual
+ * branch forbids an account id and the bank-deposit branch produces
+ * `reconciliation` rows from a deposit that a checkout payment does not have.
+ *
+ * So the QuickBooks mirror wrote the row directly and was refused by the ledger
+ * trigger, and its inbound payments have never worked. This is the shape that
+ * was missing, not a new idea about what a payment is.
+ *
+ * `providerTransactionId` is the provider's own id for the payment and is what
+ * makes recording it twice impossible at the row level -- the reconciliations
+ * that produce these are polls, and a poll sees the same payment on every pass.
+ */
+export interface CheckoutInvoicePaymentInput {
+  type: 'checkout'
+  id: number
+  currency: string
+  amountCents: number
+  paidAt: string | null
+  paidDate: string | null
+  provider: 'stripe' | 'paypal' | 'quickbooks' | 'bill_com'
+  /** A row in `payment_provider_accounts`; the account the money was taken into. */
+  providerAccountId: number
+  providerTransactionId: string
+  notes?: string | null
+}
+
 export interface RecordInvoicePaymentCommand extends InvoiceMutationCommand {
-  payment: ManualInvoicePaymentInput | BankDepositInvoicePaymentInput
+  payment:
+    | ManualInvoicePaymentInput
+    | CheckoutInvoicePaymentInput
+    | BankDepositInvoicePaymentInput
 }
 
 export interface UpdateInvoicePaymentCommand extends InvoiceMutationCommand {
@@ -1748,6 +1783,19 @@ export const recordInvoicePayment = async (
           notes: input.payment.notes,
           recorded_by_user_id: input.payment.recordedByUserId,
         }
+      : input.payment.type === 'checkout'
+      ? {
+          type: 'checkout',
+          id: input.payment.id,
+          currency: input.payment.currency,
+          amount_cents: input.payment.amountCents,
+          paid_at: input.payment.paidAt,
+          paid_date: input.payment.paidDate,
+          provider: input.payment.provider,
+          provider_account_id: input.payment.providerAccountId,
+          provider_transaction_id: input.payment.providerTransactionId,
+          notes: input.payment.notes,
+        }
       : {
           type: 'bank_deposit',
           id: input.payment.id,
@@ -1814,6 +1862,77 @@ export const recordInvoicePayment = async (
         payment.recordedByUserId,
         input.occurredAt,
         input.occurredAt,
+        input.invoiceId,
+        input.commandId,
+      ],
+    }
+  } else if (input.payment.type === 'checkout') {
+    assertCents(input.payment.amountCents, 'payment.amountCents', true)
+    assertPaymentTimestamp(input.payment)
+    if (!/^[A-Z]{3}$/.test(input.payment.currency)) {
+      invalidInput('payment.currency must be a three-letter uppercase code')
+    }
+    assertPositiveSafeInteger(input.payment.providerAccountId, 'payment.providerAccountId')
+    // The schema requires both for any provider that is not `manual`, and a
+    // receipt without the provider's own id is one no reconciliation can
+    // recognise again -- which is how the same payment is recorded twice.
+    //
+    // There is deliberately no duplicate check in the statement below.
+    // `invoice_payments_provider_transaction_unique` already makes a second
+    // receipt for one provider payment impossible, and it holds against a
+    // concurrent writer where a NOT EXISTS of our own only looks like it does.
+    // A first draft had one; a mutation that deleted it changed nothing
+    // observable, which is what an unreachable guard looks like.
+    if (input.payment.providerTransactionId.trim() === '') {
+      invalidInput('payment.providerTransactionId is required for a checkout payment')
+    }
+    payment = {
+      id: input.payment.id,
+      invoiceId: input.invoiceId,
+      harvestId: null,
+      currency: input.payment.currency,
+      amountCents: input.payment.amountCents,
+      paidAt: input.payment.paidAt,
+      paidDate: input.payment.paidDate,
+      notes: input.payment.notes ?? null,
+      // Nobody recorded it. A provider took the money and a reconciliation
+      // noticed, so naming a user here would attribute it to somebody who was
+      // not involved.
+      recordedByUserId: null,
+      provider: input.payment.provider,
+      providerShape: 'checkout',
+      providerAccountId: input.payment.providerAccountId,
+      providerTransactionId: input.payment.providerTransactionId,
+      bankDepositId: null,
+      updatedAt: input.occurredAt,
+    }
+    paymentInsert = {
+      text: `INSERT INTO invoice_payments (
+          id, invoice_id, currency, amount_cents, paid_at, paid_date, notes,
+          recorded_by_user_id, provider, provider_shape, provider_account_id,
+          provider_transaction_id, created_at, updated_at
+        )
+        SELECT ?, ?, ?, ?, ?, ?, ?, NULL, account.provider, 'checkout',
+          account.id, ?, ?, ?
+        FROM payment_provider_accounts account
+        WHERE account.id = ? AND account.provider = ? AND account.provider_shape = 'checkout'
+          AND EXISTS (
+            SELECT 1 FROM invoice_command_ledger
+            WHERE invoice_id = ? AND command_id = ? AND completed = 0
+          )`,
+      params: [
+        payment.id,
+        input.invoiceId,
+        payment.currency,
+        payment.amountCents,
+        payment.paidAt,
+        payment.paidDate,
+        payment.notes,
+        payment.providerTransactionId,
+        input.occurredAt,
+        input.occurredAt,
+        input.payment.providerAccountId,
+        input.payment.provider,
         input.invoiceId,
         input.commandId,
       ],
