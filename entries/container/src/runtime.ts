@@ -40,6 +40,7 @@ import {
   createBillMirrorSource,
   createPayoutAccountStore,
   createStripeLinkStore,
+  releaseInvoicedTimeEntries,
   recordCheckoutPayment,
   setBillDelivery,
   createQuickBooksMirrorSource,
@@ -492,6 +493,16 @@ export const createContainerRuntime = async (
         }
       })(),
       stripe,
+      // The same seam the Worker composes: both entries must answer this route
+      // or `entry-surface.ts` fails the one that does and the one that does not.
+      invoiceTimeClaims: {
+        releaseInvoicedTime: async (invoiceId: number) => {
+          const outcome = await releaseInvoicedTimeEntries(drizzle, invoiceId)
+          return 'released' in outcome
+            ? ({ kind: 'released', released: outcome.released } as const)
+            : ({ kind: 'refused', reason: outcome.refused } as const)
+        },
+      },
       bill,
       billDelivery: {
         isOptedIn: (clientId: number) =>

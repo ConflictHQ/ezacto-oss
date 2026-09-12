@@ -1293,6 +1293,20 @@ const stripeOperations: ApiContractOperation[] = [
   },
 ];
 
+const invoiceTimeClaimOperations: ApiContractOperation[] = [
+  {
+    method: "post",
+    path: "/api/v1/invoices/:id/released-time",
+    operationId: "releaseInvoicedTime",
+    summary: "Hand this invoice's time entries back, once it no longer stands",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "ReleasedTimeEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+];
+
 const payoutAccountOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -2055,6 +2069,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...brandAssetOperations,
   ...instanceThemeOperations,
   ...stripeOperations,
+  ...invoiceTimeClaimOperations,
   ...payoutAccountOperations,
   ...billOperations,
   ...twoFactorOperations,
@@ -6266,6 +6281,19 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         type: "object",
         required: ["invoice_id", "url"],
         properties: { invoice_id: integerSchema, url: stringSchema },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  ReleasedTimeEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["invoice_id", "released"],
+        properties: { invoice_id: integerSchema, released: integerSchema },
         additionalProperties: false,
       },
     },

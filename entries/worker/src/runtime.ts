@@ -39,6 +39,7 @@ import {
   createBillMirrorSource,
   createPayoutAccountStore,
   createStripeLinkStore,
+  releaseInvoicedTimeEntries,
   recordCheckoutPayment,
   setBillDelivery,
 } from "@ezacto/db/d1";
@@ -820,6 +821,16 @@ export const createRuntimeServices = async (
       }
     })(),
     stripe,
+    // Releasing is refused while the invoice stands; the store reports why
+    // rather than letting a trigger abort reach the caller as a 500.
+    invoiceTimeClaims: {
+      releaseInvoicedTime: async (invoiceId: number) => {
+        const outcome = await releaseInvoicedTimeEntries(drizzle, invoiceId)
+        return 'released' in outcome
+          ? ({ kind: 'released', released: outcome.released } as const)
+          : ({ kind: 'refused', reason: outcome.refused } as const)
+      },
+    },
     bill,
     billDelivery: {
       isOptedIn: (clientId: number) =>
