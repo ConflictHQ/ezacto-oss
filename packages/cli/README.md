@@ -4,6 +4,19 @@
 package. It supports named organization configs, token login, identity checks,
 redacted config output, and both human and JSON output.
 
+## Install
+
+```sh
+npm install -g @conflict-hq/ezacto-cli
+ez --help
+```
+
+Node 22 or later. The package is published from
+[ConflictHQ/ezacto-oss](https://github.com/ConflictHQ/ezacto-oss) under the
+AGPL v3; `npx @conflict-hq/ezacto-cli --help` runs it without installing.
+
+## Use
+
 ```sh
 # Safest for an already-issued scoped API token: it never enters shell history.
 printf '%s\n' "$EZACTO_TOKEN" | ez login --token-stdin --org conflict
