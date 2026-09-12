@@ -22,6 +22,17 @@
  *    timestamp is inside the signed payload, so it cannot be edited without
  *    breaking the signature -- checking it is what stops a captured delivery
  *    being replayed.
+ *
+ * Checked against Stripe rather than against itself. The unit tests below sign
+ * with the same code path they verify, which is the flaw issue 421 names in the
+ * Deel client: a fixture shaped by the same assumption as the code cannot catch
+ * the assumption being wrong. So this was also run against a delivery the Stripe
+ * CLI actually produced -- `stripe listen` forwarding a real
+ * `checkout.session.completed` to a local capture. That delivery carried both a
+ * v1 and a v0 signature, and confirmed the four properties above: the genuine
+ * signature verified, a body altered by one space did not, a wrong secret did
+ * not, a replay an hour later did not, and Stripe's own v0 offered alone was
+ * refused outright.
  */
 
 /** Stripe's own default, and the one their libraries use. */
