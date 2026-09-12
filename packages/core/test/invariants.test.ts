@@ -217,4 +217,44 @@ describe("domain invariant registry", () => {
     }
     expect(matches).toEqual([]);
   });
+
+  it("[unit] writes control characters as escapes, so source stays reviewable", async () => {
+    /**
+     * Three files carried a raw control character in a string literal rather
+     * than its escape: a unit separator delimiting hash inputs in the recurring
+     * invoice engine, and a NUL delimiting a composite key in the Deel time
+     * sync and guarding input in the Mailgun provider. Every one of them was
+     * deliberate and correct, and every one was written as the byte itself.
+     *
+     * The cost is not to the program, which behaves identically either way. It
+     * is that git calls a file binary when a NUL appears in its first 8 KB, so
+     * a change to it renders as `Bin 7439 -> 8818 bytes` and cannot be reviewed
+     * -- and `grep` skips the file silently, so an audit sweeping the tree for
+     * a pattern reports clean on a file it never read. Two of the three were in
+     * that state: the outbound mail provider, and a money path.
+     *
+     * An escape is the same character to the compiler and an ordinary line to
+     * everything else.
+     */
+    const offenders: string[] = [];
+    for (const topLevel of ["packages", "entries", "apps", "scripts"]) {
+      for (const path of await walk(join(repositoryRoot, topLevel))) {
+        if (!/\.(?:ts|tsx|mjs|js|css)$/u.test(path)) continue;
+        if (path.includes(`${join("", "node_modules")}/`)) continue;
+        if (path.includes(`${join("", "dist")}/`)) continue;
+        const source = await readFile(path, "utf8");
+        for (const [index, character] of [...source].entries()) {
+          const code = character.codePointAt(0)!;
+          if (code < 32 && code !== 9 && code !== 10 && code !== 13) {
+            offenders.push(
+              `${relative(repositoryRoot, path)}:${String(index)}:U+${code
+                .toString(16)
+                .padStart(4, "0")}`,
+            );
+          }
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
 });
