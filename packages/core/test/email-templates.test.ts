@@ -116,7 +116,10 @@ describe("email template variables", () => {
   });
 
   it("[unit] exposes a closed reference vocabulary with honest compatibility labels", () => {
-    expect(emailTemplateVariables).toHaveLength(15);
+    // 16 since `%invoice_payment_url%` joined for #102. The count is pinned on
+    // purpose: the vocabulary is closed, and a variable appearing without
+    // somebody deciding to add it is what this catches.
+    expect(emailTemplateVariables).toHaveLength(16);
     expect(
       emailTemplateVariables
         .filter(({ compatibility }) => compatibility === "harvest")

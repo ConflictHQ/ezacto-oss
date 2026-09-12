@@ -523,6 +523,7 @@ const harness = async (
   interleave?: "invoice" | "estimate",
   deliveryMailer?: SenderBoundQueuedMailer,
   deliveryTemplate?: DeliveryTemplate,
+  invoicePaymentUrl?: (invoiceId: number) => Promise<string | null>,
 ): Promise<Harness> => {
   const database = await factory();
   await seed(database);
@@ -559,6 +560,7 @@ const harness = async (
                 },
               },
             }),
+        ...(invoicePaymentUrl === undefined ? {} : { invoicePaymentUrl }),
         ...(deliveryMailer === undefined
           ? {}
           : {
@@ -665,6 +667,7 @@ for (const [runtime, factory] of factories) {
       interleave?: "invoice" | "estimate",
       deliveryMailer?: SenderBoundQueuedMailer,
       deliveryTemplate?: DeliveryTemplate,
+      invoicePaymentUrl?: (invoiceId: number) => Promise<string | null>,
     ): Promise<Harness> => {
       active = await harness(
         factory,
@@ -672,6 +675,7 @@ for (const [runtime, factory] of factories) {
         interleave,
         deliveryMailer,
         deliveryTemplate,
+        invoicePaymentUrl,
       );
       return active;
     };
@@ -737,6 +741,93 @@ for (const [runtime, factory] of factories) {
         `SELECT recipient.email, log.status FROM invoice_email_recipients recipient
          JOIN email_log log ON log.id = recipient.delivery_id`,
       )).toEqual([{ email: "client@example.net", status: "queued" }]);
+    }, slowRuntimeTimeout);
+
+    /**
+     * The last mile of #102: the pay link has to be INSIDE the body, and the
+     * body is composed and persisted at send time -- so the link must exist
+     * before the invoice goes out, not when somebody opens it.
+     */
+    it("[money] puts the payment link in the body the client receives", async () => {
+      const mailer = {
+        assertAvailable: vi.fn(async () => undefined),
+        enqueue: vi.fn(),
+      } satisfies SenderBoundQueuedMailer;
+      const test = await setup(
+        undefined,
+        undefined,
+        mailer,
+        { textTemplate: "Pay at %invoice_payment_url% for %invoice_number%." },
+        async () => "https://buy.stripe.com/test_example",
+      );
+      await seedInvoiceDeliveryConfiguration(test.database);
+      const response = await test.request(
+        "/api/v1/invoices/1/deliveries",
+        jsonRequest("POST", {
+          expected_version: 0,
+          recipients: [{ name: "Client", email: "client@example.net" }],
+          confirmed: true,
+        }, "invoice-delivery-paylink"),
+      );
+      expect(response.status).toBe(202);
+      const [intent] = await test.database.rows<{ text_body: string }>(
+        "SELECT text_body FROM invoice_email_intents",
+      );
+      expect(intent?.text_body).toContain("https://buy.stripe.com/test_example");
+    }, slowRuntimeTimeout);
+
+    it("[money] still sends when there is no link to offer", async () => {
+      // A deployment with no Stripe key sends the invoice it always sent. The
+      // interpolator throws on a variable it was promised and not given, so the
+      // empty string is what keeps a missing convenience from stopping an
+      // invoice.
+      const mailer = {
+        assertAvailable: vi.fn(async () => undefined),
+        enqueue: vi.fn(),
+      } satisfies SenderBoundQueuedMailer;
+      const test = await setup(
+        undefined,
+        undefined,
+        mailer,
+        { textTemplate: "Invoice %invoice_number%.%invoice_payment_url%" },
+      );
+      await seedInvoiceDeliveryConfiguration(test.database);
+      const response = await test.request(
+        "/api/v1/invoices/1/deliveries",
+        jsonRequest("POST", {
+          expected_version: 0,
+          recipients: [{ name: "Client", email: "client@example.net" }],
+          confirmed: true,
+        }, "invoice-delivery-nolink"),
+      );
+      expect(response.status).toBe(202);
+    }, slowRuntimeTimeout);
+
+    it("[security] a provider that fails does not stop the invoice going out", async () => {
+      // Minting a convenience must never be why a client does not get billed.
+      const mailer = {
+        assertAvailable: vi.fn(async () => undefined),
+        enqueue: vi.fn(),
+      } satisfies SenderBoundQueuedMailer;
+      const test = await setup(
+        undefined,
+        undefined,
+        mailer,
+        { textTemplate: "Invoice %invoice_number%.%invoice_payment_url%" },
+        async () => {
+          throw new Error("Stripe is down");
+        },
+      );
+      await seedInvoiceDeliveryConfiguration(test.database);
+      const response = await test.request(
+        "/api/v1/invoices/1/deliveries",
+        jsonRequest("POST", {
+          expected_version: 0,
+          recipients: [{ name: "Client", email: "client@example.net" }],
+          confirmed: true,
+        }, "invoice-delivery-stripe-down"),
+      );
+      expect(response.status).toBe(202);
     }, slowRuntimeTimeout);
 
     const seedDeliveryLines = async (test: Harness): Promise<void> => {

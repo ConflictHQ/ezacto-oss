@@ -127,6 +127,16 @@ export const emailTemplateVariables = [
     compatibility: "native",
   },
   {
+    name: "invoice_payment_url",
+    token: "%invoice_payment_url%",
+    description: "Where the client pays this invoice online, if a link exists",
+    kinds: invoiceKinds,
+    // Native rather than harvest: Harvest's own invoice email carried a "View
+    // invoice" link to its client portal, not a checkout URL. This is ezacto's
+    // own, and a template using it is one Harvest never had.
+    compatibility: "native",
+  },
+  {
     name: "action_url",
     token: "%action_url%",
     description: "One-time authentication action URL",
