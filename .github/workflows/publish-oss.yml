@@ -1,0 +1,69 @@
+name: publish-oss
+
+# Runs scripts/publish-oss/publish.sh: re-filters this repository's main into
+# the public history and pushes it to ConflictHQ/ezacto-oss as a fast-forward,
+# optionally with a release tag (npm-v<version> releases the CLI and client from
+# the public repository). Dispatch it, or call it from another workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to place on the published head (e.g. npm-v0.1.2); empty for none"
+        type: string
+        default: ""
+      dry_run:
+        description: "Filter and gate only; do not push"
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        default: ""
+      dry_run:
+        type: boolean
+        default: false
+    secrets:
+      OSS_PUBLISH_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-oss
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+      - name: Tools
+        run: |
+          set -euo pipefail
+          pipx install git-filter-repo==2.47.0
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.30.0/gitleaks_8.30.0_linux_x64.tar.gz | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+      - name: Deploy key
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s\n' "$OSS_PUBLISH_KEY" > "$RUNNER_TEMP/oss-publish-key"
+        env:
+          OSS_PUBLISH_KEY: ${{ secrets.OSS_PUBLISH_KEY }}
+      - name: Publish
+        run: |
+          set -euo pipefail
+          args=()
+          if [ "${{ inputs.dry_run }}" != "true" ]; then
+            args+=(--push)
+            if [ -n "${{ inputs.tag }}" ]; then args+=(--tag "${{ inputs.tag }}"); fi
+          fi
+          ./scripts/publish-oss/publish.sh "${args[@]}"
+        env:
+          PUBLISH_OSS_KEY: ${{ runner.temp }}/oss-publish-key
+          PUBLISH_OSS_SOURCE: ${{ github.workspace }}
