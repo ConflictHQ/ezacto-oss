@@ -184,6 +184,17 @@ export {
   type TimeEntryClaim,
 } from './release-invoiced-time.js'
 export {
+  invoiceDocumentFilename,
+  invoiceDocumentKey,
+  readAttachedDocument,
+  recordAttachedDocument,
+  resolveAttachPolicy,
+  setInvoiceAttachPolicy,
+  setOrganizationAttachPolicy,
+  type AttachDecision,
+  type AttachedDocument,
+} from './invoice-documents.js'
+export {
   createD1SsoProvisioningDomainStore,
   SsoProvisioningDomainError,
   type SsoProvisioningDomainErrorCode,
