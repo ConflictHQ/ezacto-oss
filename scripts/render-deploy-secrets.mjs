@@ -172,6 +172,12 @@ export const deploySecretPayload = (environment) => {
     BILL_REPLY_TO_USER_ID: optionalCredential(environment.BILL_REPLY_TO_USER_ID),
     STRIPE_API_KEY: optionalCredential(environment.STRIPE_API_KEY),
     STRIPE_WEBHOOK_SECRET: optionalCredential(environment.STRIPE_WEBHOOK_SECRET),
+    // Rendered because `secret bulk` replaces the Worker's whole secret set, so
+    // anything this payload omits is deleted on the next deploy. The bootstrap
+    // workflows put this key on the Worker themselves, and every deploy since
+    // has removed it again -- leaving the documented way to give an instance its
+    // first credential working only until the next deploy.
+    EZACTO_BOOTSTRAP_TOKEN: optionalCredential(environment.EZACTO_BOOTSTRAP_TOKEN),
   }
 }
 
