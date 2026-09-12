@@ -239,3 +239,76 @@ describe("Mailgun HTTP provider", () => {
     expect(typeof provider.send).toBe("function");
   });
 });
+
+describe("attachments", () => {
+  const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]);
+  const send = async (
+    attachments: unknown,
+    onRequest: (request: Request) => void = () => undefined,
+  ) => {
+    const provider = new MailgunMailer(config, {
+      monotonicNow: (() => {
+        const ticks = [100, 110];
+        return () => ticks.shift() ?? 110;
+      })(),
+      fetch: async (request) => {
+        onRequest(request.clone());
+        return response({ id: "<abc@mail.example.test>", message: "Queued" });
+      },
+    });
+    return provider.send(
+      { ...message, attachments } as never,
+      { signal: AbortSignal.timeout(1_000), idempotencyKey: "key1" },
+    );
+  };
+
+  it("[unit] posts multipart with the file when there is one to send", async () => {
+    let seen: Request | null = null;
+    await send([{ filename: "invoice-1315.pdf", contentType: "application/pdf", content: pdf }], (r) => {
+      seen = r;
+    });
+    const request = seen!;
+    // The boundary has to come from `fetch`, so the header is not hand-written.
+    expect(request.headers.get("content-type")).toMatch(/^multipart\/form-data; boundary=/u);
+    const form = await request.formData();
+    expect(form.get("subject")).toBe(message.subject);
+    const file = form.get("attachment") as File;
+    expect(file.name).toBe("invoice-1315.pdf");
+    expect(file.type).toBe("application/pdf");
+    expect(new Uint8Array(await file.arrayBuffer())).toEqual(pdf);
+  });
+
+  it("[unit] keeps form encoding when there is nothing attached", async () => {
+    // Every send that carries no file should take the simpler path it always
+    // took, rather than becoming multipart because the code now can be.
+    let seen: Request | null = null;
+    await send(undefined, (r) => {
+      seen = r;
+    });
+    expect(seen!.headers.get("content-type")).toBe("application/x-www-form-urlencoded");
+  });
+
+  it("[security] refuses a filename that would escape the folder it is saved to", async () => {
+    // The name reaches the recipient's filesystem.
+    for (const filename of ["../etc/passwd", "a/b.pdf", "a\\b.pdf", "..", "a:b.pdf"]) {
+      await expect(
+        send([{ filename, contentType: "application/pdf", content: pdf }]),
+      ).rejects.toThrow(/filename is invalid/u);
+    }
+  });
+
+  it("[unit] refuses an empty file, and more than ten of them", async () => {
+    await expect(
+      send([{ filename: "x.pdf", contentType: "application/pdf", content: new Uint8Array() }]),
+    ).rejects.toThrow(/is empty/u);
+    await expect(
+      send(
+        Array.from({ length: 11 }, (_, index) => ({
+          filename: `x${String(index)}.pdf`,
+          contentType: "application/pdf",
+          content: pdf,
+        })),
+      ),
+    ).rejects.toThrow(/cannot exceed 10 attachments/u);
+  });
+});

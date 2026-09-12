@@ -47,6 +47,21 @@ export interface EmailSender {
 }
 
 /** Provider input is an HTTP message document, not an SMTP transport envelope. */
+/**
+ * A file that travels with the message.
+ *
+ * Bytes, because this is the seam a provider sends from. The queue job upstream
+ * carries references instead and resolves them here at send time: a Cloudflare
+ * Queues message is capped at 128 KB, and a rendered invoice will not fit
+ * inside one (issue 626).
+ */
+export interface EmailAttachment {
+  /** What the recipient sees the file called. */
+  filename: string
+  contentType: string
+  content: Uint8Array
+}
+
 export interface EmailMessage {
   from: EmailSender
   replyTo?: readonly EmailRecipient[]
@@ -55,6 +70,12 @@ export interface EmailMessage {
   subject: string
   text: string
   html?: string
+  /**
+   * Not every provider here can carry these. The ones that cannot refuse the
+   * message rather than sending it without them -- an invoice that arrives
+   * without the document it says is attached is worse than one that fails.
+   */
+  attachments?: readonly EmailAttachment[]
   related?: { type: string; id: number }
 }
 

@@ -1,3 +1,5 @@
+import { MailgunMailer } from "../src/mailgun.js";
+import { SesMailer } from "../src/ses.js";
 import { describe, expect, it, vi } from 'vitest'
 import {
   EMAIL_RETRY_POLICY,
@@ -656,3 +658,108 @@ describe('queued mailer', () => {
     expect(provider.send).not.toHaveBeenCalled()
   })
 })
+
+describe("what every provider owes an attachment", () => {
+  const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
+  const withFile = {
+    from: { email: "notify@example.test", name: "Ezacto" },
+    to: [{ email: "owner@example.test", name: "Avery" }],
+    template: "invoice",
+    subject: "Invoice 1315",
+    text: "The invoice is attached.",
+    attachments: [
+      { filename: "invoice-1315.pdf", contentType: "application/pdf", content: pdf },
+    ],
+  } as never;
+
+  const withoutFile = {
+    from: { email: "notify@example.test", name: "Ezacto" },
+    to: [{ email: "owner@example.test", name: "Avery" }],
+    template: "invoice",
+    subject: "Invoice 1315",
+    text: "The invoice is attached.",
+  } as never;
+
+  /**
+   * The rule is not that every provider can attach a file. It is that none of
+   * them may accept the message and quietly send it without one.
+   *
+   * An invoice whose own body says a document is attached, arriving with
+   * nothing attached, is a failure the client discovers and the sender does
+   * not. So a provider that cannot carry the file has to say so, and this test
+   * fails a provider that resolves successfully having dropped it -- which is
+   * the state every provider here was in before issue 626.
+   */
+  it("[security] carries the file or refuses the message, and never silently drops it", async () => {
+    const carried: string[] = [];
+    const outcomes: Record<string, string> = {};
+
+    const providers = () => {
+      const mailgunCarried: string[] = [];
+      const mailgun = new MailgunMailer(
+        { apiKey: "key-test-00000000deadbeef00000000", domain: "mail.example.test" },
+        {
+          monotonicNow: (() => {
+            let tick = 0;
+            return () => (tick += 1);
+          })(),
+          fetch: async (request) => {
+            const body = await request.clone().formData().catch(() => null);
+            if (body?.get("attachment") instanceof File) mailgunCarried.push("mailgun");
+            return new Response(JSON.stringify({ id: "<a@b>", message: "Queued" }), { status: 200 });
+          },
+        },
+      );
+      const ses = new SesMailer(
+        {
+          accessKeyId: "TESTACCESSKEY",
+          secretAccessKey: "test-secret-key",
+          region: "us-west-2",
+          from: "Ezacto <notify@example.test>",
+        },
+        {
+          monotonicNow: (() => {
+            let tick = 0;
+            return () => (tick += 1);
+          })(),
+          fetch: async (request) =>
+            request.method === "GET"
+              ? new Response(JSON.stringify({}), {
+                  status: 404,
+                  headers: { "x-amzn-requestid": "request-1" },
+                })
+              : new Response(JSON.stringify({ MessageId: "ses-1" }), {
+                  status: 200,
+                  headers: { "x-amzn-requestid": "request-1" },
+                }),
+        },
+      );
+      return [
+        ["mailgun", mailgun, mailgunCarried] as const,
+        ["ses", ses, carried] as const,
+      ];
+    };
+
+    const options = { signal: AbortSignal.timeout(2_000), idempotencyKey: "k1" };
+    for (const [name, provider, seen] of providers()) {
+      // First, prove this harness can send at all. Without this the test is
+      // vacuous: a provider that throws for an unrelated reason would land in
+      // "refused" and pass while dropping attachments silently.
+      await expect(
+        provider.send(withoutFile, options),
+        `${name} cannot send even without an attachment, so this proves nothing`,
+      ).resolves.toBeDefined();
+
+      const outcome = await provider
+        .send(withFile, options)
+        .then(() => "sent" as const)
+        .catch(() => "refused" as const);
+      outcomes[name] = outcome;
+      if (outcome === "sent") {
+        expect(seen, `${name} reported success having dropped the file`).toContain(name);
+      }
+    }
+
+    expect(Object.keys(outcomes).sort()).toEqual(["mailgun", "ses"]);
+  });
+});
