@@ -763,3 +763,92 @@ describe("what every provider owes an attachment", () => {
     expect(Object.keys(outcomes).sort()).toEqual(["mailgun", "ses"]);
   });
 });
+
+describe('attachments through the queue', () => {
+  const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
+  const reference = {
+    key: 'invoices/1315/invoice-1315.pdf',
+    filename: 'invoice-1315.pdf',
+    contentType: 'application/pdf',
+  };
+
+  const sender = () => {
+    const sent: EmailMessage[] = [];
+    const provider: HttpEmailProvider = {
+      name: 'test-http',
+      send: vi.fn(async (message: EmailMessage) => {
+        sent.push(message);
+        return { messageId: 'm1', latencyMs: 1 };
+      }),
+    };
+    return { provider, sent };
+  };
+
+  it('[unit] fetches what the job named and hands the bytes to the provider', async () => {
+    const { provider, sent } = sender();
+    const resolve = vi.fn(async () => pdf);
+    await processQueuedEmail(
+      { ...job, attachments: [reference] },
+      1,
+      store(),
+      provider,
+      { resolveAttachment: resolve },
+    );
+    expect(resolve).toHaveBeenCalledWith(reference);
+    expect(sent[0]?.attachments).toEqual([
+      { filename: 'invoice-1315.pdf', contentType: 'application/pdf', content: pdf },
+    ]);
+  });
+
+  it('[security] refuses a job that carries the bytes themselves', async () => {
+    // A Cloudflare Queues message is capped at 128 KB. Bytes on the job mean
+    // something serialised a file into that envelope, and what that produces is
+    // a silent truncation upstream rather than an error here.
+    const { provider, sent } = sender();
+    await expect(
+      processQueuedEmail(
+        {
+          ...job,
+          message: {
+            ...message,
+            attachments: [{ filename: 'a.pdf', contentType: 'application/pdf', content: pdf }],
+          },
+        },
+        1,
+        store(),
+        provider,
+      ),
+    ).rejects.toThrow(/by reference, not by value/u);
+    expect(sent).toEqual([]);
+  });
+
+  it('[security] refuses when the file it names is not there', async () => {
+    // Dropped instead, the client receives an invoice whose own body says a
+    // document is attached and finds nothing -- a failure they discover and the
+    // sender does not.
+    const { provider, sent } = sender();
+    for (const missing of [null, new Uint8Array()]) {
+      await expect(
+        processQueuedEmail({ ...job, attachments: [reference] }, 1, store(), provider, {
+          resolveAttachment: async () => missing,
+        }),
+      ).rejects.toThrow(/attachment is missing/u);
+    }
+    expect(sent).toEqual([]);
+  });
+
+  it('[unit] refuses a job that names a file with no resolver to fetch it', async () => {
+    const { provider } = sender();
+    await expect(
+      processQueuedEmail({ ...job, attachments: [reference] }, 1, store(), provider),
+    ).rejects.toThrow(/no resolver was supplied/u);
+  });
+
+  it('[unit] leaves a message with nothing attached exactly as it was', async () => {
+    const { provider, sent } = sender();
+    await processQueuedEmail(job, 1, store(), provider, {
+      resolveAttachment: async () => pdf,
+    });
+    expect(sent[0]?.attachments).toBeUndefined();
+  });
+});
