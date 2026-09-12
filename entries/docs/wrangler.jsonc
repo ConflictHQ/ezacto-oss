@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ezacto-docs",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-26",
+  // Static pages only; the Worker exists to set headers. No bindings but the
+  // assets, so there is nothing here to point at anyone's account.
+  "workers_dev": false,
+  "observability": { "enabled": true },
+  "routes": [{ "pattern": "ezacto.dev", "custom_domain": true }],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  }
+}

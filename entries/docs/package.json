@@ -1,0 +1,28 @@
+{
+  "name": "ezacto-docs",
+  "version": "0.0.0",
+  "description": "ezacto.dev: the developer site, built from the docs, the OpenAPI contract and the CLI reference.",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "dev": "npm run build && wrangler dev",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260826.1",
+    "eslint": "^10.9.1",
+    "marked": "^18.0.12",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.68.0",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.0.0",
+    "@types/node": "^22.10.0"
+  }
+}
