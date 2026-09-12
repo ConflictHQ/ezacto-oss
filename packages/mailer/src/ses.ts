@@ -405,6 +405,13 @@ export class SesMailer implements HttpEmailProvider {
     if (!Array.isArray(message.to) || message.to.length < 1) {
       throw new RangeError("SES message requires at least one recipient");
     }
+    // Refused rather than dropped. This provider has no attachment path yet,
+    // and sending the message without the file would deliver an invoice whose
+    // own body says a document is attached when none is -- a failure the
+    // recipient has to notice, rather than one the sender does (issue 626).
+    if (message.attachments !== undefined && message.attachments.length > 0) {
+      throw new RangeError("SES cannot send attachments");
+    }
     if (message.to.length > 50) {
       throw new RangeError("SES message cannot exceed 50 recipients");
     }

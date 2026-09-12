@@ -1,4 +1,5 @@
 import type {
+  EmailAttachment,
   EmailMessage,
   EmailProviderReceipt,
   EmailRecipient,
@@ -121,6 +122,47 @@ const parseBody = (text: string): Record<string, unknown> => {
   }
 };
 
+const attachmentSizeLimit = 25 * 1024 * 1024;
+const forbiddenFilenameCharacters = new Set([
+  "/", "\\", ":", "*", "?", '"', "<", ">", "|",
+]);
+
+/**
+ * The filename reaches the recipient's filesystem, so it is checked rather than
+ * trusted: a path separator in it is how a saved attachment lands somewhere the
+ * person did not choose.
+ */
+const attachmentFilename = (value: string, index: number): string => {
+  const filename = bounded(value, `Mailgun attachment ${index} filename`, 255);
+  for (const character of filename) {
+    if (forbiddenFilenameCharacters.has(character)) {
+      throw new RangeError(`Mailgun attachment ${index} filename is invalid`);
+    }
+  }
+  if (filename === "." || filename === "..") {
+    throw new RangeError(`Mailgun attachment ${index} filename is invalid`);
+  }
+  return filename;
+};
+
+const attachmentBlob = (attachment: EmailAttachment, index: number): Blob => {
+  const contentType = bounded(
+    attachment.contentType,
+    `Mailgun attachment ${index} content type`,
+    255,
+  );
+  if (!(attachment.content instanceof Uint8Array)) {
+    throw new TypeError(`Mailgun attachment ${index} content must be bytes`);
+  }
+  if (attachment.content.byteLength === 0) {
+    throw new RangeError(`Mailgun attachment ${index} is empty`);
+  }
+  if (attachment.content.byteLength > attachmentSizeLimit) {
+    throw new RangeError(`Mailgun attachment ${index} exceeds the size limit`);
+  }
+  return new Blob([attachment.content as BlobPart], { type: contentType });
+};
+
 const baseUrl = (region: "us" | "eu"): string =>
   region === "eu"
     ? "https://api.eu.mailgun.net"
@@ -155,18 +197,29 @@ export class MailgunMailer implements HttpEmailProvider {
     this.endpoint = `${baseUrl(region)}/v3/${encodeURIComponent(domain)}/messages`;
   }
 
+  /**
+   * Mailgun takes attachments only as multipart, so a message carrying one is
+   * posted differently from one that does not. Form encoding stays the path for
+   * everything else rather than sending every message as multipart, because the
+   * simpler encoding is the one nearly every send uses.
+   */
   private async request(
-    body: URLSearchParams,
+    body: URLSearchParams | FormData,
     signal?: AbortSignal,
   ): Promise<MailgunResponse> {
     const started = this.monotonicNow();
+    const multipart = body instanceof FormData;
     const request = new Request(this.endpoint, {
       method: "POST",
       headers: {
         authorization: this.authorization,
-        "content-type": "application/x-www-form-urlencoded",
+        // Left unset for multipart: `fetch` writes it itself, with the boundary,
+        // and a hand-written one without a boundary makes the body unparseable.
+        ...(multipart
+          ? {}
+          : { "content-type": "application/x-www-form-urlencoded" }),
       },
-      body: body.toString(),
+      body: multipart ? body : body.toString(),
       ...(signal === undefined ? {} : { signal }),
     });
     const response = await this.fetchImplementation(request);
@@ -216,8 +269,31 @@ export class MailgunMailer implements HttpEmailProvider {
     params.set("h:X-Ezacto-Idempotency-Key", idempotencyKey);
     params.set("o:tag", `ezacto_idempotency_key:${idempotencyKey}`);
 
-    const { body, latencyMs } = await this.request(params, options.signal);
-    const rawId = optionalString(body.id);
+    // Validated before the first byte is sent, so a bad filename or an empty
+    // file is a refusal rather than a half-built request Mailgun rejects.
+    const attachments = message.attachments ?? [];
+    if (attachments.length > 10) {
+      throw new RangeError("Mailgun message cannot exceed 10 attachments");
+    }
+    const parts = attachments.map((attachment, index) => ({
+      filename: attachmentFilename(attachment.filename, index),
+      blob: attachmentBlob(attachment, index),
+    }));
+    const total = parts.reduce((sum, part) => sum + part.blob.size, 0);
+    if (total > attachmentSizeLimit) {
+      throw new RangeError("Mailgun attachments exceed the combined size limit");
+    }
+
+    let body: URLSearchParams | FormData = params;
+    if (parts.length > 0) {
+      const form = new FormData();
+      for (const [key, value] of params) form.append(key, value);
+      for (const part of parts) form.append("attachment", part.blob, part.filename);
+      body = form;
+    }
+
+    const { body: parsed, latencyMs } = await this.request(body, options.signal);
+    const rawId = optionalString(parsed.id);
     if (rawId === null) {
       throw new Error("Mailgun send receipt is incomplete");
     }

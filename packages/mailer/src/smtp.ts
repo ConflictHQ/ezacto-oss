@@ -156,6 +156,13 @@ export class SmtpMailer implements HttpEmailProvider {
     if (!/^[A-Za-z0-9_-]{1,256}$/u.test(options.idempotencyKey)) {
       throw new RangeError('SMTP idempotency key is invalid')
     }
+    // Refused rather than dropped. This provider has no attachment path yet,
+    // and sending the message without the file would deliver an invoice whose
+    // own body says a document is attached when none is -- a failure the
+    // recipient has to notice, rather than one the sender does (issue 626).
+    if (message.attachments !== undefined && message.attachments.length > 0) {
+      throw new RangeError('SMTP cannot send attachments');
+    }
     if (options.signal.aborted) {
       throw new DOMException('SMTP delivery aborted', 'AbortError')
     }
