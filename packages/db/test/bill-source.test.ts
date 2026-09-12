@@ -158,7 +158,6 @@ describe('recording a BILL payment', () => {
     billPaymentId: '0rp1',
     amountCents: 60_000,
     paidOn: '2026-09-20',
-    organizationId: '008EXAMPLE',
   }
 
   it('[money] remembers what BILL reported against the invoice', async () => {

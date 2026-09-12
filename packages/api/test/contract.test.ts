@@ -5,6 +5,7 @@ import {
   installQuickBooksRoutes,
   installBrandAssetRoutes,
   installBrandRoute,
+  installBillRoutes,
   installInstanceThemeRoutes,
   apiContractOperations,
   createApiApp,
@@ -207,6 +208,16 @@ const documentedApp = () =>
       installBrandRoute(api, {
         organizationName: async () => "Contract Fixture",
         assets: (env) => brandAssets.list(env),
+      });
+      installBillRoutes(api, {
+        status: () => ({
+          configured: false,
+          organizationId: null,
+          environment: "sandbox",
+          canSendFromBill: false,
+        }),
+        isOptedIn: async () => false,
+        setOptedIn: async () => false,
       });
       installInstanceThemeRoutes(api, {
         surface: {

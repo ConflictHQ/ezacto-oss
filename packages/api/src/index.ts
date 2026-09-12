@@ -63,6 +63,11 @@ export {
   type InstanceThemeSurface,
 } from './instance-theme.js'
 export {
+  installBillRoutes,
+  type BillService,
+  type BillStatus,
+} from './bill.js'
+export {
   apiContractOperations,
   apiContractSchemas,
   generateOpenApiDocument,

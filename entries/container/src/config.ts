@@ -22,6 +22,14 @@ export interface ContainerConfig {
    * routes are not mounted, because a connect button that cannot connect is
    * worse than no button. Same rule as the Worker's.
    */
+  bill?: {
+    devKey: string
+    organizationId: string
+    username: string
+    password: string
+    replyToUserId?: string
+    environment?: string
+  }
   quickBooks?: {
     clientId: string
     clientSecret: string
@@ -140,6 +148,21 @@ export const readContainerConfig = (
   )
   const bootstrapToken = optional(environment, 'EZACTO_BOOTSTRAP_TOKEN', 512)
   const magicLinkKey = optional(environment, 'MAGIC_LINK_SIGNING_KEY', 128)
+  const billDevKey = optional(environment, 'BILL_DEV_KEY', 512)
+  const billOrganizationId = optional(environment, 'BILL_ORGANIZATION_ID', 128)
+  const billUsername = optional(environment, 'BILL_USERNAME', 256)
+  const billPassword = optional(environment, 'BILL_PASSWORD', 512)
+  const billReplyToUserId = optional(environment, 'BILL_REPLY_TO_USER_ID', 128)
+  const billEnvironment = optional(environment, 'BILL_ENVIRONMENT', 32)
+  const billParts = [billDevKey, billOrganizationId, billUsername, billPassword]
+  // All four or none. BILL's sign-in takes every one of them, so a deployment
+  // that set three has a configuration that cannot sign in and an operator who
+  // believes it can.
+  if (billParts.some((part) => part !== undefined) && billParts.some((part) => part === undefined)) {
+    throw new Error(
+      'BILL needs BILL_DEV_KEY, BILL_ORGANIZATION_ID, BILL_USERNAME and BILL_PASSWORD together',
+    )
+  }
   const quickBooksClientId = optional(environment, 'QUICKBOOKS_CLIENT_ID', 512)
   const quickBooksClientSecret = optional(environment, 'QUICKBOOKS_CLIENT_SECRET', 512)
   const quickBooksVerifier = optional(environment, 'QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN', 512)
@@ -193,6 +216,21 @@ export const readContainerConfig = (
     ...(magicLinkKey === undefined
       ? {}
       : { magicLinkSigningKey: signingKey(magicLinkKey) }),
+    ...(billDevKey === undefined ||
+    billOrganizationId === undefined ||
+    billUsername === undefined ||
+    billPassword === undefined
+      ? {}
+      : {
+          bill: {
+            devKey: billDevKey,
+            organizationId: billOrganizationId,
+            username: billUsername,
+            password: billPassword,
+            ...(billReplyToUserId === undefined ? {} : { replyToUserId: billReplyToUserId }),
+            ...(billEnvironment === undefined ? {} : { environment: billEnvironment }),
+          },
+        }),
     ...(quickBooksClientId === undefined || quickBooksClientSecret === undefined
       ? {}
       : {

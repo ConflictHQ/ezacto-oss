@@ -1,4 +1,4 @@
-import type { QuickBooksService } from "@ezacto/integrations";
+import type { BillRuntime, QuickBooksService } from "@ezacto/integrations";
 import {
   notFoundResponse,
   createApiApp,
@@ -32,6 +32,7 @@ import {
   installTrackedResourceRoutes,
   installTimesheetApprovalRoutes,
   installBackupStatusRoutes,
+  installBillRoutes,
   installQuickBooksRoutes,
   installTimesheetLockPolicyRoutes,
   installTeamRoutes,
@@ -151,6 +152,25 @@ export type WorkerEnv = AppEnv & {
   QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN?: string
   /** `sandbox` reaches Intuit's test companies; anything else is live books. */
   QUICKBOOKS_ENVIRONMENT?: string
+  /**
+   * BILL credentials. All Worker secrets, and all four are needed before
+   * anything can be sent: BILL has no OAuth, so there is no connect flow that
+   * could obtain them and nothing for this system to rotate.
+   *
+   * `BILL_USERNAME` and `BILL_PASSWORD` take either an operator's BILL login or
+   * the NAME and VALUE of an AP/AR sync token -- BILL reads both from the same
+   * two fields. The sync token is the safer of the two and cannot have BILL
+   * send the invoice email, which is what `BILL_REPLY_TO_USER_ID` selects: set
+   * it and BILL emails the client, leave it and ezacto emails them with a BILL
+   * payment link instead.
+   */
+  BILL_DEV_KEY?: string
+  BILL_ORGANIZATION_ID?: string
+  BILL_USERNAME?: string
+  BILL_PASSWORD?: string
+  BILL_REPLY_TO_USER_ID?: string
+  /** `sandbox` reaches BILL's test organisation; anything else is the real book. */
+  BILL_ENVIRONMENT?: string
   /** SES credentials are Worker secrets; never place them in wrangler vars. */
   AWS_ACCESS_KEY_ID?: string
   AWS_SECRET_ACCESS_KEY?: string
@@ -235,6 +255,16 @@ export interface RuntimeServices {
    * one.
    */
   quickBooks?: QuickBooksService
+  bill?: BillRuntime
+  /**
+   * The per-client opt-in. Separate from the runtime because turning it on is a
+   * database write with no BILL call in it -- the runtime is the thing that
+   * talks to BILL, and a setting an operator changes should not need it.
+   */
+  billDelivery?: {
+    isOptedIn(clientId: number): Promise<boolean>
+    setOptedIn(clientId: number, enabled: boolean): Promise<boolean>
+  }
 }
 
 export type Health = {
@@ -390,6 +420,18 @@ export const createApp = (
             }
             if (services.quickBooks !== undefined) {
               installQuickBooksRoutes(api, services.quickBooks)
+            }
+            // Mounted whether or not BILL is reachable: there is nothing to
+            // connect, so the honest answer to "is this configured?" is a
+            // route that says so rather than a route that is missing.
+            if (services.bill !== undefined && services.billDelivery !== undefined) {
+              const billRuntime = services.bill
+              const billDelivery = services.billDelivery
+              installBillRoutes(api, {
+                status: () => billRuntime.status(),
+                isOptedIn: (id) => billDelivery.isOptedIn(id),
+                setOptedIn: (id, enabled) => billDelivery.setOptedIn(id, enabled),
+              })
             }
             installModuleSettingsRoutes(api, {
               service: services.moduleSettings,

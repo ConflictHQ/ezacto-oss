@@ -1279,6 +1279,43 @@ const instanceThemeOperations: ApiContractOperation[] = [
   },
 ];
 
+const billOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/integrations/bill",
+    operationId: "getBillStatus",
+    summary: "Whether this deployment can reach BILL, and how it can deliver",
+    tag: "integrations",
+    responseStatus: 200,
+    responseSchema: "BillStatusEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "get",
+    path: "/api/v1/integrations/bill/clients/:id",
+    operationId: "getBillClientDelivery",
+    summary: "Whether this client is billed through BILL",
+    tag: "integrations",
+    responseStatus: 200,
+    responseSchema: "BillClientDeliveryEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "post",
+    path: "/api/v1/integrations/bill/clients/:id",
+    operationId: "setBillClientDelivery",
+    summary: "Bill this client through BILL, or stop",
+    tag: "integrations",
+    responseStatus: 200,
+    responseSchema: "BillClientDeliveryEnvelope",
+    requestSchema: "BillClientDeliveryInput",
+    requestRequired: true,
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+];
+
 const twoFactorOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -1966,6 +2003,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...ssoDomainOperations,
   ...brandAssetOperations,
   ...instanceThemeOperations,
+  ...billOperations,
   ...twoFactorOperations,
   ...userEmailOperations,
   ...teamOperations,
@@ -6125,6 +6163,52 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object",
     required: ["palette"],
     properties: { palette: reference("InstancePalette") },
+    additionalProperties: false,
+  },
+  BillStatus: {
+    type: "object",
+    required: [
+      "configured",
+      "organization_id",
+      "environment",
+      "can_send_from_bill",
+    ],
+    properties: {
+      configured: booleanSchema,
+      organization_id: nullable(stringSchema),
+      environment: { enum: ["sandbox", "production"] },
+      // A sync token cannot have BILL send the invoice email. The screen has to
+      // say which it is, or an operator is told their client will be emailed
+      // when nobody will email them.
+      can_send_from_bill: booleanSchema,
+    },
+    additionalProperties: false,
+  },
+  BillStatusEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("BillStatus") },
+    additionalProperties: false,
+  },
+  BillClientDelivery: {
+    type: "object",
+    required: ["client_id", "deliver_via_bill"],
+    properties: {
+      client_id: integerSchema,
+      deliver_via_bill: booleanSchema,
+    },
+    additionalProperties: false,
+  },
+  BillClientDeliveryEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("BillClientDelivery") },
+    additionalProperties: false,
+  },
+  BillClientDeliveryInput: {
+    type: "object",
+    required: ["deliver_via_bill"],
+    properties: { deliver_via_bill: booleanSchema },
     additionalProperties: false,
   },
   SsoDomainInput: {

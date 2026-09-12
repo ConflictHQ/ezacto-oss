@@ -35,6 +35,9 @@ import {
   createD1ReminderScheduler,
   captureActivityEvent,
   createTwoFactorService,
+  createBillLinkStore,
+  createBillMirrorSource,
+  setBillDelivery,
 } from "@ezacto/db/d1";
 import { createPortalSessionService } from "@ezacto/api";
 import {
@@ -62,6 +65,8 @@ import {
 import type { RuntimeServices } from "./app.js";
 import { cloudflareAccessConfig, type WorkerEnv } from "./app.js";
 import {
+  createBillMirrorSubscriber,
+  createBillRuntime,
   createQuickBooksMirrorSubscriber,
   createQuickBooksRuntime,
 } from "@ezacto/integrations";
@@ -578,11 +583,31 @@ export const createRuntimeServices = async (
           now: () => new Date(),
         });
 
+  // Composed whenever the deployment carries BILL credentials. Unlike
+  // QuickBooks there is nothing to connect -- BILL has no OAuth -- so the
+  // routes mount either way and say whether they can reach anything; what
+  // changes with the credential is only whether a mirror can run.
+  const bill = createBillRuntime({
+    config: {
+      devKey: env.BILL_DEV_KEY,
+      organizationId: env.BILL_ORGANIZATION_ID,
+      username: env.BILL_USERNAME,
+      password: env.BILL_PASSWORD,
+      replyToUserId: env.BILL_REPLY_TO_USER_ID,
+      environment: env.BILL_ENVIRONMENT,
+    },
+    links: createBillLinkStore(drizzle, () => new Date()),
+    source: createBillMirrorSource(drizzle, () => new Date()),
+    fetch: (request: Request) => fetch(request),
+    now: () => new Date(),
+  })
+
   const outbox = createD1OutboxService(database, {
     additionalSubscribers: [
       createInvoiceEmailOutboxSubscriber(moneyResources, organizationMailer),
       reminders.subscriber,
       ...(quickBooks === null ? [] : [createQuickBooksMirrorSubscriber(quickBooks)]),
+      createBillMirrorSubscriber(bill),
     ],
   });
   return {
@@ -712,6 +737,13 @@ export const createRuntimeServices = async (
     // worse than no button -- `entry-surface.ts` declares that gating so both
     // halves of the contract guard know about it.
     ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
+    bill,
+    billDelivery: {
+      isOptedIn: (clientId: number) =>
+        createBillMirrorSource(drizzle, () => new Date()).isOptedIn(clientId),
+      setOptedIn: (clientId: number, enabled: boolean) =>
+        setBillDelivery(drizzle, clientId, enabled),
+    },
     identities,
     oidcTransactions: createD1OidcTransactionStore(database),
     ...(deploymentAuthMailer === undefined ? {} : { deploymentAuthMailer }),

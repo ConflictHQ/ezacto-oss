@@ -35,6 +35,9 @@ import {
   listClientAncestors,
   listClientDescendants,
   migrateContainer,
+  createBillLinkStore,
+  createBillMirrorSource,
+  setBillDelivery,
   createQuickBooksMirrorSource,
   createQuickBooksStore,
 } from '@ezacto/db'
@@ -58,6 +61,8 @@ import { SmtpMailer } from '@ezacto/mailer/smtp'
 import type { BrandAssetSurface, InstanceThemeSurface } from '@ezacto/api'
 import type { AppEnv, RuntimeServices } from '../../worker/src/app.js'
 import {
+  createBillMirrorSubscriber,
+  createBillRuntime,
   createQuickBooksMirrorSubscriber,
   createQuickBooksRuntime,
 } from '@ezacto/integrations'
@@ -324,6 +329,21 @@ export const createContainerRuntime = async (
             now: () => new Date(),
           })
 
+    const bill = createBillRuntime({
+      config: {
+        devKey: config.bill?.devKey,
+        organizationId: config.bill?.organizationId,
+        username: config.bill?.username,
+        password: config.bill?.password,
+        replyToUserId: config.bill?.replyToUserId,
+        environment: config.bill?.environment,
+      },
+      links: createBillLinkStore(drizzle, () => new Date()),
+      source: createBillMirrorSource(drizzle, () => new Date()),
+      fetch: (request: Request) => fetch(request),
+      now: () => new Date(),
+    })
+
     const outbox = createContainerOutboxService(database, {
       additionalSubscribers: [
         createInvoiceEmailOutboxSubscriber(moneyResources, organizationMailer),
@@ -331,6 +351,7 @@ export const createContainerRuntime = async (
         // Without this the container would connect to QuickBooks and never
         // mirror anything -- the routes would work and no invoice would move.
         ...(quickBooks === null ? [] : [createQuickBooksMirrorSubscriber(quickBooks)]),
+        createBillMirrorSubscriber(bill),
       ],
     })
     const organizationName = async () => {
@@ -396,6 +417,13 @@ export const createContainerRuntime = async (
       },
       moneyResources,
       ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
+      bill,
+      billDelivery: {
+        isOptedIn: (clientId: number) =>
+          createBillMirrorSource(drizzle, () => new Date()).isOptedIn(clientId),
+        setOptedIn: (clientId: number, enabled: boolean) =>
+          setBillDelivery(drizzle, clientId, enabled),
+      },
       invoiceGeneration: createInvoiceGenerationService(drizzle),
       recurringInvoices: createRecurringInvoiceEngine(drizzle),
       activity: {

@@ -15446,6 +15446,201 @@
         "x-ezacto-generate-client": true
       }
     },
+    "/api/v1/integrations/bill": {
+      "get": {
+        "operationId": "getBillStatus",
+        "summary": "Whether this deployment can reach BILL, and how it can deliver",
+        "tags": [
+          "integrations"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BillStatusEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/integrations/bill",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/integrations/bill/clients/{id}": {
+      "get": {
+        "operationId": "getBillClientDelivery",
+        "summary": "Whether this client is billed through BILL",
+        "tags": [
+          "integrations"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BillClientDeliveryEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/integrations/bill/clients/:id",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "setBillClientDelivery",
+        "summary": "Bill this client through BILL, or stop",
+        "tags": [
+          "integrations"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BillClientDeliveryEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/integrations/bill/clients/:id",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BillClientDeliveryInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/two-factor": {
       "get": {
         "operationId": "getTwoFactorStatus",
@@ -28096,6 +28291,93 @@
         "properties": {
           "palette": {
             "$ref": "#/components/schemas/InstancePalette"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BillStatus": {
+        "type": "object",
+        "required": [
+          "configured",
+          "organization_id",
+          "environment",
+          "can_send_from_bill"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "organization_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "environment": {
+            "enum": [
+              "sandbox",
+              "production"
+            ]
+          },
+          "can_send_from_bill": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BillStatusEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/BillStatus"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BillClientDelivery": {
+        "type": "object",
+        "required": [
+          "client_id",
+          "deliver_via_bill"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "deliver_via_bill": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BillClientDeliveryEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/BillClientDelivery"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BillClientDeliveryInput": {
+        "type": "object",
+        "required": [
+          "deliver_via_bill"
+        ],
+        "properties": {
+          "deliver_via_bill": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false

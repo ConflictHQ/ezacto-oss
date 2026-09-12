@@ -2248,6 +2248,30 @@ export type InstanceThemeInput = {
   "palette": InstancePalette;
 };
 
+export type BillStatus = {
+  "configured": boolean;
+  "organization_id": string | null;
+  "environment": "sandbox" | "production";
+  "can_send_from_bill": boolean;
+};
+
+export type BillStatusEnvelope = {
+  "data": BillStatus;
+};
+
+export type BillClientDelivery = {
+  "client_id": number;
+  "deliver_via_bill": boolean;
+};
+
+export type BillClientDeliveryEnvelope = {
+  "data": BillClientDelivery;
+};
+
+export type BillClientDeliveryInput = {
+  "deliver_via_bill": boolean;
+};
+
 export type SsoDomainInput = {
   "domain": string;
 };
@@ -4212,6 +4236,34 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<void>("DELETE", "/api/v1/settings/theme", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getBillStatus(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<BillStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BillStatusEnvelope>("GET", "/api/v1/integrations/bill", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getBillClientDelivery(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<BillClientDeliveryEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BillClientDeliveryEnvelope>("GET", "/api/v1/integrations/bill/clients/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async setBillClientDelivery(args: { "id": number; body: BillClientDeliveryInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<BillClientDeliveryEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BillClientDeliveryEnvelope>("POST", "/api/v1/integrations/bill/clients/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });
