@@ -272,7 +272,13 @@ export const renderPdf = (document: PdfDocument): Uint8Array => {
       `<< /Length ${String(latin1(stream).byteLength)} >>\nstream\n${stream}\nendstream`;
   });
 
-  const total = streamId(pageCount - 1);
+  // The title was declared on the document and, until this was written, ignored
+  // -- a field a caller sets that changes nothing is a setting that lies. It is
+  // what a reader shows in its window and what a saved file is called.
+  const infoId = streamId(pageCount - 1) + 1;
+  const hasTitle = document.title !== undefined && document.title.trim() !== "";
+  if (hasTitle) objects[infoId] = `<< /Title ${pdfString(document.title!.trim())} >>`;
+  const total = hasTitle ? infoId : streamId(pageCount - 1);
   let body = "%PDF-1.4\n";
   const offsets: number[] = [];
   for (let id = 1; id <= total; id += 1) {
@@ -286,7 +292,8 @@ export const renderPdf = (document: PdfDocument): Uint8Array => {
     xref += `${String(offsets[id]!).padStart(10, "0")} 00000 n \n`;
   }
   const trailer =
-    `trailer\n<< /Size ${String(total + 1)} /Root 1 0 R >>\n` +
+    `trailer\n<< /Size ${String(total + 1)} /Root 1 0 R` +
+    `${hasTitle ? ` /Info ${String(infoId)} 0 R` : ""} >>\n` +
     `startxref\n${String(xrefOffset)}\n%%EOF\n`;
 
   return latin1(body + xref + trailer);
