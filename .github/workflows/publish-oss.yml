@@ -1,10 +1,13 @@
 name: publish-oss
 
 # Runs scripts/publish-oss/publish.sh: re-filters this repository's main into
-# the public history and pushes it to ConflictHQ/ezacto-oss as a fast-forward,
-# optionally with a release tag (npm-v<version> releases the CLI and client from
-# the public repository). Dispatch it, or call it from another workflow.
+# the public history and pushes it to ConflictHQ/ezacto-oss as a fast-forward.
+# A tag npm-v<version> pushed here does the whole release in one motion: the
+# sync carries the tag to the public repository, where publish-npm.yml releases
+# the CLI and client. Dispatch it for a plain sync or a dry run, or call it.
 on:
+  push:
+    tags: ["npm-v*"]
   workflow_dispatch:
     inputs:
       tag:
@@ -42,6 +45,12 @@ jobs:
         with:
           fetch-depth: 0
           ref: main
+      - name: A release tag must point at a commit on main
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$GITHUB_SHA" HEAD || { echo "tag ${GITHUB_REF_NAME} is not on main" >&2; exit 1; }
+          git reset --hard "$GITHUB_SHA"
       - name: Tools
         run: |
           set -euo pipefail
@@ -59,9 +68,11 @@ jobs:
         run: |
           set -euo pipefail
           args=()
+          tag="${{ inputs.tag }}"
+          if [ "${{ github.ref_type }}" = "tag" ]; then tag="${{ github.ref_name }}"; fi
           if [ "${{ inputs.dry_run }}" != "true" ]; then
             args+=(--push)
-            if [ -n "${{ inputs.tag }}" ]; then args+=(--tag "${{ inputs.tag }}"); fi
+            if [ -n "$tag" ]; then args+=(--tag "$tag"); fi
           fi
           ./scripts/publish-oss/publish.sh "${args[@]}"
         env:
