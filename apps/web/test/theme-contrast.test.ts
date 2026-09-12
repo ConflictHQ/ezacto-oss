@@ -106,6 +106,8 @@ describe('D16 theme AA contrast gate', () => {
       ['ink/surface-2 text', 15.43],
       ['ink/row-hover text', 15.17],
       ['data/row-hover row action', 4.81],
+      ['ink/money totals figure', 17],
+      ['ink-2/money totals label', 10.24],
     ])
     expect(results.every((result) => result.passes)).toBe(true)
     expect(() => assertThemeContrast(themeManifest.precision)).not.toThrow()

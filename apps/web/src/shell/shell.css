@@ -1221,9 +1221,16 @@
   display: grid;
   gap: 4px;
 }
-.invoice-facts dt,
-.invoice-totals dt {
+.invoice-facts dt {
   color: var(--ez-muted);
+  font-size: 12px;
+}
+/* Secondary ink rather than `muted`: these labels sit on the money band, not on
+   the page ground, and `muted` is tuned against the ground. The two are not the
+   same job -- `muted` de-emphasises metadata on `surface`, `ink_2` carries the
+   same weight of text where the ground beneath it is tinted. */
+.invoice-totals dt {
+  color: var(--ez-ink-2);
   font-size: 12px;
 }
 .invoice-facts dd,
@@ -1312,9 +1319,14 @@
   color: var(--ez-muted);
   text-align: center !important;
 }
+/* The money band (issue 299): the totals block reads as money rather than as one
+   more list, which is the job `money` has been holding a colour for. */
 .invoice-totals {
   width: min(360px, 100%);
   margin: 24px 0 0 auto;
+  padding: 16px 18px;
+  background: var(--ez-money);
+  border-radius: var(--ez-radius);
 }
 .invoice-totals div {
   grid-template-columns: minmax(0, 1fr) auto;
