@@ -146,7 +146,7 @@ const digest = async (value: string): Promise<string> => {
 }
 
 const stableId = async (namespace: string, key: string, suffix = ''): Promise<number> =>
-  Number.parseInt((await digest(`${namespace}${key}${suffix}`)).slice(0, 13), 16) + 1
+  Number.parseInt((await digest(`${namespace}\u001f${key}\u001f${suffix}`)).slice(0, 13), 16) + 1
 
 const idempotencyKey = (definitionId: number, period: string): string =>
   `recurring:${definitionId}:${period}`
@@ -538,7 +538,7 @@ export const createRecurringInvoiceEngine = (
       }),
     )}`
 
-    const eventId = `evt_${await digest(`recurring-generation-event${commandId}`)}`
+    const eventId = `evt_${await digest(`recurring-generation-event\u001f${commandId}`)}`
     const nextIssueOn = advanceIssueDate(period, definition.everyNMonths, definition.dayOfMonth)
 
     let retainerDrawdownCents: number | null = null
