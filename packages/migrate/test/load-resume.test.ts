@@ -367,10 +367,14 @@ describe('idempotent load and resume', () => {
         resumed.snapshotSha256,
       )
       expect(report.resources).toHaveLength(LOAD_RESOURCES.length)
-      expect(report.resources.every((resource) => resource.completed)).toBe(true)
-      expect(report.resources.every((resource) => resource.rowsLoaded === resource.totalRows)).toBe(
-        true,
-      )
+      expect(
+        report.resources.filter((resource) => !resource.completed).map((r) => r.resource),
+      ).toEqual([])
+      expect(
+        report.resources
+          .filter((resource) => resource.rowsLoaded !== resource.totalRows)
+          .map((r) => ({ resource: r.resource, loaded: r.rowsLoaded, total: r.totalRows })),
+      ).toEqual([])
       await expectNoPendingLoadWork(rows)
     } finally {
       actualDatabase.close()
@@ -471,7 +475,7 @@ describe('idempotent load and resume', () => {
           maxStatements: 20,
         }),
       ])
-      expect(duplicate.every((result) => result.snapshotSha256 === digest)).toBe(true)
+      expect(duplicate.map((result) => result.snapshotSha256)).toEqual([digest, digest])
       await loadD1ToCompletion(resumed, snapshotDir, digest)
       expect(await loadOutcome(d1Rows(resumed))).toEqual(await loadOutcome(d1Rows(clean)))
 
@@ -495,8 +499,16 @@ describe('idempotent load and resume', () => {
       ).toEqual({ count: 1 })
       const progress = await readLoadProgress(createD1Database(resumed))
       expect(progress).toHaveLength(LOAD_RESOURCES.length)
-      expect(progress.every((resource) => resource.completed)).toBe(true)
-      expect(progress.every((resource) => resource.rowsLoaded === resource.totalRows)).toBe(true)
+      // Named rather than counted (issue 620). These were `.every(...)` and
+      // failed as a bare `false == true`, which says a resource did not
+      // converge without saying which -- so every flake cost a re-run to learn
+      // anything at all. The diff now carries the resource and its counts.
+      expect(progress.filter((resource) => !resource.completed).map((r) => r.resource)).toEqual([])
+      expect(
+        progress
+          .filter((resource) => resource.rowsLoaded !== resource.totalRows)
+          .map((r) => ({ resource: r.resource, loaded: r.rowsLoaded, total: r.totalRows })),
+      ).toEqual([])
       await expectNoPendingLoadWork(d1Rows(resumed))
     } finally {
       await miniflare.dispose()
