@@ -30,7 +30,7 @@ import type { BillMirrorClient, BillMirrorInvoice } from './mapping.js'
 
 export interface BillConfig {
   readonly devKey: string | undefined
-  readonly organizationId: string | undefined
+  readonly companyId: string | undefined
   /**
    * The username half of the login. Either an operator's BILL email, or the
    * NAME of an AP/AR sync token -- BILL takes both in the same field.
@@ -50,7 +50,7 @@ export interface BillConfig {
 
 export interface BillConnectionStatus {
   readonly configured: boolean
-  readonly organizationId: string | null
+  readonly companyId: string | null
   readonly environment: 'sandbox' | 'production'
   /**
    * Whether this deployment's credential can have BILL send the invoice email.
@@ -106,7 +106,7 @@ export const createBillRuntime = (
 ): BillRuntime => {
   const { config, links, source } = options
   const devKey = trimmed(config.devKey)
-  const organizationId = trimmed(config.organizationId)
+  const companyId = trimmed(config.companyId)
   const username = trimmed(config.username)
   const password = trimmed(config.password)
   const replyToUserId = trimmed(config.replyToUserId)
@@ -114,9 +114,9 @@ export const createBillRuntime = (
   const baseUrl = sandbox ? BILL_SANDBOX_BASE_URL : BILL_PRODUCTION_BASE_URL
 
   const credentials: BillCredentials | null =
-    devKey === null || organizationId === null || username === null || password === null
+    devKey === null || companyId === null || username === null || password === null
       ? null
-      : { devKey, organizationId, username, password }
+      : { devKey, companyId, username, password }
 
   // A single session, reused. BILL expires on idle rather than age, so a
   // deployment that mirrors regularly signs in once and a quiet one signs in
@@ -184,7 +184,7 @@ export const createBillRuntime = (
   return {
     status: () => ({
       configured: credentials !== null,
-      organizationId,
+      companyId,
       environment: sandbox ? 'sandbox' : 'production',
       canSendFromBill: replyToUserId !== null,
     }),

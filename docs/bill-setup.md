@@ -31,7 +31,7 @@ Four values, all required, all secrets:
 | variable | where it comes from |
 | --- | --- |
 | `BILL_DEV_KEY` | Settings → Sync & Integrations → Manage Developer Keys |
-| `BILL_ORGANIZATION_ID` | the same page; begins `008` |
+| `BILL_COMPANY_ID` | the same page; begins `008` |
 | `BILL_USERNAME` | see below |
 | `BILL_PASSWORD` | see below |
 

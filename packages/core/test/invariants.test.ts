@@ -183,11 +183,32 @@ describe("domain invariant registry", () => {
   it("[unit] keeps foreign organization identifiers out of production seams", async () => {
     const forbidden =
       /\b(?:orgId|org_id|organizationId|organization_id|tenantId|tenant_id)\b/g;
+    /**
+     * Where a vendor's own spelling may appear, because it is their wire format
+     * and not one of our seams.
+     *
+     * The rule exists so an `organizationId` cannot flow through ezacto's types
+     * and quietly read as multi-tenancy this product does not have. It said
+     * nothing about talking to somebody else's API, and as written it made a
+     * vendor whose login field is called `organizationId` impossible to
+     * integrate at all -- QuickBooks complies only by the accident of Intuit
+     * calling theirs `realmId`.
+     *
+     * So the exemption is one file per vendor, at the point the request body is
+     * built, and it is a list rather than a pattern: every entry is a decision
+     * somebody made once, and adding one is visible in review. Our side of that
+     * translation is still held to the rule -- BILL's credential carries
+     * `companyId` everywhere else in this repository.
+     */
+    const vendorTransport = [
+      join("packages", "integrations", "src", "bill", "session.ts"),
+    ];
     const matches: string[] = [];
     for (const topLevel of ["packages", "entries", "apps"]) {
       for (const path of await walk(join(repositoryRoot, topLevel))) {
         if (!path.endsWith(".ts") || !path.includes(`${join("", "src")}/`))
           continue;
+        if (vendorTransport.includes(relative(repositoryRoot, path))) continue;
         const source = await readFile(path, "utf8");
         for (const match of source.matchAll(forbidden)) {
           matches.push(`${relative(repositoryRoot, path)}:${match[0]}`);

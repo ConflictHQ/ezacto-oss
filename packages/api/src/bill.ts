@@ -16,7 +16,7 @@ import { readObjectBody } from './resources/support.js'
 
 export interface BillStatus {
   readonly configured: boolean
-  readonly organizationId: string | null
+  readonly companyId: string | null
   readonly environment: 'sandbox' | 'production'
   /**
    * Whether this deployment's credential can have BILL send the invoice email.
@@ -74,7 +74,7 @@ export const installBillRoutes = <Bindings extends object>(
       {
         data: {
           configured: status.configured,
-          organization_id: status.organizationId,
+          company_id: status.companyId,
           environment: status.environment,
           can_send_from_bill: status.canSendFromBill,
         },

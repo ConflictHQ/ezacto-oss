@@ -332,7 +332,7 @@ export const createContainerRuntime = async (
     const bill = createBillRuntime({
       config: {
         devKey: config.bill?.devKey,
-        organizationId: config.bill?.organizationId,
+        companyId: config.bill?.companyId,
         username: config.bill?.username,
         password: config.bill?.password,
         replyToUserId: config.bill?.replyToUserId,

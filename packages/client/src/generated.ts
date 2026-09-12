@@ -2250,7 +2250,7 @@ export type InstanceThemeInput = {
 
 export type BillStatus = {
   "configured": boolean;
-  "organization_id": string | null;
+  "company_id": string | null;
   "environment": "sandbox" | "production";
   "can_send_from_bill": boolean;
 };

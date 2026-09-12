@@ -24,7 +24,7 @@ const client = { id: 7, name: 'Kestrel Environmental', email: 'ap@kestrel.exampl
 
 const fullConfig: BillConfig = {
   devKey: 'dev-key',
-  organizationId: '008EXAMPLE',
+  companyId: '008EXAMPLE',
   username: 'books@example.test',
   password: 'sync-token-value',
   replyToUserId: '006abc',
@@ -103,7 +103,7 @@ const runtime = (
 describe('what the deployment reports about itself', () => {
   it('[unit] says it is configured only with all four credentials', () => {
     expect(runtime().runtime.status().configured).toBe(true)
-    for (const field of ['devKey', 'organizationId', 'username', 'password'] as const) {
+    for (const field of ['devKey', 'companyId', 'username', 'password'] as const) {
       expect(
         runtime({ ...fullConfig, [field]: undefined }).runtime.status().configured,
       ).toBe(false)
@@ -287,7 +287,7 @@ describe('the outbox subscriber', () => {
   const subscriber = createBillMirrorSubscriber({
     status: () => ({
       configured: true,
-      organizationId: '008',
+      companyId: '008',
       environment: 'sandbox',
       canSendFromBill: true,
     }),

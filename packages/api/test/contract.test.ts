@@ -212,7 +212,7 @@ const documentedApp = () =>
       installBillRoutes(api, {
         status: () => ({
           configured: false,
-          organizationId: null,
+          companyId: null,
           environment: "sandbox",
           canSendFromBill: false,
         }),

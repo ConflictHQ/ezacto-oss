@@ -10,7 +10,7 @@ import {
 const credentials = {
   username: 'books@example.test',
   password: 'not-a-real-password',
-  organizationId: '008EXAMPLEORG',
+  companyId: '008EXAMPLEORG',
   devKey: 'dev-key-example',
 }
 
@@ -25,7 +25,17 @@ describe('signing in to BILL', () => {
     const fetch = vi.fn(async (request: Request) => {
       expect(request.method).toBe('POST')
       expect(new URL(request.url).pathname).toBe('/connect/v3/login')
-      expect(await request.clone().json()).toEqual(credentials)
+      // BILL's wire shape, asserted literally rather than against our own
+      // object: their field is `organizationId` and ours is `companyId`,
+      // because a repo invariant keeps foreign organisation identifiers out of
+      // ezacto's seams. Comparing to `credentials` would pass whatever we
+      // happened to send, which is the one thing worth pinning here.
+      expect(await request.clone().json()).toEqual({
+        username: 'books@example.test',
+        password: 'not-a-real-password',
+        organizationId: '008EXAMPLEORG',
+        devKey: 'dev-key-example',
+      })
       return json({ sessionId: 'session-1' })
     })
 
@@ -46,7 +56,7 @@ describe('signing in to BILL', () => {
     // shape of failure, so "your credentials are wrong" would send an operator
     // to reset a password that was never the problem.
     const fetch = vi.fn()
-    for (const field of ['username', 'password', 'organizationId', 'devKey'] as const) {
+    for (const field of ['username', 'password', 'companyId', 'devKey'] as const) {
       await expect(
         login({
           credentials: { ...credentials, [field]: '  ' },

@@ -8,7 +8,7 @@ type Principal = { userId: number; profile: string } | null
 const service = (overrides: Partial<BillService> = {}): BillService => ({
   status: vi.fn(() => ({
     configured: true,
-    organizationId: '008EXAMPLE',
+    companyId: '008EXAMPLE',
     environment: 'sandbox' as const,
     canSendFromBill: true,
   })),
@@ -50,7 +50,7 @@ describe('what the deployment says about BILL', () => {
     expect(await response.json()).toEqual({
       data: {
         configured: true,
-        organization_id: '008EXAMPLE',
+        company_id: '008EXAMPLE',
         environment: 'sandbox',
         can_send_from_bill: true,
       },
@@ -64,7 +64,7 @@ describe('what the deployment says about BILL', () => {
       service({
         status: vi.fn(() => ({
           configured: true,
-          organizationId: '008EXAMPLE',
+          companyId: '008EXAMPLE',
           environment: 'production' as const,
           canSendFromBill: false,
         })),
@@ -131,7 +131,7 @@ describe('billing a client through BILL', () => {
     const bill = service({
       status: vi.fn(() => ({
         configured: false,
-        organizationId: null,
+        companyId: null,
         environment: 'production' as const,
         canSendFromBill: false,
       })),

@@ -165,7 +165,7 @@ export type WorkerEnv = AppEnv & {
    * payment link instead.
    */
   BILL_DEV_KEY?: string
-  BILL_ORGANIZATION_ID?: string
+  BILL_COMPANY_ID?: string
   BILL_USERNAME?: string
   BILL_PASSWORD?: string
   BILL_REPLY_TO_USER_ID?: string

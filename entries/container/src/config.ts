@@ -24,7 +24,7 @@ export interface ContainerConfig {
    */
   bill?: {
     devKey: string
-    organizationId: string
+    companyId: string
     username: string
     password: string
     replyToUserId?: string
@@ -149,7 +149,7 @@ export const readContainerConfig = (
   const bootstrapToken = optional(environment, 'EZACTO_BOOTSTRAP_TOKEN', 512)
   const magicLinkKey = optional(environment, 'MAGIC_LINK_SIGNING_KEY', 128)
   const billDevKey = optional(environment, 'BILL_DEV_KEY', 512)
-  const billOrganizationId = optional(environment, 'BILL_ORGANIZATION_ID', 128)
+  const billOrganizationId = optional(environment, 'BILL_COMPANY_ID', 128)
   const billUsername = optional(environment, 'BILL_USERNAME', 256)
   const billPassword = optional(environment, 'BILL_PASSWORD', 512)
   const billReplyToUserId = optional(environment, 'BILL_REPLY_TO_USER_ID', 128)
@@ -160,7 +160,7 @@ export const readContainerConfig = (
   // believes it can.
   if (billParts.some((part) => part !== undefined) && billParts.some((part) => part === undefined)) {
     throw new Error(
-      'BILL needs BILL_DEV_KEY, BILL_ORGANIZATION_ID, BILL_USERNAME and BILL_PASSWORD together',
+      'BILL needs BILL_DEV_KEY, BILL_COMPANY_ID, BILL_USERNAME and BILL_PASSWORD together',
     )
   }
   const quickBooksClientId = optional(environment, 'QUICKBOOKS_CLIENT_ID', 512)
@@ -224,7 +224,7 @@ export const readContainerConfig = (
       : {
           bill: {
             devKey: billDevKey,
-            organizationId: billOrganizationId,
+            companyId: billOrganizationId,
             username: billUsername,
             password: billPassword,
             ...(billReplyToUserId === undefined ? {} : { replyToUserId: billReplyToUserId }),

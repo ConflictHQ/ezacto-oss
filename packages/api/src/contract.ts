@@ -6169,13 +6169,13 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object",
     required: [
       "configured",
-      "organization_id",
+      "company_id",
       "environment",
       "can_send_from_bill",
     ],
     properties: {
       configured: booleanSchema,
-      organization_id: nullable(stringSchema),
+      company_id: nullable(stringSchema),
       environment: { enum: ["sandbox", "production"] },
       // A sync token cannot have BILL send the invoice email. The screen has to
       // say which it is, or an operator is told their client will be emailed

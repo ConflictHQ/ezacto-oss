@@ -590,7 +590,7 @@ export const createRuntimeServices = async (
   const bill = createBillRuntime({
     config: {
       devKey: env.BILL_DEV_KEY,
-      organizationId: env.BILL_ORGANIZATION_ID,
+      companyId: env.BILL_COMPANY_ID,
       username: env.BILL_USERNAME,
       password: env.BILL_PASSWORD,
       replyToUserId: env.BILL_REPLY_TO_USER_ID,

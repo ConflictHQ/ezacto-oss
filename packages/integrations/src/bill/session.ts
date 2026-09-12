@@ -44,7 +44,7 @@ export interface BillCredentials {
   readonly username: string
   readonly password: string
   /** BILL's organisation id. Begins `008`. */
-  readonly organizationId: string
+  readonly companyId: string
   readonly devKey: string
 }
 
@@ -82,17 +82,23 @@ export const login = async (options: Readonly<BillLoginOptions>): Promise<BillSe
   const { credentials } = options
   requireValue(credentials.username, 'username')
   requireValue(credentials.password, 'password')
-  requireValue(credentials.organizationId, 'organizationId')
+  requireValue(credentials.companyId, 'companyId')
   requireValue(credentials.devKey, 'devKey')
 
   const response = await options.fetch(
     new Request(`${options.baseUrl ?? BILL_PRODUCTION_BASE_URL}/v3/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
+      // BILL's wire field is `organizationId`. Ours is `companyId`, because a
+      // repo invariant keeps foreign organisation identifiers out of our own
+      // seams -- an `organizationId` flowing through ezacto's types would read
+      // as multi-tenancy this product does not have. This one line is the
+      // translation, and `invariants.test.ts` names this file as the only place
+      // allowed to write the vendor's spelling.
       body: JSON.stringify({
         username: credentials.username,
         password: credentials.password,
-        organizationId: credentials.organizationId,
+        organizationId: credentials.companyId,
         devKey: credentials.devKey,
       }),
     }),
