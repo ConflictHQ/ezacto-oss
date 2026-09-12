@@ -1,0 +1,46 @@
+name: publish-npm
+
+# Publishes @ezacto/client and @ezacto/cli to npm from a tag of the form
+# npm-v<version>, where <version> must equal both package versions. Needs the
+# NPM_TOKEN secret (an automation token from the npm account that owns the
+# @ezacto scope); without it the job stops before touching the registry.
+on:
+  push:
+    tags: ["npm-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - run: npm ci
+      - name: Versions agree with the tag
+        if: startsWith(github.ref, 'refs/tags/npm-v')
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#npm-v}"
+          for p in packages/client packages/cli; do
+            v="$(node -p "require('./$p/package.json').version")"
+            [ "$v" = "$tag" ] || { echo "$p is $v, tag is $tag" >&2; exit 1; }
+          done
+      - run: npm run build -w @ezacto/core -w @ezacto/client -w @ezacto/cli
+      - run: npm test -w @ezacto/client -w @ezacto/cli
+      - name: Refuse to publish without a token
+        run: test -n "${NODE_AUTH_TOKEN}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: npm publish -w @ezacto/client --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: npm publish -w @ezacto/cli --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
