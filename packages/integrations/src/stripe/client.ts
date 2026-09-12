@@ -173,6 +173,8 @@ export class StripeClient {
   async createPaymentLink(input: {
     readonly priceId: string
     readonly metadata: Readonly<Record<string, string>>
+    /** What the payer reads once the payment has gone through. */
+    readonly confirmationMessage?: string
     readonly idempotencyKey?: string
   }): Promise<StripePaymentLink> {
     const body = await this.#post(
@@ -180,6 +182,21 @@ export class StripeClient {
       {
         line_items: [{ price: input.priceId, quantity: 1 }],
         metadata: input.metadata,
+        // Left unset, Stripe shows its own wording -- "a payment to <company>
+        // will appear on your statement" -- which names no invoice, so the one
+        // moment the payer is looking says nothing about what they settled.
+        //
+        // `hosted_confirmation` rather than a redirect, because the payer is a
+        // client with no session here: sending them into the app would land
+        // them on a sign-in page the instant after paying.
+        ...(input.confirmationMessage === undefined
+          ? {}
+          : {
+              after_completion: {
+                type: 'hosted_confirmation',
+                hosted_confirmation: { custom_message: input.confirmationMessage },
+              },
+            }),
       },
       input.idempotencyKey,
     )

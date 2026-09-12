@@ -117,6 +117,8 @@ export const createStripeRuntime = (
         // The thread back. Stripe copies this onto the checkout session, and
         // the webhook reads it there.
         metadata: { ezacto_invoice_id: String(invoice.id) },
+        // Names the invoice, because "a payment to CONFLICT LLC" does not.
+        confirmationMessage: `Thank you. Invoice ${invoice.number} is settled in full.`,
         idempotencyKey: `ezacto-invoice-${String(invoice.id)}-link`,
       })
       const saved = await source.saveLink(invoice.id, {

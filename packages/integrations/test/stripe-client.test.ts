@@ -145,6 +145,39 @@ describe('creating a payment link', () => {
     ).toEqual({ id: 'plink_1', url: 'https://buy.stripe.com/test_example' })
   })
 
+  it('[money] tells the payer which invoice they just settled', async () => {
+    // Stripe's own wording is "a payment to <company> will appear on your
+    // statement", which names no invoice. This is the one moment the payer is
+    // looking at the screen.
+    //
+    // Hosted rather than a redirect: the payer has no session with us, so
+    // sending them into the app lands them on a sign-in page right after paying.
+    const fetch = vi.fn(async (request: Request) => {
+      const body = new URLSearchParams(await request.clone().text())
+      expect(body.get('after_completion[type]')).toBe('hosted_confirmation')
+      expect(
+        body.get('after_completion[hosted_confirmation][custom_message]'),
+      ).toBe('Invoice 1315 is settled.')
+      return json({ id: 'plink_1', url: 'https://buy.stripe.com/test_example' })
+    })
+    await client(fetch).createPaymentLink({
+      priceId: 'price_1',
+      metadata: {},
+      confirmationMessage: 'Invoice 1315 is settled.',
+    })
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+
+  it('[api] sends no completion block when there is no message to show', async () => {
+    const fetch = vi.fn(async (request: Request) => {
+      const body = new URLSearchParams(await request.clone().text())
+      expect([...body.keys()].filter((key) => key.startsWith('after_completion'))).toEqual([])
+      return json({ id: 'plink_1', url: 'https://buy.stripe.com/test_example' })
+    })
+    await client(fetch).createPaymentLink({ priceId: 'price_1', metadata: {} })
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+
   it('[api] treats a link with no URL as a failure', async () => {
     // An invoice email carrying an empty "pay here" is worse than one that
     // failed to send.
