@@ -7,7 +7,7 @@ import {
   type RecurringInvoice,
   type RecurringInvoiceInput,
   type Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import {
   recurringAmountLabel,
   recurringFixedTotalCents,

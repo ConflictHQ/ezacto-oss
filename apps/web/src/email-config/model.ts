@@ -29,7 +29,7 @@ import type {
   EmailTemplateVariable,
   EmailTemplateVariableGroup,
   SenderIdentity,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 
 export type EmailTemplateKind = EmailTemplate['kind']
 

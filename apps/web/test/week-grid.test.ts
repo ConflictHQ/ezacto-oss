@@ -4,7 +4,7 @@ import {
   type TimeEntry,
   type TimeEntryInput,
   type TimeEntryPatch,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import {
   buildWeekGrid,

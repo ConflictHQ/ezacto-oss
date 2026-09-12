@@ -10,7 +10,7 @@ import {
   type RetainerLedgerEntry,
   type RetainerLedgerInput,
   type Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 // Retainers are served under the invoice scopes -- `requireWrite` on
 // `/api/v1/retainers` asks for `invoices:write` -- so the screen asks the same
 // question of the identity that the invoice screen does rather than inventing a

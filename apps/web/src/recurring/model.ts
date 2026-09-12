@@ -25,7 +25,7 @@ import type {
   RecurringFixedLine,
   RecurringInvoice,
   RecurringInvoiceInput,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import { invoiceIdentityCanWrite } from '../invoices/model.js'
 
 export interface RecurringCursorPage<Resource> {

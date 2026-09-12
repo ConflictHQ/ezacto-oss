@@ -1,4 +1,4 @@
-import type { Whoami } from '@ezacto/client'
+import type { Whoami } from '@conflict-hq/ezacto-client'
 import { describe, expect, it } from 'vitest'
 import {
   parseTeamCapacitySeconds,

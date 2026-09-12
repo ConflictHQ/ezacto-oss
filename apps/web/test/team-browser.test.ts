@@ -7,7 +7,7 @@ import type {
   TeamPersonSummary,
   TeamPersonSummaryPage,
   Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createTeamDirectoryController } from '../src/team/browser.js'
 import type { TeamDirectoryApi } from '../src/team/model.js'

@@ -1,4 +1,4 @@
-import { EzactoApiError, type Attachment, type GeneralResource, type Whoami } from '@ezacto/client'
+import { EzactoApiError, type Attachment, type GeneralResource, type Whoami } from '@conflict-hq/ezacto-client'
 
 import { renderDataTable, type CellContent } from '../components/data-table.js'
 import { moneyText } from '../money-display.js'

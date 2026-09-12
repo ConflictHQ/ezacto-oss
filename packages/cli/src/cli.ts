@@ -2,7 +2,7 @@
 import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
-import { EzactoApiError, EzactoClient, type Whoami } from '@ezacto/client'
+import { EzactoApiError, EzactoClient, type Whoami } from '@conflict-hq/ezacto-client'
 import {
   CLI_CONFIG_VERSION,
   DEFAULT_BASE_URL,

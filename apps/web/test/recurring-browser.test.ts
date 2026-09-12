@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 
-import { EzactoApiError, type GeneralResource, type RecurringInvoice, type Whoami } from '@ezacto/client'
+import { EzactoApiError, type GeneralResource, type RecurringInvoice, type Whoami } from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import { createRecurringWorkspaceController } from '../src/recurring/browser.js'
 import type { RecurringWorkspaceApi } from '../src/recurring/model.js'

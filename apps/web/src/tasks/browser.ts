@@ -1,7 +1,7 @@
 import { renderDataTable, type DataColumn } from '../components/data-table.js'
 import { moneyText } from '../money-display.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
-import { EzactoApiError, type GeneralResource, type Whoami } from '@ezacto/client'
+import { EzactoApiError, type GeneralResource, type Whoami } from '@conflict-hq/ezacto-client'
 import {
   formatTaskRate,
   parseTaskRateCents,

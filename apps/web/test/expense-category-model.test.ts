@@ -1,4 +1,4 @@
-import type { ExpenseCategory, EzactoClient } from '@ezacto/client'
+import type { ExpenseCategory, EzactoClient } from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import { createShellApi } from '../src/index.js'
 import {

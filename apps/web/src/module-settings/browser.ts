@@ -3,7 +3,7 @@ import {
   type SenderIdentity,
   type SsoDomain,
   type Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import { renderDataTable } from '../components/data-table.js'
 import { defaultTheme, themeManifest } from '../theme.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'

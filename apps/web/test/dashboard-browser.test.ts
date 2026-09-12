@@ -9,7 +9,7 @@ import type {
   TimesheetSubmission,
   UninvoicedReport,
   Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mountShell } from '../src/shell/browser.js'
 import { renderAppShell, type ShellApi } from '../src/index.js'

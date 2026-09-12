@@ -83,7 +83,7 @@ same policy; OpenAPI exposes the field classification as `x-commercial-fields`.
 
 `packages/api/src/contract.ts` is the executable v1 contract definition. It emits
 the committed `openapi/ezacto-v1.openapi.json` artifact and the
-`@ezacto/client` TypeScript client from the same operation and schema registry:
+`@conflict-hq/ezacto-client` TypeScript client from the same operation and schema registry:
 
 ```sh
 npm run contract:generate
@@ -97,7 +97,7 @@ documented method to the methods actually mounted by Hono.
 CI uploads the versioned JSON document as an artifact named for the commit. A
 running Worker also serves the current v1 document at `/openapi/v1.json` without
 requiring database bindings. Consumers import `EzactoClient` from
-`@ezacto/client`; direct edits to `packages/client/src/generated.ts` are replaced
+`@conflict-hq/ezacto-client`; direct edits to `packages/client/src/generated.ts` are replaced
 by the generator.
 
 ## Reports and rollups

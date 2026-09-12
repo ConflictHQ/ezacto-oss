@@ -1,4 +1,4 @@
-import type { GeneralResource } from '@ezacto/client'
+import type { GeneralResource } from '@conflict-hq/ezacto-client'
 import { describe, expect, it } from 'vitest'
 import {
   canManageRoles,

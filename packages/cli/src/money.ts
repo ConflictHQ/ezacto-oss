@@ -8,7 +8,7 @@ import {
   type UninvoicedCurrencyTotal,
   type ClientRollupNode,
   type ProjectBudgetGrain,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 
 export interface MoneyCommandResult {
   json: unknown

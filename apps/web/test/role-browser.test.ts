@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 
-import type { GeneralResource, Whoami } from '@ezacto/client'
+import type { GeneralResource, Whoami } from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import { createRoleAdminController } from '../src/roles/browser.js'
 import type { RoleAdminApi } from '../src/roles/model.js'

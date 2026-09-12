@@ -10,7 +10,7 @@ import type {
   TeamRateInput,
   UserRate,
   Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 
 /**
  * What a person needs to exist. Everything else the record carries has a column

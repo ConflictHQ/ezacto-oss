@@ -6,7 +6,7 @@ import {
   type ApiTokenService,
   type ReportReader,
 } from '@ezacto/api'
-import { CLI_CONFIG_VERSION, writeConfig } from '@ezacto/cli'
+import { CLI_CONFIG_VERSION, writeConfig } from '@conflict-hq/ezacto-cli'
 import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { mkdtemp, rm } from 'node:fs/promises'

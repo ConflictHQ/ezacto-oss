@@ -25,7 +25,7 @@ import {
   type TimesheetUnlockInput,
   type TimesheetWithdrawalInput,
   type Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import type { InvoiceState } from '../invoices/model.js'
 import type { ActivityRow } from '../activity/browser.js'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'

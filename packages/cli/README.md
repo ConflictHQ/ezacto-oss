@@ -1,6 +1,6 @@
 # ez — ezacto CLI
 
-`ez` is the native command-line client over the generated `@ezacto/client`
+`ez` is the native command-line client over the generated `@conflict-hq/ezacto-client`
 package. It supports named organization configs, token login, identity checks,
 redacted config output, and both human and JSON output.
 

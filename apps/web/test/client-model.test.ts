@@ -1,4 +1,4 @@
-import type { EzactoClient, GeneralResource, Whoami } from '@ezacto/client'
+import type { EzactoClient, GeneralResource, Whoami } from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import {
   clientHierarchy,

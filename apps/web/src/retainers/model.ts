@@ -37,7 +37,7 @@ import type {
   RetainerLedgerInput,
   RetainerLedgerMutation,
   RetainerPatch,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 
 export type RetainerStatusFilter = 'ongoing' | 'all'
 

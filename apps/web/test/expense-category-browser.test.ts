@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 
-import { EzactoApiError, type ExpenseCategory, type Whoami } from '@ezacto/client'
+import { EzactoApiError, type ExpenseCategory, type Whoami } from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import { createExpenseCategoryDirectoryController } from '../src/expense-categories/browser.js'
 import type { ExpenseCategoryDirectoryApi } from '../src/expense-categories/model.js'

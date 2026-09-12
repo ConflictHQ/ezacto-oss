@@ -8,7 +8,7 @@ import {
   type SsoDomainCheck,
   type TimeEntryNoteSettings,
   type TimeEntryNoteSettingsPatch,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 
 /**

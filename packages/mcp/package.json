@@ -18,14 +18,14 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "pretest": "npm run build -w @ezacto/client && npm run build -w @ezacto/cli && npm run build",
+    "pretest": "npm run build -w @conflict-hq/ezacto-client && npm run build -w @conflict-hq/ezacto-cli && npm run build",
     "test": "vitest run --testTimeout=10000",
     "build": "tsc -p tsconfig.build.json",
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@ezacto/cli": "^0.1.0",
-    "@ezacto/client": "^0.1.0",
+    "@conflict-hq/ezacto-cli": "^0.1.0",
+    "@conflict-hq/ezacto-client": "^0.1.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "zod": "^4.5.4"
   },

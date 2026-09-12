@@ -1,4 +1,4 @@
-import type { TimeEntry } from '@ezacto/client'
+import type { TimeEntry } from '@conflict-hq/ezacto-client'
 import { describe, expect, it } from 'vitest'
 import {
   formatTimeForClock,

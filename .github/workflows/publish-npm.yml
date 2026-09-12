@@ -1,6 +1,6 @@
 name: publish-npm
 
-# Publishes @ezacto/client and @ezacto/cli to npm from a tag of the form
+# Publishes @conflict-hq/ezacto-client and @conflict-hq/ezacto-cli to npm from a tag of the form
 # npm-v<version>, where <version> must equal both package versions. Needs the
 # NPM_TOKEN secret (an automation token from the npm account that owns the
 # @ezacto scope); without it the job stops before touching the registry.
@@ -32,15 +32,15 @@ jobs:
             v="$(node -p "require('./$p/package.json').version")"
             [ "$v" = "$tag" ] || { echo "$p is $v, tag is $tag" >&2; exit 1; }
           done
-      - run: npm run build -w @ezacto/core -w @ezacto/client -w @ezacto/cli
-      - run: npm test -w @ezacto/client -w @ezacto/cli
+      - run: npm run build -w @ezacto/core -w @conflict-hq/ezacto-client -w @conflict-hq/ezacto-cli
+      - run: npm test -w @conflict-hq/ezacto-client -w @conflict-hq/ezacto-cli
       - name: Refuse to publish without a token
         run: test -n "${NODE_AUTH_TOKEN}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: npm publish -w @ezacto/client --access public --provenance
+      - run: npm publish -w @conflict-hq/ezacto-client --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: npm publish -w @ezacto/cli --access public --provenance
+      - run: npm publish -w @conflict-hq/ezacto-cli --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

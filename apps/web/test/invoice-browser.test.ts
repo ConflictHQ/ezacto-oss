@@ -11,7 +11,7 @@ import {
   type InvoicePaymentInput,
   type InvoiceTransitionInput,
   type Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import { createInvoicePaymentController } from '../src/invoices/browser.js'
 import type { InvoicePaymentApi } from '../src/invoices/model.js'

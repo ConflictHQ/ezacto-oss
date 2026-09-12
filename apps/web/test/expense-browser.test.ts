@@ -7,7 +7,7 @@ import {
   type ExpenseCategory,
   type GeneralResource,
   type Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import { createExpenseWorkflowController } from '../src/expenses/browser.js'
 import type { ExpenseWorkflowApi } from '../src/expenses/model.js'

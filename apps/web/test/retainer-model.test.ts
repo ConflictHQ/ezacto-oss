@@ -3,7 +3,7 @@ import type {
   Invoice,
   Retainer,
   RetainerLedgerEntry,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import { describe, expect, it } from 'vitest'
 import {
   retainerAmount,

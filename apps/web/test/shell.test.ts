@@ -30,7 +30,7 @@ import type {
   TimesheetSubmission,
   TimesheetSubmissionDetail,
   Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 
 const timestamp = '2026-08-28T12:00:00.000Z'
 const identity: Whoami = {

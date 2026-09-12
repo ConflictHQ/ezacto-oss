@@ -1,4 +1,4 @@
-import type { GeneralResource, Whoami } from '@ezacto/client'
+import type { GeneralResource, Whoami } from '@conflict-hq/ezacto-client'
 
 export interface RoleAdminPage {
   readonly data: readonly GeneralResource[]

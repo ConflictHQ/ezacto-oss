@@ -1,4 +1,4 @@
-import type { DetailedTimeReport, DetailedTimeRow, EzactoClient, Whoami } from '@ezacto/client'
+import type { DetailedTimeReport, DetailedTimeRow, EzactoClient, Whoami } from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import {
   billablePercent,

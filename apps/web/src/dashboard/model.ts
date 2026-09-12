@@ -4,7 +4,7 @@ import type {
   TimeEntry,
   TimesheetSubmission,
   UninvoicedReport,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 import type { ApprovalQueueFilters, ApprovalQueuePage } from '../shell/model.js'
 

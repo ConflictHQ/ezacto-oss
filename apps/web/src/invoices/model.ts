@@ -14,7 +14,7 @@ import type {
   InvoiceTransitionInput,
   VersionedRowDeleteInput,
   Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 
 export type InvoiceState = Invoice['state']
 

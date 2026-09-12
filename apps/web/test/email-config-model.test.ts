@@ -4,7 +4,7 @@ import type {
   EmailTemplateVariable,
   SenderIdentity,
   SenderIdentityEvidence,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import {
   emailConfigTemplateFromUrl,
   emailConfigUrl,

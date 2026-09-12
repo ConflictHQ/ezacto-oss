@@ -13,7 +13,7 @@ import type {
   TimeReport,
   UninvoicedReport,
   Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 
 export type ReportKind =
