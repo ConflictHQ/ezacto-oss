@@ -76,7 +76,10 @@ const sign = async (payload: string, timestamp = nowSeconds): Promise<string> =>
   return `t=${String(timestamp)},v1=${hex}`
 }
 
-const paidSession = (metadata: Record<string, string> = { ezacto_invoice_id: '1315' }) =>
+const paidSession = (
+  metadata: Record<string, string> = { ezacto_invoice_id: '1315' },
+  money: { amount: number; currency: string } = { amount: 250_000, currency: 'usd' },
+) =>
   JSON.stringify({
     id: 'evt_1',
     type: 'checkout.session.completed',
@@ -84,8 +87,8 @@ const paidSession = (metadata: Record<string, string> = { ezacto_invoice_id: '13
       object: {
         payment_status: 'paid',
         payment_intent: 'pi_example',
-        amount_total: 250_000,
-        currency: 'usd',
+        amount_total: money.amount,
+        currency: money.currency,
         metadata,
       },
     },
@@ -201,6 +204,28 @@ describe('receiving a payment', () => {
       paymentIntentId: 'pi_example',
       amountCents: 250_000,
     })
+  })
+
+  it('[money] refuses a payment taken in a different currency than the invoice', async () => {
+    // Adaptive Pricing is "always on" for Payment Links and cannot be turned
+    // off, so a USD invoice really can be presented as CRC 8,081,933.92. Taking
+    // `amount_total` at face value would write eight million into the book of
+    // account as dollars.
+    //
+    // Refused rather than converted: what Stripe settles to us is not in this
+    // payload, so any amount written here would be a guess.
+    const harness = runtime()
+    const payload = paidSession(
+      { ezacto_invoice_id: '1315' },
+      { amount: 808_193_392, currency: 'crc' },
+    )
+    expect(
+      await harness.runtime.receiveWebhook({ payload, signature: await sign(payload) }),
+    ).toEqual({
+      kind: 'ignored',
+      reason: 'the payment was taken in a different currency than the invoice',
+    })
+    expect(harness.source.recordPayment).not.toHaveBeenCalled()
   })
 
   it('[security] refuses an unsigned delivery', async () => {

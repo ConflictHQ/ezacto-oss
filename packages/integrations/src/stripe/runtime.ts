@@ -154,6 +154,29 @@ export const createStripeRuntime = (
         // one this settled would credit somebody else's.
         return { kind: 'ignored', reason: 'the payment names no invoice of ours' }
       }
+      // An amount is a count of minor units and means nothing without the
+      // currency it was taken in. Stripe presents our links in the payer's local
+      // currency -- a $17,256.25 invoice offered as CRC 8,081,933.92 -- and the
+      // session then reports that figure, in that currency. Recorded blindly it
+      // would write eight million into the book of account as dollars.
+      //
+      // This cannot be turned off: Adaptive Pricing is "always on" for Payment
+      // Links, so the only place the mismatch can be caught is here.
+      //
+      // Refused rather than converted. Stripe settles to us in our own currency,
+      // but the converted figure is not in this payload, so any amount written
+      // here would be a guess -- and a guess in the book of account is worse
+      // than a payment somebody has to reconcile by hand.
+      const invoice = await source.readInvoice(invoiceId)
+      if (invoice === null) {
+        return { kind: 'ignored', reason: 'the payment names an invoice that does not exist' }
+      }
+      if (invoice.currency.toUpperCase() !== completion.currency) {
+        return {
+          kind: 'ignored',
+          reason: 'the payment was taken in a different currency than the invoice',
+        }
+      }
       await source.recordPayment({
         invoiceId,
         paymentIntentId: completion.paymentIntentId,
