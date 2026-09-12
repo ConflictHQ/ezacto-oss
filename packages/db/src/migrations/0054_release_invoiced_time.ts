@@ -14,6 +14,15 @@
 // first half, and the rule it enforces is that releasing is refused while the
 // invoice still stands.
 //
+// Releasing, and only releasing. An earlier draft refused the delete as well,
+// on the reasoning that it removes the hours behind a billed line -- but the
+// two operations do not carry the same risk. Clearing the column makes billed
+// hours look uninvoiced, so they can be billed a second time; deleting the row
+// removes them, and a row that does not exist cannot be billed again. The
+// invoice's money comes from `invoice_line_items` either way. Refusing the
+// delete also broke a legitimate path: the week grid removes an entry when a
+// cell is cleared to zero, and that is not double billing.
+//
 // "Stands" means open or paid. An invoice a client has been sent and may pay is
 // the one thing that must not quietly lose the hours behind it -- release it and
 // the invoice claims money no time entry accounts for any more, which is a
@@ -37,17 +46,4 @@ export const releaseInvoicedTimeMigration = [
       SELECT RAISE(ABORT, 'a time entry cannot be released while its invoice stands');
     END`,
 
-  // The same rule from the other side. Deleting the row outright would take the
-  // hours with it and leave the invoice claiming money nothing accounts for --
-  // the identical hole, reached by a different statement.
-  `CREATE TRIGGER time_entries_delete_requires_release
-    BEFORE DELETE ON time_entries
-    WHEN OLD.invoice_id IS NOT NULL
-      AND EXISTS (
-        SELECT 1 FROM invoices invoice
-        WHERE invoice.id = OLD.invoice_id AND invoice.state IN ('open','paid')
-      )
-    BEGIN
-      SELECT RAISE(ABORT, 'a time entry cannot be deleted while its invoice stands');
-    END`,
 ] as const

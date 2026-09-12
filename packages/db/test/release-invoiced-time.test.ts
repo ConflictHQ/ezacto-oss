@@ -121,17 +121,18 @@ describe('what the schema refuses directly', () => {
     ).toThrow(/cannot be released while its invoice stands/u)
   })
 
-  it('[money] refuses to delete the entry out from under a standing invoice', async () => {
-    // The identical hole reached by a different statement: deleting the row
-    // takes the hours with it.
+  it('[unit] still allows the entry itself to be deleted', async () => {
+    // Deleting is not the hazard releasing is: a row that no longer exists
+    // cannot be billed a second time, and the invoice's money comes from its
+    // line items either way. The week grid removes an entry when a cell is
+    // cleared to zero, and that path has to keep working.
     await fixture('open')
-    expect(() => sqlite!.exec(`DELETE FROM time_entries WHERE id = 1`)).toThrow(
-      /cannot be deleted while its invoice stands/u,
-    )
+    sqlite!.exec(`DELETE FROM time_entries WHERE id = 1`)
+    expect(sqlite!.prepare(`SELECT count(*) AS n FROM time_entries`).get()).toEqual({ n: 1 })
   })
 
   it('[unit] leaves an unclaimed entry alone', async () => {
-    // The guard is about billed hours, not about time entries in general.
+    // The guard is about the claim, not about time entries in general.
     await fixture('open')
     sqlite!.exec(`
       INSERT INTO time_entries (id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
