@@ -66,6 +66,7 @@ import {
   type MailgunOptions,
   type SesMailerOptions,
 } from "@ezacto/mailer";
+import { createInvoiceDocumentPort } from './invoice-documents.js';
 import type { RuntimeServices } from "./app.js";
 import { cloudflareAccessConfig, type WorkerEnv } from "./app.js";
 import {
@@ -670,9 +671,40 @@ export const createRuntimeServices = async (
     now: () => new Date(),
   })
 
+  // The document an invoice carries, composed where the storage is. Absent
+  // without an attachments bucket, in which case the subscriber is given no
+  // port and sends exactly what it sent before (issue 626).
+  const invoiceDocuments =
+    env.ATTACHMENTS === undefined
+      ? undefined
+      : createInvoiceDocumentPort({
+          database: drizzle,
+          objects: createR2AttachmentObjectStore(env.ATTACHMENTS),
+          now: () => new Date().toISOString(),
+          source: {
+            deliveryContext: (invoiceId: number) =>
+              moneyResources.getInvoiceDeliveryContext(invoiceId),
+            invoiceVersion: async (invoiceId: number) => {
+              const rows = await database
+                .prepare(`SELECT version FROM invoices WHERE id = ?`)
+                .bind(invoiceId)
+                .all<{ version: number }>();
+              return rows.results[0]?.version ?? null;
+            },
+            paymentUrl: async (invoiceId: number) => {
+              const result = await stripe.paymentLink(invoiceId);
+              return result.kind === "linked" ? result.url : null;
+            },
+          },
+        });
+
   const outbox = createD1OutboxService(database, {
     additionalSubscribers: [
-      createInvoiceEmailOutboxSubscriber(moneyResources, organizationMailer),
+      createInvoiceEmailOutboxSubscriber(
+        moneyResources,
+        organizationMailer,
+        invoiceDocuments,
+      ),
       reminders.subscriber,
       ...(quickBooks === null ? [] : [createQuickBooksMirrorSubscriber(quickBooks)]),
       createBillMirrorSubscriber(bill),
