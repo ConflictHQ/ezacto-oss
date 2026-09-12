@@ -1,5 +1,6 @@
 import type { QueuedEmailJob } from '@ezacto/mailer'
 import { createApp, type WorkerEnv } from './app.js'
+import { isDataRequest } from './data-request.js'
 import { workerBrandAssetSurface } from './brand-assets.js'
 import { workerInstanceThemeSurface } from './instance-theme.js'
 import { consumeCloudflareEmailBatch } from './email-queue.js'
@@ -11,18 +12,6 @@ import {
 } from './runtime.js'
 
 const publicApp = createApp(undefined, workerBrandAssetSurface, workerInstanceThemeSurface)
-
-const isDataRequest = (request: Request): boolean => {
-  const path = new URL(request.url).pathname
-  return (
-    path === '/__ezacto/bootstrap' ||
-    path.startsWith('/__ezacto/bootstrap/') ||
-    path === '/api/v1' ||
-    path.startsWith('/api/v1/') ||
-    path === '/auth' ||
-    path.startsWith('/auth/')
-  )
-}
 
 /**
  * Loopback has no TLS to upgrade to. `wrangler dev`, the container runtime and

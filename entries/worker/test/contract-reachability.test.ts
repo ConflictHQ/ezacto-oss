@@ -5,11 +5,13 @@ import { createApp, type WorkerEnv } from '../src/app.js'
 import { workerBrandAssetSurface } from '../src/brand-assets.js'
 import { workerInstanceThemeSurface } from '../src/instance-theme.js'
 import {
+  PORTAL_ROUTES,
   UNDOCUMENTED_ROUTES,
   expectedApiRoutes,
   mountedApiRoutes,
   routeDifference,
 } from '../src/entry-surface.js'
+import { isServicePath } from '../src/data-request.js'
 import { createRuntimeServices } from '../src/runtime.js'
 
 /**
@@ -110,5 +112,39 @@ describe('Worker contract reachability', () => {
     )
 
     expect(difference).toEqual({ unexpected: [], missing: [] })
+  })
+
+  /**
+   * The entry serves two apps, and mounting a route on the right one is only
+   * half of answering it: `index.ts` decides from the path alone which app sees
+   * the request, and anything it does not recognise goes to the shell, which is
+   * composed without services and has no such route.
+   *
+   * Both halves were correct in isolation and the suite was green while four
+   * shipped routes answered nothing in a deployment -- Stripe's deliveries and
+   * the three portal magic-link routes. Stripe would have posted a real payment
+   * and been handed the not-found page with a 200.
+   *
+   * The portal routes are listed explicitly because this fixture configures no
+   * magic-link key, so they are not among the mounted routes to be found.
+   */
+  it('[contract] routes every path it mounts to the app that has the services', () => {
+    // What the shell already answers needs no service and is not at issue.
+    const shell = new Set(
+      createApp(undefined, workerBrandAssetSurface, workerInstanceThemeSurface).routes.map(
+        (route) => route.path,
+      ),
+    )
+    const needsServices = [
+      ...new Set([
+        ...app.routes
+          .filter((route) => route.method !== 'ALL' && !shell.has(route.path))
+          .map((route) => route.path),
+        ...PORTAL_ROUTES.map((route) => route.split(' ')[1] ?? ''),
+      ]),
+    ]
+    const stranded = needsServices.filter((path) => !isServicePath(path)).sort()
+
+    expect(stranded).toEqual([])
   })
 })
