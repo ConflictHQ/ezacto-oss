@@ -100,7 +100,11 @@ describe("the invoice a client receives", () => {
     );
     expect(withLink).toContain("(Pay online) Tj");
     expect(withLink).toContain("(https://buy.stripe.com/test_abc) Tj");
-    for (const empty of [undefined, null, ""]) {
+    // Absent, explicitly null, and empty are three ways a caller says there is
+    // no link. `exactOptionalPropertyTypes` means absent cannot be spelled as
+    // `undefined`, so it is the one case written by leaving the key off.
+    expect(text(renderInvoiceDocument(invoice()))).not.toContain("(Pay online) Tj");
+    for (const empty of [null, ""]) {
       expect(text(renderInvoiceDocument(invoice({ paymentUrl: empty })))).not.toContain(
         "(Pay online) Tj",
       );
