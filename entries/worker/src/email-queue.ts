@@ -9,6 +9,7 @@ import {
   createQueuedMailer,
   createSenderBoundQueuedMailer,
   processQueuedEmail,
+  type EmailAttachmentResolver,
   type SenderBoundQueuedMailer,
   type SenderIdentityResolver,
 } from '@ezacto/mailer'
@@ -27,6 +28,12 @@ export const consumeCloudflareEmailBatch = async (
   batch: MessageBatch<QueuedEmailJob>,
   log: EmailLogStore,
   provider: HttpEmailProvider,
+  /**
+   * Fetches an attachment the job names. Absent where a deployment has no
+   * object store, in which case a job naming a file is refused rather than
+   * sent without it (issue 626).
+   */
+  resolveAttachment?: EmailAttachmentResolver,
 ): Promise<void> => {
   await Promise.all(
     batch.messages.map(async (message) => {
@@ -35,6 +42,7 @@ export const consumeCloudflareEmailBatch = async (
         message.attempts,
         log,
         provider,
+        resolveAttachment === undefined ? {} : { resolveAttachment },
       )
       if (disposition.action === 'retry') {
         message.retry({ delaySeconds: disposition.delaySeconds })

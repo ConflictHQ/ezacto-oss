@@ -4,9 +4,11 @@ import { isDataRequest } from './data-request.js'
 import { workerBrandAssetSurface } from './brand-assets.js'
 import { workerInstanceThemeSurface } from './instance-theme.js'
 import { consumeCloudflareEmailBatch } from './email-queue.js'
+import { createAttachmentResolver } from './invoice-documents.js'
 import { runDemoMaintenance } from './demo.js'
 import { runNightlyExport } from './nightly-export.js'
 import {
+  createR2AttachmentObjectStore,
   createRuntimeServices,
   createWorkerMailProvider,
 } from './runtime.js'
@@ -146,7 +148,16 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
     const services = await createRuntimeServices(env, {
       emailProvider: provider,
     })
-    await consumeCloudflareEmailBatch(batch, services.emailLog, provider)
+    // The consumer fetches what a job names, immediately before sending. Bytes
+    // never rode the queue to get here (issue 626).
+    await consumeCloudflareEmailBatch(
+      batch,
+      services.emailLog,
+      provider,
+      env.ATTACHMENTS === undefined
+        ? undefined
+        : createAttachmentResolver(createR2AttachmentObjectStore(env.ATTACHMENTS)),
+    )
   },
   async scheduled(controller, env) {
     const services = await createRuntimeServices(env)

@@ -127,6 +127,7 @@ export {
   createInvoiceEmailOutboxSubscriber,
   installMoneyResourceRoutes,
   type InvoiceDeliveryContext,
+  type InvoiceDocumentPort,
   type InvoiceDeliveryJob,
   type InvoiceGenerationCommand,
   type InvoiceGenerationExpenseSummary,
