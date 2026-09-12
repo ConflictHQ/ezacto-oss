@@ -37,6 +37,7 @@ import {
   migrateContainer,
   createBillLinkStore,
   createBillMirrorSource,
+  createPayoutAccountStore,
   setBillDelivery,
   createQuickBooksMirrorSource,
   createQuickBooksStore,
@@ -417,6 +418,20 @@ export const createContainerRuntime = async (
       },
       moneyResources,
       ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
+      payoutAccounts: (() => {
+        const store = createPayoutAccountStore(drizzle)
+        return {
+          listForUser: (userId: number) => store.listForUser(userId),
+          link: (input: {
+            userId: number
+            provider: 'deel' | 'wise'
+            externalId: string
+            linkedByUserId: number
+          }) => store.link({ ...input, now: new Date().toISOString() }),
+          read: (id: number) => store.read(id),
+          detach: (id: number) => store.detach(id, new Date().toISOString()),
+        }
+      })(),
       bill,
       billDelivery: {
         isOptedIn: (clientId: number) =>

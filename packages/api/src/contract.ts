@@ -1279,6 +1279,43 @@ const instanceThemeOperations: ApiContractOperation[] = [
   },
 ];
 
+const payoutAccountOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/users/:id/payout-accounts",
+    operationId: "listPayoutAccounts",
+    summary: "The payout accounts a person is currently payable through",
+    tag: "payout-accounts",
+    responseStatus: 200,
+    responseSchema: "PayoutAccountListEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "post",
+    path: "/api/v1/users/:id/payout-accounts",
+    operationId: "linkPayoutAccount",
+    summary: "Link a person to their account at a payout provider",
+    tag: "payout-accounts",
+    responseStatus: 201,
+    responseSchema: "PayoutAccountEnvelope",
+    requestSchema: "PayoutAccountInput",
+    requestRequired: true,
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "delete",
+    path: "/api/v1/payout-accounts/:id",
+    operationId: "detachPayoutAccount",
+    summary: "Detach a payout account; re-attaching is a new link",
+    tag: "payout-accounts",
+    responseStatus: 204,
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+];
+
 const billOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -2003,6 +2040,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...ssoDomainOperations,
   ...brandAssetOperations,
   ...instanceThemeOperations,
+  ...payoutAccountOperations,
   ...billOperations,
   ...twoFactorOperations,
   ...userEmailOperations,
@@ -6203,6 +6241,53 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object",
     required: ["data"],
     properties: { data: reference("BillClientDelivery") },
+    additionalProperties: false,
+  },
+  PayoutAccount: {
+    type: "object",
+    required: [
+      "id",
+      "user_id",
+      "provider",
+      "external_id",
+      "linked_by_user_id",
+      "linked_at",
+      "verified_at",
+    ],
+    properties: {
+      id: integerSchema,
+      user_id: integerSchema,
+      provider: { enum: ["deel", "wise"] },
+      // The provider's own identifier, verbatim -- not parsed and not
+      // normalised, because what it means is theirs to define.
+      external_id: stringSchema,
+      linked_by_user_id: integerSchema,
+      linked_at: timestampSchema,
+      // Null until the provider itself confirmed the id resolves to this
+      // person. A link nobody checked is a claim.
+      verified_at: nullable(timestampSchema),
+    },
+    additionalProperties: false,
+  },
+  PayoutAccountListEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: { type: "array", items: reference("PayoutAccount") } },
+    additionalProperties: false,
+  },
+  PayoutAccountEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("PayoutAccount") },
+    additionalProperties: false,
+  },
+  PayoutAccountInput: {
+    type: "object",
+    required: ["provider", "external_id"],
+    properties: {
+      provider: { enum: ["deel", "wise"] },
+      external_id: stringSchema,
+    },
     additionalProperties: false,
   },
   BillClientDeliveryInput: {

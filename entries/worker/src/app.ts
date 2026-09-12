@@ -1,4 +1,5 @@
 import type { BillRuntime, QuickBooksService } from "@ezacto/integrations";
+import type { PayoutAccountService } from "@ezacto/api";
 import {
   notFoundResponse,
   createApiApp,
@@ -33,6 +34,7 @@ import {
   installTimesheetApprovalRoutes,
   installBackupStatusRoutes,
   installBillRoutes,
+  installPayoutAccountRoutes,
   installQuickBooksRoutes,
   installTimesheetLockPolicyRoutes,
   installTeamRoutes,
@@ -261,6 +263,8 @@ export interface RuntimeServices {
    * database write with no BILL call in it -- the runtime is the thing that
    * talks to BILL, and a setting an operator changes should not need it.
    */
+  /** Linking a person to their payout provider account (#421). */
+  payoutAccounts?: PayoutAccountService
   billDelivery?: {
     isOptedIn(clientId: number): Promise<boolean>
     setOptedIn(clientId: number, enabled: boolean): Promise<boolean>
@@ -424,6 +428,9 @@ export const createApp = (
             // Mounted whether or not BILL is reachable: there is nothing to
             // connect, so the honest answer to "is this configured?" is a
             // route that says so rather than a route that is missing.
+            if (services.payoutAccounts !== undefined) {
+              installPayoutAccountRoutes(api, services.payoutAccounts)
+            }
             if (services.bill !== undefined && services.billDelivery !== undefined) {
               const billRuntime = services.bill
               const billDelivery = services.billDelivery

@@ -2268,6 +2268,29 @@ export type BillClientDeliveryEnvelope = {
   "data": BillClientDelivery;
 };
 
+export type PayoutAccount = {
+  "id": number;
+  "user_id": number;
+  "provider": "deel" | "wise";
+  "external_id": string;
+  "linked_by_user_id": number;
+  "linked_at": string;
+  "verified_at": string | null;
+};
+
+export type PayoutAccountListEnvelope = {
+  "data": Array<PayoutAccount>;
+};
+
+export type PayoutAccountEnvelope = {
+  "data": PayoutAccount;
+};
+
+export type PayoutAccountInput = {
+  "provider": "deel" | "wise";
+  "external_id": string;
+};
+
 export type BillClientDeliveryInput = {
   "deliver_via_bill": boolean;
 };
@@ -4236,6 +4259,34 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<void>("DELETE", "/api/v1/settings/theme", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listPayoutAccounts(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<PayoutAccountListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PayoutAccountListEnvelope>("GET", "/api/v1/users/:id/payout-accounts".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async linkPayoutAccount(args: { "id": number; body: PayoutAccountInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<PayoutAccountEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PayoutAccountEnvelope>("POST", "/api/v1/users/:id/payout-accounts".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async detachPayoutAccount(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/payout-accounts/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });

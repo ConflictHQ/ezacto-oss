@@ -63,6 +63,12 @@ export {
   type InstanceThemeSurface,
 } from './instance-theme.js'
 export {
+  installPayoutAccountRoutes,
+  type PayoutAccount,
+  type PayoutAccountService,
+  type PayoutLinkResult,
+} from './payout-accounts.js'
+export {
   installBillRoutes,
   type BillService,
   type BillStatus,

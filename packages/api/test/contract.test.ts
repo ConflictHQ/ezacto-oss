@@ -6,6 +6,7 @@ import {
   installBrandAssetRoutes,
   installBrandRoute,
   installBillRoutes,
+  installPayoutAccountRoutes,
   installInstanceThemeRoutes,
   apiContractOperations,
   createApiApp,
@@ -208,6 +209,12 @@ const documentedApp = () =>
       installBrandRoute(api, {
         organizationName: async () => "Contract Fixture",
         assets: (env) => brandAssets.list(env),
+      });
+      installPayoutAccountRoutes(api, {
+        listForUser: async () => [],
+        link: async () => ({ outcome: "unknown_user" }),
+        read: async () => null,
+        detach: async () => false,
       });
       installBillRoutes(api, {
         status: () => ({
