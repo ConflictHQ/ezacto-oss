@@ -8,18 +8,17 @@
  */
 
 import { sql } from "drizzle-orm";
-import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
-import type { DrizzleD1Database } from "drizzle-orm/d1";
-import type * as schema from "./schema.js";
+import { recordCheckoutPayment } from "./checkout-payments.js";
+import type { InvoiceStateDatabase } from "./invoice-state.js";
 import type {
   MirrorClient,
   MirrorInvoice,
   QuickBooksMirrorSource,
 } from "@ezacto/integrations";
 
-type Database =
-  | BetterSQLite3Database<typeof schema>
-  | DrizzleD1Database<typeof schema>;
+// The command path's own database type: writing a receipt is a command, and
+// `recordCheckoutPayment` needs the transaction seam that carries.
+type Database = InvoiceStateDatabase;
 
 interface InvoiceRow {
   id: number;
@@ -119,45 +118,23 @@ export const createQuickBooksMirrorSource = (
     return rows[0]?.ezacto_id ?? null;
   },
 
+  /**
+   * Issue 595. This wrote `invoice_payments` directly and was refused by the
+   * ledger trigger, so QuickBooks payments have never reached an invoice. It
+   * now goes through the command path, which is the only thing entitled to
+   * write a receipt.
+   */
   recordPayment: async (input) => {
-    const stamp = now().toISOString();
-    const invoices = await database.all<{ currency: string }>(sql`
-      SELECT currency FROM invoices WHERE id = ${input.invoiceId}`);
-    const currency = invoices[0]?.currency;
-    if (currency === undefined) return;
-
-    // A checkout payment arrives through an account, and the schema says so:
-    // `provider_account_id` is required for a QuickBooks payment. The realm is
-    // the account -- it is the company the money was taken into.
-    await database.run(sql`
-      INSERT INTO payment_provider_accounts
-        (provider, provider_shape, external_account_id, display_name, created_at, updated_at)
-      VALUES ('quickbooks', 'checkout', ${input.realmId}, 'QuickBooks Online', ${stamp}, ${stamp})
-      ON CONFLICT(provider, provider_shape, external_account_id) DO NOTHING`);
-    const accounts = await database.all<{ id: number }>(sql`
-      SELECT id FROM payment_provider_accounts
-      WHERE provider = 'quickbooks' AND provider_shape = 'checkout'
-        AND external_account_id = ${input.realmId}`);
-    const accountId = accounts[0]?.id;
-    if (accountId === undefined) return;
-
-    // `provider_transaction_id` is the QuickBooks payment id, which makes this
-    // idempotent at the row level as well as at the delivery level: a payment
-    // already recorded is not recorded twice even if a delivery is somehow
-    // claimed twice.
-    await database.run(sql`
-      INSERT INTO invoice_payments
-        (invoice_id, currency, amount_cents, paid_date, notes, provider,
-         provider_shape, provider_account_id, provider_transaction_id,
-         created_at, updated_at)
-      SELECT ${input.invoiceId}, ${currency}, ${input.amountCents},
-        ${input.paidOn}, ${`QuickBooks payment ${input.quickBooksPaymentId}`},
-        'quickbooks', 'checkout', ${accountId}, ${input.quickBooksPaymentId},
-        ${stamp}, ${stamp}
-      WHERE NOT EXISTS (
-        SELECT 1 FROM invoice_payments
-        WHERE provider = 'quickbooks'
-          AND provider_transaction_id = ${input.quickBooksPaymentId}
-      )`);
+    await recordCheckoutPayment(database, {
+      invoiceId: input.invoiceId,
+      provider: "quickbooks",
+      // The realm is the account: it is the company the money was taken into.
+      externalAccountId: input.realmId,
+      accountDisplayName: "QuickBooks Online",
+      providerTransactionId: input.quickBooksPaymentId,
+      amountCents: input.amountCents,
+      paidOn: input.paidOn,
+      now: now().toISOString(),
+    });
   },
 });

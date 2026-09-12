@@ -228,16 +228,22 @@ describe('recording a BILL payment', () => {
     expect(count.n).toBe(0)
   })
 
-  it('[security] does not forge a receipt the invoice ledger would refuse', async () => {
-    // `invoice_payments` is guarded by a trigger requiring a pending
-    // `payment.record` command and an invoice already open or paid. A receipt
-    // is a state transition, not a row, and this integration is not entitled
-    // to forge one -- so it writes what it observed and nothing else.
+  it('[money] records no receipt against an invoice that was never sent', async () => {
+    // The fixture's invoice is still a draft, and only an invoice that has been
+    // sent can take a payment -- the same rule the ledger trigger enforces. The
+    // observation is still kept, because BILL did report it and an operator
+    // should be able to see that.
     const { sqlite: database, source } = await fixture()
     await source.recordPayment(payment)
-    const count = database
-      .prepare('SELECT COUNT(*) AS n FROM invoice_payments')
-      .get() as { n: number }
-    expect(count.n).toBe(0)
+    expect(
+      (database.prepare('SELECT COUNT(*) AS n FROM invoice_payments').get() as { n: number }).n,
+    ).toBe(0)
+    expect(
+      (
+        database.prepare('SELECT COUNT(*) AS n FROM bill_received_payments').get() as {
+          n: number
+        }
+      ).n,
+    ).toBe(1)
   })
 })
