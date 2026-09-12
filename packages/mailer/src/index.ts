@@ -201,7 +201,12 @@ export interface EmailProviderReceipt {
 export interface QueuedMailer {
   enqueue(message: EmailMessage): Promise<EmailLogRecord>
   /** Queue an already-persisted log row. Retries reuse its deterministic id. */
-  enqueueExisting?(deliveryId: number, message: EmailMessage): Promise<void>
+  enqueueExisting?(
+    deliveryId: number,
+    message: EmailMessage,
+    /** Files to attach, by reference. Bytes never ride the queue. */
+    attachments?: readonly EmailAttachmentRef[],
+  ): Promise<void>
 }
 
 export class EmailQueueUnavailableError extends Error {
@@ -307,13 +312,20 @@ export const createQueuedMailer = (
     }
     return delivery
   },
-  async enqueueExisting(deliveryId, message) {
+  async enqueueExisting(deliveryId, message, attachments) {
     if (!Number.isSafeInteger(deliveryId) || deliveryId < 1) {
       throw new RangeError('delivery id must be a positive safe integer')
     }
     const safeMessage = copyMessage(message)
     try {
-      await queue.send({ schemaVersion: 1, deliveryId, message: safeMessage })
+      await queue.send({
+        schemaVersion: 1,
+        deliveryId,
+        message: safeMessage,
+        ...(attachments === undefined || attachments.length === 0
+          ? {}
+          : { attachments: attachments.map((reference) => ({ ...reference })) }),
+      })
     } catch {
       // The log remains queued: the outbox owns durable retry of this enqueue.
       throw new EmailQueueUnavailableError()
@@ -352,6 +364,7 @@ export interface SenderBoundQueuedMailer {
       replyTo?: readonly EmailRecipient[]
     }>,
     message: Omit<EmailMessage, 'from' | 'replyTo'>,
+    attachments?: readonly EmailAttachmentRef[],
   ): Promise<void>
 }
 
@@ -484,7 +497,7 @@ export const createSenderBoundQueuedMailer = (
         ...(message.related === undefined ? {} : { related: message.related }),
       })
     },
-    async enqueuePersisted(deliveryId, binding, message) {
+    async enqueuePersisted(deliveryId, binding, message, attachments) {
       const identity = await resolveAvailable(binding.senderIdentityId)
       const replyTo =
         identity.replyToEmail === null ? undefined : [{ email: identity.replyToEmail }]
@@ -501,11 +514,15 @@ export const createSenderBoundQueuedMailer = (
         )
       }
       if (queued.enqueueExisting === undefined) throw new EmailQueueUnavailableError()
-      await queued.enqueueExisting(deliveryId, {
-        ...message,
-        from: binding.from,
-        ...(binding.replyTo === undefined ? {} : { replyTo: binding.replyTo }),
-      })
+      await queued.enqueueExisting(
+        deliveryId,
+        {
+          ...message,
+          from: binding.from,
+          ...(binding.replyTo === undefined ? {} : { replyTo: binding.replyTo }),
+        },
+        attachments,
+      )
     },
   }
 }

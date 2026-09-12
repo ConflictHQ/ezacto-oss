@@ -9,6 +9,7 @@ import {
 import {
   SenderIdentityUnavailableError,
   type SenderBoundQueuedMailer,
+  type EmailAttachmentRef,
 } from "@ezacto/mailer";
 import type { EmailConfigurationService } from "./email-configuration.js";
 import type { Context, Hono, MiddlewareHandler } from "hono";
@@ -552,12 +553,37 @@ type ResolvedMoneyResourceRouteOptions = Omit<
 interface InvoiceOutboxEvent {
   id: string;
   eventType: string;
+  /**
+   * The invoice this event is about. Already what the outbox record carries for
+   * an invoice event, so the document port is given the id the drain already
+   * has rather than a second name for the same thing.
+   */
+  aggregateId: number;
+}
+
+/**
+ * Prepares the document that goes with an invoice message (issue 626).
+ *
+ * A port rather than an implementation, because rendering a PDF and writing it
+ * to object storage are the entry's concerns -- this package knows what an
+ * invoice message is, not what a bucket is. It answers with a reference, never
+ * bytes: the job it lands on is serialised onto a queue with a 128 KB ceiling.
+ *
+ * `null` means nothing is attached, which is the ordinary answer whenever the
+ * preference says so.
+ */
+export interface InvoiceDocumentPort {
+  prepare(input: {
+    readonly invoiceId: number;
+    readonly invoiceMessageId: number;
+  }): Promise<EmailAttachmentRef | null>;
 }
 
 /** Subscriber registration used by both runtimes; provider I/O remains in the queue consumer. */
 export const createInvoiceEmailOutboxSubscriber = (
   service: Pick<MoneyResourceService, "listInvoiceDeliveryJobs">,
   mailer?: SenderBoundQueuedMailer,
+  documents?: InvoiceDocumentPort,
 ): {
   readonly id: "invoice_email";
   deliver(event: Readonly<InvoiceOutboxEvent>): Promise<void>;
@@ -569,7 +595,22 @@ export const createInvoiceEmailOutboxSubscriber = (
     if (jobs.length > 0 && mailer?.enqueuePersisted === undefined) {
       throw new Error("invoice email durable enqueue is unavailable");
     }
+    // One document per message, prepared once however many recipients the
+    // message has. Each recipient is its own delivery and its own queue job,
+    // and rendering per recipient would put several identical objects in the
+    // bucket for one send.
+    const seen = new Map<number, EmailAttachmentRef | null>();
     for (const job of jobs) {
+      if (documents !== undefined && !seen.has(job.invoiceMessageId)) {
+        seen.set(
+          job.invoiceMessageId,
+          await documents.prepare({
+            invoiceId: event.aggregateId,
+            invoiceMessageId: job.invoiceMessageId,
+          }),
+        );
+      }
+      const attachment = seen.get(job.invoiceMessageId) ?? null;
       await mailer!.enqueuePersisted!(
         job.deliveryId,
         {
@@ -593,6 +634,7 @@ export const createInvoiceEmailOutboxSubscriber = (
           ...(job.htmlBody === null ? {} : { html: job.htmlBody }),
           related: { type: "invoice_message", id: job.invoiceMessageId },
         },
+        attachment === null ? undefined : [attachment],
       );
     }
   },
