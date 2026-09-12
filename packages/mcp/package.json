@@ -24,8 +24,8 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@conflict-hq/ezacto-cli": "^0.1.0",
-    "@conflict-hq/ezacto-client": "^0.1.0",
+    "@conflict-hq/ezacto-cli": "^0.1.1",
+    "@conflict-hq/ezacto-client": "^0.1.1",
     "@modelcontextprotocol/server": "^2.0.0",
     "zod": "^4.5.4"
   },
