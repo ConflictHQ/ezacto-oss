@@ -5,9 +5,11 @@ import {
   recordAttachedDocument,
   resolveAttachPolicy,
   resolveFilesPolicy,
+  resolveJournalPolicy,
+  readInvoiceJournal,
   readStagedAttachments,
 } from "@ezacto/db/d1";
-import { renderInvoiceDocument } from "@ezacto/core";
+import { renderInvoiceDocument, renderJournalDocument } from "@ezacto/core";
 import type { EmailAttachmentRef, EmailAttachmentResolver } from "@ezacto/mailer";
 import type { InvoiceDeliveryContext, InvoiceDocumentPort } from "@ezacto/api";
 
@@ -54,8 +56,51 @@ export const createInvoiceDocumentPort = (options: {
         }))
       : [];
 
+    // The work behind the invoice, if it was asked for (issue 647). Rendered
+    // here rather than stored, because unlike the invoice document it is
+    // derived entirely from entries this invoice already claimed -- there is no
+    // version of it a client could dispute that re-rendering would not
+    // reproduce.
+    const journalLevel = await resolveJournalPolicy(options.database, invoiceId);
+    const journal = async (
+      context: InvoiceDeliveryContext,
+    ): Promise<readonly EmailAttachmentRef[]> => {
+      if (journalLevel === null) return [];
+      const entries = await readInvoiceJournal(options.database, invoiceId);
+      // Nothing claimed means nothing to show. An empty journal would tell a
+      // client their invoice is backed by no work at all, which is a stronger
+      // claim than "this invoice was not raised from tracked time".
+      if (entries.length === 0) return [];
+      const bytes = renderJournalDocument({
+        detail: journalLevel,
+        invoiceNumber: context.number,
+        companyName: context.organizationName,
+        clientName: context.clientName,
+        periodStart: entries[0]!.spentDate,
+        periodEnd: entries[entries.length - 1]!.spentDate,
+        timeFormat: "decimal",
+        entries,
+      });
+      const journalKey = `invoice-documents/${String(invoiceId)}/${String(invoiceMessageId)}-journal.pdf`;
+      await options.objects.put(
+        journalKey,
+        bytes.buffer as ArrayBuffer,
+        "application/pdf",
+      );
+      return [
+        {
+          key: journalKey,
+          filename: `work-${journalLevel}-${context.number}.pdf`,
+          contentType: "application/pdf",
+        },
+      ];
+    };
+
     const decision = await resolveAttachPolicy(options.database, invoiceId);
-    if (!decision.attach) return staged;
+    if (!decision.attach) {
+      const context = await options.source.deliveryContext(invoiceId);
+      return context === null ? staged : [...(await journal(context)), ...staged];
+    }
 
     // Already prepared. A retried outbox delivery must attach the file that went
     // the first time rather than render a second one, and the record is keyed on
@@ -121,8 +166,13 @@ export const createInvoiceDocumentPort = (options: {
     });
 
     // The invoice first. It is what the message is about, and a client opening
-    // the attachments in order should meet it before what supports it.
-    return [{ key, filename, contentType: "application/pdf" }, ...staged];
+    // the attachments in order should meet it before what supports it, then the
+    // work behind it, then whatever a person staged.
+    return [
+      { key, filename, contentType: "application/pdf" },
+      ...(await journal(context)),
+      ...staged,
+    ];
   },
 });
 

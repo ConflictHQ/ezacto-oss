@@ -7,6 +7,8 @@ import {
   setInvoiceAttachPolicy,
   setOrganizationFilesPolicy,
   setInvoiceFilesPolicy,
+  setOrganizationJournalPolicy,
+  setInvoiceJournalPolicy,
 } from '@ezacto/db'
 import { createAttachmentResolver, createInvoiceDocumentPort } from '../src/invoice-documents.js'
 
@@ -273,5 +275,115 @@ describe('the files an operator staged against the invoice', () => {
     expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toEqual([
       { key: 'files/po-1', filename: 'purchase-order.pdf', contentType: 'application/pdf' },
     ])
+  })
+})
+
+describe('the work behind the invoice', () => {
+  // Entries the invoice actually claimed, which is what `time_entries.invoice_id`
+  // records. A date range would drift: entries can be released from an invoice,
+  // and two invoices can cover overlapping weeks for different projects.
+  // Borrowed from the release-invoiced-time fixture, which already satisfies
+  // the assignment chain a claimed entry needs: a project, a task, and a user
+  // and task assignment on that project. Hand-seeding fewer rows than that is
+  // how the earlier version of this fixture quietly inserted no project at all.
+  let entryId = 0
+  const seedWork = () =>
+    sqlite!.exec(`
+      INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
+        VALUES (1, 'R.', 'Adeyemi', 'administrator', '[]', '${at}', '${at}');
+      INSERT INTO projects (id, client_id, name, code, is_active, billing_method, created_at, updated_at)
+        VALUES (1, 1, 'Phase 1', 'P1', 1, 'time_materials', '${at}', '${at}');
+      INSERT INTO tasks (id, name, billable_by_default, is_default, is_active, created_at, updated_at)
+        VALUES (1, 'Advisory', 1, 1, 1, '${at}', '${at}');
+      INSERT INTO user_assignments (id, project_id, user_id, created_at, updated_at)
+        VALUES (1, 1, 1, '${at}', '${at}');
+      INSERT INTO task_assignments (id, project_id, task_id, billable, created_at, updated_at)
+        VALUES (1, 1, 1, 1, '${at}', '${at}');
+    `)
+
+  const claim = (seconds: number, notes: string, spentDate = '2026-09-01') => {
+    entryId += 1
+    sqlite!.exec(`
+      INSERT INTO time_entries (id, user_id, project_id, task_id, user_assignment_id,
+                                task_assignment_id, spent_date, seconds, seconds_without_timer,
+                                rounded_seconds, billable, notes, invoice_id, created_at, updated_at)
+        VALUES (${String(entryId)}, 1, 1, 1, 1, 1, '${spentDate}', ${String(seconds)},
+                ${String(seconds)}, ${String(seconds)}, 1, '${notes}', 1, '${at}', '${at}');
+    `)
+  }
+
+  it('[unit] sends no journal until somebody asks for one', async () => {
+    const { orm, port } = await harness()
+    seedWork()
+    claim(3600, 'Reviewed the forecast model')
+    await setOrganizationAttachPolicy(orm as never, true)
+    const refs = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
+    expect(refs.map((r) => r.filename)).toEqual(['invoice-1315.pdf'])
+  })
+
+  it('[money] attaches it after the invoice and names the level', async () => {
+    // A client opening the attachments in order meets the invoice, then the
+    // work behind it.
+    const { orm, port } = await harness()
+    seedWork()
+    claim(3600, 'Reviewed the forecast model')
+    await setOrganizationAttachPolicy(orm as never, true)
+    await setOrganizationJournalPolicy(orm as never, 'detailed')
+    const refs = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
+    expect(refs.map((r) => r.filename)).toEqual([
+      'invoice-1315.pdf',
+      'work-detailed-1315.pdf',
+    ])
+  })
+
+  it('[money] goes on its own when the invoice document is off', async () => {
+    // The two are separate choices. Wanting the work does not mean wanting the
+    // invoice as a PDF.
+    const { orm, port } = await harness()
+    seedWork()
+    claim(3600, 'Reviewed the forecast model')
+    await setOrganizationJournalPolicy(orm as never, 'summary')
+    const refs = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
+    expect(refs.map((r) => r.filename)).toEqual(['work-summary-1315.pdf'])
+  })
+
+  it('[money] lets one invoice choose a different level from the default', async () => {
+    const { orm, port } = await harness()
+    seedWork()
+    claim(3600, 'Reviewed the forecast model')
+    await setOrganizationJournalPolicy(orm as never, 'detailed')
+    await setInvoiceJournalPolicy(orm as never, { invoiceId: 1, level: 'summary' })
+    const refs = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
+    expect(refs.map((r) => r.filename)).toEqual(['work-summary-1315.pdf'])
+  })
+
+  it('[money] lets one invoice refuse a journal the default asks for', async () => {
+    const { orm, port } = await harness()
+    seedWork()
+    claim(3600, 'Reviewed the forecast model')
+    await setOrganizationJournalPolicy(orm as never, 'detailed')
+    await setInvoiceJournalPolicy(orm as never, { invoiceId: 1, level: false })
+    expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toEqual([])
+  })
+
+  it('[money] sends nothing when the invoice claimed no time at all', async () => {
+    // An empty journal would tell a client their invoice is backed by no work,
+    // which is a stronger claim than "this was not raised from tracked time".
+    const { orm, port } = await harness()
+    await setOrganizationJournalPolicy(orm as never, 'detailed')
+    expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toEqual([])
+  })
+
+  it('[unit] renders a real PDF of the claimed work', async () => {
+    const { orm, port, objects } = await harness()
+    seedWork()
+    claim(5400, 'Reviewed the forecast model')
+    await setOrganizationJournalPolicy(orm as never, 'detailed')
+    const [ref] = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
+    const stored = objects.written.get(ref!.key)!
+    const text = Array.from(stored, (b) => String.fromCharCode(b)).join('')
+    expect(text.startsWith('%PDF-')).toBe(true)
+    expect(text).toContain('(WORK DETAIL) Tj')
+    expect(text).toContain('(1.50) Tj')
   })
 })

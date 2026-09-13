@@ -225,6 +225,10 @@ const documentedApp = () =>
         setInvoicePreference: async () => true,
         readOrganizationPreference: async () => false,
         setOrganizationPreference: async () => undefined,
+        readInvoiceJournal: async () => ({ invoice: null, organization: false }),
+        setInvoiceJournal: async () => true,
+        readOrganizationJournal: async () => false,
+        setOrganizationJournal: async () => undefined,
       } as never);
       installRecurringRepairRoutes(
         api,
