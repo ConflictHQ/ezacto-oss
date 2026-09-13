@@ -44,6 +44,7 @@ import { teamCapabilities } from '../team/model.js'
 import { createExpenseCategoryDirectoryController } from '../expense-categories/browser.js'
 import { createEmailConfigurationController } from '../email-config/browser.js'
 import { createRecurringWorkspaceController } from '../recurring/browser.js'
+import { createEstimateWorkspaceController } from '../estimates/browser.js'
 import { createRetainerWorkspaceController } from '../retainers/browser.js'
 import { createModuleSettingsController } from '../module-settings/browser.js'
 import {
@@ -952,6 +953,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     document.documentElement.dataset.appView === 'invoice-recurring'
   const invoiceRetainersPage =
     document.documentElement.dataset.appView === 'invoice-retainers'
+  const invoiceEstimatesPage =
+    document.documentElement.dataset.appView === 'invoice-estimates'
   const invoiceConfigurePage =
     document.documentElement.dataset.appView === 'settings-templates'
   const clientListPage = document.documentElement.dataset.appView === 'client-list'
@@ -987,6 +990,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
             ? ' — Recurring invoices'
             : invoiceRetainersPage
               ? ' — Retainers'
+              : invoiceEstimatesPage
+                ? ' — Estimates'
               : invoiceConfigurePage
                 ? ' — Invoice configuration'
           : clientListPage
@@ -1103,6 +1108,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const expenseCategories = createExpenseCategoryDirectoryController(api)
   const emailConfiguration = createEmailConfigurationController(api)
   const recurringWorkspace = createRecurringWorkspaceController(api)
+  const estimateWorkspace = createEstimateWorkspaceController(api)
   const retainerWorkspace = createRetainerWorkspaceController(api)
   const moduleSettings = createModuleSettingsController(api)
   const invoicePayments = createInvoicePaymentController(api)
@@ -2638,6 +2644,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     } else if (invoiceRecurringPage) {
       await Promise.all([
         recurringWorkspace.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (invoiceEstimatesPage) {
+      await Promise.all([
+        estimateWorkspace.activate(
           identity,
           authenticated.signal,
           (error) => handleSessionFailure(error, authenticated),

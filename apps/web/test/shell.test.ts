@@ -260,7 +260,7 @@ describe('S-1 through S-5 application shell', () => {
     expect(noTabs).not.toContain('class="tabstrip"')
   })
 
-  it('[acceptance] gives Invoices three destinations and a labelled pane behind each', () => {
+  it('[acceptance] gives Invoices four destinations and a labelled pane behind each', () => {
     // Invoices was one flat list while /api/v1/recurring-invoices,
     // /api/v1/retainers and the sender-identity endpoints sat behind nothing at
     // all. The strip ships ahead of the screens on purpose: a labelled empty
@@ -278,6 +278,9 @@ describe('S-1 through S-5 application shell', () => {
     expect(stripOf(overview)).toBe(
       '<a href="/invoices" aria-current="page">Overview</a>' +
         '<a href="/invoices/recurring">Recurring</a>' +
+        // Issue 485 added Estimates: seven API paths served since the API
+        // shipped with no screen calling any of them.
+        '<a href="/invoices/estimates">Estimates</a>' +
         '<a href="/invoices/retainers">Retainers</a>',
     )
 
@@ -301,6 +304,7 @@ describe('S-1 through S-5 application shell', () => {
     expect(recurring).toContain('data-recurring-detail-view hidden')
     expect(recurring).toContain('data-recurring-issue')
     expect(recurring).toContain('data-invoice-retainers-page hidden>')
+    expect(recurring).toContain('data-invoice-estimates-page hidden>')
     expect(recurring).toContain('data-invoice-list-page hidden>')
 
     const retainers = renderAppShell({
@@ -317,6 +321,23 @@ describe('S-1 through S-5 application shell', () => {
     expect(retainers).toContain('data-retainer-list-view')
     expect(retainers).toContain('data-retainer-detail-view hidden')
     expect(retainers).toContain('data-retainer-ledger')
+
+    const estimates = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      activeSection: 'Invoices',
+      view: 'invoice-estimates',
+      tabs: invoiceTabs('invoice-estimates'),
+    })
+    expect(estimates).toContain('data-invoice-estimates-page>')
+    expect(stripOf(estimates)).toContain(
+      '<a href="/invoices/estimates" aria-current="page">Estimates</a>',
+    )
+    expect(stripOf(estimates).match(/aria-current/gu)).toHaveLength(1)
+    // The list, the detail and the conversion form the controller fills in.
+    expect(estimates).toContain('data-estimate-list-view')
+    expect(estimates).toContain('data-estimate-detail-view hidden')
+    expect(estimates).toContain('data-estimate-convert-form')
 
     const configure = renderAppShell({
       environment: 'test',
