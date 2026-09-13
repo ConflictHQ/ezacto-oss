@@ -441,8 +441,65 @@ export type DetailedTimeReportResult =
  */
 export const DETAILED_TIME_ENTRY_LIMIT = 20_000
 
+/**
+ * What a banded month actually cost to deliver (issue 484, part 3).
+ *
+ * A flat-rate engagement bills the same figure every month whatever the team
+ * did, so the question "is this band priced right" cannot be answered from the
+ * invoice. It is answerable from the two rate columns every time entry already
+ * carries, and #656 stores the difference on the invoice the band raised.
+ *
+ * One row per month per project, because a band covers projects and is reviewed
+ * monthly. Billable and cost value sit side by side deliberately: the first says
+ * what the work was worth at list price, the second what it cost to deliver,
+ * and a band sits between them. A band below cost is losing money; a band near
+ * list is barely a band.
+ */
+export interface BandedMonthRow {
+  /** `YYYY-MM`, the month the work was spent in. */
+  month: string
+  projectId: number
+  projectName: string
+  clientId: number
+  clientName: string
+  currency: string
+  roundedSeconds: number
+  /** Null when any entry in the month has no billable rate. */
+  billableValueCents: number | null
+  /** Null when any entry in the month has no cost rate. */
+  costValueCents: number | null
+  entriesWithoutBillableRate: number
+  entriesWithoutCostRate: number
+  /**
+   * What the invoices claiming this month's time actually charged, and what
+   * they recorded as foregone. Null when no invoice has claimed any of it --
+   * an unbilled month is not a band priced at zero.
+   */
+  billedCents: number | null
+  foregoneCents: number | null
+}
+
+export interface BandedMonthReportRecord {
+  from: string
+  to: string
+  rows: BandedMonthRow[]
+}
+
+interface BandedMonthQueryRow {
+  month: string
+  projectId: number
+  projectName: string
+  clientId: number
+  clientName: string
+  roundedSeconds: number
+  billableRateCents: number | null
+  costRateCents: number | null
+  invoiceId: number | null
+}
+
 export interface ReportRepository {
   contractorCost(range: Readonly<ReportDateRange>): Promise<ContractorCostReportRecord>
+  bandedMonths(range: Readonly<ReportDateRange>): Promise<BandedMonthReportRecord>
   profitability(range: Readonly<ReportDateRange>): Promise<ProfitabilityReportRecord>
   detailedTime(filter: Readonly<DetailedTimeFilter>): Promise<DetailedTimeReportResult>
   detailedExpense(
@@ -2443,8 +2500,130 @@ const timeReport = async (
   }
 }
 
+/**
+ * A month of a project, valued three ways.
+ *
+ * Value is computed per entry and summed, never from a summed rate: two people
+ * at different rates on the same project have no single rate, and averaging
+ * them would invent one. A month where any entry lacks a rate reports null for
+ * that side rather than a total that quietly omits the work -- the same rule
+ * `contractorCostReport` follows, and for the same reason: a number that is
+ * silently short is worse than no number.
+ */
+const bandedMonthReport = async (
+  database: Database,
+  range: Readonly<ReportDateRange>,
+): Promise<BandedMonthReportRecord> => {
+  const rows = await database.all<BandedMonthQueryRow>(sql`
+    SELECT substr(entry.spent_date, 1, 7) AS "month",
+      project.id AS "projectId", project.name AS "projectName",
+      client.id AS "clientId", client.name AS "clientName",
+      entry.rounded_seconds AS "roundedSeconds",
+      entry.billable_rate_cents AS "billableRateCents",
+      entry.cost_rate_cents AS "costRateCents",
+      entry.invoice_id AS "invoiceId"
+    FROM time_entries entry
+    JOIN projects project ON project.id = entry.project_id
+    JOIN clients client ON client.id = project.client_id
+    WHERE entry.spent_date BETWEEN ${range.from} AND ${range.to}
+      AND entry.billable = 1
+    ORDER BY substr(entry.spent_date, 1, 7), project.id, entry.id
+  `)
+  const organization = await database.all<{ currency: string }>(
+    sql`SELECT upper(currency) AS "currency" FROM organizations WHERE id = 1`,
+  )
+  const currency = organization[0]?.currency
+  if (currency === undefined) {
+    throw new Error('organization must exist before reports are read')
+  }
+
+  // What the invoices claiming this time charged, read once rather than per
+  // row. An invoice can claim time across two months; its charge belongs to
+  // whichever months its entries fall in, so the claim is attributed by entry
+  // and the invoice total is not double counted across projects it never
+  // touched.
+  const invoices = await database.all<{
+    id: number
+    amountCents: number
+    foregoneCents: number
+  }>(sql`
+    SELECT id, amount_cents AS "amountCents",
+      foregone_billable_cents AS "foregoneCents"
+    FROM invoices
+    WHERE id IN (
+      SELECT DISTINCT invoice_id FROM time_entries
+      WHERE invoice_id IS NOT NULL AND spent_date BETWEEN ${range.from} AND ${range.to}
+    )`)
+  const invoiceById = new Map(invoices.map((invoice) => [invoice.id, invoice]))
+
+  const grouped = new Map<string, BandedMonthRow & { claimed: Set<number> }>()
+  for (const row of rows) {
+    const key = `${row.month}:${String(row.projectId)}`
+    let bucket = grouped.get(key)
+    if (bucket === undefined) {
+      bucket = {
+        month: row.month,
+        projectId: row.projectId,
+        projectName: row.projectName,
+        clientId: row.clientId,
+        clientName: row.clientName,
+        currency,
+        roundedSeconds: 0,
+        billableValueCents: 0,
+        costValueCents: 0,
+        entriesWithoutBillableRate: 0,
+        entriesWithoutCostRate: 0,
+        billedCents: null,
+        foregoneCents: null,
+        claimed: new Set<number>(),
+      }
+      grouped.set(key, bucket)
+    }
+    bucket.roundedSeconds += row.roundedSeconds
+    const value = (rate: number | null): number =>
+      Math.round((row.roundedSeconds * rate!) / 3600)
+    if (row.billableRateCents === null) {
+      bucket.entriesWithoutBillableRate += 1
+      bucket.billableValueCents = null
+    } else if (bucket.billableValueCents !== null) {
+      bucket.billableValueCents += value(row.billableRateCents)
+    }
+    if (row.costRateCents === null) {
+      bucket.entriesWithoutCostRate += 1
+      bucket.costValueCents = null
+    } else if (bucket.costValueCents !== null) {
+      bucket.costValueCents += value(row.costRateCents)
+    }
+    if (row.invoiceId !== null) bucket.claimed.add(row.invoiceId)
+  }
+
+  return {
+    from: range.from,
+    to: range.to,
+    rows: [...grouped.values()].map(({ claimed, ...bucket }) => {
+      const totals = [...claimed]
+        .map((id) => invoiceById.get(id))
+        .filter((invoice): invoice is NonNullable<typeof invoice> => invoice !== undefined)
+      return {
+        ...bucket,
+        // Null rather than zero when nothing has claimed the month: an unbilled
+        // month is not a band priced at nothing.
+        billedCents:
+          totals.length === 0
+            ? null
+            : totals.reduce((sum, invoice) => sum + invoice.amountCents, 0),
+        foregoneCents:
+          totals.length === 0
+            ? null
+            : totals.reduce((sum, invoice) => sum + invoice.foregoneCents, 0),
+      }
+    }),
+  }
+}
+
 export const createReportRepository = (database: Database): ReportRepository => ({
   contractorCost: (range) => contractorCostReport(database, range),
+  bandedMonths: (range) => bandedMonthReport(database, range),
   profitability: (range) => profitabilityReport(database, range),
   detailedTime: (filter) => detailedTimeReport(database, filter),
   detailedExpense: (filter) => detailedExpenseReport(database, filter),
