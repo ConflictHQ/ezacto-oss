@@ -37,6 +37,17 @@ API_CURSOR_SIGNING_KEY=
 # remove it from the Worker immediately after the owner token is verified.
 EZACTO_BOOTSTRAP_TOKEN=
 
+# --- Accounting mirror: QuickBooks (issue #104) ---
+# Optional pair; without both the QuickBooks routes are not mounted. The webhook
+# verifier comes from the webhooks page in the Intuit portal; without it no
+# delivery is accepted.
+QUICKBOOKS_CLIENT_ID=
+QUICKBOOKS_CLIENT_SECRET=
+QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN=
+# `sandbox` reaches Intuit's test companies. Anything else, including empty, is
+# LIVE BOOKS.
+QUICKBOOKS_ENVIRONMENT=sandbox
+
 # --- Payouts: a contractor's own Wise account, by OAuth (issue #543) ---
 # Optional pair; leave both empty and the Wise routes are not mounted at all, so
 # a contractor sees no connect button rather than one that fails at the consent
