@@ -314,6 +314,8 @@ export {
   type WiseConnectOutcome,
   type WiseConnectRefusal,
   type WiseService,
+  installWiseWebhookRoute,
+  type WiseWebhookService,
 } from './wise.js'
 
 export * from './thank-you-subscriber.js'

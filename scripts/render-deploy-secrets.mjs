@@ -175,6 +175,11 @@ export const deploySecretPayload = (environment) => {
     // Absent means live, which is what `createWiseRuntime` reads it as. A
     // deployment that means sandbox has to say so.
     WISE_ENVIRONMENT: optionalCredential(environment.WISE_ENVIRONMENT),
+    // The PEM Wise signs deliveries with. Not a secret in itself, but it rides
+    // here because `secret bulk` owns the whole set: a public key parked in a
+    // var while the rest of the pair are secrets is a value that goes missing
+    // for reasons nobody can see.
+    WISE_WEBHOOK_PUBLIC_KEY: optionalCredential(environment.WISE_WEBHOOK_PUBLIC_KEY),
     BILL_DEV_KEY: billDevKey,
     BILL_COMPANY_ID: billCompanyId,
     BILL_USERNAME: billUsername,

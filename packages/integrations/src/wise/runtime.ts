@@ -30,6 +30,12 @@ import {
   type WiseEnvironment,
   type WiseProfile,
 } from "./oauth.js";
+import {
+  WISE_SANDBOX_WEBHOOK_PUBLIC_KEY,
+  parseWiseEvent,
+  payoutOutcomeFor,
+  verifyWiseSignature,
+} from "./webhook.js";
 
 export interface WiseConnectionStatus {
   readonly profileId: string;
@@ -124,12 +130,53 @@ export interface WiseConfig {
   /** `sandbox` reaches Wise's test accounts only; anything else moves real money. */
   readonly environment: string | undefined;
   readonly appBaseUrl: string | undefined;
+  /**
+   * The PEM Wise signs deliveries with.
+   *
+   * Configured rather than compiled in, because Wise rotates the live key and a
+   * stale hard-coded one is a webhook that stops believing real events with no
+   * deploy to explain it. Absent on sandbox means Wise's published sandbox key,
+   * which never rotates quietly and is what the fixtures are signed with.
+   * Absent on live means deliveries are refused: an unverifiable claim about
+   * money is not one to act on because a key was not configured.
+   */
+  readonly webhookPublicKey: string | undefined;
+}
+
+/**
+ * The ledger and the payout log, as this runtime needs them.
+ *
+ * `claim` is first and is the arbiter: Wise retries anything it did not get a
+ * 2xx for, and only the first caller for a delivery id may act.
+ */
+export interface WiseDeliveryPort {
+  claim(input: {
+    deliveryId: string;
+    subscriptionId: string;
+    eventType: string;
+    transferId: string | null;
+    currentState: string | null;
+    occurredAt: string | null;
+    now: string;
+  }): Promise<{ claim: "fresh" } | { claim: "duplicate" }>;
+  finish(deliveryId: string, now: string, skippedReason: string | null): Promise<void>;
+  settleTransfer(input: {
+    transferId: string;
+    outcome: "sent" | "failed";
+    failureReason: string | null;
+    now: string;
+  }): Promise<
+    | { settled: "sent" | "failed"; transferId: string }
+    | { settled: "none"; reason: string }
+  >;
 }
 
 export interface WiseRuntimeOptions {
   readonly config: WiseConfig;
   readonly grants: WiseGrantPort;
   readonly accounts: WisePayoutAccountPort;
+  /** Absent where a deployment does not receive webhooks; the route is then not mounted. */
+  readonly deliveries?: WiseDeliveryPort;
   readonly fetch?: typeof fetch;
   readonly now: () => Date;
   /** Injected so a test can state the value rather than tolerate randomness. */
@@ -167,6 +214,15 @@ export const choosePayoutProfile = (
   profiles.find((profile) => profile.type === "business") ?? profiles[0] ?? null;
 
 export interface WiseRuntime {
+  /** Absent unless a delivery port was supplied. */
+  readonly webhook?: {
+    receiveWebhook(input: {
+      payload: string;
+      signature: string | null;
+      deliveryId: string | null;
+      isTest: boolean;
+    }): Promise<{ accepted: boolean }>;
+  };
   readonly service: {
     clientId(): string | null;
     callbackUrl(): string | null;
@@ -231,7 +287,108 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
     payable: await payable(userId, grant.profileId),
   });
 
+  /**
+   * Wise's key for this environment.
+   *
+   * Sandbox falls back to the published key; live does not fall back at all. A
+   * deployment that forgot to configure it refuses deliveries, which is the
+   * right failure: an unverifiable claim about money should not be acted on
+   * because a value was missing.
+   */
+  const webhookPublicKey =
+    trimmed(config.webhookPublicKey) ??
+    (environment === "sandbox" ? WISE_SANDBOX_WEBHOOK_PUBLIC_KEY : null);
+
+  const deliveries = options.deliveries;
+
+  /**
+   * One delivery, start to finish.
+   *
+   * Order matters and is the whole of the correctness here: verify, then parse,
+   * then claim, then act. Verifying last would mean parsing a forged body;
+   * claiming last would let two concurrent retries both act, and settling a
+   * payout twice is the failure the log exists to prevent.
+   */
+  const receiveWebhook = async (input: {
+    payload: string;
+    signature: string | null;
+    deliveryId: string | null;
+    isTest: boolean;
+  }): Promise<{ accepted: boolean }> => {
+    if (deliveries === undefined || webhookPublicKey === null) return { accepted: false };
+    const verified = await verifyWiseSignature({
+      body: input.payload,
+      signature: input.signature,
+      publicKeyPem: webhookPublicKey,
+    });
+    if (!verified) return { accepted: false };
+
+    // Wise's ping when a subscription is created. Signed, so it proves the
+    // endpoint and the key agree, which is the only thing it is for. Accepted
+    // and not recorded: a test is not a fact about anybody's money.
+    if (input.isTest) return { accepted: true };
+
+    const event = parseWiseEvent(input.payload);
+    // Signed by Wise and unreadable by us. Accepted, because a retry of
+    // something we cannot parse will not parse the second time either.
+    if (event === null) return { accepted: true };
+
+    const now = instant();
+    const transferId = event.kind === "transfer_state" ? event.transferId : null;
+    // A delivery with no id of its own is keyed on the event's own identity,
+    // which is stable across a retry for the same reason: a retry is the same
+    // event again.
+    const deliveryId =
+      trimmed(input.deliveryId ?? undefined) ??
+      [
+        event.subscriptionId,
+        event.kind === "transfer_state" ? "transfers#state-change" : event.eventType,
+        transferId ?? "-",
+        event.kind === "transfer_state" ? event.currentState : "-",
+        event.occurredAt ?? "-",
+      ].join("|");
+
+    const claimed = await deliveries.claim({
+      deliveryId,
+      subscriptionId: event.subscriptionId,
+      eventType: event.kind === "transfer_state" ? "transfers#state-change" : event.eventType,
+      transferId,
+      currentState: event.kind === "transfer_state" ? event.currentState : null,
+      occurredAt: event.occurredAt,
+      now,
+    });
+    // Told already. The right answer to a retry is 2xx and no further work.
+    if (claimed.claim === "duplicate") return { accepted: true };
+
+    if (event.kind !== "transfer_state") {
+      await deliveries.finish(deliveryId, now, `event type ${event.eventType} is not acted on`);
+      return { accepted: true };
+    }
+
+    const outcome = payoutOutcomeFor(event.currentState);
+    if (outcome === null) {
+      // In flight. Writing 'sent' here would mark money as moved while it is
+      // still reversible, and a sent row cannot be corrected afterwards.
+      await deliveries.finish(deliveryId, now, `state ${event.currentState} is not final`);
+      return { accepted: true };
+    }
+
+    const settlement = await deliveries.settleTransfer({
+      transferId: event.transferId,
+      outcome,
+      failureReason: outcome === "failed" ? `wise reported ${event.currentState}` : null,
+      now,
+    });
+    await deliveries.finish(
+      deliveryId,
+      now,
+      settlement.settled === "none" ? settlement.reason : null,
+    );
+    return { accepted: true };
+  };
+
   return {
+    ...(deliveries === undefined ? {} : { webhook: { receiveWebhook } }),
     service: {
       clientId: () => clientId,
       callbackUrl,

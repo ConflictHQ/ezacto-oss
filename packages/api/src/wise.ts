@@ -201,3 +201,50 @@ export const installWiseRoutes = <Bindings extends object>(
     return context.body(null, 204)
   })
 }
+
+/**
+ * What Wise pushes at us, at `/webhooks/wise`.
+ *
+ * Outside the authenticated surface, like Stripe's and for the same reason:
+ * Wise has no session with us, so the signature is the whole of the
+ * authorisation. It is checked before the body is treated as anything but
+ * text, because the signature covers the raw bytes and a parse-then-verify
+ * would be verifying something Wise never signed.
+ *
+ * 200 once the signature holds, even where the event is one we do not act on.
+ * Wise retries a non-2xx, and retrying a delivery we have correctly decided to
+ * ignore is work that can never succeed. A bad signature is a 401 -- the one
+ * case where a retry is not wanted either, and the honest answer to a request
+ * nobody proved Wise sent.
+ */
+export interface WiseWebhookService {
+  receiveWebhook(input: {
+    payload: string
+    signature: string | null
+    /** Wise's own id for the delivery; how a retry is recognised. */
+    deliveryId: string | null
+    /** Wise's ping when a subscription is created. Verified, then not acted on. */
+    isTest: boolean
+  }): Promise<{ accepted: boolean }>
+}
+
+export const installWiseWebhookRoute = <Bindings extends object>(
+  app: Hono<ApiContext<Bindings>>,
+  service: Readonly<WiseWebhookService>,
+): void => {
+  app.post('/webhooks/wise', async (context) => {
+    const payload = await context.req.text()
+    const result = await service.receiveWebhook({
+      payload,
+      signature: context.req.header('x-signature-sha256') ?? null,
+      deliveryId: context.req.header('x-delivery-id') ?? null,
+      // Wise spells the test ping with a header rather than an event type, so a
+      // subscription can be proved end to end without inventing a transfer.
+      isTest: (context.req.header('x-test-notification') ?? '').toLowerCase() === 'true',
+    })
+    if (!result.accepted) {
+      return context.json({ error: { code: 'signature_invalid' } }, 401)
+    }
+    return context.json({ data: { received: true } }, 200)
+  })
+}

@@ -49,6 +49,11 @@ WISE_CLIENT_SECRET=
 # loudly where a sandbox token against live looks like a payout that went
 # nowhere.
 WISE_ENVIRONMENT=sandbox
+# The PEM Wise signs webhook deliveries with, for the subscription pointed at
+# <APP_BASE_URL>/webhooks/wise. Optional on sandbox -- Wise's published sandbox
+# key is used -- and REQUIRED on live: an unverifiable claim about money is
+# refused rather than trusted, so live deliveries are rejected until this is set.
+WISE_WEBHOOK_PUBLIC_KEY=
 
 # --- migrate package (dev, against the live Harvest account) ---
 HARVEST_ACCOUNT_ID=

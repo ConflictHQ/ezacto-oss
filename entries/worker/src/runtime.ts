@@ -39,6 +39,7 @@ import {
   createBillMirrorSource,
   createPayoutAccountStore,
   createWiseGrantStore,
+  createWiseDeliveryStore,
   createStripeLinkStore,
   readAttachPreference,
   readFilesPreference,
@@ -622,8 +623,10 @@ export const createRuntimeServices = async (
             clientSecret: env.WISE_CLIENT_SECRET,
             environment: env.WISE_ENVIRONMENT,
             appBaseUrl: env.APP_BASE_URL,
+            webhookPublicKey: env.WISE_WEBHOOK_PUBLIC_KEY,
           },
           grants: createWiseGrantStore(drizzle),
+          deliveries: createWiseDeliveryStore(drizzle),
           accounts: (() => {
             const store = createPayoutAccountStore(drizzle);
             return {
@@ -907,6 +910,7 @@ export const createRuntimeServices = async (
     // halves of the contract guard know about it.
     ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
     ...(wise === null ? {} : { wise: wise.service }),
+    ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),
     payoutAccounts: (() => {
       const store = createPayoutAccountStore(drizzle)
       return {

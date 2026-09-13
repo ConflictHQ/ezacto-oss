@@ -212,3 +212,4 @@ export * from './ecb/rates.js'
 
 export * from './wise/oauth.js'
 export * from './wise/runtime.js'
+export * from './wise/webhook.js'

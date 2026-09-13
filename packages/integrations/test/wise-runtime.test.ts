@@ -99,6 +99,7 @@ const runtime = (
         clientSecret: "client-secret",
         environment: parts.environment ?? "sandbox",
         appBaseUrl: "https://time.example.test",
+        webhookPublicKey: undefined,
       },
       grants,
       accounts,

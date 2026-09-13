@@ -40,6 +40,7 @@ import {
   createBillMirrorSource,
   createPayoutAccountStore,
   createWiseGrantStore,
+  createWiseDeliveryStore,
   createStripeLinkStore,
   readAttachPreference,
   readFilesPreference,
@@ -367,8 +368,10 @@ export const createContainerRuntime = async (
               clientSecret: config.wise.clientSecret,
               environment: config.wise.environment,
               appBaseUrl: config.appBaseUrl,
+              webhookPublicKey: config.wise.webhookPublicKey,
             },
             grants: createWiseGrantStore(drizzle),
+            deliveries: createWiseDeliveryStore(drizzle),
             accounts: (() => {
               const store = createPayoutAccountStore(drizzle)
               return {
@@ -547,6 +550,7 @@ export const createContainerRuntime = async (
       moneyResources,
       ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
       ...(wise === null ? {} : { wise: wise.service }),
+      ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),
       payoutAccounts: (() => {
         const store = createPayoutAccountStore(drizzle)
         return {
