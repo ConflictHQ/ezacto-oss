@@ -170,6 +170,12 @@ export const deploySecretPayload = (environment) => {
     QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN: optionalCredential(
       environment.QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN,
     ),
+    // `runtime.ts` reads this and nothing ever delivered it, so a deployment
+    // could only ever reach live Intuit however it was configured -- the same
+    // shape of defect as the credentials themselves once had, where the routes
+    // mounted and the value never arrived. Absent still means live, which is
+    // the safe way round; the point is that `sandbox` is now reachable at all.
+    QUICKBOOKS_ENVIRONMENT: optionalCredential(environment.QUICKBOOKS_ENVIRONMENT),
     WISE_CLIENT_ID: wiseClientId,
     WISE_CLIENT_SECRET: wiseClientSecret,
     // Absent means live, which is what `createWiseRuntime` reads it as. A
