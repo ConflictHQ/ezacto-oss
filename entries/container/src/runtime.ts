@@ -39,6 +39,8 @@ import {
   createBillLinkStore,
   createBillMirrorSource,
   createPayoutAccountStore,
+  createWiseGrantStore,
+  createWiseDeliveryStore,
   createStripeLinkStore,
   readAttachPreference,
   readFilesPreference,
@@ -90,6 +92,7 @@ import {
   createStripeRuntime,
   createQuickBooksMirrorSubscriber,
   createQuickBooksRuntime,
+  createWiseRuntime,
 } from '@ezacto/integrations'
 import type { ContainerConfig } from './config.js'
 import { createContainerBrandAssetSurface } from './brand-assets.js'
@@ -354,6 +357,39 @@ export const createContainerRuntime = async (
             now: () => new Date(),
           })
 
+    // And the same Wise connection. A contractor paid by a self-hoster connects
+    // their own account exactly as one paid by the hosted deployment does.
+    const wise =
+      config.wise === undefined
+        ? null
+        : createWiseRuntime({
+            config: {
+              clientId: config.wise.clientId,
+              clientSecret: config.wise.clientSecret,
+              environment: config.wise.environment,
+              appBaseUrl: config.appBaseUrl,
+              webhookPublicKey: config.wise.webhookPublicKey,
+            },
+            grants: createWiseGrantStore(drizzle),
+            deliveries: createWiseDeliveryStore(drizzle),
+            accounts: (() => {
+              const store = createPayoutAccountStore(drizzle)
+              return {
+                listForUser: (userId: number) => store.listForUser(userId),
+                link: (input: {
+                  userId: number
+                  provider: 'wise'
+                  externalId: string
+                  linkedByUserId: number
+                  now: string
+                }) => store.link(input),
+                markVerified: (id: number, now: string) => store.markVerified(id, now),
+              }
+            })(),
+            fetch: (input, init) => fetch(input as RequestInfo, init as RequestInit),
+            now: () => new Date(),
+          })
+
     const bill = createBillRuntime({
       config: {
         devKey: config.bill?.devKey,
@@ -513,6 +549,8 @@ export const createContainerRuntime = async (
       },
       moneyResources,
       ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
+      ...(wise === null ? {} : { wise: wise.service }),
+      ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),
       payoutAccounts: (() => {
         const store = createPayoutAccountStore(drizzle)
         return {

@@ -1,4 +1,4 @@
-import type { BillRuntime, QuickBooksService } from "@ezacto/integrations";
+import type { BillRuntime, QuickBooksService, WiseRuntime } from "@ezacto/integrations";
 import type {
   InvoiceDocumentPreferenceService,
   ThankYouPreferenceService,
@@ -49,6 +49,8 @@ import {
   installStripeRoutes,
   installStripeWebhookRoute,
   installQuickBooksRoutes,
+  installWiseRoutes,
+  installWiseWebhookRoute,
   installTimesheetLockPolicyRoutes,
   installTeamRoutes,
   installUserEmailRoutes,
@@ -168,6 +170,21 @@ export type WorkerEnv = AppEnv & {
   /** `sandbox` reaches Intuit's test companies; anything else is live books. */
   QUICKBOOKS_ENVIRONMENT?: string
   /**
+   * Wise credentials. Both are Worker secrets; without them the Wise routes are
+   * not mounted, and a contractor sees no connect button rather than one that
+   * fails at the consent screen.
+   */
+  WISE_CLIENT_ID?: string
+  WISE_CLIENT_SECRET?: string
+  /** `sandbox` reaches Wise's test accounts; anything else moves real money. */
+  WISE_ENVIRONMENT?: string
+  /**
+   * The PEM Wise signs webhook deliveries with. Optional on sandbox, where the
+   * published sandbox key is used; required on live, because an unverifiable
+   * claim about money is refused rather than trusted.
+   */
+  WISE_WEBHOOK_PUBLIC_KEY?: string
+  /**
    * BILL credentials. All Worker secrets, and all four are needed before
    * anything can be sent: BILL has no OAuth, so there is no connect flow that
    * could obtain them and nothing for this system to rotate.
@@ -277,6 +294,13 @@ export interface RuntimeServices {
    * one.
    */
   quickBooks?: QuickBooksService
+  /**
+   * A contractor's own Wise connection. Absent where the deployment has no Wise
+   * keys, for the same reason as QuickBooks above.
+   */
+  wise?: WiseRuntime["service"]
+  /** Deliveries Wise pushes. Outside the authenticated surface; see the route. */
+  wiseWebhook?: NonNullable<WiseRuntime["webhook"]>
   stripe?: StripeService
   invoiceTimeClaims?: InvoiceTimeClaimService
   invoiceDocumentPreference?: InvoiceDocumentPreferenceService
@@ -462,6 +486,9 @@ export const createApp = (
             if (services.quickBooks !== undefined) {
               installQuickBooksRoutes(api, services.quickBooks)
             }
+            if (services.wise !== undefined) {
+              installWiseRoutes(api, services.wise)
+            }
             // Mounted whether or not BILL is reachable: there is nothing to
             // connect, so the honest answer to "is this configured?" is a
             // route that says so rather than a route that is missing.
@@ -562,6 +589,12 @@ export const createApp = (
       // surface and the signature is the authorisation.
       if (services?.stripe !== undefined) {
         installStripeWebhookRoute(app, services.stripe)
+      }
+      // Wise likewise has no session with us, so the signature is the whole of
+      // the authorisation and this sits beside Stripe's rather than under the
+      // API surface.
+      if (services?.wiseWebhook !== undefined) {
+        installWiseWebhookRoute(app, services.wiseWebhook)
       }
       if (services !== undefined) {
         installOidcRoutes(app, {

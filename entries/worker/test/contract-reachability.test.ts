@@ -46,6 +46,10 @@ describe('Worker contract reachability', () => {
       // the fixture has to be the configured case.
       QUICKBOOKS_CLIENT_ID: 'contract-fixture-client-id',
       QUICKBOOKS_CLIENT_SECRET: 'contract-fixture-client-secret',
+      // Likewise for Wise, and for the same reason.
+      WISE_CLIENT_ID: 'contract-fixture-wise-client-id',
+      WISE_CLIENT_SECRET: 'contract-fixture-wise-client-secret',
+      WISE_ENVIRONMENT: 'sandbox',
       APP_BASE_URL: 'https://app.example.test',
     }
     // The brand and theme surfaces are passed the way `index.ts` passes them,
@@ -107,7 +111,7 @@ describe('Worker contract reachability', () => {
           (operation) => `${operation.method} ${operation.path}`,
         ),
         'worker',
-        { portal: false, quickBooks: true },
+        { portal: false, quickBooks: true, wise: true },
       ),
     )
 

@@ -1146,6 +1146,57 @@ const quickBooksOperations: ApiContractOperation[] = [
   },
 ];
 
+/**
+ * A contractor's own Wise connection (#543).
+ *
+ * Every one of these is the caller's own, which is why none of them takes a
+ * user id. The account being authorised is a person's bank, and an
+ * administrator connecting or disconnecting it for them is the exact thing
+ * doing this by OAuth exists to prevent.
+ */
+const wiseOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/integrations/wise",
+    operationId: "getWiseConnection",
+    summary: "Whether Wise is configured, and the caller's own connection",
+    tag: "integrations",
+    responseStatus: 200,
+    responseSchema: "WiseStatusEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/integrations/wise/authorize",
+    operationId: "startWiseAuthorization",
+    summary: "Begin connecting the caller's own Wise account",
+    tag: "integrations",
+    responseStatus: 200,
+    responseSchema: "WiseAuthorizeEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "delete",
+    path: "/api/v1/integrations/wise",
+    operationId: "disconnectWise",
+    summary: "Revoke the caller's own Wise grant",
+    tag: "integrations",
+    responseStatus: 204,
+    sessionOnly: true,
+  },
+  {
+    method: "get",
+    path: "/api/v1/integrations/wise/callback",
+    operationId: "completeWiseAuthorization",
+    summary: "Where Wise returns a contractor after they approve",
+    tag: "integrations",
+    responseStatus: 302,
+    public: true,
+    parameters: [query("code"), query("state")],
+    generateClient: false,
+  },
+];
+
 const ssoDomainOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -2179,6 +2230,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...moduleSettingsOperations,
   ...backupOperations,
   ...quickBooksOperations,
+  ...wiseOperations,
   ...ssoDomainOperations,
   ...brandAssetOperations,
   ...instanceThemeOperations,
@@ -2995,6 +3047,50 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   QuickBooksAuthorizeEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["authorize_url"],
+        properties: { authorize_url: stringSchema },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  WiseConnection: {
+    type: "object",
+    required: ["profile_id", "profile_type", "environment", "granted_at", "payable"],
+    properties: {
+      profile_id: stringSchema,
+      profile_type: stringSchema,
+      environment: stringSchema,
+      granted_at: stringSchema,
+      // Whether a payout has something to resolve to. A grant whose account is
+      // not verified is a connection that cannot be paid through, and saying so
+      // is the difference between a handled state and a silent skip on payday.
+      payable: { type: "boolean" },
+    },
+    additionalProperties: false,
+  },
+  WiseStatusEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["configured", "connection"],
+        properties: {
+          configured: { type: "boolean" },
+          connection: nullable(reference("WiseConnection")),
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  WiseAuthorizeEnvelope: {
     type: "object",
     required: ["data"],
     properties: {

@@ -66,6 +66,8 @@ import { canonicalCurrencyMigration } from './migrations/0059_canonical_currency
 import { bandedEngagementsMigration } from './migrations/0060_banded_engagements.js'
 import { userEmailKindMigration } from './migrations/0061_user_email_kind.js'
 import { exchangeRatesMigration } from './migrations/0062_exchange_rates.js'
+import { wiseGrantsMigration } from './migrations/0063_wise_grants.js'
+import { wiseWebhookDeliveriesMigration } from './migrations/0064_wise_webhook_deliveries.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL, statements_sha256 TEXT
@@ -1475,6 +1477,8 @@ const migrations = [
   { id: '0060_banded_engagements', statements: bandedEngagementsMigration },
   { id: '0061_user_email_kind', statements: userEmailKindMigration },
   { id: '0062_exchange_rates', statements: exchangeRatesMigration },
+  { id: '0063_wise_grants', statements: wiseGrantsMigration },
+  { id: '0064_wise_webhook_deliveries', statements: wiseWebhookDeliveriesMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

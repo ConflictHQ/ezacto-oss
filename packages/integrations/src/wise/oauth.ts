@@ -191,6 +191,22 @@ export interface WiseProfile {
  * because matching on an address is a guess whose failure mode is paying the
  * wrong person.
  */
+/**
+ * Quotes every `id` in a body before it is parsed.
+ *
+ * `JSON.parse` rounds an integer past 2^53 to the nearest double, and it does
+ * so before a reviver or any later `String(...)` can see the original digits.
+ * So reading the id "as a string" off the parsed object stringifies a number
+ * that is already the wrong one: the quoting has to happen on the text or not
+ * at all.
+ *
+ * Wise's own ids are comfortably inside the safe range today, which is exactly
+ * why this is worth doing now rather than after one is not -- a rounded profile
+ * id addresses somebody else's account, and nothing about that failure looks
+ * like a parsing bug when it happens.
+ */
+const quoteIds = (body: string): string => body.replace(/"id"\s*:\s*(-?\d+)/gu, '"id":"$1"')
+
 export const fetchWiseProfiles = async (
   input: Readonly<{
     accessToken: string
@@ -205,7 +221,7 @@ export const fetchWiseProfiles = async (
   if (!response.ok) {
     throw new WiseOAuthError(`Wise refused the profile request (${String(response.status)})`)
   }
-  const body = await response.json()
+  const body = JSON.parse(quoteIds(await response.text())) as unknown
   if (!Array.isArray(body)) throw new WiseOAuthError('profile response was not an array')
   return body.map((entry) => {
     const profile = asObject(entry)

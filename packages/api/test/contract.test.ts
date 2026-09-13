@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   installBackupStatusRoutes,
   installQuickBooksRoutes,
+  installWiseRoutes,
   installBrandAssetRoutes,
   installBrandRoute,
   installBillRoutes,
@@ -158,6 +159,19 @@ const documentedApp = () =>
         setAllowOnlinePayment: async () => undefined,
         disconnect: async () => undefined,
         receiveWebhook: async () => ({ accepted: true }),
+        newState: () => "contract-fixture-state",
+      });
+      installWiseRoutes(api, {
+        clientId: () => "contract-fixture",
+        callbackUrl: () => "https://app.example.test/cb",
+        settingsUrl: () => "/settings/payouts",
+        authorizeUrl: () => "https://sandbox.wise.com/oauth/authorize",
+        beginAuthorization: async () => undefined,
+        completeAuthorization: async () => {
+          throw new Error("not used by the contract fixture");
+        },
+        readStatus: async () => null,
+        disconnect: async () => false,
         newState: () => "contract-fixture-state",
       });
       installEmailLogRoutes(api, emailLog);

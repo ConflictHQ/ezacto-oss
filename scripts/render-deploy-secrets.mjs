@@ -138,6 +138,11 @@ export const deploySecretPayload = (environment) => {
       'QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET must be configured together',
     )
   }
+  const wiseClientId = optionalCredential(environment.WISE_CLIENT_ID)
+  const wiseClientSecret = optionalCredential(environment.WISE_CLIENT_SECRET)
+  if ((wiseClientId === null) !== (wiseClientSecret === null)) {
+    throw new TypeError('WISE_CLIENT_ID and WISE_CLIENT_SECRET must be configured together')
+  }
   const billDevKey = optionalCredential(environment.BILL_DEV_KEY)
   const billCompanyId = optionalCredential(environment.BILL_COMPANY_ID)
   const billUsername = optionalCredential(environment.BILL_USERNAME)
@@ -165,6 +170,16 @@ export const deploySecretPayload = (environment) => {
     QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN: optionalCredential(
       environment.QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN,
     ),
+    WISE_CLIENT_ID: wiseClientId,
+    WISE_CLIENT_SECRET: wiseClientSecret,
+    // Absent means live, which is what `createWiseRuntime` reads it as. A
+    // deployment that means sandbox has to say so.
+    WISE_ENVIRONMENT: optionalCredential(environment.WISE_ENVIRONMENT),
+    // The PEM Wise signs deliveries with. Not a secret in itself, but it rides
+    // here because `secret bulk` owns the whole set: a public key parked in a
+    // var while the rest of the pair are secrets is a value that goes missing
+    // for reasons nobody can see.
+    WISE_WEBHOOK_PUBLIC_KEY: optionalCredential(environment.WISE_WEBHOOK_PUBLIC_KEY),
     BILL_DEV_KEY: billDevKey,
     BILL_COMPANY_ID: billCompanyId,
     BILL_USERNAME: billUsername,

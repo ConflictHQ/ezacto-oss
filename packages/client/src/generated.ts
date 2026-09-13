@@ -304,6 +304,27 @@ export type QuickBooksAuthorizeEnvelope = {
 };
 };
 
+export type WiseConnection = {
+  "profile_id": string;
+  "profile_type": string;
+  "environment": string;
+  "granted_at": string;
+  "payable": boolean;
+};
+
+export type WiseStatusEnvelope = {
+  "data": {
+  "configured": boolean;
+  "connection": WiseConnection | null;
+};
+};
+
+export type WiseAuthorizeEnvelope = {
+  "data": {
+  "authorize_url": string;
+};
+};
+
 export type QuickBooksConnectionEnvelope = {
   "data": QuickBooksConnection | null;
 };
@@ -4238,6 +4259,33 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<void>("DELETE", "/api/v1/integrations/quickbooks", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getWiseConnection(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<WiseStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<WiseStatusEnvelope>("GET", "/api/v1/integrations/wise", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async startWiseAuthorization(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<WiseAuthorizeEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<WiseAuthorizeEnvelope>("POST", "/api/v1/integrations/wise/authorize", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async disconnectWise(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/integrations/wise", {
       signal: args.signal,
       headers,
     });
