@@ -25,8 +25,8 @@ const fixture = async (thankYou: boolean) => {
   await migrateContainer(database)
   database.pragma('foreign_keys = ON')
   database.exec(`
-    INSERT INTO organizations (name, modules, auto_thank_you, created_at, updated_at)
-      VALUES ('CONFLICT', '{}', ${thankYou ? 1 : 0}, '${at}', '${at}');
+    INSERT INTO organizations (name, modules, invoice_extras, created_at, updated_at)
+      VALUES ('CONFLICT', '{}', '{"thank_you":${thankYou ? 'true' : 'false'}}', '${at}', '${at}');
     INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
       VALUES (1, 'Operator', 'One', 'administrator', '[]', '${at}', '${at}');
     INSERT INTO clients (id, name, currency, created_at, updated_at)
@@ -221,7 +221,7 @@ describe('an invoice settling produces a message', () => {
     await settle(orm)
     // Some invoices settle a dispute, and a cheerful automated note is the
     // wrong thing to send about those.
-    sqlite!.exec(`UPDATE invoices SET auto_thank_you = 0 WHERE id = 1`)
+    sqlite!.exec(`UPDATE invoices SET invoice_extras = '{"thank_you":false}' WHERE id = 1`)
     expect(await port.prepare(1)).toBeNull()
   })
 })
