@@ -2905,8 +2905,14 @@ a {
   letter-spacing: 0.1em;
   white-space: nowrap;
 }
+/*
+ * Visible at every width since issue 461. Below 1140px it is the whole nav;
+ * at desktop it is where the sections folded out of the six live -- Home,
+ * Tasks and Team. Leaving it hidden up there would have made "folded into a
+ * menu" mean "removed", because the strip is the only other affordance.
+ */
 .menu-trigger {
-  display: none;
+  display: block;
 }
 .tabstrip {
   height: 44px;
