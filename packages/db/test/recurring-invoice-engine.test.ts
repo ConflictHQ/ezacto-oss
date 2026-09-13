@@ -836,5 +836,213 @@ for (const [runtime, factory] of factories) {
       )
       expect(issued.map((invoice) => invoice.recurring_invoice_id)).toEqual([behind.id])
     })
+
+  describe('a banded engagement, where the flat rate consumes the work', () => {
+    // Issue 484. A team at a flat monthly rate: the month's tracked time is worth
+    // far more at billable rates than the band charges, and neither shape the
+    // model offered fitted -- "bill the time" overcharges, "bill a fixed line"
+    // leaves the hours reading as uninvoiced and billable twice.
+    const claimable = async (
+      database: TestDatabase,
+      entries: readonly { seconds: number; rateCents: number; spentDate: string }[],
+      projectId = 1,
+    ) => {
+      await database.run(
+        `INSERT INTO tasks (id, name, billable_by_default, is_default, is_active, created_at, updated_at)
+         VALUES (1, 'Advisory', 1, 1, 1, ?, ?)`,
+        timestamp, timestamp,
+      )
+      await database.run(
+        `INSERT INTO user_assignments (id, project_id, user_id, created_at, updated_at)
+         VALUES (?, ?, 1, ?, ?)`,
+        projectId, projectId, timestamp, timestamp,
+      )
+      await database.run(
+        `INSERT INTO task_assignments (id, project_id, task_id, billable, created_at, updated_at)
+         VALUES (?, ?, 1, 1, ?, ?)`,
+        projectId, projectId, timestamp, timestamp,
+      )
+      for (const [index, entry] of entries.entries()) {
+        await database.run(
+          `INSERT INTO time_entries (id, user_id, project_id, task_id, user_assignment_id,
+                                     task_assignment_id, spent_date, seconds, seconds_without_timer,
+                                     rounded_seconds, billable, billable_rate_cents,
+                                     created_at, updated_at)
+           VALUES (?, 1, ?, 1, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+          index + 1, projectId, projectId, projectId, entry.spentDate,
+          entry.seconds, entry.seconds, entry.seconds, entry.rateCents, timestamp, timestamp,
+        )
+      }
+    }
+
+    it('[money] claims the work and still bills the band', async () => {
+      // The failure in the issue, in miniature: 100 hours at $250 is $25,000 of
+      // billable value against a $12,500 band. The client is billed the band, and
+      // the hours stop reading as uninvoiced so they cannot be billed again.
+      database = await factory()
+      await seedDatabase(database)
+      await claimable(database, [
+        { seconds: 180_000, rateCents: 25_000, spentDate: '2026-08-10' },
+        { seconds: 180_000, rateCents: 25_000, spentDate: '2026-08-20' },
+      ])
+      const definition = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({
+          nextIssueOn: '2026-09-10',
+          dayOfMonth: 10,
+          amountConfig: {
+            ...fixedAmountConfig,
+            line_items: [{ ...fixedAmountConfig.line_items[0]!, unit_price_cents: 1_250_000 }],
+          },
+        }),
+      )
+      await database.run(
+        `UPDATE recurring_invoices SET claims_project_ids = '[1]' WHERE id = ?`,
+        definition.id,
+      )
+
+      const result = await createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-09-10T10:00:00.000Z',
+      }).generate(definition.id, '2026-09-10', principal)
+
+      const [invoice] = await database.rows<{
+        amount_cents: number
+        foregone_billable_cents: number
+        written_off_cents: number
+      }>(
+        `SELECT amount_cents, foregone_billable_cents, written_off_cents
+         FROM invoices WHERE id = ?`,
+        result.invoiceId,
+      )
+      // Billed the band, not the time.
+      expect(invoice!.amount_cents).toBe(1_250_000)
+      // 100 hours at $250 is $25,000; the band charged $12,500.
+      expect(invoice!.foregone_billable_cents).toBe(1_250_000)
+      // And not as a write-off: the client owes and pays the whole band.
+      expect(invoice!.written_off_cents).toBe(0)
+
+      const claimed = await database.rows<{ n: number }>(
+        `SELECT count(*) AS n FROM time_entries WHERE invoice_id = ?`,
+        result.invoiceId,
+      )
+      expect(claimed[0]!.n).toBe(2)
+      const loose = await database.rows<{ n: number }>(
+        `SELECT count(*) AS n FROM time_entries WHERE invoice_id IS NULL`,
+      )
+      expect(loose[0]!.n).toBe(0)
+    })
+
+    it('[money] a definition that claims nothing behaves exactly as before', async () => {
+      // The whole feature is inert until somebody names a project. Every existing
+      // definition is this one.
+      database = await factory()
+      await seedDatabase(database)
+      await claimable(database, [{ seconds: 3_600, rateCents: 25_000, spentDate: '2026-08-10' }])
+      const definition = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({ nextIssueOn: '2026-09-10', dayOfMonth: 10 }),
+      )
+      const result = await createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-09-10T10:00:00.000Z',
+      }).generate(definition.id, '2026-09-10', principal)
+
+      const [invoice] = await database.rows<{ foregone_billable_cents: number }>(
+        `SELECT foregone_billable_cents FROM invoices WHERE id = ?`,
+        result.invoiceId,
+      )
+      expect(invoice!.foregone_billable_cents).toBe(0)
+      const loose = await database.rows<{ n: number }>(
+        `SELECT count(*) AS n FROM time_entries WHERE invoice_id IS NULL`,
+      )
+      expect(loose[0]!.n).toBe(1)
+    })
+
+    it('[money] never claims time already billed elsewhere', async () => {
+      // An entry on an earlier ad-hoc invoice stays there. The band covers what
+      // has not been covered, and cannot quietly move work off another invoice.
+      database = await factory()
+      await seedDatabase(database)
+      await claimable(database, [
+        { seconds: 3_600, rateCents: 25_000, spentDate: '2026-08-10' },
+        { seconds: 3_600, rateCents: 25_000, spentDate: '2026-08-11' },
+      ])
+      await database.run(
+        `INSERT INTO invoices (id, client_id, number, currency, issue_date, due_date, state,
+                               created_at, updated_at)
+         VALUES (900, 1, '900', 'USD', '2026-08-15', '2026-09-15', 'draft', ?, ?)`,
+        timestamp, timestamp,
+      )
+      await database.run(`UPDATE time_entries SET invoice_id = 900 WHERE id = 1`)
+
+      const definition = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({ nextIssueOn: '2026-09-10', dayOfMonth: 10 }),
+      )
+      await database.run(
+        `UPDATE recurring_invoices SET claims_project_ids = '[1]' WHERE id = ?`,
+        definition.id,
+      )
+      const result = await createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-09-10T10:00:00.000Z',
+      }).generate(definition.id, '2026-09-10', principal)
+
+      expect(
+        (await database.rows<{ n: number }>(
+          `SELECT count(*) AS n FROM time_entries WHERE invoice_id = 900`,
+        ))[0]!.n,
+      ).toBe(1)
+      expect(
+        (await database.rows<{ n: number }>(
+          `SELECT count(*) AS n FROM time_entries WHERE invoice_id = ?`,
+          result.invoiceId,
+        ))[0]!.n,
+      ).toBe(1)
+    })
+
+    it('[money] records nothing foregone when the band covers more than the work', async () => {
+      // A profitable month is not a negative forgone amount.
+      database = await factory()
+      await seedDatabase(database)
+      await claimable(database, [{ seconds: 3_600, rateCents: 10_000, spentDate: '2026-08-10' }])
+      const definition = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({ nextIssueOn: '2026-09-10', dayOfMonth: 10 }),
+      )
+      await database.run(
+        `UPDATE recurring_invoices SET claims_project_ids = '[1]' WHERE id = ?`,
+        definition.id,
+      )
+      const result = await createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-09-10T10:00:00.000Z',
+      }).generate(definition.id, '2026-09-10', principal)
+      expect(
+        (await database.rows<{ foregone_billable_cents: number }>(
+          `SELECT foregone_billable_cents FROM invoices WHERE id = ?`,
+          result.invoiceId,
+        ))[0]!.foregone_billable_cents,
+      ).toBe(0)
+    })
+
+    it('[security] refuses a definition claiming another client project', async () => {
+      // One client's work inside another client's invoice.
+      database = await factory()
+      await seedDatabase(database)
+      await database.run(
+        `INSERT INTO projects (id, client_id, name, code, created_at, updated_at)
+         VALUES (2, 2, 'Other Client Project', 'SAN-2', ?, ?)`,
+        timestamp, timestamp,
+      )
+      const definition = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({ nextIssueOn: '2026-09-10', dayOfMonth: 10 }),
+      )
+      await expect(
+        database.run(
+          `UPDATE recurring_invoices SET claims_project_ids = '[2]' WHERE id = ?`,
+          definition.id,
+        ),
+      ).rejects.toThrow(/must belong to the definition client/u)
+    })
+  })
   })
 }
