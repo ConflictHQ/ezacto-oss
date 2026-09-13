@@ -1,6 +1,7 @@
 import type { BillRuntime, QuickBooksService } from "@ezacto/integrations";
 import type {
   InvoiceDocumentPreferenceService,
+  ThankYouPreferenceService,
   InvoiceTimeClaimService,
   StripeService,
 } from "@ezacto/api";
@@ -41,6 +42,7 @@ import {
   installBillRoutes,
   installPayoutAccountRoutes,
   installInvoiceDocumentPreferenceRoutes,
+  installThankYouPreferenceRoutes,
   installInvoiceTimeClaimRoutes,
   installStripeRoutes,
   installStripeWebhookRoute,
@@ -276,6 +278,7 @@ export interface RuntimeServices {
   stripe?: StripeService
   invoiceTimeClaims?: InvoiceTimeClaimService
   invoiceDocumentPreference?: InvoiceDocumentPreferenceService
+  thankYouPreference?: ThankYouPreferenceService
   bill?: BillRuntime
   /**
    * The per-client opt-in. Separate from the runtime because turning it on is a
@@ -470,6 +473,9 @@ export const createApp = (
                 api,
                 services.invoiceDocumentPreference,
               )
+            }
+            if (services.thankYouPreference !== undefined) {
+              installThankYouPreferenceRoutes(api, services.thankYouPreference)
             }
             if (services.payoutAccounts !== undefined) {
               installPayoutAccountRoutes(api, services.payoutAccounts)

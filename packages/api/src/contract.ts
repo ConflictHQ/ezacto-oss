@@ -1307,6 +1307,51 @@ const invoiceTimeClaimOperations: ApiContractOperation[] = [
   },
 ];
 
+const invoiceThankYouPreferenceOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/invoices/:id/thank-you-preference",
+    operationId: "getInvoiceThankYouPreference",
+    summary: "Whether this invoice will thank its client when it settles, and why",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "InvoiceThankYouPreferenceEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "post",
+    path: "/api/v1/invoices/:id/thank-you-preference",
+    operationId: "setInvoiceThankYouPreference",
+    summary: "Thank this invoice's client, refuse to, or follow the organization",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "InvoiceThankYouPreferenceEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "get",
+    path: "/api/v1/settings/invoice-thank-you",
+    operationId: "getOrganizationInvoiceThankYou",
+    summary: "Whether settled invoices thank their client by default",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "OrganizationInvoiceThankYouEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/settings/invoice-thank-you",
+    operationId: "setOrganizationInvoiceThankYou",
+    summary: "Set whether settled invoices thank their client by default",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "OrganizationInvoiceThankYouEnvelope",
+    sessionOnly: true,
+  },
+];
+
 const invoiceDocumentPreferenceOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -2116,6 +2161,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...stripeOperations,
   ...invoiceTimeClaimOperations,
   ...invoiceDocumentPreferenceOperations,
+  ...invoiceThankYouPreferenceOperations,
   ...payoutAccountOperations,
   ...billOperations,
   ...twoFactorOperations,
@@ -6327,6 +6373,39 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         type: "object",
         required: ["invoice_id", "url"],
         properties: { invoice_id: integerSchema, url: stringSchema },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  InvoiceThankYouPreferenceEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["invoice_id", "auto_thank_you", "organization_auto_thank_you", "effective"],
+        properties: {
+          invoice_id: integerSchema,
+          // Null is a third answer, not a missing one: it means this invoice
+          // follows the organization.
+          auto_thank_you: { type: "boolean", nullable: true },
+          organization_auto_thank_you: { type: "boolean" },
+          effective: { type: "boolean" },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  OrganizationInvoiceThankYouEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["auto_thank_you"],
+        properties: { auto_thank_you: { type: "boolean" } },
         additionalProperties: false,
       },
     },

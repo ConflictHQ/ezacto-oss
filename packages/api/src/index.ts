@@ -308,3 +308,7 @@ export {
   type QuickBooksService,
   type QuickBooksTokenSet,
 } from './quickbooks.js'
+
+export * from './thank-you-subscriber.js'
+
+export * from './thank-you-preference.js'

@@ -50,6 +50,11 @@ import {
   setOrganizationAttachPolicy,
   releaseInvoicedTimeEntries,
   recordCheckoutPayment,
+  createThankYouPort,
+  readThankYouPreference,
+  readOrganizationThankYouPolicy,
+  setInvoiceThankYouPolicy,
+  setOrganizationThankYouPolicy,
   setBillDelivery,
   createQuickBooksMirrorSource,
   createQuickBooksStore,
@@ -57,6 +62,8 @@ import {
 import {
   createApiSessionService,
   createInvoiceEmailOutboxSubscriber,
+  createInvoiceThankYouSubscriber,
+  thankYouInvoiceFromDeliveryContext,
   createPortalSessionService,
   createQueuedAuthMailer,
   type AttachmentRouteOptions,
@@ -413,9 +420,25 @@ export const createContainerRuntime = async (
       now: () => new Date(),
     })
 
+    // The thank-you an invoice sends when it settles (issue 545). Subscribes to
+    // `invoice.paid`, which the reducer emits only when the payment status
+    // actually changes to paid, so a part payment reaches nothing here.
+    const thankYou = createThankYouPort({
+      database: drizzle,
+      configuration: emailConfiguration,
+      invoices: {
+        read: async (invoiceId: number) => {
+          const context = await moneyResources.getInvoiceDeliveryContext(invoiceId)
+          return context === null ? null : thankYouInvoiceFromDeliveryContext(context)
+        },
+      },
+      now: () => new Date().toISOString(),
+    })
+
     const outbox = createContainerOutboxService(database, {
       additionalSubscribers: [
         createInvoiceEmailOutboxSubscriber(moneyResources, organizationMailer),
+        createInvoiceThankYouSubscriber(thankYou, organizationMailer),
         reminders.subscriber,
         // Without this the container would connect to QuickBooks and never
         // mirror anything -- the routes would work and no invoice would move.
@@ -525,6 +548,17 @@ export const createContainerRuntime = async (
           kind === 'document'
             ? setOrganizationAttachPolicy(drizzle, enabled)
             : setOrganizationFilesPolicy(drizzle, enabled),
+      },
+      // Suppressing the thank-you for one invoice (issue 545), which is the
+      // half that has to be reachable before the payment lands: some invoices
+      // settle a dispute.
+      thankYouPreference: {
+        readInvoiceThankYou: (invoiceId: number) => readThankYouPreference(drizzle, invoiceId),
+        setInvoiceThankYou: (invoiceId: number, enabled: boolean | null) =>
+          setInvoiceThankYouPolicy(drizzle, { invoiceId, enabled }),
+        readOrganizationThankYou: () => readOrganizationThankYouPolicy(drizzle),
+        setOrganizationThankYou: (enabled: boolean) =>
+          setOrganizationThankYouPolicy(drizzle, enabled),
       },
       // The same seam the Worker composes: both entries must answer this route
       // or `entry-surface.ts` fails the one that does and the one that does not.

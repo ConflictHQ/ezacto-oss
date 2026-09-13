@@ -178,6 +178,17 @@ export {
   type CheckoutProvider,
 } from './checkout-payments.js'
 export {
+  readThankYouPreference,
+  readOrganizationThankYouPolicy,
+  setInvoiceThankYouPolicy,
+  setOrganizationThankYouPolicy,
+} from './automatic-thank-you.js'
+export {
+  createThankYouPort,
+  type ThankYouInvoiceSource,
+  type ThankYouPortMessage,
+} from './thank-you-port.js'
+export {
   readTimeEntryClaim,
   releaseInvoicedTimeEntries,
   type ReleaseOutcome,

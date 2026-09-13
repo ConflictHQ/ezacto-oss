@@ -8,6 +8,7 @@ import {
   installBillRoutes,
   installPayoutAccountRoutes,
   installInvoiceDocumentPreferenceRoutes,
+  installThankYouPreferenceRoutes,
   installInvoiceTimeClaimRoutes,
   installStripeRoutes,
   installInstanceThemeRoutes,
@@ -223,6 +224,12 @@ const documentedApp = () =>
         setInvoicePreference: async () => true,
         readOrganizationPreference: async () => false,
         setOrganizationPreference: async () => undefined,
+      } as never);
+      installThankYouPreferenceRoutes(api, {
+        readInvoiceThankYou: async () => ({ invoice: null, organization: false }),
+        setInvoiceThankYou: async () => true,
+        readOrganizationThankYou: async () => false,
+        setOrganizationThankYou: async () => undefined,
       } as never);
       installInvoiceTimeClaimRoutes(api, {
         releaseInvoicedTime: async () => ({ kind: "released", released: 0 }),

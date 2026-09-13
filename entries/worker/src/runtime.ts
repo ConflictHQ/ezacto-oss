@@ -49,6 +49,11 @@ import {
   setOrganizationAttachPolicy,
   releaseInvoicedTimeEntries,
   recordCheckoutPayment,
+  createThankYouPort,
+  readThankYouPreference,
+  readOrganizationThankYouPolicy,
+  setInvoiceThankYouPolicy,
+  setOrganizationThankYouPolicy,
   setBillDelivery,
 } from "@ezacto/db/d1";
 import { createPortalSessionService } from "@ezacto/api";
@@ -57,6 +62,8 @@ import {
   createCloudflareAccessSessionResolver,
   createCloudflareAccessVerifier,
   createInvoiceEmailOutboxSubscriber,
+  createInvoiceThankYouSubscriber,
+  thankYouInvoiceFromDeliveryContext,
 } from "@ezacto/api";
 import type {
   AttachmentObjectPort,
@@ -706,6 +713,21 @@ export const createRuntimeServices = async (
           },
         });
 
+  // The thank-you an invoice sends when it settles (issue 545). Subscribes to
+  // `invoice.paid`, which the reducer emits only when the payment status
+  // actually changes to paid -- so a part payment reaches nothing here.
+  const thankYou = createThankYouPort({
+    database: drizzle,
+    configuration: emailConfiguration,
+    invoices: {
+      read: async (invoiceId: number) => {
+        const context = await moneyResources.getInvoiceDeliveryContext(invoiceId);
+        return context === null ? null : thankYouInvoiceFromDeliveryContext(context);
+      },
+    },
+    now: () => new Date().toISOString(),
+  });
+
   const outbox = createD1OutboxService(database, {
     additionalSubscribers: [
       createInvoiceEmailOutboxSubscriber(
@@ -713,6 +735,7 @@ export const createRuntimeServices = async (
         organizationMailer,
         invoiceDocuments,
       ),
+      createInvoiceThankYouSubscriber(thankYou, organizationMailer),
       reminders.subscriber,
       ...(quickBooks === null ? [] : [createQuickBooksMirrorSubscriber(quickBooks)]),
       createBillMirrorSubscriber(bill),
@@ -885,6 +908,16 @@ export const createRuntimeServices = async (
         kind === 'document'
           ? setOrganizationAttachPolicy(drizzle, enabled)
           : setOrganizationFilesPolicy(drizzle, enabled),
+    },
+    // Suppressing the thank-you for one invoice, which is the half that has to
+    // be reachable before the payment lands: some invoices settle a dispute.
+    thankYouPreference: {
+      readInvoiceThankYou: (invoiceId: number) => readThankYouPreference(drizzle, invoiceId),
+      setInvoiceThankYou: (invoiceId: number, enabled: boolean | null) =>
+        setInvoiceThankYouPolicy(drizzle, { invoiceId, enabled }),
+      readOrganizationThankYou: () => readOrganizationThankYouPolicy(drizzle),
+      setOrganizationThankYou: (enabled: boolean) =>
+        setOrganizationThankYouPolicy(drizzle, enabled),
     },
     // Releasing is refused while the invoice stands; the store reports why
     // rather than letting a trigger abort reach the caller as a 500.

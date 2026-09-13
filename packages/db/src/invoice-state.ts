@@ -459,7 +459,7 @@ interface StoredLedger {
   resultJson: string | null
 }
 
-interface SqlStatement {
+export interface SqlStatement {
   text: string
   params: Array<string | number | null>
 }
@@ -799,7 +799,7 @@ const first = async <T>(
   return (client.prepare(statement.text).get(...statement.params) as T | undefined) ?? null
 }
 
-const runAtomic = async (
+export const runAtomic = async (
   database: InvoiceStateDatabase,
   statements: readonly SqlStatement[],
 ): Promise<void> => {
