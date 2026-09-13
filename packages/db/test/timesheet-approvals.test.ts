@@ -1756,7 +1756,11 @@ for (const [runtime, factory] of factories) {
       const tracked = new DrizzleTrackedResourceRepository(database.orm, unlocked)
       const submitted = await approvals.submit(1, periodStart, periodEnd, t1)
 
-      await database.run(`UPDATE projects SET billing_currency = 'eur' WHERE id = 1`)
+      // Uppercase since issue 522: a currency is a canonical three-letter code
+      // and the schema now refuses anything else. The point of this line is a
+      // project billing in something other than the client's currency, which
+      // 'EUR' still is.
+      await database.run(`UPDATE projects SET billing_currency = 'EUR' WHERE id = 1`)
 
       const [detail, edit] = await Promise.all([
         approvals.get(actor(10, 'administrator'), submitted.id),
@@ -1801,6 +1805,12 @@ for (const [runtime, factory] of factories) {
         code: 'forbidden',
       })
 
+      // Issue 522 stops this being written, so the trigger comes off to plant it
+      // the way a database loaded before 0059 could still hold one: that
+      // migration repairs case-only mistakes and deliberately leaves a value it
+      // cannot interpret rather than failing a deployment. The reader has to go
+      // on refusing what it finds, which is what this asserts.
+      await database.run(`DROP TRIGGER projects_billing_currency_canonical_update`)
       await database.run(`UPDATE projects SET billing_currency = 'invalid' WHERE id = 1`)
       await expect(approvals.get(actor(10, 'administrator'), submitted.id)).rejects.toThrow(
         'Timesheet submission expense currency is invalid.',

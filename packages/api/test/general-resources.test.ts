@@ -342,6 +342,36 @@ for (const [runtime, createHarness] of factories) {
     }, 20_000);
     afterEach(async () => harness.close());
 
+    it('[money #522] refuses a currency that is not a currency code', async () => {
+      // The generator matches billable time with
+      // `upper(coalesce(project.billing_currency, client.currency))` against
+      // the invoice's own canonical code. A client saved as 'dollars' becomes
+      // 'DOLLARS', matches nothing, and every entry on it is silently left out
+      // of the invoice -- an empty invoice with no reason given.
+      for (const bad of ['dollars', 'usd', 'US', 'USDD', '']) {
+        const refused = await harness.request('/clients', json({ name: 'Kestrel', currency: bad }));
+        expect(refused.status, bad).toBe(422);
+        const body = (await refused.json()) as { error: { fields: { field: string }[] } };
+        expect(body.error.fields.map((entry) => entry.field)).toContain('currency');
+      }
+      const accepted = await harness.request('/clients', json({ name: 'Kestrel', currency: 'EUR' }));
+      expect(accepted.status).toBe(201);
+
+      // A project may decline to say, which is what the generator's coalesce is
+      // for, but may not say something that is not a code.
+      const client = await data(accepted);
+      const badProject = await harness.request(
+        '/projects',
+        json({ client_id: client.id, name: 'Phase 1', billing_currency: 'euros' }),
+      );
+      expect(badProject.status).toBe(422);
+      const okProject = await harness.request(
+        '/projects',
+        json({ client_id: client.id, name: 'Phase 1', billing_currency: null }),
+      );
+      expect(okProject.status).toBe(201);
+    });
+
     it('[security #467] never caches rate-bearing or redacted general resources', async () => {
       const client = await data(await harness.request('/clients', json({ name: 'Private cache fixture' })));
       const created = await harness.request('/projects', json({ client_id: client.id, name: 'Private rates', hourly_rate_cents: 25000, fee_cents: 500000, cost_budget_cents: 300000 }));

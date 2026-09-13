@@ -40,6 +40,8 @@ type FieldType =
   | "string"
   | "empty-string"
   | "nullable-string"
+  | "currency-code"
+  | "nullable-currency-code"
   | "boolean"
   | "positive-int"
   | "nullable-positive-int"
@@ -75,6 +77,18 @@ const managerGrantValues = [
 const string = { type: "string" } as const;
 const emptyString = { type: "empty-string" } as const;
 const nullableString = { type: "nullable-string" } as const;
+/**
+ * A currency is not free text (issue 522).
+ *
+ * The invoice generator matches billable time with
+ * `upper(coalesce(project.billing_currency, client.currency))` against the
+ * invoice's own canonical code, so a client saved as "dollars" matches nothing
+ * and every entry on it is silently left out of the invoice. Refusing it here
+ * turns that into a named field error instead of an empty invoice nobody can
+ * explain.
+ */
+const currencyCode = { type: "currency-code" } as const;
+const nullableCurrencyCode = { type: "nullable-currency-code" } as const;
 const bool = { type: "boolean" } as const;
 const positiveInt = { type: "positive-int" } as const;
 const nonnegativeInt = { type: "nonnegative-int" } as const;
@@ -102,7 +116,7 @@ const routeDefinitions: Readonly<
     fields: {
       name: string,
       address: nullableString,
-      currency: string,
+      currency: currencyCode,
       is_active: bool,
       parent_client_id: { type: "nullable-positive-int" },
       bill_to_client_id: { type: "nullable-positive-int" },
@@ -182,7 +196,7 @@ const routeDefinitions: Readonly<
       starts_on: { type: "nullable-date" },
       ends_on: { type: "nullable-date" },
       notes: nullableString,
-      billing_currency: nullableString,
+      billing_currency: nullableCurrencyCode,
       time_entry_notes_minimum_length: nullableTimeEntryNoteMinimumLength,
     },
     required: new Set(["client_id", "name"]),
@@ -413,6 +427,14 @@ const parseField = (
     return value === null || typeof value === "string"
       ? value
       : invalid("invalid_string", `${field} must be a string or null`);
+  if (spec.type === "currency-code" || spec.type === "nullable-currency-code")
+    return (spec.type === "nullable-currency-code" && value === null) ||
+      (typeof value === "string" && /^[A-Z]{3}$/u.test(value))
+      ? (value as string | null)
+      : invalid(
+          "invalid_currency",
+          `${field} must be a three-letter uppercase currency code`,
+        );
   if (spec.type === "boolean")
     return typeof value === "boolean"
       ? value
