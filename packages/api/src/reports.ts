@@ -404,6 +404,10 @@ export interface ReportReader {
 }
 
 const reportKeys = new Set(["from", "to"]);
+// The payroll run is the one report with a file representation, so it is the
+// one that admits `format`. The strict parser refuses every key not listed, so
+// adding it anywhere else would silently accept it there too.
+const contractorCostKeys = new Set([...reportKeys, "format"]);
 const uninvoicedKeys = new Set([...reportKeys, "client_id", "project_id"]);
 // Deliberately no user_id. The strict parser refuses every key that is not on
 // this list, so `?user_id=7` is a 422 rather than a report of somebody else's
@@ -537,6 +541,67 @@ const serializeUninvoiced = (
  * the row without a rate -- and `entries_without_rate` carries the count, so the
  * screen names the gap instead of showing a total that quietly omits hours.
  */
+/**
+ * The payroll run as a file somebody can paste into another system (issue 280).
+ *
+ * A CSV rather than a screen, because the output's job is to leave: the run is
+ * handed to a payout provider, and a copyable artefact matters more than a
+ * pretty table.
+ *
+ * Hours are written to two decimals -- the grain the product already shows
+ * decimal time in -- and derived from the seconds rather than summed from
+ * rounded rows, so the file agrees with the API figures it came from.
+ *
+ * A row whose cost could not be computed writes an empty cell and says how many
+ * entries lacked a rate. It does not write 0.00: a payroll number that is
+ * silently wrong is worse than no number, and a zero reads as "this person
+ * costs nothing" rather than "this could not be worked out".
+ */
+const CONTRACTOR_COST_COLUMNS = [
+  "user_id",
+  "name",
+  "payroll_email",
+  "is_contractor",
+  "currency",
+  "hours",
+  "cost_cents",
+  "entries_without_rate",
+] as const;
+
+/**
+ * Quotes a field for a spreadsheet, and defuses the one that is not about
+ * quoting at all: a cell beginning `=`, `+`, `-` or `@` is run as a formula by
+ * Excel and Sheets when the file is opened. A person's name is attacker-
+ * adjacent data here -- it arrives from whoever typed it -- and this file is
+ * opened by somebody about to pay people.
+ */
+const csvCell = (value: string | number | null): string => {
+  if (value === null) return "";
+  const text = String(value);
+  const guarded = /^[=+\-@\t\r]/u.test(text) ? `'${text}` : text;
+  return /[",\n\r]/u.test(guarded) ? `"${guarded.replace(/"/gu, '""')}"` : guarded;
+};
+
+const contractorCostCsv = (report: Readonly<ContractorCostReportRecord>): string => {
+  const lines = [CONTRACTOR_COST_COLUMNS.join(",")];
+  for (const row of report.rows) {
+    lines.push(
+      [
+        csvCell(row.userId),
+        csvCell(row.name),
+        csvCell(row.payrollEmail),
+        csvCell(row.isContractor ? "true" : "false"),
+        csvCell(row.currency),
+        csvCell((Math.round((row.roundedSeconds / 3600) * 100) / 100).toFixed(2)),
+        csvCell(row.costCents),
+        csvCell(row.entriesWithoutRate),
+      ].join(","),
+    );
+  }
+  // A trailing newline, so appending to the file does not join two rows.
+  return `${lines.join("\n")}\n`;
+};
+
 const serializeContractorCost = (report: Readonly<ContractorCostReportRecord>) => ({
   from: report.from,
   to: report.to,
@@ -988,9 +1053,28 @@ export const installReportRoutes = <Bindings extends object>(
         message: "The acting user profile cannot perform this operation.",
       });
     }
-    const parsed = rangeFrom(new URL(context.req.url), reportKeys);
+    const parsed = rangeFrom(new URL(context.req.url), contractorCostKeys);
     assertFields(parsed.errors);
+    const format = new URL(context.req.url).searchParams.get("format");
+    assertFields(
+      format === null || format === "csv"
+        ? []
+        : [{ field: "format", code: "invalid", message: 'format must be "csv".' }],
+    );
     const report = await reports.contractorCost(parsed.range);
+    // `format=csv` rather than content negotiation: the caller is usually a
+    // person clicking a link, and a link cannot set an Accept header.
+    if (format === "csv") {
+      return new Response(contractorCostCsv(report), {
+        status: 200,
+        headers: {
+          "content-type": "text/csv; charset=utf-8",
+          "cache-control": "no-store",
+          "content-disposition":
+            `attachment; filename="contractor-cost-${report.from}-to-${report.to}.csv"`,
+        },
+      });
+    }
     return context.json(
       {
         data: serializeContractorCost(report),
