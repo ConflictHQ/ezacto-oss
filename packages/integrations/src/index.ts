@@ -209,3 +209,5 @@ export {
 } from './calendar/proposals.js'
 
 export * from './ecb/rates.js'
+
+export * from './wise/oauth.js'
