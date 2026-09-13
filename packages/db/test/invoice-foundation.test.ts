@@ -338,9 +338,8 @@ for (const [runtime, factory] of factories) {
         'retainer_id',
         'recurring_invoice_id',
         'estimate_id',
-        'auto_thank_you',
-        'attach_invoice_pdf',
-        'attach_invoice_files',
+        // Issue 647 folded the three preference columns into one set.
+        'invoice_extras',
       ])
       expect(
         (await db.rows<{ name: string }>(`PRAGMA table_info(invoice_item_categories)`)).map(

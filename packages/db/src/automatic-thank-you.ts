@@ -1,5 +1,13 @@
 import { sql } from 'drizzle-orm'
 import { runAtomic, type InvoiceStateDatabase } from './invoice-state.js'
+import {
+  isExtraEnabled,
+  readInvoiceExtras,
+  readOrganizationInvoiceExtras,
+  resolveInvoiceExtra,
+  setInvoiceExtra,
+  setOrganizationInvoiceExtra,
+} from './invoice-extras.js'
 
 /**
  * Whether a settled invoice should send a thank-you (issue 545).
@@ -20,29 +28,12 @@ export const resolveThankYouPolicy = async (
   database: InvoiceStateDatabase,
   invoiceId: number,
 ): Promise<ThankYouDecision> => {
-  const rows = await database.all<{
-    invoice: number | null
-    organization: number | null
-  }>(
-    sql`SELECT invoice.auto_thank_you AS invoice,
-               (SELECT organization.auto_thank_you FROM organizations organization
-                ORDER BY organization.id LIMIT 1) AS organization
-        FROM invoices invoice WHERE invoice.id = ${invoiceId}`,
-  )
-  const row = rows[0]
-  if (row === undefined) return { send: false, because: 'unknown_invoice' }
-  if (row.invoice !== null) {
-    return row.invoice === 1
-      ? { send: true, because: 'invoice' }
-      : { send: false, because: 'invoice' }
-  }
-  // No organization row at all is treated as off. A deployment that has not
-  // been configured should not begin emailing clients because this shipped.
-  return row.organization === 1
-    ? { send: true, because: 'organization' }
-    : { send: false, because: 'organization' }
+  const both = await readInvoiceExtras(database, invoiceId)
+  if (both === null) return { send: false, because: 'unknown_invoice' }
+  const resolved = resolveInvoiceExtra(both.organization, both.invoice, 'thank_you')
+  const because = resolved.invoice === null ? 'organization' : 'invoice'
+  return isExtraEnabled(resolved.effective) ? { send: true, because } : { send: false, because }
 }
-
 /**
  * Whether this payment has already had its thank-you.
  *
@@ -70,30 +61,11 @@ export interface ThankYouPolicyUpdate {
 export const setInvoiceThankYouPolicy = async (
   database: InvoiceStateDatabase,
   input: Readonly<ThankYouPolicyUpdate>,
-): Promise<boolean> => {
-  // Asked before the write rather than counted after it: the two drivers behind
-  // this seam report affected rows differently, and a caller wants to know
-  // whether the invoice exists, not how many rows a driver decided to name.
-  const present = await database.all<{ id: number }>(
-    sql`SELECT id FROM invoices WHERE id = ${input.invoiceId}`,
-  )
-  if (present.length === 0) return false
-  const value = input.enabled === null ? null : input.enabled ? 1 : 0
-  await database.run(
-    sql`UPDATE invoices SET auto_thank_you = ${value} WHERE id = ${input.invoiceId}`,
-  )
-  return true
-}
-
+): Promise<boolean> => setInvoiceExtra(database, input.invoiceId, 'thank_you', input.enabled)
 export const setOrganizationThankYouPolicy = async (
   database: InvoiceStateDatabase,
   enabled: boolean,
-): Promise<void> => {
-  await database.run(
-    sql`UPDATE organizations SET auto_thank_you = ${enabled ? 1 : 0}`,
-  )
-}
-
+): Promise<void> => setOrganizationInvoiceExtra(database, 'thank_you', enabled)
 export interface ThankYouRecipient {
   readonly name: string
   readonly email: string
@@ -320,26 +292,19 @@ export const readThankYouPreference = async (
   database: InvoiceStateDatabase,
   invoiceId: number,
 ): Promise<{ invoice: boolean | null; organization: boolean } | null> => {
-  const rows = await database.all<{ invoice: number | null; organization: number | null }>(
-    sql`SELECT invoice.auto_thank_you AS invoice,
-               (SELECT organization.auto_thank_you FROM organizations organization
-                ORDER BY organization.id LIMIT 1) AS organization
-        FROM invoices invoice WHERE invoice.id = ${invoiceId}`,
-  )
-  const row = rows[0]
-  if (row === undefined) return null
+  const both = await readInvoiceExtras(database, invoiceId)
+  if (both === null) return null
+  const resolved = resolveInvoiceExtra(both.organization, both.invoice, 'thank_you')
   return {
-    invoice: row.invoice === null ? null : row.invoice === 1,
-    organization: row.organization === 1,
+    invoice: resolved.invoice === null ? null : isExtraEnabled(resolved.invoice),
+    organization: isExtraEnabled(resolved.organization),
   }
 }
-
 /** The organization default on its own, for the settings screen. */
 export const readOrganizationThankYouPolicy = async (
   database: InvoiceStateDatabase,
-): Promise<boolean> => {
-  const rows = await database.all<{ enabled: number | null }>(
-    sql`SELECT auto_thank_you AS enabled FROM organizations ORDER BY id LIMIT 1`,
+): Promise<boolean> =>
+  isExtraEnabled(
+    resolveInvoiceExtra(await readOrganizationInvoiceExtras(database), {}, 'thank_you')
+      .organization,
   )
-  return rows[0]?.enabled === 1
-}

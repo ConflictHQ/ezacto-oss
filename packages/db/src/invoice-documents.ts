@@ -1,5 +1,13 @@
 import { sql } from 'drizzle-orm'
 import type { InvoiceStateDatabase } from './invoice-state.js'
+import {
+  isExtraEnabled,
+  readInvoiceExtras,
+  readOrganizationInvoiceExtras,
+  resolveInvoiceExtra,
+  setInvoiceExtra,
+  setOrganizationInvoiceExtra,
+} from './invoice-extras.js'
 
 /**
  * Whether an invoice arrives with its document, and what was actually sent
@@ -20,24 +28,14 @@ export const resolveAttachPolicy = async (
   database: InvoiceStateDatabase,
   invoiceId: number,
 ): Promise<AttachDecision> => {
-  const rows = await database.all<{ invoice: number | null; organization: number | null }>(
-    sql`SELECT invoice.attach_invoice_pdf AS invoice,
-               (SELECT organization.attach_invoice_pdf FROM organizations organization
-                ORDER BY organization.id LIMIT 1) AS organization
-        FROM invoices invoice WHERE invoice.id = ${invoiceId}`,
-  )
-  const row = rows[0]
-  if (row === undefined) return { attach: false, because: 'unknown_invoice' }
-  if (row.invoice !== null) {
-    return row.invoice === 1
-      ? { attach: true, because: 'invoice' }
-      : { attach: false, because: 'invoice' }
-  }
-  return row.organization === 1
-    ? { attach: true, because: 'organization' }
-    : { attach: false, because: 'organization' }
+  const both = await readInvoiceExtras(database, invoiceId)
+  if (both === null) return { attach: false, because: 'unknown_invoice' }
+  const resolved = resolveInvoiceExtra(both.organization, both.invoice, 'document')
+  const because = resolved.invoice === null ? 'organization' : 'invoice'
+  return isExtraEnabled(resolved.effective)
+    ? { attach: true, because }
+    : { attach: false, because }
 }
-
 /**
  * Both answers at once, for a screen that has to show what will happen and why.
  *
@@ -48,53 +46,28 @@ export const readAttachPreference = async (
   database: InvoiceStateDatabase,
   invoiceId: number,
 ): Promise<{ invoice: boolean | null; organization: boolean } | null> => {
-  const rows = await database.all<{ invoice: number | null; organization: number | null }>(
-    sql`SELECT invoice.attach_invoice_pdf AS invoice,
-               (SELECT organization.attach_invoice_pdf FROM organizations organization
-                ORDER BY organization.id LIMIT 1) AS organization
-        FROM invoices invoice WHERE invoice.id = ${invoiceId}`,
-  )
-  const row = rows[0]
-  if (row === undefined) return null
+  const both = await readInvoiceExtras(database, invoiceId)
+  if (both === null) return null
+  const resolved = resolveInvoiceExtra(both.organization, both.invoice, 'document')
   return {
-    invoice: row.invoice === null ? null : row.invoice === 1,
-    organization: row.organization === 1,
+    invoice: resolved.invoice === null ? null : isExtraEnabled(resolved.invoice),
+    organization: isExtraEnabled(resolved.organization),
   }
 }
-
 export const readOrganizationAttachPolicy = async (
   database: InvoiceStateDatabase,
-): Promise<boolean> => {
-  const rows = await database.all<{ attach: number | null }>(
-    sql`SELECT attach_invoice_pdf AS attach FROM organizations ORDER BY id LIMIT 1`,
+): Promise<boolean> =>
+  isExtraEnabled(
+    resolveInvoiceExtra(await readOrganizationInvoiceExtras(database), {}, 'document').organization,
   )
-  return rows[0]?.attach === 1
-}
-
 export const setInvoiceAttachPolicy = async (
   database: InvoiceStateDatabase,
   input: Readonly<{ invoiceId: number; enabled: boolean | null }>,
-): Promise<boolean> => {
-  const present = await database.all<{ id: number }>(
-    sql`SELECT id FROM invoices WHERE id = ${input.invoiceId}`,
-  )
-  if (present.length === 0) return false
-  const value = input.enabled === null ? null : input.enabled ? 1 : 0
-  await database.run(
-    sql`UPDATE invoices SET attach_invoice_pdf = ${value} WHERE id = ${input.invoiceId}`,
-  )
-  return true
-}
-
+): Promise<boolean> => setInvoiceExtra(database, input.invoiceId, 'document', input.enabled)
 export const setOrganizationAttachPolicy = async (
   database: InvoiceStateDatabase,
   enabled: boolean,
-): Promise<void> => {
-  await database.run(
-    sql`UPDATE organizations SET attach_invoice_pdf = ${enabled ? 1 : 0}`,
-  )
-}
-
+): Promise<void> => setOrganizationInvoiceExtra(database, 'document', enabled)
 /**
  * Whether the files staged against an invoice go with it.
  *
@@ -105,67 +78,41 @@ export const resolveFilesPolicy = async (
   database: InvoiceStateDatabase,
   invoiceId: number,
 ): Promise<boolean> => {
-  const rows = await database.all<{ invoice: number | null; organization: number | null }>(
-    sql`SELECT invoice.attach_invoice_files AS invoice,
-               (SELECT organization.attach_invoice_files FROM organizations organization
-                ORDER BY organization.id LIMIT 1) AS organization
-        FROM invoices invoice WHERE invoice.id = ${invoiceId}`,
-  )
-  const row = rows[0]
-  if (row === undefined) return false
-  return row.invoice === null ? row.organization === 1 : row.invoice === 1
+  // A plain boolean, unlike the document's decision, because the only caller
+  // asks "do these go?" and nothing needs to explain which level answered. It
+  // stays a boolean deliberately: the worker port writes
+  // `(await resolveFilesPolicy(...)) ? ... : []`, and a truthy object there
+  // would attach every staged file to every invoice, silently.
+  const both = await readInvoiceExtras(database, invoiceId)
+  if (both === null) return false
+  return isExtraEnabled(resolveInvoiceExtra(both.organization, both.invoice, 'files').effective)
 }
-
 export const readFilesPreference = async (
   database: InvoiceStateDatabase,
   invoiceId: number,
 ): Promise<{ invoice: boolean | null; organization: boolean } | null> => {
-  const rows = await database.all<{ invoice: number | null; organization: number | null }>(
-    sql`SELECT invoice.attach_invoice_files AS invoice,
-               (SELECT organization.attach_invoice_files FROM organizations organization
-                ORDER BY organization.id LIMIT 1) AS organization
-        FROM invoices invoice WHERE invoice.id = ${invoiceId}`,
-  )
-  const row = rows[0]
-  if (row === undefined) return null
+  const both = await readInvoiceExtras(database, invoiceId)
+  if (both === null) return null
+  const resolved = resolveInvoiceExtra(both.organization, both.invoice, 'files')
   return {
-    invoice: row.invoice === null ? null : row.invoice === 1,
-    organization: row.organization === 1,
+    invoice: resolved.invoice === null ? null : isExtraEnabled(resolved.invoice),
+    organization: isExtraEnabled(resolved.organization),
   }
 }
-
 export const readOrganizationFilesPolicy = async (
   database: InvoiceStateDatabase,
-): Promise<boolean> => {
-  const rows = await database.all<{ attach: number | null }>(
-    sql`SELECT attach_invoice_files AS attach FROM organizations ORDER BY id LIMIT 1`,
+): Promise<boolean> =>
+  isExtraEnabled(
+    resolveInvoiceExtra(await readOrganizationInvoiceExtras(database), {}, 'files').organization,
   )
-  return rows[0]?.attach === 1
-}
-
 export const setInvoiceFilesPolicy = async (
   database: InvoiceStateDatabase,
   input: Readonly<{ invoiceId: number; enabled: boolean | null }>,
-): Promise<boolean> => {
-  const present = await database.all<{ id: number }>(
-    sql`SELECT id FROM invoices WHERE id = ${input.invoiceId}`,
-  )
-  if (present.length === 0) return false
-  const value = input.enabled === null ? null : input.enabled ? 1 : 0
-  await database.run(
-    sql`UPDATE invoices SET attach_invoice_files = ${value} WHERE id = ${input.invoiceId}`,
-  )
-  return true
-}
-
+): Promise<boolean> => setInvoiceExtra(database, input.invoiceId, 'files', input.enabled)
 export const setOrganizationFilesPolicy = async (
   database: InvoiceStateDatabase,
   enabled: boolean,
-): Promise<void> => {
-  await database.run(
-    sql`UPDATE organizations SET attach_invoice_files = ${enabled ? 1 : 0}`,
-  )
-}
+): Promise<void> => setOrganizationInvoiceExtra(database, 'files', enabled)
 
 export interface StagedAttachment {
   readonly key: string
