@@ -100,6 +100,9 @@ const runtime = (
         environment: parts.environment ?? "sandbox",
         appBaseUrl: "https://time.example.test",
         webhookPublicKey: undefined,
+        // Sandbox has no default address any more; the suite states one.
+        apiBase: "https://api.wise.example.test",
+        authorizeUrl: "https://wise.example.test/oauth/authorize",
       },
       grants,
       accounts,
@@ -155,14 +158,16 @@ describe("starting an authorization (#543)", () => {
   it("[money] treats anything but an explicit sandbox as live", () => {
     // The safe way round: a live token against sandbox is refused loudly, where
     // a sandbox token against live looks like a payout that went nowhere.
-    const { runtime: wise } = runtime({ environment: "Sandbox" });
-    expect(wise.service.authorizeUrl({ state: "s", redirectUri: "https://x.example.test" })).toContain(
-      "sandbox",
-    );
+    const { runtime: sandbox } = runtime({ environment: "Sandbox" });
+    expect(
+      sandbox.service.authorizeUrl({ state: "s", redirectUri: "https://x.example.test" }),
+    ).toContain("wise.example.test");
+    // Anything else is live, and live ignores the configured override entirely
+    // rather than letting a stale sandbox address redirect real money.
     const { runtime: live } = runtime({ environment: "staging" });
-    expect(live.service.authorizeUrl({ state: "s", redirectUri: "https://x.example.test" })).not.toContain(
-      "sandbox",
-    );
+    expect(
+      live.service.authorizeUrl({ state: "s", redirectUri: "https://x.example.test" }),
+    ).toContain("//wise.com");
   });
 });
 

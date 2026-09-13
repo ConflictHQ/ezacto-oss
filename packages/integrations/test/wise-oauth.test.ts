@@ -1,3 +1,4 @@
+import type { WiseHosts } from '../src/wise/oauth.js'
 import { describe, expect, it, vi } from 'vitest'
 import {
   WiseOAuthError,
@@ -7,6 +8,16 @@ import {
   wiseApiBase,
   wiseAuthorizeUrl,
 } from '../src/wise/oauth.js'
+
+/**
+ * Wise decommissioned the sandbox this was written against, so there is no
+ * default any more and a test that wants one says where it is. Pointing these
+ * at a real vendor host would make the suite depend on somebody else's uptime.
+ */
+const SANDBOX_HOSTS: WiseHosts = {
+  api: 'https://api.wise.example.test',
+  authorize: 'https://wise.example.test/oauth/authorize',
+}
 
 /**
  * Issue 543. A contractor authorises their own Wise account; payouts go to the
@@ -36,7 +47,7 @@ describe('sending somebody to Wise', () => {
         clientId: 'c',
         redirectUri: 'https://time.example.test/cb',
         state: '   ',
-        environment: 'sandbox',
+        environment: 'sandbox', hosts: SANDBOX_HOSTS,
       }),
     ).toThrow(WiseOAuthError)
   })
@@ -46,7 +57,7 @@ describe('sending somebody to Wise', () => {
       clientId: 'c',
       redirectUri: 'https://time.example.test/cb',
       state: 's',
-      environment: 'sandbox',
+      environment: 'sandbox', hosts: SANDBOX_HOSTS,
     })
     const live = wiseAuthorizeUrl({
       clientId: 'c',
@@ -54,16 +65,24 @@ describe('sending somebody to Wise', () => {
       state: 's',
       environment: 'live',
     })
-    expect(sandbox).toContain('sandbox.transferwise.tech')
+    // Separate hosts, not a flag on a shared one: a live token against sandbox
+    // is refused loudly where the reverse looks like a payout that went nowhere.
+    expect(sandbox).toContain('wise.example.test')
+    expect(sandbox).not.toContain('//wise.com')
     expect(live).toContain('wise.com')
     expect(live).not.toContain('sandbox')
     expect(new URL(sandbox).searchParams.get('state')).toBe('s')
     expect(new URL(sandbox).searchParams.get('response_type')).toBe('code')
   })
 
-  it('[unit] separates the two API bases too', () => {
-    expect(wiseApiBase('sandbox')).toBe('https://api.sandbox.transferwise.tech')
+  it('[unit] knows where live is, and refuses to invent where sandbox is', () => {
     expect(wiseApiBase('live')).toBe('https://api.wise.com')
+    expect(wiseApiBase('sandbox', SANDBOX_HOSTS)).toBe('https://api.wise.example.test')
+    // This shipped pointing at api.sandbox.transferwise.tech, which Wise has
+    // decommissioned -- it answers 410. A hard-coded host that no longer exists
+    // is worse than none, because every call then fails as "Wise refused" and
+    // reads like a credential problem rather than an address that is gone.
+    expect(() => wiseApiBase('sandbox')).toThrow(/sandbox hosts are not configured/u)
   })
 })
 
@@ -78,7 +97,7 @@ describe('exchanging the code', () => {
       clientSecret: 'secret',
       redirectUri: 'https://time.example.test/cb',
       code: 'abc',
-      environment: 'sandbox',
+      environment: 'sandbox', hosts: SANDBOX_HOSTS,
       fetchImplementation: call as never,
       now: () => new Date('2026-09-13T00:00:00.000Z'),
     })
@@ -97,7 +116,7 @@ describe('exchanging the code', () => {
       clientSecret: 'secret',
       redirectUri: 'https://time.example.test/cb',
       code: 'abc',
-      environment: 'sandbox',
+      environment: 'sandbox', hosts: SANDBOX_HOSTS,
       fetchImplementation: (async () => json(tokenBody)) as never,
       now: () => new Date('2026-09-13T00:00:00.000Z'),
     })
@@ -115,7 +134,7 @@ describe('exchanging the code', () => {
         clientSecret: 'secret',
         redirectUri: 'https://time.example.test/cb',
         code: 'abc',
-        environment: 'sandbox',
+        environment: 'sandbox', hosts: SANDBOX_HOSTS,
         fetchImplementation: (async () => json({ error: 'invalid_grant' }, 400)) as never,
       }),
     ).rejects.toThrow(/refused the authorization code \(400\)/u)
@@ -128,7 +147,7 @@ describe('exchanging the code', () => {
         clientSecret: 'secret',
         redirectUri: 'https://time.example.test/cb',
         code: 'abc',
-        environment: 'sandbox',
+        environment: 'sandbox', hosts: SANDBOX_HOSTS,
         fetchImplementation: (async () => json({ access_token: 'at', expires_in: 60 })) as never,
       }),
     ).rejects.toThrow(/missing refresh_token/u)

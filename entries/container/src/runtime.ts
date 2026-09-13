@@ -369,6 +369,8 @@ export const createContainerRuntime = async (
               environment: config.wise.environment,
               appBaseUrl: config.appBaseUrl,
               webhookPublicKey: config.wise.webhookPublicKey,
+              apiBase: config.wise.apiBase,
+              authorizeUrl: config.wise.authorizeUrl,
             },
             grants: createWiseGrantStore(drizzle),
             deliveries: createWiseDeliveryStore(drizzle),

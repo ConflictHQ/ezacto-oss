@@ -27,7 +27,9 @@ import {
   exchangeWiseAuthorizationCode,
   fetchWiseProfiles,
   wiseAuthorizeUrl,
+  wiseHosts,
   type WiseEnvironment,
+  type WiseHosts,
   type WiseProfile,
 } from "./oauth.js";
 import {
@@ -141,6 +143,15 @@ export interface WiseConfig {
    * money is not one to act on because a key was not configured.
    */
   readonly webhookPublicKey: string | undefined;
+  /**
+   * Where Wise is, for a deployment that is not pointing at the live hosts.
+   *
+   * Both or neither. Live defaults to Wise's own; sandbox has no default at
+   * all, because the sandbox this was written against was decommissioned and
+   * guessing a replacement hostname is not a thing to do with money.
+   */
+  readonly apiBase: string | undefined;
+  readonly authorizeUrl: string | undefined;
 }
 
 /**
@@ -251,6 +262,14 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
   // token against live would look like a payout that silently went nowhere.
   const environment: WiseEnvironment =
     config.environment?.trim().toLowerCase() === "sandbox" ? "sandbox" : "live";
+  const apiBase = trimmed(config.apiBase);
+  const authorizeBase = trimmed(config.authorizeUrl);
+  const hosts: WiseHosts | null = wiseHosts(
+    environment,
+    apiBase !== null && authorizeBase !== null
+      ? { api: apiBase, authorize: authorizeBase }
+      : undefined,
+  );
   const newState = options.newState ?? randomState;
   const call = options.fetch ?? fetch;
 
@@ -390,12 +409,15 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
   return {
     ...(deliveries === undefined ? {} : { webhook: { receiveWebhook } }),
     service: {
-      clientId: () => clientId,
+      // A deployment whose Wise has no address is not configured, whatever
+      // credentials it holds, and "not configured" is a thing the routes
+      // already say clearly.
+      clientId: () => (hosts === null ? null : clientId),
       callbackUrl,
       settingsUrl: () => SETTINGS_PATH,
       authorizeUrl: ({ state, redirectUri }) => {
         if (clientId === null) throw new Error("Wise client credentials are not configured");
-        return wiseAuthorizeUrl({ clientId, redirectUri, state, environment });
+        return wiseAuthorizeUrl({ clientId, redirectUri, state, environment, ...(hosts === null ? {} : { hosts }) });
       },
       beginAuthorization: async ({ state, userId, redirectUri }) => {
         const now = options.now();
@@ -426,6 +448,7 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
           redirectUri,
           code,
           environment: claimed.state.environment,
+          ...(hosts === null ? {} : { hosts }),
           fetchImplementation: call,
           now: options.now,
         });
@@ -434,6 +457,7 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
           await fetchWiseProfiles({
             accessToken: tokens.accessToken,
             environment: claimed.state.environment,
+            ...(hosts === null ? {} : { hosts }),
             fetchImplementation: call,
           }),
         );

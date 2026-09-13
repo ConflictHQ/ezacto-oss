@@ -185,6 +185,14 @@ export type WorkerEnv = AppEnv & {
    */
   WISE_WEBHOOK_PUBLIC_KEY?: string
   /**
+   * Where Wise is, for a sandbox deployment. Both or neither, and ignored on
+   * live -- live is Wise's own address and nothing else. Wise decommissioned
+   * the sandbox this was written against, so there is no default to fall back
+   * to and a sandbox deployment without these is simply not configured.
+   */
+  WISE_API_BASE?: string
+  WISE_AUTHORIZE_URL?: string
+  /**
    * BILL credentials. All Worker secrets, and all four are needed before
    * anything can be sent: BILL has no OAuth, so there is no connect flow that
    * could obtain them and nothing for this system to rotate.
