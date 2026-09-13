@@ -2275,6 +2275,21 @@ export type InvoicePaymentLinkEnvelope = {
 };
 };
 
+export type InvoiceDocumentPreferenceEnvelope = {
+  "data": {
+  "invoice_id": number;
+  "attach_pdf": boolean;
+  "organization_attach_pdf": boolean;
+  "effective": boolean;
+};
+};
+
+export type OrganizationInvoiceDocumentsEnvelope = {
+  "data": {
+  "attach_pdf": boolean;
+};
+};
+
 export type ReleasedTimeEnvelope = {
   "data": {
   "invoice_id": number;
@@ -4291,6 +4306,42 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<ReleasedTimeEnvelope>("POST", "/api/v1/invoices/:id/released-time".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getInvoiceDocumentPreference(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceDocumentPreferenceEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InvoiceDocumentPreferenceEnvelope>("GET", "/api/v1/invoices/:id/document-preference".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async setInvoiceDocumentPreference(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceDocumentPreferenceEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InvoiceDocumentPreferenceEnvelope>("POST", "/api/v1/invoices/:id/document-preference".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getOrganizationInvoiceDocuments(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<OrganizationInvoiceDocumentsEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<OrganizationInvoiceDocumentsEnvelope>("GET", "/api/v1/settings/invoice-documents", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async setOrganizationInvoiceDocuments(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<OrganizationInvoiceDocumentsEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<OrganizationInvoiceDocumentsEnvelope>("POST", "/api/v1/settings/invoice-documents", {
       signal: args.signal,
       headers,
     });

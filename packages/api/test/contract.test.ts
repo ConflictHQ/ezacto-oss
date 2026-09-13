@@ -7,6 +7,7 @@ import {
   installBrandRoute,
   installBillRoutes,
   installPayoutAccountRoutes,
+  installInvoiceDocumentPreferenceRoutes,
   installInvoiceTimeClaimRoutes,
   installStripeRoutes,
   installInstanceThemeRoutes,
@@ -216,6 +217,12 @@ const documentedApp = () =>
         configured: () => false,
         paymentLink: async () => ({ kind: "refused", reason: "fixture" }),
         receiveWebhook: async () => ({ kind: "unverified" }),
+      });
+      installInvoiceDocumentPreferenceRoutes(api, {
+        readInvoicePreference: async () => ({ invoice: null, organization: false }),
+        setInvoicePreference: async () => true,
+        readOrganizationPreference: async () => false,
+        setOrganizationPreference: async () => undefined,
       });
       installInvoiceTimeClaimRoutes(api, {
         releaseInvoicedTime: async () => ({ kind: "released", released: 0 }),

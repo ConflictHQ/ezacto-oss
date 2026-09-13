@@ -1,5 +1,9 @@
 import type { BillRuntime, QuickBooksService } from "@ezacto/integrations";
-import type { InvoiceTimeClaimService, StripeService } from "@ezacto/api";
+import type {
+  InvoiceDocumentPreferenceService,
+  InvoiceTimeClaimService,
+  StripeService,
+} from "@ezacto/api";
 import type { PayoutAccountService } from "@ezacto/api";
 import {
   notFoundResponse,
@@ -36,6 +40,7 @@ import {
   installBackupStatusRoutes,
   installBillRoutes,
   installPayoutAccountRoutes,
+  installInvoiceDocumentPreferenceRoutes,
   installInvoiceTimeClaimRoutes,
   installStripeRoutes,
   installStripeWebhookRoute,
@@ -270,6 +275,7 @@ export interface RuntimeServices {
   quickBooks?: QuickBooksService
   stripe?: StripeService
   invoiceTimeClaims?: InvoiceTimeClaimService
+  invoiceDocumentPreference?: InvoiceDocumentPreferenceService
   bill?: BillRuntime
   /**
    * The per-client opt-in. Separate from the runtime because turning it on is a
@@ -458,6 +464,12 @@ export const createApp = (
             }
             if (services.invoiceTimeClaims !== undefined) {
               installInvoiceTimeClaimRoutes(api, services.invoiceTimeClaims)
+            }
+            if (services.invoiceDocumentPreference !== undefined) {
+              installInvoiceDocumentPreferenceRoutes(
+                api,
+                services.invoiceDocumentPreference,
+              )
             }
             if (services.payoutAccounts !== undefined) {
               installPayoutAccountRoutes(api, services.payoutAccounts)

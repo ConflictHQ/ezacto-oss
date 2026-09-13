@@ -184,6 +184,8 @@ export {
   type TimeEntryClaim,
 } from './release-invoiced-time.js'
 export {
+  readAttachPreference,
+  readOrganizationAttachPolicy,
   invoiceDocumentFilename,
   invoiceDocumentKey,
   readAttachedDocument,
