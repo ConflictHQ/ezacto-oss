@@ -27,6 +27,16 @@ import { ApiError, validationError } from './errors.js'
  */
 export type AttachmentKind = 'document' | 'files'
 
+/**
+ * The work journal's answer, which is not a boolean (issue 647).
+ *
+ * `'detailed'` is every entry billed, `'summary'` the same hours totalled per
+ * project, `false` is off, and on an invoice `null` follows the organization.
+ * This is the value that made issue 656's set worth building: a fourth boolean
+ * pair could not have carried it.
+ */
+export type JournalPreference = 'detailed' | 'summary' | false
+
 export interface InvoiceDocumentPreferenceService {
   /** `null` on the invoice means it follows the organization. */
   readInvoicePreference(
@@ -40,6 +50,38 @@ export interface InvoiceDocumentPreferenceService {
   ): Promise<boolean>
   readOrganizationPreference(kind: AttachmentKind): Promise<boolean>
   setOrganizationPreference(kind: AttachmentKind, enabled: boolean): Promise<void>
+  readInvoiceJournal(
+    invoiceId: number,
+  ): Promise<{ invoice: JournalPreference | null; organization: JournalPreference } | null>
+  setInvoiceJournal(invoiceId: number, level: JournalPreference | null): Promise<boolean>
+  readOrganizationJournal(): Promise<JournalPreference>
+  setOrganizationJournal(level: JournalPreference): Promise<void>
+}
+
+/**
+ * Reads the journal's answer out of a body.
+ *
+ * `false` rather than a missing field is how it is turned off, for the same
+ * reason `null` is how an invoice defers: a caller that leaves it out has not
+ * said anything, and guessing which they meant is how a client stops receiving
+ * something nobody chose to stop.
+ */
+const journalOf = (
+  body: Record<string, unknown>,
+  nullable: boolean,
+): JournalPreference | null => {
+  const value = body.attach_journal
+  if (value === 'detailed' || value === 'summary' || value === false) return value
+  if (nullable && value === null) return null
+  throw validationError([
+    {
+      field: 'attach_journal',
+      code: 'invalid',
+      message: nullable
+        ? 'attach_journal must be "detailed", "summary", false, or null to follow the organization.'
+        : 'attach_journal must be "detailed", "summary", or false.',
+    },
+  ])
 }
 
 const assertMoneyWriter = <Bindings extends object>(
@@ -109,11 +151,12 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
   api.get('/invoices/:id/document-preference', async (context) => {
     assertMoneyWriter(context)
     const invoiceId = invoiceIdOf(context)
-    const [document, files] = await Promise.all([
+    const [document, files, journal] = await Promise.all([
       service.readInvoicePreference(invoiceId, 'document'),
       service.readInvoicePreference(invoiceId, 'files'),
+      service.readInvoiceJournal(invoiceId),
     ])
-    if (document === null || files === null) {
+    if (document === null || files === null || journal === null) {
       throw new ApiError({
         status: 404,
         code: 'not_found',
@@ -132,6 +175,9 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
           attach_files: files.invoice,
           organization_attach_files: files.organization,
           effective_files: files.invoice ?? files.organization,
+          attach_journal: journal.invoice,
+          organization_attach_journal: journal.organization,
+          effective_journal: journal.invoice ?? journal.organization,
         },
       },
       200,
@@ -145,14 +191,23 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
     const body = (await context.req.json().catch(() => ({}))) as Record<string, unknown>
     // At least one, or the call is a write that changes nothing and reports
     // success -- which reads as a saved setting that was never saved.
-    if (!('attach_pdf' in body) && !('attach_files' in body)) {
+    if (!('attach_pdf' in body) && !('attach_files' in body) && !('attach_journal' in body)) {
       throw validationError([
         {
           field: 'attach_pdf',
           code: 'required',
-          message: 'Provide attach_pdf, attach_files, or both.',
+          message: 'Provide attach_pdf, attach_files, attach_journal, or any combination.',
         },
       ])
+    }
+    if ('attach_journal' in body) {
+      if (!(await service.setInvoiceJournal(invoiceId, journalOf(body, true)))) {
+        throw new ApiError({
+          status: 404,
+          code: 'not_found',
+          message: 'The requested resource does not exist.',
+        })
+      }
     }
     if ('attach_pdf' in body) {
       const wanted = flagOf(body, 'attach_pdf', true)
@@ -174,9 +229,10 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
         })
       }
     }
-    const [document, files] = await Promise.all([
+    const [document, files, journal] = await Promise.all([
       service.readInvoicePreference(invoiceId, 'document'),
       service.readInvoicePreference(invoiceId, 'files'),
+      service.readInvoiceJournal(invoiceId),
     ])
     return context.json(
       {
@@ -188,6 +244,9 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
           attach_files: files?.invoice ?? null,
           organization_attach_files: files?.organization ?? false,
           effective_files: files?.invoice ?? files?.organization ?? false,
+          attach_journal: journal?.invoice ?? null,
+          organization_attach_journal: journal?.organization ?? false,
+          effective_journal: journal?.invoice ?? journal?.organization ?? false,
         },
       },
       200,
@@ -197,12 +256,19 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
 
   api.get('/settings/invoice-documents', async (context) => {
     assertMoneyWriter(context)
-    const [attachPdf, attachFiles] = await Promise.all([
+    const [attachPdf, attachFiles, attachJournal] = await Promise.all([
       service.readOrganizationPreference('document'),
       service.readOrganizationPreference('files'),
+      service.readOrganizationJournal(),
     ])
     return context.json(
-      { data: { attach_pdf: attachPdf, attach_files: attachFiles } },
+      {
+        data: {
+          attach_pdf: attachPdf,
+          attach_files: attachFiles,
+          attach_journal: attachJournal,
+        },
+      },
       200,
       { 'cache-control': 'no-store' },
     )
@@ -211,14 +277,17 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
   api.post('/settings/invoice-documents', async (context) => {
     assertMoneyWriter(context)
     const body = (await context.req.json().catch(() => ({}))) as Record<string, unknown>
-    if (!('attach_pdf' in body) && !('attach_files' in body)) {
+    if (!('attach_pdf' in body) && !('attach_files' in body) && !('attach_journal' in body)) {
       throw validationError([
         {
           field: 'attach_pdf',
           code: 'required',
-          message: 'Provide attach_pdf, attach_files, or both.',
+          message: 'Provide attach_pdf, attach_files, attach_journal, or any combination.',
         },
       ])
+    }
+    if ('attach_journal' in body) {
+      await service.setOrganizationJournal(journalOf(body, false)!)
     }
     if ('attach_pdf' in body) {
       await service.setOrganizationPreference('document', flagOf(body, 'attach_pdf', false)!)
@@ -226,12 +295,19 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
     if ('attach_files' in body) {
       await service.setOrganizationPreference('files', flagOf(body, 'attach_files', false)!)
     }
-    const [attachPdf, attachFiles] = await Promise.all([
+    const [attachPdf, attachFiles, attachJournal] = await Promise.all([
       service.readOrganizationPreference('document'),
       service.readOrganizationPreference('files'),
+      service.readOrganizationJournal(),
     ])
     return context.json(
-      { data: { attach_pdf: attachPdf, attach_files: attachFiles } },
+      {
+        data: {
+          attach_pdf: attachPdf,
+          attach_files: attachFiles,
+          attach_journal: attachJournal,
+        },
+      },
       200,
       { 'cache-control': 'no-store' },
     )

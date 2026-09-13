@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm'
 import type { InvoiceStateDatabase } from './invoice-state.js'
 import {
   isExtraEnabled,
+  type InvoiceExtraValue,
   readInvoiceExtras,
   readOrganizationInvoiceExtras,
   resolveInvoiceExtra,
@@ -207,3 +208,103 @@ export const invoiceDocumentKey = (invoiceId: number, invoiceMessageId: number):
 /** What the recipient sees the file called. */
 export const invoiceDocumentFilename = (invoiceNumber: string): string =>
   `invoice-${invoiceNumber.replace(/[^A-Za-z0-9._-]/gu, '-')}.pdf`
+
+/**
+ * The work behind an invoice, for the journal that can go with it (issue 647).
+ *
+ * Reads the entries this invoice actually billed -- `time_entries.invoice_id` is
+ * set when they are claimed -- rather than re-deriving them from a date range.
+ * A range would drift: entries can be released from an invoice, and two
+ * invoices can cover overlapping weeks for different projects.
+ *
+ * `rounded_seconds` where it exists, because that is what was billed. Showing
+ * the raw duration next to a total computed from the rounded one is a client
+ * asking why the arithmetic does not work.
+ */
+export interface InvoiceJournalEntry {
+  readonly spentDate: string
+  readonly personName: string
+  readonly projectName: string
+  readonly taskName: string | null
+  readonly notes: string | null
+  readonly seconds: number
+}
+
+export const readInvoiceJournal = async (
+  database: InvoiceStateDatabase,
+  invoiceId: number,
+): Promise<readonly InvoiceJournalEntry[]> =>
+  database.all<InvoiceJournalEntry>(
+    sql`SELECT entry.spent_date AS spentDate,
+               trim(coalesce(person.first_name, '') || ' ' || coalesce(person.last_name, ''))
+                 AS personName,
+               project.name AS projectName,
+               task.name AS taskName,
+               entry.notes AS notes,
+               coalesce(entry.rounded_seconds, entry.seconds) AS seconds
+        FROM time_entries entry
+        JOIN users person ON person.id = entry.user_id
+        JOIN projects project ON project.id = entry.project_id
+        LEFT JOIN tasks task ON task.id = entry.task_id
+        WHERE entry.invoice_id = ${invoiceId}
+        ORDER BY entry.spent_date, entry.id`,
+  )
+
+/**
+ * Whether the work journal goes with this invoice, and at which level.
+ *
+ * `false` is off; `'detailed'` is every entry billed; `'summary'` is the same
+ * hours totalled per project. Three answers rather than two, which is the reason
+ * issue 647 made these a set instead of a fourth boolean pair: a client checking
+ * an unexpected total wants the entries, a client filing the invoice wants a
+ * page rather than forty, and the operator picks.
+ */
+export type JournalLevel = 'detailed' | 'summary'
+
+export const resolveJournalPolicy = async (
+  database: InvoiceStateDatabase,
+  invoiceId: number,
+): Promise<JournalLevel | null> => {
+  const both = await readInvoiceExtras(database, invoiceId)
+  if (both === null) return null
+  const effective = resolveInvoiceExtra(both.organization, both.invoice, 'journal').effective
+  return effective === 'detailed' || effective === 'summary' ? effective : null
+}
+
+/** `null` on the invoice hands it back to the organization. */
+export const setInvoiceJournalPolicy = async (
+  database: InvoiceStateDatabase,
+  input: Readonly<{ invoiceId: number; level: JournalLevel | false | null }>,
+): Promise<boolean> => setInvoiceExtra(database, input.invoiceId, 'journal', input.level)
+
+export const setOrganizationJournalPolicy = async (
+  database: InvoiceStateDatabase,
+  level: JournalLevel | false,
+): Promise<void> => setOrganizationInvoiceExtra(database, 'journal', level)
+
+/** Both answers, for a screen that shows what will happen and why. */
+export const readJournalPreference = async (
+  database: InvoiceStateDatabase,
+  invoiceId: number,
+): Promise<{ invoice: JournalLevel | false | null; organization: JournalLevel | false } | null> => {
+  const both = await readInvoiceExtras(database, invoiceId)
+  if (both === null) return null
+  const resolved = resolveInvoiceExtra(both.organization, both.invoice, 'journal')
+  const level = (value: InvoiceExtraValue | null): JournalLevel | false | null =>
+    value === 'detailed' || value === 'summary' ? value : value === null ? null : false
+  return {
+    invoice: level(resolved.invoice),
+    organization: level(resolved.organization) === null ? false : (level(resolved.organization) as JournalLevel | false),
+  }
+}
+
+export const readOrganizationJournalPolicy = async (
+  database: InvoiceStateDatabase,
+): Promise<JournalLevel | false> => {
+  const value = resolveInvoiceExtra(
+    await readOrganizationInvoiceExtras(database),
+    {},
+    'journal',
+  ).organization
+  return value === 'detailed' || value === 'summary' ? value : false
+}

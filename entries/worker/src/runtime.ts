@@ -44,6 +44,10 @@ import {
   readOrganizationFilesPolicy,
   setInvoiceFilesPolicy,
   setOrganizationFilesPolicy,
+  readJournalPreference,
+  readOrganizationJournalPolicy,
+  setInvoiceJournalPolicy,
+  setOrganizationJournalPolicy,
   readOrganizationAttachPolicy,
   setInvoiceAttachPolicy,
   setOrganizationAttachPolicy,
@@ -908,6 +912,13 @@ export const createRuntimeServices = async (
         kind === 'document'
           ? setOrganizationAttachPolicy(drizzle, enabled)
           : setOrganizationFilesPolicy(drizzle, enabled),
+      // The work journal, whose answer is a level rather than a flag (647).
+      readInvoiceJournal: (invoiceId: number) => readJournalPreference(drizzle, invoiceId),
+      setInvoiceJournal: (invoiceId: number, level: 'detailed' | 'summary' | false | null) =>
+        setInvoiceJournalPolicy(drizzle, { invoiceId, level }),
+      readOrganizationJournal: () => readOrganizationJournalPolicy(drizzle),
+      setOrganizationJournal: (level: 'detailed' | 'summary' | false) =>
+        setOrganizationJournalPolicy(drizzle, level),
     },
     // Suppressing the thank-you for one invoice, which is the half that has to
     // be reachable before the payment lands: some invoices settle a dispute.

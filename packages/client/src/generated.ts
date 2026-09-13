@@ -2318,6 +2318,9 @@ export type InvoiceDocumentPreferenceEnvelope = {
   "attach_files": boolean;
   "organization_attach_files": boolean;
   "effective_files": boolean;
+  "attach_journal": "detailed" | "summary" | boolean;
+  "organization_attach_journal": "detailed" | "summary" | boolean;
+  "effective_journal": "detailed" | "summary" | boolean;
 };
 };
 
@@ -2325,6 +2328,7 @@ export type OrganizationInvoiceDocumentsEnvelope = {
   "data": {
   "attach_pdf": boolean;
   "attach_files": boolean;
+  "attach_journal": "detailed" | "summary" | boolean;
 };
 };
 

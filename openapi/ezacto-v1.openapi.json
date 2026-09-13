@@ -29473,7 +29473,10 @@
               "effective",
               "attach_files",
               "organization_attach_files",
-              "effective_files"
+              "effective_files",
+              "attach_journal",
+              "organization_attach_journal",
+              "effective_journal"
             ],
             "properties": {
               "invoice_id": {
@@ -29499,6 +29502,49 @@
               },
               "effective_files": {
                 "type": "boolean"
+              },
+              "attach_journal": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "detailed",
+                      "summary"
+                    ]
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "nullable": true
+              },
+              "organization_attach_journal": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "detailed",
+                      "summary"
+                    ]
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
+              },
+              "effective_journal": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "detailed",
+                      "summary"
+                    ]
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
               }
             },
             "additionalProperties": false
@@ -29516,7 +29562,8 @@
             "type": "object",
             "required": [
               "attach_pdf",
-              "attach_files"
+              "attach_files",
+              "attach_journal"
             ],
             "properties": {
               "attach_pdf": {
@@ -29524,6 +29571,20 @@
               },
               "attach_files": {
                 "type": "boolean"
+              },
+              "attach_journal": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "detailed",
+                      "summary"
+                    ]
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
               }
             },
             "additionalProperties": false

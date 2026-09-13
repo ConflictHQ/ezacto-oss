@@ -6497,6 +6497,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           "attach_files",
           "organization_attach_files",
           "effective_files",
+          "attach_journal",
+          "organization_attach_journal",
+          "effective_journal",
         ],
         properties: {
           invoice_id: integerSchema,
@@ -6510,6 +6513,11 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           attach_files: { type: "boolean", nullable: true },
           organization_attach_files: { type: "boolean" },
           effective_files: { type: "boolean" },
+          // Not a boolean: the journal renders detailed or summary, which is
+          // the value a fourth boolean pair could not have carried.
+          attach_journal: { ...{ oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean" }] }, nullable: true },
+          organization_attach_journal: { oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean" }] },
+          effective_journal: { oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean" }] },
         },
         additionalProperties: false,
       },
@@ -6522,10 +6530,11 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: {
       data: {
         type: "object",
-        required: ["attach_pdf", "attach_files"],
+        required: ["attach_pdf", "attach_files", "attach_journal"],
         properties: {
           attach_pdf: { type: "boolean" },
           attach_files: { type: "boolean" },
+          attach_journal: { oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean" }] },
         },
         additionalProperties: false,
       },

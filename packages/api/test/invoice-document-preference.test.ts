@@ -15,6 +15,10 @@ const app = (
     setInvoicePreference?: ReturnType<typeof vi.fn>
     readOrganizationPreference?: ReturnType<typeof vi.fn>
     setOrganizationPreference?: ReturnType<typeof vi.fn>
+    readInvoiceJournal?: ReturnType<typeof vi.fn>
+    setInvoiceJournal?: ReturnType<typeof vi.fn>
+    readOrganizationJournal?: ReturnType<typeof vi.fn>
+    setOrganizationJournal?: ReturnType<typeof vi.fn>
   } = {},
   profile = 'administrator',
 ) => {
@@ -25,6 +29,11 @@ const app = (
     setInvoicePreference: overrides.setInvoicePreference ?? vi.fn(async () => true),
     readOrganizationPreference: overrides.readOrganizationPreference ?? vi.fn(async () => true),
     setOrganizationPreference: overrides.setOrganizationPreference ?? vi.fn(async () => undefined),
+    readInvoiceJournal:
+      overrides.readInvoiceJournal ?? vi.fn(async () => ({ invoice: null, organization: false })),
+    setInvoiceJournal: overrides.setInvoiceJournal ?? vi.fn(async () => true),
+    readOrganizationJournal: overrides.readOrganizationJournal ?? vi.fn(async () => false),
+    setOrganizationJournal: overrides.setOrganizationJournal ?? vi.fn(async () => undefined),
   }
   const instance = new Hono<{ Bindings: object; Variables: Record<string, unknown> }>()
   instance.use('*', async (context, next) => {
@@ -66,6 +75,9 @@ describe('reading what an invoice will do', () => {
         attach_files: null,
         organization_attach_files: true,
         effective_files: true,
+        attach_journal: null,
+        organization_attach_journal: false,
+        effective_journal: false,
       },
     })
   })
@@ -144,7 +156,7 @@ describe('the organization default', () => {
       await (
         await (instance as never as Hono<never>).request('/settings/invoice-documents')
       ).json(),
-    ).toEqual({ data: { attach_pdf: true, attach_files: true } })
+    ).toEqual({ data: { attach_pdf: true, attach_files: true, attach_journal: false } })
 
     const response = await post(
       instance as never as Hono<never>,
@@ -263,5 +275,92 @@ describe('the files staged against an invoice', () => {
     )
     expect(response.status).toBe(422)
     expect(service.setOrganizationPreference).not.toHaveBeenCalled()
+  })
+})
+
+describe('the work journal, which is not a yes or no', () => {
+  it('[unit] accepts a level, false, and null to follow the organization', async () => {
+    // Three answers plus defer. This is the value a fourth boolean pair could
+    // not have carried, and the reason 647 made these a set.
+    for (const wanted of ['detailed', 'summary', false, null] as const) {
+      const { app: instance, service } = app()
+      const response = await post(
+        instance as never as Hono<never>,
+        '/invoices/1315/document-preference',
+        { attach_journal: wanted },
+      )
+      expect(response.status).toBe(200)
+      expect(service.setInvoiceJournal).toHaveBeenCalledWith(1315, wanted)
+    }
+  })
+
+  it('[api] names attach_journal, and never writes, on anything else', async () => {
+    for (const wanted of ['yes', true, 1, {}, 'DETAILED']) {
+      const { app: instance, service } = app()
+      const response = await post(
+        instance as never as Hono<never>,
+        '/invoices/1315/document-preference',
+        { attach_journal: wanted },
+      )
+      expect(response.status).toBe(422)
+      const body = (await response.json()) as { error: { fields: { field: string }[] } }
+      expect(body.error.fields.map((field) => field.field)).toEqual(['attach_journal'])
+      expect(service.setInvoiceJournal).not.toHaveBeenCalled()
+    }
+  })
+
+  it('[unit] reports the level and which side decided it', async () => {
+    const { app: instance } = app({
+      readInvoiceJournal: vi.fn(async () => ({ invoice: 'summary', organization: 'detailed' })),
+    })
+    const body = (await (
+      await (instance as never as Hono<never>).request('/invoices/1315/document-preference')
+    ).json()) as { data: Record<string, unknown> }
+    expect(body.data).toMatchObject({
+      attach_journal: 'summary',
+      organization_attach_journal: 'detailed',
+      effective_journal: 'summary',
+    })
+  })
+
+  it('[unit] falls back to the organization when the invoice has not said', async () => {
+    const { app: instance } = app({
+      readInvoiceJournal: vi.fn(async () => ({ invoice: null, organization: 'detailed' })),
+    })
+    const body = (await (
+      await (instance as never as Hono<never>).request('/invoices/1315/document-preference')
+    ).json()) as { data: Record<string, unknown> }
+    expect(body.data.effective_journal).toBe('detailed')
+  })
+
+  it('[api] refuses null on the organization, which has nothing to fall back to', async () => {
+    const { app: instance, service } = app()
+    const response = await post(
+      instance as never as Hono<never>,
+      '/settings/invoice-documents',
+      { attach_journal: null },
+    )
+    expect(response.status).toBe(422)
+    expect(service.setOrganizationJournal).not.toHaveBeenCalled()
+  })
+
+  it('[unit] sets the organization default to a level', async () => {
+    const { app: instance, service } = app()
+    await post(instance as never as Hono<never>, '/settings/invoice-documents', {
+      attach_journal: 'summary',
+    })
+    expect(service.setOrganizationJournal).toHaveBeenCalledWith('summary')
+  })
+
+  it('[unit] can be set alongside the other two in one call', async () => {
+    const { app: instance, service } = app()
+    await post(instance as never as Hono<never>, '/invoices/1315/document-preference', {
+      attach_pdf: true,
+      attach_files: false,
+      attach_journal: 'detailed',
+    })
+    expect(service.setInvoicePreference).toHaveBeenCalledWith(1315, 'document', true)
+    expect(service.setInvoicePreference).toHaveBeenCalledWith(1315, 'files', false)
+    expect(service.setInvoiceJournal).toHaveBeenCalledWith(1315, 'detailed')
   })
 })
