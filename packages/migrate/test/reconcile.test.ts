@@ -784,6 +784,38 @@ describe('three-way reconciliation', () => {
     )
   })
 
+  it('[money] reports an upstream deletion that load never applied', async () => {
+    // Issue 407. `sync` writes tombstones and `load` never reads them -- its
+    // writes are insert-if-absent, not upsert. So a row deleted upstream stays
+    // in the loaded database and shows up as no row-count difference at all,
+    // which makes the report green in exactly the case it should not be.
+    const manifest = await readManifest(snapshotDir)
+    manifest.deleted_upstream = { clients: [4242, 4243] }
+    await writeManifest(snapshotDir, manifest)
+
+    const result = await runReconcile({ snapshotDir, databasePath })
+    expect(result.report.gaps).toContainEqual(
+      expect.objectContaining({
+        check: 'upstream_deletion',
+        key: 'clients',
+        gap_citation: expect.objectContaining({ id: 'issue-407-load-is-add-only' }),
+      }),
+    )
+  })
+
+  it('[unit] says nothing about deletions when sync recorded none', async () => {
+    // The ordinary case. A note on every run would be noise that trains
+    // somebody to skim past the one that matters.
+    const manifest = await readManifest(snapshotDir)
+    manifest.deleted_upstream = { clients: [] }
+    await writeManifest(snapshotDir, manifest)
+
+    const result = await runReconcile({ snapshotDir, databasePath })
+    expect(
+      result.report.gaps.filter((gap) => gap.check === 'upstream_deletion'),
+    ).toEqual([])
+  })
+
   it('[unit] binds full manifest coverage evidence to load admission', async () => {
     const manifest = await readManifest(snapshotDir)
     manifest.resources.clients!.total_entries = 999
