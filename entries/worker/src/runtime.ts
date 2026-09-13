@@ -38,6 +38,7 @@ import {
   createBillLinkStore,
   createBillMirrorSource,
   createPayoutAccountStore,
+  createWiseGrantStore,
   createStripeLinkStore,
   readAttachPreference,
   readFilesPreference,
@@ -94,6 +95,7 @@ import {
   createStripeRuntime,
   createQuickBooksMirrorSubscriber,
   createQuickBooksRuntime,
+  createWiseRuntime,
 } from "@ezacto/integrations";
 import {
   createWorkerDeploymentAuthMailer,
@@ -608,6 +610,38 @@ export const createRuntimeServices = async (
           now: () => new Date(),
         });
 
+  // Same gating, and for the same reason: a connect button that cannot connect
+  // is worse than no button. `entry-surface.ts` declares it so both halves of
+  // the contract guard agree.
+  const wise =
+    env.WISE_CLIENT_ID === undefined || env.WISE_CLIENT_SECRET === undefined
+      ? null
+      : createWiseRuntime({
+          config: {
+            clientId: env.WISE_CLIENT_ID,
+            clientSecret: env.WISE_CLIENT_SECRET,
+            environment: env.WISE_ENVIRONMENT,
+            appBaseUrl: env.APP_BASE_URL,
+          },
+          grants: createWiseGrantStore(drizzle),
+          accounts: (() => {
+            const store = createPayoutAccountStore(drizzle);
+            return {
+              listForUser: (userId: number) => store.listForUser(userId),
+              link: (input: {
+                userId: number;
+                provider: "wise";
+                externalId: string;
+                linkedByUserId: number;
+                now: string;
+              }) => store.link(input),
+              markVerified: (id: number, now: string) => store.markVerified(id, now),
+            };
+          })(),
+          fetch: (input, init) => fetch(input as RequestInfo, init as RequestInit),
+          now: () => new Date(),
+        });
+
   // Composed whenever the deployment carries BILL credentials. Unlike
   // QuickBooks there is nothing to connect -- BILL has no OAuth -- so the
   // routes mount either way and say whether they can reach anything; what
@@ -872,6 +906,7 @@ export const createRuntimeServices = async (
     // worse than no button -- `entry-surface.ts` declares that gating so both
     // halves of the contract guard know about it.
     ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
+    ...(wise === null ? {} : { wise: wise.service }),
     payoutAccounts: (() => {
       const store = createPayoutAccountStore(drizzle)
       return {

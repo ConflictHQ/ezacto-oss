@@ -308,6 +308,13 @@ export {
   type QuickBooksService,
   type QuickBooksTokenSet,
 } from './quickbooks.js'
+export {
+  installWiseRoutes,
+  type WiseConnectionStatus,
+  type WiseConnectOutcome,
+  type WiseConnectRefusal,
+  type WiseService,
+} from './wise.js'
 
 export * from './thank-you-subscriber.js'
 

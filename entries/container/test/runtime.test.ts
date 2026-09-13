@@ -49,6 +49,12 @@ const config = (root: string): ContainerConfig => ({
     clientId: 'container-fixture-client-id',
     clientSecret: 'container-fixture-client-secret',
   },
+  // Likewise Wise, and for the same reason.
+  wise: {
+    clientId: 'container-fixture-wise-client-id',
+    clientSecret: 'container-fixture-wise-client-secret',
+    environment: 'sandbox',
+  },
   smtp: {
     url: 'smtp://127.0.0.1:2525',
     from: 'billing@example.test',
@@ -510,7 +516,7 @@ describe('container runtime composition', () => {
             (operation) => `${operation.method} ${operation.path}`,
           ),
           'container',
-          { portal: false, quickBooks: true },
+          { portal: false, quickBooks: true, wise: true },
         ),
       )
 

@@ -57,6 +57,18 @@ export const QUICKBOOKS_ROUTES: readonly string[] = [
 ]
 
 /**
+ * Gated on Wise credentials, exactly as the QuickBooks set above and for the
+ * same reason. One feature: the connect button and the callback it comes back
+ * to are useless apart.
+ */
+export const WISE_ROUTES: readonly string[] = [
+  'get /api/v1/integrations/wise',
+  'post /api/v1/integrations/wise/authorize',
+  'get /api/v1/integrations/wise/callback',
+  'delete /api/v1/integrations/wise',
+]
+
+/**
  * Mounted by the Worker and not by the container.
  *
  * `backup/status` reads the R2 export the nightly Worker cron writes. The
@@ -111,11 +123,16 @@ export const mountedApiRoutes = (
 export const expectedApiRoutes = (
   documented: readonly string[],
   entry: 'worker' | 'container',
-  options: { readonly portal: boolean; readonly quickBooks?: boolean },
+  options: {
+    readonly portal: boolean
+    readonly quickBooks?: boolean
+    readonly wise?: boolean
+  },
 ): ReadonlySet<string> => {
   const gatedOff = new Set([
     ...(options.portal ? [] : PORTAL_ROUTES),
     ...(options.quickBooks === true ? [] : QUICKBOOKS_ROUTES),
+    ...(options.wise === true ? [] : WISE_ROUTES),
     ...(entry === 'worker' ? CONTAINER_ONLY_ROUTES : WORKER_ONLY_ROUTES),
   ])
   return new Set(

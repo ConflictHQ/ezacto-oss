@@ -1,4 +1,4 @@
-import type { BillRuntime, QuickBooksService } from "@ezacto/integrations";
+import type { BillRuntime, QuickBooksService, WiseRuntime } from "@ezacto/integrations";
 import type {
   InvoiceDocumentPreferenceService,
   ThankYouPreferenceService,
@@ -49,6 +49,7 @@ import {
   installStripeRoutes,
   installStripeWebhookRoute,
   installQuickBooksRoutes,
+  installWiseRoutes,
   installTimesheetLockPolicyRoutes,
   installTeamRoutes,
   installUserEmailRoutes,
@@ -168,6 +169,15 @@ export type WorkerEnv = AppEnv & {
   /** `sandbox` reaches Intuit's test companies; anything else is live books. */
   QUICKBOOKS_ENVIRONMENT?: string
   /**
+   * Wise credentials. Both are Worker secrets; without them the Wise routes are
+   * not mounted, and a contractor sees no connect button rather than one that
+   * fails at the consent screen.
+   */
+  WISE_CLIENT_ID?: string
+  WISE_CLIENT_SECRET?: string
+  /** `sandbox` reaches Wise's test accounts; anything else moves real money. */
+  WISE_ENVIRONMENT?: string
+  /**
    * BILL credentials. All Worker secrets, and all four are needed before
    * anything can be sent: BILL has no OAuth, so there is no connect flow that
    * could obtain them and nothing for this system to rotate.
@@ -277,6 +287,11 @@ export interface RuntimeServices {
    * one.
    */
   quickBooks?: QuickBooksService
+  /**
+   * A contractor's own Wise connection. Absent where the deployment has no Wise
+   * keys, for the same reason as QuickBooks above.
+   */
+  wise?: WiseRuntime["service"]
   stripe?: StripeService
   invoiceTimeClaims?: InvoiceTimeClaimService
   invoiceDocumentPreference?: InvoiceDocumentPreferenceService
@@ -461,6 +476,9 @@ export const createApp = (
             }
             if (services.quickBooks !== undefined) {
               installQuickBooksRoutes(api, services.quickBooks)
+            }
+            if (services.wise !== undefined) {
+              installWiseRoutes(api, services.wise)
             }
             // Mounted whether or not BILL is reachable: there is nothing to
             // connect, so the honest answer to "is this configured?" is a
