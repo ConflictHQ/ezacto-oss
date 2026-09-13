@@ -185,6 +185,10 @@ export {
 } from './release-invoiced-time.js'
 export {
   readAttachPreference,
+  readFilesPreference,
+  readOrganizationFilesPolicy,
+  setInvoiceFilesPolicy,
+  setOrganizationFilesPolicy,
   readStagedAttachments,
   resolveFilesPolicy,
   readOrganizationAttachPolicy,

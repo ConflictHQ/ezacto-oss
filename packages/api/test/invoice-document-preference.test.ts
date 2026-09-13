@@ -63,6 +63,9 @@ describe('reading what an invoice will do', () => {
         attach_pdf: null,
         organization_attach_pdf: true,
         effective: true,
+        attach_files: null,
+        organization_attach_files: true,
+        effective_files: true,
       },
     })
   })
@@ -103,7 +106,7 @@ describe('setting it', () => {
         { attach_pdf: wanted },
       )
       expect(response.status).toBe(200)
-      expect(service.setInvoicePreference).toHaveBeenCalledWith(1315, wanted)
+      expect(service.setInvoicePreference).toHaveBeenCalledWith(1315, 'document', wanted)
     }
   })
 
@@ -141,7 +144,7 @@ describe('the organization default', () => {
       await (
         await (instance as never as Hono<never>).request('/settings/invoice-documents')
       ).json(),
-    ).toEqual({ data: { attach_pdf: true } })
+    ).toEqual({ data: { attach_pdf: true, attach_files: true } })
 
     const response = await post(
       instance as never as Hono<never>,
@@ -149,7 +152,7 @@ describe('the organization default', () => {
       { attach_pdf: false },
     )
     expect(response.status).toBe(200)
-    expect(service.setOrganizationPreference).toHaveBeenCalledWith(false)
+    expect(service.setOrganizationPreference).toHaveBeenCalledWith('document', false)
   })
 
   it('[api] refuses null on the organization, which has nothing to fall back to', async () => {
@@ -191,5 +194,74 @@ describe('who may change it', () => {
         ).status,
       ).toBe(200)
     }
+  })
+})
+
+describe('the files staged against an invoice', () => {
+  it('[unit] is a separate answer from the document', async () => {
+    // Wanting a purchase order returned is not wanting the invoice as a PDF.
+    const { app: instance, service } = app()
+    const response = await post(
+      instance as never as Hono<never>,
+      '/invoices/1315/document-preference',
+      { attach_files: true },
+    )
+    expect(response.status).toBe(200)
+    expect(service.setInvoicePreference).toHaveBeenCalledWith(1315, 'files', true)
+    expect(service.setInvoicePreference).not.toHaveBeenCalledWith(1315, 'document', expect.anything())
+  })
+
+  it('[unit] can be set alongside the document in one call', async () => {
+    const { app: instance, service } = app()
+    await post(instance as never as Hono<never>, '/invoices/1315/document-preference', {
+      attach_pdf: true,
+      attach_files: false,
+    })
+    expect(service.setInvoicePreference).toHaveBeenCalledWith(1315, 'document', true)
+    expect(service.setInvoicePreference).toHaveBeenCalledWith(1315, 'files', false)
+  })
+
+  it('[api] refuses a body that sets neither, rather than reporting a save', async () => {
+    // A write that changes nothing and answers 200 reads as a saved setting
+    // that was never saved.
+    const { app: instance, service } = app()
+    const response = await post(
+      instance as never as Hono<never>,
+      '/invoices/1315/document-preference',
+      { something_else: true },
+    )
+    expect(response.status).toBe(422)
+    expect(service.setInvoicePreference).not.toHaveBeenCalled()
+  })
+
+  it('[api] names attach_files when that is the field at fault', async () => {
+    const { app: instance } = app()
+    const response = await post(
+      instance as never as Hono<never>,
+      '/invoices/1315/document-preference',
+      { attach_files: 'yes' },
+    )
+    expect(response.status).toBe(422)
+    const body = (await response.json()) as { error: { fields: { field: string }[] } }
+    expect(body.error.fields.map((field) => field.field)).toEqual(['attach_files'])
+  })
+
+  it('[unit] sets the organization default for files too', async () => {
+    const { app: instance, service } = app()
+    await post(instance as never as Hono<never>, '/settings/invoice-documents', {
+      attach_files: true,
+    })
+    expect(service.setOrganizationPreference).toHaveBeenCalledWith('files', true)
+  })
+
+  it('[api] refuses null on the organization for files as well', async () => {
+    const { app: instance, service } = app()
+    const response = await post(
+      instance as never as Hono<never>,
+      '/settings/invoice-documents',
+      { attach_files: null },
+    )
+    expect(response.status).toBe(422)
+    expect(service.setOrganizationPreference).not.toHaveBeenCalled()
   })
 })

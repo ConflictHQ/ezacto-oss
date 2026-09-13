@@ -2281,12 +2281,16 @@ export type InvoiceDocumentPreferenceEnvelope = {
   "attach_pdf": boolean;
   "organization_attach_pdf": boolean;
   "effective": boolean;
+  "attach_files": boolean;
+  "organization_attach_files": boolean;
+  "effective_files": boolean;
 };
 };
 
 export type OrganizationInvoiceDocumentsEnvelope = {
   "data": {
   "attach_pdf": boolean;
+  "attach_files": boolean;
 };
 };
 

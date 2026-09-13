@@ -223,7 +223,7 @@ const documentedApp = () =>
         setInvoicePreference: async () => true,
         readOrganizationPreference: async () => false,
         setOrganizationPreference: async () => undefined,
-      });
+      } as never);
       installInvoiceTimeClaimRoutes(api, {
         releaseInvoicedTime: async () => ({ kind: "released", released: 0 }),
       });

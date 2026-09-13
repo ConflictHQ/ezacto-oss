@@ -17,14 +17,29 @@ import { requireSessionPrincipal } from './auth.js'
 import type { ApiContext } from './context.js'
 import { ApiError, validationError } from './errors.js'
 
+/**
+ * The two things an invoice can carry, each its own answer.
+ *
+ * `document` is the invoice rendered as a PDF. `files` is whatever an operator
+ * staged against it -- a purchase order, a signed order form. Wanting one is not
+ * wanting the other, so they are read and written separately rather than folded
+ * into a single flag that would make the choice for somebody.
+ */
+export type AttachmentKind = 'document' | 'files'
+
 export interface InvoiceDocumentPreferenceService {
   /** `null` on the invoice means it follows the organization. */
   readInvoicePreference(
     invoiceId: number,
+    kind: AttachmentKind,
   ): Promise<{ invoice: boolean | null; organization: boolean } | null>
-  setInvoicePreference(invoiceId: number, enabled: boolean | null): Promise<boolean>
-  readOrganizationPreference(): Promise<boolean>
-  setOrganizationPreference(enabled: boolean): Promise<void>
+  setInvoicePreference(
+    invoiceId: number,
+    kind: AttachmentKind,
+    enabled: boolean | null,
+  ): Promise<boolean>
+  readOrganizationPreference(kind: AttachmentKind): Promise<boolean>
+  setOrganizationPreference(kind: AttachmentKind, enabled: boolean): Promise<void>
 }
 
 const assertMoneyWriter = <Bindings extends object>(
@@ -61,21 +76,32 @@ const invoiceIdOf = <Bindings extends object>(
  * handed back to the organization default -- so it cannot be spelled by leaving
  * the field out.
  */
-const flagOf = (body: Record<string, unknown>, nullable: boolean): boolean | null => {
-  const value = body['attach_pdf']
+const flagOf = (
+  body: Record<string, unknown>,
+  field: string,
+  nullable: boolean,
+): boolean | null => {
+  const value = body[field]
   if (typeof value === 'boolean') return value
   if (nullable && value === null) return null
   throw validationError([
     {
-      field: 'attach_pdf',
+      field,
       code: 'invalid',
       message: nullable
-        ? 'attach_pdf must be true, false, or null to follow the organization.'
-        : 'attach_pdf must be true or false.',
+        ? `${field} must be true, false, or null to follow the organization.`
+        : `${field} must be true or false.`,
     },
   ])
 }
 
+/**
+ * Both answers for one invoice, in one read.
+ *
+ * Separate calls would let a screen show a document answer from one moment and
+ * a files answer from another, and the pair it displayed would be a state that
+ * never existed.
+ */
 export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   service: Readonly<InvoiceDocumentPreferenceService>,
@@ -83,8 +109,11 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
   api.get('/invoices/:id/document-preference', async (context) => {
     assertMoneyWriter(context)
     const invoiceId = invoiceIdOf(context)
-    const preference = await service.readInvoicePreference(invoiceId)
-    if (preference === null) {
+    const [document, files] = await Promise.all([
+      service.readInvoicePreference(invoiceId, 'document'),
+      service.readInvoicePreference(invoiceId, 'files'),
+    ])
+    if (document === null || files === null) {
       throw new ApiError({
         status: 404,
         code: 'not_found',
@@ -95,11 +124,14 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
       {
         data: {
           invoice_id: invoiceId,
-          attach_pdf: preference.invoice,
-          organization_attach_pdf: preference.organization,
-          // What will actually happen, so a screen does not have to work out
-          // the precedence a second time and reach a different answer.
-          effective: preference.invoice ?? preference.organization,
+          attach_pdf: document.invoice,
+          organization_attach_pdf: document.organization,
+          // What will actually happen, so a screen does not work out the
+          // precedence a second time and reach a different answer.
+          effective: document.invoice ?? document.organization,
+          attach_files: files.invoice,
+          organization_attach_files: files.organization,
+          effective_files: files.invoice ?? files.organization,
         },
       },
       200,
@@ -111,22 +143,51 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
     assertMoneyWriter(context)
     const invoiceId = invoiceIdOf(context)
     const body = (await context.req.json().catch(() => ({}))) as Record<string, unknown>
-    const wanted = flagOf(body, true)
-    if (!(await service.setInvoicePreference(invoiceId, wanted))) {
-      throw new ApiError({
-        status: 404,
-        code: 'not_found',
-        message: 'The requested resource does not exist.',
-      })
+    // At least one, or the call is a write that changes nothing and reports
+    // success -- which reads as a saved setting that was never saved.
+    if (!('attach_pdf' in body) && !('attach_files' in body)) {
+      throw validationError([
+        {
+          field: 'attach_pdf',
+          code: 'required',
+          message: 'Provide attach_pdf, attach_files, or both.',
+        },
+      ])
     }
-    const preference = await service.readInvoicePreference(invoiceId)
+    if ('attach_pdf' in body) {
+      const wanted = flagOf(body, 'attach_pdf', true)
+      if (!(await service.setInvoicePreference(invoiceId, 'document', wanted))) {
+        throw new ApiError({
+          status: 404,
+          code: 'not_found',
+          message: 'The requested resource does not exist.',
+        })
+      }
+    }
+    if ('attach_files' in body) {
+      const wanted = flagOf(body, 'attach_files', true)
+      if (!(await service.setInvoicePreference(invoiceId, 'files', wanted))) {
+        throw new ApiError({
+          status: 404,
+          code: 'not_found',
+          message: 'The requested resource does not exist.',
+        })
+      }
+    }
+    const [document, files] = await Promise.all([
+      service.readInvoicePreference(invoiceId, 'document'),
+      service.readInvoicePreference(invoiceId, 'files'),
+    ])
     return context.json(
       {
         data: {
           invoice_id: invoiceId,
-          attach_pdf: wanted,
-          organization_attach_pdf: preference?.organization ?? false,
-          effective: wanted ?? preference?.organization ?? false,
+          attach_pdf: document?.invoice ?? null,
+          organization_attach_pdf: document?.organization ?? false,
+          effective: document?.invoice ?? document?.organization ?? false,
+          attach_files: files?.invoice ?? null,
+          organization_attach_files: files?.organization ?? false,
+          effective_files: files?.invoice ?? files?.organization ?? false,
         },
       },
       200,
@@ -136,8 +197,12 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
 
   api.get('/settings/invoice-documents', async (context) => {
     assertMoneyWriter(context)
+    const [attachPdf, attachFiles] = await Promise.all([
+      service.readOrganizationPreference('document'),
+      service.readOrganizationPreference('files'),
+    ])
     return context.json(
-      { data: { attach_pdf: await service.readOrganizationPreference() } },
+      { data: { attach_pdf: attachPdf, attach_files: attachFiles } },
       200,
       { 'cache-control': 'no-store' },
     )
@@ -146,10 +211,29 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
   api.post('/settings/invoice-documents', async (context) => {
     assertMoneyWriter(context)
     const body = (await context.req.json().catch(() => ({}))) as Record<string, unknown>
-    const wanted = flagOf(body, false) as boolean
-    await service.setOrganizationPreference(wanted)
-    return context.json({ data: { attach_pdf: wanted } }, 200, {
-      'cache-control': 'no-store',
-    })
+    if (!('attach_pdf' in body) && !('attach_files' in body)) {
+      throw validationError([
+        {
+          field: 'attach_pdf',
+          code: 'required',
+          message: 'Provide attach_pdf, attach_files, or both.',
+        },
+      ])
+    }
+    if ('attach_pdf' in body) {
+      await service.setOrganizationPreference('document', flagOf(body, 'attach_pdf', false)!)
+    }
+    if ('attach_files' in body) {
+      await service.setOrganizationPreference('files', flagOf(body, 'attach_files', false)!)
+    }
+    const [attachPdf, attachFiles] = await Promise.all([
+      service.readOrganizationPreference('document'),
+      service.readOrganizationPreference('files'),
+    ])
+    return context.json(
+      { data: { attach_pdf: attachPdf, attach_files: attachFiles } },
+      200,
+      { 'cache-control': 'no-store' },
+    )
   })
 }

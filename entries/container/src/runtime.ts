@@ -41,6 +41,10 @@ import {
   createPayoutAccountStore,
   createStripeLinkStore,
   readAttachPreference,
+  readFilesPreference,
+  readOrganizationFilesPolicy,
+  setInvoiceFilesPolicy,
+  setOrganizationFilesPolicy,
   readOrganizationAttachPolicy,
   setInvoiceAttachPolicy,
   setOrganizationAttachPolicy,
@@ -501,13 +505,26 @@ export const createContainerRuntime = async (
       // could set it, which is a decision made on the operator's behalf that they
       // could not revisit (issue 626).
       invoiceDocumentPreference: {
-        readInvoicePreference: (invoiceId: number) =>
-          readAttachPreference(drizzle, invoiceId),
-        setInvoicePreference: (invoiceId: number, enabled: boolean | null) =>
-          setInvoiceAttachPolicy(drizzle, { invoiceId, enabled }),
-        readOrganizationPreference: () => readOrganizationAttachPolicy(drizzle),
-        setOrganizationPreference: (enabled: boolean) =>
-          setOrganizationAttachPolicy(drizzle, enabled),
+        readInvoicePreference: (invoiceId: number, kind: 'document' | 'files') =>
+          kind === 'document'
+            ? readAttachPreference(drizzle, invoiceId)
+            : readFilesPreference(drizzle, invoiceId),
+        setInvoicePreference: (
+          invoiceId: number,
+          kind: 'document' | 'files',
+          enabled: boolean | null,
+        ) =>
+          kind === 'document'
+            ? setInvoiceAttachPolicy(drizzle, { invoiceId, enabled })
+            : setInvoiceFilesPolicy(drizzle, { invoiceId, enabled }),
+        readOrganizationPreference: (kind: 'document' | 'files') =>
+          kind === 'document'
+            ? readOrganizationAttachPolicy(drizzle)
+            : readOrganizationFilesPolicy(drizzle),
+        setOrganizationPreference: (kind: 'document' | 'files', enabled: boolean) =>
+          kind === 'document'
+            ? setOrganizationAttachPolicy(drizzle, enabled)
+            : setOrganizationFilesPolicy(drizzle, enabled),
       },
       // The same seam the Worker composes: both entries must answer this route
       // or `entry-surface.ts` fails the one that does and the one that does not.
