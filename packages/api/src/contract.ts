@@ -6343,6 +6343,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           "attach_pdf",
           "organization_attach_pdf",
           "effective",
+          "attach_files",
+          "organization_attach_files",
+          "effective_files",
         ],
         properties: {
           invoice_id: integerSchema,
@@ -6351,6 +6354,11 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           attach_pdf: { type: "boolean", nullable: true },
           organization_attach_pdf: { type: "boolean" },
           effective: { type: "boolean" },
+          // The files staged against the invoice are a separate choice from
+          // the invoice document itself.
+          attach_files: { type: "boolean", nullable: true },
+          organization_attach_files: { type: "boolean" },
+          effective_files: { type: "boolean" },
         },
         additionalProperties: false,
       },
@@ -6363,8 +6371,11 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: {
       data: {
         type: "object",
-        required: ["attach_pdf"],
-        properties: { attach_pdf: { type: "boolean" } },
+        required: ["attach_pdf", "attach_files"],
+        properties: {
+          attach_pdf: { type: "boolean" },
+          attach_files: { type: "boolean" },
+        },
         additionalProperties: false,
       },
     },

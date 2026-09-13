@@ -116,6 +116,57 @@ export const resolveFilesPolicy = async (
   return row.invoice === null ? row.organization === 1 : row.invoice === 1
 }
 
+export const readFilesPreference = async (
+  database: InvoiceStateDatabase,
+  invoiceId: number,
+): Promise<{ invoice: boolean | null; organization: boolean } | null> => {
+  const rows = await database.all<{ invoice: number | null; organization: number | null }>(
+    sql`SELECT invoice.attach_invoice_files AS invoice,
+               (SELECT organization.attach_invoice_files FROM organizations organization
+                ORDER BY organization.id LIMIT 1) AS organization
+        FROM invoices invoice WHERE invoice.id = ${invoiceId}`,
+  )
+  const row = rows[0]
+  if (row === undefined) return null
+  return {
+    invoice: row.invoice === null ? null : row.invoice === 1,
+    organization: row.organization === 1,
+  }
+}
+
+export const readOrganizationFilesPolicy = async (
+  database: InvoiceStateDatabase,
+): Promise<boolean> => {
+  const rows = await database.all<{ attach: number | null }>(
+    sql`SELECT attach_invoice_files AS attach FROM organizations ORDER BY id LIMIT 1`,
+  )
+  return rows[0]?.attach === 1
+}
+
+export const setInvoiceFilesPolicy = async (
+  database: InvoiceStateDatabase,
+  input: Readonly<{ invoiceId: number; enabled: boolean | null }>,
+): Promise<boolean> => {
+  const present = await database.all<{ id: number }>(
+    sql`SELECT id FROM invoices WHERE id = ${input.invoiceId}`,
+  )
+  if (present.length === 0) return false
+  const value = input.enabled === null ? null : input.enabled ? 1 : 0
+  await database.run(
+    sql`UPDATE invoices SET attach_invoice_files = ${value} WHERE id = ${input.invoiceId}`,
+  )
+  return true
+}
+
+export const setOrganizationFilesPolicy = async (
+  database: InvoiceStateDatabase,
+  enabled: boolean,
+): Promise<void> => {
+  await database.run(
+    sql`UPDATE organizations SET attach_invoice_files = ${enabled ? 1 : 0}`,
+  )
+}
+
 export interface StagedAttachment {
   readonly key: string
   readonly filename: string
