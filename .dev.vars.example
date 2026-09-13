@@ -37,6 +37,19 @@ API_CURSOR_SIGNING_KEY=
 # remove it from the Worker immediately after the owner token is verified.
 EZACTO_BOOTSTRAP_TOKEN=
 
+# --- Payouts: a contractor's own Wise account, by OAuth (issue #543) ---
+# Optional pair; leave both empty and the Wise routes are not mounted at all, so
+# a contractor sees no connect button rather than one that fails at the consent
+# screen. Register the callback as
+# <APP_BASE_URL>/api/v1/integrations/wise/callback in the Wise app.
+WISE_CLIENT_ID=
+WISE_CLIENT_SECRET=
+# `sandbox` reaches Wise's test accounts. ANYTHING ELSE, INCLUDING EMPTY, IS
+# LIVE — the safe way round, because a live token against sandbox is refused
+# loudly where a sandbox token against live looks like a payout that went
+# nowhere.
+WISE_ENVIRONMENT=sandbox
+
 # --- migrate package (dev, against the live Harvest account) ---
 HARVEST_ACCOUNT_ID=
 HARVEST_PAT=
