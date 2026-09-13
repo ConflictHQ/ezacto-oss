@@ -599,7 +599,11 @@ test('[e2e:rate-change] adds a dated rate through the real worker and shows the 
       }
 
       await expect(person).toBeVisible()
-      await expect(page.locator('[data-team-nav]:not([hidden])')).toHaveCount(2)
+      // One, not two: issue 461 folded Team out of the strip, so it is rendered
+      // once in the Menu group rather than in both the desktop strip and the
+      // mobile menu. Still gated by the same attribute, which is what this
+      // assertion is actually about.
+      await expect(page.locator('[data-team-nav]:not([hidden])')).toHaveCount(1)
       await page.getByRole('tab', { name: 'Rates' }).click()
       const billable = page.locator('[data-team-billable-section]')
       await expect(billable).toContainText('2026-08-01 – Ongoing')

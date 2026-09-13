@@ -64,7 +64,12 @@ export const createDashboardController = (api: DashboardApi): DashboardControlle
   const container = required<HTMLElement>('[data-dashboard-cards]')
   const status = required<HTMLElement>('[data-dashboard-status]')
   const retry = required<HTMLButtonElement>('[data-dashboard-retry]')
-  const navigation = document.querySelector<HTMLElement>('.primary-nav')
+  // Both navs, since issue 461 folded Team and the directories into the Menu
+  // group: a gate that settles there has to wake the cards the same way one in
+  // the strip does, or a card silently keeps its pre-permission shape.
+  const navigations = [
+    ...document.querySelectorAll<HTMLElement>('.primary-nav, .secondary-nav'),
+  ]
   const cards = new Map<DashboardCardKey, HTMLElement>(
     dashboardCards.map((card) => [
       card.key,
@@ -240,9 +245,15 @@ export const createDashboardController = (api: DashboardApi): DashboardControlle
    * only a profile that may read people can open -- so it is read behind that
    * section's own nav item, and a week without it is a week card with one fewer
    * clause rather than a blank where a number should be.
+   *
+   * Not scoped to `.primary-nav`: issue 461 folded Team out of the strip into
+   * the Menu group, and a selector naming one nav turned a permission question
+   * into a layout question -- the clause vanished for everyone the moment the
+   * link moved. The gate is the attribute, wherever it is rendered, which is
+   * how `revealTeamSections` has always set it.
    */
   const capacityOffered = (): boolean => {
-    const teamNav = document.querySelector<HTMLElement>('.primary-nav [data-team-nav]')
+    const teamNav = document.querySelector<HTMLElement>('[data-team-nav]')
     return teamNav !== null && !teamNav.hidden && api.getTeamPerson !== undefined
   }
 
@@ -462,16 +473,18 @@ export const createDashboardController = (api: DashboardApi): DashboardControlle
    * appears with it, and neither is decided here.
    */
   const watchGates = (signal: AbortSignal): void => {
-    if (navigation === null) return
+    if (navigations.length === 0) return
     const observer = new MutationObserver(() => {
       if (currentSession() === null || gateSignature() === signature) return
       void load()
     })
-    observer.observe(navigation, {
-      attributes: true,
-      attributeFilter: ['hidden'],
-      subtree: true,
-    })
+    for (const navigation of navigations) {
+      observer.observe(navigation, {
+        attributes: true,
+        attributeFilter: ['hidden'],
+        subtree: true,
+      })
+    }
     signal.addEventListener('abort', () => observer.disconnect(), { once: true })
   }
 

@@ -40,8 +40,13 @@ describe('command palette browser behavior', () => {
       (option) => option.textContent ?? '',
     )
 
+  // Issue 461 folded Home, Tasks and Team into the Menu group. The palette
+  // gates on whichever nav carries a destination, so the premise this test
+  // rests on has to look in both.
   const navHidden = (href: string): boolean =>
-    document.querySelector<HTMLElement>(`.primary-nav a[href="${href}"]`)!.hidden
+    document.querySelector<HTMLElement>(
+      `.primary-nav a[href="${href}"], .secondary-nav a[href="${href}"]`,
+    )!.hidden
 
   it('[e2e] groups every destination the nav offers an administrator', async () => {
     renderBrowserShell()

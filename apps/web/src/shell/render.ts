@@ -255,14 +255,34 @@ export const renderDocumentShell = (title: string, content: string, brand?: Part
   `</main></article>`
 }
 
+/**
+ * The primary strip (issue 461).
+ *
+ * Six, per the analysis in §6: Time, Expenses, Projects, Clients, Invoices,
+ * Reports. Ten top-level sections was the junk-drawer failure §6 diagnoses in
+ * legacy `Manage`, arrived at from the other direction -- everything promoted
+ * rather than everything buried -- and it spends the density budget the same
+ * section asks for.
+ *
+ * Three left, and each for its own reason:
+ *
+ * `Tasks` and `Team` are configuration in every reference, and §6 names Tasks
+ * explicitly. Their routes and command-palette entries are untouched; only the
+ * strip stops carrying them.
+ *
+ * `Home` moves to the wordmark, which is where a masthead normally goes home.
+ *
+ * `Approvals` stays and is not a seventh for most people: it is already gated,
+ * so it appears only for a profile that approves timesheets. Folding a
+ * role-gated daily surface into Settings to reach a count derived from an
+ * account that had no such surface would follow §6's letter against its
+ * reasoning.
+ */
 const sections = [
-  'Home',
   'Time',
   'Approvals',
   'Expenses',
-  'Team',
   'Projects',
-  'Tasks',
   'Clients',
   'Invoices',
   'Reports',
@@ -274,13 +294,22 @@ const sections = [
  * profile browse them -- and the browser opens all three from the same
  * capability, the way Approvals, Team and Invoices are each opened from theirs.
  */
-const directorySections: ReadonlySet<(typeof sections)[number]> = new Set([
-  'Projects',
-  'Tasks',
-  'Clients',
-])
+const directorySections: ReadonlySet<string> = new Set(['Projects', 'Tasks', 'Clients'])
 
-const hrefFor = (section: (typeof sections)[number]): string =>
+/**
+ * Folded out of the strip by issue 461, and still reachable.
+ *
+ * `Tasks` and `Team` are configuration, which is where §6 puts them; `Home`
+ * moves to the wordmark. None of the three loses its route, and all three keep
+ * the permission gate they had -- which matters for more than tidiness: the
+ * command palette decides what to offer by reading whether the nav element for
+ * a destination is present and showing. Drop the element and `paletteOffers`
+ * fails closed, so folding these without rehoming them would have quietly taken
+ * them out of the palette too, leaving a URL as the only way back.
+ */
+const foldedSections = ['Home', 'Tasks', 'Team'] as const
+
+const hrefFor = (section: (typeof sections)[number] | (typeof foldedSections)[number]): string =>
   section === 'Home'
     ? '/dashboard'
     : section === 'Time'
@@ -371,12 +400,10 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const brand = b.name
   const resumeSession = options.sessionCookiePresent === true
   const shortRelease = options.release.slice(0, 7)
-  const navigation = sections
-    .map(
-      (section) =>
-        `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === 'Invoices' ? ' data-money-nav hidden' : ''}${directorySections.has(section) ? ' data-directory-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${section}</a>`,
-    )
-    .join('')
+  const navLink = (section: (typeof sections)[number] | (typeof foldedSections)[number]): string =>
+    `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === 'Invoices' ? ' data-money-nav hidden' : ''}${directorySections.has(section) ? ' data-directory-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${section}</a>`
+  const navigation = sections.map(navLink).join('')
+  const foldedNavigation = foldedSections.map(navLink).join('')
 
   return `<!doctype html>
 <html lang="en" data-ez-theme="${defaultTheme}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}">
@@ -440,7 +467,7 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
   </aside>
   <div class="authenticated-shell" data-authenticated-shell${resumeSession ? '' : ' hidden'} inert aria-busy="true">
   <header class="topbar">
-    <a class="brand" href="/" aria-label="${escapeHtml(brand)} home">${wordmark(b.wordmarkDark, brand)}</a>
+    <a class="brand" href="/dashboard" aria-label="${escapeHtml(brand)} home" data-home-link>${wordmark(b.wordmarkDark, brand)}</a>
     <nav class="primary-nav" aria-label="Primary">${navigation}</nav>
     <button class="timer-chip" type="button" data-timer-chip data-state="loading" data-auth-action disabled aria-haspopup="dialog">
       ${iconMarkup('clock')}
@@ -778,6 +805,7 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
   <dialog class="menu-dialog" data-menu-dialog aria-labelledby="menu-title">
     <header><h2 id="menu-title">Navigate</h2><button type="button" data-dialog-close aria-label="Close">×</button></header>
     <nav aria-label="Mobile primary">${navigation}</nav>
+    <nav class="secondary-nav" data-secondary-nav aria-label="More">${foldedNavigation}</nav>
   </dialog>
   <dialog class="row-dialog" data-row-dialog aria-labelledby="row-title">
     <form data-row-form>
