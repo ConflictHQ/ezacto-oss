@@ -310,11 +310,12 @@ export {
 } from './quickbooks.js'
 export {
   installWiseRoutes,
-  type WiseConnectionStatus,
-  type WiseConnectOutcome,
-  type WiseConnectRefusal,
-  type WiseService,
   installWiseWebhookRoute,
+  type WiseConnectionStatus,
+  type WiseLinkOutcome,
+  type WiseLinkRefusal,
+  type WiseRecipientView,
+  type WiseService,
   type WiseWebhookService,
 } from './wise.js'
 

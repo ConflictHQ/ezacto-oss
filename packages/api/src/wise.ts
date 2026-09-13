@@ -1,125 +1,159 @@
 /**
- * Connecting a contractor's own Wise account (#543), as they meet it: a button
- * that starts an authorization, the callback it comes back to, a status to
- * render, and a way to disconnect.
+ * Wise, as an operator meets it (issue 543).
  *
- * The whole shape of this differs from QuickBooks in one way that decides every
- * authorization rule below. A QuickBooks connection is a grant over the
- * organisation's books, so only an administrator may make one. This is a grant
- * over a *person's own bank*, so only that person may make one -- an
- * administrator connecting somebody else's Wise is the exact thing doing it by
- * OAuth exists to prevent, and the issue says so: the payout method belongs to
- * the person, not to the organisation.
+ * The app-token shape. An earlier pass mounted an OAuth connect button for each
+ * contractor to authorise their own account; that is gone, because the token
+ * authenticates as the business that actually sends the money and a contractor
+ * supplies a destination rather than a grant.
  *
- * Which means there is no route here that acts on another user's behalf, not
- * even for an administrator. Seeing who is connected is a different question,
- * and `/payout-accounts` already answers it.
- *
- * Every dependency is injected. This module knows the shape of the handshake
- * and nothing about where tokens live or how to reach Wise.
+ * So the authorization rule inverts from the one that flow needed. Choosing
+ * which Wise recipient a person is paid through is a decision about the
+ * organisation's money, made with the organisation's token, against a list only
+ * the organisation can see. That sits with administrators and accounting, the
+ * same people who raise invoices -- not with everyone who can edit their own
+ * time.
  */
 
 import type { Hono } from 'hono'
 import { requireSessionPrincipal } from './auth.js'
 import type { ApiContext } from './context.js'
-import { ApiError } from './errors.js'
+import { ApiError, validationError } from './errors.js'
+import { readObjectBody } from './resources/support.js'
 
 export interface WiseConnectionStatus {
-  /** Wise's own identifier for the profile that authorised. */
   profileId: string
-  profileType: 'personal' | 'business'
-  environment: 'sandbox' | 'live'
-  grantedAt: string
-  /**
-   * Whether a payout has something to resolve to. A grant without a linked
-   * payout account is a connection that cannot be paid through, and saying so
-   * is the difference between the "visible, handled state" the issue asks for
-   * and a silent skip on payday.
-   */
-  payable: boolean
+  profileName: string | null
+  payableRecipients: number
+  webhooksVerifiable: boolean
 }
 
 /**
- * Why a connection attempt did not produce a grant.
+ * A destination the organisation can pay.
  *
- * Each sends the person somewhere different, which is the only reason to tell
- * them apart: their own stale connection is theirs to replace, somebody else's
- * is not, and a refused exchange is neither.
+ * No account number, and that is the point rather than an omission. Wise hands
+ * one over in a field called `accountSummary`; the client does not carry it, so
+ * it cannot reach this screen.
  */
-export type WiseConnectRefusal =
-  | 'state_unknown'
-  | 'state_expired'
-  | 'already_connected'
-  | 'profile_taken'
-  | 'no_profile'
-  | 'exchange_failed'
-
-export type WiseConnectOutcome =
-  | { outcome: 'connected'; status: WiseConnectionStatus }
-  | { outcome: WiseConnectRefusal }
-
-export interface WiseService {
-  clientId(): string | null
-  callbackUrl(): string | null
-  /** Where the person lands after connecting; a page, not an API route. */
-  settingsUrl(): string
-  authorizeUrl(input: { state: string; redirectUri: string }): string
-  beginAuthorization(input: {
-    state: string
-    userId: number
-    redirectUri: string
-  }): Promise<void>
-  /**
-   * Everything the callback does, in one call: claim the state, exchange the
-   * code, read back who authorised, record the grant, and link the payout
-   * account. It is one method because it is one transaction's worth of meaning
-   * -- a grant recorded without its payout account is a credential for an
-   * account nothing will ever pay into.
-   */
-  completeAuthorization(input: { state: string; code: string }): Promise<WiseConnectOutcome>
-  readStatus(userId: number): Promise<WiseConnectionStatus | null>
-  disconnect(userId: number): Promise<boolean>
-  newState(): string
+export interface WiseRecipientView {
+  id: string
+  holderName: string | null
+  currency: string
+  type: string
+  /** Masked -- the "ending in 1234" form. */
+  maskedSummary: string | null
+  email: string | null
 }
 
-const requireUser = <Bindings extends object>(
-  context: Parameters<typeof requireSessionPrincipal<Bindings>>[0],
-): { userId: number } => ({ userId: requireSessionPrincipal(context).userId })
+export type WiseLinkRefusal =
+  | 'unknown_recipient'
+  | 'recipient_is_ours'
+  | 'recipient_inactive'
+  | 'already_linked'
+  | 'recipient_taken'
+  | 'unknown_user'
 
-const requireConfigured = (service: Readonly<WiseService>): { callbackUrl: string } => {
-  const clientId = service.clientId()
-  const callbackUrl = service.callbackUrl()
-  if (clientId === null || callbackUrl === null) {
+export type WiseLinkOutcome =
+  | { outcome: 'linked'; recipient: WiseRecipientView }
+  | { outcome: WiseLinkRefusal }
+
+export interface WiseService {
+  configured(): boolean
+  readStatus(): Promise<WiseConnectionStatus | null>
+  listRecipients(): Promise<readonly WiseRecipientView[]>
+  linkRecipient(input: {
+    userId: number
+    recipientId: string
+    linkedByUserId: number
+  }): Promise<WiseLinkOutcome>
+  unlink(accountId: number): Promise<boolean>
+}
+
+const assertMoneyWriter = <Bindings extends object>(
+  context: Parameters<typeof requireSessionPrincipal<Bindings>>[0],
+): { userId: number } => {
+  const principal = requireSessionPrincipal(context)
+  // Where a contractor gets paid is the organisation's money leaving the
+  // organisation's account. It sits with the people who raise invoices.
+  if (!['administrator', 'accounting', 'executive_manager'].includes(principal.profile)) {
+    throw new ApiError({
+      status: 403,
+      code: 'profile_forbidden',
+      message: 'Only administrators and accounting can manage Wise payout destinations.',
+    })
+  }
+  return { userId: principal.userId }
+}
+
+const requireConfigured = (service: Readonly<WiseService>): void => {
+  if (!service.configured()) {
     throw new ApiError({
       status: 503,
       code: 'service_unavailable',
-      message:
-        'Wise is not configured for this deployment. A Wise client id and callback URL are required.',
+      message: 'Wise is not configured for this deployment. An API token is required.',
     })
   }
-  return { callbackUrl }
 }
 
-const serialize = (status: WiseConnectionStatus) => ({
-  profile_id: status.profileId,
-  profile_type: status.profileType,
-  environment: status.environment,
-  granted_at: status.grantedAt,
-  payable: status.payable,
+const serializeRecipient = (recipient: WiseRecipientView) => ({
+  id: recipient.id,
+  holder_name: recipient.holderName,
+  currency: recipient.currency,
+  type: recipient.type,
+  masked_summary: recipient.maskedSummary,
+  email: recipient.email,
 })
+
+/**
+ * Each refusal is a different thing to go and do, which is the only reason to
+ * tell them apart. A recipient that is ours, one that is deactivated, and one
+ * that does not exist all look identical from a screen that only sees "no".
+ */
+const LINK_REFUSALS: Record<
+  WiseLinkRefusal,
+  { status: 404 | 409; message: string } | { field: string; message: string }
+> = {
+  unknown_recipient: { status: 404, message: 'No Wise recipient with that id.' },
+  // These two are a 422 naming `recipient_id`, because that is what is wrong
+  // with the request and this codebase reserves 422 for errors somebody can act
+  // on field by field. A refusal nobody can locate is just a refusal.
+  recipient_is_ours: {
+    field: 'recipient_id',
+    message: 'That is one of the organisation’s own accounts, not somebody it can pay.',
+  },
+  recipient_inactive: {
+    field: 'recipient_id',
+    message: 'That Wise recipient is deactivated and cannot receive a payout.',
+  },
+  already_linked: { status: 409, message: 'That person already has a Wise payout destination.' },
+  recipient_taken: {
+    status: 409,
+    message: 'That Wise recipient is already somebody else’s payout destination.',
+  },
+  unknown_user: { status: 404, message: 'The requested resource does not exist.' },
+}
 
 export const installWiseRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   service: Readonly<WiseService>,
 ): void => {
   api.get('/integrations/wise', async (context) => {
-    const { userId } = requireUser(context)
-    const status = await service.readStatus(userId)
+    assertMoneyWriter(context)
+    const status = service.configured() ? await service.readStatus() : null
     return context.json(
       {
         data: {
-          configured: service.clientId() !== null && service.callbackUrl() !== null,
-          connection: status === null ? null : serialize(status),
+          configured: service.configured(),
+          connection:
+            status === null
+              ? null
+              : {
+                  profile_id: status.profileId,
+                  profile_name: status.profileName,
+                  payable_recipients: status.payableRecipients,
+                  // Whether a delivery can be believed. False is a connection
+                  // that can send money and cannot be told what became of it.
+                  webhooks_verifiable: status.webhooksVerifiable,
+                },
         },
       },
       200,
@@ -127,71 +161,71 @@ export const installWiseRoutes = <Bindings extends object>(
     )
   })
 
-  // The button. Answers with the URL rather than redirecting, so the shell can
-  // send the person there itself and a caller can see where it is being sent
-  // before following.
-  api.post('/integrations/wise/authorize', async (context) => {
-    const { userId } = requireUser(context)
-    const { callbackUrl } = requireConfigured(service)
-    const state = service.newState()
-    await service.beginAuthorization({ state, userId, redirectUri: callbackUrl })
+  api.get('/integrations/wise/recipients', async (context) => {
+    assertMoneyWriter(context)
+    requireConfigured(service)
+    const recipients = await service.listRecipients()
     return context.json(
-      { data: { authorize_url: service.authorizeUrl({ state, redirectUri: callbackUrl }) } },
+      { data: recipients.map(serializeRecipient) },
       200,
       { 'cache-control': 'no-store' },
     )
   })
 
   /**
-   * Where Wise sends the person back.
+   * Points a person at the destination they told us to pay.
    *
-   * Not JSON: a browser lands here, so it redirects to the settings page either
-   * way and the page says what happened. Deliberately not authenticated -- the
-   * state is the authorization, and it names whose grant this is. Requiring a
-   * session here as well would refuse a person who authorised in a browser that
-   * did not carry their cookie, and would still not make the flow any safer,
-   * because a state nobody issued is refused regardless of who is logged in.
+   * The recipient is read back from Wise before the link is made, so what gets
+   * stored is an identifier the provider confirmed rather than a string somebody
+   * typed. That read is the whole difference between a payout destination and a
+   * claim, and it is what #421 is about.
    */
-  api.get('/integrations/wise/callback', async (context) => {
-    const url = new URL(context.req.url)
-    const settings = service.settingsUrl()
-    const error = url.searchParams.get('error')
-    if (error !== null) {
-      // The person pressed Cancel, or Wise refused. Neither is our failure.
-      return context.redirect(`${settings}?wise=${encodeURIComponent(error)}`, 302)
+  api.post('/integrations/wise/recipients/link', async (context) => {
+    const { userId: linkedByUserId } = assertMoneyWriter(context)
+    requireConfigured(service)
+    const body = await readObjectBody(context)
+    const userId = Number(body['user_id'])
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      throw validationError([
+        { field: 'user_id', code: 'invalid', message: 'user_id must be a positive integer.' },
+      ])
     }
-    const state = url.searchParams.get('state')
-    const code = url.searchParams.get('code')
-    if (state === null || code === null) {
-      return context.redirect(`${settings}?wise=invalid_callback`, 302)
+    const recipientId = body['recipient_id']
+    if (typeof recipientId !== 'string' || recipientId.trim() === '') {
+      throw validationError([
+        { field: 'recipient_id', code: 'invalid', message: 'recipient_id is required.' },
+      ])
     }
-    let result: WiseConnectOutcome
-    try {
-      result = await service.completeAuthorization({ state, code })
-    } catch {
-      // Wise was unreachable or answered with something we could not read. The
-      // state is already spent either way, which is what the schema wants: a
-      // callback that failed halfway is not one to replay.
-      result = { outcome: 'exchange_failed' }
+    const result = await service.linkRecipient({ userId, recipientId, linkedByUserId })
+    if (result.outcome !== 'linked') {
+      const refusal = LINK_REFUSALS[result.outcome]
+      if ('field' in refusal) {
+        throw validationError([
+          { field: refusal.field, code: result.outcome, message: refusal.message },
+        ])
+      }
+      throw new ApiError({
+        status: refusal.status,
+        code: result.outcome,
+        message: refusal.message,
+      })
     }
-    return context.redirect(
-      `${settings}?wise=${result.outcome === 'connected' ? 'connected' : result.outcome}`,
-      302,
+    return context.json(
+      { data: { user_id: userId, recipient: serializeRecipient(result.recipient) } },
+      201,
+      { 'cache-control': 'no-store' },
     )
   })
 
-  /**
-   * Disconnecting, which is the person's own to do and nobody else's.
-   *
-   * This revokes the grant. It deliberately does not detach the payout account:
-   * that is the record of where money went, detaching is final, and a person
-   * reconnecting the same Wise profile next week should not have to be relinked
-   * by an administrator to be paid again.
-   */
-  api.delete('/integrations/wise', async (context) => {
-    const { userId } = requireUser(context)
-    const removed = await service.disconnect(userId)
-    if (!removed) {
+  api.delete('/integrations/wise/recipients/:accountId', async (context) => {
+    assertMoneyWriter(context)
+    const accountId = Number(context.req.param('accountId') ?? '')
+    if (!Number.isSafeInteger(accountId) || accountId <= 0) {
+      throw validationError([
+        { field: 'accountId', code: 'invalid', message: 'accountId must be a positive integer.' },
+      ])
+    }
+    if (!(await service.unlink(accountId))) {
       throw new ApiError({
         status: 404,
         code: 'not_found',

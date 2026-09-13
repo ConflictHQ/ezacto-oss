@@ -38,7 +38,6 @@ import {
   createBillLinkStore,
   createBillMirrorSource,
   createPayoutAccountStore,
-  createWiseGrantStore,
   createWiseDeliveryStore,
   createStripeLinkStore,
   readAttachPreference,
@@ -615,24 +614,19 @@ export const createRuntimeServices = async (
   // is worse than no button. `entry-surface.ts` declares it so both halves of
   // the contract guard agree.
   const wise =
-    env.WISE_CLIENT_ID === undefined || env.WISE_CLIENT_SECRET === undefined
+    env.WISE_TOKEN === undefined
       ? null
       : createWiseRuntime({
           config: {
-            clientId: env.WISE_CLIENT_ID,
-            clientSecret: env.WISE_CLIENT_SECRET,
-            environment: env.WISE_ENVIRONMENT,
-            appBaseUrl: env.APP_BASE_URL,
+            token: env.WISE_TOKEN,
+            profileId: env.WISE_PROFILE_ID,
             webhookPublicKey: env.WISE_WEBHOOK_PUBLIC_KEY,
-            apiBase: env.WISE_API_BASE,
-            authorizeUrl: env.WISE_AUTHORIZE_URL,
           },
-          grants: createWiseGrantStore(drizzle),
-          deliveries: createWiseDeliveryStore(drizzle),
           accounts: (() => {
             const store = createPayoutAccountStore(drizzle);
             return {
               listForUser: (userId: number) => store.listForUser(userId),
+              listForProvider: (provider: "wise") => store.listForProvider(provider),
               link: (input: {
                 userId: number;
                 provider: "wise";
@@ -641,8 +635,10 @@ export const createRuntimeServices = async (
                 now: string;
               }) => store.link(input),
               markVerified: (id: number, now: string) => store.markVerified(id, now),
+              detach: (id: number, now: string) => store.detach(id, now),
             };
           })(),
+          deliveries: createWiseDeliveryStore(drizzle),
           fetch: (input, init) => fetch(input as RequestInfo, init as RequestInit),
           now: () => new Date(),
         });

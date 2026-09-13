@@ -57,15 +57,15 @@ export const QUICKBOOKS_ROUTES: readonly string[] = [
 ]
 
 /**
- * Gated on Wise credentials, exactly as the QuickBooks set above and for the
- * same reason. One feature: the connect button and the callback it comes back
- * to are useless apart.
+ * Gated on the Wise API token, exactly as the QuickBooks set above and for the
+ * same reason. One feature: a screen that cannot list a single destination is
+ * worse than no screen.
  */
 export const WISE_ROUTES: readonly string[] = [
   'get /api/v1/integrations/wise',
-  'post /api/v1/integrations/wise/authorize',
-  'get /api/v1/integrations/wise/callback',
-  'delete /api/v1/integrations/wise',
+  'get /api/v1/integrations/wise/recipients',
+  'post /api/v1/integrations/wise/recipients/link',
+  'delete /api/v1/integrations/wise/recipients/:accountId',
 ]
 
 /**

@@ -172,14 +172,6 @@ export {
   type PayoutProvider,
 } from './payout-accounts.js'
 export {
-  createWiseGrantStore,
-  type WiseGrantOutcome,
-  type WiseGrantRecord,
-  type WiseGrantStore,
-  type WiseOAuthStateRecord,
-  type WiseStateClaim,
-} from './wise-grants.js'
-export {
   createWiseDeliveryStore,
   type WiseDeliveryClaim,
   type WiseDeliveryRecord,

@@ -1147,53 +1147,55 @@ const quickBooksOperations: ApiContractOperation[] = [
 ];
 
 /**
- * A contractor's own Wise connection (#543).
+ * Wise, on the organisation's own API token (#543).
  *
- * Every one of these is the caller's own, which is why none of them takes a
- * user id. The account being authorised is a person's bank, and an
- * administrator connecting or disconnecting it for them is the exact thing
- * doing this by OAuth exists to prevent.
+ * Every one of these is about the organisation's money leaving the
+ * organisation's account, chosen against a list only its token can see, so all
+ * of them are administrator-and-accounting. An earlier pass had a per-person
+ * OAuth connect flow here; it is gone.
  */
 const wiseOperations: ApiContractOperation[] = [
   {
     method: "get",
     path: "/api/v1/integrations/wise",
     operationId: "getWiseConnection",
-    summary: "Whether Wise is configured, and the caller's own connection",
+    summary: "Whether Wise is configured, and which profile pays",
     tag: "integrations",
     responseStatus: 200,
     responseSchema: "WiseStatusEnvelope",
     sessionOnly: true,
   },
   {
-    method: "post",
-    path: "/api/v1/integrations/wise/authorize",
-    operationId: "startWiseAuthorization",
-    summary: "Begin connecting the caller's own Wise account",
+    method: "get",
+    path: "/api/v1/integrations/wise/recipients",
+    operationId: "listWiseRecipients",
+    summary: "The Wise destinations the organisation can pay",
     tag: "integrations",
     responseStatus: 200,
-    responseSchema: "WiseAuthorizeEnvelope",
+    responseSchema: "WiseRecipientListEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/integrations/wise/recipients/link",
+    operationId: "linkWiseRecipient",
+    summary: "Point a person at the Wise destination they are paid through",
+    tag: "integrations",
+    responseStatus: 201,
+    responseSchema: "WiseLinkEnvelope",
+    requestSchema: "WiseLinkInput",
+    requestRequired: true,
     sessionOnly: true,
   },
   {
     method: "delete",
-    path: "/api/v1/integrations/wise",
-    operationId: "disconnectWise",
-    summary: "Revoke the caller's own Wise grant",
+    path: "/api/v1/integrations/wise/recipients/:accountId",
+    operationId: "unlinkWiseRecipient",
+    summary: "Detach a person's Wise payout destination",
     tag: "integrations",
     responseStatus: 204,
+    parameters: [path("accountId")],
     sessionOnly: true,
-  },
-  {
-    method: "get",
-    path: "/api/v1/integrations/wise/callback",
-    operationId: "completeWiseAuthorization",
-    summary: "Where Wise returns a contractor after they approve",
-    tag: "integrations",
-    responseStatus: 302,
-    public: true,
-    parameters: [query("code"), query("state")],
-    generateClient: false,
   },
 ];
 
@@ -3061,16 +3063,29 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   WiseConnection: {
     type: "object",
-    required: ["profile_id", "profile_type", "environment", "granted_at", "payable"],
+    required: ["profile_id", "profile_name", "payable_recipients", "webhooks_verifiable"],
     properties: {
       profile_id: stringSchema,
-      profile_type: stringSchema,
-      environment: stringSchema,
-      granted_at: stringSchema,
-      // Whether a payout has something to resolve to. A grant whose account is
-      // not verified is a connection that cannot be paid through, and saying so
-      // is the difference between a handled state and a silent skip on payday.
-      payable: { type: "boolean" },
+      profile_name: nullable(stringSchema),
+      payable_recipients: { type: "integer" },
+      // False is a connection that can send money and cannot be told what
+      // became of it.
+      webhooks_verifiable: { type: "boolean" },
+    },
+    additionalProperties: false,
+  },
+  WiseRecipient: {
+    type: "object",
+    required: ["id", "holder_name", "currency", "type", "masked_summary", "email"],
+    properties: {
+      id: stringSchema,
+      holder_name: nullable(stringSchema),
+      currency: stringSchema,
+      type: stringSchema,
+      // Masked. Wise's own `accountSummary` is the full account number despite
+      // the name, and is deliberately not carried anywhere near this document.
+      masked_summary: nullable(stringSchema),
+      email: nullable(stringSchema),
     },
     additionalProperties: false,
   },
@@ -3090,14 +3105,32 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
-  WiseAuthorizeEnvelope: {
+  WiseRecipientListEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: { type: "array", items: reference("WiseRecipient") } },
+    additionalProperties: false,
+  },
+  WiseLinkInput: {
+    type: "object",
+    required: ["user_id", "recipient_id"],
+    properties: {
+      user_id: { type: "integer" },
+      recipient_id: stringSchema,
+    },
+    additionalProperties: false,
+  },
+  WiseLinkEnvelope: {
     type: "object",
     required: ["data"],
     properties: {
       data: {
         type: "object",
-        required: ["authorize_url"],
-        properties: { authorize_url: stringSchema },
+        required: ["user_id", "recipient"],
+        properties: {
+          user_id: { type: "integer" },
+          recipient: reference("WiseRecipient"),
+        },
         additionalProperties: false,
       },
     },

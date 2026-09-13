@@ -306,10 +306,18 @@ export type QuickBooksAuthorizeEnvelope = {
 
 export type WiseConnection = {
   "profile_id": string;
-  "profile_type": string;
-  "environment": string;
-  "granted_at": string;
-  "payable": boolean;
+  "profile_name": string | null;
+  "payable_recipients": number;
+  "webhooks_verifiable": boolean;
+};
+
+export type WiseRecipient = {
+  "id": string;
+  "holder_name": string | null;
+  "currency": string;
+  "type": string;
+  "masked_summary": string | null;
+  "email": string | null;
 };
 
 export type WiseStatusEnvelope = {
@@ -319,9 +327,19 @@ export type WiseStatusEnvelope = {
 };
 };
 
-export type WiseAuthorizeEnvelope = {
+export type WiseRecipientListEnvelope = {
+  "data": Array<WiseRecipient>;
+};
+
+export type WiseLinkInput = {
+  "user_id": number;
+  "recipient_id": string;
+};
+
+export type WiseLinkEnvelope = {
   "data": {
-  "authorize_url": string;
+  "user_id": number;
+  "recipient": WiseRecipient;
 };
 };
 
@@ -4273,19 +4291,29 @@ export class EzactoClient {
     });
   }
 
-  async startWiseAuthorization(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<WiseAuthorizeEnvelope> {
+  async listWiseRecipients(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<WiseRecipientListEnvelope> {
     const headers = new Headers(args.headers);
 
-    return this.request<WiseAuthorizeEnvelope>("POST", "/api/v1/integrations/wise/authorize", {
+    return this.request<WiseRecipientListEnvelope>("GET", "/api/v1/integrations/wise/recipients", {
       signal: args.signal,
       headers,
     });
   }
 
-  async disconnectWise(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<void> {
+  async linkWiseRecipient(args: { body: WiseLinkInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<WiseLinkEnvelope> {
     const headers = new Headers(args.headers);
 
-    return this.request<void>("DELETE", "/api/v1/integrations/wise", {
+    return this.request<WiseLinkEnvelope>("POST", "/api/v1/integrations/wise/recipients/link", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async unlinkWiseRecipient(args: { "accountId": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/integrations/wise/recipients/:accountId".replace(":accountId", encodeURIComponent(String(args["accountId"]))), {
       signal: args.signal,
       headers,
     });
