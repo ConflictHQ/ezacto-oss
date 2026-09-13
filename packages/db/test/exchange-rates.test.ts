@@ -18,6 +18,17 @@ afterEach(() => {
   sqlite = null
 })
 
+/**
+ * Narrows to the converted case and fails loudly otherwise, so a test that
+ * meant to inspect the rates cannot quietly pass on a refusal.
+ */
+const converted = (outcome: Awaited<ReturnType<typeof convertCents>>) => {
+  if (outcome.kind !== 'converted') {
+    throw new Error(`expected a conversion, got ${outcome.kind}`)
+  }
+  return outcome
+}
+
 const fixture = async () => {
   const database = new BetterSqlite3(':memory:')
   await migrateContainer(database)
@@ -75,7 +86,7 @@ describe('converting an amount', () => {
       asOf: '2026-09-12',
     })
     expect(saturday).toMatchObject({ kind: 'converted', cents: 10_800 })
-    expect((saturday as { via: { asOf: string }[] }).via[0]!.asOf).toBe('2026-09-11')
+    expect(converted(saturday).via[0]!.asOf).toBe('2026-09-11')
   })
 
   it('[money] never reaches forward for a rate that did not exist yet', async () => {
@@ -115,9 +126,7 @@ describe('converting an amount', () => {
       to: 'GBP',
       asOf: '2026-09-11',
     })
-    expect((result as { via: { quoteCurrency: string }[] }).via.map((r) => r.quoteCurrency)).toEqual(
-      ['USD', 'GBP'],
-    )
+    expect(converted(result).via.map((rate) => rate.quoteCurrency)).toEqual(['USD', 'GBP'])
   })
 
   it('[money] rounds half away from zero, like the rest of the money code', async () => {
@@ -180,7 +189,7 @@ describe('what the table refuses', () => {
       asOf: '2026-09-11',
     })
     expect(result).toMatchObject({ cents: 11_000 })
-    expect((result as { via: { source: string }[] }).via[0]!.source).toBe('manual')
+    expect(converted(result).via[0]!.source).toBe('manual')
   })
 
   it('[security] refuses a currency that is not a code', async () => {
