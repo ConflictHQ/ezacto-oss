@@ -234,3 +234,26 @@ the gate is zero UNEXPLAINED.
 | M7 | retainer/recurring worksheets done, books balance | the manual-gap path |
 
 M3 failing is a **domain-model bug first** — fix the model, then the loader.
+
+### The milestone numbers are not the running order
+
+M6 is numbered before M7 and must not be run before it. Worksheet completions
+are bound to the snapshot and context digests they were entered against, so a
+later `sync` rewrites the manifest and voids every one of them — and the new
+snapshot cannot be loaded into the existing database, so the worksheets have to
+be redone from scratch in a virgin one. Reading this table as a sequence
+prescribes exactly the redo it is meant to prevent (issue 288).
+
+The running order is:
+
+```text
+sync → verify → load → reconcile → worksheets → ship
+```
+
+**No `sync` between the worksheets and shipping.** M6 proves parallel-run
+viability and belongs to the rehearsal; the final sync is the one that precedes
+the load you actually ship. `docs/cutover-runbook.md` states the same rule at
+the point of use.
+
+If a late sync turns out to be unavoidable, keep the filled worksheet JSON — only
+the four header digests need regenerating, not the operator's transcribed data.
