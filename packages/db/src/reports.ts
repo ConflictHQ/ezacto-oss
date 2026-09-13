@@ -288,10 +288,10 @@ export interface ContractorCostRow {
    * account, because matching on an address is a guess whose failure mode is
    * paying the wrong person.
    *
-   * Primary rather than a payroll-kind address because that column does not
-   * exist yet, and the import deliberately kept the source system's address
-   * primary for exactly this reason. When #280's `kind` lands this reads it
-   * instead, and the meaning stops being a coincidence of another flag.
+   * The payroll-kind address where somebody has named one, and the primary
+   * otherwise. Migration 0061 added the kind; until an address is marked this
+   * behaves exactly as it did, which is why naming one is a deliberate act
+   * rather than something the import guessed at.
    */
   payrollEmail: string | null
   isContractor: boolean
@@ -1478,9 +1478,19 @@ const contractorCostReport = async (
   const rows = await database.all<ContractorCostQueryRow>(sql`
     SELECT person.id AS "userId",
       person.first_name || ' ' || person.last_name AS "name",
-      (SELECT address FROM user_emails
-        WHERE user_id = person.id AND is_primary = 1 AND invalidated_at IS NULL
-        LIMIT 1) AS "payrollEmail",
+      -- The payroll-kind address where one is named, the primary otherwise
+      -- (issue 280). is_primary was being asked to mean both the address we
+      -- write to and the address a payout provider knows them by; those are the
+      -- same address today by coincidence, and the day they stop being,
+      -- somebody is paid to the wrong one.
+      coalesce(
+        (SELECT address FROM user_emails
+          WHERE user_id = person.id AND kind = 'payroll' AND invalidated_at IS NULL
+          LIMIT 1),
+        (SELECT address FROM user_emails
+          WHERE user_id = person.id AND is_primary = 1 AND invalidated_at IS NULL
+          LIMIT 1)
+      ) AS "payrollEmail",
       person.is_contractor AS "isContractor",
       entry.rounded_seconds AS "roundedSeconds",
       entry.cost_rate_cents AS "costRateCents"
