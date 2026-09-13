@@ -79,6 +79,9 @@ const runtime = (
         environment: parts.environment ?? "sandbox",
         appBaseUrl: "https://time.example.test",
         webhookPublicKey: parts.publicKey,
+        // Sandbox has no default address any more; the suite states one.
+        apiBase: "https://api.wise.example.test",
+        authorizeUrl: "https://wise.example.test/oauth/authorize",
       },
       grants: {
         readCurrent: vi.fn(async () => null),

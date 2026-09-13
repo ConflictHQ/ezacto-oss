@@ -624,6 +624,8 @@ export const createRuntimeServices = async (
             environment: env.WISE_ENVIRONMENT,
             appBaseUrl: env.APP_BASE_URL,
             webhookPublicKey: env.WISE_WEBHOOK_PUBLIC_KEY,
+            apiBase: env.WISE_API_BASE,
+            authorizeUrl: env.WISE_AUTHORIZE_URL,
           },
           grants: createWiseGrantStore(drizzle),
           deliveries: createWiseDeliveryStore(drizzle),

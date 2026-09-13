@@ -180,6 +180,10 @@ export const deploySecretPayload = (environment) => {
     // var while the rest of the pair are secrets is a value that goes missing
     // for reasons nobody can see.
     WISE_WEBHOOK_PUBLIC_KEY: optionalCredential(environment.WISE_WEBHOOK_PUBLIC_KEY),
+    // Sandbox only; ignored on live. Wise decommissioned the sandbox this was
+    // written against and no replacement hostname is guessed here.
+    WISE_API_BASE: optionalCredential(environment.WISE_API_BASE),
+    WISE_AUTHORIZE_URL: optionalCredential(environment.WISE_AUTHORIZE_URL),
     BILL_DEV_KEY: billDevKey,
     BILL_COMPANY_ID: billCompanyId,
     BILL_USERNAME: billUsername,

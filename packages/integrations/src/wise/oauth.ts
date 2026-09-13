@@ -19,15 +19,53 @@
 
 export type WiseEnvironment = 'sandbox' | 'live'
 
-const HOSTS: Record<WiseEnvironment, { api: string; authorize: string }> = {
-  sandbox: {
-    api: 'https://api.sandbox.transferwise.tech',
-    authorize: 'https://sandbox.transferwise.tech/oauth/authorize',
-  },
-  live: {
-    api: 'https://api.wise.com',
-    authorize: 'https://wise.com/oauth/authorize',
-  },
+export interface WiseHosts {
+  readonly api: string
+  readonly authorize: string
+}
+
+/**
+ * Live, verified against the API rather than taken from a page.
+ */
+const LIVE_HOSTS: WiseHosts = {
+  api: 'https://api.wise.com',
+  authorize: 'https://wise.com/oauth/authorize',
+}
+
+/**
+ * Sandbox has no default, and that is deliberate.
+ *
+ * This shipped pointing at `api.sandbox.transferwise.tech`, which Wise has
+ * decommissioned -- it answers 410 with a note about migrating to a new
+ * sandbox. A hard-coded host that no longer exists is worse than none: every
+ * call fails as "Wise refused" and reads like a credential problem rather than
+ * an address that is gone.
+ *
+ * So a deployment that wants sandbox says where sandbox is. No hostname is
+ * guessed here, because the one thing worse than an address that is gone is an
+ * address that belongs to somebody else.
+ */
+export const wiseHosts = (
+  environment: WiseEnvironment,
+  override?: WiseHosts,
+): WiseHosts | null => {
+  // Live is Wise's own address and nothing else, deliberately. An override that
+  // reached live would mean a deployment configured for sandbox testing and
+  // later flipped to live -- without the override being cleared -- sends real
+  // payouts at whatever address was left behind. There is no use for pointing
+  // live somewhere else that is worth that.
+  if (environment === 'live') return LIVE_HOSTS
+  return override ?? null
+}
+
+const requireHosts = (environment: WiseEnvironment, override?: WiseHosts): WiseHosts => {
+  const hosts = wiseHosts(environment, override)
+  if (hosts === null) {
+    throw new WiseOAuthError(
+      'Wise sandbox hosts are not configured. The transferwise.tech sandbox was decommissioned; set the sandbox API and authorize URLs for this deployment.',
+    )
+  }
+  return hosts
 }
 
 export class WiseOAuthError extends Error {
@@ -54,12 +92,13 @@ export interface WiseAuthorizeUrlInput {
    */
   readonly state: string
   readonly environment: WiseEnvironment
+  readonly hosts?: WiseHosts
 }
 
 export const wiseAuthorizeUrl = (input: Readonly<WiseAuthorizeUrlInput>): string => {
   if (input.state.trim() === '') throw new WiseOAuthError('state is required')
   if (input.clientId.trim() === '') throw new WiseOAuthError('clientId is required')
-  const url = new URL(HOSTS[input.environment].authorize)
+  const url = new URL(requireHosts(input.environment, input.hosts).authorize)
   url.searchParams.set('client_id', input.clientId)
   url.searchParams.set('response_type', 'code')
   url.searchParams.set('redirect_uri', input.redirectUri)
@@ -96,6 +135,7 @@ export interface WiseTokenExchangeInput {
   readonly redirectUri: string
   readonly code: string
   readonly environment: WiseEnvironment
+  readonly hosts?: WiseHosts
   readonly fetchImplementation?: typeof fetch
   readonly now?: () => Date
 }
@@ -113,7 +153,7 @@ export const exchangeWiseAuthorizationCode = async (
 ): Promise<WiseTokens> => {
   const now = input.now ?? (() => new Date())
   const call = input.fetchImplementation ?? fetch
-  const response = await call(`${HOSTS[input.environment].api}/oauth/token`, {
+  const response = await call(`${requireHosts(input.environment, input.hosts).api}/oauth/token`, {
     method: 'POST',
     headers: {
       authorization: basic(input.clientId, input.clientSecret),
@@ -142,6 +182,7 @@ export interface WiseTokenRefreshInput {
   readonly clientSecret: string
   readonly refreshToken: string
   readonly environment: WiseEnvironment
+  readonly hosts?: WiseHosts
   readonly fetchImplementation?: typeof fetch
   readonly now?: () => Date
 }
@@ -151,7 +192,7 @@ export const refreshWiseAccessToken = async (
 ): Promise<WiseTokens> => {
   const now = input.now ?? (() => new Date())
   const call = input.fetchImplementation ?? fetch
-  const response = await call(`${HOSTS[input.environment].api}/oauth/token`, {
+  const response = await call(`${requireHosts(input.environment, input.hosts).api}/oauth/token`, {
     method: 'POST',
     headers: {
       authorization: basic(input.clientId, input.clientSecret),
@@ -211,11 +252,12 @@ export const fetchWiseProfiles = async (
   input: Readonly<{
     accessToken: string
     environment: WiseEnvironment
+    hosts?: WiseHosts
     fetchImplementation?: typeof fetch
   }>,
 ): Promise<readonly WiseProfile[]> => {
   const call = input.fetchImplementation ?? fetch
-  const response = await call(`${HOSTS[input.environment].api}/v2/profiles`, {
+  const response = await call(`${requireHosts(input.environment, input.hosts).api}/v2/profiles`, {
     headers: { authorization: `Bearer ${input.accessToken}`, accept: 'application/json' },
   })
   if (!response.ok) {
@@ -232,7 +274,13 @@ export const fetchWiseProfiles = async (
     const type = profile.type
     return {
       id: String(id),
-      type: type === 'business' ? 'business' : 'personal',
+      // Wise returns these UPPERCASE -- 'BUSINESS' and 'PERSONAL', confirmed
+      // against the live API. A lowercase comparison here read every business
+      // profile as personal, which is not a cosmetic mislabel: the payout
+      // profile is chosen by preferring business, so it would never have found
+      // one and would have paid into whichever profile Wise happened to list
+      // first.
+      type: typeof type === 'string' && type.toLowerCase() === 'business' ? 'business' : 'personal',
       fullName:
         typeof profile.fullName === 'string'
           ? profile.fullName
@@ -243,4 +291,5 @@ export const fetchWiseProfiles = async (
   })
 }
 
-export const wiseApiBase = (environment: WiseEnvironment): string => HOSTS[environment].api
+export const wiseApiBase = (environment: WiseEnvironment, hosts?: WiseHosts): string =>
+  requireHosts(environment, hosts).api

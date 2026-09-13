@@ -54,6 +54,13 @@ WISE_ENVIRONMENT=sandbox
 # key is used -- and REQUIRED on live: an unverifiable claim about money is
 # refused rather than trusted, so live deliveries are rejected until this is set.
 WISE_WEBHOOK_PUBLIC_KEY=
+# Where Wise is, for a SANDBOX deployment only -- both or neither, and ignored
+# on live, which is always Wise's own address. There is no default: Wise
+# decommissioned api.sandbox.transferwise.tech (it answers 410) and no
+# replacement hostname is guessed here, so a sandbox deployment without these is
+# reported as not configured rather than quietly calling an address that is gone.
+WISE_API_BASE=
+WISE_AUTHORIZE_URL=
 
 # --- migrate package (dev, against the live Harvest account) ---
 HARVEST_ACCOUNT_ID=
