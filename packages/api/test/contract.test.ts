@@ -9,6 +9,7 @@ import {
   installPayoutAccountRoutes,
   installInvoiceDocumentPreferenceRoutes,
   installThankYouPreferenceRoutes,
+  installRecurringRepairRoutes,
   installInvoiceTimeClaimRoutes,
   installStripeRoutes,
   installInstanceThemeRoutes,
@@ -225,6 +226,11 @@ const documentedApp = () =>
         readOrganizationPreference: async () => false,
         setOrganizationPreference: async () => undefined,
       } as never);
+      installRecurringRepairRoutes(
+        api,
+        { listIncomplete: async () => [], complete: async () => ({ outcome: 'completed' }) } as never,
+        () => "2026-09-12T12:00:00.000Z",
+      );
       installThankYouPreferenceRoutes(api, {
         readInvoiceThankYou: async () => ({ invoice: null, organization: false }),
         setInvoiceThankYou: async () => true,

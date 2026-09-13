@@ -60,6 +60,7 @@ import { automaticThankYouMigration } from './migrations/0053_automatic_thank_yo
 import { releaseInvoicedTimeMigration } from './migrations/0054_release_invoiced_time.js'
 import { invoiceAttachedDocumentsMigration } from './migrations/0055_invoice_attached_documents.js'
 import { invoiceStagedAttachmentsMigration } from './migrations/0056_invoice_staged_attachments.js'
+import { recurringDefinitionRepairMigration } from './migrations/0057_recurring_definition_repair.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL, statements_sha256 TEXT
@@ -1463,6 +1464,7 @@ const migrations = [
   { id: '0054_release_invoiced_time', statements: releaseInvoicedTimeMigration },
   { id: '0055_invoice_attached_documents', statements: invoiceAttachedDocumentsMigration },
   { id: '0056_invoice_staged_attachments', statements: invoiceStagedAttachmentsMigration },
+  { id: '0057_recurring_definition_repair', statements: recurringDefinitionRepairMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges
