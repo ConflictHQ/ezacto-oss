@@ -573,10 +573,16 @@ interface InvoiceOutboxEvent {
  * preference says so.
  */
 export interface InvoiceDocumentPort {
+  /**
+   * Every file this message carries, in the order they should appear. A list
+   * rather than one, because an invoice can go out with its own document and
+   * with what an operator staged against it -- a purchase order, a signed
+   * order form -- and those are separate choices.
+   */
   prepare(input: {
     readonly invoiceId: number;
     readonly invoiceMessageId: number;
-  }): Promise<EmailAttachmentRef | null>;
+  }): Promise<readonly EmailAttachmentRef[]>;
 }
 
 /** Subscriber registration used by both runtimes; provider I/O remains in the queue consumer. */
@@ -599,7 +605,7 @@ export const createInvoiceEmailOutboxSubscriber = (
     // message has. Each recipient is its own delivery and its own queue job,
     // and rendering per recipient would put several identical objects in the
     // bucket for one send.
-    const seen = new Map<number, EmailAttachmentRef | null>();
+    const seen = new Map<number, readonly EmailAttachmentRef[]>();
     for (const job of jobs) {
       if (documents !== undefined && !seen.has(job.invoiceMessageId)) {
         seen.set(
@@ -610,7 +616,7 @@ export const createInvoiceEmailOutboxSubscriber = (
           }),
         );
       }
-      const attachment = seen.get(job.invoiceMessageId) ?? null;
+      const attachments = seen.get(job.invoiceMessageId) ?? [];
       await mailer!.enqueuePersisted!(
         job.deliveryId,
         {
@@ -634,7 +640,7 @@ export const createInvoiceEmailOutboxSubscriber = (
           ...(job.htmlBody === null ? {} : { html: job.htmlBody }),
           related: { type: "invoice_message", id: job.invoiceMessageId },
         },
-        attachment === null ? undefined : [attachment],
+        attachments.length === 0 ? undefined : attachments,
       );
     }
   },

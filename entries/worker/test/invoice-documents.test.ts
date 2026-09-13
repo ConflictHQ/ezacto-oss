@@ -89,7 +89,7 @@ afterEach(() => {
 describe('preparing the document an invoice carries', () => {
   it('[unit] attaches nothing while the preference is off, and writes no object', async () => {
     const { port, objects } = await harness()
-    expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toBeNull()
+    expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toEqual([])
     expect(objects.put).not.toHaveBeenCalled()
   })
 
@@ -98,11 +98,13 @@ describe('preparing the document an invoice carries', () => {
     await setOrganizationAttachPolicy(orm as never, true)
     const reference = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
 
-    expect(reference).toEqual({
-      key: 'invoice-documents/1/100.pdf',
-      filename: 'invoice-1315.pdf',
-      contentType: 'application/pdf',
-    })
+    expect(reference).toEqual([
+      {
+        key: 'invoice-documents/1/100.pdf',
+        filename: 'invoice-1315.pdf',
+        contentType: 'application/pdf',
+      },
+    ])
     // A real render, not a stand-in: the bytes are a PDF.
     const stored = objects.written.get('invoice-documents/1/100.pdf')!
     expect(Array.from(stored.slice(0, 5), (b) => String.fromCharCode(b)).join('')).toBe('%PDF-')
@@ -138,7 +140,7 @@ describe('preparing the document an invoice carries', () => {
     const { orm, port, objects } = await harness()
     await setOrganizationAttachPolicy(orm as never, true)
     await setInvoiceAttachPolicy(orm as never, { invoiceId: 1, enabled: false })
-    expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toBeNull()
+    expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toEqual([])
     expect(objects.put).not.toHaveBeenCalled()
   })
 
@@ -150,7 +152,7 @@ describe('preparing the document an invoice carries', () => {
       },
     })
     await setOrganizationAttachPolicy(orm as never, true)
-    expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).not.toBeNull()
+    expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toHaveLength(1)
     expect(objects.put).toHaveBeenCalledTimes(1)
   })
 
@@ -184,5 +186,87 @@ describe('fetching it back for the queue consumer', () => {
     expect(
       await resolve({ key: 'missing', filename: 'a.pdf', contentType: 'application/pdf' }),
     ).toBeNull()
+  })
+})
+
+describe('the files an operator staged against the invoice', () => {
+  // An attachment declares exactly one owner, and its link id is its own id --
+  // the schema says so, which is what keeps a file from belonging to an invoice
+  // and an expense at once.
+  let nextAttachmentId = 500
+  const stage = (name: string, key: string) => {
+    const id = (nextAttachmentId += 1)
+    const hash = key.replace(/[^a-f0-9]/gu, '').padEnd(64, 'a').slice(0, 64)
+    // One transaction: the attachment names its link and the link names the
+    // attachment, and those keys are deferred precisely so the pair can be
+    // written together.
+    sqlite!.exec(`
+      BEGIN;
+      INSERT INTO file_objects (content_hash, file_key, byte_size, content_type, created_at, updated_at)
+        VALUES ('${hash}', '${key}', 2048, 'application/pdf', '${at}', '${at}');
+      INSERT INTO attachments
+        (id, file_object_id, name, invoice_attachment_link_id, created_at, updated_at)
+        VALUES (${String(id)},
+                (SELECT id FROM file_objects WHERE file_key = '${key}'),
+                '${name}', ${String(id)}, '${at}', '${at}');
+      INSERT INTO invoice_attachments (attachment_id, invoice_id)
+        VALUES (${String(id)}, 1);
+      COMMIT;
+    `)
+  }
+
+  it('[unit] sends nothing staged until somebody turns it on', async () => {
+    // Attachments are already on invoices in this account. Turning this on by
+    // default would email files to clients that nobody chose to send.
+    const { orm, port } = await harness()
+    stage('purchase-order.pdf', 'files/po-1')
+    expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toEqual([])
+    await setOrganizationAttachPolicy(orm as never, true)
+    const withDocument = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
+    expect(withDocument).toHaveLength(1)
+  })
+
+  it('[unit] carries them once enabled, after the invoice itself', async () => {
+    // A client opening the attachments in order should meet the invoice before
+    // what supports it.
+    const { orm, port } = await harness()
+    stage('purchase-order.pdf', 'files/po-1')
+    stage('order-form.pdf', 'files/of-1')
+    await setOrganizationAttachPolicy(orm as never, true)
+    sqlite!.exec(`UPDATE organizations SET attach_invoice_files = 1`)
+
+    const refs = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
+    expect(refs.map((r) => r.filename)).toEqual([
+      'invoice-1315.pdf',
+      'purchase-order.pdf',
+      'order-form.pdf',
+    ])
+  })
+
+  it('[unit] sends the staged files even when the invoice document is off', async () => {
+    // The two are separate choices: wanting a purchase order returned is not
+    // wanting the invoice as a PDF.
+    const { port } = await harness()
+    stage('purchase-order.pdf', 'files/po-1')
+    sqlite!.exec(`UPDATE organizations SET attach_invoice_files = 1`)
+    const refs = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
+    expect(refs.map((r) => r.filename)).toEqual(['purchase-order.pdf'])
+  })
+
+  it('[unit] lets one invoice refuse the staged files while the default says send', async () => {
+    const { port } = await harness()
+    stage('purchase-order.pdf', 'files/po-1')
+    sqlite!.exec(`UPDATE organizations SET attach_invoice_files = 1`)
+    sqlite!.exec(`UPDATE invoices SET attach_invoice_files = 0 WHERE id = 1`)
+    expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toEqual([])
+  })
+
+  it('[unit] carries the file key and type from the stored object, not a guess', async () => {
+    const { port } = await harness()
+    stage('purchase-order.pdf', 'files/po-1')
+    sqlite!.exec(`UPDATE organizations SET attach_invoice_files = 1`)
+    expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toEqual([
+      { key: 'files/po-1', filename: 'purchase-order.pdf', contentType: 'application/pdf' },
+    ])
   })
 })

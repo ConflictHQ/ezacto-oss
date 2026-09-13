@@ -4,6 +4,8 @@ import {
   readAttachedDocument,
   recordAttachedDocument,
   resolveAttachPolicy,
+  resolveFilesPolicy,
+  readStagedAttachments,
 } from "@ezacto/db/d1";
 import { renderInvoiceDocument } from "@ezacto/core";
 import type { EmailAttachmentRef, EmailAttachmentResolver } from "@ezacto/mailer";
@@ -40,23 +42,40 @@ export const createInvoiceDocumentPort = (options: {
   readonly now: () => string;
 }): InvoiceDocumentPort => ({
   async prepare({ invoiceId, invoiceMessageId }) {
+    // The files an operator staged against the invoice -- a purchase order, a
+    // signed order form. A separate choice from the document, because wanting
+    // a purchase order returned is not the same as wanting the invoice as a
+    // PDF, and the client's own files are already named by whoever staged them.
+    const staged = (await resolveFilesPolicy(options.database, invoiceId))
+      ? (await readStagedAttachments(options.database, invoiceId)).map((file) => ({
+          key: file.key,
+          filename: file.filename,
+          contentType: file.contentType,
+        }))
+      : [];
+
     const decision = await resolveAttachPolicy(options.database, invoiceId);
-    if (!decision.attach) return null;
+    if (!decision.attach) return staged;
 
     // Already prepared. A retried outbox delivery must attach the file that went
     // the first time rather than render a second one, and the record is keyed on
     // the message precisely so this question has an answer.
     const existing = await readAttachedDocument(options.database, invoiceMessageId);
     if (existing !== null) {
-      return {
-        key: existing.objectKey,
-        filename: existing.filename,
-        contentType: existing.contentType,
-      };
+      return [
+        {
+          key: existing.objectKey,
+          filename: existing.filename,
+          contentType: existing.contentType,
+        },
+        ...staged,
+      ];
     }
 
     const context = await options.source.deliveryContext(invoiceId);
-    if (context === null) return null;
+    // Nothing to render from, but a staged purchase order is still worth
+    // sending: it was attached by a person, not derived from the invoice.
+    if (context === null) return staged;
     const version = (await options.source.invoiceVersion(invoiceId)) ?? 0;
     // A link is printed only where one exists, and a failure to mint one is not
     // a reason to send no invoice at all.
@@ -101,7 +120,9 @@ export const createInvoiceDocumentPort = (options: {
       now: options.now(),
     });
 
-    return { key, filename, contentType: "application/pdf" };
+    // The invoice first. It is what the message is about, and a client opening
+    // the attachments in order should meet it before what supports it.
+    return [{ key, filename, contentType: "application/pdf" }, ...staged];
   },
 });
 
