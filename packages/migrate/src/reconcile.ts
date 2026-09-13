@@ -28,6 +28,9 @@ export type ReconciliationGapId =
   | 'migration-spec-7-sub-cent-unit-prices'
   | 'migration-spec-7-estimates-module-disabled'
   | 'migration-spec-7-duplicate-harvest-accounts'
+  // Not a documented spec gap like the others: a defect in the tooling, cited
+  // so the report names what is wrong rather than staying quiet about it.
+  | 'issue-407-load-is-add-only'
 
 export interface ReconciliationGapCitation {
   id: ReconciliationGapId
@@ -48,6 +51,11 @@ export interface ReconciliationCheck {
 }
 
 const MIGRATION_SPEC_GAP_CITATIONS = {
+  loadIsAddOnly: {
+    id: 'issue-407-load-is-add-only',
+    reference:
+      'issue 407: load is insert-if-absent, so sync tombstones never reach a loaded database.',
+  },
   retainersNoApi: {
     id: 'migration-spec-7-retainers-no-api',
     reference: 'docs/migration-spec.md §7: Retainers: no API.',
@@ -2503,6 +2511,34 @@ const validateReportPeriods = (periods: ChecksumReport['periods']): void => {
   }
 }
 
+/**
+ * Says out loud that a refreshed load is add-only (issue 407).
+ *
+ * `sync` writes `deleted_upstream` tombstones, and `load` never reads them --
+ * its writes are guarded `WHERE NOT EXISTS (... harvest_id = ?)`, which is
+ * insert-if-absent rather than upsert. So a row deleted upstream stays in the
+ * loaded database, and a row edited upstream keeps its old values, and neither
+ * shows up as a row-count difference.
+ *
+ * That is the dangerous shape: the report is currently green in exactly the
+ * case it should not be. Until load consumes the tombstones, reconcile says so
+ * per resource rather than implying currency.
+ */
+const tombstoneChecks = (checks: Checks, manifest: Manifest): void => {
+  for (const [resource, ids] of Object.entries(manifest.deleted_upstream ?? {})) {
+    if (ids.length === 0) continue
+    checks.note(
+      'B',
+      'upstream_deletion',
+      resource,
+      'gap',
+      `sync recorded ${String(ids.length)} upstream deletion(s) for this resource and load ` +
+        'does not apply them, so a loaded database still holds these rows',
+      MIGRATION_SPEC_GAP_CITATIONS.loadIsAddOnly,
+    )
+  }
+}
+
 const manifestCoverageChecks = (checks: Checks, manifest: Manifest): void => {
   for (const [resource, progress] of Object.entries(manifest.resources)) {
     if (progress.incremental && progress.staged_total_entries !== null) {
@@ -2691,6 +2727,7 @@ export const runReconcile = async (options: RunReconcileOptions): Promise<RunRec
     const source = await sourceState(options.snapshotDir, checksum)
     const checks = new Checks()
     manifestCoverageChecks(checks, manifest)
+    tombstoneChecks(checks, manifest)
     timeReportChecks(checks, source, checksum)
     expenseReportChecks(checks, source, checksum)
     uninvoicedReportChecks(checks, source, checksum)
