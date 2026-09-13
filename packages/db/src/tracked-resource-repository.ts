@@ -7,6 +7,8 @@ import {
   type ApprovalStatus,
   type TrackedState,
   type TeamViewer,
+  dateInTimeZone,
+  timeInTimeZone,
 } from '@ezacto/core'
 import {
   computeExpenseTotalCents,
@@ -291,7 +293,14 @@ interface ApprovalMembership {
 
 type TimeSettings = Pick<
   typeof organizations.$inferSelect,
-  'timeEntryMode' | 'timeFormat' | 'clock' | 'timeRounding' | 'weekStartDay'
+  | 'timeEntryMode'
+  | 'timeFormat'
+  | 'clock'
+  | 'timeRounding'
+  | 'weekStartDay'
+  // Issue 651: a running timer is filed against the organization's today, not
+  // UTC's.
+  | 'timezone'
 >
 
 const moneyUpperBound = 9_000_000_000_000
@@ -314,6 +323,33 @@ const mapReturnedExpense = (row: Record<string, unknown>): Expense =>
 
 const isRunning = (entry: TimeEntry): boolean =>
   entry.timerStartedAt !== null || (entry.startedTime !== null && entry.endedTime === null)
+
+
+/**
+ * The same instant, with the date and wall-clock time the organization sees.
+ *
+ * `instant` is untouched -- it is the moment, and the moment is not local to
+ * anybody. Only the calendar fields move.
+ */
+const localBoundary = (
+  boundary: TimeBoundary,
+  timezone: string | null,
+): TimeBoundary => {
+  const zone = timezone ?? 'UTC'
+  if (zone === 'UTC') return boundary
+  try {
+    return {
+      instant: boundary.instant,
+      date: dateInTimeZone(boundary.instant, zone),
+      time: timeInTimeZone(boundary.instant, zone),
+    }
+  } catch {
+    // An unusable zone is a settings problem, not a reason to refuse a timer.
+    // Falling back to UTC restores exactly the behaviour that existed before
+    // this, which is wrong but no more wrong than it already was.
+    return boundary
+  }
+}
 
 export class DrizzleTrackedResourceRepository {
   readonly #database: TrackedResourceDatabase
@@ -786,6 +822,15 @@ export class DrizzleTrackedResourceRepository {
     boundary: TimeBoundary,
   ): Promise<TimeEntryRecord> {
     const settings = await this.#timeSettings()
+    // The clock is UTC, because an instant is. The *date* a running timer is
+    // filed under is the operator's, not UTC's: west of UTC those differ every
+    // evening, so a 23:14 Saturday session lands on Sunday and a Sunday-evening
+    // session lands in next week's timesheet entirely (issue 651).
+    //
+    // The refusals below already claimed to be about "the current
+    // organization-local date". Nothing applied a timezone until now, so they
+    // described a rule the code did not implement.
+    const local = localBoundary(boundary, settings.timezone)
     const assignment = await this.#resolveTimeAssignment(userId, input.projectId, input.taskId)
     const base = {
       userId,
@@ -808,28 +853,28 @@ export class DrizzleTrackedResourceRepository {
         )
       }
       if (input.seconds === undefined) {
-        if (input.spentDate !== undefined && input.spentDate !== boundary.date) {
+        if (input.spentDate !== undefined && input.spentDate !== local.date) {
           throw inputProblem(
             'spent_date',
             'timer_owned',
             'a running timer must use the current organization-local date',
           )
         }
-        await this.#assertPolicyDateUnlocked(boundary.date)
+        await this.#assertPolicyDateUnlocked(local.date)
         const runningEntryPolicyLocked = await this.#policy.isLocked({
           entityType: 'running_time_entry_replacement',
           userId,
         })
-        const approval = await this.#approvalMembership(userId, boundary.date, true)
+        const approval = await this.#approvalMembership(userId, local.date, true)
         try {
           created = await startTimeEntry(
             this.#database,
             { ...base, ...approval },
-            boundary,
+            local,
             runningEntryPolicyLocked,
           )
         } catch (error) {
-          return this.#translateApprovalPeriodWriteError(error, userId, boundary.date, true)
+          return this.#translateApprovalPeriodWriteError(error, userId, local.date, true)
         }
       } else {
         if (input.spentDate === undefined) {
@@ -859,35 +904,35 @@ export class DrizzleTrackedResourceRepository {
         )
       }
       if (input.endedTime === undefined) {
-        if (input.spentDate !== undefined && input.spentDate !== boundary.date) {
+        if (input.spentDate !== undefined && input.spentDate !== local.date) {
           throw inputProblem(
             'spent_date',
             'timer_owned',
             'a running timer must use the current organization-local date',
           )
         }
-        if (input.startedTime !== undefined && input.startedTime !== boundary.time) {
+        if (input.startedTime !== undefined && input.startedTime !== local.time) {
           throw inputProblem(
             'started_time',
             'timer_owned',
             'a running timer must use the current organization-local start time',
           )
         }
-        await this.#assertPolicyDateUnlocked(boundary.date)
+        await this.#assertPolicyDateUnlocked(local.date)
         const runningEntryPolicyLocked = await this.#policy.isLocked({
           entityType: 'running_time_entry_replacement',
           userId,
         })
-        const approval = await this.#approvalMembership(userId, boundary.date, true)
+        const approval = await this.#approvalMembership(userId, local.date, true)
         try {
           created = await startTimeEntry(
             this.#database,
             { ...base, ...approval },
-            boundary,
+            local,
             runningEntryPolicyLocked,
           )
         } catch (error) {
-          return this.#translateApprovalPeriodWriteError(error, userId, boundary.date, true)
+          return this.#translateApprovalPeriodWriteError(error, userId, local.date, true)
         }
       } else {
         if (input.spentDate === undefined || input.startedTime === undefined) {
