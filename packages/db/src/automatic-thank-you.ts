@@ -307,3 +307,39 @@ export const readThankYouRecipients = async (
         )
         ORDER BY recipient.recipient_index`,
   )
+
+/**
+ * Both answers for one invoice, for a screen that has to show why.
+ *
+ * `resolveThankYouPolicy` answers what will happen; this answers what each
+ * level said. An operator looking at one invoice needs both -- "off" and "off
+ * because the whole organization is off" are different things to be looking at,
+ * and only one of them is changed on this invoice.
+ */
+export const readThankYouPreference = async (
+  database: InvoiceStateDatabase,
+  invoiceId: number,
+): Promise<{ invoice: boolean | null; organization: boolean } | null> => {
+  const rows = await database.all<{ invoice: number | null; organization: number | null }>(
+    sql`SELECT invoice.auto_thank_you AS invoice,
+               (SELECT organization.auto_thank_you FROM organizations organization
+                ORDER BY organization.id LIMIT 1) AS organization
+        FROM invoices invoice WHERE invoice.id = ${invoiceId}`,
+  )
+  const row = rows[0]
+  if (row === undefined) return null
+  return {
+    invoice: row.invoice === null ? null : row.invoice === 1,
+    organization: row.organization === 1,
+  }
+}
+
+/** The organization default on its own, for the settings screen. */
+export const readOrganizationThankYouPolicy = async (
+  database: InvoiceStateDatabase,
+): Promise<boolean> => {
+  const rows = await database.all<{ enabled: number | null }>(
+    sql`SELECT auto_thank_you AS enabled FROM organizations ORDER BY id LIMIT 1`,
+  )
+  return rows[0]?.enabled === 1
+}

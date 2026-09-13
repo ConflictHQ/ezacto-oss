@@ -2275,6 +2275,21 @@ export type InvoicePaymentLinkEnvelope = {
 };
 };
 
+export type InvoiceThankYouPreferenceEnvelope = {
+  "data": {
+  "invoice_id": number;
+  "auto_thank_you": boolean;
+  "organization_auto_thank_you": boolean;
+  "effective": boolean;
+};
+};
+
+export type OrganizationInvoiceThankYouEnvelope = {
+  "data": {
+  "auto_thank_you": boolean;
+};
+};
+
 export type InvoiceDocumentPreferenceEnvelope = {
   "data": {
   "invoice_id": number;
@@ -4346,6 +4361,42 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<OrganizationInvoiceDocumentsEnvelope>("POST", "/api/v1/settings/invoice-documents", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getInvoiceThankYouPreference(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceThankYouPreferenceEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InvoiceThankYouPreferenceEnvelope>("GET", "/api/v1/invoices/:id/thank-you-preference".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async setInvoiceThankYouPreference(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceThankYouPreferenceEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InvoiceThankYouPreferenceEnvelope>("POST", "/api/v1/invoices/:id/thank-you-preference".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getOrganizationInvoiceThankYou(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<OrganizationInvoiceThankYouEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<OrganizationInvoiceThankYouEnvelope>("GET", "/api/v1/settings/invoice-thank-you", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async setOrganizationInvoiceThankYou(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<OrganizationInvoiceThankYouEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<OrganizationInvoiceThankYouEnvelope>("POST", "/api/v1/settings/invoice-thank-you", {
       signal: args.signal,
       headers,
     });
