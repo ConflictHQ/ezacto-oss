@@ -95,6 +95,54 @@ export const setOrganizationAttachPolicy = async (
   )
 }
 
+/**
+ * Whether the files staged against an invoice go with it.
+ *
+ * Same precedence as the document, and a separate answer: an operator who wants
+ * a purchase order returned has not thereby asked for the invoice as a PDF.
+ */
+export const resolveFilesPolicy = async (
+  database: InvoiceStateDatabase,
+  invoiceId: number,
+): Promise<boolean> => {
+  const rows = await database.all<{ invoice: number | null; organization: number | null }>(
+    sql`SELECT invoice.attach_invoice_files AS invoice,
+               (SELECT organization.attach_invoice_files FROM organizations organization
+                ORDER BY organization.id LIMIT 1) AS organization
+        FROM invoices invoice WHERE invoice.id = ${invoiceId}`,
+  )
+  const row = rows[0]
+  if (row === undefined) return false
+  return row.invoice === null ? row.organization === 1 : row.invoice === 1
+}
+
+export interface StagedAttachment {
+  readonly key: string
+  readonly filename: string
+  readonly contentType: string
+  readonly byteSize: number
+}
+
+/**
+ * The files an operator staged against this invoice, ready to attach.
+ *
+ * Ordered by when they were attached, so a client opening two of them meets
+ * them in the order somebody put them there.
+ */
+export const readStagedAttachments = async (
+  database: InvoiceStateDatabase,
+  invoiceId: number,
+): Promise<readonly StagedAttachment[]> =>
+  database.all<StagedAttachment>(
+    sql`SELECT object.file_key AS key, attachment.name AS filename,
+               object.content_type AS contentType, object.byte_size AS byteSize
+        FROM invoice_attachments link
+        JOIN attachments attachment ON attachment.id = link.attachment_id
+        JOIN file_objects object ON object.id = attachment.file_object_id
+        WHERE link.invoice_id = ${invoiceId}
+        ORDER BY attachment.created_at, attachment.id`,
+  )
+
 export interface AttachedDocument {
   readonly invoiceMessageId: number
   readonly invoiceId: number

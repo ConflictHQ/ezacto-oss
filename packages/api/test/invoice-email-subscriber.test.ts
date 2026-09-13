@@ -95,7 +95,7 @@ describe('the document that goes with an invoice message', () => {
   it('[unit] prepares it once for a message with several recipients', async () => {
     // Each recipient is its own delivery and its own queue job. Rendering per
     // recipient would put several identical objects in the bucket for one send.
-    const prepare = vi.fn(async () => reference)
+    const prepare = vi.fn(async () => [reference])
     const { subscriber, enqueuePersisted } = harness(prepare)
     await subscriber.deliver({ id: 'e1', eventType: 'invoice.sent', aggregateId: 1 })
     expect(prepare).toHaveBeenCalledTimes(1)
@@ -111,7 +111,7 @@ describe('the document that goes with an invoice message', () => {
   it('[unit] attaches nothing when the port says so, and still sends', async () => {
     // `null` is the ordinary answer whenever the preference is off. The message
     // must still go.
-    const { subscriber, enqueuePersisted } = harness(vi.fn(async () => null))
+    const { subscriber, enqueuePersisted } = harness(vi.fn(async () => []))
     await subscriber.deliver({ id: 'e1', eventType: 'invoice.sent', aggregateId: 1 })
     expect(enqueuePersisted).toHaveBeenCalledTimes(2)
     expect((enqueuePersisted.mock.calls as unknown as unknown[][])[0]?.[3]).toBeUndefined()
@@ -120,7 +120,7 @@ describe('the document that goes with an invoice message', () => {
   it('[unit] passes the invoice the event is about, not the message id', async () => {
     // The two are different numbers and confusing them would render somebody
     // else's invoice.
-    const prepare = vi.fn(async () => reference)
+    const prepare = vi.fn(async () => [reference])
     const { subscriber } = harness(prepare)
     await subscriber.deliver({ id: 'e1', eventType: 'invoice.sent', aggregateId: 4242 })
     expect(prepare).toHaveBeenCalledWith({ invoiceId: 4242, invoiceMessageId: 100 })

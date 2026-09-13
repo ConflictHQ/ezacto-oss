@@ -340,6 +340,7 @@ for (const [runtime, factory] of factories) {
         'estimate_id',
         'auto_thank_you',
         'attach_invoice_pdf',
+        'attach_invoice_files',
       ])
       expect(
         (await db.rows<{ name: string }>(`PRAGMA table_info(invoice_item_categories)`)).map(
