@@ -90,6 +90,8 @@ interface StoredDefinition {
   nextIssueOn: string | null
   amountConfig: string | null
   attachmentPolicy: string | null
+  /** JSON array of project ids whose unbilled time this flat amount consumes. */
+  claimsProjectIds: string | null
   canDrawFromRetainerId: number | null
 }
 
@@ -354,6 +356,7 @@ export const createRecurringInvoiceEngine = (
           every_n_months AS "everyNMonths", day_of_month AS "dayOfMonth",
           next_issue_on AS "nextIssueOn", amount_config AS "amountConfig",
           attachment_policy AS "attachmentPolicy",
+          claims_project_ids AS "claimsProjectIds",
           can_draw_from_retainer_id AS "canDrawFromRetainerId"
         FROM recurring_invoices WHERE id = ?`,
       params: [definitionId],
@@ -679,6 +682,70 @@ export const createRecurringInvoiceEngine = (
           invoiceId,
           commandId,
         ],
+      })
+    }
+
+    // A banded engagement: the flat amount consumes the work rather than pricing
+    // it (issue 484). Two statements, in this order and inside the same batch as
+    // everything else, so a generation that fails leaves neither.
+    //
+    // Everything still unbilled on the named projects up to the issue date,
+    // rather than a period window. A window would have to be guessed -- an
+    // invoice issued on the 10th could mean the calendar month before it or the
+    // rolling month ending that day -- and guessing wrong either double-bills a
+    // week or leaves one stranded. "Whatever the band has not covered yet" needs
+    // no such guess and cannot strand anything.
+    if (definition.claimsProjectIds !== null) {
+      statements.push({
+        text: `UPDATE time_entries SET invoice_id = ?
+          WHERE invoice_id IS NULL AND billable = 1
+            AND timer_started_at IS NULL
+            AND NOT (started_time IS NOT NULL AND ended_time IS NULL)
+            AND spent_date <= ?
+            AND project_id IN (
+              SELECT CAST(member.value AS INTEGER) FROM json_each(?) member
+            )
+            AND EXISTS (
+              SELECT 1 FROM invoice_command_ledger command
+              WHERE command.invoice_id = ? AND command.command_id = ?
+                AND command.command_kind = 'recurring.generate'
+                AND command.completed = 0
+            )`,
+        params: [
+          invoiceId,
+          issueDate,
+          definition.claimsProjectIds,
+          invoiceId,
+          commandId,
+        ],
+      })
+
+      // What the band absorbed: billable value delivered and never charged.
+      // Deliberately not `written_off_cents` -- that is settlement, and this
+      // client owes and pays the whole flat amount. Recording it there would
+      // make a fully collectible invoice read as partly written off and would
+      // block returning it to draft.
+      //
+      // Runs after the line items, because it reads the invoice total the line
+      // triggers maintain.
+      statements.push({
+        text: `UPDATE invoices SET foregone_billable_cents = max(
+            0,
+            coalesce((
+              SELECT sum(CAST(ROUND(
+                coalesce(entry.rounded_seconds, entry.seconds)
+                  * coalesce(entry.billable_rate_cents, 0) / 3600.0
+              ) AS INTEGER))
+              FROM time_entries entry WHERE entry.invoice_id = invoices.id
+            ), 0) - invoices.amount_cents
+          )
+          WHERE id = ? AND EXISTS (
+            SELECT 1 FROM invoice_command_ledger command
+            WHERE command.invoice_id = ? AND command.command_id = ?
+              AND command.command_kind = 'recurring.generate'
+              AND command.completed = 0
+          )`,
+        params: [invoiceId, invoiceId, commandId],
       })
     }
 

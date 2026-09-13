@@ -63,6 +63,7 @@ import { invoiceStagedAttachmentsMigration } from './migrations/0056_invoice_sta
 import { recurringDefinitionRepairMigration } from './migrations/0057_recurring_definition_repair.js'
 import { invoiceExtrasSetMigration } from './migrations/0058_invoice_extras_set.js'
 import { canonicalCurrencyMigration } from './migrations/0059_canonical_currency.js'
+import { bandedEngagementsMigration } from './migrations/0060_banded_engagements.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL, statements_sha256 TEXT
@@ -1469,6 +1470,7 @@ const migrations = [
   { id: '0057_recurring_definition_repair', statements: recurringDefinitionRepairMigration },
   { id: '0058_invoice_extras_set', statements: invoiceExtrasSetMigration },
   { id: '0059_canonical_currency', statements: canonicalCurrencyMigration },
+  { id: '0060_banded_engagements', statements: bandedEngagementsMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

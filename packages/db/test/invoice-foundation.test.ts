@@ -340,6 +340,9 @@ for (const [runtime, factory] of factories) {
         'estimate_id',
         // Issue 647 folded the three preference columns into one set.
         'invoice_extras',
+        // Issue 484: billable value a band absorbed. Not settlement -- it takes
+        // no part in the due/paid/written-off arithmetic.
+        'foregone_billable_cents',
       ])
       expect(
         (await db.rows<{ name: string }>(`PRAGMA table_info(invoice_item_categories)`)).map(
