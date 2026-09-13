@@ -51,6 +51,10 @@ import {
   releaseInvoicedTimeEntries,
   recordCheckoutPayment,
   createThankYouPort,
+  readThankYouPreference,
+  readOrganizationThankYouPolicy,
+  setInvoiceThankYouPolicy,
+  setOrganizationThankYouPolicy,
   setBillDelivery,
   createQuickBooksMirrorSource,
   createQuickBooksStore,
@@ -544,6 +548,17 @@ export const createContainerRuntime = async (
           kind === 'document'
             ? setOrganizationAttachPolicy(drizzle, enabled)
             : setOrganizationFilesPolicy(drizzle, enabled),
+      },
+      // Suppressing the thank-you for one invoice (issue 545), which is the
+      // half that has to be reachable before the payment lands: some invoices
+      // settle a dispute.
+      thankYouPreference: {
+        readInvoiceThankYou: (invoiceId: number) => readThankYouPreference(drizzle, invoiceId),
+        setInvoiceThankYou: (invoiceId: number, enabled: boolean | null) =>
+          setInvoiceThankYouPolicy(drizzle, { invoiceId, enabled }),
+        readOrganizationThankYou: () => readOrganizationThankYouPolicy(drizzle),
+        setOrganizationThankYou: (enabled: boolean) =>
+          setOrganizationThankYouPolicy(drizzle, enabled),
       },
       // The same seam the Worker composes: both entries must answer this route
       // or `entry-surface.ts` fails the one that does and the one that does not.
