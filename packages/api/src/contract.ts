@@ -1307,6 +1307,30 @@ const invoiceTimeClaimOperations: ApiContractOperation[] = [
   },
 ];
 
+const recurringRepairOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/recurring-invoices/incomplete",
+    operationId: "listIncompleteRecurringInvoices",
+    summary: "Recurring definitions an import could not finish, and what bills against them",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "IncompleteRecurringInvoiceListEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/recurring-invoices/:id/completion",
+    operationId: "completeRecurringInvoiceDefinition",
+    summary: "Give an unfinished recurring definition its terms",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "RecurringInvoiceCompletionEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+];
+
 const invoiceThankYouPreferenceOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -2162,6 +2186,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...invoiceTimeClaimOperations,
   ...invoiceDocumentPreferenceOperations,
   ...invoiceThankYouPreferenceOperations,
+  ...recurringRepairOperations,
   ...payoutAccountOperations,
   ...billOperations,
   ...twoFactorOperations,
@@ -6373,6 +6398,53 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         type: "object",
         required: ["invoice_id", "url"],
         properties: { invoice_id: integerSchema, url: stringSchema },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  IncompleteRecurringInvoiceListEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "array",
+        items: {
+          type: "object",
+          required: [
+            "id",
+            "harvest_id",
+            "client_id",
+            "client_name",
+            "invoice_count",
+            "created_at",
+            "updated_at",
+          ],
+          properties: {
+            id: integerSchema,
+            harvest_id: { type: "integer", nullable: true },
+            client_id: integerSchema,
+            client_name: { type: "string" },
+            // What is riding on the stub. A definition with invoices against it
+            // is a billing relationship somebody is still in.
+            invoice_count: integerSchema,
+            created_at: { type: "string" },
+            updated_at: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    additionalProperties: false,
+  },
+  RecurringInvoiceCompletionEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["id", "completed"],
+        properties: { id: integerSchema, completed: { type: "boolean" } },
         additionalProperties: false,
       },
     },

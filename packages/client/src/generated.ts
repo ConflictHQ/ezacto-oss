@@ -2275,6 +2275,25 @@ export type InvoicePaymentLinkEnvelope = {
 };
 };
 
+export type IncompleteRecurringInvoiceListEnvelope = {
+  "data": Array<{
+  "id": number;
+  "harvest_id": number;
+  "client_id": number;
+  "client_name": string;
+  "invoice_count": number;
+  "created_at": string;
+  "updated_at": string;
+}>;
+};
+
+export type RecurringInvoiceCompletionEnvelope = {
+  "data": {
+  "id": number;
+  "completed": boolean;
+};
+};
+
 export type InvoiceThankYouPreferenceEnvelope = {
   "data": {
   "invoice_id": number;
@@ -4397,6 +4416,24 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<OrganizationInvoiceThankYouEnvelope>("POST", "/api/v1/settings/invoice-thank-you", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listIncompleteRecurringInvoices(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<IncompleteRecurringInvoiceListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<IncompleteRecurringInvoiceListEnvelope>("GET", "/api/v1/recurring-invoices/incomplete", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async completeRecurringInvoiceDefinition(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<RecurringInvoiceCompletionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<RecurringInvoiceCompletionEnvelope>("POST", "/api/v1/recurring-invoices/:id/completion".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });

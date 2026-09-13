@@ -911,6 +911,13 @@ export const createRuntimeServices = async (
     },
     // Suppressing the thank-you for one invoice, which is the half that has to
     // be reachable before the payment lands: some invoices settle a dispute.
+    // Definitions an import could not finish (issue 648). Live billing that
+    // no screen could see and no route could repair until now.
+    recurringRepair: {
+      listIncomplete: () => moneyResources.listIncompleteRecurring(),
+      complete: (id: number, terms: Parameters<typeof moneyResources.completeRecurring>[1]) =>
+        moneyResources.completeRecurring(id, terms),
+    },
     thankYouPreference: {
       readInvoiceThankYou: (invoiceId: number) => readThankYouPreference(drizzle, invoiceId),
       setInvoiceThankYou: (invoiceId: number, enabled: boolean | null) =>

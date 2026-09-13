@@ -874,6 +874,49 @@ const retainerSelect = `SELECT retainer.id, retainer.client_id, retainer.project
 
 type RawRecurring = Omit<RecurringInvoiceResource, 'amount_config'> & { amount_config: unknown }
 
+/**
+ * A definition an import could not finish, and what is riding on it (issue 648).
+ *
+ * Its own shape rather than `RecurringInvoiceResource`, whose fields are
+ * non-null. `definition_status = 'incomplete'` exists precisely so an import can
+ * record "this exists and we do not yet know how it bills", and widening the
+ * complete-definition type to nullable would make every healthy definition look
+ * like it might be a stub.
+ *
+ * `invoice_count` is what makes this actionable rather than a curiosity: a stub
+ * with invoices against it is a billing relationship somebody is still in.
+ */
+export interface IncompleteRecurringInvoice {
+  id: number
+  harvest_id: number | null
+  client_id: number
+  client_name: string
+  subject_template: string | null
+  notes_template: string | null
+  every_n_months: number | null
+  day_of_month: number | null
+  next_issue_on: string | null
+  amount_config: RecurringAmountConfig | null
+  can_draw_from_retainer_id: number | null
+  created_at: string
+  updated_at: string
+  invoice_count: number
+}
+
+type RawIncompleteRecurring = Omit<IncompleteRecurringInvoice, 'amount_config'> & {
+  amount_config: string | null
+}
+
+/** Who is completing a stub, which the record has to name. */
+export interface CompleteRecurringInput extends RecurringInvoiceInput {
+  actorUserId: number
+}
+
+export type CompleteRecurringOutcome =
+  | { outcome: 'completed'; recurring: RecurringInvoiceResource }
+  | { outcome: 'not_found' }
+  | { outcome: 'already_complete' }
+
 const recurringSelect = `SELECT id, client_id, subject_template, notes_template,
   every_n_months, day_of_month, next_issue_on, amount_config,
   can_draw_from_retainer_id, created_at, updated_at FROM recurring_invoices
@@ -2072,6 +2115,126 @@ export class MoneyResourceRepository {
         })
       ).changes === 1
     )
+  }
+
+  /**
+   * The recurring definitions a migration left as stubs (issue 648).
+   *
+   * Every other query here filters these out, which is right for the ones that
+   * generate invoices and was wrong as a whole: three of these carried about
+   * ninety invoices between them, so they were live billing that no screen could
+   * see and no route could repair.
+   */
+  async listIncompleteRecurring(): Promise<IncompleteRecurringInvoice[]> {
+    const rows = await all<RawIncompleteRecurring>(this.database, {
+      text: `SELECT recurring.id, recurring.harvest_id, recurring.client_id,
+          client.name AS client_name, recurring.subject_template, recurring.notes_template,
+          recurring.every_n_months, recurring.day_of_month, recurring.next_issue_on,
+          recurring.amount_config, recurring.can_draw_from_retainer_id,
+          recurring.created_at, recurring.updated_at,
+          (SELECT count(*) FROM invoices invoice
+             WHERE invoice.recurring_invoice_id = recurring.id) AS invoice_count
+        FROM recurring_invoices recurring
+        JOIN clients client ON client.id = recurring.client_id
+        WHERE recurring.definition_status = 'incomplete'
+        ORDER BY recurring.id`,
+      params: [],
+    })
+    return rows.map((row) => ({
+      ...row,
+      amount_config:
+        row.amount_config === null
+          ? null
+          : parseJson<RecurringAmountConfig>(row.amount_config, {
+              schema_version: 1,
+              type: 'fixed_lines',
+              line_items: [],
+            }),
+    }))
+  }
+
+  /**
+   * Gives a stub its terms (issue 648).
+   *
+   * A full definition rather than a patch, because the table's own CHECK refuses
+   * `complete` unless every field is present -- a partial repair would be a
+   * constraint failure dressed as an update. Asking for all of it also means
+   * whoever is transcribing reads every field once, rather than discovering a
+   * missing one when generation later refuses.
+   *
+   * Two statements, atomically. The completion row states what is about to
+   * happen and names who is claiming it; the update then has to match it
+   * exactly, because migration 0057's trigger admits the incomplete -> complete
+   * flip only against a completion bound to that precise row version. Writing
+   * the update alone is refused, which is the point: a payment schedule that
+   * changed with no author is one nobody can be asked about.
+   *
+   * Deliberately not `completeHarvestRecurringInvoice`. That one binds its
+   * evidence to a snapshot digest, so it stops working the moment the source is
+   * re-synced and cannot run at all against hosted D1 -- which is the trap in
+   * issue 288. This path records no migration evidence because it is not a
+   * migration: it is an operator typing in terms they have.
+   */
+  async completeRecurring(
+    id: number,
+    input: CompleteRecurringInput,
+  ): Promise<CompleteRecurringOutcome> {
+    assertPositiveId(id, 'recurring invoice id')
+    assertPositiveId(input.actorUserId, 'actorUserId')
+    this.validateRecurringInput(input)
+    const existing = await all<{ definition_status: string }>(this.database, {
+      text: `SELECT definition_status FROM recurring_invoices WHERE id = ?`,
+      params: [id],
+    })
+    // Asked before writing so the caller gets a reason rather than a constraint
+    // failure it has to interpret. The triggers are what actually hold.
+    if (existing[0] === undefined) return { outcome: 'not_found' }
+    if (existing[0].definition_status !== 'incomplete') return { outcome: 'already_complete' }
+
+    const amountConfig = JSON.stringify(input.amountConfig)
+    await runAtomic(this.database, [
+      {
+        text: `INSERT INTO recurring_definition_completions (
+            recurring_invoice_id, completed_by_user_id, completed_at,
+            subject_template, notes_template, every_n_months, day_of_month,
+            next_issue_on, amount_config, can_draw_from_retainer_id, target_updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          id,
+          input.actorUserId,
+          input.occurredAt,
+          input.subjectTemplate,
+          input.notesTemplate,
+          input.everyNMonths,
+          input.dayOfMonth,
+          input.nextIssueOn,
+          amountConfig,
+          input.canDrawFromRetainerId,
+          input.occurredAt,
+        ],
+      },
+      {
+        text: `UPDATE recurring_invoices SET client_id = ?, subject_template = ?,
+          notes_template = ?, every_n_months = ?, day_of_month = ?, next_issue_on = ?,
+          amount_config = ?, can_draw_from_retainer_id = ?, updated_at = ?,
+          definition_status = 'complete'
+          WHERE id = ? AND definition_status = 'incomplete'`,
+        params: [
+          input.clientId,
+          input.subjectTemplate,
+          input.notesTemplate,
+          input.everyNMonths,
+          input.dayOfMonth,
+          input.nextIssueOn,
+          amountConfig,
+          input.canDrawFromRetainerId,
+          input.occurredAt,
+          id,
+        ],
+      },
+    ])
+    const recurring = await this.getRecurring(id)
+    return recurring === null ? { outcome: 'not_found' } : { outcome: 'completed', recurring }
   }
 
   private validateRecurringInput(input: RecurringInvoiceInput): void {
