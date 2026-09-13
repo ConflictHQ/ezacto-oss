@@ -451,7 +451,12 @@ describe('home dashboard', () => {
       Object.fromEntries(
         ['/projects', '/tasks', '/clients'].map((href) => [
           href,
-          document.querySelector<HTMLElement>(`.primary-nav a[href="${href}"]`)?.hidden,
+          // Issue 461 folded Tasks out of the strip into the Menu group. The
+          // property is "hidden wherever it is offered", so both navs are
+          // asked -- which is stronger than asking the one it used to be in.
+          document.querySelector<HTMLElement>(
+            `.primary-nav a[href="${href}"], .secondary-nav a[href="${href}"]`,
+          )?.hidden,
         ]),
       )
 
@@ -464,7 +469,9 @@ describe('home dashboard', () => {
     // Their own four are untouched: this withholds the directories, not the app.
     for (const href of ['/dashboard', '/', '/expenses', '/reports']) {
       expect(
-        document.querySelector<HTMLElement>(`.primary-nav a[href="${href}"]`)?.hidden,
+        document.querySelector<HTMLElement>(
+          `.primary-nav a[href="${href}"], .secondary-nav a[href="${href}"]`,
+        )?.hidden,
         href,
       ).toBe(false)
     }

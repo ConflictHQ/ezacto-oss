@@ -322,13 +322,23 @@ export interface PaletteDestination {
 
 const primaryNav = (href: string): string => `.primary-nav a[href="${href}"]`
 
+/**
+ * Folded out of the strip by issue 461 and gated from the Menu instead.
+ *
+ * The palette offers a destination when the nav element behind it is present
+ * and showing, and `paletteOffers` fails closed on a missing element. So a
+ * section that leaves the strip has to keep a gated element somewhere, or it
+ * leaves the palette with it.
+ */
+const foldedNav = (href: string): string => `.secondary-nav a[href="${href}"]`
+
 export const paletteDestinations: readonly PaletteDestination[] = [
   {
     label: 'Home',
     href: '/dashboard',
     group: 'Track',
     keywords: 'dashboard overview where things stand',
-    gate: primaryNav('/dashboard'),
+    gate: foldedNav('/dashboard'),
   },
   {
     label: 'Time',
@@ -345,7 +355,7 @@ export const paletteDestinations: readonly PaletteDestination[] = [
     gate: primaryNav('/expenses'),
   },
   { label: 'Projects', href: '/projects', group: 'Organize', gate: primaryNav('/projects') },
-  { label: 'Tasks', href: '/tasks', group: 'Organize', gate: primaryNav('/tasks') },
+  { label: 'Tasks', href: '/tasks', group: 'Organize', gate: foldedNav('/tasks') },
   {
     label: 'Clients',
     href: '/clients',
@@ -353,7 +363,7 @@ export const paletteDestinations: readonly PaletteDestination[] = [
     keywords: 'contacts',
     gate: primaryNav('/clients'),
   },
-  { label: 'Team', href: '/team', group: 'Organize', keywords: 'people', gate: primaryNav('/team') },
+  { label: 'Team', href: '/team', group: 'Organize', keywords: 'people', gate: foldedNav('/team') },
   // Reached from Expenses and gated with it: the categories page is that
   // section's own administration rather than a destination of its own.
   {
