@@ -14,6 +14,7 @@ import { renderTeamPages } from '../team/render.js'
 import { renderExpenseCategoriesPage } from '../expense-categories/render.js'
 import { renderEmailConfigPage } from '../email-config/render.js'
 import { renderRecurringPage } from '../recurring/render.js'
+import { renderEstimatesPage } from '../estimates/render.js'
 import { renderRetainerDialogs, renderRetainerPage } from '../retainers/render.js'
 import {
   renderActivityLogPage,
@@ -72,6 +73,7 @@ export interface AppShellOptions {
     | 'invoice-detail'
     | 'invoice-generation'
     | 'invoice-recurring'
+    | 'invoice-estimates'
     | 'invoice-retainers'
     | 'client-list'
     | 'client-detail'
@@ -189,6 +191,10 @@ const renderTabStrip = (options: AppShellOptions): string => {
 const invoiceDestinations = [
   ['Overview', '/invoices', 'invoice-list'],
   ['Recurring', '/invoices/recurring', 'invoice-recurring'],
+  // Issue 485: seven API paths served since the API shipped with no screen
+  // calling any of them. Beside Recurring because an estimate is the document
+  // an invoice comes from, not a setting.
+  ['Estimates', '/invoices/estimates', 'invoice-estimates'],
   ['Retainers', '/invoices/retainers', 'invoice-retainers'],
   // Configure left this strip for Settings. Two of the five templates it edits
   // -- the email-verification and password-reset messages -- are account mail
@@ -751,6 +757,7 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
     </section>
   </main>
   ${renderRecurringPage(view)}
+  ${renderEstimatesPage(view)}
   ${renderRetainerPage(view)}
   ${renderEmailConfigPage(view)}
   ${renderClientDirectoryPages(view)}

@@ -942,6 +942,33 @@ export const createApp = (
       // Moved to Settings (issue 546). A bookmark and every link that shipped
       // still work: 301, the same way /settings/modules kept working when it
       // folded into /settings/company.
+      app.get('/invoices/estimates', async (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            ...(await shellChrome(context.env)),
+            activeSection: 'Invoices',
+            view: 'invoice-estimates',
+            tabs: invoiceTabs('invoice-estimates'),
+            signInProviders: configuredSignInProviders(context.env),
+            demoAccounts: publishedDemoAccounts(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      // Moved to Settings (issue 546). A bookmark and every link that shipped
+      // still work: 301, the same way /settings/modules kept working when it
+      // folded into /settings/company.
       app.get('/invoices/configure', (context) =>
         context.redirect('/settings/templates', 301),
       )

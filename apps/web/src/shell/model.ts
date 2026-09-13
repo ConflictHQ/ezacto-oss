@@ -41,6 +41,7 @@ import type { TeamDirectoryApi } from '../team/model.js'
 import type { CompanySettingsApi } from '../module-settings/model.js'
 import type { EmailConfigurationApi } from '../email-config/model.js'
 import type { RecurringWorkspaceApi } from '../recurring/model.js'
+import type { EstimateWorkspaceApi } from '../estimates/model.js'
 import type { RetainerWorkspaceApi } from '../retainers/model.js'
 
 interface CursorPage<T> {
@@ -67,6 +68,7 @@ export interface ShellApi
     Partial<ExpenseCategoryDirectoryApi>,
     Partial<EmailConfigurationApi>,
     Partial<RecurringWorkspaceApi>,
+    Partial<EstimateWorkspaceApi>,
     Partial<RetainerWorkspaceApi>,
     Partial<InvoicePaymentApi>,
     Partial<RoleAdminApi>,
@@ -1447,6 +1449,30 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  listEstimates: (cursor, signal) =>
+    client.listEstimates({
+      query: { per_page: 50, ...(cursor === undefined ? {} : { cursor }) },
+      ...withSignal(signal),
+    }),
+  getEstimate: async (id, signal) =>
+    (await client.getEstimate({ id, ...withSignal(signal) })).data,
+  convertEstimate: async (id, body, idempotencyKey, signal) =>
+    (
+      await client.convertEstimate({
+        id,
+        body,
+        'Idempotency-Key': idempotencyKey,
+        ...withSignal(signal),
+      })
+    ).data,
+  // The client directory the estimates pane names rows from. Unfiltered, for
+  // the reason the recurring pane gives: an estimate outlives the archiving of
+  // the client it quoted.
+  listEstimateClients: (cursor, signal) =>
+    client.listClients({
+      query: { per_page: 100, ...(cursor === undefined ? {} : { cursor }) },
+      ...withSignal(signal),
+    }),
   listRecurringInvoices: (cursor, signal) =>
     client.listRecurringInvoices({
       query: {
