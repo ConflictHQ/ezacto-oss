@@ -65,6 +65,7 @@ import { invoiceExtrasSetMigration } from './migrations/0058_invoice_extras_set.
 import { canonicalCurrencyMigration } from './migrations/0059_canonical_currency.js'
 import { bandedEngagementsMigration } from './migrations/0060_banded_engagements.js'
 import { userEmailKindMigration } from './migrations/0061_user_email_kind.js'
+import { exchangeRatesMigration } from './migrations/0062_exchange_rates.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL, statements_sha256 TEXT
@@ -1473,6 +1474,7 @@ const migrations = [
   { id: '0059_canonical_currency', statements: canonicalCurrencyMigration },
   { id: '0060_banded_engagements', statements: bandedEngagementsMigration },
   { id: '0061_user_email_kind', statements: userEmailKindMigration },
+  { id: '0062_exchange_rates', statements: exchangeRatesMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges
