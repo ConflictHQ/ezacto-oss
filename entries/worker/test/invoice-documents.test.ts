@@ -2,7 +2,12 @@ import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createContainerDatabase } from '@ezacto/db'
 import { migrateContainer } from '@ezacto/db'
-import { setOrganizationAttachPolicy, setInvoiceAttachPolicy } from '@ezacto/db'
+import {
+  setOrganizationAttachPolicy,
+  setInvoiceAttachPolicy,
+  setOrganizationFilesPolicy,
+  setInvoiceFilesPolicy,
+} from '@ezacto/db'
 import { createAttachmentResolver, createInvoiceDocumentPort } from '../src/invoice-documents.js'
 
 /**
@@ -233,7 +238,7 @@ describe('the files an operator staged against the invoice', () => {
     stage('purchase-order.pdf', 'files/po-1')
     stage('order-form.pdf', 'files/of-1')
     await setOrganizationAttachPolicy(orm as never, true)
-    sqlite!.exec(`UPDATE organizations SET attach_invoice_files = 1`)
+    await setOrganizationFilesPolicy(orm as never, true)
 
     const refs = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
     expect(refs.map((r) => r.filename)).toEqual([
@@ -246,25 +251,25 @@ describe('the files an operator staged against the invoice', () => {
   it('[unit] sends the staged files even when the invoice document is off', async () => {
     // The two are separate choices: wanting a purchase order returned is not
     // wanting the invoice as a PDF.
-    const { port } = await harness()
+    const { orm, port } = await harness()
     stage('purchase-order.pdf', 'files/po-1')
-    sqlite!.exec(`UPDATE organizations SET attach_invoice_files = 1`)
+    await setOrganizationFilesPolicy(orm as never, true)
     const refs = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
     expect(refs.map((r) => r.filename)).toEqual(['purchase-order.pdf'])
   })
 
   it('[unit] lets one invoice refuse the staged files while the default says send', async () => {
-    const { port } = await harness()
+    const { orm, port } = await harness()
     stage('purchase-order.pdf', 'files/po-1')
-    sqlite!.exec(`UPDATE organizations SET attach_invoice_files = 1`)
-    sqlite!.exec(`UPDATE invoices SET attach_invoice_files = 0 WHERE id = 1`)
+    await setOrganizationFilesPolicy(orm as never, true)
+    await setInvoiceFilesPolicy(orm as never, { invoiceId: 1, enabled: false })
     expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toEqual([])
   })
 
   it('[unit] carries the file key and type from the stored object, not a guess', async () => {
-    const { port } = await harness()
+    const { orm, port } = await harness()
     stage('purchase-order.pdf', 'files/po-1')
-    sqlite!.exec(`UPDATE organizations SET attach_invoice_files = 1`)
+    await setOrganizationFilesPolicy(orm as never, true)
     expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toEqual([
       { key: 'files/po-1', filename: 'purchase-order.pdf', contentType: 'application/pdf' },
     ])

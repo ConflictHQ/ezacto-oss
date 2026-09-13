@@ -77,14 +77,15 @@ export const setOrganizationAttachPolicy = async (
 export const resolveFilesPolicy = async (
   database: InvoiceStateDatabase,
   invoiceId: number,
-): Promise<AttachDecision> => {
+): Promise<boolean> => {
+  // A plain boolean, unlike the document's decision, because the only caller
+  // asks "do these go?" and nothing needs to explain which level answered. It
+  // stays a boolean deliberately: the worker port writes
+  // `(await resolveFilesPolicy(...)) ? ... : []`, and a truthy object there
+  // would attach every staged file to every invoice, silently.
   const both = await readInvoiceExtras(database, invoiceId)
-  if (both === null) return { attach: false, because: 'unknown_invoice' }
-  const resolved = resolveInvoiceExtra(both.organization, both.invoice, 'files')
-  const because = resolved.invoice === null ? 'organization' : 'invoice'
-  return isExtraEnabled(resolved.effective)
-    ? { attach: true, because }
-    : { attach: false, because }
+  if (both === null) return false
+  return isExtraEnabled(resolveInvoiceExtra(both.organization, both.invoice, 'files').effective)
 }
 export const readFilesPreference = async (
   database: InvoiceStateDatabase,
