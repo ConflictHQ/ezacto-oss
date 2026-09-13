@@ -1,5 +1,6 @@
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
+import { withD1Diagnostics } from './fixtures/d1-proxy-diagnostics.js'
 import { readFile } from 'node:fs/promises'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
@@ -99,7 +100,10 @@ const d1Database = async (migrate = true): Promise<TestDatabase> => {
     script: 'export default { fetch() { return new Response("ok") } }',
     d1Databases: ['DB'],
   })
-  const d1 = await miniflare.getD1Database('DB')
+  // Issue 645: this file has flaked twice on a message-less assertion from
+  // miniflare's proxy. The wrapper cannot stop it; it makes the next one say
+  // which statement was in flight.
+  const d1 = withD1Diagnostics(await miniflare.getD1Database('DB'))
   if (migrate) await migrateD1(d1)
   return {
     orm: createD1Database(d1),
