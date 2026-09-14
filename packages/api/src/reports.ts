@@ -92,6 +92,37 @@ export interface ProfitabilityReportRecord {
   previousTotals: Readonly<ProfitabilityTotals>;
 }
 
+/**
+ * A month of tracked work on a project, against what an invoice charged for it.
+ *
+ * The question a banded engagement cannot otherwise answer: what would this
+ * month have cost at full rates, and what did the band actually charge (#484).
+ * A band below cost is losing money and a band near list is barely a band, and
+ * neither is visible from the invoice alone.
+ */
+export interface BandedMonthRowRecord {
+  month: string;
+  projectId: number;
+  projectName: string;
+  clientId: number;
+  clientName: string;
+  currency: string;
+  roundedSeconds: number;
+  billableValueCents: number | null;
+  costValueCents: number | null;
+  entriesWithoutBillableRate: number;
+  entriesWithoutCostRate: number;
+  claimedInOtherCurrency: number;
+  billedCents: number | null;
+  foregoneCents: number | null;
+}
+
+export interface BandedMonthReportRecord {
+  from: string;
+  to: string;
+  rows: readonly BandedMonthRowRecord[];
+}
+
 export interface DetailedExpenseRowRecord {
   expenseId: number;
   spentDate: string;
@@ -384,6 +415,7 @@ export interface ReportReader {
     billableOnly?: boolean;
   }): Promise<DetailedExpenseReportRecord>;
   profitability(range: Readonly<ReportDateRange>): Promise<ProfitabilityReportRecord>;
+  bandedMonths(range: Readonly<ReportDateRange>): Promise<BandedMonthReportRecord>;
   timeReport(range: Readonly<ReportDateRange>): Promise<TimeReportRecord>;
   detailedTime(filter: {
     from: string;
@@ -673,6 +705,32 @@ const serializeProfitability = (report: Readonly<ProfitabilityReportRecord>) => 
   previous_from: report.previousFrom,
   previous_to: report.previousTo,
   previous_totals: serializeProfitabilityTotals(report.previousTotals),
+});
+
+const serializeBandedMonths = (report: Readonly<BandedMonthReportRecord>) => ({
+  from: report.from,
+  to: report.to,
+  rows: report.rows.map((row) => ({
+    month: row.month,
+    project_id: row.projectId,
+    project_name: row.projectName,
+    client_id: row.clientId,
+    client_name: row.clientName,
+    currency: row.currency,
+    rounded_seconds: row.roundedSeconds,
+    // Null rather than zero where a rate is missing, and the counts beside
+    // them say how much is missing. A month priced at nothing and a month
+    // nobody could price are different answers.
+    billable_value_cents: row.billableValueCents,
+    cost_value_cents: row.costValueCents,
+    entries_without_billable_rate: row.entriesWithoutBillableRate,
+    entries_without_cost_rate: row.entriesWithoutCostRate,
+    // Non-zero means the billed figure is partial rather than low: an invoice
+    // claimed this month's time in another currency and is not added in.
+    claimed_in_other_currency: row.claimedInOtherCurrency,
+    billed_cents: row.billedCents,
+    foregone_cents: row.foregoneCents,
+  })),
 });
 
 /**
@@ -1169,6 +1227,40 @@ export const installReportRoutes = <Bindings extends object>(
     return context.json(
       {
         data: serializeDetailedTime(result.report, context.get("principal")),
+        links: {
+          self:
+            new URL(context.req.url).pathname + new URL(context.req.url).search,
+        },
+      },
+      200,
+      { "cache-control": "no-store" },
+    );
+  });
+
+  /**
+   * What a banded month would have been worth at full rates, against what it
+   * was charged (#484).
+   *
+   * Refused on the cost authority like the margin report beside it, and for the
+   * same reason: every row states a cost, and a figure derived from the cost is
+   * the cost rearranged.
+   */
+  api.get("/reports/banded-months", async (context) => {
+    requireApiScope(context, "reports:read");
+    const principal = context.get("principal");
+    if (!canViewMoneyField(principal, "cost_rate")) {
+      throw new ApiError({
+        status: 403,
+        code: "profile_forbidden",
+        message: "The acting user profile cannot perform this operation.",
+      });
+    }
+    const parsed = rangeFrom(new URL(context.req.url), reportKeys);
+    assertFields(parsed.errors);
+    const report = await reports.bandedMonths(parsed.range);
+    return context.json(
+      {
+        data: serializeBandedMonths(report),
         links: {
           self:
             new URL(context.req.url).pathname + new URL(context.req.url).search,

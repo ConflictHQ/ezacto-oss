@@ -1712,6 +1712,16 @@ const reportOperations: ApiContractOperation[] = [
   },
   {
     method: "get",
+    path: "/api/v1/reports/banded-months",
+    operationId: "getBandedMonthReport",
+    summary: "What a banded month was worth at full rates, against what it charged",
+    tag: "reports",
+    responseStatus: 200,
+    responseSchema: "BandedMonthReportEnvelope",
+    parameters: [...requiredReportRange],
+  },
+  {
+    method: "get",
     path: "/api/v1/reports/profitability",
     operationId: "getProfitabilityReport",
     summary: "Revenue, cost and profit per project against the window before it",
@@ -6228,6 +6238,67 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   DetailedExpenseReportEnvelope: envelope("DetailedExpenseReport"),
+  /**
+   * A month of tracked work against what an invoice charged for it (#484).
+   *
+   * A band below cost is losing money and a band near list is barely a band,
+   * and neither is visible from the invoice on its own.
+   */
+  BandedMonthRow: {
+    type: "object",
+    required: [
+      "month",
+      "project_id",
+      "project_name",
+      "client_id",
+      "client_name",
+      "currency",
+      "rounded_seconds",
+      "billable_value_cents",
+      "cost_value_cents",
+      "entries_without_billable_rate",
+      "entries_without_cost_rate",
+      "claimed_in_other_currency",
+      "billed_cents",
+      "foregone_cents",
+    ],
+    properties: {
+      month: { type: "string", pattern: "^\\d{4}-\\d{2}$" },
+      project_id: integerSchema,
+      project_name: stringSchema,
+      client_id: integerSchema,
+      client_name: stringSchema,
+      currency: stringSchema,
+      rounded_seconds: { type: "integer", minimum: 0 },
+      // Null rather than zero where a rate is missing; the counts beside them
+      // say how much. A month priced at nothing and a month nobody could price
+      // are different answers.
+      billable_value_cents: nullable(signedIntegerSchema),
+      cost_value_cents: nullable(signedIntegerSchema),
+      entries_without_billable_rate: { type: "integer", minimum: 0 },
+      entries_without_cost_rate: { type: "integer", minimum: 0 },
+      // Non-zero means `billed_cents` is partial rather than low: an invoice
+      // claimed this month's time in another currency and is not added in,
+      // because adding it would invent a rate this system does not hold.
+      claimed_in_other_currency: { type: "integer", minimum: 0 },
+      // Null when no invoice has claimed any of the month. An unbilled month
+      // is not a band priced at zero.
+      billed_cents: nullable(signedIntegerSchema),
+      foregone_cents: nullable(signedIntegerSchema),
+    },
+    additionalProperties: false,
+  },
+  BandedMonthReport: {
+    type: "object",
+    required: ["from", "to", "rows"],
+    properties: {
+      from: dateSchema,
+      to: dateSchema,
+      rows: { type: "array", items: { $ref: "#/components/schemas/BandedMonthRow" } },
+    },
+    additionalProperties: false,
+  },
+  BandedMonthReportEnvelope: envelope("BandedMonthReport"),
   ProfitabilityRow: {
     type: "object",
     required: [
