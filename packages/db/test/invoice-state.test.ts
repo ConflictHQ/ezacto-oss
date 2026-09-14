@@ -866,8 +866,10 @@ for (const [runtime, factory] of factories) {
        *
        * Keyed on the command, because that is what a transition is here. A
        * command that legally produces two events (a payment that also settles
-       * an invoice) is ordered rather than deduplicated, which `[inv-05]`
-       * covers separately.
+       * an invoice) is ordered rather than deduplicated, which the payment
+       * ordering invariant covers separately -- named in prose rather than
+       * cited, because the registry counts a citation as a claim to own the
+       * invariant and it already has an owner.
        */
       const perCommand = await database.rows<{ command_id: string; events: number }>(
         `SELECT command_id, count(*) AS events FROM event_outbox
