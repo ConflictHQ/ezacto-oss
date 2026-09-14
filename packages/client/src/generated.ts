@@ -331,6 +331,13 @@ export type WiseRecipientListEnvelope = {
   "data": Array<WiseRecipient>;
 };
 
+export type WiseOnboardInput = {
+  "user_id": number;
+  "email": string;
+  "legal_name": string;
+  "currency": string;
+};
+
 export type WiseLinkInput = {
   "user_id": number;
   "recipient_id": string;
@@ -4299,6 +4306,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<WiseRecipientListEnvelope>("GET", "/api/v1/integrations/wise/recipients", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async onboardWiseRecipient(args: { body: WiseOnboardInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<WiseLinkEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<WiseLinkEnvelope>("POST", "/api/v1/integrations/wise/recipients", {
+      body: args.body,
       signal: args.signal,
       headers,
     });

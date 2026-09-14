@@ -38,6 +38,7 @@ const service = (overrides: Partial<WiseService> = {}): WiseService => ({
   })),
   listRecipients: vi.fn(async () => [recipient]),
   linkRecipient: vi.fn(async () => ({ outcome: 'linked' as const, recipient })),
+  onboardRecipient: vi.fn(async () => ({ outcome: 'linked' as const, recipient })),
   unlink: vi.fn(async () => true),
   ...overrides,
 })
@@ -201,5 +202,111 @@ describe('unlinking (#543)', () => {
     expect(
       (await app(missing).request('/integrations/wise/recipients/5', { method: 'DELETE' })).status,
     ).toBe(404)
+  })
+})
+
+describe('onboarding somebody we have never paid (#543)', () => {
+  const onboard = (wise: WiseService, body: unknown, principal?: Principal) =>
+    app(wise, principal).request('/integrations/wise/recipients', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+
+  const good = {
+    user_id: 7,
+    email: 'contractor@example.test',
+    legal_name: 'R. Adeyemi',
+    currency: 'USD',
+  }
+
+  it('[api] asks for an email address and hands back the destination Wise made', async () => {
+    const wise = service()
+    const response = await onboard(wise, good)
+    expect(response.status).toBe(201)
+    expect(await response.json()).toEqual({
+      data: {
+        user_id: 7,
+        recipient: {
+          id: '701234567',
+          holder_name: 'R. Adeyemi',
+          currency: 'USD',
+          type: 'Aba',
+          masked_summary: 'ABA routing number ending in 9012',
+          email: 'contractor@example.test',
+        },
+      },
+    })
+    expect(wise.onboardRecipient).toHaveBeenCalledWith({
+      userId: 7,
+      email: 'contractor@example.test',
+      legalName: 'R. Adeyemi',
+      currency: 'USD',
+      linkedByUserId: 1,
+    })
+  })
+
+  it('[security] has nowhere to put an account number, which is the whole design', async () => {
+    // Wise collects the bank details from the contractor directly. An account
+    // number sent here is ignored rather than stored, because nothing reads it.
+    const wise = service()
+    await onboard(wise, { ...good, account_number: '123456789012' })
+    const [call] = (wise.onboardRecipient as ReturnType<typeof vi.fn>).mock.calls
+    expect(JSON.stringify(call)).not.toContain('123456789012')
+  })
+
+  it('[api] names every field that is wrong at once, and calls Wise for none of them', async () => {
+    const wise = service()
+    const response = await onboard(wise, {
+      user_id: 0,
+      email: 'not-an-address',
+      legal_name: '  ',
+      currency: 'dollars',
+    })
+    expect(response.status).toBe(422)
+    const body = (await response.json()) as { error: { fields: { field: string }[] } }
+    expect(body.error.fields.map((problem) => problem.field).sort()).toEqual([
+      'currency',
+      'email',
+      'legal_name',
+      'user_id',
+    ])
+    // Nothing reached Wise. A recipient created for a request we were going to
+    // refuse anyway is a destination that outlives the mistake.
+    expect(wise.onboardRecipient).not.toHaveBeenCalled()
+  })
+
+  it('[api] refuses a second destination for somebody who already has one', async () => {
+    const wise = service({ onboardRecipient: vi.fn(async () => ({ outcome: 'already_linked' as const })) })
+    const response = await onboard(wise, good)
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ error: { code: 'already_linked' } })
+  })
+
+  it('[money] names the recipient when Wise made one and the link did not take', async () => {
+    // It exists at Wise by then and cannot be deleted from here. An operator
+    // who is not told its id has a destination nobody knows about.
+    const wise = service({
+      onboardRecipient: vi.fn(async () => ({
+        outcome: 'created_not_linked' as const,
+        recipient,
+        refusal: 'recipient_taken' as const,
+      })),
+    })
+    const response = await onboard(wise, good)
+    expect(response.status).toBe(409)
+    const body = (await response.json()) as { error: { code: string; message: string } }
+    expect(body.error.code).toBe('created_not_linked')
+    expect(body.error.message).toContain('701234567')
+    expect(body.error.message).toContain('recipient_taken')
+  })
+
+  it('[api] is administrators and accounting, and refuses before it asks Wise anything', async () => {
+    const wise = service()
+    expect((await onboard(wise, good, { userId: 2, profile: 'member' })).status).toBe(403)
+    const unconfigured = service({ configured: vi.fn(() => false) })
+    expect((await onboard(unconfigured, good)).status).toBe(503)
+    expect(wise.onboardRecipient).not.toHaveBeenCalled()
+    expect(unconfigured.onboardRecipient).not.toHaveBeenCalled()
   })
 })

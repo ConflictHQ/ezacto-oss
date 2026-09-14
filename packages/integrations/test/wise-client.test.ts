@@ -163,3 +163,76 @@ describe("who we can pay (#543)", () => {
     expect(await wise.recipients("22239672")).toHaveLength(2);
   });
 });
+
+describe("onboarding somebody we have never paid (#543)", () => {
+  // What Wise hands back for an email recipient: no rails yet, because the
+  // contractor has not filled them in. `name` is absent here and the holder
+  // arrives as `accountHolderName` instead, which is why the mapper reads both.
+  const CREATED = JSON.stringify({
+    id: 701234599,
+    profile: 22239672,
+    accountHolderName: "R. Adeyemi",
+    currency: "USD",
+    type: "email",
+    active: true,
+    ownedByCustomer: false,
+    details: { email: "contractor@example.test" },
+  });
+
+  it("[unit] asks Wise for an email recipient and reads back what it made", async () => {
+    const { wise, call } = client(CREATED);
+    const recipient = await wise.createEmailRecipient({
+      profileId: "22239672",
+      email: " contractor@example.test ",
+      legalName: " R. Adeyemi ",
+      currency: "usd",
+    });
+    const [url, init] = call.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://api.wise.com/v1/accounts");
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>)["content-type"]).toBe("application/json");
+    expect(JSON.parse(String(init.body))).toEqual({
+      profile: "22239672",
+      accountHolderName: "R. Adeyemi",
+      currency: "USD",
+      type: "email",
+      details: { email: "contractor@example.test" },
+    });
+    expect(recipient).toEqual({
+      id: "701234599",
+      holderName: "R. Adeyemi",
+      currency: "USD",
+      type: "email",
+      maskedSummary: null,
+      email: "contractor@example.test",
+      active: true,
+      ownedByUs: false,
+    });
+  });
+
+  it("[security] is the whole onboarding: we ask for an email, never an account number", async () => {
+    // The point of an email recipient. Wise collects the bank details from the
+    // contractor directly, so there is no account number in this request to be
+    // logged, backed up or leaked -- and the input type has nowhere to put one.
+    const { wise, call } = client(CREATED);
+    await wise.createEmailRecipient({
+      profileId: "22239672",
+      email: "contractor@example.test",
+      legalName: "R. Adeyemi",
+      currency: "USD",
+    });
+    const body = JSON.parse(String((call.mock.calls[0] as unknown as [string, RequestInit])[1].body));
+    expect(Object.keys(body.details)).toEqual(["email"]);
+  });
+
+  it("[unit] refuses a missing email or name here, so the operator hears which field", async () => {
+    const { wise, call } = client(CREATED);
+    const input = { profileId: "22239672", email: "contractor@example.test", legalName: "R. Adeyemi", currency: "USD" };
+    await expect(wise.createEmailRecipient({ ...input, email: "  " })).rejects.toThrow(/email address/u);
+    await expect(wise.createEmailRecipient({ ...input, email: "not-an-address" })).rejects.toThrow(/email address/u);
+    await expect(wise.createEmailRecipient({ ...input, legalName: " " })).rejects.toThrow(/name to pay/u);
+    // Refused before the call, not after: a half-made recipient at Wise is
+    // worse than an error, because nothing here knows it exists.
+    expect(call).not.toHaveBeenCalled();
+  });
+});

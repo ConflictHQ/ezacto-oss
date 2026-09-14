@@ -168,6 +168,9 @@ const documentedApp = () =>
         linkRecipient: async () => {
           throw new Error("not used by the contract fixture");
         },
+        onboardRecipient: async () => {
+          throw new Error("not used by the contract fixture");
+        },
         unlink: async () => false,
       });
       installEmailLogRoutes(api, emailLog);

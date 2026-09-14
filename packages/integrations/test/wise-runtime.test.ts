@@ -228,3 +228,121 @@ describe("linking a person to a destination (#543)", () => {
     expect(accounts.link).toHaveBeenCalledWith(expect.objectContaining({ externalId: "701234567" }));
   });
 });
+
+describe("onboarding somebody we have never paid (#543)", () => {
+  const CREATED = {
+    id: 701234599,
+    profile: 22239672,
+    accountHolderName: "R. Adeyemi",
+    currency: "USD",
+    type: "email",
+    active: true,
+    ownedByCustomer: false,
+    details: { email: "newcomer@example.test" },
+  };
+
+  /** Profiles, the recipient list, and the create call, told apart by path. */
+  const onboardingTransport = () =>
+    vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const body = url.includes("/v2/profiles")
+        ? PROFILES
+        : init?.method === "POST"
+          ? CREATED
+          : RECIPIENTS;
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+  const onboarding = (accounts?: WisePayoutAccountPort) =>
+    runtime({
+      accounts: accounts ?? accountPort(),
+      fetch: onboardingTransport() as unknown as typeof fetch,
+    });
+
+  const input = {
+    userId: 7,
+    email: "newcomer@example.test",
+    legalName: "R. Adeyemi",
+    currency: "USD",
+    linkedByUserId: 1,
+  };
+
+  it("[money] creates the destination on the paying profile and links it, verified", async () => {
+    const { wise, accounts, call } = onboarding();
+    const result = await wise.service.onboardRecipient(input);
+    expect(result).toEqual({
+      outcome: "linked",
+      recipient: {
+        id: "701234599",
+        holderName: "R. Adeyemi",
+        currency: "USD",
+        type: "email",
+        maskedSummary: null,
+        email: "newcomer@example.test",
+        active: true,
+        ownedByUs: false,
+      },
+    });
+    // The business profile, not the personal one beside it -- the same choice
+    // that decides which balance a payout leaves from.
+    const created = (call as ReturnType<typeof onboardingTransport>).mock.calls.find(
+      ([, init]) => init?.method === "POST",
+    );
+    expect(JSON.parse(String(created?.[1]?.body)).profile).toBe("22239672");
+    expect(accounts.link).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 7, provider: "wise", externalId: "701234599" }),
+    );
+    // Wise made it, so Wise says it resolves. That is what verified means here.
+    expect(accounts.markVerified).toHaveBeenCalledWith(77, NOW.toISOString());
+  });
+
+  it("[money] asks whether they already have one before creating anything at Wise", async () => {
+    // A recipient created here cannot be deleted from here. A second one for
+    // somebody who already has a destination is a payout nobody will ever make.
+    const { wise, call } = onboarding(
+      accountPort({
+        listForUser: vi.fn(async () => [
+          { id: 12, provider: "wise", externalId: "701234567", verifiedAt: NOW.toISOString() },
+        ]),
+      }),
+    );
+    expect(await wise.service.onboardRecipient(input)).toEqual({ outcome: "already_linked" });
+    const posts = (call as ReturnType<typeof onboardingTransport>).mock.calls.filter(
+      ([, init]) => init?.method === "POST",
+    );
+    expect(posts).toHaveLength(0);
+  });
+
+  it("[money] names the recipient it made when the link does not take", async () => {
+    // It exists at Wise by then. Reporting a bare failure would leave a
+    // destination sitting in the account that nothing here knows about.
+    const { wise } = onboarding(
+      accountPort({ link: vi.fn(async () => ({ outcome: "external_id_taken" as const })) }),
+    );
+    const result = await wise.service.onboardRecipient(input);
+    expect(result).toMatchObject({ outcome: "created_not_linked", refusal: "recipient_taken" });
+    expect(result).toMatchObject({ recipient: { id: "701234599" } });
+  });
+
+  it("[security] asks Wise for an email recipient, which is why no rails reach us", async () => {
+    // The whole of the onboarding decision. We send an email address; the
+    // contractor fills their bank details in at Wise. Nothing here ever holds
+    // an account number, so there is nothing to log, back up or leak.
+    const { wise, call } = onboarding();
+    await wise.service.onboardRecipient(input);
+    const created = (call as ReturnType<typeof onboardingTransport>).mock.calls.find(
+      ([, init]) => init?.method === "POST",
+    );
+    const body = JSON.parse(String(created?.[1]?.body));
+    expect(body.type).toBe("email");
+    expect(Object.keys(body.details)).toEqual(["email"]);
+  });
+
+  it("[unit] says so rather than creating anything where there is no token", async () => {
+    const { wise } = runtime({ token: undefined });
+    expect(await wise.service.onboardRecipient(input)).toEqual({ outcome: "not_configured" });
+  });
+});
