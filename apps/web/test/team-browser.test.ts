@@ -1233,3 +1233,176 @@ describe('Team browser controller', () => {
     expect(document.querySelector<HTMLButtonElement>('[data-team-person-retry]')?.hidden).toBe(true)
   })
 })
+
+describe('the payout destination panel (#543)', () => {
+  const destinationApi = (
+    overrides: Partial<TeamDirectoryApi> = {},
+  ): Partial<TeamDirectoryApi> => ({
+    getTeamPerson: vi.fn(async () => person()),
+    getTeamCatalog: vi.fn(async () => catalog),
+    getWisePayoutDestination: vi.fn(async () => ({ configured: true, destination: null })),
+    shareWiseProfile: vi.fn(async () => ({ name: 'R. Adeyemi' })),
+    removeWisePayoutDestination: vi.fn(async () => undefined),
+    ...overrides,
+  })
+
+  const payoutForm = (): HTMLFormElement =>
+    document.querySelector<HTMLFormElement>('[data-team-payout-form]')!
+
+  it('asks for a Wisetag and shows back whose profile Wise says it is', async () => {
+    writeDocument('team-person')
+    const shareWiseProfile = vi.fn<NonNullable<TeamDirectoryApi['shareWiseProfile']>>(async () => ({
+      name: 'R. Adeyemi',
+    }))
+    const api = destinationApi({ shareWiseProfile })
+    const controller = createTeamDirectoryController(api)
+
+    await controller.activate(identity(), new AbortController().signal, () => false)
+    await vi.waitFor(() => expect(payoutForm().hidden).toBe(false))
+
+    setField(payoutForm(), 'identifier', ' @theirtag ')
+    setField(payoutForm(), 'currency', 'usd')
+    submit(payoutForm())
+
+    await vi.waitFor(() => expect(shareWiseProfile).toHaveBeenCalledTimes(1))
+    expect(shareWiseProfile.mock.calls[0]![0]).toEqual({
+      userId: 1,
+      identifier: '@theirtag',
+      currency: 'USD',
+    })
+    // A mistyped tag that resolves resolves to somebody else, and the name is
+    // the only thing that catches it before money moves.
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-team-payout-result]')?.textContent).toContain(
+        'R. Adeyemi',
+      ),
+    )
+  })
+
+  it('says a destination is set without ever printing the identifier', async () => {
+    writeDocument('team-person')
+    const controller = createTeamDirectoryController(
+      destinationApi({
+        getWisePayoutDestination: vi.fn(async () => ({
+          configured: true,
+          destination: {
+            kind: 'contact' as const,
+            linkedAt: '2026-09-13T12:00:00.000Z',
+            verifiedAt: '2026-09-13T12:00:00.000Z',
+          },
+        })),
+      }),
+    )
+
+    await controller.activate(identity(), new AbortController().signal, () => false)
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLElement>('[data-team-payout-current]')?.hidden).toBe(false),
+    )
+    const panel = document.querySelector<HTMLElement>('[data-team-panel="payout"]')!
+    expect(panel.textContent).toContain('Wise holds the bank details')
+    // The form is gone while one is set: two destinations is two answers to
+    // where somebody's money goes.
+    expect(payoutForm().hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-team-payout-unverified]')?.hidden).toBe(true)
+  })
+
+  it('[money] says so when Wise never confirmed the destination resolves', async () => {
+    // Paying against an unverified link is the failure the whole store exists
+    // to prevent, and it is invisible unless the screen says it.
+    writeDocument('team-person')
+    const controller = createTeamDirectoryController(
+      destinationApi({
+        getWisePayoutDestination: vi.fn(async () => ({
+          configured: true,
+          destination: {
+            kind: 'contact' as const,
+            linkedAt: '2026-09-13T12:00:00.000Z',
+            verifiedAt: null,
+          },
+        })),
+      }),
+    )
+
+    await controller.activate(identity(), new AbortController().signal, () => false)
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLElement>('[data-team-payout-unverified]')?.hidden).toBe(
+        false,
+      ),
+    )
+  })
+
+  it('sends a member who mistyped a tag back to the field, not to an administrator', async () => {
+    writeDocument('team-person')
+    const controller = createTeamDirectoryController(
+      destinationApi({
+        shareWiseProfile: vi.fn(async () => {
+          throw Object.assign(new Error('refused'), {
+            status: 422,
+            body: { error: { fields: [{ field: 'identifier', code: 'not_discoverable' }] } },
+          })
+        }),
+      }),
+    )
+
+    await controller.activate(identity(), new AbortController().signal, () => false)
+    await vi.waitFor(() => expect(payoutForm().hidden).toBe(false))
+    setField(payoutForm(), 'identifier', '@nobody')
+    setField(payoutForm(), 'currency', 'USD')
+    submit(payoutForm())
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-team-payout-result]')?.textContent).toContain(
+        'discoverability',
+      ),
+    )
+  })
+
+  it('[auth] asks for nobody’s destination on a person page that will not open', async () => {
+    // A member cannot read the team directory at all, so this panel is
+    // accounting's today and the self-service half has no screen yet. The
+    // guard still has to hold here: the tab stays shut and nothing is fetched.
+    writeDocument('team-person')
+    const getWisePayoutDestination = vi.fn(async () => ({ configured: true, destination: null }))
+    const controller = createTeamDirectoryController(
+      destinationApi({ getWisePayoutDestination }),
+    )
+
+    await controller.activate(identity('member'), new AbortController().signal, () => false)
+
+    expect(document.querySelector<HTMLElement>('[data-team-tab="payout"]')?.hidden).toBe(true)
+    expect(getWisePayoutDestination).not.toHaveBeenCalled()
+  })
+
+  it('[auth] offers it to accounting for somebody who never got round to it', async () => {
+    writeDocument('team-person')
+    const getWisePayoutDestination = vi.fn<
+      NonNullable<TeamDirectoryApi['getWisePayoutDestination']>
+    >(async () => ({ configured: true, destination: null }))
+    const controller = createTeamDirectoryController(
+      destinationApi({
+        getTeamPerson: vi.fn(async () => person({ id: 4 })),
+        getWisePayoutDestination,
+      }),
+    )
+
+    await controller.activate(identity('administrator'), new AbortController().signal, () => false)
+
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLElement>('[data-team-tab="payout"]')?.hidden).toBe(false),
+    )
+    expect(getWisePayoutDestination.mock.calls[0]![0]).toBe(4)
+  })
+
+  it('hides the tab entirely in a build without the Wise endpoints', async () => {
+    writeDocument('team-person')
+    const controller = createTeamDirectoryController({
+      getTeamPerson: vi.fn(async () => person()),
+      getTeamCatalog: vi.fn(async () => catalog),
+    })
+
+    await controller.activate(identity(), new AbortController().signal, () => false)
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLElement>('[data-team-tab="payout"]')?.hidden).toBe(true),
+    )
+  })
+})

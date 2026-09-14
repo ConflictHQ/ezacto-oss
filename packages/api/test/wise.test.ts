@@ -43,6 +43,14 @@ const service = (overrides: Partial<WiseService> = {}): WiseService => ({
     outcome: 'linked' as const,
     contact: { id: '00000000-0000-4000-8000-000000000001', name: 'R. Adeyemi' },
   })),
+  readDestination: vi.fn(async () => ({
+    id: 77,
+    kind: 'contact' as const,
+    linkedAt: '2026-09-13T12:00:00.000Z',
+    linkedByUserId: 7,
+    verifiedAt: '2026-09-13T12:00:00.000Z',
+  })),
+  detachFor: vi.fn(async () => true),
   unlink: vi.fn(async () => true),
   ...overrides,
 })
@@ -409,5 +417,72 @@ describe('a person sharing their own Wise account (#543)', () => {
     const wise = service({ configured: vi.fn(() => false) })
     expect((await share(wise, good)).status).toBe(503)
     expect(wise.shareWiseProfile).not.toHaveBeenCalled()
+  })
+})
+
+describe('reading and removing where somebody is paid (#543)', () => {
+  const read = (wise: WiseService, userId: number, principal?: Principal) =>
+    app(wise, principal).request(`/integrations/wise/destinations/${String(userId)}`)
+
+  const remove = (wise: WiseService, userId: number, principal?: Principal) =>
+    app(wise, principal).request(`/integrations/wise/destinations/${String(userId)}`, {
+      method: 'DELETE',
+    })
+
+  it('[api] says a destination is set, and whether Wise confirmed it', async () => {
+    const response = await read(service(), 7)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      data: {
+        configured: true,
+        destination: {
+          id: 77,
+          kind: 'contact',
+          linked_at: '2026-09-13T12:00:00.000Z',
+          linked_by_user_id: 7,
+          // Null would mean Wise never confirmed the identifier resolves, and
+          // paying against that is the failure the store exists to prevent.
+          verified_at: '2026-09-13T12:00:00.000Z',
+        },
+      },
+    })
+  })
+
+  it('[security] never puts the identifier itself on the wire', async () => {
+    // A contact id and a recipient id are both opaque, and neither tells a
+    // person anything they could check. Nothing is served by carrying one.
+    const body = await (await read(service(), 7)).text()
+    expect(body).not.toContain('00000000-0000-4000')
+    expect(body).not.toContain('external_id')
+  })
+
+  it('[api] answers null rather than 404 where nobody has said where to pay', async () => {
+    // The state a screen has to render, not a missing resource.
+    const wise = service({ readDestination: vi.fn(async () => null) })
+    const response = await read(wise, 7)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ data: { destination: null } })
+  })
+
+  it('[auth] lets a person read and remove their own, and nobody else’s', async () => {
+    const mine = service()
+    expect((await read(mine, 9, { userId: 9, profile: 'member' })).status).toBe(200)
+    expect((await remove(mine, 9, { userId: 9, profile: 'member' })).status).toBe(204)
+    const theirs = service()
+    expect((await read(theirs, 7, { userId: 9, profile: 'member' })).status).toBe(403)
+    expect((await remove(theirs, 7, { userId: 9, profile: 'member' })).status).toBe(403)
+    expect(theirs.readDestination).not.toHaveBeenCalled()
+    expect(theirs.detachFor).not.toHaveBeenCalled()
+  })
+
+  it('[api] removing what is not there is a 404, not a silent success', async () => {
+    const wise = service({ detachFor: vi.fn(async () => false) })
+    expect((await remove(wise, 7)).status).toBe(404)
+  })
+
+  it('[api] refuses a userId that is not one', async () => {
+    const wise = service()
+    expect((await read(wise, 0)).status).toBe(422)
+    expect(wise.readDestination).not.toHaveBeenCalled()
   })
 })

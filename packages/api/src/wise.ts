@@ -56,6 +56,21 @@ export type WiseLinkOutcome =
   | { outcome: 'linked'; recipient: WiseRecipientView }
   | { outcome: WiseLinkRefusal }
 
+/**
+ * Where a person is paid, as a screen shows it.
+ *
+ * No identifier on purpose. A contact id and a recipient id are both opaque,
+ * and neither tells a person anything they could check. What is worth seeing is
+ * that a destination exists, whether Wise confirmed it, and when.
+ */
+export interface WiseDestinationView {
+  id: number
+  kind: 'account' | 'contact'
+  linkedAt: string
+  linkedByUserId: number
+  verifiedAt: string | null
+}
+
 export interface WiseContactView {
   id: string
   name: string | null
@@ -102,6 +117,8 @@ export interface WiseService {
     currency: string
     linkedByUserId: number
   }): Promise<WiseShareOutcome>
+  readDestination(userId: number): Promise<WiseDestinationView | null>
+  detachFor(userId: number): Promise<boolean>
   unlink(accountId: number): Promise<boolean>
 }
 
@@ -444,6 +461,71 @@ export const installWiseRoutes = <Bindings extends object>(
       201,
       { 'cache-control': 'no-store' },
     )
+  })
+
+  /**
+   * Where one person is paid, for the person themselves or for accounting.
+   *
+   * Answers with `null` rather than 404 where there is none: "nobody has told
+   * us where to pay you" is the state a screen has to render, and it is not an
+   * error about a missing resource.
+   */
+  api.get('/integrations/wise/destinations/:userId', async (context) => {
+    const userId = Number(context.req.param('userId') ?? '')
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      throw validationError([
+        { field: 'userId', code: 'invalid', message: 'userId must be a positive integer.' },
+      ])
+    }
+    assertMayDestineFor(context, userId)
+    const destination = service.configured() ? await service.readDestination(userId) : null
+    return context.json(
+      {
+        data: {
+          configured: service.configured(),
+          destination:
+            destination === null
+              ? null
+              : {
+                  id: destination.id,
+                  kind: destination.kind,
+                  linked_at: destination.linkedAt,
+                  linked_by_user_id: destination.linkedByUserId,
+                  // Null means Wise never confirmed the identifier resolves,
+                  // and paying against that is the failure the store exists to
+                  // prevent. Worth showing rather than implying.
+                  verified_at: destination.verifiedAt,
+                },
+        },
+      },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
+  /**
+   * Removes a person's destination, addressed by the person.
+   *
+   * So "may you remove this" has the same answer as "may you set it", and
+   * somebody who has just entered a tag that resolved to the wrong person can
+   * undo it without finding accounting first.
+   */
+  api.delete('/integrations/wise/destinations/:userId', async (context) => {
+    const userId = Number(context.req.param('userId') ?? '')
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      throw validationError([
+        { field: 'userId', code: 'invalid', message: 'userId must be a positive integer.' },
+      ])
+    }
+    assertMayDestineFor(context, userId)
+    if (!(await service.detachFor(userId))) {
+      throw new ApiError({
+        status: 404,
+        code: 'not_found',
+        message: 'That person has no Wise payout destination.',
+      })
+    }
+    return context.body(null, 204)
   })
 
   api.delete('/integrations/wise/recipients/:accountId', async (context) => {

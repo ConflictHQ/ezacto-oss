@@ -316,6 +316,7 @@ export {
   installWiseRoutes,
   installWiseWebhookRoute,
   type WiseConnectionStatus,
+  type WiseDestinationView,
   type WiseLinkOutcome,
   type WiseLinkRefusal,
   type WiseOnboardOutcome,

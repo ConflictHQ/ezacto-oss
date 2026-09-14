@@ -21,6 +21,8 @@ import {
   teamCapabilities,
   teamHours,
   teamMoney,
+  teamPayoutDate,
+  teamPayoutFailure,
   teamPersonIdFromPathname,
   teamProfileOptions,
   teamUtilization,
@@ -30,6 +32,7 @@ import {
   type TeamDirectoryApi,
   type TeamPersonCreate,
   type TeamProfile,
+  type WisePayoutDestinationState,
 } from './model.js'
 
 const required = <ElementType extends Element>(selector: string): ElementType => {
@@ -135,6 +138,16 @@ export const createTeamDirectoryController = (
   const scopeSelect = required<HTMLSelectElement>('[data-team-scope]')
   const summary = required<HTMLElement>('[data-team-summary]')
   const weekLabel = required<HTMLElement>('[data-team-week-label]')
+  const payoutTab = required<HTMLButtonElement>('[data-team-tab="payout"]')
+  const payoutStatus = required<HTMLElement>('[data-team-payout-status]')
+  const payoutUnconfigured = required<HTMLElement>('[data-team-payout-unconfigured]')
+  const payoutCurrent = required<HTMLElement>('[data-team-payout-current]')
+  const payoutSummary = required<HTMLElement>('[data-team-payout-summary]')
+  const payoutUnverified = required<HTMLElement>('[data-team-payout-unverified]')
+  const payoutRemove = required<HTMLButtonElement>('[data-team-payout-remove]')
+  const payoutForm = required<HTMLFormElement>('[data-team-payout-form]')
+  const payoutResult = required<HTMLElement>('[data-team-payout-result]')
+  const payoutSubmit = required<HTMLButtonElement>('[data-team-payout-submit]')
   const personStatus = required<HTMLElement>('[data-team-person-status]')
   const personRetry = required<HTMLButtonElement>('[data-team-person-retry]')
   const editor = required<HTMLElement>('[data-team-person-editor]')
@@ -1037,6 +1050,121 @@ export const createTeamDirectoryController = (
     statusAction.disabled = mutationPending || value.is_owner || !active.capabilities.canManagePeople
   }
 
+
+  /**
+   * The payout panel.
+   *
+   * Shown to the person themselves and to whoever may manage people, and to
+   * nobody else: where somebody is paid is not a fact the whole directory needs.
+   * A build without the Wise routes has no answer, so the tab hides rather than
+   * offering a form that cannot submit.
+   */
+  const mayDestineFor = (active: ActiveSession, userId: number): boolean =>
+    active.identity.user_id === userId || active.capabilities.canManagePeople
+
+  let payoutUserId: number | null = null
+
+  const paintPayout = (state: WisePayoutDestinationState): void => {
+    payoutUnconfigured.hidden = state.configured
+    const destination = state.destination
+    payoutCurrent.hidden = destination === null
+    payoutForm.hidden = destination !== null || !state.configured
+    if (destination === null) {
+      payoutStatus.textContent = state.configured
+        ? 'No payout destination yet.'
+        : 'Wise is not connected on this instance.'
+      return
+    }
+    payoutStatus.textContent = ''
+    payoutSummary.textContent =
+      destination.kind === 'contact'
+        ? `Paid to the Wise profile shared on ${teamPayoutDate(destination.linkedAt)}. Wise holds the bank details; this instance never sees them.`
+        : `Paid to a Wise recipient account added on ${teamPayoutDate(destination.linkedAt)}.`
+    // Unverified means Wise never confirmed the identifier resolves, and
+    // paying against that is the whole failure the store exists to prevent.
+    payoutUnverified.hidden = destination.verifiedAt !== null
+  }
+
+  const loadPayout = async (active: ActiveSession, userId: number): Promise<void> => {
+    payoutUserId = userId
+    const read = api.getWisePayoutDestination
+    payoutTab.hidden = !mayDestineFor(active, userId) || read === undefined
+    if (read === undefined || payoutTab.hidden) return
+    payoutStatus.textContent = 'Loading payout destination…'
+    payoutCurrent.hidden = true
+    payoutForm.hidden = true
+    try {
+      const state = await read(userId, active.signal)
+      if (currentSession() !== active) return
+      paintPayout(state)
+    } catch (error) {
+      if (currentSession() !== active) return
+      // Its own message, in its own panel. A payout destination that will not
+      // load is not a reason to take the person record off the screen.
+      payoutStatus.textContent =
+        error instanceof EzactoApiError && error.status === 403
+          ? 'You cannot see this person’s payout destination.'
+          : 'The payout destination could not be loaded.'
+    }
+  }
+
+  payoutForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const active = currentSession()
+    const userId = payoutUserId
+    const share = api.shareWiseProfile
+    if (active === null || userId === null || share === undefined) return
+    const identifier = formInput(payoutForm, 'identifier').value.trim()
+    const currency = formInput(payoutForm, 'currency').value.trim().toUpperCase()
+    if (identifier === '' || !/^[A-Za-z]{3}$/u.test(currency)) {
+      payoutResult.textContent = 'Enter their Wisetag, email or phone, and a three-letter currency.'
+      return
+    }
+    payoutSubmit.disabled = true
+    payoutResult.textContent = 'Asking Wise…'
+    void (async () => {
+      try {
+        const shared = await share({ userId, identifier, currency }, active.signal)
+        if (currentSession() !== active) return
+        // Wise's own answer for whose profile that identifier is. Shown back
+        // because a mistyped tag that resolves resolves to somebody else.
+        payoutResult.textContent =
+          shared.name === null
+            ? 'Payout destination saved.'
+            : `Payout destination saved: Wise says that is ${shared.name}.`
+        payoutForm.reset()
+        await loadPayout(active, userId)
+      } catch (error) {
+        if (currentSession() !== active) return
+        payoutResult.textContent = teamPayoutFailure(error)
+      } finally {
+        if (currentSession() === active) payoutSubmit.disabled = false
+      }
+    })()
+  })
+
+  payoutRemove.addEventListener('click', () => {
+    const active = currentSession()
+    const userId = payoutUserId
+    const detach = api.removeWisePayoutDestination
+    if (active === null || userId === null || detach === undefined) return
+    payoutRemove.disabled = true
+    payoutResult.textContent = 'Removing…'
+    void (async () => {
+      try {
+        await detach(userId, active.signal)
+        if (currentSession() !== active) return
+        payoutResult.textContent = 'Payout destination removed.'
+        await loadPayout(active, userId)
+      } catch (error) {
+        if (currentSession() !== active) return
+        payoutResult.textContent = teamPayoutFailure(error)
+      } finally {
+        if (currentSession() === active) payoutRemove.disabled = false
+      }
+    })()
+  })
+
   const renderPerson = (active: ActiveSession, value: TeamPerson): void => {
     personName.textContent = `${value.first_name} ${value.last_name}`
     formInput(infoForm, 'first_name').value = value.first_name
@@ -1063,6 +1191,9 @@ export const createTeamDirectoryController = (
     renderProjects(active, value)
     renderProfiles(active, value)
     renderNotifications(value)
+    // Not awaited. The payout destination is a second request and a slow or
+    // refusing one must not keep the rest of the person off the screen.
+    void loadPayout(active, value.id)
     editor.hidden = false
     personStatus.textContent = `${value.is_active ? 'Active' : 'Inactive'} · version ${value.version}`
   }

@@ -26,6 +26,76 @@ export type TeamPersonCreate = {
   readonly profile?: TeamProfile
 }
 
+/**
+ * What a payout panel knows.
+ *
+ * No identifier: a Wise contact id and a recipient id are both opaque, and
+ * neither tells a person anything they could check. `kind` is the part worth
+ * showing -- "we hold your Wise profile" and "we hold an account somebody
+ * entered for you" are different promises about where money lands.
+ */
+export interface WisePayoutDestinationState {
+  readonly configured: boolean
+  readonly destination: {
+    readonly kind: 'account' | 'contact'
+    readonly linkedAt: string
+    readonly verifiedAt: string | null
+  } | null
+}
+
+/**
+ * The date a destination was set, in the person's own reading of it.
+ *
+ * Deliberately not the time. What matters is "when did somebody tell us this",
+ * and a timestamp to the second implies a precision nobody needs to act on.
+ */
+export const teamPayoutDate = (value: string): string => {
+  const stamp = Date.parse(value)
+  return Number.isNaN(stamp)
+    ? 'an unknown date'
+    : new Date(stamp).toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      })
+}
+
+/**
+ * What went wrong, said to the person who can fix it.
+ *
+ * Nearly every refusal here is theirs to act on -- a tag with a typo, a Wise
+ * profile that is not discoverable, somebody who already has a destination --
+ * and "the request failed" sends them to ask an administrator about something
+ * no administrator can see.
+ */
+export const teamPayoutFailure = (error: unknown): string => {
+  const status = typeof error === 'object' && error !== null && 'status' in error
+    ? (error as { status: unknown }).status
+    : null
+  const body = typeof error === 'object' && error !== null && 'body' in error
+    ? (error as { body: unknown }).body
+    : null
+  const fields =
+    typeof body === 'object' && body !== null && 'error' in body
+      ? (body as { error: { fields?: readonly { code?: string }[] } }).error.fields ?? []
+      : []
+  if (fields.some((field) => field.code === 'not_discoverable')) {
+    return 'Wise has no discoverable profile with that identifier. Check the spelling, and check they have discoverability switched on in Wise.'
+  }
+  switch (status) {
+    case 409:
+      return 'That is already a payout destination — either this person has one, or that Wise profile belongs to somebody else here.'
+    case 422:
+      return 'Enter their Wisetag, email or phone, and a three-letter currency.'
+    case 403:
+      return 'You cannot set this person’s payout destination.'
+    case 503:
+      return 'Wise is not connected on this instance.'
+    default:
+      return 'The payout destination could not be saved.'
+  }
+}
+
 export interface TeamDirectoryApi {
   getTeamStatus(signal?: AbortSignal): Promise<{ readonly enabled: boolean }>
   getTeamWeekStartDay?(
@@ -41,6 +111,21 @@ export interface TeamDirectoryApi {
     signal?: AbortSignal,
   ): Promise<TeamPersonSummaryPage>
   getTeamPerson(id: number, signal?: AbortSignal): Promise<TeamPerson>
+  /**
+   * Where a person is paid, and how they say so.
+   *
+   * Optional because a build without the Wise routes has no answer to give,
+   * and the panel that uses these hides itself rather than failing.
+   */
+  getWisePayoutDestination?(
+    userId: number,
+    signal?: AbortSignal,
+  ): Promise<WisePayoutDestinationState>
+  shareWiseProfile?(
+    input: { readonly userId: number; readonly identifier: string; readonly currency: string },
+    signal?: AbortSignal,
+  ): Promise<{ readonly name: string | null }>
+  removeWisePayoutDestination?(userId: number, signal?: AbortSignal): Promise<void>
   getTeamCatalog(signal?: AbortSignal): Promise<TeamCatalog>
   createTeamPerson(
     input: TeamPersonCreate,

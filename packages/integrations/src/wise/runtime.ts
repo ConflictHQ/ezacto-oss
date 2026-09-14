@@ -82,12 +82,37 @@ export type WiseShareOutcome =
   | { outcome: WiseLinkRefusal }
   | { outcome: "not_configured" };
 
+/**
+ * Where a person is paid, as a screen needs to show it.
+ *
+ * No identifier. A contact id is opaque and a recipient id is opaque, and
+ * neither tells anybody anything they could check -- what a person needs to see
+ * is that a destination exists, that Wise confirmed it, and when. The one thing
+ * worth reading is the kind, because "we hold your Wise profile" and "we hold
+ * an account somebody entered" are different promises.
+ */
+export interface WiseDestination {
+  readonly id: number;
+  readonly kind: "account" | "contact";
+  readonly linkedAt: string;
+  readonly linkedByUserId: number;
+  readonly verifiedAt: string | null;
+}
+
 /** The payout log, as this runtime needs it. */
 export interface WisePayoutAccountPort {
   listForUser(
     userId: number,
   ): Promise<
-    readonly { id: number; provider: string; externalId: string; verifiedAt: string | null }[]
+    readonly {
+      id: number;
+      provider: string;
+      externalId: string;
+      kind?: "account" | "contact";
+      linkedAt?: string;
+      linkedByUserId?: number;
+      verifiedAt: string | null;
+    }[]
   >;
   listForProvider(
     provider: "wise",
@@ -223,6 +248,16 @@ export interface WiseRuntime {
       currency: string;
       linkedByUserId: number;
     }): Promise<WiseShareOutcome>;
+    /** Where one person is currently paid, or nothing. */
+    readDestination(userId: number): Promise<WiseDestination | null>;
+    /**
+     * Removes a person's own destination.
+     *
+     * Addressed by person rather than by row, so the question "may you do this"
+     * has the same answer as "may you set it" -- and somebody who has just
+     * typed a tag that resolved to the wrong person can undo it themselves.
+     */
+    detachFor(userId: number): Promise<boolean>;
     unlink(accountId: number): Promise<boolean>;
   };
 }
@@ -512,6 +547,27 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
         // exactly what verified means everywhere else in this store.
         await accounts.markVerified(linked.account.id, now);
         return { outcome: "linked", contact: found.contact };
+      },
+
+      readDestination: async (userId) => {
+        const mine = (await accounts.listForUser(userId)).find(
+          (account) => account.provider === "wise",
+        );
+        if (mine === undefined) return null;
+        return {
+          id: mine.id,
+          kind: mine.kind ?? "account",
+          linkedAt: mine.linkedAt ?? "",
+          linkedByUserId: mine.linkedByUserId ?? 0,
+          verifiedAt: mine.verifiedAt,
+        };
+      },
+
+      detachFor: async (userId) => {
+        const mine = (await accounts.listForUser(userId)).find(
+          (account) => account.provider === "wise",
+        );
+        return mine === undefined ? false : accounts.detach(mine.id, instant());
       },
 
       unlink: async (accountId) => accounts.detach(accountId, instant()),
