@@ -1133,6 +1133,21 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.getTeamPerson({ id, ...withSignal(signal) })).data,
   getTeamCatalog: async (signal) =>
     (await client.getTeamCatalog(withSignal(signal))).data,
+  getWiseConnection: async (signal) => {
+    const { data } = await client.getWiseConnection(withSignal(signal))
+    return {
+      configured: data.configured,
+      connection:
+        data.connection === null
+          ? null
+          : {
+              profileId: data.connection.profile_id,
+              profileName: data.connection.profile_name,
+              payableRecipients: data.connection.payable_recipients,
+              webhooksVerifiable: data.connection.webhooks_verifiable,
+            },
+    }
+  },
   getWisePayoutDestination: async (userId, signal) => {
     const { data } = await client.getWisePayoutDestination({ userId, ...withSignal(signal) })
     return {

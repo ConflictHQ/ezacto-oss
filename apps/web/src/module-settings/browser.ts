@@ -241,6 +241,10 @@ export const createModuleSettingsController = (
   const emailStatus = required<HTMLElement>('[data-settings-email-status]')
   const emailSenders = required<HTMLElement>('[data-settings-sender-identities]')
   const emailReputation = required<HTMLElement>('[data-settings-email-reputation]')
+  const wiseSection = required<HTMLElement>('[data-settings-wise]')
+  const wiseStatus = required<HTMLElement>('[data-settings-wise-status]')
+  const wiseFacts = required<HTMLElement>('[data-settings-wise-facts]')
+  const wiseAlarm = required<HTMLElement>('[data-settings-wise-alarm]')
   const backupStatus = required<HTMLElement>('[data-settings-backup-status]')
   const backupAlarm = required<HTMLElement>('[data-settings-backup-alarm]')
   const backupFacts = required<HTMLElement>('[data-settings-backup-facts]')
@@ -987,6 +991,62 @@ export const createModuleSettingsController = (
     }
   }
 
+  /**
+   * The payout connection.
+   *
+   * No profile check of its own: `activate` refuses anyone who is not an
+   * administrator or an executive manager before any of these loaders run, so a
+   * second one here would be a branch nothing can reach. A build without the
+   * Wise routes hides the section rather than showing an empty one.
+   */
+  const loadWiseConnection = async (active: ActiveSession): Promise<void> => {
+    const read = api.getWiseConnection
+    if (read === undefined) return
+    wiseSection.hidden = false
+    try {
+      const state = await read(active.signal)
+      active.present(() => {
+        if (!state.configured || state.connection === null) {
+          wiseFacts.hidden = true
+          wiseAlarm.hidden = true
+          wiseStatus.textContent = state.configured
+            ? 'Wise is configured, but no profile could be read from the token.'
+            : 'Wise is not connected on this deployment. Payouts cannot be sent.'
+          return
+        }
+        const connection = state.connection
+        facts(wiseFacts, [
+          ['Paying profile', connection.profileName ?? `Profile ${connection.profileId}`],
+          ['People it can pay', connection.payableRecipients.toLocaleString('en-US')],
+          ['Delivery receipts', connection.webhooksVerifiable ? 'Verified' : 'Not verifiable'],
+        ])
+        wiseFacts.hidden = false
+        // The alarm, not a row to be scanned for. Money still leaves without a
+        // signing key; what stops is anything ever saying whether it arrived.
+        wiseAlarm.hidden = connection.webhooksVerifiable
+        wiseAlarm.textContent = connection.webhooksVerifiable
+          ? ''
+          : 'Wise has no signing key on this deployment, so every delivery it sends is refused. Payouts still go out and nothing records whether they arrived.'
+        // Nobody to pay is its own state: the connection is fine and the
+        // payment run has nothing in it, which reads as working until payday.
+        if (connection.payableRecipients === 0) {
+          wiseAlarm.hidden = false
+          wiseAlarm.textContent = `${wiseAlarm.textContent} No recipient is set up, so there is nobody this profile can pay.`.trim()
+        }
+        wiseStatus.textContent = ''
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        wiseFacts.hidden = true
+        wiseStatus.textContent = messageFor(
+          error,
+          'Only administrators and accounting can view the payout connection.',
+          'The payout connection could not be loaded.',
+        )
+      })
+    }
+  }
+
   const loadBackups = async (identity: Whoami, active: ActiveSession): Promise<void> => {
     if (identity.profile !== 'administrator') {
       backupStatus.textContent = 'Backups are visible to administrators only.'
@@ -1277,6 +1337,7 @@ export const createModuleSettingsController = (
         loadTimeTracking(active),
         loadEmail(identity, active),
         loadBackups(identity, active),
+        loadWiseConnection(active),
         loadQuickBooks(identity, active),
         loadInstanceTheme(identity, active),
         loadBrandAssets(identity, active),

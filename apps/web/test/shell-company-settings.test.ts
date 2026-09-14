@@ -910,4 +910,133 @@ describe('company settings', () => {
     )
   })
 
+describe('the payout connection on company settings (issues 421, 543)', () => {
+    const wiseApi = (
+      connection: {
+        configured: boolean
+        connection: {
+          profileId: string
+          profileName: string | null
+          payableRecipients: number
+          webhooksVerifiable: boolean
+        } | null
+      },
+    ) => ({
+      ...companyApi(),
+      getWiseConnection: vi.fn(async () => connection),
+    })
+  
+    const section = (): HTMLElement =>
+      document.querySelector<HTMLElement>('[data-settings-wise]')!
+  
+    it('[money] says which profile pays and how many people it can pay', async () => {
+      stubModulesEndpoint()
+      renderBrowserShell({ view: 'settings-company' })
+      await mountShell(
+        wiseApi({
+          configured: true,
+          connection: {
+            profileId: '22239672',
+            profileName: 'Example Firm LLC',
+            payableRecipients: 3,
+            webhooksVerifiable: true,
+          },
+        }),
+      )
+  
+      await vi.waitFor(() => expect(section().hidden).toBe(false))
+      await vi.waitFor(() =>
+        expect(
+          document.querySelector<HTMLElement>('[data-settings-wise-facts]')!.hidden,
+        ).toBe(false),
+      )
+      expect(section().textContent).toContain('Example Firm LLC')
+      expect(section().textContent).toContain('Verified')
+      expect(
+        document.querySelector<HTMLElement>('[data-settings-wise-alarm]')!.hidden,
+      ).toBe(true)
+    })
+  
+    it('[money] raises the alarm when Wise cannot tell us what became of a payout', async () => {
+      // Money still leaves without a signing key. What stops is anything ever
+      // saying whether it arrived, and that is invisible from everywhere else.
+      stubModulesEndpoint()
+      renderBrowserShell({ view: 'settings-company' })
+      await mountShell(
+        wiseApi({
+          configured: true,
+          connection: {
+            profileId: '22239672',
+            profileName: 'Example Firm LLC',
+            payableRecipients: 3,
+            webhooksVerifiable: false,
+          },
+        }),
+      )
+  
+      const alarm = document.querySelector<HTMLElement>('[data-settings-wise-alarm]')!
+      await vi.waitFor(() => expect(alarm.hidden).toBe(false))
+      expect(alarm.textContent).toContain('every delivery it sends is refused')
+    })
+  
+    it('[money] treats having nobody to pay as its own alarm', async () => {
+      // A healthy connection with an empty recipient list reads as working right
+      // up until payday.
+      stubModulesEndpoint()
+      renderBrowserShell({ view: 'settings-company' })
+      await mountShell(
+        wiseApi({
+          configured: true,
+          connection: {
+            profileId: '22239672',
+            profileName: 'Example Firm LLC',
+            payableRecipients: 0,
+            webhooksVerifiable: true,
+          },
+        }),
+      )
+  
+      const alarm = document.querySelector<HTMLElement>('[data-settings-wise-alarm]')!
+      await vi.waitFor(() => expect(alarm.hidden).toBe(false))
+      expect(alarm.textContent).toContain('nobody this profile can pay')
+    })
+  
+    it('says so plainly when the deployment has no Wise token', async () => {
+      stubModulesEndpoint()
+      renderBrowserShell({ view: 'settings-company' })
+      await mountShell(wiseApi({ configured: false, connection: null }))
+  
+      await vi.waitFor(() =>
+        expect(
+          document.querySelector<HTMLElement>('[data-settings-wise-status]')!.textContent,
+        ).toContain('Payouts cannot be sent'),
+      )
+    })
+  
+    it('[security] shows nobody else where the money leaves from', async () => {
+      // Which profile pays and how many people it can pay is a fact about the
+      // organisation's money. The whole company-settings controller refuses a
+      // member before any section loads, and this holds that: no section, and
+      // Wise is never asked.
+      stubModulesEndpoint()
+      renderBrowserShell({ view: 'settings-company' })
+      const getWiseConnection = vi.fn(async () => ({ configured: true, connection: null }))
+      await mountShell({
+        ...companyApi(),
+        whoami: vi.fn(async () => secondIdentity),
+        getWiseConnection,
+      })
+
+      expect(section().hidden).toBe(true)
+      expect(getWiseConnection).not.toHaveBeenCalled()
+    })
+
+    it('hides the section entirely in a build without the Wise routes', async () => {
+      stubModulesEndpoint()
+      renderBrowserShell({ view: 'settings-company' })
+      await mountShell(companyApi())
+  
+      expect(section().hidden).toBe(true)
+    })
+  })
 })
