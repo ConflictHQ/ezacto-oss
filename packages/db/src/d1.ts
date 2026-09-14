@@ -122,6 +122,19 @@ export {
   type OidcAppCodeStore,
 } from './oidc-app-codes.js'
 export {
+  createD1StaffMagicLinkStore,
+  type CreateStaffMagicLinkInput,
+  type StaffMagicLinkFlow,
+  type StaffMagicLinkRedemption,
+  type StaffMagicLinkCreation,
+  type StaffMagicLinkStore,
+} from './staff-magic-links.js'
+export {
+  createD1StaffUserDirectory,
+  type StaffUser,
+  type StaffUserDirectory,
+} from './staff-user-directory.js'
+export {
   createD1PasswordAuthService,
   AuthRateLimitError,
   FirstRunSignupUnavailableError,

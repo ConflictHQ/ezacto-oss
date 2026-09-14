@@ -13,7 +13,12 @@ import {
   type SenderBoundQueuedMailer,
   type SenderIdentityResolver,
 } from '@ezacto/mailer'
-import { createQueuedAuthMailer, type AuthMailer } from '@ezacto/api'
+import {
+  createQueuedAuthMailer,
+  createQueuedStaffMagicLinkMailer,
+  type AuthMailer,
+  type StaffMagicLinkMailer,
+} from '@ezacto/api'
 
 /** Cloudflare Queues producer adapter. Provider I/O never runs in fetch(). */
 export const createCloudflareEmailQueue = (
@@ -73,6 +78,21 @@ export const createWorkerDeploymentAuthMailer = (
     templates,
     organizationName,
     appOrigin,
+  )
+
+/** The staff sign-in email on the same queue as the other deployment mail. */
+export const createWorkerStaffMagicLinkMailer = (
+  queue: Queue<QueuedEmailJob>,
+  log: EmailLogStore,
+  from: string,
+  organizationName: () => Promise<string>,
+): StaffMagicLinkMailer =>
+  createQueuedStaffMagicLinkMailer(
+    createDeploymentSenderQueuedMailer(
+      from,
+      createQueuedMailer(log, createCloudflareEmailQueue(queue)),
+    ),
+    organizationName,
   )
 
 export const createWorkerOrganizationMailer = (
