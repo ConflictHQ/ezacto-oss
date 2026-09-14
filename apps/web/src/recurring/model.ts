@@ -27,6 +27,7 @@ import type {
   RecurringInvoiceInput,
 } from '@conflict-hq/ezacto-client'
 import { invoiceIdentityCanWrite } from '../invoices/model.js'
+import { parseDurationSeconds } from '../shell/model.js'
 
 export interface RecurringCursorPage<Resource> {
   readonly data: readonly Resource[]
@@ -389,6 +390,17 @@ export interface RecurringDefinitionFormValues {
    * billed twice.
    */
   readonly claimsProjectIds: readonly string[]
+  /**
+   * How much of the period the band takes, and in which unit (#707).
+   *
+   * `all` is the #484 behaviour. `ceiling` covers the oldest hours up to
+   * `claimCeiling` -- read as a duration or as cents of billable value at list,
+   * depending on `claimCeilingUnit` -- and leaves the overflow to be invoiced
+   * as ordinary time and materials.
+   */
+  readonly claimMode: 'all' | 'ceiling'
+  readonly claimCeilingUnit: 'time' | 'money'
+  readonly claimCeiling: string
   readonly importTime: boolean
   readonly timeSummary: string
   readonly importExpenses: boolean
@@ -611,7 +623,56 @@ export const recurringDefinitionInput = (
       values.claimsProjectIds.length === 0
         ? null
         : values.claimsProjectIds.map((id) => wholeNumberAbove(id, 'Covers the time on')),
+    ...claimCeilingBody(values),
   }
+}
+
+/**
+ * The ceiling, in whichever unit the operator chose (#707).
+ *
+ * A band that claims nothing is not a band, so its ceiling is dropped rather
+ * than sent: the API refuses a ceiling on a definition that claims no projects,
+ * and a stale number left in a hidden box is not something the operator asked
+ * for.
+ */
+const claimCeilingBody = (
+  values: Readonly<RecurringDefinitionFormValues>,
+): {
+  claim_mode: 'all' | 'ceiling'
+  claim_ceiling_seconds: number | null
+  claim_ceiling_cents: number | null
+} => {
+  if (values.claimsProjectIds.length === 0 || values.claimMode === 'all') {
+    return { claim_mode: 'all', claim_ceiling_seconds: null, claim_ceiling_cents: null }
+  }
+  return values.claimCeilingUnit === 'money'
+    ? {
+        claim_mode: 'ceiling',
+        claim_ceiling_seconds: null,
+        claim_ceiling_cents: wholeNumberAbove(values.claimCeiling, 'Claims up to'),
+      }
+    : {
+        claim_mode: 'ceiling',
+        claim_ceiling_seconds: parseDurationSeconds(values.claimCeiling),
+        claim_ceiling_cents: null,
+      }
+}
+
+/**
+ * Seconds back into something `parseDurationSeconds` reads again.
+ *
+ * Whole hours are the common case and read as "400h". Anything left over comes
+ * back as decimal minutes rather than being rounded away, so a value stored by
+ * some other caller survives being opened in this form and saved again.
+ */
+export const recurringDurationInput = (seconds: number): string => {
+  const hours = Math.floor(seconds / 3_600)
+  const minutes = (seconds - hours * 3_600) / 60
+  const trimmed = Number.isInteger(minutes)
+    ? String(minutes)
+    : minutes.toFixed(6).replace(/0+$/u, '').replace(/\.$/u, '')
+  if (minutes === 0) return `${hours}h`
+  return hours === 0 ? `${trimmed}m` : `${hours}h${trimmed}m`
 }
 
 export const recurringBlankLine = (): RecurringLineFormValues => ({
@@ -644,6 +705,9 @@ export const recurringBlankFormValues = (): RecurringDefinitionFormValues => ({
   lines: [recurringBlankLine()],
   projectIds: [],
   claimsProjectIds: [],
+  claimMode: 'all',
+  claimCeilingUnit: 'time',
+  claimCeiling: '',
   importTime: true,
   timeSummary: 'project',
   importExpenses: false,
@@ -677,6 +741,15 @@ export const recurringFormValuesFromDefinition = (
     // PATCH replaces the whole definition, so an editor that dropped this would
     // silently un-band an engagement whose day of month somebody corrected.
     claimsProjectIds: (definition.claims_project_ids ?? []).map(String),
+    claimMode: definition.claim_mode === 'ceiling' ? ('ceiling' as const) : ('all' as const),
+    claimCeilingUnit:
+      definition.claim_ceiling_cents === null ? ('time' as const) : ('money' as const),
+    claimCeiling:
+      definition.claim_ceiling_cents !== null
+        ? String(definition.claim_ceiling_cents)
+        : definition.claim_ceiling_seconds === null
+          ? ''
+          : recurringDurationInput(definition.claim_ceiling_seconds),
   }
   if (config.type === 'fixed_lines') {
     return {

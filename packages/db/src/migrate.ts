@@ -77,6 +77,7 @@ import { payoutDestinationKindMigration } from './migrations/0070_payout_destina
 import { sourceLineageMigration } from './migrations/0071_source_lineage.js'
 import { staffMagicLinksMigration } from './migrations/0072_staff_magic_links.js'
 import { emailHtmlTemplatesMigration } from './migrations/0073_email_html_templates.js'
+import { bandClaimModesMigration } from './migrations/0074_band_claim_modes.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL, statements_sha256 TEXT
@@ -1497,6 +1498,7 @@ const migrations = [
   { id: '0071_source_lineage', statements: sourceLineageMigration },
   { id: '0072_staff_magic_links', statements: staffMagicLinksMigration },
   { id: '0073_email_html_templates', statements: emailHtmlTemplatesMigration },
+  { id: '0074_band_claim_modes', statements: bandClaimModesMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

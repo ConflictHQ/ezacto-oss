@@ -133,6 +133,18 @@ export const renderRecurringPage = (view?: string): string => `
           <button type="button" data-recurring-editor-add-line>Add a line</button>
           <label>Covers the time on <span class="hint">Optional. A banded team: the amount stays the same and these projects' hours are claimed by it rather than billed.</span><select multiple size="4" data-recurring-editor-claims></select></label>
           <p class="hint">Leave this empty for an ordinary fixed invoice, which ignores tracked time entirely. Choosing projects makes the hours stop reading as uninvoiced, so they cannot be billed a second time, and records what the flat rate absorbed.</p>
+          <label>Claims<select data-recurring-editor-claim-mode>
+            <option value="all">Every uninvoiced hour on those projects</option>
+            <option value="ceiling">Up to a limit, then bill the rest as usual</option>
+          </select></label>
+          <div class="recurring-editor-ceiling" data-recurring-editor-ceiling hidden>
+            <label>Measured in<select data-recurring-editor-ceiling-unit>
+              <option value="time">Hours the band covers</option>
+              <option value="money">Value it covers, at list</option>
+            </select></label>
+            <label>Up to<span class="hint">Hours as <code>400h</code> or <code>1h30m</code>; value in cents.</span><input data-recurring-editor-ceiling-amount inputmode="text" autocomplete="off"></label>
+            <p class="hint">The oldest hours are claimed first, and an entry that would straddle the limit is left out whole rather than split. A value limit stops at work with no billable rate instead of treating it as free, so unpriced hours stay billable where somebody can see them.</p>
+          </div>
         </section>
         <section class="recurring-editor-import" data-recurring-editor-import hidden aria-labelledby="recurring-editor-import-heading">
           <h3 id="recurring-editor-import-heading">Uninvoiced work</h3>

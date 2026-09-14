@@ -61,6 +61,9 @@ const definition = (overrides: Partial<RecurringInvoice> = {}): RecurringInvoice
   },
   can_draw_from_retainer_id: null,
   claims_project_ids: null,
+  claim_mode: 'all',
+  claim_ceiling_seconds: null,
+  claim_ceiling_cents: null,
   created_at: timestamp,
   updated_at: timestamp,
   ...overrides,
@@ -316,6 +319,9 @@ describe('recurring definition editor input', () => {
       },
       can_draw_from_retainer_id: null,
       claims_project_ids: null,
+      claim_mode: 'all',
+      claim_ceiling_seconds: null,
+      claim_ceiling_cents: null,
     })
   })
 
@@ -569,5 +575,105 @@ describe('a banded engagement, from the form (#484)', () => {
     )
     expect(values.claimsProjectIds).toEqual(['7', '9'])
     expect(recurringFormValuesFromDefinition(definition()).claimsProjectIds).toEqual([])
+  })
+
+  const banded = (extra: Record<string, unknown>) => ({
+    ...recurringBlankFormValues(),
+    clientId: '1',
+    subjectTemplate: 'Banded team',
+    nextIssueOn: '2026-10-10',
+    lines: [
+      { kind: 'Service', description: 'Band', quantity: '1', unitPriceCents: '9368500',
+        taxed: false, taxed2: false, projectId: '', through: '', installments: '' },
+    ],
+    claimsProjectIds: ['7'],
+    ...extra,
+  })
+
+  it('[money] sends a ceiling in the unit the operator chose, and only that unit', () => {
+    // A capacity promise and a budget are different deals. Sending both numbers
+    // would be two answers to one question, and the API refuses it.
+    expect(
+      recurringDefinitionInput(
+        banded({ claimMode: 'ceiling', claimCeilingUnit: 'time', claimCeiling: '400h' }) as never,
+      ),
+    ).toMatchObject({
+      claim_mode: 'ceiling',
+      claim_ceiling_seconds: 1_440_000,
+      claim_ceiling_cents: null,
+    })
+    expect(
+      recurringDefinitionInput(
+        banded({
+          claimMode: 'ceiling',
+          claimCeilingUnit: 'money',
+          claimCeiling: '9368500',
+        }) as never,
+      ),
+    ).toMatchObject({
+      claim_mode: 'ceiling',
+      claim_ceiling_seconds: null,
+      claim_ceiling_cents: 9_368_500,
+    })
+  })
+
+  it('[money] drops a ceiling left behind on a definition that claims nothing', () => {
+    // Switching a band back to an ordinary fixed invoice leaves whatever was
+    // typed in the ceiling box. Sending it would be refused, and storing it
+    // would be a number somebody later assumes applied.
+    expect(
+      recurringDefinitionInput(
+        banded({
+          claimsProjectIds: [],
+          claimMode: 'ceiling',
+          claimCeilingUnit: 'money',
+          claimCeiling: '9368500',
+        }) as never,
+      ),
+    ).toMatchObject({
+      claim_mode: 'all',
+      claim_ceiling_seconds: null,
+      claim_ceiling_cents: null,
+    })
+  })
+
+  it('[money] reads a stored ceiling back in the unit it was stored in', () => {
+    // Same reason as the band itself: PATCH replaces the definition, so an
+    // editor that dropped the ceiling would quietly widen the band to every
+    // hour the next time somebody corrected an unrelated field.
+    const hours = recurringFormValuesFromDefinition(
+      definition({ claims_project_ids: [7], claim_mode: 'ceiling', claim_ceiling_seconds: 1_440_000 }),
+    )
+    expect(hours).toMatchObject({
+      claimMode: 'ceiling',
+      claimCeilingUnit: 'time',
+      claimCeiling: '400h',
+    })
+    const money = recurringFormValuesFromDefinition(
+      definition({ claims_project_ids: [7], claim_mode: 'ceiling', claim_ceiling_cents: 9_368_500 }),
+    )
+    expect(money).toMatchObject({
+      claimMode: 'ceiling',
+      claimCeilingUnit: 'money',
+      claimCeiling: '9368500',
+    })
+  })
+
+  it('[unit] renders a ceiling that is not whole hours as something it can read back', () => {
+    // A value written by some other caller must survive being opened in this
+    // form and saved again, rather than being rounded to the nearest hour.
+    const values = recurringFormValuesFromDefinition(
+      definition({ claims_project_ids: [7], claim_mode: 'ceiling', claim_ceiling_seconds: 5_430 }),
+    )
+    expect(values.claimCeiling).toBe('1h30.5m')
+    expect(
+      recurringDefinitionInput(
+        banded({
+          claimMode: 'ceiling',
+          claimCeilingUnit: 'time',
+          claimCeiling: values.claimCeiling,
+        }) as never,
+      ).claim_ceiling_seconds,
+    ).toBe(5_430)
   })
 })

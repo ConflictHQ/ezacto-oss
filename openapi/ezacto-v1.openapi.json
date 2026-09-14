@@ -27923,6 +27923,9 @@
           "amount_config",
           "can_draw_from_retainer_id",
           "claims_project_ids",
+          "claim_mode",
+          "claim_ceiling_seconds",
+          "claim_ceiling_cents",
           "created_at",
           "updated_at"
         ],
@@ -27976,6 +27979,35 @@
                   "type": "integer",
                   "minimum": 1
                 }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "claim_mode": {
+            "type": "string",
+            "enum": [
+              "all",
+              "ceiling"
+            ]
+          },
+          "claim_ceiling_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "claim_ceiling_cents": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
               },
               {
                 "type": "null"
@@ -28151,6 +28183,35 @@
                   "type": "integer",
                   "minimum": 1
                 }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "claim_mode": {
+            "type": "string",
+            "enum": [
+              "all",
+              "ceiling"
+            ]
+          },
+          "claim_ceiling_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "claim_ceiling_cents": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
               },
               {
                 "type": "null"
