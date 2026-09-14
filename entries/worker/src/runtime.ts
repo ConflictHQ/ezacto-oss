@@ -7,6 +7,8 @@ import {
   createD1IdentityStore,
   createD1OidcTransactionStore,
   createD1OidcAppCodeStore,
+  createD1StaffMagicLinkStore,
+  createD1StaffUserDirectory,
   createD1OutboxService,
   createQuickBooksMirrorSource,
   createQuickBooksStore,
@@ -101,6 +103,7 @@ import {
 import {
   createWorkerDeploymentAuthMailer,
   createWorkerOrganizationMailer,
+  createWorkerStaffMagicLinkMailer,
 } from "./email-queue.js";
 
 const cursorSecretPattern = /^[A-Za-z0-9_-]+$/;
@@ -571,6 +574,15 @@ export const createRuntimeServices = async (
           organizationName,
           env.APP_BASE_URL!,
         );
+  const staffMagicLinkMailer =
+    !emailQueueReady || mailFrom === undefined
+      ? undefined
+      : createWorkerStaffMagicLinkMailer(
+          env.EMAIL_QUEUE!,
+          emailLog,
+          mailFrom,
+          organizationName,
+        );
   const organizationMailer =
     !emailTransportReady
       ? undefined
@@ -997,6 +1009,18 @@ export const createRuntimeServices = async (
     identities,
     oidcTransactions: createD1OidcTransactionStore(database),
     oidcAppCodes: createD1OidcAppCodeStore(database),
+    ...(magicLinkSigningKey === undefined
+      ? {}
+      : {
+          staffMagicLinks: {
+            users: createD1StaffUserDirectory(database),
+            store: createD1StaffMagicLinkStore(database),
+            ...(staffMagicLinkMailer === undefined
+              ? {}
+              : { mailer: staffMagicLinkMailer }),
+            codeKey: magicLinkSigningKey,
+          },
+        }),
     ...(deploymentAuthMailer === undefined ? {} : { deploymentAuthMailer }),
     ...(organizationMailer === undefined ? {} : { organizationMailer }),
     ...(env.ATTACHMENTS === undefined

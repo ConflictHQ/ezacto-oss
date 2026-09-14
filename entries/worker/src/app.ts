@@ -31,6 +31,7 @@ import {
   installGitHubRoutes,
   installMoneyResourceRoutes,
   installOidcRoutes,
+  installStaffMagicLinkRoutes,
   installOutboxRoutes,
   installPasswordAuthRoutes,
   installPublicBrandAssetRoutes,
@@ -78,6 +79,9 @@ import {
   type OidcProviderConfig,
   type OidcTransactionStorePort,
   type OidcAppCodeStorePort,
+  type StaffMagicLinkMailer,
+  type StaffMagicLinkStorePort,
+  type StaffUserDirectory,
   type PasswordAuthService,
   type BackupStatusReader,
   type ReportReader,
@@ -282,6 +286,17 @@ export interface RuntimeServices {
   oidcTransactions: OidcTransactionStorePort
   /** Present only where the native-app OIDC sign-in handoff is enabled. */
   oidcAppCodes?: OidcAppCodeStorePort
+  /**
+   * Staff (user) magic-link sign-in. Present only where a code-signing key and
+   * a mailer both exist; the app-handoff leg also needs `oidcAppCodes`.
+   */
+  staffMagicLinks?: {
+    users: StaffUserDirectory
+    store: StaffMagicLinkStorePort
+    /** Absent where magic-link is on but no email transport is configured. */
+    mailer?: StaffMagicLinkMailer
+    codeKey: Uint8Array
+  }
   /** Deployment-brand sender for all authentication mail. */
   deploymentAuthMailer?: AuthMailer
   attachments?: AttachmentRouteOptions
@@ -638,6 +653,24 @@ export const createApp = (
         })
         if (services.portalAuth !== undefined) {
           installMagicLinkRoutes(app, services.portalAuth)
+        }
+        // The app-handoff leg mints a single-use OIDC app code, so staff
+        // magic-link needs the same store the OIDC sign-in does.
+        if (
+          services.staffMagicLinks !== undefined &&
+          services.oidcAppCodes !== undefined
+        ) {
+          installStaffMagicLinkRoutes(app, {
+            users: services.staffMagicLinks.users,
+            magicLinks: services.staffMagicLinks.store,
+            sessions: services.sessions,
+            appCodes: services.oidcAppCodes,
+            ...(services.staffMagicLinks.mailer === undefined
+              ? {}
+              : { mailer: services.staffMagicLinks.mailer }),
+            codeKey: services.staffMagicLinks.codeKey,
+            linkOrigin: (env) => redirectOrigin(env),
+          })
         }
       }
 

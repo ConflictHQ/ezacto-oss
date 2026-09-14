@@ -14,6 +14,8 @@ import {
   createContainerMagicLinkStore,
   createContainerOidcTransactionStore,
   createContainerOidcAppCodeStore,
+  createContainerStaffMagicLinkStore,
+  createContainerStaffUserDirectory,
   createMagicLinkService,
   createContainerOutboxService,
   createContainerPasswordAuthService,
@@ -72,6 +74,7 @@ import {
   thankYouInvoiceFromDeliveryContext,
   createPortalSessionService,
   createQueuedAuthMailer,
+  createQueuedStaffMagicLinkMailer,
   type AttachmentRouteOptions,
   type UserPrincipal,
 } from '@ezacto/api'
@@ -673,6 +676,24 @@ export const createContainerRuntime = async (
       identities: createContainerIdentityStore(database),
       oidcTransactions: createContainerOidcTransactionStore(database),
       oidcAppCodes: createContainerOidcAppCodeStore(database),
+      // Same opt-in as portalAuth below: mounted only with a code-signing key,
+      // never with a weak one. The container always has a mailer.
+      ...(config.magicLinkSigningKey === undefined
+        ? {}
+        : {
+            staffMagicLinks: {
+              users: createContainerStaffUserDirectory(database),
+              store: createContainerStaffMagicLinkStore(database),
+              mailer: createQueuedStaffMagicLinkMailer(
+                createDeploymentSenderQueuedMailer(
+                  config.smtp.from,
+                  queuedMailer,
+                ),
+                organizationName,
+              ),
+              codeKey: config.magicLinkSigningKey,
+            },
+          }),
       deploymentAuthMailer: createQueuedAuthMailer(
         createDeploymentSenderQueuedMailer(
           config.smtp.from,
