@@ -107,16 +107,26 @@ for (const [runtime, factory] of factories) {
     it('[unit] seeds all template types and appends immutable idempotent versions', async () => {
       harness = await factory()
       const templates = await harness.store.listTemplates()
-      // Account mail stays at the seeded version; the three client-facing
-      // kinds advanced in 0046, which put the invoice number in their subjects
-      // instead of the primary key.
-      expect(templates.map(({ kind, version }) => [kind, version])).toEqual([
-        ['auth_email_verification', 1],
-        ['auth_password_reset', 1],
-        ['invoice', 2],
-        ['reminder', 2],
-        ['thank_you', 2],
+      // Every kind is seeded, and the three client-facing ones have been
+      // revised more often than the account pair -- 0046 rewrote their
+      // subjects, which the account mail did not need.
+      //
+      // Not asserted as exact version numbers. The comment below already says
+      // this test is about append-immutability rather than about counting
+      // revisions, and a hardcoded number makes it fail every time any
+      // migration touches a template for an unrelated reason.
+      expect(templates.map(({ kind }) => kind)).toEqual([
+        'auth_email_verification',
+        'auth_password_reset',
+        'invoice',
+        'reminder',
+        'thank_you',
       ])
+      const versionOf = (kind: string): number =>
+        templates.find((template) => template.kind === kind)!.version
+      for (const kind of ['invoice', 'reminder', 'thank_you']) {
+        expect(versionOf(kind), kind).toBeGreaterThan(versionOf('auth_password_reset'))
+      }
       // Everything below appends onto whatever is current rather than assuming
       // a number: this test is about append-immutability and idempotency, and
       // it should not fail every time a migration touches a template.

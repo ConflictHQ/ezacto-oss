@@ -101,9 +101,12 @@ describe('Worker email queue composition', () => {
     expect(queuedJobs).toHaveLength(1)
     expect(queuedJobs[0]?.message).toMatchObject({
       from: { email: 'notify@example.test' },
-      template: 'auth_email_verification:v1',
       subject: 'Verify your Halcyon Studio email',
     })
+    // The kind, not the revision. What this claims is that signup queued the
+    // verification mail; the revision number never said that, and pinning it
+    // made this fail whenever a migration touched the template.
+    expect(queuedJobs[0]?.message.template).toMatch(/^auth_email_verification:v\d+$/u)
     expect(JSON.stringify(queuedJobs[0])).toContain('ezacto_verify_')
 
     const retries: number[] = []

@@ -168,9 +168,13 @@ describe('container runtime composition', () => {
     expect(captured).toHaveLength(1)
     expect(captured[0]).toMatchObject({
       from: { email: 'billing@example.test' },
-      template: 'auth_email_verification:v1',
       subject: 'Verify your Container Studio email',
     })
+    // The kind, not the revision. Pinning `:v1` made this fail whenever a
+    // migration touched the template for an unrelated reason -- 0073 gives
+    // every kind an HTML part -- and the claim here is that signup sent the
+    // verification mail, which the kind says and the number does not.
+    expect(captured[0]!.template).toMatch(/^auth_email_verification:v\d+$/u)
     const token = /ezacto_verify_[A-Za-z0-9_-]{16}_[A-Za-z0-9_-]{43}/u.exec(
       captured[0]!.text,
     )?.[0]
