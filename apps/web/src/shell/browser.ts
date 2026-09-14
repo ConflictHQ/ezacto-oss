@@ -12,6 +12,7 @@ import {
   type Whoami,
   type ApiToken,
   type CreateApiTokenInput,
+  type TwoFactorStatus,
 } from '@conflict-hq/ezacto-client'
 import { browserDensityStore, createDensityRuntime, type Density } from '../density.js'
 import { browserThemeStore, createThemeRuntime } from '../theme-preference.js'
@@ -1860,6 +1861,173 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     void reload()
   }
 
+  /** A definition list, written the way `renderUserSettings` writes its own. */
+  const writeFacts = (
+    target: HTMLElement,
+    rows: readonly (readonly [string, string])[],
+  ): void => {
+    target.replaceChildren(
+      ...rows.flatMap(([label, value]) => {
+        const term = document.createElement('dt')
+        term.textContent = label
+        const detail = document.createElement('dd')
+        detail.textContent = value
+        return [term, detail]
+      }),
+    )
+    target.hidden = false
+  }
+
+  /**
+   * Two-step sign-in (issue 485).
+   *
+   * An instance can require a second factor and nothing in the app could set
+   * one up, so enrolment was a terminal job for the people least likely to have
+   * one open. Nothing about signing in changes until a code from the
+   * authenticator is accepted, which is why the confirm step is the whole shape
+   * of this rather than a formality after it.
+   */
+  const wireTwoFactor = (): void => {
+    const section = document.querySelector<HTMLElement>('[data-settings-2fa]')
+    const read = api.getTwoFactorStatus
+    if (section === null || read === undefined) return
+    const status = required<HTMLElement>('[data-settings-2fa-status]')
+    const factsList = required<HTMLElement>('[data-settings-2fa-facts]')
+    const begin = required<HTMLButtonElement>('[data-settings-2fa-begin]')
+    const enrolment = required<HTMLElement>('[data-settings-2fa-enrolment]')
+    const secret = required<HTMLElement>('[data-settings-2fa-secret]')
+    const uri = required<HTMLElement>('[data-settings-2fa-uri]')
+    const recovery = required<HTMLElement>('[data-settings-2fa-recovery]')
+    const confirmForm = required<HTMLFormElement>('[data-settings-2fa-confirm-form]')
+    const confirmResult = required<HTMLElement>('[data-settings-2fa-confirm-result]')
+    const disableForm = required<HTMLFormElement>('[data-settings-2fa-disable-form]')
+    const disableResult = required<HTMLElement>('[data-settings-2fa-disable-result]')
+    section.hidden = false
+
+    const paint = (state: TwoFactorStatus): void => {
+      writeFacts(factsList, [
+        [
+          'Status',
+          state.enrolled
+            ? 'On'
+            : state.pending_confirmation
+              ? 'Started, not finished'
+              : 'Off',
+        ],
+        [
+          'Recovery codes left',
+          state.enrolled ? String(state.recovery_codes_remaining) : '—',
+        ],
+      ])
+      begin.hidden = state.enrolled
+      begin.textContent = state.pending_confirmation
+        ? 'Start again'
+        : 'Set up two-step sign-in'
+      disableForm.hidden = !state.enrolled
+      // An unfinished enrolment cannot be resumed: the secret was shown once
+      // and is not readable back, so the only honest offer is to start again.
+      status.textContent = state.pending_confirmation
+        ? 'An earlier setup was never finished. Starting again replaces it.'
+        : ''
+      // Running low is worth saying before the last one is used, because the
+      // moment they matter is the moment the authenticator is gone.
+      if (state.enrolled && state.recovery_codes_remaining <= 2) {
+        status.textContent =
+          'Few recovery codes left. Turn two-step sign-in off and on again to get a fresh set.'
+      }
+    }
+
+    const reload = async (): Promise<void> => {
+      try {
+        paint(await read())
+      } catch {
+        factsList.hidden = true
+        status.textContent = 'Two-step sign-in could not be loaded.'
+      }
+    }
+
+    begin.addEventListener('click', () => {
+      const start = api.beginTwoFactorEnrolment
+      if (start === undefined) return
+      begin.disabled = true
+      void (async () => {
+        try {
+          const started = await start()
+          secret.textContent = started.secret
+          uri.textContent = started.otpauth_uri
+          // Shown once, here. Each works one time, and they are the only way
+          // back in once the authenticator is gone.
+          recovery.replaceChildren(
+            ...started.recovery_codes.map((code) => {
+              const item = document.createElement('li')
+              item.textContent = code
+              return item
+            }),
+          )
+          enrolment.hidden = false
+          begin.hidden = true
+          confirmResult.textContent = ''
+        } catch {
+          status.textContent = 'Two-step sign-in could not be started.'
+        } finally {
+          begin.disabled = false
+        }
+      })()
+    })
+
+    confirmForm.addEventListener('submit', (event) => {
+      event.preventDefault()
+      const confirm = api.confirmTwoFactorEnrolment
+      if (confirm === undefined) return
+      const code = String(new FormData(confirmForm).get('code') ?? '').trim()
+      if (code === '') {
+        confirmResult.textContent = 'Enter the code your authenticator is showing.'
+        return
+      }
+      confirmResult.textContent = 'Checking…'
+      void (async () => {
+        try {
+          paint(await confirm(code))
+          // Gone from the screen the moment it takes effect: the codes were a
+          // one-time reveal, and leaving them up invites them being left up.
+          enrolment.hidden = true
+          recovery.replaceChildren()
+          secret.textContent = ''
+          uri.textContent = ''
+          confirmForm.reset()
+          confirmResult.textContent = ''
+        } catch {
+          confirmResult.textContent =
+            'That code was not accepted. Two-step sign-in is not on yet.'
+        }
+      })()
+    })
+
+    disableForm.addEventListener('submit', (event) => {
+      event.preventDefault()
+      const disable = api.disableTwoFactor
+      if (disable === undefined) return
+      const code = String(new FormData(disableForm).get('code') ?? '').trim()
+      if (code === '') {
+        disableResult.textContent = 'Enter a current code to turn it off.'
+        return
+      }
+      disableResult.textContent = 'Checking…'
+      void (async () => {
+        try {
+          paint(await disable(code))
+          disableForm.reset()
+          disableResult.textContent = 'Two-step sign-in is off.'
+        } catch {
+          disableResult.textContent =
+            'That code was not accepted. Two-step sign-in is still on.'
+        }
+      })()
+    })
+
+    void reload()
+  }
+
   const renderUserSettings = (identity: Readonly<Whoami>): void => {
     revealCompanySettings(identity)
     const facts = document.querySelector<HTMLElement>('[data-settings-user-facts]')
@@ -1886,6 +2054,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     settingsStatus.textContent = ''
     wireUserPayout(identity)
     wireApiTokens()
+    wireTwoFactor()
   }
 
   const handleSessionFailure = (

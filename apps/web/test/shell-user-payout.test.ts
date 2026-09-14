@@ -1,7 +1,7 @@
 /** @vitest-environment happy-dom */
 
 import { describe, expect, it, vi } from 'vitest'
-import type { ApiToken } from '@conflict-hq/ezacto-client'
+import type { ApiToken, TwoFactorStatus } from '@conflict-hq/ezacto-client'
 import {
   EzactoApiError,
   browserApi,
@@ -310,5 +310,168 @@ describe('your API tokens in your own settings', () => {
     await mountShell(browserApi())
 
     expect(document.querySelector<HTMLElement>('[data-settings-tokens]')!.hidden).toBe(true)
+  })
+})
+
+/**
+ * Two-step sign-in (issue 485).
+ *
+ * An instance can require a second factor and nothing in the app could set one
+ * up, so enrolment was a terminal job for exactly the people least likely to
+ * have one open.
+ */
+describe('two-step sign-in in your own settings', () => {
+  const status = (overrides: Partial<TwoFactorStatus> = {}): TwoFactorStatus => ({
+    enrolled: false,
+    pending_confirmation: false,
+    recovery_codes_remaining: 0,
+    ...overrides,
+  })
+
+  const twoFactorApi = (overrides: Record<string, unknown> = {}) => ({
+    ...browserApi(),
+    getTwoFactorStatus: vi.fn(async () => status()),
+    beginTwoFactorEnrolment: vi.fn(async () => ({
+      secret: 'JBSWY3DPEHPK3PXP',
+      otpauth_uri: 'otpauth://totp/ezacto:someone@example.test?secret=JBSWY3DPEHPK3PXP',
+      recovery_codes: ['aaaa-1111', 'bbbb-2222'],
+    })),
+    confirmTwoFactorEnrolment: vi.fn(async () =>
+      status({ enrolled: true, recovery_codes_remaining: 2 }),
+    ),
+    disableTwoFactor: vi.fn(async () => status()),
+    ...overrides,
+  })
+
+  const panel = (): HTMLElement => document.querySelector<HTMLElement>('[data-settings-2fa]')!
+  const enrolment = (): HTMLElement =>
+    document.querySelector<HTMLElement>('[data-settings-2fa-enrolment]')!
+
+  it('shows the key and the recovery codes once the setup is started', async () => {
+    renderBrowserShell({ view: 'settings-user' })
+    await mountShell(twoFactorApi())
+
+    await vi.waitFor(() => expect(panel().hidden).toBe(false))
+    document.querySelector<HTMLButtonElement>('[data-settings-2fa-begin]')!.click()
+
+    await vi.waitFor(() => expect(enrolment().hidden).toBe(false))
+    expect(enrolment().textContent).toContain('JBSWY3DPEHPK3PXP')
+    expect(enrolment().textContent).toContain('aaaa-1111')
+    // Shown once, and said so: these are the only way back in once the
+    // authenticator is gone.
+    expect(enrolment().textContent).toContain('Shown once')
+  })
+
+  it('[security] changes nothing about signing in until a code is accepted', async () => {
+    // A screen that said "on" before the code was checked would leave somebody
+    // believing they were protected by a secret their app never took.
+    renderBrowserShell({ view: 'settings-user' })
+    const confirmTwoFactorEnrolment = vi.fn(async () => {
+      throw new EzactoApiError(422, { error: { code: 'invalid_code' } }, null)
+    })
+    await mountShell(twoFactorApi({ confirmTwoFactorEnrolment }))
+
+    await vi.waitFor(() => expect(panel().hidden).toBe(false))
+    document.querySelector<HTMLButtonElement>('[data-settings-2fa-begin]')!.click()
+    await vi.waitFor(() => expect(enrolment().hidden).toBe(false))
+
+    const form = document.querySelector<HTMLFormElement>('[data-settings-2fa-confirm-form]')!
+    ;(form.elements.namedItem('code') as HTMLInputElement).value = '000000'
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector<HTMLElement>('[data-settings-2fa-confirm-result]')!.textContent,
+      ).toContain('not on yet'),
+    )
+    expect(panel().textContent).toContain('Off')
+  })
+
+  it('[security] clears the secret and the codes the moment it takes effect', async () => {
+    // Leaving a one-time reveal on the screen is how it ends up left on the
+    // screen.
+    renderBrowserShell({ view: 'settings-user' })
+    await mountShell(twoFactorApi())
+
+    await vi.waitFor(() => expect(panel().hidden).toBe(false))
+    document.querySelector<HTMLButtonElement>('[data-settings-2fa-begin]')!.click()
+    await vi.waitFor(() => expect(enrolment().hidden).toBe(false))
+
+    const form = document.querySelector<HTMLFormElement>('[data-settings-2fa-confirm-form]')!
+    ;(form.elements.namedItem('code') as HTMLInputElement).value = '123456'
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() => expect(enrolment().hidden).toBe(true))
+    expect(enrolment().textContent).not.toContain('JBSWY3DPEHPK3PXP')
+    expect(enrolment().textContent).not.toContain('aaaa-1111')
+    expect(panel().textContent).toContain('On')
+  })
+
+  it('[security] needs a current code to turn it off', async () => {
+    renderBrowserShell({ view: 'settings-user' })
+    const disableTwoFactor = vi.fn(async () => status())
+    await mountShell(
+      twoFactorApi({
+        getTwoFactorStatus: vi.fn(async () =>
+          status({ enrolled: true, recovery_codes_remaining: 5 }),
+        ),
+        disableTwoFactor,
+      }),
+    )
+
+    const form = document.querySelector<HTMLFormElement>('[data-settings-2fa-disable-form]')!
+    await vi.waitFor(() => expect(form.hidden).toBe(false))
+    // Empty is refused here rather than at the server, so a borrowed session
+    // cannot turn it off by submitting nothing.
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    expect(disableTwoFactor).not.toHaveBeenCalled()
+
+    ;(form.elements.namedItem('code') as HTMLInputElement).value = '123456'
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(disableTwoFactor).toHaveBeenCalledWith('123456'))
+  })
+
+  it('says an unfinished setup has to start again rather than offering to resume', async () => {
+    // The secret was a one-time reveal and is not readable back, so resuming is
+    // not a thing this can honestly offer.
+    renderBrowserShell({ view: 'settings-user' })
+    await mountShell(
+      twoFactorApi({
+        getTwoFactorStatus: vi.fn(async () => status({ pending_confirmation: true })),
+      }),
+    )
+
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector<HTMLElement>('[data-settings-2fa-status]')!.textContent,
+      ).toContain('never finished'),
+    )
+    expect(
+      document.querySelector<HTMLButtonElement>('[data-settings-2fa-begin]')!.textContent,
+    ).toBe('Start again')
+  })
+
+  it('[security] warns before the recovery codes run out, not after', async () => {
+    renderBrowserShell({ view: 'settings-user' })
+    await mountShell(
+      twoFactorApi({
+        getTwoFactorStatus: vi.fn(async () =>
+          status({ enrolled: true, recovery_codes_remaining: 1 }),
+        ),
+      }),
+    )
+
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector<HTMLElement>('[data-settings-2fa-status]')!.textContent,
+      ).toContain('Few recovery codes left'),
+    )
+  })
+
+  it('stays out of the way in a build without the two-factor endpoints', async () => {
+    renderBrowserShell({ view: 'settings-user' })
+    await mountShell(browserApi())
+
+    expect(panel().hidden).toBe(true)
   })
 })
