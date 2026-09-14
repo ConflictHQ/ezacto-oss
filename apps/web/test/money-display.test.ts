@@ -304,7 +304,7 @@ describe('money display preference', () => {
     // reach for the marker fails here rather than shipping a figure the toggle
     // cannot put away.
     const formatter =
-      /\b(?:formatMoney|invoiceMoney|expenseMoney|projectMoney|retainerMoney|retainerAmount|recurringMoney|teamMoney|formatTaskRate|formatReportMoney|formatReportCents|retainerCommitmentLabel|retainerBalanceLabel|recurringAmountLabel|expenseCategoryPricingLabel)\(/u
+      /\b(?:formatMoney|invoiceMoney|expenseMoney|projectMoney|retainerMoney|retainerAmount|recurringMoney|teamMoney|formatTaskRate|formatReportMoney|formatReportCents|retainerCommitmentLabel|retainerBalanceLabel|recurringAmountLabel|expenseCategoryPricingLabel|clientMoney)\(/u
     const controllers = (await filesUnder(resolve(root, 'src'))).filter(
       (path) => path.endsWith('browser.ts') && !path.includes('generated'),
     )

@@ -429,3 +429,24 @@ export const clientRollupHref = (
   window: { readonly from: string; readonly to: string },
 ): string =>
   `/reports?report=client-rollup&from=${window.from}&to=${window.to}&client_id=${clientId}`
+
+/**
+ * A client figure, in the currency it was billed in.
+ *
+ * Named and living here rather than at the call site, which is what the money
+ * guards are for: a list of formatter names cannot see an amount built inline,
+ * and an amount it cannot see is one the hide-money toggle leaves on screen.
+ *
+ * A currency the organization typed in is not necessarily one ICU knows, and a
+ * client screen is not the place to throw over it -- the same guard the expense
+ * and project screens carry around the same call.
+ */
+export const clientMoney = (cents: number, currency: string): string => {
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100)
+  } catch {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(
+      cents / 100,
+    )
+  }
+}

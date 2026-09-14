@@ -1,17 +1,18 @@
 import { renderDataTable } from '../components/data-table.js'
+import { markMoney } from '../money-display.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
 import { canManageClientTerms } from '../commercial-terms.js'
-import { EzactoApiError, type GeneralResource, type Whoami } from '@conflict-hq/ezacto-client'
 import {
   EzactoApiError,
   type GeneralResource,
   type Invoice,
   type Retainer,
   type Whoami,
-} from '@ezacto/client'
+} from '@conflict-hq/ezacto-client'
 import { retainerAmount } from '../retainers/model.js'
 import {
   clientBudgetBurn,
+  clientMoney,
   clientBurnWindow,
   clientDisplayName,
   clientHierarchy,
@@ -142,20 +143,6 @@ const percentLabel = (value: unknown): string =>
 const countLabel = (count: number, singular: string): string =>
   `${count.toLocaleString('en-US')} ${count === 1 ? singular : `${singular}s`}`
 
-/**
- * A currency the organization typed in is not necessarily one ICU knows, and a
- * client screen is not the place to throw over it -- the same guard the expense
- * and project screens carry around the same call.
- */
-const money = (cents: number, currency: string): string => {
-  try {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100)
-  } catch {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(
-      cents / 100,
-    )
-  }
-}
 
 /**
  * The calendar date in the reader's own zone, the way the reports screen reads
@@ -672,7 +659,7 @@ export const createClientDirectoryController = (
             key: 'due',
             label: 'Due',
             numeric: true,
-            render: (row) => money(row.dueCents, row.currency),
+            render: (row) => clientMoney(row.dueCents, row.currency),
           },
           {
             key: 'overdue',
@@ -683,11 +670,15 @@ export const createClientDirectoryController = (
             render: (row) =>
               row.overdueCount === 0
                 ? 'None'
-                : `${money(row.overdueCents, row.currency)} (${countLabel(row.overdueCount, 'invoice')})`,
+                : `${clientMoney(row.overdueCents, row.currency)} (${countLabel(row.overdueCount, 'invoice')})`,
           },
         ],
       }),
     )
+    // Marked so the hide-money toggle reaches these the way it reaches every
+    // other amount: a screen that never says which of its numbers are money is
+    // one the rule cannot mask.
+    markMoney(rollupInvoices)
   }
 
   const renderRetainerBalances = (balances: readonly ClientRetainerBalance[]): void => {
@@ -730,6 +721,7 @@ export const createClientDirectoryController = (
         ],
       }),
     )
+    markMoney(rollupRetainers)
   }
 
   const renderBurn = (burns: readonly ClientBudgetBurn[]): void => {
@@ -745,23 +737,24 @@ export const createClientDirectoryController = (
             key: 'cost',
             label: 'Labour cost',
             numeric: true,
-            render: (row) => money(row.costCents, row.currency),
+            render: (row) => clientMoney(row.costCents, row.currency),
           },
           {
             key: 'expense',
             label: 'Expenses',
             numeric: true,
-            render: (row) => money(row.expenseCents, row.currency),
+            render: (row) => clientMoney(row.expenseCents, row.currency),
           },
           {
             key: 'burn',
             label: 'Burn',
             numeric: true,
-            render: (row) => money(row.burnCents, row.currency),
+            render: (row) => clientMoney(row.burnCents, row.currency),
           },
         ],
       }),
     )
+    markMoney(rollupBurn)
   }
 
   /**
