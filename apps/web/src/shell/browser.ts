@@ -10,9 +10,12 @@ import {
   type TimesheetSubmission,
   type TimesheetSubmissionDetail,
   type Whoami,
+  type ApiToken,
+  type CreateApiTokenInput,
 } from '@conflict-hq/ezacto-client'
 import { browserDensityStore, createDensityRuntime, type Density } from '../density.js'
 import { browserThemeStore, createThemeRuntime } from '../theme-preference.js'
+import { renderDataTable } from '../components/data-table.js'
 import { defaultTheme, themeManifest } from '../theme.js'
 import {
   payoutFailure,
@@ -1724,6 +1727,139 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     void reload()
   }
 
+  /**
+   * The tokens you have issued (issue 485).
+   *
+   * Issuing one has been a terminal job: the endpoints shipped and no control
+   * reached them. They are scoped to the acting user by the routes themselves,
+   * so this belongs on the page that is yours rather than on the company one.
+   */
+  const wireApiTokens = (): void => {
+    const section = document.querySelector<HTMLElement>('[data-settings-tokens]')
+    const read = api.listApiTokens
+    if (section === null || read === undefined) return
+    const status = required<HTMLElement>('[data-settings-tokens-status]')
+    const table = required<HTMLElement>('[data-settings-tokens-table]')
+    const form = required<HTMLFormElement>('[data-settings-token-form]')
+    const result = required<HTMLElement>('[data-settings-token-result]')
+    const submit = required<HTMLButtonElement>('[data-settings-token-submit]')
+    const issued = required<HTMLElement>('[data-settings-token-issued]')
+    const issuedValue = required<HTMLElement>('[data-settings-token-value]')
+    section.hidden = false
+
+    const paint = (tokens: readonly ApiToken[]): void => {
+      const live = tokens.filter((token) => token.revoked_at === null)
+      status.textContent = live.length === 0 ? 'You have no API tokens.' : ''
+      table.hidden = live.length === 0
+      if (live.length === 0) {
+        table.replaceChildren()
+        return
+      }
+      table.replaceChildren(
+        renderDataTable<ApiToken>({
+          caption: 'API tokens',
+          rows: [...live],
+          rowKey: (token) => String(token.id),
+          columns: [
+            { key: 'name', label: 'Name', render: (token) => token.name },
+            // The hint, never the token: the value is stored hashed and shown
+            // once, and a screen that could print it again would mean it was
+            // recoverable.
+            { key: 'hint', label: 'Token', render: (token) => token.token_hint },
+            {
+              key: 'scopes',
+              label: 'Scopes',
+              render: (token) => token.scopes.join(', '),
+            },
+            {
+              key: 'used',
+              label: 'Last used',
+              // A token nobody has ever used is the one worth revoking, and
+              // "never" says that where an empty cell reads as a loading bug.
+              render: (token) => token.last_used_at ?? 'Never',
+            },
+            {
+              key: 'expires',
+              label: 'Expires',
+              render: (token) => token.expires_at ?? 'Never',
+            },
+          ],
+          actions: (token) => [
+            {
+              label: 'Revoke',
+              primary: true,
+              disabled: api.revokeApiToken === undefined,
+              onSelect: () => {
+                const revoke = api.revokeApiToken
+                if (revoke === undefined) return
+                result.textContent = 'Revoking…'
+                void revoke(token.id)
+                  .then(async () => {
+                    result.textContent = `Revoked ${token.name}.`
+                    paint(await read())
+                  })
+                  .catch(() => {
+                    result.textContent = 'The token could not be revoked.'
+                  })
+              },
+            },
+          ],
+        }),
+      )
+    }
+
+    const reload = async (): Promise<void> => {
+      try {
+        paint(await read())
+      } catch {
+        table.hidden = true
+        status.textContent = 'Your API tokens could not be loaded.'
+      }
+    }
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault()
+      const create = api.createApiToken
+      if (create === undefined) return
+      const data = new FormData(form)
+      const name = String(data.get('name') ?? '').trim()
+      const scopes = data.getAll('scopes').map(String)
+      const expires = String(data.get('expires_at') ?? '').trim()
+      if (name === '' || scopes.length === 0) {
+        result.textContent = 'Name the token and tick at least one scope.'
+        return
+      }
+      submit.disabled = true
+      result.textContent = 'Issuing…'
+      void (async () => {
+        try {
+          const token = await create({
+            name,
+            scopes: scopes as CreateApiTokenInput['scopes'],
+            ...(expires === '' ? {} : { expires_at: expires }),
+          })
+          // Once. The value is stored hashed, so this is the only moment it
+          // exists anywhere a person can read it.
+          issuedValue.textContent = token.token
+          issued.hidden = false
+          result.textContent = ''
+          form.reset()
+          await reload()
+        } catch (error) {
+          issued.hidden = true
+          result.textContent =
+            error instanceof EzactoApiError && error.status === 403
+              ? 'Your permission profile cannot grant one or more of those scopes.'
+              : 'The token could not be issued.'
+        } finally {
+          submit.disabled = false
+        }
+      })()
+    })
+
+    void reload()
+  }
+
   const renderUserSettings = (identity: Readonly<Whoami>): void => {
     revealCompanySettings(identity)
     const facts = document.querySelector<HTMLElement>('[data-settings-user-facts]')
@@ -1749,6 +1885,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     facts.hidden = false
     settingsStatus.textContent = ''
     wireUserPayout(identity)
+    wireApiTokens()
   }
 
   const handleSessionFailure = (

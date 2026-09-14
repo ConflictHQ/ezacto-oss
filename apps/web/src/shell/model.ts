@@ -25,6 +25,9 @@ import {
   type TimesheetUnlockInput,
   type TimesheetWithdrawalInput,
   type Whoami,
+  type ApiToken,
+  type CreateApiTokenInput,
+  type IssuedApiToken,
 } from '@conflict-hq/ezacto-client'
 import type { InvoiceState } from '../invoices/model.js'
 import type { ActivityRow } from '../activity/browser.js'
@@ -91,6 +94,18 @@ export interface ShellApi
     query: { readonly from?: string; readonly to?: string; readonly event_type?: string },
     signal?: AbortSignal,
   ): Promise<{ readonly data: readonly ActivityRow[] }>
+  /**
+   * The tokens you have issued, and issuing another (issue 485).
+   *
+   * Yours alone: the routes scope every one of these to the acting user, so
+   * this is a personal-settings surface rather than an administrative one.
+   */
+  listApiTokens?(signal?: AbortSignal): Promise<readonly ApiToken[]>
+  createApiToken?(
+    input: CreateApiTokenInput,
+    signal?: AbortSignal,
+  ): Promise<IssuedApiToken>
+  revokeApiToken?(tokenId: number, signal?: AbortSignal): Promise<void>
   /** What was sent, and what became of it (issue 485). */
   listEmailLog?(
     query: { readonly status?: EmailLogStatus },
@@ -1133,6 +1148,12 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.getTeamPerson({ id, ...withSignal(signal) })).data,
   getTeamCatalog: async (signal) =>
     (await client.getTeamCatalog(withSignal(signal))).data,
+  listApiTokens: async (signal) => (await client.listApiTokens(withSignal(signal))).data,
+  createApiToken: async (input, signal) =>
+    (await client.createApiToken({ body: input, ...withSignal(signal) })).data,
+  revokeApiToken: async (tokenId, signal) => {
+    await client.revokeApiToken({ tokenId, ...withSignal(signal) })
+  },
   getWiseConnection: async (signal) => {
     const { data } = await client.getWiseConnection(withSignal(signal))
     return {
