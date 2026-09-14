@@ -209,3 +209,126 @@ describe('one run per occurrence (#63)', () => {
     ).toThrow(/cannot gain items/u)
   })
 })
+
+/**
+ * Issue 62. A confirmed run executes durably, per item, and a resume never
+ * repeats work that already happened.
+ *
+ * The reason state lives on the item rather than the run: a run that half
+ * worked is neither done nor undone, and re-running it from a run-level flag
+ * repeats the half that succeeded. For a month-end pack, that is sending
+ * invoices to clients twice.
+ */
+describe('executing a confirmed run, exactly once per item (#62)', () => {
+  const confirmed = async (store: ScheduledActionStore) => {
+    const proposed = await propose(store)
+    if (proposed.outcome !== 'proposed') throw new Error(proposed.outcome)
+    const ok = await store.confirm(proposed.run.id, 1, t(10))
+    if (ok.outcome !== 'confirmed') throw new Error(ok.outcome)
+    return proposed.run.id
+  }
+
+  it('[money] a resume does not repeat what already completed', async () => {
+    const { store } = await fixture()
+    const runId = await confirmed(store)
+    const [first, second] = await store.outstanding(runId)
+
+    // The first item ran; then the process died holding the second.
+    await store.claimItem(first!.id, t(11))
+    await store.completeItem(first!.id, t(11))
+    await store.claimItem(second!.id, t(11))
+
+    // What a resume picks up: the one left running, and not the one done.
+    const afterCrash = await store.outstanding(runId)
+    expect(afterCrash.map((row) => row.id)).toEqual([second!.id])
+    expect(afterCrash[0]?.state).toBe('running')
+  })
+
+  it('[money] a completed item can never be claimed or moved again', async () => {
+    const { sqlite: database, store } = await fixture()
+    const runId = await confirmed(store)
+    const [first] = await store.outstanding(runId)
+    await store.claimItem(first!.id, t(11))
+    await store.completeItem(first!.id, t(11))
+
+    // Through the store it is simply unclaimable...
+    expect(await store.claimItem(first!.id, t(12))).toBe(false)
+    expect(await store.completeItem(first!.id, t(12))).toBe(false)
+    // ...and the schema refuses it even to a writer going around the store,
+    // which is what makes a resume safe to run as often as it likes.
+    expect(() =>
+      database.prepare(`UPDATE run_items SET state = 'pending' WHERE id = ?`).run(first!.id),
+    ).toThrow(/cannot run again/u)
+  })
+
+  it('[money] a re-run after partial failure touches only the failed item', async () => {
+    const { store } = await fixture()
+    const runId = await confirmed(store)
+    const [first, second] = await store.outstanding(runId)
+    await store.claimItem(first!.id, t(11))
+    await store.completeItem(first!.id, t(11))
+    await store.claimItem(second!.id, t(11))
+    await store.failItem(second!.id, t(11), 'the client has no invoice address')
+
+    const retry = await store.outstanding(runId)
+    expect(retry.map((row) => row.id)).toEqual([second!.id])
+    // The reason is carried, because whoever re-runs it decides from that.
+    expect(retry[0]?.failureReason).toBe('the client has no invoice address')
+    expect(retry[0]?.attemptCount).toBe(1)
+  })
+
+  it('[money] counts attempts, so an item failing forever is visible as that', async () => {
+    const { store } = await fixture()
+    const runId = await confirmed(store)
+    const [first] = await store.outstanding(runId)
+    for (const hour of [11, 12, 13]) {
+      await store.claimItem(first!.id, t(hour))
+      await store.failItem(first!.id, t(hour), 'still unreachable')
+    }
+    expect((await store.outstanding(runId))[0]?.attemptCount).toBe(3)
+  })
+
+  it('[money] the run is not finished while anything is outstanding', async () => {
+    const { store } = await fixture()
+    const runId = await confirmed(store)
+    const [first, second] = await store.outstanding(runId)
+    await store.claimItem(first!.id, t(11))
+    await store.completeItem(first!.id, t(11))
+
+    // A partial run stays visibly partial. Reporting it finished would leave
+    // items nobody ever did and nobody was told about.
+    expect(await store.settleRun(runId, t(12))).toBe(false)
+    expect((await store.read(runId))?.state).toBe('confirmed')
+
+    await store.claimItem(second!.id, t(12))
+    await store.completeItem(second!.id, t(12))
+    expect(await store.settleRun(runId, t(13))).toBe(true)
+    expect((await store.read(runId))?.state).toBe('completed')
+  })
+
+  it('[money] nothing executes for a run nobody confirmed', async () => {
+    // 0067 stops a settled run changing state; this stops its items moving
+    // underneath it, which is the last place to refuse before work happens.
+    const { store } = await fixture()
+    const proposed = await propose(store)
+    if (proposed.outcome !== 'proposed') throw new Error(proposed.outcome)
+    const [first] = await store.outstanding(proposed.run.id)
+    await expect(store.claimItem(first!.id, t(11))).rejects.toThrow(/only a confirmed run/u)
+  })
+
+  it('[money] a result must say when it finished or why it did not', async () => {
+    const { sqlite: database, store } = await fixture()
+    const runId = await confirmed(store)
+    const [first] = await store.outstanding(runId)
+    expect(() =>
+      database
+        .prepare(`UPDATE run_items SET state = 'done', completed_at = NULL WHERE id = ?`)
+        .run(first!.id),
+    ).toThrow(/must say when or why/u)
+    expect(() =>
+      database
+        .prepare(`UPDATE run_items SET state = 'failed', failure_reason = NULL WHERE id = ?`)
+        .run(first!.id),
+    ).toThrow(/must say when or why/u)
+  })
+})

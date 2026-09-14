@@ -25,6 +25,7 @@ type Database =
   | DrizzleD1Database<typeof schema>
 
 export type RunState = 'proposed' | 'confirmed' | 'cancelled' | 'expired' | 'completed'
+export type RunItemState = 'pending' | 'running' | 'done' | 'failed'
 
 export interface RunItemInput {
   subjectType: string
@@ -40,6 +41,10 @@ export interface RunItemRecord extends RunItemInput {
   amountCents: number | null
   currency: string | null
   target: string | null
+  state: RunItemState
+  attemptCount: number
+  failureReason: string | null
+  completedAt: string | null
 }
 
 export interface ProposedRunRecord {
@@ -97,6 +102,37 @@ const run = (row: RunRow): ProposedRunRecord => ({
 const columns = `id, job_id, occurrence_key, state, proposed_at, expires_at,
   confirmed_by_user_id, confirmed_at, settled_reason`
 
+interface ItemRow {
+  id: number
+  subject_type: string
+  subject_id: number
+  description: string
+  amount_cents: number | null
+  currency: string | null
+  target: string | null
+  state: RunItemState
+  attempt_count: number
+  failure_reason: string | null
+  completed_at: string | null
+}
+
+const item = (row: ItemRow): RunItemRecord => ({
+  id: row.id,
+  subjectType: row.subject_type,
+  subjectId: row.subject_id,
+  description: row.description,
+  amountCents: row.amount_cents,
+  currency: row.currency,
+  target: row.target,
+  state: row.state,
+  attemptCount: row.attempt_count,
+  failureReason: row.failure_reason,
+  completedAt: row.completed_at,
+})
+
+const itemColumns = `id, subject_type, subject_id, description, amount_cents,
+  currency, target, state, attempt_count, failure_reason, completed_at`
+
 export interface ScheduledActionStore {
   /**
    * Materializes a run with its manifest, or refuses.
@@ -122,6 +158,36 @@ export interface ScheduledActionStore {
    * a caller can say what lapsed rather than only that something did.
    */
   expire(now: string): Promise<readonly number[]>
+
+  /**
+   * The items this run still owes, oldest first (#62).
+   *
+   * Everything not already done: pending, failed, and anything left `running`
+   * by a process that died holding it. That last one is the point -- a resume
+   * has to pick those up, and it is safe to because a done item can never be
+   * claimed again.
+   */
+  outstanding(runId: number): Promise<readonly RunItemRecord[]>
+  /**
+   * Marks an item as being worked on, before the work.
+   *
+   * Returns false where the item is already done, which is how a second worker
+   * -- or a resume racing the original -- is told to leave it alone. Writing
+   * only on success would make a kill between the work and the write look
+   * identical to a kill before it, and the safe reading of that ambiguity is to
+   * redo the work: for an email, that is sending it twice.
+   */
+  claimItem(itemId: number, now: string): Promise<boolean>
+  completeItem(itemId: number, now: string): Promise<boolean>
+  failItem(itemId: number, now: string, reason: string): Promise<boolean>
+  /**
+   * Moves the run to completed once nothing is outstanding.
+   *
+   * Returns false while anything is still pending or failed, so a partial run
+   * stays visibly partial rather than reading as finished with some items
+   * quietly never done.
+   */
+  settleRun(runId: number, now: string): Promise<boolean>
 }
 
 export const createScheduledActionStore = (database: Database): ScheduledActionStore => ({
@@ -167,26 +233,9 @@ export const createScheduledActionStore = (database: Database): ScheduledActionS
 
   manifest: async (runId) =>
     (
-      await database.all<{
-        id: number
-        subject_type: string
-        subject_id: number
-        description: string
-        amount_cents: number | null
-        currency: string | null
-        target: string | null
-      }>(sql`
-        SELECT id, subject_type, subject_id, description, amount_cents, currency, target
-        FROM run_items WHERE run_id = ${runId} ORDER BY id`)
-    ).map((row) => ({
-      id: row.id,
-      subjectType: row.subject_type,
-      subjectId: row.subject_id,
-      description: row.description,
-      amountCents: row.amount_cents,
-      currency: row.currency,
-      target: row.target,
-    })),
+      await database.all<ItemRow>(sql`
+        SELECT ${sql.raw(itemColumns)} FROM run_items WHERE run_id = ${runId} ORDER BY id`)
+    ).map(item),
 
   /**
    * Confirms a standing run.
@@ -235,4 +284,51 @@ export const createScheduledActionStore = (database: Database): ScheduledActionS
         WHERE state = 'proposed' AND expires_at <= ${now}
         RETURNING id`)
     ).map((row) => row.id),
+
+  outstanding: async (runId) =>
+    (
+      await database.all<ItemRow>(sql`
+        SELECT ${sql.raw(itemColumns)} FROM run_items
+        WHERE run_id = ${runId} AND state <> 'done'
+        ORDER BY id`)
+    ).map(item),
+
+  claimItem: async (itemId, now) => {
+    const rows = await database.all<{ id: number }>(sql`
+      UPDATE run_items
+      SET state = 'running', attempted_at = ${now}, attempt_count = attempt_count + 1
+      WHERE id = ${itemId} AND state <> 'done'
+      RETURNING id`)
+    return rows.length > 0
+  },
+
+  completeItem: async (itemId, now) => {
+    const rows = await database.all<{ id: number }>(sql`
+      UPDATE run_items
+      SET state = 'done', completed_at = ${now}, failure_reason = NULL
+      WHERE id = ${itemId} AND state <> 'done'
+      RETURNING id`)
+    return rows.length > 0
+  },
+
+  failItem: async (itemId, now, reason) => {
+    const rows = await database.all<{ id: number }>(sql`
+      UPDATE run_items
+      SET state = 'failed', failure_reason = ${reason}, attempted_at = ${now}
+      WHERE id = ${itemId} AND state <> 'done'
+      RETURNING id`)
+    return rows.length > 0
+  },
+
+  settleRun: async (runId, now) => {
+    const rows = await database.all<{ id: number }>(sql`
+      UPDATE proposed_runs
+      SET state = 'completed', settled_at = ${now}, updated_at = ${now}
+      WHERE id = ${runId} AND state = 'confirmed'
+        AND NOT EXISTS (
+          SELECT 1 FROM run_items WHERE run_id = ${runId} AND state <> 'done'
+        )
+      RETURNING id`)
+    return rows.length > 0
+  },
 })
