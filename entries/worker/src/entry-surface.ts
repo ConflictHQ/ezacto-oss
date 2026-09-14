@@ -36,6 +36,14 @@ export const UNDOCUMENTED_ROUTES: readonly string[] = [
   'post /portal/magic-link',
   'get /portal/verify',
   'get /portal/statements',
+  // Staff magic-link sign-in, the user-facing sibling of the portal set above
+  // and gated on the same key. The verify leg is a browser/app redirect with no
+  // client call; request and exchange are called by the native app over raw
+  // fetch, not a generated client -- so, like the OIDC app-code handoff, they
+  // stay out of the generated client and, unlike it, out of the document too.
+  'post /auth/magic-link',
+  'get /auth/magic-link/verify',
+  'post /auth/magic-link/exchange',
 ]
 
 /**
@@ -89,6 +97,17 @@ export const PORTAL_ROUTES: readonly string[] = [
 ]
 
 /**
+ * Staff magic-link sign-in, gated on the very same key as the portal set: one
+ * `MAGIC_LINK_SIGNING_KEY` turns both on, so they share the `portal` flag
+ * rather than inventing a second one that is always equal to the first.
+ */
+export const STAFF_MAGIC_LINK_ROUTES: readonly string[] = [
+  'post /auth/magic-link',
+  'get /auth/magic-link/verify',
+  'post /auth/magic-link/exchange',
+]
+
+/**
  * Every API, auth and portal route an app composes, in the form the lists above
  * use. `/portal` is in the sweep because leaving it out is how three routes
  * stayed unreachable in every deployment without either half of the guard
@@ -130,7 +149,7 @@ export const expectedApiRoutes = (
   },
 ): ReadonlySet<string> => {
   const gatedOff = new Set([
-    ...(options.portal ? [] : PORTAL_ROUTES),
+    ...(options.portal ? [] : [...PORTAL_ROUTES, ...STAFF_MAGIC_LINK_ROUTES]),
     ...(options.quickBooks === true ? [] : QUICKBOOKS_ROUTES),
     ...(options.wise === true ? [] : WISE_ROUTES),
     ...(entry === 'worker' ? CONTAINER_ONLY_ROUTES : WORKER_ONLY_ROUTES),

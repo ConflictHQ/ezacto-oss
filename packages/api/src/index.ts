@@ -281,6 +281,21 @@ export {
   type OidcTransaction,
   type OidcTransactionStorePort,
 } from './oidc.js'
+export { createQueuedStaffMagicLinkMailer } from './staff-magic-link-email.js'
+export {
+  installStaffMagicLinkRoutes,
+  STAFF_MAGIC_LINK_TTL_MS,
+  STAFF_MAGIC_LINK_THROTTLE_MS,
+  STAFF_MAGIC_LINK_MAX_CODE_ATTEMPTS,
+  DEFAULT_STAFF_MAGIC_LINK_APP_REDIRECT_URI,
+  type StaffMagicLinkDelivery,
+  type StaffMagicLinkFlow,
+  type StaffMagicLinkMailer,
+  type StaffMagicLinkRouteOptions,
+  type StaffMagicLinkStorePort,
+  type StaffSessionIssuer,
+  type StaffUserDirectory,
+} from './staff-magic-link.js'
 export * from './resources/index.js'
 export { serializeMany, serializeOne, type Serializer } from './serializer.js'
 export {

@@ -2,7 +2,7 @@ import BetterSqlite3 from 'better-sqlite3'
 import { inspectEmailTemplateVariables } from '@ezacto/core'
 import { afterEach, describe, expect, it } from 'vitest'
 import { migrateContainer, migrateContainerThrough } from '../src/migrate.js'
-import { emailHtmlTemplatesMigration } from '../src/migrations/0072_email_html_templates.js'
+import { emailHtmlTemplatesMigration } from '../src/migrations/0073_email_html_templates.js'
 
 const at = '2026-09-11T12:00:00.000Z'
 let sqlite: BetterSqlite3.Database | null = null
@@ -106,7 +106,7 @@ describe('the html templates', () => {
     // is not a reason to discard it.
     const database = new BetterSqlite3(':memory:')
     sqlite = database
-    migrateContainerThrough(database, '0071_source_lineage')
+    migrateContainerThrough(database, '0072_staff_magic_links')
     database.exec(`
       INSERT INTO organizations (name, modules, created_at, updated_at)
         VALUES ('Fixture', '{}', '${at}', '${at}');
