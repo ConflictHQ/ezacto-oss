@@ -350,6 +350,15 @@ export interface RecurringInvoiceResource {
   next_issue_on: string
   amount_config: RecurringAmountConfig
   can_draw_from_retainer_id: number | null
+  /**
+   * The projects whose time this flat amount covers (#484).
+   *
+   * Null is an ordinary recurring invoice: a fixed amount that ignores tracked
+   * time. A non-empty list makes it a banded engagement -- the amount stays
+   * flat and the named projects' unbilled hours are claimed by it, so they stop
+   * reading as uninvoiced and cannot be billed twice.
+   */
+  claims_project_ids: readonly number[] | null
   created_at: string
   updated_at: string
 }
@@ -366,6 +375,8 @@ export interface RecurringInvoiceInput {
   nextIssueOn: string
   amountConfig: RecurringAmountConfig
   canDrawFromRetainerId: number | null
+  /** See `claims_project_ids` above. Null for an ordinary definition. */
+  claimsProjectIds: readonly number[] | null
   occurredAt: string
 }
 
@@ -872,7 +883,10 @@ const retainerSelect = `SELECT retainer.id, retainer.client_id, retainer.project
   FROM retainers retainer
   LEFT JOIN retainer_balances balance ON balance.retainer_id = retainer.id`
 
-type RawRecurring = Omit<RecurringInvoiceResource, 'amount_config'> & { amount_config: unknown }
+type RawRecurring = Omit<
+  RecurringInvoiceResource,
+  'amount_config' | 'claims_project_ids'
+> & { amount_config: unknown; claims_project_ids: string | null }
 
 /**
  * A definition an import could not finish, and what is riding on it (issue 648).
@@ -919,7 +933,8 @@ export type CompleteRecurringOutcome =
 
 const recurringSelect = `SELECT id, client_id, subject_template, notes_template,
   every_n_months, day_of_month, next_issue_on, amount_config,
-  can_draw_from_retainer_id, created_at, updated_at FROM recurring_invoices
+  can_draw_from_retainer_id, claims_project_ids, created_at, updated_at
+  FROM recurring_invoices
   WHERE definition_status = 'complete'`
 
 const hydrateRecurring = (row: RawRecurring): RecurringInvoiceResource => ({
@@ -929,6 +944,13 @@ const hydrateRecurring = (row: RawRecurring): RecurringInvoiceResource => ({
     type: 'fixed_lines',
     line_items: [],
   }),
+  // Stored as a JSON array; null stays null, because "covers no projects" and
+  // "is not a banded engagement" are the same statement and an empty array
+  // would be a third spelling of it. The column's own CHECK refuses one.
+  claims_project_ids:
+    row.claims_project_ids === null
+      ? null
+      : parseJson<number[]>(row.claims_project_ids, []),
 })
 
 export class MoneyResourceRepository {
@@ -1997,6 +2019,10 @@ export class MoneyResourceRepository {
         next_issue_on: input.nextIssueOn,
         amount_config: input.amountConfig,
         can_draw_from_retainer_id: input.canDrawFromRetainerId,
+        // In the fingerprint, or two definitions differing only in what they
+        // claim would share a command identity and the second would replay as
+        // the first.
+        claims_project_ids: input.claimsProjectIds,
       },
     })
     const expected = {
@@ -2016,6 +2042,7 @@ export class MoneyResourceRepository {
       next_issue_on: input.nextIssueOn,
       amount_config: input.amountConfig,
       can_draw_from_retainer_id: input.canDrawFromRetainerId,
+      claims_project_ids: input.claimsProjectIds,
       created_at: input.occurredAt,
       updated_at: input.occurredAt,
     }
@@ -2025,8 +2052,8 @@ export class MoneyResourceRepository {
           text: `INSERT INTO recurring_invoices (
             id, client_id, definition_status, subject_template, notes_template,
             every_n_months, day_of_month, next_issue_on, amount_config,
-            can_draw_from_retainer_id, created_at, updated_at
-          ) VALUES (?, ?, 'complete', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            can_draw_from_retainer_id, claims_project_ids, created_at, updated_at
+          ) VALUES (?, ?, 'complete', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           params: [
             input.resourceId,
             input.clientId,
@@ -2037,6 +2064,7 @@ export class MoneyResourceRepository {
             input.nextIssueOn,
             JSON.stringify(input.amountConfig),
             input.canDrawFromRetainerId,
+            input.claimsProjectIds === null ? null : JSON.stringify(input.claimsProjectIds),
             input.occurredAt,
             input.occurredAt,
           ],
@@ -2087,7 +2115,8 @@ export class MoneyResourceRepository {
     const result = await run(this.database, {
       text: `UPDATE recurring_invoices SET client_id = ?, subject_template = ?,
         notes_template = ?, every_n_months = ?, day_of_month = ?, next_issue_on = ?,
-        amount_config = ?, can_draw_from_retainer_id = ?, updated_at = ?
+        amount_config = ?, can_draw_from_retainer_id = ?, claims_project_ids = ?,
+        updated_at = ?
         WHERE id = ? AND definition_status = 'complete'`,
       params: [
         input.clientId,
@@ -2098,6 +2127,7 @@ export class MoneyResourceRepository {
         input.nextIssueOn,
         JSON.stringify(input.amountConfig),
         input.canDrawFromRetainerId,
+        input.claimsProjectIds === null ? null : JSON.stringify(input.claimsProjectIds),
         input.occurredAt,
         id,
       ],
@@ -2216,8 +2246,8 @@ export class MoneyResourceRepository {
       {
         text: `UPDATE recurring_invoices SET client_id = ?, subject_template = ?,
           notes_template = ?, every_n_months = ?, day_of_month = ?, next_issue_on = ?,
-          amount_config = ?, can_draw_from_retainer_id = ?, updated_at = ?,
-          definition_status = 'complete'
+          amount_config = ?, can_draw_from_retainer_id = ?, claims_project_ids = ?,
+          updated_at = ?, definition_status = 'complete'
           WHERE id = ? AND definition_status = 'incomplete'`,
         params: [
           input.clientId,
@@ -2228,6 +2258,7 @@ export class MoneyResourceRepository {
           input.nextIssueOn,
           amountConfig,
           input.canDrawFromRetainerId,
+          input.claimsProjectIds === null ? null : JSON.stringify(input.claimsProjectIds),
           input.occurredAt,
           id,
         ],
@@ -2241,6 +2272,17 @@ export class MoneyResourceRepository {
     assertPositiveId(input.clientId, 'clientId')
     if (input.canDrawFromRetainerId !== null) {
       assertPositiveId(input.canDrawFromRetainerId, 'canDrawFromRetainerId')
+    }
+    if (input.claimsProjectIds !== null) {
+      // An empty list would be a second spelling of "not a banded engagement",
+      // and the column's own CHECK refuses one. Saying so here means the caller
+      // hears it as a validation error rather than a constraint failure.
+      if (input.claimsProjectIds.length === 0) {
+        throw new TypeError('claimsProjectIds must name at least one project, or be null')
+      }
+      for (const projectId of input.claimsProjectIds) {
+        assertPositiveId(projectId, 'claimsProjectIds')
+      }
     }
     if (input.subjectTemplate.trim().length === 0) {
       throw new TypeError('subjectTemplate must be non-empty')

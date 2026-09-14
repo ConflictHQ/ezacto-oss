@@ -131,6 +131,8 @@ export const renderRecurringPage = (view?: string): string => `
           <p class="hint">A line with a <em>through</em> date stops appearing once that day has passed. Give it an installment total as well and it can count itself off in its own description with <code>%line_installment_number%</code> and <code>%line_installment_total%</code> — "CREDIT 2 of 4".</p>
           <div data-recurring-editor-line-list></div>
           <button type="button" data-recurring-editor-add-line>Add a line</button>
+          <label>Covers the time on <span class="hint">Optional. A banded team: the amount stays the same and these projects' hours are claimed by it rather than billed.</span><select multiple size="4" data-recurring-editor-claims></select></label>
+          <p class="hint">Leave this empty for an ordinary fixed invoice, which ignores tracked time entirely. Choosing projects makes the hours stop reading as uninvoiced, so they cannot be billed a second time, and records what the flat rate absorbed.</p>
         </section>
         <section class="recurring-editor-import" data-recurring-editor-import hidden aria-labelledby="recurring-editor-import-heading">
           <h3 id="recurring-editor-import-heading">Uninvoiced work</h3>

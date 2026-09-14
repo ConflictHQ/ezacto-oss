@@ -209,6 +209,19 @@ const seed = async (database: TestDatabase): Promise<void> => {
     seedTime,
     seedTime,
   );
+  // One project per client. A banded definition names the projects whose time
+  // its flat amount covers, and 0060's trigger refuses one belonging to another
+  // client -- so the seed needs both to exercise either side.
+  await database.run(
+    `INSERT INTO projects (id, client_id, name, code, created_at, updated_at)
+     VALUES
+      (1, 1, 'Phase 1', 'P1', ?, ?),
+      (2, 2, 'Other Phase', 'P2', ?, ?)`,
+    seedTime,
+    seedTime,
+    seedTime,
+    seedTime,
+  );
   await database.run(
     `INSERT INTO retainers (
       id, client_id, state, denomination, amount_cents, seconds,
@@ -2782,6 +2795,174 @@ for (const [runtime, factory] of factories) {
           "SELECT count(*) AS count FROM resource_create_commands",
         ),
       ).toEqual([{ count: 0 }]);
+    });
+
+    /**
+     * Issue 484. The banded billing model has been in the engine since 0060 and
+     * nothing could turn it on: `claims_project_ids` had no field on the API
+     * and no control on any screen, so a flat-rate engagement could only be
+     * configured with a SQL statement. The same defect #485 catalogued as
+     * columns with no control, on the one column that decides whether a month's
+     * hours are claimed or billed.
+     */
+    it("[money] stores the projects a banded definition claims, and hands them back", async () => {
+      const test = await setup();
+      const created = await test.request(
+        "/api/v1/recurring-invoices",
+        jsonRequest(
+          "POST",
+          {
+            client_id: 1,
+            subject_template: "Banded team",
+            notes_template: "",
+            every_n_months: 1,
+            day_of_month: 10,
+            next_issue_on: "2026-10-10",
+            amount_config: {
+              schema_version: 1,
+              type: "fixed_lines",
+              line_items: [
+                {
+                  kind: "Service",
+                  description: null,
+                  quantity: 1,
+                  unit_price_cents: 9_368_500,
+                  taxed: false,
+                  taxed2: false,
+                  project_id: null,
+                },
+              ],
+            },
+            can_draw_from_retainer_id: null,
+            claims_project_ids: [1],
+          },
+          "banded-create",
+        ),
+      );
+      expect(created.status).toBe(201);
+      expect(await responseData<{ claims_project_ids: number[] }>(created)).toMatchObject({
+        claims_project_ids: [1],
+      });
+    });
+
+    it("[money] refuses a project belonging to another client", async () => {
+      // Claiming across clients would put one client's work inside another's
+      // invoice, and the time-entry trigger would refuse the claim every month
+      // at generation anyway. Refusing the definition is the earlier, kinder
+      // failure.
+      const test = await setup();
+      const response = await test.request(
+        "/api/v1/recurring-invoices",
+        jsonRequest(
+          "POST",
+          {
+            client_id: 1,
+            subject_template: "Banded team",
+            notes_template: "",
+            every_n_months: 1,
+            day_of_month: 10,
+            next_issue_on: "2026-10-10",
+            amount_config: {
+              schema_version: 1,
+              type: "fixed_lines",
+              line_items: [
+                {
+                  kind: "Service",
+                  description: null,
+                  quantity: 1,
+                  unit_price_cents: 9_368_500,
+                  taxed: false,
+                  taxed2: false,
+                  project_id: null,
+                },
+              ],
+            },
+            can_draw_from_retainer_id: null,
+            claims_project_ids: [2],
+          },
+          "banded-cross-client",
+        ),
+      );
+      expect(response.status).not.toBe(201);
+    });
+
+    it("[money] refuses an empty list rather than storing a null nobody asked for", async () => {
+      // Empty and null would otherwise be two spellings of "not banded", and
+      // the column's own CHECK forbids one of them. A caller that sent `[]`
+      // meant something, which is worth saying back to them.
+      const test = await setup();
+      const response = await test.request(
+        "/api/v1/recurring-invoices",
+        jsonRequest(
+          "POST",
+          {
+            client_id: 1,
+            subject_template: "Banded team",
+            notes_template: "",
+            every_n_months: 1,
+            day_of_month: 10,
+            next_issue_on: "2026-10-10",
+            amount_config: {
+              schema_version: 1,
+              type: "fixed_lines",
+              line_items: [
+                {
+                  kind: "Service",
+                  description: null,
+                  quantity: 1,
+                  unit_price_cents: 9_368_500,
+                  taxed: false,
+                  taxed2: false,
+                  project_id: null,
+                },
+              ],
+            },
+            can_draw_from_retainer_id: null,
+            claims_project_ids: [],
+          },
+          "banded-empty",
+        ),
+      );
+      expect(response.status).toBe(422);
+    });
+
+    it("[money] refuses an id that is not a positive integer", async () => {
+      const test = await setup();
+      for (const claims of [[0], [-1], ["1"], [1.5], "1"]) {
+        const response = await test.request(
+          "/api/v1/recurring-invoices",
+          jsonRequest(
+            "POST",
+            {
+              client_id: 1,
+              subject_template: "Banded team",
+              notes_template: "",
+              every_n_months: 1,
+              day_of_month: 10,
+              next_issue_on: "2026-10-10",
+              amount_config: {
+                schema_version: 1,
+                type: "fixed_lines",
+                line_items: [
+                  {
+                    kind: "Service",
+                    description: null,
+                    quantity: 1,
+                    unit_price_cents: 9_368_500,
+                    taxed: false,
+                    taxed2: false,
+                    project_id: null,
+                  },
+                ],
+              },
+              can_draw_from_retainer_id: null,
+              claims_project_ids: claims,
+            },
+            `banded-bad-${JSON.stringify(claims)}`,
+          ),
+        );
+        expect(response.status, JSON.stringify(claims)).toBe(422);
+      }
     });
 
     it("[api] validates recurring definitions and exposes complete CRUD", async () => {

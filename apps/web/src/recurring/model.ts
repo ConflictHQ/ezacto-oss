@@ -374,7 +374,21 @@ export interface RecurringDefinitionFormValues {
   readonly retainerId: string
   readonly amountType: RecurringAmountType
   readonly lines: readonly RecurringLineFormValues[]
+  /**
+   * The projects an import sweeps. Not the same thing as `claimsProjectIds`
+   * below, and the difference is the whole of #484: this one prices the time it
+   * finds, and that one refuses to.
+   */
   readonly projectIds: readonly string[]
+  /**
+   * The projects a flat amount covers (#484).
+   *
+   * Empty is an ordinary fixed invoice, which ignores tracked time. Non-empty
+   * makes it a banded engagement: the amount stays flat and these projects'
+   * hours are claimed by it, so they stop reading as uninvoiced and cannot be
+   * billed twice.
+   */
+  readonly claimsProjectIds: readonly string[]
   readonly importTime: boolean
   readonly timeSummary: string
   readonly importExpenses: boolean
@@ -590,6 +604,13 @@ export const recurringDefinitionInput = (
     amount_config: amountConfig,
     can_draw_from_retainer_id:
       retainerId === '' ? null : wholeNumberAbove(retainerId, 'Retainer'),
+    // Null rather than an empty array: the two would be different spellings of
+    // "not a banded engagement", and the API refuses the empty one rather than
+    // quietly accepting a third state.
+    claims_project_ids:
+      values.claimsProjectIds.length === 0
+        ? null
+        : values.claimsProjectIds.map((id) => wholeNumberAbove(id, 'Covers the time on')),
   }
 }
 
@@ -622,6 +643,7 @@ export const recurringBlankFormValues = (): RecurringDefinitionFormValues => ({
   amountType: 'fixed_lines',
   lines: [recurringBlankLine()],
   projectIds: [],
+  claimsProjectIds: [],
   importTime: true,
   timeSummary: 'project',
   importExpenses: false,
@@ -652,6 +674,9 @@ export const recurringFormValuesFromDefinition = (
       definition.can_draw_from_retainer_id === null
         ? ''
         : String(definition.can_draw_from_retainer_id),
+    // PATCH replaces the whole definition, so an editor that dropped this would
+    // silently un-band an engagement whose day of month somebody corrected.
+    claimsProjectIds: (definition.claims_project_ids ?? []).map(String),
   }
   if (config.type === 'fixed_lines') {
     return {

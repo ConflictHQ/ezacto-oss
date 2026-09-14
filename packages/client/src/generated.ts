@@ -1747,6 +1747,7 @@ export type RecurringInvoice = {
   "next_issue_on": string;
   "amount_config": RecurringAmountConfig;
   "can_draw_from_retainer_id": number | null;
+  "claims_project_ids": Array<number> | null;
   "created_at": string;
   "updated_at": string;
 };
@@ -1786,6 +1787,7 @@ export type RecurringInvoiceInput = {
   "next_issue_on": string;
   "amount_config": RecurringAmountConfig;
   "can_draw_from_retainer_id"?: number | null;
+  "claims_project_ids"?: Array<number> | null;
 };
 
 export type MyHoursProject = {

@@ -60,6 +60,7 @@ const definition = (overrides: Partial<RecurringInvoice> = {}): RecurringInvoice
     ],
   },
   can_draw_from_retainer_id: null,
+  claims_project_ids: null,
   created_at: timestamp,
   updated_at: timestamp,
   ...overrides,
@@ -314,6 +315,7 @@ describe('recurring definition editor input', () => {
         ],
       },
       can_draw_from_retainer_id: null,
+      claims_project_ids: null,
     })
   })
 
@@ -515,5 +517,57 @@ describe('recurring definition editor input', () => {
         authentication: { kind: 'token', token_id: 1, scopes: ['invoices:write'] },
       }),
     ).toBe(true)
+  })
+})
+
+/**
+ * Issue 484. A banded engagement bills a flat amount and claims the period's
+ * hours rather than pricing them. The model has held that since 0060 and no
+ * screen could set it, so the arrangement could only be configured with a SQL
+ * statement.
+ */
+describe('a banded engagement, from the form (#484)', () => {
+  it('[money] sends the projects a flat amount covers', () => {
+    const values = {
+      ...recurringBlankFormValues(),
+      clientId: '1',
+      subjectTemplate: 'Banded team',
+      nextIssueOn: '2026-10-10',
+      lines: [
+        { kind: 'Service', description: 'Band', quantity: '1', unitPriceCents: '9368500',
+          taxed: false, taxed2: false, projectId: '', through: '', installments: '' },
+      ],
+      claimsProjectIds: ['7', '9'],
+    }
+    expect(recurringDefinitionInput(values as never)).toMatchObject({
+      claims_project_ids: [7, 9],
+    })
+  })
+
+  it('[money] sends null for an ordinary fixed invoice, never an empty list', () => {
+    // Empty and null would be two spellings of "not banded", and the API
+    // refuses the empty one rather than accepting a third state.
+    const values = {
+      ...recurringBlankFormValues(),
+      clientId: '1',
+      subjectTemplate: 'Monthly',
+      nextIssueOn: '2026-10-10',
+      lines: [
+        { kind: 'Service', description: 'Retainer', quantity: '1', unitPriceCents: '10000',
+          taxed: false, taxed2: false, projectId: '', through: '', installments: '' },
+      ],
+    }
+    expect(recurringDefinitionInput(values as never).claims_project_ids).toBeNull()
+  })
+
+  it('[money] reads a stored band back, so editing another field cannot un-band it', () => {
+    // PATCH replaces the whole definition. An editor that dropped this would
+    // silently turn a banded engagement into one that bills the time as well,
+    // the next time somebody corrected its day of month.
+    const values = recurringFormValuesFromDefinition(
+      definition({ claims_project_ids: [7, 9] }),
+    )
+    expect(values.claimsProjectIds).toEqual(['7', '9'])
+    expect(recurringFormValuesFromDefinition(definition()).claimsProjectIds).toEqual([])
   })
 })

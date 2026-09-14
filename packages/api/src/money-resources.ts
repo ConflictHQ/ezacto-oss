@@ -217,6 +217,15 @@ interface RecurringInput {
   nextIssueOn: string;
   amountConfig: RecurringAmountConfig;
   canDrawFromRetainerId: number | null;
+  /**
+   * The projects whose time this flat amount covers (#484).
+   *
+   * Null is the ordinary recurring invoice: a fixed amount that ignores tracked
+   * time. A non-empty list makes it a banded engagement, and the named
+   * projects' unbilled hours are claimed by the invoice rather than priced into
+   * it -- so they stop reading as uninvoiced and cannot be billed twice.
+   */
+  claimsProjectIds: readonly number[] | null;
   occurredAt: string;
 }
 
@@ -2803,6 +2812,55 @@ const installRetainers = <Bindings extends object>(
   api.post("/retainers/:id/drawdowns", (context) => append(context, true));
 };
 
+/**
+ * The projects a banded definition claims (#484).
+ *
+ * Absent and null are the same answer -- an ordinary recurring invoice -- and
+ * an empty list is refused rather than quietly treated as a third one: the
+ * column's own CHECK forbids it, and a caller that sent `[]` meant something,
+ * which is worth saying back to them instead of storing a null they did not ask
+ * for.
+ */
+const claimsValue = (
+  body: Record<string, unknown>,
+  errors: FieldError[],
+): readonly number[] | null => {
+  const raw = body["claims_project_ids"];
+  if (raw === undefined || raw === null) return null;
+  if (!Array.isArray(raw)) {
+    errors.push({
+      field: "claims_project_ids",
+      code: "invalid",
+      message: "claims_project_ids must be an array of project ids, or null.",
+    });
+    return null;
+  }
+  if (raw.length === 0) {
+    errors.push({
+      field: "claims_project_ids",
+      code: "invalid",
+      message: "claims_project_ids must name at least one project, or be null.",
+    });
+    return null;
+  }
+  const ids: number[] = [];
+  for (const entry of raw) {
+    if (!Number.isSafeInteger(entry) || (entry as number) <= 0) {
+      errors.push({
+        field: "claims_project_ids",
+        code: "invalid",
+        message: "Every claims_project_ids entry must be a positive integer.",
+      });
+      return null;
+    }
+    ids.push(entry as number);
+  }
+  // Deduplicated: claiming a project twice is the same claim, and the engine's
+  // IN clause would not notice, so the stored value would differ from what it
+  // means for no reason.
+  return [...new Set(ids)];
+};
+
 const parseRecurring = (
   body: JsonObject,
   occurredAt: string,
@@ -2816,6 +2874,7 @@ const parseRecurring = (
     "next_issue_on",
     "amount_config",
     "can_draw_from_retainer_id",
+    "claims_project_ids",
   ]);
   const errors = unknownFieldErrors(body, allowed);
   const amountConfig = body.amount_config;
@@ -2852,6 +2911,7 @@ const parseRecurring = (
         nullable: true,
         minimum: 1,
       }) ?? null,
+    claimsProjectIds: claimsValue(body, errors),
     occurredAt,
   };
   assertFields(errors);
@@ -2864,6 +2924,7 @@ const parseRecurring = (
     nextIssueOn: value.nextIssueOn!,
     amountConfig: value.amountConfig as unknown as RecurringAmountConfig,
     canDrawFromRetainerId: value.canDrawFromRetainerId,
+    claimsProjectIds: value.claimsProjectIds,
     occurredAt: value.occurredAt,
   };
 };
