@@ -415,6 +415,16 @@
   padding-top: 20px;
   border-top: 1px solid var(--ez-border);
 }
+.team-payout-current {
+  max-width: 760px;
+  margin-bottom: 28px;
+  padding: 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+}
+.team-payout-current h3 {
+  margin-top: 0;
+}
 .team-rate-columns {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -338,6 +338,19 @@ export type WiseOnboardInput = {
   "currency": string;
 };
 
+export type WiseDestinationEnvelope = {
+  "data": {
+  "configured": boolean;
+  "destination": {
+  "id": number;
+  "kind": "account" | "contact";
+  "linked_at": string;
+  "linked_by_user_id": number;
+  "verified_at": string | null;
+} | null;
+};
+};
+
 export type WiseContactInput = {
   "user_id": number;
   "identifier": string;
@@ -4332,6 +4345,24 @@ export class EzactoClient {
 
     return this.request<WiseLinkEnvelope>("POST", "/api/v1/integrations/wise/recipients", {
       body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getWisePayoutDestination(args: { "userId": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<WiseDestinationEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<WiseDestinationEnvelope>("GET", "/api/v1/integrations/wise/destinations/:userId".replace(":userId", encodeURIComponent(String(args["userId"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async removeWisePayoutDestination(args: { "userId": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/integrations/wise/destinations/:userId".replace(":userId", encodeURIComponent(String(args["userId"]))), {
       signal: args.signal,
       headers,
     });

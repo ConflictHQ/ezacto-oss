@@ -1198,6 +1198,27 @@ const wiseOperations: ApiContractOperation[] = [
     sessionOnly: true,
   },
   {
+    method: "get",
+    path: "/api/v1/integrations/wise/destinations/:userId",
+    operationId: "getWisePayoutDestination",
+    summary: "Where one person is currently paid, if anywhere",
+    tag: "integrations",
+    responseStatus: 200,
+    responseSchema: "WiseDestinationEnvelope",
+    parameters: [path("userId")],
+    sessionOnly: true,
+  },
+  {
+    method: "delete",
+    path: "/api/v1/integrations/wise/destinations/:userId",
+    operationId: "removeWisePayoutDestination",
+    summary: "Remove a person's Wise payout destination",
+    tag: "integrations",
+    responseStatus: 204,
+    parameters: [path("userId")],
+    sessionOnly: true,
+  },
+  {
     method: "post",
     path: "/api/v1/integrations/wise/contacts",
     operationId: "shareWiseProfile",
@@ -3177,6 +3198,35 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
    * The whole of what a person has to share to be paid: an identifier Wise
    * already knows them by. No account number, anywhere, ever.
    */
+  WiseDestinationEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["configured", "destination"],
+        properties: {
+          configured: { type: "boolean" },
+          destination: nullable({
+            type: "object",
+            required: ["id", "kind", "linked_at", "linked_by_user_id", "verified_at"],
+            properties: {
+              id: { type: "integer" },
+              // No identifier. A contact id and a recipient id are both opaque,
+              // and neither tells a person anything they could check.
+              kind: { type: "string", enum: ["account", "contact"] },
+              linked_at: stringSchema,
+              linked_by_user_id: { type: "integer" },
+              verified_at: nullable(stringSchema),
+            },
+            additionalProperties: false,
+          }),
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
   WiseContactInput: {
     type: "object",
     required: ["user_id", "identifier", "currency"],

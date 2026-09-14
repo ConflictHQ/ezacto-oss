@@ -58,6 +58,7 @@ export const renderTeamPages = (view?: string): string => `
         <button type="button" role="tab" id="team-tab-rates" aria-controls="team-panel-rates" aria-selected="false" tabindex="-1" data-team-tab="rates">Rates</button>
         <button type="button" role="tab" id="team-tab-projects" aria-controls="team-panel-projects" aria-selected="false" tabindex="-1" data-team-tab="projects">Projects</button>
         <button type="button" role="tab" id="team-tab-permissions" aria-controls="team-panel-permissions" aria-selected="false" tabindex="-1" data-team-tab="permissions">Permissions</button>
+        <button type="button" role="tab" id="team-tab-payout" aria-controls="team-panel-payout" aria-selected="false" tabindex="-1" data-team-tab="payout" hidden>Payout</button>
         <button type="button" role="tab" id="team-tab-notifications" aria-controls="team-panel-notifications" aria-selected="false" tabindex="-1" data-team-tab="notifications">Notifications</button>
       </div>
 
@@ -119,6 +120,26 @@ export const renderTeamPages = (view?: string): string => `
           <p class="hint" data-team-owner-profile-note hidden>The organization owner is always an administrator. Transfer ownership explicitly before changing this access.</p>
           <p class="form-result" data-team-permissions-result role="status" aria-live="polite"></p>
           <button class="primary-action" type="submit" data-team-permissions-submit>Save permission profile</button>
+        </form>
+      </section>
+
+      <section class="team-person-panel" id="team-panel-payout" role="tabpanel" aria-labelledby="team-tab-payout" data-team-panel="payout" hidden>
+        <header><div><p class="eyebrow">Where money goes</p><h2>Payout destination</h2></div></header>
+        <p class="hint" data-team-payout-unconfigured hidden>Wise is not connected on this instance, so there is nowhere to send a payout yet.</p>
+        <p class="form-result" data-team-payout-status role="status" aria-live="polite">Loading payout destination…</p>
+        <section class="team-payout-current" data-team-payout-current hidden>
+          <h3>Set</h3>
+          <p data-team-payout-summary></p>
+          <p class="hint" data-team-payout-unverified hidden>Wise has not confirmed this destination resolves. Remove it and add it again.</p>
+          <button type="button" class="danger-action" data-team-payout-remove>Remove destination</button>
+        </section>
+        <form class="team-person-form" data-team-payout-form hidden>
+          <p>Share the Wisetag on their Wise account — or the email address or phone number that account is discoverable by. Wise keeps the bank details; we never see them.</p>
+          <label for="ez-team-payout-identifier">Wisetag, email or phone<input id="ez-team-payout-identifier" name="identifier" autocomplete="off" maxlength="255" placeholder="@theirtag" required aria-describedby="team-payout-hint"></label>
+          <p class="hint" id="team-payout-hint">Their Wise profile has to be discoverable for this to find it. They can switch that on in Wise under their Wisetag.</p>
+          <label for="ez-team-payout-currency">Currency<input id="ez-team-payout-currency" name="currency" autocomplete="off" maxlength="3" minlength="3" placeholder="USD" required></label>
+          <p class="form-result" data-team-payout-result role="status" aria-live="polite"></p>
+          <button class="primary-action" type="submit" data-team-payout-submit>Save payout destination</button>
         </form>
       </section>
 
