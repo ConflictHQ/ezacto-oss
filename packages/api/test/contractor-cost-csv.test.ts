@@ -23,6 +23,7 @@ const report = {
       costCents: 500_000,
       costRateCents: 10_000,
       costRateIsMixed: false,
+      entryCount: 1,
       entriesWithoutRate: 0,
     },
     {
@@ -39,6 +40,7 @@ const report = {
       // this row exercises both nulls at once.
       costRateCents: null,
       costRateIsMixed: true,
+      entryCount: 3,
       entriesWithoutRate: 2,
     },
   ],
@@ -78,10 +80,12 @@ describe('the payroll run as a file', () => {
     )
     const lines = body.trimEnd().split('\n')
     expect(lines[0]).toBe(
-      'user_id,name,payroll_email,is_contractor,currency,hours,cost_cents,cost_rate_cents,entries_without_rate',
+      'user_id,name,payroll_email,is_contractor,currency,hours,cost_cents,cost_rate_cents,entry_count,entries_without_rate',
     )
     // 180000 seconds is 50 hours.
-    expect(lines[1]).toBe('1,R. Adeyemi,r.adeyemi@example.test,true,USD,50.00,500000,10000,0')
+    // The trailing pair is the spot-check: how many entries made this figure,
+    // and how many of them had no rate to make it from.
+    expect(lines[1]).toBe('1,R. Adeyemi,r.adeyemi@example.test,true,USD,50.00,500000,10000,1,0')
   })
 
   it('[money] leaves the cost empty when it could not be worked out', async () => {
@@ -92,7 +96,7 @@ describe('the payroll run as a file', () => {
     // Empty cost, then "mixed" rather than a blank rate: a rate that moved
     // inside the period is distinguishable from one that was never set, and
     // only one of those is somebody's mistake.
-    expect(row.endsWith(',,mixed,2')).toBe(true)
+    expect(row.endsWith(',,mixed,3,2')).toBe(true)
     expect(row).not.toContain('0.00,0,')
   })
 

@@ -6071,6 +6071,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "cost_cents",
       "cost_rate_cents",
       "cost_rate_is_mixed",
+      "entry_count",
       "entries_without_rate",
     ],
     properties: {
@@ -6093,6 +6094,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       // another system, and an average nobody agreed to is not an answer.
       cost_rate_cents: nullable(signedIntegerSchema),
       cost_rate_is_mixed: { type: "boolean" },
+      // How many entries the figures came from, for spot-checking a row that
+      // looks wrong against something.
+      entry_count: { type: "integer", minimum: 0 },
       entries_without_rate: { type: "integer", minimum: 0 },
     },
     additionalProperties: false,

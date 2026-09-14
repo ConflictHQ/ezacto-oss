@@ -1668,6 +1668,7 @@ describe('Reports Stage 1 browser controller', () => {
           cost_cents: 400_000,
           cost_rate_cents: null,
           cost_rate_is_mixed: false,
+          entry_count: 20,
           entries_without_rate: 0,
         },
         {
@@ -1680,6 +1681,7 @@ describe('Reports Stage 1 browser controller', () => {
           cost_cents: null,
           cost_rate_cents: null,
           cost_rate_is_mixed: false,
+          entry_count: 3,
           entries_without_rate: 3,
         },
         {
@@ -1692,6 +1694,7 @@ describe('Reports Stage 1 browser controller', () => {
           cost_cents: 20_000,
           cost_rate_cents: null,
           cost_rate_is_mixed: false,
+          entry_count: 1,
           entries_without_rate: 0,
         },
       ],

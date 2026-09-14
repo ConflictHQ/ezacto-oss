@@ -40,6 +40,8 @@ export interface ContractorCostRowRecord {
    */
   costRateCents: number | null;
   costRateIsMixed: boolean;
+  /** How many entries the figures came from, for spot-checking. */
+  entryCount: number;
   entriesWithoutRate: number;
 }
 
@@ -576,6 +578,7 @@ const CONTRACTOR_COST_COLUMNS = [
   "hours",
   "cost_cents",
   "cost_rate_cents",
+  "entry_count",
   "entries_without_rate",
 ] as const;
 
@@ -609,6 +612,7 @@ const contractorCostCsv = (report: Readonly<ContractorCostReportRecord>): string
         // is distinguishable from one that was never set. Both are blank in
         // `cost_rate_cents`, and only one of them is somebody's mistake.
         csvCell(row.costRateIsMixed ? "mixed" : row.costRateCents),
+        csvCell(row.entryCount),
         csvCell(row.entriesWithoutRate),
       ].join(","),
     );
@@ -630,6 +634,7 @@ const serializeContractorCost = (report: Readonly<ContractorCostReportRecord>) =
     cost_cents: row.costCents,
     cost_rate_cents: row.costRateCents,
     cost_rate_is_mixed: row.costRateIsMixed,
+    entry_count: row.entryCount,
     entries_without_rate: row.entriesWithoutRate,
   })),
 });

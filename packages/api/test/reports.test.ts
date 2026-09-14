@@ -244,6 +244,10 @@ for (const [runtime, factory] of factories) {
           userId: 1,
           roundedSeconds: 9900,
           costCents: 11_000,
+          // Four entries made that figure. A payroll run pastes this into
+          // another system, and a row whose hours look wrong is a different
+          // investigation at four entries than at four hundred (#280).
+          entryCount: 4,
           entriesWithoutRate: 0,
         }),
       ]);
@@ -275,6 +279,10 @@ for (const [runtime, factory] of factories) {
       expect(report.rows[0]!.costCents).toBeNull();
       expect(report.rows[0]!.entriesWithoutRate).toBe(1);
       expect(report.rows[0]!.roundedSeconds).toBe(13_500);
+      // The unrated entry still counts toward what the row was made from --
+      // otherwise the two numbers cannot be read against each other, which is
+      // the only thing either is for.
+      expect(report.rows[0]!.entryCount).toBe(5);
     });
 
     /**
