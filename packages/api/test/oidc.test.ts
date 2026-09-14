@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   OIDC_STATE_COOKIE_NAME,
+  OIDC_APP_COOKIE_NAME,
   createApiApp,
   installOidcRoutes,
+  type OidcAppCodeStorePort,
   type OidcProviderConfig,
   type OidcTransaction,
   type OidcTransactionStorePort,
@@ -562,5 +564,166 @@ describe('OpenID Connect browser authentication', () => {
     expect(await unavailable.json()).toMatchObject({
       error: { code: 'internal_error' },
     })
+  })
+})
+
+class MemoryAppCodes implements OidcAppCodeStorePort {
+  private readonly rows = new Map<
+    string,
+    { userId: number; expiresAt: string; consumedAt: string | null }
+  >()
+
+  async create(input: {
+    provider: string
+    codeHash: string
+    userId: number
+    expiresAt: string
+    createdAt: string
+    cleanupBefore: string
+  }): Promise<'created' | 'collision'> {
+    if (this.rows.has(input.codeHash)) return 'collision'
+    this.rows.set(input.codeHash, {
+      userId: input.userId,
+      expiresAt: input.expiresAt,
+      consumedAt: null,
+    })
+    return 'created'
+  }
+
+  async consume(
+    codeHash: string,
+    now: string,
+  ): Promise<{ userId: number } | null> {
+    const row = this.rows.get(codeHash)
+    if (
+      row === undefined ||
+      row.consumedAt !== null ||
+      Date.parse(row.expiresAt) <= Date.parse(now)
+    ) {
+      return null
+    }
+    this.rows.set(codeHash, { ...row, consumedAt: now })
+    return { userId: row.userId }
+  }
+}
+
+const appHarness = async (
+  configured: Readonly<Record<string, FakeProvider>>,
+) => {
+  const transactions = new MemoryTransactions()
+  const appCodes = new MemoryAppCodes()
+  const identities = {
+    resolveProvider: vi.fn(async () => ({
+      status: 'active' as const,
+      matchedBy: 'verified_email' as const,
+      userId: 7,
+      profile: 'administrator' as const,
+      managerGrants: [] as string[],
+    })),
+  }
+  const sessions = {
+    issue: vi.fn(async () => ({
+      setCookie:
+        '__Host-ezacto_session=test-session; Path=/; HttpOnly; Secure; SameSite=Lax',
+    })),
+  }
+  const app = createApiApp({
+    installApp(app) {
+      installOidcRoutes(app, {
+        transactions,
+        identities,
+        sessions,
+        appCodes,
+        provider: (key) => configured[key]?.config ?? null,
+        clientKey: () => '198.51.100.8',
+        now: () => fixedNow,
+      })
+    },
+  })
+  return { app, appCodes, identities, sessions }
+}
+
+describe('OpenID Connect app authentication', () => {
+  it('[api] hands the app a one-time code and exchanges it for a session', async () => {
+    const google = await fakeProvider('https://accounts.example.test')
+    const { app, sessions } = await appHarness({ google })
+
+    const started = await app.request(
+      'https://ezacto.io/auth/oidc/google?flow=app',
+    )
+    expect(started.status).toBe(302)
+    const authorization = new URL(started.headers.get('location')!)
+    google.setNonce(authorization.searchParams.get('nonce')!)
+    const setCookies = started.headers.get('set-cookie')!
+    expect(setCookies).toContain(`${OIDC_STATE_COOKIE_NAME}=`)
+    expect(setCookies).toContain(`${OIDC_APP_COOKIE_NAME}=1`)
+    const state = authorization.searchParams.get('state')!
+    const cookie = `${OIDC_STATE_COOKIE_NAME}=${state}; ${OIDC_APP_COOKIE_NAME}=1`
+
+    const callback = await app.request(
+      `https://ezacto.io/auth/oidc/google/callback?code=test-authorization-code&state=${encodeURIComponent(state)}`,
+      { headers: { cookie } },
+    )
+    expect(callback.status).toBe(303)
+    const location = new URL(callback.headers.get('location')!)
+    expect(location.protocol).toBe('ezacto:')
+    const code = location.searchParams.get('code')!
+    expect(code).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(callback.headers.get('set-cookie') ?? '').not.toContain(
+      '__Host-ezacto_session',
+    )
+    expect(sessions.issue).not.toHaveBeenCalled()
+
+    const exchanged = await app.request(
+      'https://ezacto.io/auth/oidc/exchange',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code }),
+      },
+    )
+    expect(exchanged.status).toBe(200)
+    expect(exchanged.headers.get('set-cookie')).toContain(
+      '__Host-ezacto_session=test-session',
+    )
+    expect(sessions.issue).toHaveBeenCalledWith(7)
+
+    const replay = await app.request('https://ezacto.io/auth/oidc/exchange', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code }),
+    })
+    expect(replay.status).toBe(401)
+  })
+
+  it('[security] rejects a malformed exchange code without issuing a session', async () => {
+    const google = await fakeProvider('https://accounts.example.test')
+    const { app, sessions } = await appHarness({ google })
+    const response = await app.request('https://ezacto.io/auth/oidc/exchange', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: 'too-short' }),
+    })
+    expect(response.status).toBe(422)
+    expect(sessions.issue).not.toHaveBeenCalled()
+  })
+
+  it('[api] a normal browser flow still issues a session when the handoff is enabled', async () => {
+    const google = await fakeProvider('https://accounts.example.test')
+    const { app, sessions } = await appHarness({ google })
+    const started = await app.request('https://ezacto.io/auth/oidc/google')
+    const authorization = new URL(started.headers.get('location')!)
+    google.setNonce(authorization.searchParams.get('nonce')!)
+    const state = authorization.searchParams.get('state')!
+    const callback = await app.request(
+      `https://ezacto.io/auth/oidc/google/callback?code=test-authorization-code&state=${encodeURIComponent(state)}`,
+      { headers: { cookie: `${OIDC_STATE_COOKIE_NAME}=${state}` } },
+    )
+    expect(callback.status).toBe(303)
+    expect(callback.headers.get('location')).toBe('/')
+    expect(callback.headers.get('set-cookie')).toContain(
+      '__Host-ezacto_session=test-session',
+    )
+    expect(sessions.issue).toHaveBeenCalledWith(7)
   })
 })

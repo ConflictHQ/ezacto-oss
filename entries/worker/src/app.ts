@@ -77,6 +77,7 @@ import {
   type OidcIdentityResolver,
   type OidcProviderConfig,
   type OidcTransactionStorePort,
+  type OidcAppCodeStorePort,
   type PasswordAuthService,
   type BackupStatusReader,
   type ReportReader,
@@ -279,6 +280,8 @@ export interface RuntimeServices {
   outbox: OutboxService
   identities: OidcIdentityResolver
   oidcTransactions: OidcTransactionStorePort
+  /** Present only where the native-app OIDC sign-in handoff is enabled. */
+  oidcAppCodes?: OidcAppCodeStorePort
   /** Deployment-brand sender for all authentication mail. */
   deploymentAuthMailer?: AuthMailer
   attachments?: AttachmentRouteOptions
@@ -606,6 +609,9 @@ export const createApp = (
           provider: oidcProvider,
           clientKey: (request) =>
             request.headers.get('cf-connecting-ip') ?? 'unknown-client',
+          ...(services.oidcAppCodes === undefined
+            ? {}
+            : { appCodes: services.oidcAppCodes }),
         })
         installGitHubRoutes(app, {
           transactions: services.oidcTransactions,

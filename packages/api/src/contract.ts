@@ -1887,6 +1887,16 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   },
   {
     method: "post",
+    path: "/auth/oidc/exchange",
+    operationId: "exchangeOidcAppCode",
+    summary: "Exchange a native-app OIDC sign-in code for a session",
+    tag: "authentication",
+    responseStatus: 200,
+    public: true,
+    generateClient: false,
+  },
+  {
+    method: "post",
     path: "/auth/signup",
     operationId: "signup",
     summary: "Create the first owner and send email verification",
