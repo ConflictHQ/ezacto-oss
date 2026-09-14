@@ -9,6 +9,8 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
 import { monthEndManifest, type MonthEndManifest } from './month-end-manifest.js'
+// The same anchoring the engine issues by, so a short month answers once (#709).
+import { anchoredDate } from './recurring-invoice-engine.js'
 
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
 
@@ -511,8 +513,27 @@ export const DETAILED_TIME_ENTRY_LIMIT = 20_000
  * list is barely a band.
  */
 export interface BandedMonthRow {
-  /** `YYYY-MM`, the month the work was spent in. */
-  month: string
+  /**
+   * The billing cycle the work falls in, as the definition that claims the
+   * project defines it -- not the calendar (#709).
+   *
+   * The window matches what the invoice claimed, because a figure computed over
+   * any other window is a real number describing a period nobody was billed
+   * for. Generation takes every unbilled hour with `spent_date <= issue_date`,
+   * so a cycle ends on an issue date and starts the day after the one before
+   * it: a band issuing on the 10th runs the 11th to the 10th.
+   *
+   * That rule has no special case for a band issuing on the 1st, which is why
+   * such a band's cycle is not the calendar month -- it is the 2nd to the 1st,
+   * because the invoice raised on the 1st really did absorb the work done that
+   * day. The report says what the invoice did rather than what the calendar
+   * says.
+   *
+   * A project no definition claims keeps calendar months, which is the same
+   * window it has always had.
+   */
+  periodStart: string
+  periodEnd: string
   projectId: number
   projectName: string
   clientId: number
@@ -547,7 +568,7 @@ export interface BandedMonthReportRecord {
 }
 
 interface BandedMonthQueryRow {
-  month: string
+  spentDate: string
   projectId: number
   projectName: string
   clientId: number
@@ -2613,6 +2634,142 @@ const timeReport = async (
  * `contractorCostReport` follows, and for the same reason: a number that is
  * silently short is worse than no number.
  */
+/**
+ * The billing cycle a project's work belongs to (#709).
+ *
+ * A definition already knows its cycle -- `day_of_month` and `every_n_months` --
+ * and the generation command is aligned to it. The report was not: it grouped
+ * by calendar month, so for any definition whose day is not the 1st the hours a
+ * single band absorbed were split across two buckets and each bucket mixed
+ * hours from two different bands. Every figure describing a band is computed
+ * over a window, so a wrong window makes each of them a real number describing
+ * a period nobody was billed for.
+ */
+export interface ClaimCycle {
+  dayOfMonth: number
+  everyNMonths: number
+  /**
+   * A month the definition genuinely issues in, as a month index.
+   *
+   * Carried because a cycle longer than a month has a *phase* as well as a
+   * length: quarterly on the 10th is January-April-July-October or
+   * February-May-August-November, and nothing in the day or the interval says
+   * which. Derived from `next_issue_on`, which is the one date the definition
+   * states it will issue on.
+   */
+  anchorMonthIndex: number
+}
+
+export interface ClaimPeriod {
+  periodStart: string
+  periodEnd: string
+}
+
+/**
+ * Which cycle each claimed project runs on.
+ *
+ * Only complete definitions that claim projects: an ordinary recurring invoice
+ * prices time rather than absorbing it, so its cadence says nothing about the
+ * window anybody's hours belong to. A project claimed by two definitions takes
+ * the lower id, deliberately and not arbitrarily -- it is the older deal, and a
+ * report that changed window when a second definition was drafted would be one
+ * nobody could reconcile against last month's copy.
+ */
+const readClaimCycles = async (database: Database): Promise<Map<number, ClaimCycle>> => {
+  const definitions = await database.all<{
+    id: number
+    dayOfMonth: number
+    everyNMonths: number
+    nextIssueOn: string
+    claimsProjectIds: string
+  }>(sql`
+    SELECT id, day_of_month AS "dayOfMonth", every_n_months AS "everyNMonths",
+      next_issue_on AS "nextIssueOn", claims_project_ids AS "claimsProjectIds"
+    FROM recurring_invoices
+    WHERE definition_status = 'complete' AND claims_project_ids IS NOT NULL
+    ORDER BY id
+  `)
+  const cycles = new Map<number, ClaimCycle>()
+  for (const definition of definitions) {
+    let claimed: unknown
+    try {
+      claimed = JSON.parse(definition.claimsProjectIds)
+    } catch {
+      // The column's CHECK admits only a JSON array, so this cannot happen
+      // against a migrated database. Skipping rather than throwing keeps one
+      // malformed definition from taking down every other band's report.
+      continue
+    }
+    if (!Array.isArray(claimed)) continue
+    for (const projectId of claimed) {
+      if (typeof projectId !== 'number') continue
+      if (!cycles.has(projectId)) {
+        cycles.set(projectId, {
+          dayOfMonth: definition.dayOfMonth,
+          everyNMonths: definition.everyNMonths,
+          anchorMonthIndex: monthIndex(definition.nextIssueOn),
+        })
+      }
+    }
+  }
+  return cycles
+}
+
+/** The calendar month containing a date, as the report has always grouped. */
+const calendarPeriod = (spentDate: string): ClaimPeriod => {
+  const year = Number(spentDate.slice(0, 4))
+  const month = Number(spentDate.slice(5, 7))
+  return {
+    periodStart: `${spentDate.slice(0, 7)}-01`,
+    periodEnd: anchoredDate(31, year, month),
+  }
+}
+
+/**
+ * The cycle a date falls in, for a project on a cycle (#709).
+ *
+ * Generation claims every unbilled hour with `spent_date <= issue_date`, so a
+ * cycle *ends* on an issue date and starts the day after the previous one. A
+ * band issuing on the 10th runs the 11th to the 10th, which is the window the
+ * invoice it will be compared against actually covers.
+ *
+ * There is no special case for a band issuing on the 1st. Its cycle is the 2nd
+ * to the 1st rather than the calendar month, because the invoice raised on the
+ * 1st really did absorb the work done that day, and a report that said
+ * otherwise would be the same off-by-a-day this issue exists to remove.
+ *
+ * Short months follow `anchoredDate`, which is what `advanceIssueDate` uses to
+ * issue, rather than a second rule invented here: a day-31 definition anchors
+ * on the 28th in February both times.
+ */
+const claimPeriod = (cycle: ClaimCycle | undefined, spentDate: string): ClaimPeriod => {
+  if (cycle === undefined) return calendarPeriod(spentDate)
+  const issueOn = (step: number): string => {
+    const index = cycle.anchorMonthIndex + step * cycle.everyNMonths
+    return anchoredDate(cycle.dayOfMonth, Math.floor(index / 12), (index % 12) + 1)
+  }
+  // Steps are counted from the definition's own anchor rather than from the
+  // entry's month, because a cycle longer than a month has a phase: stepping
+  // from whichever month the work happened to fall in would put two entries of
+  // one quarter in two different quarters.
+  let step = Math.ceil((monthIndex(spentDate) - cycle.anchorMonthIndex) / cycle.everyNMonths)
+  // The estimate can be one out either way, because the day within the month
+  // decides as well as the month: work on the 11th belongs to the next issue,
+  // not the one on the 10th. Walked rather than solved, which is two steps at
+  // most and says plainly what it is doing.
+  while (issueOn(step) < spentDate) step += 1
+  while (issueOn(step - 1) >= spentDate) step -= 1
+  return { periodStart: nextDay(issueOn(step - 1)), periodEnd: issueOn(step) }
+}
+
+/** Months since year zero, the unit a cycle counts its steps in. */
+const monthIndex = (date: string): number =>
+  Number(date.slice(0, 4)) * 12 + Number(date.slice(5, 7)) - 1
+
+/** The day after a canonical date, in UTC so no local calendar is involved. */
+const nextDay = (date: string): string =>
+  new Date(Date.parse(`${date}T00:00:00.000Z`) + 86_400_000).toISOString().slice(0, 10)
+
 const bandedMonthReport = async (
   database: Database,
   range: Readonly<ReportDateRange>,
@@ -2630,8 +2787,11 @@ const bandedMonthReport = async (
   // the organization default, so a client billed in another currency read as a
   // figure in a currency nobody charged. The number was right and the unit was
   // wrong, which is the worse of the two.
+  // The cycles the definitions define, read before the entries so every entry
+  // can be placed in one (#709).
+  const cycles = await readClaimCycles(database)
   const rows = await database.all<BandedMonthQueryRow>(sql`
-    SELECT substr(entry.spent_date, 1, 7) AS "month",
+    SELECT entry.spent_date AS "spentDate",
       project.id AS "projectId", project.name AS "projectName",
       client.id AS "clientId", client.name AS "clientName",
       upper(coalesce(project.billing_currency, client.currency, ${organizationCurrency}))
@@ -2645,7 +2805,7 @@ const bandedMonthReport = async (
     JOIN clients client ON client.id = project.client_id
     WHERE entry.spent_date BETWEEN ${range.from} AND ${range.to}
       AND entry.billable = 1
-    ORDER BY substr(entry.spent_date, 1, 7), project.id, entry.id
+    ORDER BY entry.spent_date, project.id, entry.id
   `)
 
   // What the invoices claiming this time charged, read once rather than per
@@ -2670,11 +2830,13 @@ const bandedMonthReport = async (
 
   const grouped = new Map<string, BandedMonthRow & { claimed: Set<number> }>()
   for (const row of rows) {
-    const key = `${row.month}:${String(row.projectId)}`
+    const period = claimPeriod(cycles.get(row.projectId), row.spentDate)
+    const key = `${period.periodStart}:${String(row.projectId)}`
     let bucket = grouped.get(key)
     if (bucket === undefined) {
       bucket = {
-        month: row.month,
+        periodStart: period.periodStart,
+        periodEnd: period.periodEnd,
         projectId: row.projectId,
         projectName: row.projectName,
         clientId: row.clientId,

@@ -6379,7 +6379,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   BandedMonthRow: {
     type: "object",
     required: [
-      "month",
+      "period_start",
+      "period_end",
       "project_id",
       "project_name",
       "client_id",
@@ -6395,7 +6396,15 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "foregone_cents",
     ],
     properties: {
-      month: { type: "string", pattern: "^\\d{4}-\\d{2}$" },
+      // The billing cycle, not the calendar month (#709). Generation takes
+      // every unbilled hour with `spent_date <= issue_date`, so a cycle ends on
+      // an issue date and starts the day after the one before it: a band
+      // issuing on the 10th runs the 11th to the 10th, which is the window the
+      // invoice beside it covers. The same rule gives a band issuing on the 1st
+      // the 2nd to the 1st rather than the calendar month, and there is no
+      // special case for it. A project no definition claims keeps months.
+      period_start: dateSchema,
+      period_end: dateSchema,
       project_id: integerSchema,
       project_name: stringSchema,
       client_id: integerSchema,

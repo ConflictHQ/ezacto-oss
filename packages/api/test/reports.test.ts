@@ -1026,7 +1026,8 @@ for (const [runtime, factory] of factories) {
       const body = (await response.json()) as {
         data: {
           rows: {
-            month: string;
+            period_start: string;
+            period_end: string;
             currency: string;
             billable_value_cents: number | null;
             cost_value_cents: number | null;
@@ -1037,7 +1038,11 @@ for (const [runtime, factory] of factories) {
         };
       };
       const row = body.data.rows[0]!;
-      expect(row.month).toMatch(/^\d{4}-\d{2}$/u);
+      // A period carries its own window rather than only a label (#709), so
+      // every figure beside it is readable against the invoice it describes.
+      expect(row.period_start).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
+      expect(row.period_end).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
+      expect(row.period_start < row.period_end).toBe(true);
       expect(row.currency).toMatch(/^[A-Z]{3}$/u);
       expect(row.billable_value_cents).toBeGreaterThan(0);
       expect(row.cost_value_cents).toBeGreaterThan(0);
