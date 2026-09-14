@@ -28775,6 +28775,7 @@
           "cost_cents",
           "cost_rate_cents",
           "cost_rate_is_mixed",
+          "entry_count",
           "entries_without_rate"
         ],
         "properties": {
@@ -28827,6 +28828,10 @@
           },
           "cost_rate_is_mixed": {
             "type": "boolean"
+          },
+          "entry_count": {
+            "type": "integer",
+            "minimum": 0
           },
           "entries_without_rate": {
             "type": "integer",

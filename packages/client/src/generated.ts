@@ -2031,6 +2031,7 @@ export type ContractorCostRow = {
   "cost_cents": number | null;
   "cost_rate_cents": number | null;
   "cost_rate_is_mixed": boolean;
+  "entry_count": number;
   "entries_without_rate": number;
 };
 

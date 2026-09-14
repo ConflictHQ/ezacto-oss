@@ -306,6 +306,15 @@ export interface ContractorCostRow {
   roundedSeconds: number
   /** Null when any entry in the row has no cost rate -- see the note below. */
   costCents: number | null
+  /**
+   * How many entries the figures were worked out from.
+   *
+   * For spot-checking, which is the only reason a payroll run wants it: a
+   * person whose hours look wrong is a different investigation depending on
+   * whether they are two entries or two hundred, and the number that reaches
+   * another system should be checkable against something.
+   */
+  entryCount: number
   entriesWithoutRate: number
   /**
    * The rate this cost was worked out at, where there is a single one.
@@ -1597,10 +1606,12 @@ const contractorCostReport = async (
       currency,
       roundedSeconds: 0,
       costCents: 0,
+      entryCount: 0,
       entriesWithoutRate: 0,
       costRateCents: null,
       costRateIsMixed: false,
     }
+    existing.entryCount += 1
     existing.roundedSeconds += row.roundedSeconds
     if (row.costRateCents === null) {
       existing.entriesWithoutRate += 1
