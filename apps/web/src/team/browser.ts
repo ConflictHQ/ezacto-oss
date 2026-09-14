@@ -1,5 +1,10 @@
 import { renderDataTable } from '../components/data-table.js'
 import { markMoney } from '../money-display.js'
+import {
+  payoutFailure,
+  payoutSummary,
+  type PayoutDestinationState,
+} from '../payout.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
 import {
   EzactoApiError,
@@ -21,8 +26,6 @@ import {
   teamCapabilities,
   teamHours,
   teamMoney,
-  teamPayoutDate,
-  teamPayoutFailure,
   teamPersonIdFromPathname,
   teamProfileOptions,
   teamUtilization,
@@ -32,7 +35,6 @@ import {
   type TeamDirectoryApi,
   type TeamPersonCreate,
   type TeamProfile,
-  type WisePayoutDestinationState,
 } from './model.js'
 
 const required = <ElementType extends Element>(selector: string): ElementType => {
@@ -142,7 +144,7 @@ export const createTeamDirectoryController = (
   const payoutStatus = required<HTMLElement>('[data-team-payout-status]')
   const payoutUnconfigured = required<HTMLElement>('[data-team-payout-unconfigured]')
   const payoutCurrent = required<HTMLElement>('[data-team-payout-current]')
-  const payoutSummary = required<HTMLElement>('[data-team-payout-summary]')
+  const payoutSummaryText = required<HTMLElement>('[data-team-payout-summary]')
   const payoutUnverified = required<HTMLElement>('[data-team-payout-unverified]')
   const payoutRemove = required<HTMLButtonElement>('[data-team-payout-remove]')
   const payoutForm = required<HTMLFormElement>('[data-team-payout-form]')
@@ -1064,7 +1066,7 @@ export const createTeamDirectoryController = (
 
   let payoutUserId: number | null = null
 
-  const paintPayout = (state: WisePayoutDestinationState): void => {
+  const paintPayout = (state: PayoutDestinationState): void => {
     payoutUnconfigured.hidden = state.configured
     const destination = state.destination
     payoutCurrent.hidden = destination === null
@@ -1076,10 +1078,7 @@ export const createTeamDirectoryController = (
       return
     }
     payoutStatus.textContent = ''
-    payoutSummary.textContent =
-      destination.kind === 'contact'
-        ? `Paid to the Wise profile shared on ${teamPayoutDate(destination.linkedAt)}. Wise holds the bank details; this instance never sees them.`
-        : `Paid to a Wise recipient account added on ${teamPayoutDate(destination.linkedAt)}.`
+    payoutSummaryText.textContent = payoutSummary(destination)
     // Unverified means Wise never confirmed the identifier resolves, and
     // paying against that is the whole failure the store exists to prevent.
     payoutUnverified.hidden = destination.verifiedAt !== null
@@ -1136,7 +1135,7 @@ export const createTeamDirectoryController = (
         await loadPayout(active, userId)
       } catch (error) {
         if (currentSession() !== active) return
-        payoutResult.textContent = teamPayoutFailure(error)
+        payoutResult.textContent = payoutFailure(error)
       } finally {
         if (currentSession() === active) payoutSubmit.disabled = false
       }
@@ -1158,7 +1157,7 @@ export const createTeamDirectoryController = (
         await loadPayout(active, userId)
       } catch (error) {
         if (currentSession() !== active) return
-        payoutResult.textContent = teamPayoutFailure(error)
+        payoutResult.textContent = payoutFailure(error)
       } finally {
         if (currentSession() === active) payoutRemove.disabled = false
       }

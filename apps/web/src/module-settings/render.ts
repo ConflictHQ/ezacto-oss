@@ -95,6 +95,24 @@ export const renderModuleSettingsPage = (view?: string): string => `
     <p class="module-settings-intro">Your own account. Everything here is yours alone; the company settings beside it apply to everyone.</p>
     <p class="form-result module-settings-status" data-settings-user-status role="status" aria-live="polite">Loading your account…</p>
     <dl class="settings-facts" data-settings-user-facts hidden></dl>
+    <section class="settings-payout" data-settings-payout aria-labelledby="settings-payout-heading" hidden>
+      <h2 id="settings-payout-heading">Where you are paid</h2>
+      <p class="hint" data-settings-payout-unconfigured hidden>Wise is not connected on this instance, so there is nowhere to send a payout yet.</p>
+      <p class="form-result" data-settings-payout-status role="status" aria-live="polite">Loading your payout destination…</p>
+      <div class="settings-payout-current" data-settings-payout-current hidden>
+        <p data-settings-payout-summary></p>
+        <p class="hint" data-settings-payout-unverified hidden>Wise has not confirmed this destination resolves. Remove it and add it again.</p>
+        <button type="button" class="danger-action" data-settings-payout-remove>Remove destination</button>
+      </div>
+      <form data-settings-payout-form hidden>
+        <p class="hint">Share the Wisetag on your Wise account — or the email address or phone number it is discoverable by. Wise keeps your bank details; this instance never sees them.</p>
+        <label for="ez-settings-payout-identifier">Wisetag, email or phone<input id="ez-settings-payout-identifier" name="identifier" autocomplete="off" maxlength="255" placeholder="@yourtag" required aria-describedby="settings-payout-hint"></label>
+        <p class="hint" id="settings-payout-hint">Your Wise profile has to be discoverable for this to find it. You can switch that on in Wise, under your Wisetag.</p>
+        <label for="ez-settings-payout-currency">Currency<input id="ez-settings-payout-currency" name="currency" autocomplete="off" maxlength="3" minlength="3" placeholder="USD" required></label>
+        <p class="form-result" data-settings-payout-result role="status" aria-live="polite"></p>
+        <button class="primary-action" type="submit" data-settings-payout-submit>Save payout destination</button>
+      </form>
+    </section>
     <section class="settings-density" aria-labelledby="settings-density-heading">
       <h2 id="settings-density-heading">Row density</h2>
       <p class="hint">How much of a table fits on your screen. This is yours and this machine's — nobody else's view changes, and the company setting beside it is unaffected.</p>
