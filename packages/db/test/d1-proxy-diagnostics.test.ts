@@ -34,6 +34,23 @@ describe('naming what the D1 proxy was doing', () => {
     ).rejects.toThrow(/prepare\(SELECT 1 FROM attachments WHERE id = \?\)/u)
   })
 
+  it('[unit] names the whole chain, because the failure lands two calls later', async () => {
+    // The statement text arrives at `prepare` and miniflare's assertion fires
+    // inside `run`. Naming only the last call says "run()" and nothing about
+    // which query, which is the problem this exists to solve.
+    const database = withD1Diagnostics({
+      prepare: () => ({
+        bind: () => ({ run: async () => { throw bareAssertion() } }),
+      }),
+    })
+    await expect(
+      (database as never as { prepare: (s: string) => { bind: () => { run: () => Promise<void> } } })
+        .prepare('SELECT 1')
+        .bind()
+        .run(),
+    ).rejects.toThrow(/prepare\(SELECT 1\) → bind → run/u)
+  })
+
   it('[unit] keeps the original as the cause, so nothing is hidden', async () => {
     const original = bareAssertion()
     const database = withD1Diagnostics({ run: async () => { throw original } })
