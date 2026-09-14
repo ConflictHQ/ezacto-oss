@@ -250,6 +250,9 @@ for (const [runtime, factory] of factories) {
         'is_active',
         'created_at',
         'updated_at',
+        // Appended by 0071: the lineage a refresh compares against, which is
+        // not `updated_at` because a person moves that by editing (#665).
+        'source_updated_at',
       ])
       const expenseColumns = (await db.rows<{ name: string }>(`PRAGMA table_info(expenses)`)).map(
         ({ name }) => name,
@@ -274,6 +277,8 @@ for (const [runtime, factory] of factories) {
         'updated_at',
         'timesheet_submission_id',
         'source_approval_status',
+        // Appended by 0071, same as the category table above (#665).
+        'source_updated_at',
       ])
       for (const forbidden of [
         'is_locked',

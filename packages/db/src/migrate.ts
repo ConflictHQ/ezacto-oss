@@ -74,6 +74,7 @@ import { scheduledActionsMigration } from './migrations/0067_scheduled_actions.j
 import { runExecutionMigration } from './migrations/0068_run_execution.js'
 import { dropExchangeRatesMigration } from './migrations/0069_drop_exchange_rates.js'
 import { payoutDestinationKindMigration } from './migrations/0070_payout_destination_kind.js'
+import { sourceLineageMigration } from './migrations/0071_source_lineage.js'
 import { staffMagicLinksMigration } from './migrations/0072_staff_magic_links.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
@@ -1492,6 +1493,7 @@ const migrations = [
   { id: '0068_run_execution', statements: runExecutionMigration },
   { id: '0069_drop_exchange_rates', statements: dropExchangeRatesMigration },
   { id: '0070_payout_destination_kind', statements: payoutDestinationKindMigration },
+  { id: '0071_source_lineage', statements: sourceLineageMigration },
   { id: '0072_staff_magic_links', statements: staffMagicLinksMigration },
 ] as const
 
