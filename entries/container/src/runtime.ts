@@ -13,6 +13,7 @@ import {
   createContainerIdentityStore,
   createContainerMagicLinkStore,
   createContainerOidcTransactionStore,
+  createContainerOidcAppCodeStore,
   createMagicLinkService,
   createContainerOutboxService,
   createContainerPasswordAuthService,
@@ -669,6 +670,7 @@ export const createContainerRuntime = async (
       outbox,
       identities: createContainerIdentityStore(database),
       oidcTransactions: createContainerOidcTransactionStore(database),
+      oidcAppCodes: createContainerOidcAppCodeStore(database),
       deploymentAuthMailer: createQueuedAuthMailer(
         createDeploymentSenderQueuedMailer(
           config.smtp.from,

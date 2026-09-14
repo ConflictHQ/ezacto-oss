@@ -6,6 +6,7 @@ import {
   createD1Database,
   createD1IdentityStore,
   createD1OidcTransactionStore,
+  createD1OidcAppCodeStore,
   createD1OutboxService,
   createQuickBooksMirrorSource,
   createQuickBooksStore,
@@ -993,6 +994,7 @@ export const createRuntimeServices = async (
     },
     identities,
     oidcTransactions: createD1OidcTransactionStore(database),
+    oidcAppCodes: createD1OidcAppCodeStore(database),
     ...(deploymentAuthMailer === undefined ? {} : { deploymentAuthMailer }),
     ...(organizationMailer === undefined ? {} : { organizationMailer }),
     ...(env.ATTACHMENTS === undefined

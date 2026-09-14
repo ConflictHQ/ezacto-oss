@@ -151,6 +151,57 @@
         ]
       }
     },
+    "/auth/oidc/exchange": {
+      "post": {
+        "operationId": "exchangeOidcAppCode",
+        "summary": "Exchange a native-app OIDC sign-in code for a session",
+        "tags": [
+          "authentication"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/auth/oidc/exchange",
+        "x-ezacto-generate-client": false
+      }
+    },
     "/auth/signup": {
       "post": {
         "operationId": "signup",
@@ -9236,6 +9287,15 @@
               "type": "string",
               "pattern": "^(draft|open|paid|closed)(,(draft|open|paid|closed))*$"
             }
+          },
+          {
+            "name": "client_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(,[1-9][0-9]*)*$"
+            }
           }
         ]
       }
@@ -10882,6 +10942,15 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 200
+            }
+          },
+          {
+            "name": "client_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(,[1-9][0-9]*)*$"
             }
           }
         ]

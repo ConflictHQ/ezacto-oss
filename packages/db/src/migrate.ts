@@ -69,7 +69,8 @@ import { exchangeRatesMigration } from './migrations/0062_exchange_rates.js'
 import { wiseGrantsMigration } from './migrations/0063_wise_grants.js'
 import { wiseWebhookDeliveriesMigration } from './migrations/0064_wise_webhook_deliveries.js'
 import { dropWiseOauthMigration } from './migrations/0065_drop_wise_oauth.js'
-import { scheduledActionsMigration } from './migrations/0066_scheduled_actions.js'
+import { oidcAppCodesMigration } from './migrations/0066_oidc_app_codes.js'
+import { scheduledActionsMigration } from './migrations/0067_scheduled_actions.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL, statements_sha256 TEXT
@@ -1482,7 +1483,8 @@ const migrations = [
   { id: '0063_wise_grants', statements: wiseGrantsMigration },
   { id: '0064_wise_webhook_deliveries', statements: wiseWebhookDeliveriesMigration },
   { id: '0065_drop_wise_oauth', statements: dropWiseOauthMigration },
-  { id: '0066_scheduled_actions', statements: scheduledActionsMigration },
+  { id: '0066_oidc_app_codes', statements: oidcAppCodesMigration },
+  { id: '0067_scheduled_actions', statements: scheduledActionsMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

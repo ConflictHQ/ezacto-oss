@@ -1,10 +1,24 @@
-import type { EzactoClient, GeneralResource, Whoami } from '@conflict-hq/ezacto-client'
+import type {
+  ClientRollupNode,
+  EzactoClient,
+  GeneralResource,
+  Invoice,
+  Retainer,
+  Whoami,
+} from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  clientBudgetBurn,
+  clientBurnWindow,
   clientHierarchy,
   clientIdFromPathname,
+  clientOpenInvoiceTotals,
+  clientProfileCanReadMoney,
   clientProfileCanWrite,
+  clientRetainerBalances,
+  clientRollupHref,
   clientSearchMatches,
+  clientSubtreeIds,
   createShellApi,
   relationLabel,
   renderClientDirectoryPages,
@@ -39,6 +53,9 @@ describe('Clients V1 model', () => {
       updateContact: vi.fn(async () => response),
       deleteContact: vi.fn(async () => undefined),
       listProjects: vi.fn(async () => page),
+      listClientDescendants: vi.fn(async () => ({ data: [], links: {} })),
+      listInvoices: vi.fn(async () => page),
+      listRetainers: vi.fn(async () => page),
     }
     const api = createShellApi(generated as unknown as EzactoClient)
     const signal = new AbortController().signal
@@ -54,6 +71,9 @@ describe('Clients V1 model', () => {
     await api.updateClientContact!(8, { first_name: 'Jordan' }, signal)
     await api.deleteClientContact!(8, signal)
     await api.listClientProjects!(7, 'project-cursor', signal)
+    await api.listClientSubtree!(7, signal)
+    await api.listClientOpenInvoices!([7, 8, 9], undefined, signal)
+    await api.listClientRetainers!([7, 8, 9], undefined, signal)
 
     expect(generated.listProjects).toHaveBeenNthCalledWith(1, {
       query: { per_page: 200, is_active: true, cursor: 'shared-cursor' },
@@ -81,6 +101,17 @@ describe('Clients V1 model', () => {
     expect(generated.deleteContact).toHaveBeenCalledWith({ id: 8, signal })
     expect(generated.listProjects).toHaveBeenNthCalledWith(2, {
       query: { client_id: 7, per_page: 200, cursor: 'project-cursor' },
+      signal,
+    })
+    expect(generated.listClientDescendants).toHaveBeenCalledWith({ id: 7, signal })
+    // One request for the whole subtree rather than one per node, and `open`
+    // applied by the server so a page of drafts never crosses the wire.
+    expect(generated.listInvoices).toHaveBeenCalledWith({
+      query: { client_id: '7,8,9', state: 'open', per_page: 200 },
+      signal,
+    })
+    expect(generated.listRetainers).toHaveBeenCalledWith({
+      query: { client_id: '7,8,9', per_page: 200 },
       signal,
     })
   })
@@ -173,4 +204,181 @@ describe('Clients V1 model', () => {
   ])('[unit] parses safe client path %s', (path, expected) => {
     expect(clientIdFromPathname(path)).toBe(expected)
   })
+})
+
+const invoice = (
+  id: number,
+  clientId: number,
+  currency: string,
+  state: Invoice['state'],
+  dueCents: number,
+  dueDate: string,
+): Invoice =>
+  ({
+    id,
+    client_id: clientId,
+    currency,
+    state,
+    due_amount_cents: dueCents,
+    due_date: dueDate,
+  }) as unknown as Invoice
+
+const retainer = (
+  id: number,
+  clientId: number | null,
+  denomination: Retainer['denomination'],
+  balance: number,
+): Retainer =>
+  ({
+    id,
+    client_id: clientId,
+    project_id: null,
+    denomination,
+    balance,
+    state: 'ongoing',
+  }) as unknown as Retainer
+
+const rollupNode = (
+  clientId: number,
+  currencies: ClientRollupNode['rollup']['currencies'],
+): ClientRollupNode =>
+  ({
+    client_id: clientId,
+    name: `Client ${clientId}`,
+    parent_client_id: null,
+    depth: 0,
+    direct: { currencies: [] },
+    rollup: { currencies },
+  }) as unknown as ClientRollupNode
+
+describe('Client 360 figures', () => {
+  it('[unit] roots the subtree at this client and ignores rows anchored elsewhere', () => {
+    // The endpoint is rooted, so a row for another ancestor should not arrive.
+    // If one ever does -- a mis-wired call, a cached response for the previous
+    // client -- rolling it in would put a stranger's money on this page.
+    expect(
+      clientSubtreeIds(10, [
+        { ancestor_id: 10, descendant_id: 10, depth: 0 },
+        { ancestor_id: 10, descendant_id: 12, depth: 1 },
+        { ancestor_id: 10, descendant_id: 11, depth: 1 },
+        { ancestor_id: 99, descendant_id: 50, depth: 1 },
+      ]),
+    ).toEqual([10, 11, 12])
+    // An empty answer still includes the client itself, so its own invoices
+    // are counted rather than the section reading as an empty subtree.
+    expect(clientSubtreeIds(10, [])).toEqual([10])
+  })
+
+  it('[unit] keeps open-invoice obligations per currency and never blends them', () => {
+    const totals = clientOpenInvoiceTotals(
+      [
+        invoice(1, 10, 'USD', 'open', 30_000, '2026-08-01'),
+        invoice(2, 11, 'EUR', 'open', 90_000, '2026-10-01'),
+        invoice(3, 11, 'USD', 'open', 10_000, '2026-10-01'),
+        // Not owed: a draft has not been sent, and a paid one is settled.
+        invoice(4, 11, 'USD', 'draft', 500_000, '2026-08-01'),
+        invoice(5, 11, 'USD', 'paid', 500_000, '2026-08-01'),
+        // Outside the subtree. The server filters too; this is what stands
+        // between a filter that did not arrive and another client's debt.
+        invoice(6, 77, 'USD', 'open', 700_000, '2026-08-01'),
+      ],
+      [10, 11],
+      '2026-09-09',
+    )
+
+    expect(totals).toEqual([
+      { currency: 'EUR', dueCents: 90_000, overdueCents: 0, openCount: 1, overdueCount: 0 },
+      {
+        currency: 'USD',
+        dueCents: 40_000,
+        overdueCents: 30_000,
+        openCount: 2,
+        overdueCount: 1,
+      },
+    ])
+    // The two currencies stay two rows. A single 130,000 would be a number in
+    // no currency at all, which is the failure this grouping exists to prevent.
+    expect(totals).toHaveLength(2)
+  })
+
+  it('[unit] groups retainer balances by denomination and currency, dropping unclaimed ones', () => {
+    const clients: GeneralResource[] = [
+      { ...client(10, 'Parent'), currency: 'USD' },
+      { ...client(11, 'Euro Child', 10), currency: 'EUR' },
+    ]
+
+    expect(
+      clientRetainerBalances(
+        [
+          retainer(1, 10, 'money', 250_000),
+          retainer(2, 10, 'money', 50_000),
+          retainer(3, 11, 'money', 400_000),
+          retainer(4, 10, 'hours', 36_000),
+          // No client: the Harvest cutover leaves client_id unset on a stub,
+          // and a balance attributed to a client that never agreed to it is a
+          // wrong number.
+          retainer(5, null, 'money', 999_999),
+          // Outside the subtree.
+          retainer(6, 77, 'money', 888_888),
+        ],
+        [10, 11],
+        clients,
+      ),
+    ).toEqual([
+      { denomination: 'money', currency: 'EUR', count: 1, balance: 400_000 },
+      { denomination: 'money', currency: 'USD', count: 2, balance: 300_000 },
+      // Seconds, and in no currency: adding this to either money row would
+      // produce a number with no unit.
+      { denomination: 'hours', currency: null, count: 1, balance: 36_000 },
+    ])
+  })
+
+  it('[unit] derives burn per currency and refuses the payload blended total', () => {
+    const burns = clientBudgetBurn(
+      rollupNode(10, [
+        { currency: 'USD', expense_cents: 20_000, cost_cents: 100_000 },
+        { currency: 'EUR', expense_cents: 5_000, cost_cents: 0 },
+      ]),
+    )
+
+    expect(burns).toEqual([
+      { currency: 'USD', costCents: 100_000, expenseCents: 20_000, burnCents: 120_000 },
+      { currency: 'EUR', costCents: 0, expenseCents: 5_000, burnCents: 5_000 },
+    ])
+    // The report's own budget_burn_cents adds these two into 125,000, an
+    // integer in no currency. Nothing here ever produces that number.
+    expect(burns!.some((burn) => burn.burnCents === 125_000)).toBe(false)
+  })
+
+  it('[unit] states nothing at all when the server withheld the cost figures', () => {
+    // cost_rate is administrator-only, so accounting and executive managers get
+    // buckets with no cost_cents on every client. Zero would say "nothing was
+    // spent", which is a fact about the business; "we did not tell you" is not.
+    expect(
+      clientBudgetBurn(rollupNode(10, [{ currency: 'USD', expense_cents: 20_000 }])),
+    ).toBeNull()
+    // No activity is a different answer from a withheld one, and stays empty.
+    expect(clientBudgetBurn(rollupNode(10, []))).toEqual([])
+  })
+
+  it('[unit] bounds burn to a stated window that matches the report it links to', () => {
+    expect(clientBurnWindow('2026-09-09')).toEqual({ from: '2026-09-01', to: '2026-09-09' })
+    expect(clientRollupHref(11, clientBurnWindow('2026-09-09'))).toBe(
+      '/reports?report=client-rollup&from=2026-09-01&to=2026-09-09&client_id=11',
+    )
+  })
+
+  it.each([
+    ['member', false],
+    ['project_manager', false],
+    ['people_admin', false],
+    ['accounting', true],
+    ['executive_manager', true],
+    ['administrator', true],
+  ] satisfies ReadonlyArray<readonly [Whoami['profile'], boolean]>)(
+    '[unit] maps %s to 360 money visibility %s',
+    (profile, expected) => {
+      expect(clientProfileCanReadMoney(profile)).toBe(expected)
+    },
+  )
 })

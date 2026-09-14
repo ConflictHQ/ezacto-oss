@@ -6,9 +6,15 @@ import {
 } from '@ezacto/core'
 import * as oauth from 'oauth4webapi'
 import type { ApiContext } from './context.js'
-import { ApiError } from './errors.js'
+import { ApiError, readJsonBody, validationError } from './errors.js'
 
 export const OIDC_STATE_COOKIE_NAME = '__Host-ezacto_oidc_state'
+// Marks a sign-in started from the native app (`?flow=app`). It rides alongside
+// the state cookie through the provider round-trip; the callback reads it to
+// hand back a one-time code to the app scheme instead of a browser session.
+export const OIDC_APP_COOKIE_NAME = '__Host-ezacto_oidc_app'
+export const OIDC_APP_CODE_TTL_MS = 2 * 60 * 1_000
+export const DEFAULT_OIDC_APP_REDIRECT_URI = 'ezacto://auth/callback'
 export const OIDC_TRANSACTION_TTL_MS = 10 * 60 * 1_000
 export const OIDC_START_RATE_WINDOW_MS = 10 * 60 * 1_000
 export const OIDC_TRANSACTION_RETENTION_MS = 24 * 60 * 60 * 1_000
@@ -52,6 +58,22 @@ export interface OidcSessionIssuer {
   issue(userId: number): Promise<{ setCookie: string }>
 }
 
+/**
+ * Single-use codes that bridge an app-initiated sign-in to a session. Only the
+ * SHA-256 of the code is stored; consumption is single-use and irreversible.
+ */
+export interface OidcAppCodeStorePort {
+  create(input: {
+    provider: string
+    codeHash: string
+    userId: number
+    expiresAt: string
+    createdAt: string
+    cleanupBefore: string
+  }): Promise<'created' | 'collision'>
+  consume(codeHash: string, now: string): Promise<{ userId: number } | null>
+}
+
 export type OidcClientAuthentication = 'client_secret_basic' | 'client_secret_post'
 
 export interface OidcProviderConfig {
@@ -76,6 +98,11 @@ export interface OidcRouteOptions<Bindings extends object> {
   ): OidcProviderConfig | null
   clientKey(request: Request): string
   now?: () => string
+  // Present only where the native-app sign-in handoff is enabled. When set, a
+  // `?flow=app` sign-in ends by minting a one-time code and redirecting to
+  // `appRedirectUri` instead of issuing a browser session.
+  appCodes?: OidcAppCodeStorePort
+  appRedirectUri?: string
 }
 
 interface NormalizedProvider {
@@ -305,6 +332,33 @@ const cookieValue = (request: Request): string | null => {
   return matches[0]!
 }
 
+const appFlowCookie = (expiresAt: string): string =>
+  `${OIDC_APP_COOKIE_NAME}=1; Path=/; Expires=${new Date(expiresAt).toUTCString()}; HttpOnly; Secure; SameSite=Lax`
+
+const clearAppFlowCookie = (): string =>
+  `${OIDC_APP_COOKIE_NAME}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; HttpOnly; Secure; SameSite=Lax`
+
+const appFlowRequested = (request: Request): boolean => {
+  const header = request.headers.get('cookie')
+  if (header === null) return false
+  return header
+    .split(';')
+    .map((part) => part.trim())
+    .some((part) => part === `${OIDC_APP_COOKIE_NAME}=1`)
+}
+
+const appCodePattern = /^[A-Za-z0-9_-]{43}$/
+
+const generateAppCode = (): string => {
+  const bytes = crypto.getRandomValues(new Uint8Array(32))
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary)
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replace(/=+$/, '')
+}
+
 const providerFor = <Bindings extends object>(
   key: string,
   context: Context<ApiContext<Bindings>>,
@@ -455,6 +509,9 @@ export const installOidcRoutes = <Bindings extends object>(
       )
       authorization.searchParams.set('code_challenge_method', 'S256')
       context.header('set-cookie', stateCookie(state, expiresAt), { append: true })
+      if (options.appCodes !== undefined && context.req.query('flow') === 'app') {
+        context.header('set-cookie', appFlowCookie(expiresAt), { append: true })
+      }
       setRedirectHeaders(context)
       return context.redirect(authorization.href, 302)
     }
@@ -467,6 +524,11 @@ export const installOidcRoutes = <Bindings extends object>(
 
   app.get('/auth/oidc/:provider/callback', async (context) => {
     context.header('set-cookie', clearStateCookie(), { append: true })
+    const appFlow =
+      options.appCodes !== undefined && appFlowRequested(context.req.raw)
+    if (appFlow) {
+      context.header('set-cookie', clearAppFlowCookie(), { append: true })
+    }
     const key = context.req.param('provider')
     const provider = providerFor(key, context, options)
     const url = new URL(context.req.url)
@@ -589,6 +651,29 @@ export const installOidcRoutes = <Bindings extends object>(
       if (identity.status === 'disabled') {
         throw oidcError(403, 'account_disabled', 'This ezacto user is disabled.')
       }
+      if (appFlow && options.appCodes !== undefined) {
+        const issuedAt = canonicalTimestamp(now())
+        const code = generateAppCode()
+        const created = await options.appCodes.create({
+          provider: key,
+          codeHash: await sha256Hex(code),
+          userId: identity.userId,
+          createdAt: issuedAt,
+          expiresAt: new Date(
+            Date.parse(issuedAt) + OIDC_APP_CODE_TTL_MS,
+          ).toISOString(),
+          cleanupBefore: new Date(
+            Date.parse(issuedAt) - OIDC_APP_CODE_TTL_MS,
+          ).toISOString(),
+        })
+        if (created !== 'created') throw authFailure()
+        const target = new URL(
+          options.appRedirectUri ?? DEFAULT_OIDC_APP_REDIRECT_URI,
+        )
+        target.searchParams.set('code', code)
+        setRedirectHeaders(context)
+        return context.redirect(target.href, 303)
+      }
       const session = await options.sessions.issue(identity.userId)
       context.header('set-cookie', session.setCookie, { append: true })
       setRedirectHeaders(context)
@@ -597,5 +682,58 @@ export const installOidcRoutes = <Bindings extends object>(
       if (error instanceof ApiError) throw error
       throw authFailure()
     }
+  })
+
+  // The native app exchanges the one-time code from the app-flow redirect for a
+  // browser session (the same session the password flow issues), then mints its
+  // API token through the existing /api/v1/api-tokens route -- so scope and
+  // profile policy stay in exactly one place.
+  app.post('/auth/oidc/exchange', async (context) => {
+    if (options.appCodes === undefined) {
+      throw oidcError(
+        404,
+        'oidc_app_exchange_unavailable',
+        'App sign-in exchange is not enabled.',
+      )
+    }
+    const body = await readJsonBody<unknown>(context, { maxBytes: 4 * 1024 })
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      throw validationError([
+        { field: 'body', code: 'invalid', message: 'body must be a JSON object' },
+      ])
+    }
+    const record = body as Record<string, unknown>
+    if (typeof record.code !== 'string' || !appCodePattern.test(record.code)) {
+      throw validationError([
+        { field: 'code', code: 'invalid', message: 'code is missing or malformed' },
+      ])
+    }
+    const unknownFields = Object.keys(record).filter((field) => field !== 'code')
+    if (unknownFields.length > 0) {
+      throw validationError(
+        unknownFields.map((field) => ({
+          field,
+          code: 'unknown',
+          message: `${field} is not accepted`,
+        })),
+      )
+    }
+    const consumed = await options.appCodes.consume(
+      await sha256Hex(record.code),
+      canonicalTimestamp(now()),
+    )
+    if (consumed === null) {
+      throw oidcError(
+        401,
+        'oidc_app_code_invalid',
+        'The sign-in code is invalid, already used, or expired.',
+      )
+    }
+    const session = await options.sessions.issue(consumed.userId)
+    context.header('set-cookie', session.setCookie, { append: true })
+    setRedirectHeaders(context)
+    return context.json({ data: { ok: true } }, 200, {
+      'cache-control': 'no-store',
+    })
   })
 }

@@ -115,6 +115,13 @@ export {
   type OidcTransactionStore,
 } from './oidc-transactions.js'
 export {
+  createD1OidcAppCodeStore,
+  type CreateOidcAppCodeInput,
+  type OidcAppCode,
+  type OidcAppCodeCreation,
+  type OidcAppCodeStore,
+} from './oidc-app-codes.js'
+export {
   createD1PasswordAuthService,
   AuthRateLimitError,
   FirstRunSignupUnavailableError,
