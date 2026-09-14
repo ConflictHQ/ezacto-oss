@@ -238,6 +238,14 @@ interface RecurringInput {
   claimMode: "all" | "ceiling";
   claimCeilingSeconds: number | null;
   claimCeilingCents: number | null;
+  /**
+   * Whether the band absorbs every tracked hour on those projects or only the
+   * billable ones (#708). Under a fixed amount the client bought the period, so
+   * "tracked" is the honest unit for a firm that logs internal work against the
+   * client's project; "billable" is what every definition did before the
+   * setting existed.
+   */
+  claimScope: "billable" | "tracked";
   occurredAt: string;
 }
 
@@ -2936,6 +2944,14 @@ const claimValues = (
   claimMode: "all" | "ceiling";
   claimCeilingSeconds: number | null;
   claimCeilingCents: number | null;
+  /**
+   * Whether the band absorbs every tracked hour on those projects or only the
+   * billable ones (#708). Under a fixed amount the client bought the period, so
+   * "tracked" is the honest unit for a firm that logs internal work against the
+   * client's project; "billable" is what every definition did before the
+   * setting existed.
+   */
+  claimScope: "billable" | "tracked";
 } => {
   const rawMode = body["claim_mode"];
   const mode =
@@ -2984,10 +3000,32 @@ const claimValues = (
       message: "A ceiling claim must name the projects it claims from.",
     });
   }
+  const rawScope = body["claim_scope"];
+  const scope =
+    rawScope === undefined || rawScope === null
+      ? "billable"
+      : rawScope === "billable" || rawScope === "tracked"
+        ? rawScope
+        : null;
+  if (scope === null) {
+    errors.push({
+      field: "claim_scope",
+      code: "invalid",
+      message: 'claim_scope must be "billable" or "tracked".',
+    });
+  }
+  if (scope === "tracked" && body["claims_project_ids"] == null) {
+    errors.push({
+      field: "claims_project_ids",
+      code: "invalid",
+      message: "A claim scope must name the projects it claims from.",
+    });
+  }
   return {
     claimMode: mode ?? "all",
     claimCeilingSeconds: seconds,
     claimCeilingCents: cents,
+    claimScope: scope ?? "billable",
   };
 };
 
@@ -3008,6 +3046,7 @@ const parseRecurring = (
     "claim_mode",
     "claim_ceiling_seconds",
     "claim_ceiling_cents",
+    "claim_scope",
   ]);
   const errors = unknownFieldErrors(body, allowed);
   const amountConfig = body.amount_config;
@@ -3062,6 +3101,7 @@ const parseRecurring = (
     claimMode: value.claimMode,
     claimCeilingSeconds: value.claimCeilingSeconds,
     claimCeilingCents: value.claimCeilingCents,
+    claimScope: value.claimScope,
     occurredAt: value.occurredAt,
   };
 };

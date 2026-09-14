@@ -844,7 +844,12 @@ for (const [runtime, factory] of factories) {
     // leaves the hours reading as uninvoiced and billable twice.
     const claimable = async (
       database: TestDatabase,
-      entries: readonly { seconds: number; rateCents: number | null; spentDate: string }[],
+      entries: readonly {
+        seconds: number
+        rateCents: number | null
+        spentDate: string
+        billable?: boolean
+      }[],
       projectId = 1,
     ) => {
       await database.run(
@@ -868,9 +873,10 @@ for (const [runtime, factory] of factories) {
                                      task_assignment_id, spent_date, seconds, seconds_without_timer,
                                      rounded_seconds, billable, billable_rate_cents,
                                      created_at, updated_at)
-           VALUES (?, 1, ?, 1, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+           VALUES (?, 1, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           index + 1, projectId, projectId, projectId, entry.spentDate,
-          entry.seconds, entry.seconds, entry.seconds, entry.rateCents, timestamp, timestamp,
+          entry.seconds, entry.seconds, entry.seconds,
+          entry.billable === false ? 0 : 1, entry.rateCents, timestamp, timestamp,
         )
       }
     }
@@ -1111,6 +1117,104 @@ for (const [runtime, factory] of factories) {
         result.invoiceId,
       )
       expect(claimed.map((row) => row.spent_date)).toEqual(['2026-08-05', '2026-08-12'])
+    })
+
+    it('[money] a band set to count tracked time claims the non-billable hours too', async () => {
+      // #708. Under a fixed amount the client bought the period, so every hour
+      // the team tracked against those projects was absorbed by it. Leaving the
+      // non-billable ones out makes the band look cheaper to deliver than it
+      // was, and puts those hours outside every figure describing the deal.
+      database = await factory()
+      await seedDatabase(database)
+      await claimable(database, [
+        { seconds: 3_600, rateCents: 25_000, spentDate: '2026-08-05' },
+        { seconds: 3_600, rateCents: null, spentDate: '2026-08-12', billable: false },
+      ])
+      const definition = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({ nextIssueOn: '2026-09-10', dayOfMonth: 10 }),
+      )
+      await database.run(
+        `UPDATE recurring_invoices SET claims_project_ids = '[1]',
+           claim_scope = 'tracked' WHERE id = ?`,
+        definition.id,
+      )
+
+      const result = await createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-09-10T10:00:00.000Z',
+      }).generate(definition.id, '2026-09-10', principal)
+
+      const claimed = await database.rows<{ spent_date: string }>(
+        `SELECT spent_date FROM time_entries WHERE invoice_id = ? ORDER BY spent_date`,
+        result.invoiceId,
+      )
+      expect(claimed.map((row) => row.spent_date)).toEqual(['2026-08-05', '2026-08-12'])
+    })
+
+    it('[money] a band left on billable-only leaves the non-billable hours alone', async () => {
+      // The default, and what every definition written before the setting did.
+      database = await factory()
+      await seedDatabase(database)
+      await claimable(database, [
+        { seconds: 3_600, rateCents: 25_000, spentDate: '2026-08-05' },
+        { seconds: 3_600, rateCents: null, spentDate: '2026-08-12', billable: false },
+      ])
+      const definition = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({ nextIssueOn: '2026-09-10', dayOfMonth: 10 }),
+      )
+      await database.run(
+        `UPDATE recurring_invoices SET claims_project_ids = '[1]' WHERE id = ?`,
+        definition.id,
+      )
+
+      const result = await createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-09-10T10:00:00.000Z',
+      }).generate(definition.id, '2026-09-10', principal)
+
+      const claimed = await database.rows<{ spent_date: string }>(
+        `SELECT spent_date FROM time_entries WHERE invoice_id = ? ORDER BY spent_date`,
+        result.invoiceId,
+      )
+      expect(claimed.map((row) => row.spent_date)).toEqual(['2026-08-05'])
+    })
+
+    it('[money] a non-billable hour is worth zero to a money ceiling, not unknown', async () => {
+      // The 0074 stop exists because a *billable* entry with no rate is missing
+      // data. A non-billable one is not missing anything: its value at list is
+      // zero by definition. It must pass through contributing nothing, or a
+      // band counting tracked time could never use a money ceiling at all.
+      database = await factory()
+      await seedDatabase(database)
+      await claimable(database, [
+        { seconds: 3_600, rateCents: 25_000, spentDate: '2026-08-05' },
+        { seconds: 3_600, rateCents: null, spentDate: '2026-08-12', billable: false },
+        { seconds: 3_600, rateCents: 25_000, spentDate: '2026-08-19' },
+      ])
+      const definition = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({ nextIssueOn: '2026-09-10', dayOfMonth: 10 }),
+      )
+      // $500 of ceiling against two priced hours at $250 and one free one.
+      await database.run(
+        `UPDATE recurring_invoices SET claims_project_ids = '[1]', claim_scope = 'tracked',
+           claim_mode = 'ceiling', claim_ceiling_cents = 50000 WHERE id = ?`,
+        definition.id,
+      )
+
+      const result = await createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-09-10T10:00:00.000Z',
+      }).generate(definition.id, '2026-09-10', principal)
+
+      const claimed = await database.rows<{ spent_date: string }>(
+        `SELECT spent_date FROM time_entries WHERE invoice_id = ? ORDER BY spent_date`,
+        result.invoiceId,
+      )
+      expect(claimed.map((row) => row.spent_date)).toEqual([
+        '2026-08-05',
+        '2026-08-12',
+        '2026-08-19',
+      ])
     })
 
     it('[money] claims the same entries on a re-run, not a different subset', async () => {

@@ -47,6 +47,7 @@ import {
   reportFiltersUrl,
   reportResourceLabel,
   validateReportFilters,
+  type DetailedTimeGrain,
   type DetailedTimeGrouping,
   type DetailedTimeHours,
   type DetailedTimeOptions,
@@ -1009,7 +1010,10 @@ const detailedTimeRecap = (
   return recap
 }
 
-const detailedTimeCells = (row: Readonly<DetailedTimeRow>): readonly Node[] => {
+const detailedTimeCells = (
+  row: Readonly<DetailedTimeRow>,
+  grain: DetailedTimeGrain,
+): readonly Node[] => {
   const client = element('th')
   client.scope = 'row'
   client.append(linkElement(`/clients/${row.client_id}`, row.client_name))
@@ -1017,7 +1021,7 @@ const detailedTimeCells = (row: Readonly<DetailedTimeRow>): readonly Node[] => {
   project.append(
     linkElement(`/projects/${row.project_id}`, detailedTimeProjectLabel(row)),
   )
-  return [
+  const cells = [
     client,
     project,
     textElement('td', row.task_name),
@@ -1025,8 +1029,23 @@ const detailedTimeCells = (row: Readonly<DetailedTimeRow>): readonly Node[] => {
     // account, where an em dash in this column would read as "not loaded".
     textElement('td', row.roles.join(', ')),
     textElement('td', row.user_name),
-    textElement('td', decimalHours(row.seconds), 'report-numeric'),
   ]
+  if (grain === 'entry') {
+    // What the drill-through is for: at the folded grain two entries share a
+    // line and have two notes between them, so the column can only exist here.
+    cells.push(textElement('td', row.notes ?? ''))
+    const claim = element('td')
+    if (row.invoice_id === null || row.invoice_id === undefined) {
+      // Not an em dash: "no invoice has taken this hour" is a state somebody
+      // acts on, where a dash reads as a value that failed to load.
+      claim.append(textElement('span', 'Not claimed', 'report-muted'))
+    } else {
+      claim.append(linkElement(`/invoices/${row.invoice_id}`, `#${row.invoice_id}`))
+    }
+    cells.push(claim)
+  }
+  cells.push(textElement('td', decimalHours(row.seconds), 'report-numeric'))
+  return cells
 }
 
 const renderDetailedTime = (
@@ -1049,6 +1068,10 @@ const renderDetailedTime = (
   totals.append(
     fact('Total hours', formatReportHours(report.seconds)),
     fact('Uninvoiced billable hours', formatReportHours(report.uninvoiced_billable_seconds)),
+    // Tracked, not billable: a band absorbs the period, so the hours nobody
+    // ticked billable are part of what it took (#708).
+    fact('Claimed hours', formatReportHours(report.claimed_seconds)),
+    fact('Unclaimed hours', formatReportHours(report.unclaimed_seconds)),
   )
   for (const currency of report.currencies) {
     // Absent for a profile that cannot read billable rates; the fact is then
@@ -1074,6 +1097,8 @@ const renderDetailedTime = (
         ['billable', 'Billable hours'],
         ['non_billable', 'Non-billable hours'],
         ['uninvoiced', 'Uninvoiced billable hours'],
+        ['claimed', 'Claimed by an invoice'],
+        ['unclaimed', 'Not claimed yet'],
       ],
       options.hours,
       (next) => handlers.onOptions({ ...options, hours: next as DetailedTimeHours }),
@@ -1087,10 +1112,24 @@ const renderDetailedTime = (
         ['project', 'Project'],
         ['task', 'Task'],
         ['person', 'Person'],
+        ['claimed', 'Claimed'],
       ],
       options.grouping,
       (next) =>
         handlers.onOptions({ ...options, grouping: next as DetailedTimeGrouping }),
+    ),
+    // The drill-through (#708). A total nobody can open is a total nobody can
+    // check, and because grouping is a re-fold of whatever rows came back, the
+    // entries land under the band they belong to.
+    selectControl(
+      'ez-detailed-grain',
+      'Detail',
+      [
+        ['day', 'One line per day'],
+        ['entry', 'One line per entry'],
+      ],
+      options.grain,
+      (next) => handlers.onOptions({ ...options, grain: next as DetailedTimeGrain }),
     ),
   )
   const activeField = element('div', 'report-filter-field report-detailed-active')
@@ -1129,7 +1168,11 @@ const renderDetailedTime = (
   const table = element('table', 'report-table report-detailed-table')
   const head = element('thead')
   const headerRow = element('tr')
-  for (const label of ['Client', 'Project', 'Task', 'Roles', 'Person', 'Hours']) {
+  const headers =
+    options.grain === 'entry'
+      ? ['Client', 'Project', 'Task', 'Roles', 'Person', 'Notes', 'Claimed by', 'Hours']
+      : ['Client', 'Project', 'Task', 'Roles', 'Person', 'Hours']
+  for (const label of headers) {
     const cell = textElement('th', label)
     cell.scope = 'col'
     if (label === 'Hours') cell.className = 'report-numeric'
@@ -1140,13 +1183,13 @@ const renderDetailedTime = (
   for (const band of groupDetailedTimeRows(report.rows, options.grouping)) {
     const bandRow = element('tr', 'report-band-row')
     const bandLabel = textElement('th', band.label)
-    bandLabel.colSpan = 5
+    bandLabel.colSpan = headers.length - 1
     bandLabel.scope = 'colgroup'
     bandRow.append(bandLabel, textElement('td', decimalHours(band.seconds), 'report-numeric'))
     body.append(bandRow)
     for (const row of band.rows) {
       const line = element('tr')
-      line.append(...detailedTimeCells(row))
+      line.append(...detailedTimeCells(row, options.grain))
       body.append(line)
     }
   }
@@ -1154,7 +1197,7 @@ const renderDetailedTime = (
   const totalRow = element('tr')
   const totalLabel = textElement('th', 'Total')
   totalLabel.scope = 'row'
-  totalLabel.colSpan = 5
+  totalLabel.colSpan = headers.length - 1
   totalRow.append(totalLabel, textElement('td', decimalHours(report.seconds), 'report-numeric'))
   foot.append(totalRow)
   table.append(head, body, foot)
@@ -1661,6 +1704,7 @@ export const createReportsController = (
     hours: 'all',
     grouping: 'date',
     activeProjectsOnly: false,
+    grain: 'day',
   }
   let pending = false
   let retryAction: (() => void) | null = null
@@ -1843,11 +1887,12 @@ export const createReportsController = (
           onOptions: (next) => {
             const regroupOnly =
               next.hours === detailedOptions.hours &&
-              next.activeProjectsOnly === detailedOptions.activeProjectsOnly
+              next.activeProjectsOnly === detailedOptions.activeProjectsOnly &&
+              next.grain === detailedOptions.grain
             detailedOptions = next
             // Grouping is a re-fold of rows already here, so it re-renders
-            // without a request; Show and Active projects only change which
-            // rows exist, so they go back to the API.
+            // without a request; Show, Active projects only and Detail change
+            // which rows exist, so they go back to the API.
             if (regroupOnly) {
               globalThis.history.pushState(
                 null,
@@ -2005,6 +2050,7 @@ export const createReportsController = (
                 ...(filters.projectId === null ? {} : { project_id: filters.projectId }),
                 hours: detailedOptions.hours,
                 active_projects_only: detailedOptions.activeProjectsOnly,
+                grain: detailedOptions.grain,
               },
               active.signal,
             )

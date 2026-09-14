@@ -39,8 +39,16 @@ export type TimeReportTab = 'clients' | 'projects' | 'tasks' | 'teammates'
 
 export type DetailedTimeHours = DetailedTimeReport['hours']
 
+export type DetailedTimeGrain = DetailedTimeReport['grain']
+
 /** The Group by control. Date is the default because the table bands by it. */
-export type DetailedTimeGrouping = 'date' | 'client' | 'project' | 'task' | 'person'
+export type DetailedTimeGrouping =
+  | 'date'
+  | 'client'
+  | 'project'
+  | 'task'
+  | 'person'
+  | 'claimed'
 
 /**
  * The three controls that sit above the detailed table rather than in the
@@ -53,6 +61,16 @@ export interface DetailedTimeOptions {
   readonly hours: DetailedTimeHours
   readonly grouping: DetailedTimeGrouping
   readonly activeProjectsOnly: boolean
+  /**
+   * The drill-through (#708). `day` is the folded grain the table has always
+   * drawn; `entry` asks the same question of the same range and gets one line
+   * per time entry, with its notes and the invoice that claimed it.
+   *
+   * A total nobody can open is a total nobody can check, and grouping is a
+   * re-fold of whatever rows came back -- so switching the grain under a
+   * grouping puts the entries behind each band directly under that band.
+   */
+  readonly grain: DetailedTimeGrain
 }
 
 /**
@@ -188,6 +206,7 @@ export interface ReportWorkspaceApi {
       readonly project_id?: number
       readonly hours?: DetailedTimeHours
       readonly active_projects_only?: boolean
+      readonly grain?: DetailedTimeGrain
     },
     signal?: AbortSignal,
   ): Promise<DetailedTimeReport>
@@ -312,6 +331,8 @@ const detailedTimeHours: ReadonlySet<string> = new Set<DetailedTimeHours>([
   'billable',
   'non_billable',
   'uninvoiced',
+  'claimed',
+  'unclaimed',
 ])
 
 const detailedTimeGroupings: ReadonlySet<string> = new Set<DetailedTimeGrouping>([
@@ -320,6 +341,7 @@ const detailedTimeGroupings: ReadonlySet<string> = new Set<DetailedTimeGrouping>
   'project',
   'task',
   'person',
+  'claimed',
 ])
 
 /**
@@ -332,6 +354,7 @@ export const detailedTimeOptionsFromUrl = (url: URL): DetailedTimeOptions => {
   const hours = url.searchParams.get('hours')
   const grouping = url.searchParams.get('group')
   return {
+    grain: url.searchParams.get('grain') === 'entry' ? 'entry' : 'day',
     hours: hours !== null && detailedTimeHours.has(hours) ? (hours as DetailedTimeHours) : 'all',
     grouping:
       grouping !== null && detailedTimeGroupings.has(grouping)
@@ -371,6 +394,7 @@ export const reportFiltersUrl = (
     params.set('hours', options.hours)
     params.set('group', options.grouping)
     params.set('active_only', String(options.activeProjectsOnly))
+    params.set('grain', options.grain)
   }
   // Only the Time report has sub-tabs, so only it carries one. A `tab` left on
   // every other kind's address would be a parameter that does nothing, and the
@@ -450,6 +474,16 @@ const bandKey = (
       return { key: `task:${row.task_id}`, label: row.task_name }
     case 'person':
       return { key: `person:${row.user_id}`, label: row.user_name }
+    case 'claimed':
+      // Two bands, and the wording matters: an unclaimed hour on a banded
+      // project is not "uninvoiced". It is work a band will absorb at the next
+      // generation, work a ceiling left over that ought to be billed, or work
+      // nobody will ever bill -- three answers, which is why the report has to
+      // let somebody look at them rather than leaving `invoice_id IS NULL` as
+      // the only signal (#708).
+      return row.claimed
+        ? { key: 'claimed:1', label: 'Claimed by an invoice' }
+        : { key: 'claimed:0', label: 'Not claimed yet' }
     default:
       return { key: `date:${row.spent_date}`, label: row.spent_date }
   }

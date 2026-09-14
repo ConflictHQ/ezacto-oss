@@ -381,6 +381,12 @@ export interface RecurringInvoiceResource {
   /** Set exactly when the mode is `ceiling`; the schema refuses either alone. */
   claim_ceiling_seconds: number | null
   claim_ceiling_cents: number | null
+  /**
+   * Whether the band absorbs every tracked hour on those projects or only the
+   * billable ones (#708). `billable` is what every definition did before the
+   * setting existed, and is the default for that reason.
+   */
+  claim_scope: 'billable' | 'tracked'
   created_at: string
   updated_at: string
 }
@@ -403,6 +409,7 @@ export interface RecurringInvoiceInput {
   claimMode?: 'all' | 'ceiling'
   claimCeilingSeconds?: number | null
   claimCeilingCents?: number | null
+  claimScope?: 'billable' | 'tracked'
   occurredAt: string
 }
 
@@ -978,7 +985,7 @@ export type CompleteRecurringOutcome =
 const recurringSelect = `SELECT id, client_id, subject_template, notes_template,
   every_n_months, day_of_month, next_issue_on, amount_config,
   can_draw_from_retainer_id, claims_project_ids, claim_mode, claim_ceiling_seconds,
-  claim_ceiling_cents,
+  claim_ceiling_cents, claim_scope,
   created_at, updated_at
   FROM recurring_invoices
   WHERE definition_status = 'complete'`
@@ -2081,11 +2088,13 @@ export class MoneyResourceRepository {
         can_draw_from_retainer_id: input.canDrawFromRetainerId,
         // In the fingerprint, or two definitions differing only in what they
         // claim would share a command identity and the second would replay as
-        // the first. The mode and its ceiling are part of "what they claim".
+        // the first. The mode, its ceiling and its scope are all part of "what
+        // they claim".
         claims_project_ids: input.claimsProjectIds,
         claim_mode: input.claimMode ?? 'all',
         claim_ceiling_seconds: input.claimCeilingSeconds ?? null,
         claim_ceiling_cents: input.claimCeilingCents ?? null,
+        claim_scope: input.claimScope ?? 'billable',
       },
     })
     const expected = {
@@ -2109,6 +2118,7 @@ export class MoneyResourceRepository {
       claim_mode: input.claimMode ?? 'all',
       claim_ceiling_seconds: input.claimCeilingSeconds ?? null,
       claim_ceiling_cents: input.claimCeilingCents ?? null,
+      claim_scope: input.claimScope ?? 'billable',
       created_at: input.occurredAt,
       updated_at: input.occurredAt,
     }
@@ -2119,9 +2129,9 @@ export class MoneyResourceRepository {
             id, client_id, definition_status, subject_template, notes_template,
             every_n_months, day_of_month, next_issue_on, amount_config,
             can_draw_from_retainer_id, claims_project_ids,
-            claim_mode, claim_ceiling_seconds, claim_ceiling_cents,
+            claim_mode, claim_ceiling_seconds, claim_ceiling_cents, claim_scope,
             created_at, updated_at
-          ) VALUES (?, ?, 'complete', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, 'complete', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           params: [
             input.resourceId,
             input.clientId,
@@ -2136,6 +2146,7 @@ export class MoneyResourceRepository {
             input.claimMode ?? 'all',
             input.claimCeilingSeconds ?? null,
             input.claimCeilingCents ?? null,
+            input.claimScope ?? 'billable',
             input.occurredAt,
             input.occurredAt,
           ],
@@ -2188,7 +2199,7 @@ export class MoneyResourceRepository {
         notes_template = ?, every_n_months = ?, day_of_month = ?, next_issue_on = ?,
         amount_config = ?, can_draw_from_retainer_id = ?, claims_project_ids = ?,
         claim_mode = ?, claim_ceiling_seconds = ?, claim_ceiling_cents = ?,
-        updated_at = ?
+        claim_scope = ?, updated_at = ?
         WHERE id = ? AND definition_status = 'complete'`,
       params: [
         input.clientId,
@@ -2203,6 +2214,7 @@ export class MoneyResourceRepository {
         input.claimMode ?? 'all',
         input.claimCeilingSeconds ?? null,
         input.claimCeilingCents ?? null,
+        input.claimScope ?? 'billable',
         input.occurredAt,
         id,
       ],
@@ -2323,7 +2335,7 @@ export class MoneyResourceRepository {
           notes_template = ?, every_n_months = ?, day_of_month = ?, next_issue_on = ?,
           amount_config = ?, can_draw_from_retainer_id = ?, claims_project_ids = ?,
           claim_mode = ?, claim_ceiling_seconds = ?, claim_ceiling_cents = ?,
-          updated_at = ?, definition_status = 'complete'
+          claim_scope = ?, updated_at = ?, definition_status = 'complete'
           WHERE id = ? AND definition_status = 'incomplete'`,
         params: [
           input.clientId,
@@ -2338,6 +2350,7 @@ export class MoneyResourceRepository {
           input.claimMode ?? 'all',
           input.claimCeilingSeconds ?? null,
           input.claimCeilingCents ?? null,
+          input.claimScope ?? 'billable',
           input.occurredAt,
           id,
         ],
@@ -2382,6 +2395,9 @@ export class MoneyResourceRepository {
       }
     } else if (ceilings.length > 0) {
       throw new TypeError('only a ceiling claim may carry a ceiling')
+    }
+    if ((input.claimScope ?? 'billable') !== 'billable' && input.claimsProjectIds === null) {
+      throw new TypeError('a claim scope must name the projects it claims from')
     }
     if (input.subjectTemplate.trim().length === 0) {
       throw new TypeError('subjectTemplate must be non-empty')

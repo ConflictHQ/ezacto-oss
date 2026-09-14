@@ -306,11 +306,19 @@ export interface MyHoursReportRecord extends ReportDateRange {
   projects: readonly MyHoursProjectRecord[];
 }
 
+/**
+ * `uninvoiced` is billable work nobody has charged for. `claimed` and
+ * `unclaimed` are the band question (#708) and say nothing about billable: a
+ * fixed amount buys the period, so an hour nobody ticked billable was absorbed
+ * by it all the same.
+ */
 export type DetailedTimeHours =
   | "all"
   | "billable"
   | "non_billable"
-  | "uninvoiced";
+  | "uninvoiced"
+  | "claimed"
+  | "unclaimed";
 
 /** `day` folds entries per date, task and person; `entry` is one row each. */
 export type DetailedTimeGrain = "day" | "entry";
@@ -337,8 +345,15 @@ export interface DetailedTimeRowRecord {
   /** Null when any billable entry folded into the row has no resolved rate. */
   billableAmountCents: number | null;
   entriesWithoutBillableRate: number;
+  /**
+   * Whether an invoice has taken this work (#708). Part of the row's grain: a
+   * day, task and person partly claimed folds into two rows, one of each, so
+   * grouping the table by it is the same re-fold as grouping by project.
+   */
+  claimed: boolean;
   /** Set at `entry` grain only. */
   timeEntryId: number | null;
+  invoiceId: number | null;
   notes: string | null;
 }
 
@@ -358,6 +373,13 @@ export interface DetailedTimeReportRecord extends ReportDateRange {
   roundedSeconds: number;
   billableSeconds: number;
   uninvoicedBillableSeconds: number;
+  /**
+   * Tracked seconds an invoice has taken, and tracked seconds still open
+   * (#708). Billable and non-billable alike, so these two add to `seconds`
+   * where `uninvoicedBillableSeconds` does not.
+   */
+  claimedSeconds: number;
+  unclaimedSeconds: number;
   timeEntryCount: number;
   currencies: readonly DetailedTimeCurrencyRecord[];
   rows: readonly DetailedTimeRowRecord[];
@@ -503,6 +525,8 @@ const detailedTimeHours: readonly DetailedTimeHours[] = [
   "billable",
   "non_billable",
   "uninvoiced",
+  "claimed",
+  "unclaimed",
 ];
 
 const rangeFrom = (
@@ -875,6 +899,8 @@ const serializeDetailedTime = (
     rounded_seconds: report.roundedSeconds,
     billable_seconds: report.billableSeconds,
     uninvoiced_billable_seconds: report.uninvoicedBillableSeconds,
+    claimed_seconds: report.claimedSeconds,
+    unclaimed_seconds: report.unclaimedSeconds,
     time_entry_count: report.timeEntryCount,
     currencies: report.currencies.map((currency) => ({
       currency: currency.currency,
@@ -900,9 +926,14 @@ const serializeDetailedTime = (
       uninvoiced_billable_seconds: row.uninvoicedBillableSeconds,
       time_entry_count: row.timeEntryCount,
       entries_without_billable_rate: row.entriesWithoutBillableRate,
+      claimed: row.claimed,
       ...(money ? { billable_amount_cents: row.billableAmountCents } : {}),
       ...(report.grain === "entry"
-        ? { time_entry_id: row.timeEntryId, notes: row.notes }
+        ? {
+            time_entry_id: row.timeEntryId,
+            invoice_id: row.invoiceId,
+            notes: row.notes,
+          }
         : {}),
     })),
   };

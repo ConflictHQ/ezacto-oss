@@ -1883,6 +1883,107 @@ for (const [runtime, factory] of factories) {
       expect((await harness.request(`${base}&grain=week`)).status).toBe(422);
     });
 
+    /**
+     * Issue 708. An unclaimed hour on a banded project is ambiguous today:
+     * work a band will absorb at the next generation, work a ceiling left over
+     * that ought to be billed, or work nobody will ever bill. Those are three
+     * responses, and `invoice_id IS NULL` is the only signal, on no screen.
+     */
+    it("[db] splits a day's fold by whether an invoice has claimed the hours", async () => {
+      harness = await factory();
+      await seedDetailedDay(harness);
+      // One entry of the same day, task and person is claimed and the rest are
+      // not, so a fold blind to claimed-ness returns one row whose boolean is
+      // true of only some of its hours.
+      await harness.run(`UPDATE time_entries SET invoice_id = 301 WHERE id = 111`, []);
+      const result = await harness.reports.detailedTime({
+        from: "2026-08-10",
+        to: "2026-08-10",
+        projectId: 1,
+      });
+      if (result.kind !== "report") throw new Error("expected a report");
+      expect(result.report.rows).toHaveLength(2);
+      expect(
+        result.report.rows.map((row) => [row.claimed, row.seconds, row.timeEntryCount]),
+      ).toEqual(
+        expect.arrayContaining([
+          [true, 1800, 1],
+          [false, 4500, 2],
+        ]),
+      );
+      // Tracked, not billable: the non-billable entry is in the unclaimed
+      // figure because a band absorbs the period rather than the billable part
+      // of it. The two add to the total where the uninvoiced figure does not.
+      expect(result.report.claimedSeconds).toBe(1800);
+      expect(result.report.unclaimedSeconds).toBe(4500);
+      expect(result.report.claimedSeconds + result.report.unclaimedSeconds).toBe(
+        result.report.seconds,
+      );
+      expect(result.report.uninvoicedBillableSeconds).toBe(3600);
+    });
+
+    it("[db] filters to claimed or unclaimed without reading it as billable", async () => {
+      harness = await factory();
+      await seedDetailedDay(harness);
+      await harness.run(`UPDATE time_entries SET invoice_id = 301 WHERE id = 111`, []);
+      const unclaimed = await harness.reports.detailedTime({
+        from: "2026-08-10",
+        to: "2026-08-10",
+        projectId: 1,
+        hours: "unclaimed",
+        grain: "entry",
+      });
+      if (unclaimed.kind !== "report") throw new Error("expected a report");
+      // 112 is non-billable and still here: `uninvoiced` would have dropped it,
+      // and under a band it is exactly the hour that must not be dropped.
+      expect(unclaimed.report.rows.map((row) => row.timeEntryId)).toEqual([101, 112]);
+
+      const claimed = await harness.reports.detailedTime({
+        from: "2026-08-10",
+        to: "2026-08-10",
+        projectId: 1,
+        hours: "claimed",
+        grain: "entry",
+      });
+      if (claimed.kind !== "report") throw new Error("expected a report");
+      expect(claimed.report.rows.map((row) => row.timeEntryId)).toEqual([111]);
+      // Drill-through: the total opens onto the invoice that took the hours.
+      expect(claimed.report.rows[0]!.invoiceId).toBe(301);
+    });
+
+    it("[api] serves the claimed split and refuses nothing it used to accept", async () => {
+      harness = await factory();
+      await seedDetailedDay(harness);
+      await harness.run(`UPDATE time_entries SET invoice_id = 301 WHERE id = 111`, []);
+      const response = await harness.request(
+        "/reports/detailed-time?from=2026-08-10&to=2026-08-10&project_id=1&hours=unclaimed&grain=entry",
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        data: {
+          hours: string;
+          claimed_seconds: number;
+          unclaimed_seconds: number;
+          rows: Array<Record<string, unknown>>;
+        };
+      };
+      expect(body.data.hours).toBe("unclaimed");
+      expect(body.data.rows.map((row) => row["time_entry_id"])).toEqual([101, 112]);
+      expect(body.data.rows.every((row) => row["claimed"] === false)).toBe(true);
+      expect(body.data.rows.every((row) => row["invoice_id"] === null)).toBe(true);
+      expect(body.data.claimed_seconds).toBe(0);
+      expect(body.data.unclaimed_seconds).toBe(4500);
+
+      const day = await harness.request(
+        "/reports/detailed-time?from=2026-08-10&to=2026-08-10&project_id=1",
+      );
+      const dayBody = (await day.json()) as { data: { rows: Array<Record<string, unknown>> } };
+      // Claimed-ness is part of the grain, so it is on every row; the entry-only
+      // fields still are not.
+      expect(dayBody.data.rows.every((row) => typeof row["claimed"] === "boolean")).toBe(true);
+      expect(dayBody.data.rows[0]).not.toHaveProperty("invoice_id");
+    });
+
     it("[api] serves the detailed report and echoes the filters it was run with", async () => {
       harness = await factory();
       await seedDetailedDay(harness);
@@ -2035,6 +2136,8 @@ describe("detailed time serialization", () => {
     roundedSeconds: 3600,
     billableSeconds: 3600,
     uninvoicedBillableSeconds: 3600,
+    claimedSeconds: 0,
+    unclaimedSeconds: 0,
     timeEntryCount: 1,
     currencies: [
       { currency: "USD", billableAmountCents: 10_000, entriesWithoutBillableRate: 1 },
@@ -2060,7 +2163,9 @@ describe("detailed time serialization", () => {
         timeEntryCount: 1,
         billableAmountCents: 10_000,
         entriesWithoutBillableRate: 1,
+        claimed: false,
         timeEntryId: 101,
+        invoiceId: null,
         notes: "wrote the thing",
       },
     ],

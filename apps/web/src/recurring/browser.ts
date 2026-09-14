@@ -205,6 +205,7 @@ export const createRecurringWorkspaceController = (
   const editorClaims = required<HTMLSelectElement>('[data-recurring-editor-claims]')
   // How much of the period that band takes (#707), and in which unit.
   const editorClaimMode = required<HTMLSelectElement>('[data-recurring-editor-claim-mode]')
+  const editorClaimScope = required<HTMLSelectElement>('[data-recurring-editor-claim-scope]')
   const editorCeiling = required<HTMLElement>('[data-recurring-editor-ceiling]')
   const editorCeilingUnit = required<HTMLSelectElement>('[data-recurring-editor-ceiling-unit]')
   const editorCeilingAmount = required<HTMLInputElement>(
@@ -463,6 +464,7 @@ export const createRecurringWorkspaceController = (
     claimMode: editorClaimMode.value === 'ceiling' ? 'ceiling' : 'all',
     claimCeilingUnit: editorCeilingUnit.value === 'money' ? 'money' : 'time',
     claimCeiling: editorCeilingAmount.value,
+    claimScope: editorClaimScope.value === 'tracked' ? 'tracked' : 'billable',
     importTime: editorTimeOn.checked,
     timeSummary: editorTimeSummary.value,
     importExpenses: editorExpensesOn.checked,
@@ -506,6 +508,7 @@ export const createRecurringWorkspaceController = (
       values.claimsProjectIds,
       null,
     )
+    editorClaimScope.value = values.claimScope
     editorClaimMode.value = values.claimMode
     editorCeilingUnit.value = values.claimCeilingUnit
     editorCeilingAmount.value = values.claimCeiling

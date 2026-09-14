@@ -152,6 +152,33 @@ describe('the claim mode and its ceiling', () => {
     ).toEqual({ claim_mode: 'ceiling', claim_ceiling_seconds: 180_000, claim_ceiling_cents: null })
   })
 
+  it('[db] defaults an existing definition to counting billable hours only', async () => {
+    // #708 widens what a band may absorb. A migration that widened a live band
+    // would pull months of non-billable hours onto the next invoice.
+    const database = await fixture()
+    define(database, '', '')
+    expect(
+      database.prepare(`SELECT claim_scope FROM recurring_invoices`).get(),
+    ).toEqual({ claim_scope: 'billable' })
+  })
+
+  it('[money] refuses a claim scope on a band that claims no projects', async () => {
+    // Same rule the mode carries: a setting about what a band claims means
+    // nothing on a definition that claims nothing.
+    const database = await fixture()
+    expect(() =>
+      define(database, `, claim_scope`, `, 'tracked'`),
+    ).toThrow(/claim scope needs the projects/u)
+  })
+
+  it('[db] accepts a band that counts every tracked hour', async () => {
+    const database = await fixture()
+    define(database, `, claims_project_ids, claim_scope`, `, '[1]', 'tracked'`)
+    expect(
+      database.prepare(`SELECT claim_scope FROM recurring_invoices`).get(),
+    ).toEqual({ claim_scope: 'tracked' })
+  })
+
   it('[db] accepts a budget stated in money', async () => {
     // The other contract the same band writes: "covers work worth up to X at
     // list" rather than "covers N hours".

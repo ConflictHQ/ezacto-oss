@@ -46,6 +46,7 @@ const managed: RecurringInvoice = {
   claim_mode: 'all',
   claim_ceiling_seconds: null,
   claim_ceiling_cents: null,
+  claim_scope: 'billable',
   created_at: timestamp,
   updated_at: timestamp,
 }
@@ -478,6 +479,7 @@ describe('Recurring workspace controller', () => {
     mode.value = 'ceiling'
     mode.dispatchEvent(new window.Event('change'))
     expect(ceiling.hidden).toBe(false)
+    control<HTMLSelectElement>('[data-recurring-editor-claim-scope]').value = 'tracked'
     control<HTMLSelectElement>('[data-recurring-editor-ceiling-unit]').value = 'money'
     control<HTMLInputElement>('[data-recurring-editor-ceiling-amount]').value = '9368500'
     submitEditor()
@@ -489,6 +491,7 @@ describe('Recurring workspace controller', () => {
         claim_mode: 'ceiling',
         claim_ceiling_seconds: null,
         claim_ceiling_cents: 9_368_500,
+        claim_scope: 'tracked',
       }),
       expect.any(String),
       expect.any(AbortSignal),
@@ -554,6 +557,7 @@ describe('Recurring workspace controller', () => {
         claim_mode: 'all',
         claim_ceiling_seconds: null,
         claim_ceiling_cents: null,
+        claim_scope: 'billable',
       },
       expect.any(String),
       expect.any(AbortSignal),

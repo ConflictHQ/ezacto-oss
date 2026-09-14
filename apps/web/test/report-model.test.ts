@@ -36,6 +36,7 @@ const detailedRow = (fields: Partial<DetailedTimeRow> = {}): DetailedTimeRow => 
   time_entry_count: 1,
   billable_amount_cents: 10_000,
   entries_without_billable_rate: 0,
+  claimed: false,
   ...fields,
 })
 
@@ -58,6 +59,8 @@ const detailedReport = (fields: Partial<DetailedTimeReport> = {}): DetailedTimeR
   rounded_seconds: 0,
   billable_seconds: 0,
   uninvoiced_billable_seconds: 0,
+  claimed_seconds: 0,
+  unclaimed_seconds: 0,
   time_entry_count: 0,
   currencies: [],
   rows: [],
@@ -224,9 +227,10 @@ describe('Reports Stage 1 model', () => {
       hours: 'uninvoiced',
       grouping: 'person',
       activeProjectsOnly: true,
+      grain: 'day',
     })
     expect(reportFiltersUrl(filters, options)).toBe(
-      '/reports?report=detailed-time&from=2026-08-01&to=2026-08-31&client_id=3&project_id=9&hours=uninvoiced&group=person&active_only=true',
+      '/reports?report=detailed-time&from=2026-08-01&to=2026-08-31&client_id=3&project_id=9&hours=uninvoiced&group=person&active_only=true&grain=day',
     )
     // An unreadable display preference falls back rather than stopping the
     // report: the range is what has to be right, the grouping is a shape.
@@ -234,13 +238,13 @@ describe('Reports Stage 1 model', () => {
       detailedTimeOptionsFromUrl(
         new URL('https://example.test/reports?hours=everything&group=colour'),
       ),
-    ).toEqual({ hours: 'all', grouping: 'date', activeProjectsOnly: false })
+    ).toEqual({ hours: 'all', grouping: 'date', activeProjectsOnly: false, grain: 'day' })
     // The other kinds carry none of it: a client rollup has no Show control,
     // and an address implying one would be a control that does not exist.
     expect(
       reportFiltersUrl(
         { ...filters, kind: 'client-rollup', projectId: null },
-        { hours: 'billable', grouping: 'task', activeProjectsOnly: true },
+        { hours: 'billable', grouping: 'task', activeProjectsOnly: true, grain: 'day' },
       ),
     ).toBe('/reports?report=client-rollup&from=2026-08-01&to=2026-08-31&client_id=3')
   })
@@ -262,6 +266,41 @@ describe('Reports Stage 1 model', () => {
     expect(total(byDate)).toBe(total(byPerson))
     expect(total(byDate)).toBe(3_600 + 1_800 + 900)
     expect(byDate.flatMap((band) => band.rows)).toHaveLength(rows.length)
+  })
+
+  it('[money] groups by whether an invoice has claimed the hours', () => {
+    // #708. "Unclaimed" is not "uninvoiced": on a banded project it could be
+    // work the band absorbs next generation, work a ceiling left over that
+    // ought to be billed, or work nobody will ever bill. The grouping is what
+    // lets somebody look at the three, so the labels say claimed rather than
+    // invoiced.
+    const rows = [
+      detailedRow({ claimed: true }),
+      detailedRow({ ...nextDay, claimed: false }),
+      detailedRow({ ...secondPerson, claimed: false }),
+    ]
+    const bands = groupDetailedTimeRows(rows, 'claimed')
+
+    expect(bands).toHaveLength(2)
+    expect(bands.map((band) => band.label)).toEqual([
+      'Claimed by an invoice',
+      'Not claimed yet',
+    ])
+    expect(bands.map((band) => band.rows.length)).toEqual([1, 2])
+    expect(bands.reduce((sum, band) => sum + band.seconds, 0)).toBe(
+      rows.reduce((sum, row) => sum + row.seconds, 0),
+    )
+  })
+
+  it('[unit] reads a claimed grouping and filter out of the address', () => {
+    // A saved or shared report address has to come back as the report it was.
+    const url = new URL(
+      'https://example.test/reports?report=detailed-time&from=2026-08-01&to=2026-08-31&hours=unclaimed&group=claimed',
+    )
+    expect(detailedTimeOptionsFromUrl(url)).toMatchObject({
+      hours: 'unclaimed',
+      grouping: 'claimed',
+    })
   })
 
   it('[unit] does not force a negative number to text in the export', () => {

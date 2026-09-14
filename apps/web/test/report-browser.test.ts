@@ -83,6 +83,7 @@ const emptyProfitTotals = {
   cost_cents: 0,
   profit_cents: 0,
   entries_without_billable_rate: 0,
+  claimed: false,
   entries_without_cost_rate: 0,
   projects_not_converted: 0,
 }
@@ -173,6 +174,7 @@ const detailedTimeRow = (fields: Partial<DetailedTimeRow> = {}): DetailedTimeRow
   time_entry_count: 1,
   billable_amount_cents: 10_000,
   entries_without_billable_rate: 0,
+  claimed: false,
   ...fields,
 })
 
@@ -190,6 +192,8 @@ const detailedTimeReport = (
   rounded_seconds: 0,
   billable_seconds: 0,
   uninvoiced_billable_seconds: 0,
+  claimed_seconds: 0,
+  unclaimed_seconds: 0,
   time_entry_count: 0,
   currencies: [],
   rows: [],
@@ -1965,6 +1969,7 @@ describe('Reports Stage 1 browser controller', () => {
         to: '2026-08-31',
         hours: 'all',
         active_projects_only: false,
+        grain: 'day',
       },
       expect.anything(),
     )
@@ -1979,6 +1984,7 @@ describe('Reports Stage 1 browser controller', () => {
         to: '2026-08-31',
         hours: 'uninvoiced',
         active_projects_only: false,
+        grain: 'day',
       },
       expect.anything(),
     )
@@ -1993,9 +1999,90 @@ describe('Reports Stage 1 browser controller', () => {
         to: '2026-08-31',
         hours: 'uninvoiced',
         active_projects_only: true,
+        grain: 'day',
       },
       expect.anything(),
     )
+    session.abort()
+  })
+
+  it('[e2e] opens the entries behind a total, grouped by whether they were claimed', async () => {
+    // #708. A total nobody can open is a total nobody can check, and an
+    // unclaimed hour is three different states with three different responses
+    // -- so the screen has to show the split and then the entries under it.
+    writeDocument('/reports?report=detailed-time&from=2026-08-01&to=2026-08-31')
+    const getDetailedTimeReport = vi.fn(
+      async (filter: { grain?: string }) =>
+        filter.grain === 'entry'
+          ? detailedTimeReport({
+              grain: 'entry',
+              seconds: 3_600,
+              claimed_seconds: 1_800,
+              unclaimed_seconds: 1_800,
+              time_entry_count: 2,
+              rows: [
+                detailedTimeRow({
+                  seconds: 1_800,
+                  claimed: true,
+                  time_entry_id: 111,
+                  invoice_id: 301,
+                  notes: 'wrote the thing',
+                }),
+                detailedTimeRow({
+                  seconds: 1_800,
+                  claimed: false,
+                  time_entry_id: 112,
+                  invoice_id: null,
+                  notes: null,
+                }),
+              ],
+            })
+          : detailedFixture(),
+    )
+    const session = new AbortController()
+    await createReportsController(baseApi({ getDetailedTimeReport })).activate(
+      identity('administrator'),
+      session.signal,
+      () => false,
+    )
+
+    const results = document.querySelector('[data-report-results]')!
+    // The split is on the screen before anything is opened.
+    const facts = [...results.querySelectorAll('.report-facts dt')].map(
+      (term) => term.textContent,
+    )
+    expect(facts).toContain('Claimed hours')
+    expect(facts).toContain('Unclaimed hours')
+
+    const group = document.querySelector<HTMLSelectElement>('#ez-detailed-group')!
+    group.value = 'claimed'
+    group.dispatchEvent(new Event('change'))
+    // Re-queried: changing the grouping redraws the controls, so the handle
+    // taken before it points at a node no longer in the document.
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector<HTMLSelectElement>('#ez-detailed-group')?.value,
+      ).toBe('claimed'),
+    )
+    const grain = document.querySelector<HTMLSelectElement>('#ez-detailed-grain')!
+    grain.value = 'entry'
+    grain.dispatchEvent(new Event('change'))
+    await vi.waitFor(() =>
+      expect(getDetailedTimeReport).toHaveBeenLastCalledWith(
+        expect.objectContaining({ grain: 'entry' }),
+        expect.anything(),
+      ),
+    )
+
+    const table = document.querySelector('.report-detailed-table')!
+    const bands = [...table.querySelectorAll('.report-band-row th')].map(
+      (cell) => cell.textContent,
+    )
+    expect(bands).toEqual(['Claimed by an invoice', 'Not claimed yet'])
+    // The entries themselves, with what was done and what took them.
+    expect(table.textContent).toContain('wrote the thing')
+    expect(table.querySelector('a[href="/invoices/301"]')).not.toBeNull()
+    expect(table.textContent).toContain('Not claimed')
     session.abort()
   })
 
