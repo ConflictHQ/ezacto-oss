@@ -320,6 +320,7 @@ export {
   type WiseLinkOutcome,
   type WiseLinkRefusal,
   type WiseOnboardOutcome,
+  type WiseProposalView,
   type WiseRecipientView,
   type WiseShareOutcome,
   type WiseService,

@@ -43,6 +43,10 @@ const service = (overrides: Partial<WiseService> = {}): WiseService => ({
     outcome: 'linked' as const,
     contact: { id: '00000000-0000-4000-8000-000000000001', name: 'R. Adeyemi' },
   })),
+  proposeDestinations: vi.fn(async () => [
+    { userId: 8, name: 'R. Adeyemi', payrollEmail: 'r.adeyemi@example.test', matches: [recipient] },
+    { userId: 9, name: 'Nobody Matched', payrollEmail: null, matches: [] },
+  ]),
   readDestination: vi.fn(async () => ({
     id: 77,
     kind: 'contact' as const,
@@ -484,5 +488,71 @@ describe('reading and removing where somebody is paid (#543)', () => {
     const wise = service()
     expect((await read(wise, 0)).status).toBe(422)
     expect(wise.readDestination).not.toHaveBeenCalled()
+  })
+})
+
+describe('proposing who somebody at Wise might be (#421)', () => {
+  const proposals = (wise: WiseService, principal?: Principal) =>
+    app(wise, principal).request('/integrations/wise/proposals')
+
+  it('[api] lists who has nowhere to be paid, with the address the guess used', async () => {
+    const response = await proposals(service())
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      data: [
+        {
+          user_id: 8,
+          name: 'R. Adeyemi',
+          // Shown on purpose: a proposal nobody can check is a silent join
+          // with extra steps.
+          payroll_email: 'r.adeyemi@example.test',
+          matches: [
+            {
+              id: '701234567',
+              holder_name: 'R. Adeyemi',
+              currency: 'USD',
+              type: 'Aba',
+              masked_summary: 'ABA routing number ending in 9012',
+              email: 'contractor@example.test',
+            },
+          ],
+        },
+        {
+          user_id: 9,
+          name: 'Nobody Matched',
+          payroll_email: null,
+          // Kept. The people nothing matched are the ones somebody has to
+          // chase, and leaving them out hides the work rather than finishing it.
+          matches: [],
+        },
+      ],
+    })
+  })
+
+  it('[security] still never puts an account number on the wire', async () => {
+    const body = await (await proposals(service())).text()
+    expect(body).toContain('ending in 9012')
+    expect(body).not.toContain('accountSummary')
+  })
+
+  it('[money] proposes only — nothing is stored by reading it', async () => {
+    const wise = service()
+    await proposals(wise)
+    expect(wise.linkRecipient).not.toHaveBeenCalled()
+    expect(wise.shareWiseProfile).not.toHaveBeenCalled()
+  })
+
+  it('[auth] is administrators and accounting, not everyone with a session', async () => {
+    // This is everybody's payout state at once, which is a different thing to
+    // see than your own.
+    const wise = service()
+    expect((await proposals(wise, { userId: 9, profile: 'member' })).status).toBe(403)
+    expect(wise.proposeDestinations).not.toHaveBeenCalled()
+  })
+
+  it('[api] refuses where the deployment has no token', async () => {
+    const wise = service({ configured: vi.fn(() => false) })
+    expect((await proposals(wise)).status).toBe(503)
+    expect(wise.proposeDestinations).not.toHaveBeenCalled()
   })
 })

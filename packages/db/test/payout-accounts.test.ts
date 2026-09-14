@@ -280,3 +280,54 @@ describe('what 0070 does to destinations that already exist', () => {
     ).toEqual({ kind: 'account' })
   })
 })
+
+describe('who still has nowhere to be paid (#421)', () => {
+  it('[db] lists active people with no destination, and the address to propose from', async () => {
+    const { store, sqlite: database } = await fixture()
+    database.exec(`
+      INSERT INTO user_emails
+        (user_id, address, kind, is_primary, verified_at, created_at, updated_at)
+        VALUES (2, 'work@example.test', 'work', 1, '${t(0)}', '${t(0)}', '${t(0)}');
+      INSERT INTO user_emails
+        (user_id, address, kind, is_primary, verified_at, created_at, updated_at)
+        VALUES (2, 'personal@example.test', 'payroll', 0, '${t(0)}', '${t(0)}', '${t(0)}');
+      INSERT INTO user_emails
+        (user_id, address, kind, is_primary, verified_at, created_at, updated_at)
+        VALUES (3, 'three@example.test', 'work', 1, '${t(0)}', '${t(0)}', '${t(0)}');
+    `)
+
+    const awaiting = await store.awaitingDestination('wise')
+    // The payroll-kind address wins where one is named. Deel and Wise accounts
+    // were set up against personal addresses, which is the whole reason 0061
+    // let one be named rather than implied (#280).
+    expect(awaiting).toEqual([
+      { userId: 1, name: 'Operator One', payrollEmail: null },
+      { userId: 2, name: 'Contractor Two', payrollEmail: 'personal@example.test' },
+      { userId: 3, name: 'Contractor Three', payrollEmail: 'three@example.test' },
+    ])
+  })
+
+  it('[money] drops somebody the moment they have a destination, per provider', async () => {
+    const { store } = await fixture()
+    await link(store, { userId: 2, provider: 'wise', externalId: 'wise-2' })
+    expect((await store.awaitingDestination('wise')).map((row) => row.userId)).toEqual([1, 3])
+    // Their Wise destination says nothing about Deel. A person payable through
+    // one provider and not the other is the ordinary case, not an edge one.
+    expect((await store.awaitingDestination('deel')).map((row) => row.userId)).toEqual([1, 2, 3])
+  })
+
+  it('[money] brings them back when the destination is detached', async () => {
+    // Detaching is final and the row stays for history, so a query reading the
+    // history rather than the current state would never list them again.
+    const { store } = await fixture()
+    const linked = await link(store, { userId: 2, provider: 'wise', externalId: 'wise-2' })
+    await store.detach(linked.outcome === 'linked' ? linked.account.id : 0, t(2))
+    expect((await store.awaitingDestination('wise')).map((row) => row.userId)).toEqual([1, 2, 3])
+  })
+
+  it('[db] leaves out somebody who cannot track work', async () => {
+    const { store, sqlite: database } = await fixture()
+    database.prepare(`UPDATE users SET is_active = 0 WHERE id = 3`).run()
+    expect((await store.awaitingDestination('wise')).map((row) => row.userId)).toEqual([1, 2])
+  })
+})

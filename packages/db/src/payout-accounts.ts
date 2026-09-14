@@ -104,6 +104,21 @@ const record = (row: Row): PayoutAccountRecord => ({
 const columns = `id, user_id, provider, external_id, kind, linked_by_user_id,
   linked_at, verified_at, detached_at`
 
+/**
+ * Somebody who could be paid and has nowhere to be paid to.
+ *
+ * The address is a *proposal* and never a join -- #421 is explicit that
+ * matching on an address is a guess whose failure mode is paying the wrong
+ * person. It exists so a human can be shown a likely pairing and say yes, which
+ * is a different act from a silent join and leaves somebody's name on it.
+ */
+export interface UnlinkedPerson {
+  userId: number
+  name: string
+  /** The payroll-kind address where one is named, the primary otherwise. */
+  payrollEmail: string | null
+}
+
 export interface PayoutAccountStore {
   /** The accounts a person is currently payable through. */
   listForUser(userId: number): Promise<readonly PayoutAccountRecord[]>
@@ -116,6 +131,13 @@ export interface PayoutAccountStore {
   read(id: number): Promise<PayoutAccountRecord | null>
   /** Current accounts for a provider, for an export that needs the whole set. */
   listForProvider(provider: PayoutProvider): Promise<readonly PayoutAccountRecord[]>
+  /**
+   * Active people with no current destination at this provider.
+   *
+   * Inactive people are left out: somebody who cannot track work is not part of
+   * a payment run, and listing them makes the real gaps harder to see.
+   */
+  awaitingDestination(provider: PayoutProvider): Promise<readonly UnlinkedPerson[]>
   link(input: PayoutAccountLink): Promise<PayoutLinkOutcome>
   /** Records that the provider confirmed the id resolves. */
   markVerified(id: number, now: string): Promise<PayoutAccountRecord | null>
@@ -163,6 +185,35 @@ export const createPayoutAccountStore = (database: Database): PayoutAccountStore
    * different places. The indexes remain the guarantee: a racing writer loses
    * at the index, and the answer it gets back is the same one.
    */
+  awaitingDestination: async (provider) =>
+    (
+      await database.all<{ userId: number; name: string; payrollEmail: string | null }>(sql`
+        SELECT person.id AS "userId",
+          person.first_name || ' ' || person.last_name AS "name",
+          -- The payroll-kind address where one is named, the primary otherwise
+          -- (issue 280). is_primary was being asked to mean both the address we
+          -- write to and the address a payout provider knows them by.
+          coalesce(
+            (SELECT address FROM user_emails
+              WHERE user_id = person.id AND kind = 'payroll' AND invalidated_at IS NULL
+              LIMIT 1),
+            (SELECT address FROM user_emails
+              WHERE user_id = person.id AND is_primary = 1 AND invalidated_at IS NULL
+              LIMIT 1)
+          ) AS "payrollEmail"
+        FROM users person
+        WHERE person.is_active = 1
+          AND NOT EXISTS (
+            SELECT 1 FROM user_payout_accounts
+            WHERE user_id = person.id AND provider = ${provider} AND detached_at IS NULL
+          )
+        ORDER BY person.id`)
+    ).map((row) => ({
+      userId: row.userId,
+      name: row.name,
+      payrollEmail: row.payrollEmail,
+    })),
+
   link: async (input) => {
     const externalId = input.externalId.trim()
     const users = await database.all<{ id: number }>(sql`

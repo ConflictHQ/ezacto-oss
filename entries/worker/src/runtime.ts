@@ -628,10 +628,12 @@ export const createRuntimeServices = async (
             return {
               listForUser: (userId: number) => store.listForUser(userId),
               listForProvider: (provider: "wise") => store.listForProvider(provider),
+              awaitingDestination: (provider: "wise") => store.awaitingDestination(provider),
               link: (input: {
                 userId: number;
                 provider: "wise";
                 externalId: string;
+                kind?: "account" | "contact";
                 linkedByUserId: number;
                 now: string;
               }) => store.link(input),

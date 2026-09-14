@@ -68,6 +68,7 @@ const transport = () =>
 const accountPort = (overrides: Partial<WisePayoutAccountPort> = {}): WisePayoutAccountPort => ({
   listForUser: vi.fn(async () => []),
   listForProvider: vi.fn(async () => []),
+  awaitingDestination: vi.fn(async () => []),
   link: vi.fn(async () => ({ outcome: "linked" as const, account: { id: 77 } })),
   markVerified: vi.fn(async () => undefined),
   detach: vi.fn(async () => true),
@@ -449,5 +450,99 @@ describe("a contractor sharing their own Wise account (#543)", () => {
   it("[unit] says so rather than looking anything up where there is no token", async () => {
     const { wise } = runtime({ token: undefined });
     expect(await wise.service.shareWiseProfile(input)).toEqual({ outcome: "not_configured" });
+  });
+});
+
+describe("proposing who somebody at Wise might be (#421)", () => {
+  const awaiting = [
+    { userId: 2, name: "R. Adeyemi", payrollEmail: "CONTRACTOR@example.test" },
+    { userId: 3, name: "Nobody Matched", payrollEmail: "absent@example.test" },
+    { userId: 4, name: "No Address", payrollEmail: null },
+  ];
+
+  const proposing = (rows = awaiting) =>
+    runtime({ accounts: accountPort({ awaitingDestination: vi.fn(async () => rows) }) });
+
+  it("[money] proposes a pairing and does not make it", async () => {
+    // An address is a guess, and the failure mode of a wrong guess is paying
+    // the wrong person. So this suggests; a human stores it.
+    const { wise, accounts } = proposing();
+    const proposals = await wise.service.proposeDestinations();
+    expect(proposals[0]).toMatchObject({ userId: 2, name: "R. Adeyemi" });
+    expect(proposals[0]?.matches.map((match) => match.id)).toEqual(["701234567"]);
+    expect(accounts.link).not.toHaveBeenCalled();
+    expect(accounts.markVerified).not.toHaveBeenCalled();
+  });
+
+  it("[unit] lower-cases both sides, not just the one the fixture varied", async () => {
+    // Wise stores whatever the operator typed, so the case difference can be on
+    // either side. Normalising one and not the other matches half the time.
+    const shouted = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      return new Response(
+        JSON.stringify(
+          url.includes("/v2/profiles")
+            ? PROFILES
+            : [
+                {
+                  id: 701234570,
+                  currency: "USD",
+                  type: "Aba",
+                  active: true,
+                  ownedByCustomer: false,
+                  email: "Contractor@Example.test",
+                  name: { fullName: "R. Adeyemi" },
+                  longAccountSummary: "ABA routing number ending in 9012",
+                },
+              ],
+        ),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    const { wise } = runtime({
+      accounts: accountPort({
+        awaitingDestination: vi.fn(async () => [
+          { userId: 2, name: "R. Adeyemi", payrollEmail: "contractor@example.test" },
+        ]),
+      }),
+      fetch: shouted as unknown as typeof fetch,
+    });
+    const proposals = await wise.service.proposeDestinations();
+    expect(proposals[0]?.matches.map((match) => match.id)).toEqual(["701234570"]);
+  });
+
+  it("[unit] matches regardless of case, because an address is not case-sensitive", async () => {
+    // The fixture address is lower case and the stored one is not. A case
+    // difference hiding a match would send somebody chasing a contractor who
+    // is already in the account.
+    const { wise } = proposing();
+    const matched = (await wise.service.proposeDestinations()).find((row) => row.userId === 2);
+    expect(matched?.matches).toHaveLength(1);
+    // Never normalised into the answer: what is handed back is what is stored.
+    expect(matched?.payrollEmail).toBe("CONTRACTOR@example.test");
+  });
+
+  it("[money] keeps the people nothing matched, because they are the work", async () => {
+    const { wise } = proposing();
+    const proposals = await wise.service.proposeDestinations();
+    expect(proposals.map((row) => row.userId)).toEqual([2, 3, 4]);
+    expect(proposals.find((row) => row.userId === 3)?.matches).toEqual([]);
+    expect(proposals.find((row) => row.userId === 4)?.matches).toEqual([]);
+  });
+
+  it("[money] never proposes one of our own accounts or a closed one", async () => {
+    // Both are in the recipient list. Ours would send money in a circle, and a
+    // deactivated recipient cannot receive a payout at all.
+    const { wise } = proposing([
+      { userId: 5, name: "Ours", payrollEmail: null },
+    ]);
+    const proposals = await wise.service.proposeDestinations();
+    expect(proposals[0]?.matches).toEqual([]);
+  });
+
+  it("[unit] asks Wise nothing when nobody is waiting", async () => {
+    const { wise, call } = proposing([]);
+    expect(await wise.service.proposeDestinations()).toEqual([]);
+    expect(call).not.toHaveBeenCalled();
   });
 });

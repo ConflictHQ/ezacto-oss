@@ -174,6 +174,7 @@ const documentedApp = () =>
         shareWiseProfile: async () => {
           throw new Error("not used by the contract fixture");
         },
+        proposeDestinations: async () => [],
         readDestination: async () => null,
         detachFor: async () => false,
         unlink: async () => false,
