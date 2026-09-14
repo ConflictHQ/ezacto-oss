@@ -904,6 +904,70 @@ for (const [runtime, factory] of factories) {
       }
     });
 
+    it("[security] serves the banded month report on the cost authority alone", async () => {
+      // Every row states a cost, and a figure derived from the cost is the cost
+      // rearranged -- so this is refused wherever the cost itself is.
+      harness = await factory();
+
+      const allowed = await harness.request(
+        "/reports/banded-months?from=2026-08-01&to=2026-08-31",
+      );
+      expect(allowed.status, await allowed.clone().text()).toBe(200);
+      const body = (await allowed.json()) as { data: { rows: unknown[] } };
+      // The fixture tracks time in August, so an empty set would satisfy every
+      // assertion below without measuring one row.
+      expect(body.data.rows.length).toBeGreaterThan(0);
+
+      for (const profile of [
+        "member",
+        "project_manager",
+        "people_admin",
+        "accounting",
+        "executive_manager",
+      ] as const) {
+        const refused = await harness.request(
+          "/reports/banded-months?from=2026-08-01&to=2026-08-31",
+          profile,
+        );
+        expect(refused.status, `${profile} reached banded months`).toBe(403);
+      }
+    });
+
+    it("[money] says what a month was worth at full rates and what it charged", async () => {
+      // The question a band cannot otherwise answer. A band below cost is
+      // losing money; a band near list is barely a band (#484).
+      harness = await factory();
+      const response = await harness.request(
+        "/reports/banded-months?from=2026-08-01&to=2026-08-31",
+      );
+      expect(response.status, await response.clone().text()).toBe(200);
+      const body = (await response.json()) as {
+        data: {
+          rows: {
+            month: string;
+            currency: string;
+            billable_value_cents: number | null;
+            cost_value_cents: number | null;
+            billed_cents: number | null;
+            foregone_cents: number | null;
+            claimed_in_other_currency: number;
+          }[];
+        };
+      };
+      const row = body.data.rows[0]!;
+      expect(row.month).toMatch(/^\d{4}-\d{2}$/u);
+      expect(row.currency).toMatch(/^[A-Z]{3}$/u);
+      expect(row.billable_value_cents).toBeGreaterThan(0);
+      expect(row.cost_value_cents).toBeGreaterThan(0);
+      // Null and not zero. No invoice has claimed this month in the fixture,
+      // and an unbilled month is not a band priced at nothing -- a zero here
+      // reads as "they were charged nothing", which is a different fact.
+      expect(row.billed_cents).toBeNull();
+      expect(row.foregone_cents).toBeNull();
+      // Partial rather than low, and said so rather than implied.
+      expect(row.claimed_in_other_currency).toBeGreaterThanOrEqual(0);
+    });
+
     it("[unit] states revenue, cost and margin per project against the window before", async () => {
       harness = await factory();
       const response = await harness.request(

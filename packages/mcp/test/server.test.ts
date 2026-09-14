@@ -147,6 +147,7 @@ const reportReader: ReportReader = {
     totals: [],
   }),
   // Not exercised here; present because ReportReader requires it.
+  bandedMonths: async (range) => ({ from: range.from, to: range.to, rows: [] }),
   profitability: async (range) => ({
     from: range.from,
     to: range.to,

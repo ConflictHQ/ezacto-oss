@@ -13669,6 +13669,84 @@
         ]
       }
     },
+    "/api/v1/reports/banded-months": {
+      "get": {
+        "operationId": "getBandedMonthReport",
+        "summary": "What a banded month was worth at full rates, against what it charged",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BandedMonthReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/reports/banded-months",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/reports/profitability": {
       "get": {
         "operationId": "getProfitabilityReport",
@@ -29180,6 +29258,146 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/DetailedExpenseReport"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BandedMonthRow": {
+        "type": "object",
+        "required": [
+          "month",
+          "project_id",
+          "project_name",
+          "client_id",
+          "client_name",
+          "currency",
+          "rounded_seconds",
+          "billable_value_cents",
+          "cost_value_cents",
+          "entries_without_billable_rate",
+          "entries_without_cost_rate",
+          "claimed_in_other_currency",
+          "billed_cents",
+          "foregone_cents"
+        ],
+        "properties": {
+          "month": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}$"
+          },
+          "project_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "client_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "client_name": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "rounded_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "billable_value_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cost_value_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entries_without_billable_rate": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "entries_without_cost_rate": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "claimed_in_other_currency": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "billed_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "foregone_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "BandedMonthReport": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "rows"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date"
+          },
+          "to": {
+            "type": "string",
+            "format": "date"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BandedMonthRow"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "BandedMonthReportEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/BandedMonthReport"
           },
           "links": {
             "$ref": "#/components/schemas/Links"

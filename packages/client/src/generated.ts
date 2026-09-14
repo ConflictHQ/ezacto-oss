@@ -2099,6 +2099,34 @@ export type DetailedExpenseReportEnvelope = {
   "links": Links;
 };
 
+export type BandedMonthRow = {
+  "month": string;
+  "project_id": number;
+  "project_name": string;
+  "client_id": number;
+  "client_name": string;
+  "currency": string;
+  "rounded_seconds": number;
+  "billable_value_cents": number | null;
+  "cost_value_cents": number | null;
+  "entries_without_billable_rate": number;
+  "entries_without_cost_rate": number;
+  "claimed_in_other_currency": number;
+  "billed_cents": number | null;
+  "foregone_cents": number | null;
+};
+
+export type BandedMonthReport = {
+  "from": string;
+  "to": string;
+  "rows": Array<BandedMonthRow>;
+};
+
+export type BandedMonthReportEnvelope = {
+  "data": BandedMonthReport;
+  "links": Links;
+};
+
 export type ProfitabilityRow = {
   "project_id": number;
   "project_name": string;
@@ -4193,6 +4221,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<ContractorCostReportEnvelope>("GET", "/api/v1/reports/contractor", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getBandedMonthReport(args: { query: { "from": string; "to": string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<BandedMonthReportEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BandedMonthReportEnvelope>("GET", "/api/v1/reports/banded-months", {
       query: args.query,
       signal: args.signal,
       headers,
