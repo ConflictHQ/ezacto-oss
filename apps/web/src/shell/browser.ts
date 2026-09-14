@@ -32,6 +32,7 @@ import { createPeriodControl, isCalendarDay } from '../components/period.js'
 import { createClientDirectoryController } from '../clients/browser.js'
 import { createProjectDirectoryController } from '../projects/browser.js'
 import { createActivityController } from '../activity/browser.js'
+import { createDeliveriesController } from '../deliveries/browser.js'
 import { createCalendarController } from '../calendar/browser.js'
 import { createDashboardController } from '../dashboard/browser.js'
 import { createReportsController } from '../reports/browser.js'
@@ -1103,6 +1104,21 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         ? { data: [] }
         : api.listActivityLog(query, signal),
   })
+  // Same shape as the activity controller above: an install whose api does not
+  // offer these still serves the page and says it cannot load, rather than the
+  // shell failing to construct.
+  const deliveries = createDeliveriesController({
+    listEmailLog: async (query, signal) =>
+      api.listEmailLog === undefined ? { data: [] } : api.listEmailLog(query, signal),
+    listOutboxDeliveries: async (query, signal) =>
+      api.listOutboxDeliveries === undefined
+        ? { data: [] }
+        : api.listOutboxDeliveries(query, signal),
+    retryOutboxDelivery: async (subscriberId, eventId, signal) =>
+      api.retryOutboxDelivery === undefined
+        ? undefined
+        : api.retryOutboxDelivery(subscriberId, eventId, signal),
+  })
   const reports = createReportsController(api)
   const expenseWorkflow = createExpenseWorkflowController(api)
   const expenseCategories = createExpenseCategoryDirectoryController(api)
@@ -1559,7 +1575,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const revealCompanySettings = (identity: Readonly<Whoami>): void => {
     const visible = identity.profile === 'administrator'
     for (const tab of document.querySelectorAll<HTMLElement>(
-      '[data-settings-company-tab], [data-settings-activity-tab], [data-settings-templates-tab], [data-settings-roles-tab]',
+      '[data-settings-company-tab], [data-settings-activity-tab], [data-settings-templates-tab], [data-settings-roles-tab], [data-settings-deliveries-tab]',
     )) {
       tab.hidden = !visible
     }
@@ -2605,6 +2621,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       ])
     } else if (document.querySelector('[data-activity-log-page]:not([hidden])') !== null) {
       await Promise.all([activity.activate(authenticated.signal), loadWeek(authenticated)])
+    } else if (document.querySelector('[data-deliveries-page]:not([hidden])') !== null) {
+      await Promise.all([deliveries.activate(authenticated.signal), loadWeek(authenticated)])
     } else if (reportsPage) {
       await Promise.all([
         reports.activate(

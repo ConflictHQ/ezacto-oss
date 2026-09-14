@@ -28,6 +28,12 @@ import {
 } from '@conflict-hq/ezacto-client'
 import type { InvoiceState } from '../invoices/model.js'
 import type { ActivityRow } from '../activity/browser.js'
+import type {
+  EmailLogRow,
+  EmailLogStatus,
+  OutboxRow,
+  OutboxStatus,
+} from '../deliveries/browser.js'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 import type { ClientDirectoryApi } from '../clients/model.js'
 import type { ProjectDirectoryApi } from '../projects/model.js'
@@ -85,6 +91,20 @@ export interface ShellApi
     query: { readonly from?: string; readonly to?: string; readonly event_type?: string },
     signal?: AbortSignal,
   ): Promise<{ readonly data: readonly ActivityRow[] }>
+  /** What was sent, and what became of it (issue 485). */
+  listEmailLog?(
+    query: { readonly status?: EmailLogStatus },
+    signal?: AbortSignal,
+  ): Promise<{ readonly data: readonly EmailLogRow[] }>
+  listOutboxDeliveries?(
+    query: { readonly status?: OutboxStatus },
+    signal?: AbortSignal,
+  ): Promise<{ readonly data: readonly OutboxRow[] }>
+  retryOutboxDelivery?(
+    subscriberId: string,
+    eventId: string,
+    signal?: AbortSignal,
+  ): Promise<unknown>
   listInvoices?(
     cursor?: string,
     signal?: AbortSignal,
@@ -409,6 +429,15 @@ export const paletteDestinations: readonly PaletteDestination[] = [
     // The same gate as Company settings: the log names who did what, and the
     // palette must not offer a destination that answers 403.
     gate: '[data-settings-activity-tab]',
+  },
+  {
+    label: 'Deliveries',
+    href: '/settings/deliveries',
+    group: 'Review',
+    keywords: 'email sent outbox delivery failed retry bounce',
+    // The same gate as the activity log, and for the same reason: the table
+    // names every recipient this instance has written to.
+    gate: '[data-settings-deliveries-tab]',
   },
   {
     label: 'Invoices',
@@ -1390,6 +1419,12 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     ).data,
   listActivityLog: (query, signal) =>
     client.listActivityLog({ query: { per_page: 200, ...query }, ...withSignal(signal) }),
+  listEmailLog: (query, signal) =>
+    client.listEmailLog({ query: { per_page: 200, ...query }, ...withSignal(signal) }),
+  listOutboxDeliveries: (query, signal) =>
+    client.listOutboxDeliveries({ query: { per_page: 200, ...query }, ...withSignal(signal) }),
+  retryOutboxDelivery: (subscriberId, eventId, signal) =>
+    client.retryOutboxDelivery({ subscriberId, eventId, ...withSignal(signal) }),
   listInvoices: (cursor, signal, perPage, states) =>
     client.listInvoices({
       query: {

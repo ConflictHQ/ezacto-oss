@@ -18,6 +18,7 @@ import { renderEstimatesPage } from '../estimates/render.js'
 import { renderRetainerDialogs, renderRetainerPage } from '../retainers/render.js'
 import {
   renderActivityLogPage,
+  renderDeliveriesPage,
   renderModuleSettingsPage,
 } from '../module-settings/render.js'
 import {
@@ -87,6 +88,7 @@ export interface AppShellOptions {
     | 'settings-user'
     | 'settings-company'
     | 'settings-activity'
+    | 'settings-deliveries'
     | 'settings-templates'
     | 'settings-roles'
     | 'team-list'
@@ -770,6 +772,7 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
   ${renderExpenseCategoriesPage(view)}
   ${renderModuleSettingsPage(view)}
   ${renderActivityLogPage(view)}
+  ${renderDeliveriesPage(view)}
   ${renderRoleAdminPage(view)}
   ${renderNotFoundPage(view)}
   ${renderInvoiceComposerDialog()}
