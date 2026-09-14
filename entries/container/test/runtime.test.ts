@@ -51,9 +51,8 @@ const config = (root: string): ContainerConfig => ({
   },
   // Likewise Wise, and for the same reason.
   wise: {
-    clientId: 'container-fixture-wise-client-id',
-    clientSecret: 'container-fixture-wise-client-secret',
-    environment: 'sandbox',
+    token: 'container-fixture-wise-token',
+    webhookPublicKey: 'container-fixture-wise-key',
   },
   smtp: {
     url: 'smtp://127.0.0.1:2525',

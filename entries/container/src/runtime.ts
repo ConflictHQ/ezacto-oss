@@ -39,7 +39,6 @@ import {
   createBillLinkStore,
   createBillMirrorSource,
   createPayoutAccountStore,
-  createWiseGrantStore,
   createWiseDeliveryStore,
   createStripeLinkStore,
   readAttachPreference,
@@ -364,20 +363,15 @@ export const createContainerRuntime = async (
         ? null
         : createWiseRuntime({
             config: {
-              clientId: config.wise.clientId,
-              clientSecret: config.wise.clientSecret,
-              environment: config.wise.environment,
-              appBaseUrl: config.appBaseUrl,
+              token: config.wise.token,
+              profileId: config.wise.profileId,
               webhookPublicKey: config.wise.webhookPublicKey,
-              apiBase: config.wise.apiBase,
-              authorizeUrl: config.wise.authorizeUrl,
             },
-            grants: createWiseGrantStore(drizzle),
-            deliveries: createWiseDeliveryStore(drizzle),
             accounts: (() => {
               const store = createPayoutAccountStore(drizzle)
               return {
                 listForUser: (userId: number) => store.listForUser(userId),
+                listForProvider: (provider: 'wise') => store.listForProvider(provider),
                 link: (input: {
                   userId: number
                   provider: 'wise'
@@ -386,8 +380,10 @@ export const createContainerRuntime = async (
                   now: string
                 }) => store.link(input),
                 markVerified: (id: number, now: string) => store.markVerified(id, now),
+                detach: (id: number, now: string) => store.detach(id, now),
               }
             })(),
+            deliveries: createWiseDeliveryStore(drizzle),
             fetch: (input, init) => fetch(input as RequestInfo, init as RequestInit),
             now: () => new Date(),
           })

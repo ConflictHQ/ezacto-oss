@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createWiseRuntime, type WiseDeliveryPort } from "../src/wise/runtime.js";
+import { WISE_SANDBOX_WEBHOOK_PUBLIC_KEY } from "../src/wise/webhook.js";
 
 /**
  * Issue 543. One delivery, start to finish: verify, parse, claim, act.
@@ -74,26 +75,16 @@ const runtime = (
     deliveries,
     wise: createWiseRuntime({
       config: {
-        clientId: "client-id",
-        clientSecret: "client-secret",
-        environment: parts.environment ?? "sandbox",
-        appBaseUrl: "https://time.example.test",
-        webhookPublicKey: parts.publicKey,
-        // Sandbox has no default address any more; the suite states one.
-        apiBase: "https://api.wise.example.test",
-        authorizeUrl: "https://wise.example.test/oauth/authorize",
-      },
-      grants: {
-        readCurrent: vi.fn(async () => null),
-        beginAuthorization: vi.fn(async () => undefined),
-        claimState: vi.fn(async () => ({ claim: "unknown" as const })),
-        record: vi.fn(async () => ({ outcome: "unknown_user" as const })),
-        revoke: vi.fn(async () => false),
+        token: "token-value",
+        profileId: undefined,
+        webhookPublicKey: parts.publicKey ?? WISE_SANDBOX_WEBHOOK_PUBLIC_KEY,
       },
       accounts: {
         listForUser: vi.fn(async () => []),
+        listForProvider: vi.fn(async () => []),
         link: vi.fn(async () => ({ outcome: "unknown_user" as const })),
         markVerified: vi.fn(async () => undefined),
+        detach: vi.fn(async () => false),
       },
       deliveries,
       now: () => NOW,
@@ -143,14 +134,22 @@ describe("a signed delivery (#543)", () => {
     expect(deliveries.claim).not.toHaveBeenCalled();
   });
 
-  it("[money] refuses everything on live until the key is configured", async () => {
+  it("[money] has no webhook at all until the key is configured", async () => {
     // An unverifiable claim about money is not one to act on because a value
-    // was missing from the deployment.
-    const { wise, deliveries } = runtime({ environment: "live" });
-    expect(await deliver(wise, { payload: SIGNED_BODY, signature: SIGNATURE })).toEqual({
-      accepted: false,
+    // was missing, and a route that cannot verify is better not mounted.
+    const bare = createWiseRuntime({
+      config: { token: "t", profileId: undefined, webhookPublicKey: undefined },
+      accounts: {
+        listForUser: vi.fn(async () => []),
+        listForProvider: vi.fn(async () => []),
+        link: vi.fn(async () => ({ outcome: "unknown_user" as const })),
+        markVerified: vi.fn(async () => undefined),
+        detach: vi.fn(async () => false),
+      },
+      deliveries: port(),
+      now: () => NOW,
     });
-    expect(deliveries.claim).not.toHaveBeenCalled();
+    expect(bare.webhook).toBeUndefined();
   });
 
   it("[unit] accepts Wise's subscription ping without recording a fact about money", async () => {

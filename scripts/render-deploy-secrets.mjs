@@ -138,11 +138,6 @@ export const deploySecretPayload = (environment) => {
       'QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET must be configured together',
     )
   }
-  const wiseClientId = optionalCredential(environment.WISE_CLIENT_ID)
-  const wiseClientSecret = optionalCredential(environment.WISE_CLIENT_SECRET)
-  if ((wiseClientId === null) !== (wiseClientSecret === null)) {
-    throw new TypeError('WISE_CLIENT_ID and WISE_CLIENT_SECRET must be configured together')
-  }
   const billDevKey = optionalCredential(environment.BILL_DEV_KEY)
   const billCompanyId = optionalCredential(environment.BILL_COMPANY_ID)
   const billUsername = optionalCredential(environment.BILL_USERNAME)
@@ -176,20 +171,16 @@ export const deploySecretPayload = (environment) => {
     // mounted and the value never arrived. Absent still means live, which is
     // the safe way round; the point is that `sandbox` is now reachable at all.
     QUICKBOOKS_ENVIRONMENT: optionalCredential(environment.QUICKBOOKS_ENVIRONMENT),
-    WISE_CLIENT_ID: wiseClientId,
-    WISE_CLIENT_SECRET: wiseClientSecret,
-    // Absent means live, which is what `createWiseRuntime` reads it as. A
-    // deployment that means sandbox has to say so.
-    WISE_ENVIRONMENT: optionalCredential(environment.WISE_ENVIRONMENT),
-    // The PEM Wise signs deliveries with. Not a secret in itself, but it rides
-    // here because `secret bulk` owns the whole set: a public key parked in a
-    // var while the rest of the pair are secrets is a value that goes missing
-    // for reasons nobody can see.
+    // The organisation's own Wise API token. Not an OAuth pair: it
+    // authenticates as the business that actually sends the money, and a
+    // contractor supplies a destination rather than a grant.
+    WISE_TOKEN: optionalCredential(environment.WISE_TOKEN),
+    // Which profile pays, where the token reaches more than one.
+    WISE_PROFILE_ID: optionalCredential(environment.WISE_PROFILE_ID),
+    // The PEM Wise signs deliveries with. Without it the webhook route is not
+    // mounted at all, so losing it on the way through the deploy leaves a
+    // connection that can send money and cannot be told what became of it.
     WISE_WEBHOOK_PUBLIC_KEY: optionalCredential(environment.WISE_WEBHOOK_PUBLIC_KEY),
-    // Sandbox only; ignored on live. Wise decommissioned the sandbox this was
-    // written against and no replacement hostname is guessed here.
-    WISE_API_BASE: optionalCredential(environment.WISE_API_BASE),
-    WISE_AUTHORIZE_URL: optionalCredential(environment.WISE_AUTHORIZE_URL),
     BILL_DEV_KEY: billDevKey,
     BILL_COMPANY_ID: billCompanyId,
     BILL_USERNAME: billUsername,

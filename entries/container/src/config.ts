@@ -38,12 +38,9 @@ export interface ContainerConfig {
     environment?: string
   }
   wise?: {
-    clientId: string
-    clientSecret: string
-    environment?: string
+    token: string
+    profileId?: string
     webhookPublicKey?: string
-    apiBase?: string
-    authorizeUrl?: string
   }
   smtp: { url: string; from: string }
   appEnv: AppEnv
@@ -185,17 +182,9 @@ export const readContainerConfig = (
       'QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET must be set together',
     )
   }
-  const wiseClientId = optional(environment, 'WISE_CLIENT_ID', 512)
-  const wiseClientSecret = optional(environment, 'WISE_CLIENT_SECRET', 512)
-  const wiseEnvironment = optional(environment, 'WISE_ENVIRONMENT', 32)
+  const wiseToken = optional(environment, 'WISE_TOKEN', 512)
+  const wiseProfileId = optional(environment, 'WISE_PROFILE_ID', 64)
   const wiseWebhookKey = optional(environment, 'WISE_WEBHOOK_PUBLIC_KEY', 4_096)
-  const wiseApiBase = optional(environment, 'WISE_API_BASE', 512)
-  const wiseAuthorizeUrl = optional(environment, 'WISE_AUTHORIZE_URL', 512)
-  if ((wiseClientId === undefined) !== (wiseClientSecret === undefined)) {
-    // Half a credential is a deployment that will fail at the token exchange
-    // with a message about Wise rather than about its own configuration.
-    throw new TypeError('WISE_CLIENT_ID and WISE_CLIENT_SECRET must be set together')
-  }
   const brandName = optional(environment, 'BRAND_NAME', 200)
   const brandTagline = optional(environment, 'BRAND_TAGLINE', 500)
   const brandDescription = optional(environment, 'BRAND_DESCRIPTION', 1_000)
@@ -277,16 +266,13 @@ export const readContainerConfig = (
               : { environment: quickBooksEnvironment }),
           },
         }),
-    ...(wiseClientId === undefined || wiseClientSecret === undefined
+    ...(wiseToken === undefined
       ? {}
       : {
           wise: {
-            clientId: wiseClientId,
-            clientSecret: wiseClientSecret,
-            ...(wiseEnvironment === undefined ? {} : { environment: wiseEnvironment }),
+            token: wiseToken,
+            ...(wiseProfileId === undefined ? {} : { profileId: wiseProfileId }),
             ...(wiseWebhookKey === undefined ? {} : { webhookPublicKey: wiseWebhookKey }),
-            ...(wiseApiBase === undefined ? {} : { apiBase: wiseApiBase }),
-            ...(wiseAuthorizeUrl === undefined ? {} : { authorizeUrl: wiseAuthorizeUrl }),
           },
         }),
     smtp: {

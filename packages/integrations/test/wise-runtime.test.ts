@@ -1,368 +1,230 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  choosePayoutProfile,
   createWiseRuntime,
-  type WiseGrantPort,
   type WisePayoutAccountPort,
 } from "../src/wise/runtime.js";
 
 /**
- * Issue 543. What actually happens when a contractor comes back from Wise's
- * consent screen: a state claimed, a code exchanged, a profile read, a grant
- * recorded, and a payout account linked and verified.
+ * Issue 543, on the app token.
  *
- * The last of those is the one that matters. A grant recorded without a linked
- * account is a credential for an account nothing will ever pay into, and the
- * tests below are mostly about that pair never being left half-made.
+ * The rule under all of this is unchanged from the OAuth pass it replaced: a
+ * payout resolves to an identifier the provider gave us, never to a guess about
+ * somebody's email address (#421). What changed is where the identifier comes
+ * from -- a Wise recipient the organisation can actually pay, rather than a
+ * profile the contractor authorised.
  */
 
 const NOW = new Date("2026-09-13T12:00:00.000Z");
 
-const tokenResponse = {
-  access_token: "access-one",
-  refresh_token: "refresh-one",
-  expires_in: 43_200,
-};
+const PROFILES = [
+  { id: "22239672", type: "BUSINESS", fullName: "Example Firm LLC" },
+  { id: "22239725", type: "PERSONAL", fullName: "A Person" },
+];
 
-const profilesResponse = [{ id: 41_000_001, type: "personal", details: { firstName: "R", lastName: "A" } }];
+const RECIPIENTS = [
+  {
+    id: 701234567,
+    currency: "USD",
+    type: "Aba",
+    active: true,
+    ownedByCustomer: false,
+    email: "contractor@example.test",
+    name: { fullName: "R. Adeyemi" },
+    accountSummary: "(Bank) 123456789012",
+    longAccountSummary: "ABA routing number ending in 9012",
+  },
+  {
+    id: 701234568,
+    currency: "USD",
+    type: "SwiftCode",
+    active: true,
+    // One of ours. Offering it as a payout destination would send money in a
+    // circle.
+    ownedByCustomer: true,
+    name: { fullName: "Example Firm LLC" },
+    longAccountSummary: "SWIFT account ending in 7666",
+  },
+  {
+    id: 701234569,
+    currency: "USD",
+    type: "Aba",
+    active: false,
+    ownedByCustomer: false,
+    name: { fullName: "Former Contractor" },
+    longAccountSummary: "ABA routing number ending in 3333",
+  },
+];
 
-/** What the token endpoint was actually posted, for the redirect-URI test. */
-const sent: string[] = [];
-
-const transport = (
-  overrides: {
-    token?: unknown
-    profiles?: unknown
-    /** Raw, so a test can state digits a JS number literal cannot hold. */
-    profilesBody?: string
-    profilesStatus?: number
-  } = {},
-) =>
-  vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+const transport = () =>
+  vi.fn(async (input: string | URL | Request) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    if (url.includes("/oauth/token")) {
-      sent.push(String(init?.body ?? ""));
-      return new Response(JSON.stringify(overrides.token ?? tokenResponse), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    }
-    return new Response(overrides.profilesBody ?? JSON.stringify(overrides.profiles ?? profilesResponse), {
-      status: overrides.profilesStatus ?? 200,
+    const body = url.includes("/v2/profiles") ? PROFILES : RECIPIENTS;
+    return new Response(JSON.stringify(body), {
+      status: 200,
       headers: { "content-type": "application/json" },
     });
   });
 
-const grantPort = (overrides: Partial<WiseGrantPort> = {}): WiseGrantPort => ({
-  readCurrent: vi.fn(async () => null),
-  beginAuthorization: vi.fn(async () => undefined),
-  claimState: vi.fn(async () => ({
-    claim: "valid" as const,
-    state: {
-      requestedByUserId: 2,
-      environment: "sandbox" as const,
-      redirectUri: "https://time.example.test/api/v1/integrations/wise/callback",
-    },
-  })),
-  record: vi.fn(async () => ({
-    outcome: "granted" as const,
-    grant: { id: 10, grantedAt: NOW.toISOString() },
-  })),
-  revoke: vi.fn(async () => true),
-  ...overrides,
-});
-
 const accountPort = (overrides: Partial<WisePayoutAccountPort> = {}): WisePayoutAccountPort => ({
   listForUser: vi.fn(async () => []),
+  listForProvider: vi.fn(async () => []),
   link: vi.fn(async () => ({ outcome: "linked" as const, account: { id: 77 } })),
   markVerified: vi.fn(async () => undefined),
+  detach: vi.fn(async () => true),
   ...overrides,
 });
 
 const runtime = (
   parts: {
-    grants?: WiseGrantPort;
     accounts?: WisePayoutAccountPort;
+    token?: string | undefined;
+    profileId?: string;
+    webhookPublicKey?: string;
     fetch?: typeof fetch;
-    environment?: string;
-    clientId?: string;
   } = {},
 ) => {
-  const grants = parts.grants ?? grantPort();
   const accounts = parts.accounts ?? accountPort();
+  const call = parts.fetch ?? (transport() as unknown as typeof fetch);
   return {
-    grants,
     accounts,
-    runtime: createWiseRuntime({
+    call,
+    wise: createWiseRuntime({
       config: {
-        clientId: parts.clientId ?? "client-id",
-        clientSecret: "client-secret",
-        environment: parts.environment ?? "sandbox",
-        appBaseUrl: "https://time.example.test",
-        webhookPublicKey: undefined,
-        // Sandbox has no default address any more; the suite states one.
-        apiBase: "https://api.wise.example.test",
-        authorizeUrl: "https://wise.example.test/oauth/authorize",
+        token: "token" in parts ? parts.token : "token-value",
+        profileId: parts.profileId,
+        webhookPublicKey: parts.webhookPublicKey,
       },
-      grants,
       accounts,
-      fetch: (parts.fetch ?? transport()) as typeof fetch,
+      fetch: call,
       now: () => NOW,
-      newState: () => "state-value-0123456789",
     }),
   };
 };
 
-describe("which profile gets paid (#543)", () => {
-  it("[money] prefers a business profile, which is the one with invoicing details", () => {
-    const profiles = [
-      { id: "1", type: "personal" as const, fullName: null },
-      { id: "2", type: "business" as const, fullName: null },
-    ];
-    expect(choosePayoutProfile(profiles)?.id).toBe("2");
+describe("the connection (#543)", () => {
+  it("[unit] is configured by a token and nothing else", () => {
+    expect(runtime().wise.service.configured()).toBe(true);
+    expect(runtime({ token: undefined }).wise.service.configured()).toBe(false);
+    expect(runtime({ token: "   " }).wise.service.configured()).toBe(false);
   });
 
-  it("[unit] falls back to the only profile there is, and to none at all", () => {
-    expect(choosePayoutProfile([{ id: "1", type: "personal", fullName: null }])?.id).toBe("1");
-    expect(choosePayoutProfile([])).toBeNull();
+  it("[money] pays from the business profile, not the personal one beside it", async () => {
+    // A personal profile on the same login is the operator's own money. Paying
+    // contractors out of it is a different act with different consequences.
+    const status = await runtime().wise.service.readStatus();
+    expect(status).toMatchObject({ profileId: "22239672", profileName: "Example Firm LLC" });
+  });
+
+  it("[money] lets a configured profile id win over the guess", async () => {
+    const status = await runtime({ profileId: "22239725" }).wise.service.readStatus();
+    expect(status?.profileId).toBe("22239725");
+  });
+
+  it("[unit] counts only the people it could actually pay", async () => {
+    // Three recipients, of which one is ours and one is deactivated.
+    const status = await runtime().wise.service.readStatus();
+    expect(status?.payableRecipients).toBe(1);
+  });
+
+  it("[money] says when deliveries cannot be believed", async () => {
+    // A connection that can send money and cannot be told what became of it is
+    // a thing an operator should see before they rely on it.
+    expect((await runtime().wise.service.readStatus())?.webhooksVerifiable).toBe(false);
+    expect(
+      (await runtime({ webhookPublicKey: "-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----" })
+        .wise.service.readStatus())?.webhooksVerifiable,
+    ).toBe(true);
+  });
+
+  it("[unit] has no status and no webhook at all without a token", async () => {
+    const { wise } = runtime({ token: undefined });
+    expect(await wise.service.readStatus()).toBeNull();
+    expect(wise.webhook).toBeUndefined();
   });
 });
 
-describe("starting an authorization (#543)", () => {
-  it("[unit] records the state with a short life before sending anybody anywhere", async () => {
-    const { runtime: wise, grants } = runtime();
-    await wise.service.beginAuthorization({
-      state: "state-value-0123456789",
-      userId: 2,
-      redirectUri: "https://time.example.test/api/v1/integrations/wise/callback",
-    });
-    expect(grants.beginAuthorization).toHaveBeenCalledWith({
-      state: "state-value-0123456789",
-      userId: 2,
-      environment: "sandbox",
-      redirectUri: "https://time.example.test/api/v1/integrations/wise/callback",
-      now: "2026-09-13T12:00:00.000Z",
-      // Ten minutes. A consent screen is answered in minutes; an hour-old state
-      // is a link somebody kept.
-      expiresAt: "2026-09-13T12:10:00.000Z",
-    });
+describe("who we can pay (#543)", () => {
+  it("[money] leaves out our own accounts and the deactivated ones", async () => {
+    const recipients = await runtime().wise.service.listRecipients();
+    expect(recipients.map((r) => r.id)).toEqual(["701234567"]);
   });
 
-  it("[unit] builds the callback off the app's own base URL", () => {
-    const { runtime: wise } = runtime();
-    expect(wise.service.callbackUrl()).toBe(
-      "https://time.example.test/api/v1/integrations/wise/callback",
-    );
-  });
-
-  it("[money] treats anything but an explicit sandbox as live", () => {
-    // The safe way round: a live token against sandbox is refused loudly, where
-    // a sandbox token against live looks like a payout that went nowhere.
-    const { runtime: sandbox } = runtime({ environment: "Sandbox" });
-    expect(
-      sandbox.service.authorizeUrl({ state: "s", redirectUri: "https://x.example.test" }),
-    ).toContain("wise.example.test");
-    // Anything else is live, and live ignores the configured override entirely
-    // rather than letting a stale sandbox address redirect real money.
-    const { runtime: live } = runtime({ environment: "staging" });
-    expect(
-      live.service.authorizeUrl({ state: "s", redirectUri: "https://x.example.test" }),
-    ).toContain("//wise.com");
+  it("[security] never carries an account number, only the masked form", async () => {
+    const recipients = await runtime().wise.service.listRecipients();
+    const serialised = JSON.stringify(recipients);
+    expect(serialised).not.toContain("123456789012");
+    expect(serialised).toContain("ending in 9012");
   });
 });
 
-describe("coming back from the consent screen (#543)", () => {
-  it("[money] links the profile Wise named and marks it verified", async () => {
-    const { runtime: wise, accounts } = runtime();
-    const result = await wise.service.completeAuthorization({
-      state: "state-value-0123456789",
-      code: "auth-code",
+describe("linking a person to a destination (#543)", () => {
+  it("[money] stores the id Wise confirmed, and marks it verified", async () => {
+    const { wise, accounts } = runtime();
+    const result = await wise.service.linkRecipient({
+      userId: 2,
+      recipientId: "701234567",
+      linkedByUserId: 1,
     });
-    expect(result).toMatchObject({ outcome: "connected" });
+    expect(result).toMatchObject({ outcome: "linked" });
     expect(accounts.link).toHaveBeenCalledWith({
       userId: 2,
       provider: "wise",
-      externalId: "41000001",
-      // Nobody attached this on their behalf.
-      linkedByUserId: 2,
+      externalId: "701234567",
+      linkedByUserId: 1,
       now: "2026-09-13T12:00:00.000Z",
     });
-    // The provider itself just confirmed the id resolves, which is the only way
-    // verified_at is ever legitimately set.
+    // The recipient was read back from Wise before the link was made, which is
+    // exactly what verified_at means: the provider says this id resolves.
     expect(accounts.markVerified).toHaveBeenCalledWith(77, "2026-09-13T12:00:00.000Z");
   });
 
-  it("[money] stores the profile id as a string, not a rounded double", async () => {
-    const { runtime: wise, grants } = runtime({
-      // Raw text: writing this as a JS number literal would round it here, in
-      // the fixture, and the test would pass against a client that also rounds.
-      fetch: transport({
-        profilesBody: '[{"id": 9007199254740993, "type": "personal"}]',
-      }) as unknown as typeof fetch,
-    });
-    await wise.service.completeAuthorization({ state: "s", code: "c" });
-    // A rounded profile id addresses somebody else.
-    expect(grants.record).toHaveBeenCalledWith(
-      expect.objectContaining({ profileId: "9007199254740993" }),
-    );
-  });
-
-  it("[money] exchanges against the redirect URI the request was built with", async () => {
-    // Not the one this deployment would build now. They differ where the app's
-    // base URL changed mid-flow, and Wise checks the pair.
-    const call = transport();
-    const { runtime: wise } = runtime({
-      fetch: call as unknown as typeof fetch,
-      grants: grantPort({
-        claimState: vi.fn(async () => ({
-          claim: "valid" as const,
-          state: {
-            requestedByUserId: 2,
-            environment: "sandbox" as const,
-            redirectUri: "https://old.example.test/api/v1/integrations/wise/callback",
-          },
-        })),
-      }),
-    });
-    await wise.service.completeAuthorization({ state: "s", code: "c" });
-    expect(sent.at(-1)).toContain(
-      encodeURIComponent("https://old.example.test/api/v1/integrations/wise/callback"),
-    );
-  });
-
-  it("[unit] refuses a state nobody issued, and an expired one, differently", async () => {
-    const unknown = runtime({
-      grants: grantPort({ claimState: vi.fn(async () => ({ claim: "unknown" as const })) }),
-    });
-    expect(await unknown.runtime.service.completeAuthorization({ state: "s", code: "c" })).toEqual({
-      outcome: "state_unknown",
-    });
-    const expired = runtime({
-      grants: grantPort({ claimState: vi.fn(async () => ({ claim: "expired" as const })) }),
-    });
-    expect(await expired.runtime.service.completeAuthorization({ state: "s", code: "c" })).toEqual({
-      outcome: "state_expired",
-    });
-  });
-
-  it("[money] never exchanges a code for a state it did not claim", async () => {
-    const call = transport();
-    const { runtime: wise } = runtime({
-      fetch: call as unknown as typeof fetch,
-      grants: grantPort({ claimState: vi.fn(async () => ({ claim: "unknown" as const })) }),
-    });
-    await wise.service.completeAuthorization({ state: "s", code: "c" });
-    expect(call).not.toHaveBeenCalled();
-  });
-
-  it("[money] says so where the authorization reaches no profile", async () => {
-    const { runtime: wise, grants } = runtime({
-      fetch: transport({ profiles: [] }) as unknown as typeof fetch,
-    });
-    expect(await wise.service.completeAuthorization({ state: "s", code: "c" })).toEqual({
-      outcome: "no_profile",
-    });
-    // A token with nothing to pay into is not worth storing.
-    expect(grants.record).not.toHaveBeenCalled();
-  });
-
-  it("[money] takes the grant back out where the account cannot be linked", async () => {
-    const { runtime: wise, grants } = runtime({
-      accounts: accountPort({
-        link: vi.fn(async () => ({ outcome: "external_id_taken" as const })),
-      }),
-    });
-    expect(await wise.service.completeAuthorization({ state: "s", code: "c" })).toEqual({
-      outcome: "profile_taken",
-    });
-    // Otherwise the person holds a credential for an account nothing will pay.
-    expect(grants.revoke).toHaveBeenCalledWith(2, "2026-09-13T12:00:00.000Z");
-  });
-
-  it("[money] re-verifies the account they already had, rather than linking a second", async () => {
-    const { runtime: wise, accounts } = runtime({
-      accounts: accountPort({
-        listForUser: vi.fn(async () => [
-          { id: 77, provider: "wise", externalId: "41000001", verifiedAt: null },
-        ]),
-      }),
-    });
-    expect(await wise.service.completeAuthorization({ state: "s", code: "c" })).toMatchObject({
-      outcome: "connected",
-    });
+  it("[money] refuses one of our own accounts, saying which kind of no it is", async () => {
+    // Told apart from "does not exist" so an operator is not left hunting a
+    // recipient that is sitting right there.
+    const { wise, accounts } = runtime();
+    expect(
+      await wise.service.linkRecipient({ userId: 2, recipientId: "701234568", linkedByUserId: 1 }),
+    ).toEqual({ outcome: "recipient_is_ours" });
     expect(accounts.link).not.toHaveBeenCalled();
-    expect(accounts.markVerified).toHaveBeenCalledWith(77, "2026-09-13T12:00:00.000Z");
   });
 
-  it("[money] refuses to repoint an existing payout account at a different profile", async () => {
-    // Repointing where money goes is not something a consent screen should be
-    // able to do silently, and detaching is final.
-    const { runtime: wise, grants, accounts } = runtime({
-      accounts: accountPort({
-        listForUser: vi.fn(async () => [
-          { id: 77, provider: "wise", externalId: "41000999", verifiedAt: "2026-08-01T00:00:00.000Z" },
-        ]),
-      }),
-    });
-    expect(await wise.service.completeAuthorization({ state: "s", code: "c" })).toEqual({
-      outcome: "profile_taken",
-    });
-    expect(accounts.markVerified).not.toHaveBeenCalled();
-    expect(grants.revoke).toHaveBeenCalledWith(2, "2026-09-13T12:00:00.000Z");
+  it("[money] refuses a deactivated recipient rather than storing a dead destination", async () => {
+    const { wise } = runtime();
+    expect(
+      await wise.service.linkRecipient({ userId: 2, recipientId: "701234569", linkedByUserId: 1 }),
+    ).toEqual({ outcome: "recipient_inactive" });
   });
 
-  it("[unit] carries a grant refusal through rather than inventing one", async () => {
-    const { runtime: wise } = runtime({
-      grants: grantPort({ record: vi.fn(async () => ({ outcome: "already_connected" as const })) }),
-    });
-    expect(await wise.service.completeAuthorization({ state: "s", code: "c" })).toEqual({
-      outcome: "already_connected",
-    });
+  it("[unit] refuses an id Wise has never heard of", async () => {
+    const { wise } = runtime();
+    expect(
+      await wise.service.linkRecipient({ userId: 2, recipientId: "999", linkedByUserId: 1 }),
+    ).toEqual({ outcome: "unknown_recipient" });
   });
 
-  it("[unit] refuses outright where the deployment has no Wise keys", async () => {
-    const { runtime: wise, grants } = runtime({ clientId: "   " });
-    expect(await wise.service.completeAuthorization({ state: "s", code: "c" })).toEqual({
-      outcome: "exchange_failed",
-    });
-    expect(grants.claimState).not.toHaveBeenCalled();
-  });
-});
-
-describe("the status a screen renders (#543)", () => {
-  it("[money] is payable only where the linked account is verified", async () => {
-    const grant = {
-      id: 10,
-      profileId: "41000001",
-      profileType: "personal" as const,
-      environment: "sandbox" as const,
-      grantedAt: NOW.toISOString(),
-    };
-    const verified = runtime({
-      grants: grantPort({ readCurrent: vi.fn(async () => grant) }),
-      accounts: accountPort({
-        listForUser: vi.fn(async () => [
-          { id: 77, provider: "wise", externalId: "41000001", verifiedAt: NOW.toISOString() },
-        ]),
-      }),
-    });
-    expect(await verified.runtime.service.readStatus(2)).toMatchObject({ payable: true });
-
-    // A link nobody checked is a claim, and paying against a claim is the
-    // failure the whole seam exists to prevent.
-    const unverified = runtime({
-      grants: grantPort({ readCurrent: vi.fn(async () => grant) }),
-      accounts: accountPort({
-        listForUser: vi.fn(async () => [
-          { id: 77, provider: "wise", externalId: "41000001", verifiedAt: null },
-        ]),
-      }),
-    });
-    expect(await unverified.runtime.service.readStatus(2)).toMatchObject({ payable: false });
+  it("[money] carries the log's own refusals through unchanged in meaning", async () => {
+    for (const [stored, expected] of [
+      ["already_linked", "already_linked"],
+      ["external_id_taken", "recipient_taken"],
+      ["unknown_user", "unknown_user"],
+    ] as const) {
+      const { wise } = runtime({
+        accounts: accountPort({ link: vi.fn(async () => ({ outcome: stored }) as never) }),
+      });
+      expect(
+        await wise.service.linkRecipient({ userId: 2, recipientId: "701234567", linkedByUserId: 1 }),
+        stored,
+      ).toEqual({ outcome: expected });
+    }
   });
 
-  it("[unit] is null where nobody has connected, not an empty connection", async () => {
-    const { runtime: wise } = runtime();
-    expect(await wise.service.readStatus(2)).toBeNull();
+  it("[unit] trims the id, because a pasted one arrives with whitespace", async () => {
+    const { wise, accounts } = runtime();
+    await wise.service.linkRecipient({
+      userId: 2,
+      recipientId: "  701234567  ",
+      linkedByUserId: 1,
+    });
+    expect(accounts.link).toHaveBeenCalledWith(expect.objectContaining({ externalId: "701234567" }));
   });
 });

@@ -162,17 +162,13 @@ const documentedApp = () =>
         newState: () => "contract-fixture-state",
       });
       installWiseRoutes(api, {
-        clientId: () => "contract-fixture",
-        callbackUrl: () => "https://app.example.test/cb",
-        settingsUrl: () => "/settings/payouts",
-        authorizeUrl: () => "https://sandbox.wise.com/oauth/authorize",
-        beginAuthorization: async () => undefined,
-        completeAuthorization: async () => {
+        configured: () => true,
+        readStatus: async () => null,
+        listRecipients: async () => [],
+        linkRecipient: async () => {
           throw new Error("not used by the contract fixture");
         },
-        readStatus: async () => null,
-        disconnect: async () => false,
-        newState: () => "contract-fixture-state",
+        unlink: async () => false,
       });
       installEmailLogRoutes(api, emailLog);
       installEmailHealthRoutes(api, emailLog);

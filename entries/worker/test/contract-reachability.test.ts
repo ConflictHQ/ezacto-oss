@@ -47,9 +47,8 @@ describe('Worker contract reachability', () => {
       QUICKBOOKS_CLIENT_ID: 'contract-fixture-client-id',
       QUICKBOOKS_CLIENT_SECRET: 'contract-fixture-client-secret',
       // Likewise for Wise, and for the same reason.
-      WISE_CLIENT_ID: 'contract-fixture-wise-client-id',
-      WISE_CLIENT_SECRET: 'contract-fixture-wise-client-secret',
-      WISE_ENVIRONMENT: 'sandbox',
+      WISE_TOKEN: 'contract-fixture-wise-token',
+      WISE_WEBHOOK_PUBLIC_KEY: 'contract-fixture-wise-key',
       APP_BASE_URL: 'https://app.example.test',
     }
     // The brand and theme surfaces are passed the way `index.ts` passes them,

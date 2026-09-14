@@ -48,30 +48,19 @@ QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN=
 # LIVE BOOKS.
 QUICKBOOKS_ENVIRONMENT=sandbox
 
-# --- Payouts: a contractor's own Wise account, by OAuth (issue #543) ---
-# Optional pair; leave both empty and the Wise routes are not mounted at all, so
-# a contractor sees no connect button rather than one that fails at the consent
-# screen. Register the callback as
-# <APP_BASE_URL>/api/v1/integrations/wise/callback in the Wise app.
-WISE_CLIENT_ID=
-WISE_CLIENT_SECRET=
-# `sandbox` reaches Wise's test accounts. ANYTHING ELSE, INCLUDING EMPTY, IS
-# LIVE — the safe way round, because a live token against sandbox is refused
-# loudly where a sandbox token against live looks like a payout that went
-# nowhere.
-WISE_ENVIRONMENT=sandbox
-# The PEM Wise signs webhook deliveries with, for the subscription pointed at
-# <APP_BASE_URL>/webhooks/wise. Optional on sandbox -- Wise's published sandbox
-# key is used -- and REQUIRED on live: an unverifiable claim about money is
-# refused rather than trusted, so live deliveries are rejected until this is set.
+# --- Payouts: paying contractors from the organisation's Wise account (#543) ---
+# The organisation's own API token. NOT an OAuth pair: it authenticates as the
+# business that sends the money, and a contractor supplies a destination rather
+# than a grant. Without it the Wise routes are not mounted at all.
+WISE_TOKEN=
+# Which profile pays, where the token reaches more than one. A business profile
+# is chosen when it is the only one of its kind; naming it is better, because an
+# account with two business profiles is a question nothing here can answer.
+WISE_PROFILE_ID=
+# The PEM Wise signs webhook deliveries with, for a subscription pointed at
+# <APP_BASE_URL>/webhooks/wise. Without it the webhook route is NOT MOUNTED: an
+# unverifiable claim about money is not one to act on.
 WISE_WEBHOOK_PUBLIC_KEY=
-# Where Wise is, for a SANDBOX deployment only -- both or neither, and ignored
-# on live, which is always Wise's own address. There is no default: Wise
-# decommissioned api.sandbox.transferwise.tech (it answers 410) and no
-# replacement hostname is guessed here, so a sandbox deployment without these is
-# reported as not configured rather than quietly calling an address that is gone.
-WISE_API_BASE=
-WISE_AUTHORIZE_URL=
 
 # --- migrate package (dev, against the live Harvest account) ---
 HARVEST_ACCOUNT_ID=

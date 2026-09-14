@@ -14798,7 +14798,7 @@
     "/api/v1/integrations/wise": {
       "get": {
         "operationId": "getWiseConnection",
-        "summary": "Whether Wise is configured, and the caller's own connection",
+        "summary": "Whether Wise is configured, and which profile pays",
         "tags": [
           "integrations"
         ],
@@ -14848,10 +14848,132 @@
         },
         "x-ezacto-runtime-path": "/api/v1/integrations/wise",
         "x-ezacto-generate-client": true
-      },
+      }
+    },
+    "/api/v1/integrations/wise/recipients": {
+      "get": {
+        "operationId": "listWiseRecipients",
+        "summary": "The Wise destinations the organisation can pay",
+        "tags": [
+          "integrations"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WiseRecipientListEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/integrations/wise/recipients",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/integrations/wise/recipients/link": {
+      "post": {
+        "operationId": "linkWiseRecipient",
+        "summary": "Point a person at the Wise destination they are paid through",
+        "tags": [
+          "integrations"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WiseLinkEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/integrations/wise/recipients/link",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WiseLinkInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/integrations/wise/recipients/{accountId}": {
       "delete": {
-        "operationId": "disconnectWise",
-        "summary": "Revoke the caller's own Wise grant",
+        "operationId": "unlinkWiseRecipient",
+        "summary": "Detach a person's Wise payout destination",
         "tags": [
           "integrations"
         ],
@@ -14892,130 +15014,16 @@
             "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
-        "x-ezacto-runtime-path": "/api/v1/integrations/wise",
-        "x-ezacto-generate-client": true
-      }
-    },
-    "/api/v1/integrations/wise/authorize": {
-      "post": {
-        "operationId": "startWiseAuthorization",
-        "summary": "Begin connecting the caller's own Wise account",
-        "tags": [
-          "integrations"
-        ],
-        "security": [
-          {
-            "cookieSession": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WiseAuthorizeEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/MalformedRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/AuthenticationRequired"
-          },
-          "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
-          },
-          "404": {
-            "$ref": "#/components/responses/ResourceNotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/StateConflict"
-          },
-          "413": {
-            "$ref": "#/components/responses/PayloadTooLarge"
-          },
-          "422": {
-            "$ref": "#/components/responses/ValidationFailed"
-          },
-          "429": {
-            "$ref": "#/components/responses/RateLimited"
-          },
-          "503": {
-            "$ref": "#/components/responses/ServiceUnavailable"
-          }
-        },
-        "x-ezacto-runtime-path": "/api/v1/integrations/wise/authorize",
-        "x-ezacto-generate-client": true
-      }
-    },
-    "/api/v1/integrations/wise/callback": {
-      "get": {
-        "operationId": "completeWiseAuthorization",
-        "summary": "Where Wise returns a contractor after they approve",
-        "tags": [
-          "integrations"
-        ],
-        "security": [],
-        "responses": {
-          "302": {
-            "description": "Redirect response",
-            "headers": {
-              "Location": {
-                "description": "Redirect target",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/MalformedRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/AuthenticationRequired"
-          },
-          "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
-          },
-          "404": {
-            "$ref": "#/components/responses/ResourceNotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/StateConflict"
-          },
-          "413": {
-            "$ref": "#/components/responses/PayloadTooLarge"
-          },
-          "422": {
-            "$ref": "#/components/responses/ValidationFailed"
-          },
-          "429": {
-            "$ref": "#/components/responses/RateLimited"
-          },
-          "503": {
-            "$ref": "#/components/responses/ServiceUnavailable"
-          }
-        },
-        "x-ezacto-runtime-path": "/api/v1/integrations/wise/callback",
-        "x-ezacto-generate-client": false,
+        "x-ezacto-runtime-path": "/api/v1/integrations/wise/recipients/:accountId",
+        "x-ezacto-generate-client": true,
         "parameters": [
           {
-            "name": "code",
-            "in": "query",
-            "required": false,
+            "name": "accountId",
+            "in": "path",
+            "required": true,
             "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "state",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
+              "type": "integer",
+              "minimum": 1
             }
           }
         ]
@@ -19432,26 +19440,82 @@
         "type": "object",
         "required": [
           "profile_id",
-          "profile_type",
-          "environment",
-          "granted_at",
-          "payable"
+          "profile_name",
+          "payable_recipients",
+          "webhooks_verifiable"
         ],
         "properties": {
           "profile_id": {
             "type": "string"
           },
-          "profile_type": {
-            "type": "string"
+          "profile_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
-          "environment": {
-            "type": "string"
+          "payable_recipients": {
+            "type": "integer"
           },
-          "granted_at": {
-            "type": "string"
-          },
-          "payable": {
+          "webhooks_verifiable": {
             "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WiseRecipient": {
+        "type": "object",
+        "required": [
+          "id",
+          "holder_name",
+          "currency",
+          "type",
+          "masked_summary",
+          "email"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "holder_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currency": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "masked_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -19488,7 +19552,38 @@
         },
         "additionalProperties": false
       },
-      "WiseAuthorizeEnvelope": {
+      "WiseRecipientListEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WiseRecipient"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "WiseLinkInput": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "recipient_id"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "integer"
+          },
+          "recipient_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WiseLinkEnvelope": {
         "type": "object",
         "required": [
           "data"
@@ -19497,11 +19592,15 @@
           "data": {
             "type": "object",
             "required": [
-              "authorize_url"
+              "user_id",
+              "recipient"
             ],
             "properties": {
-              "authorize_url": {
-                "type": "string"
+              "user_id": {
+                "type": "integer"
+              },
+              "recipient": {
+                "$ref": "#/components/schemas/WiseRecipient"
               }
             },
             "additionalProperties": false
