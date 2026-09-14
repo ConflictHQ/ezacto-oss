@@ -5685,6 +5685,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "amount_config",
       "can_draw_from_retainer_id",
       "claims_project_ids",
+      "claim_mode",
+      "claim_ceiling_seconds",
+      "claim_ceiling_cents",
       "created_at",
       "updated_at",
     ],
@@ -5712,6 +5715,19 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
        * control.
        */
       claims_project_ids: nullable({ type: "array", items: integerSchema }),
+      /**
+       * How much of the period a band takes, and in which unit (#707).
+       *
+       * `all` is the #484 behaviour: every unbilled hour on the claimed
+       * projects. `ceiling` claims the oldest hours up to a limit and leaves
+       * the overflow to be invoiced as ordinary time and materials -- the two
+       * contracts a band actually writes, a capacity promise in
+       * `claim_ceiling_seconds` or a budget in `claim_ceiling_cents` measured
+       * as billable value at list. Exactly one is set, and only for a ceiling.
+       */
+      claim_mode: { type: "string", enum: ["all", "ceiling"] },
+      claim_ceiling_seconds: nullable({ type: "integer", minimum: 1 }),
+      claim_ceiling_cents: nullable({ type: "integer", minimum: 1 }),
       created_at: timestampSchema,
       updated_at: timestampSchema,
     },
@@ -5783,6 +5799,19 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
        * control.
        */
       claims_project_ids: nullable({ type: "array", items: integerSchema }),
+      /**
+       * How much of the period a band takes, and in which unit (#707).
+       *
+       * `all` is the #484 behaviour: every unbilled hour on the claimed
+       * projects. `ceiling` claims the oldest hours up to a limit and leaves
+       * the overflow to be invoiced as ordinary time and materials -- the two
+       * contracts a band actually writes, a capacity promise in
+       * `claim_ceiling_seconds` or a budget in `claim_ceiling_cents` measured
+       * as billable value at list. Exactly one is set, and only for a ceiling.
+       */
+      claim_mode: { type: "string", enum: ["all", "ceiling"] },
+      claim_ceiling_seconds: nullable({ type: "integer", minimum: 1 }),
+      claim_ceiling_cents: nullable({ type: "integer", minimum: 1 }),
     },
     additionalProperties: false,
   },

@@ -1795,6 +1795,9 @@ export type RecurringInvoice = {
   "amount_config": RecurringAmountConfig;
   "can_draw_from_retainer_id": number | null;
   "claims_project_ids": Array<number> | null;
+  "claim_mode": "all" | "ceiling";
+  "claim_ceiling_seconds": number | null;
+  "claim_ceiling_cents": number | null;
   "created_at": string;
   "updated_at": string;
 };
@@ -1835,6 +1838,9 @@ export type RecurringInvoiceInput = {
   "amount_config": RecurringAmountConfig;
   "can_draw_from_retainer_id"?: number | null;
   "claims_project_ids"?: Array<number> | null;
+  "claim_mode"?: "all" | "ceiling";
+  "claim_ceiling_seconds"?: number | null;
+  "claim_ceiling_cents"?: number | null;
 };
 
 export type MyHoursProject = {

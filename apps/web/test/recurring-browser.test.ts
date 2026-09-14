@@ -43,6 +43,9 @@ const managed: RecurringInvoice = {
   },
   can_draw_from_retainer_id: null,
   claims_project_ids: null,
+  claim_mode: 'all',
+  claim_ceiling_seconds: null,
+  claim_ceiling_cents: null,
   created_at: timestamp,
   updated_at: timestamp,
 }
@@ -450,6 +453,48 @@ describe('Recurring workspace controller', () => {
     )
   })
 
+  it('[money] sends a band ceiling, and shows its boxes only once one applies', async () => {
+    // #707. Without a control this is a column nobody can set, which is the
+    // same defect #485 catalogued -- and a ceiling box visible while the band
+    // claims everything invites a number that never applies.
+    writeDocument()
+    const api = baseApi()
+    await activate(api)
+
+    control<HTMLButtonElement>('[data-recurring-new]').click()
+    const ceiling = control<HTMLElement>('[data-recurring-editor-ceiling]')
+    expect(ceiling.hidden).toBe(true)
+
+    control<HTMLSelectElement>('[data-recurring-editor-client]').value = '5'
+    control<HTMLInputElement>('[data-recurring-editor-subject]').value = 'Banded team'
+    control<HTMLInputElement>('[data-recurring-editor-next]').value = '2026-11-10'
+    lineInput(0, 'kind').value = 'Service'
+    lineInput(0, 'description').value = 'Band'
+    lineInput(0, 'quantity').value = '1'
+    lineInput(0, 'unitPriceCents').value = '9368500'
+    const claims = control<HTMLSelectElement>('[data-recurring-editor-claims]')
+    for (const option of claims.options) option.selected = option.value === '7'
+    const mode = control<HTMLSelectElement>('[data-recurring-editor-claim-mode]')
+    mode.value = 'ceiling'
+    mode.dispatchEvent(new window.Event('change'))
+    expect(ceiling.hidden).toBe(false)
+    control<HTMLSelectElement>('[data-recurring-editor-ceiling-unit]').value = 'money'
+    control<HTMLInputElement>('[data-recurring-editor-ceiling-amount]').value = '9368500'
+    submitEditor()
+
+    await vi.waitFor(() => expect(api.createRecurringInvoice).toHaveBeenCalled())
+    expect(api.createRecurringInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        claims_project_ids: [7],
+        claim_mode: 'ceiling',
+        claim_ceiling_seconds: null,
+        claim_ceiling_cents: 9_368_500,
+      }),
+      expect.any(String),
+      expect.any(AbortSignal),
+    )
+  })
+
   it('[browser] creates a definition, carrying a through date and an installment total', async () => {
     // The gap this closes. `createRecurringInvoice` had no call site, so the
     // three live definitions were loaded by a script; nothing in the product
@@ -506,6 +551,9 @@ describe('Recurring workspace controller', () => {
         },
         can_draw_from_retainer_id: null,
         claims_project_ids: null,
+        claim_mode: 'all',
+        claim_ceiling_seconds: null,
+        claim_ceiling_cents: null,
       },
       expect.any(String),
       expect.any(AbortSignal),

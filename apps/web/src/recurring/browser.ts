@@ -203,6 +203,13 @@ export const createRecurringWorkspaceController = (
   // block, because it is the flat-amount case: these projects' hours are
   // claimed by the amount, not priced into it.
   const editorClaims = required<HTMLSelectElement>('[data-recurring-editor-claims]')
+  // How much of the period that band takes (#707), and in which unit.
+  const editorClaimMode = required<HTMLSelectElement>('[data-recurring-editor-claim-mode]')
+  const editorCeiling = required<HTMLElement>('[data-recurring-editor-ceiling]')
+  const editorCeilingUnit = required<HTMLSelectElement>('[data-recurring-editor-ceiling-unit]')
+  const editorCeilingAmount = required<HTMLInputElement>(
+    '[data-recurring-editor-ceiling-amount]',
+  )
   const editorTimeOn = required<HTMLInputElement>('[data-recurring-editor-time-on]')
   const editorTimeSummary = required<HTMLSelectElement>('[data-recurring-editor-time-summary]')
   const editorExpensesOn = required<HTMLInputElement>('[data-recurring-editor-expenses-on]')
@@ -422,6 +429,13 @@ export const createRecurringWorkspaceController = (
     installments: lineField(line, 'installments').value,
   })
 
+  // The ceiling boxes only mean anything once a band claims to one, and a
+  // number sitting in a hidden box is a number somebody will later assume
+  // applied.
+  const syncClaimMode = (): void => {
+    editorCeiling.hidden = editorClaimMode.value !== 'ceiling'
+  }
+
   const syncAmountType = (): void => {
     const fixed = editorType.value !== 'line_items_import'
     editorFixed.hidden = !fixed
@@ -446,6 +460,9 @@ export const createRecurringWorkspaceController = (
     claimsProjectIds: [...editorClaims.options]
       .filter((item) => item.selected)
       .map((item) => item.value),
+    claimMode: editorClaimMode.value === 'ceiling' ? 'ceiling' : 'all',
+    claimCeilingUnit: editorCeilingUnit.value === 'money' ? 'money' : 'time',
+    claimCeiling: editorCeilingAmount.value,
     importTime: editorTimeOn.checked,
     timeSummary: editorTimeSummary.value,
     importExpenses: editorExpensesOn.checked,
@@ -489,6 +506,10 @@ export const createRecurringWorkspaceController = (
       values.claimsProjectIds,
       null,
     )
+    editorClaimMode.value = values.claimMode
+    editorCeilingUnit.value = values.claimCeilingUnit
+    editorCeilingAmount.value = values.claimCeiling
+    syncClaimMode()
     editorTimeOn.checked = values.importTime
     editorTimeSummary.value = values.timeSummary
     editorExpensesOn.checked = values.importExpenses
@@ -1040,6 +1061,11 @@ export const createRecurringWorkspaceController = (
       `“${detail.subject_template}” stops billing ${recurringClientLabel(detail, clients)}. ` +
       'A definition that has already raised an invoice cannot be deleted.'
     deleteDialog.showModal()
+  })
+  editorClaimMode.addEventListener('change', () => {
+    syncClaimMode()
+    editorResult.textContent = ''
+    delete editorResult.dataset.outcome
   })
   editorType.addEventListener('change', () => {
     syncAmountType()

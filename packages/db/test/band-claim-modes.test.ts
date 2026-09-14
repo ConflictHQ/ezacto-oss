@@ -31,8 +31,8 @@ afterEach(() => {
  *
  * The settings are refused in combinations that would read as something they
  * are not: a ceiling with no number claims nothing while looking like a band
- * that claims everything, and a number with no ceiling is a value nothing
- * applies.
+ * that claims everything, a number with no ceiling is a value nothing applies,
+ * and a ceiling in both units at once is two answers to one question.
  */
 describe('the claim mode and its ceiling', () => {
   const fixture = async () => {
@@ -70,8 +70,13 @@ describe('the claim mode and its ceiling', () => {
     const database = await fixture()
     define(database, '', '')
     expect(
-      database.prepare(`SELECT claim_mode, claim_ceiling_seconds FROM recurring_invoices`).get(),
-    ).toEqual({ claim_mode: 'all', claim_ceiling_seconds: null })
+      database
+        .prepare(
+          `SELECT claim_mode, claim_ceiling_seconds, claim_ceiling_cents
+             FROM recurring_invoices`,
+        )
+        .get(),
+    ).toEqual({ claim_mode: 'all', claim_ceiling_seconds: null, claim_ceiling_cents: null })
   })
 
   it('[money] refuses a ceiling with no ceiling', async () => {
@@ -80,7 +85,20 @@ describe('the claim mode and its ceiling', () => {
     const database = await fixture()
     expect(() =>
       define(database, `, claims_project_ids, claim_mode`, `, '[1]', 'ceiling'`),
-    ).toThrow(/ceiling claim needs a ceiling/u)
+    ).toThrow(/needs exactly one ceiling/u)
+  })
+
+  it('[money] refuses a ceiling stated in both units at once', async () => {
+    // Two numbers answering one question, and whichever the reader saw last
+    // wins. The deal is either a capacity promise or a budget, never both.
+    const database = await fixture()
+    expect(() =>
+      define(
+        database,
+        `, claims_project_ids, claim_mode, claim_ceiling_seconds, claim_ceiling_cents`,
+        `, '[1]', 'ceiling', 180000, 2500000`,
+      ),
+    ).toThrow(/needs exactly one ceiling/u)
   })
 
   it('[money] refuses a ceiling on a band that claims no projects', async () => {
@@ -95,7 +113,10 @@ describe('the claim mode and its ceiling', () => {
     const database = await fixture()
     expect(() =>
       define(database, `, claims_project_ids, claim_ceiling_seconds`, `, '[1]', 180000`),
-    ).toThrow(/only a ceiling claim may carry one/u)
+    ).toThrow(/needs exactly one ceiling/u)
+    expect(() =>
+      define(database, `, claims_project_ids, claim_ceiling_cents`, `, '[1]', 2500000`),
+    ).toThrow(/needs exactly one ceiling/u)
   })
 
   it('[money] holds the same rules when a definition is edited, not only created', async () => {
@@ -105,13 +126,16 @@ describe('the claim mode and its ceiling', () => {
     define(database, `, claims_project_ids`, `, '[1]'`)
     expect(() =>
       database.exec(`UPDATE recurring_invoices SET claim_mode = 'ceiling' WHERE id = 1`),
-    ).toThrow(/ceiling claim needs a ceiling/u)
+    ).toThrow(/needs exactly one ceiling/u)
     expect(() =>
       database.exec(`UPDATE recurring_invoices SET claim_ceiling_seconds = 180000 WHERE id = 1`),
-    ).toThrow(/only a ceiling claim may carry one/u)
+    ).toThrow(/needs exactly one ceiling/u)
+    expect(() =>
+      database.exec(`UPDATE recurring_invoices SET claim_ceiling_cents = 2500000 WHERE id = 1`),
+    ).toThrow(/needs exactly one ceiling/u)
   })
 
-  it('[db] accepts the pair the deal actually needs', async () => {
+  it('[db] accepts a capacity promise stated in time', async () => {
     const database = await fixture()
     define(
       database,
@@ -119,7 +143,31 @@ describe('the claim mode and its ceiling', () => {
       `, '[1]', 'ceiling', 180000`,
     )
     expect(
-      database.prepare(`SELECT claim_mode, claim_ceiling_seconds FROM recurring_invoices`).get(),
-    ).toEqual({ claim_mode: 'ceiling', claim_ceiling_seconds: 180_000 })
+      database
+        .prepare(
+          `SELECT claim_mode, claim_ceiling_seconds, claim_ceiling_cents
+             FROM recurring_invoices`,
+        )
+        .get(),
+    ).toEqual({ claim_mode: 'ceiling', claim_ceiling_seconds: 180_000, claim_ceiling_cents: null })
+  })
+
+  it('[db] accepts a budget stated in money', async () => {
+    // The other contract the same band writes: "covers work worth up to X at
+    // list" rather than "covers N hours".
+    const database = await fixture()
+    define(
+      database,
+      `, claims_project_ids, claim_mode, claim_ceiling_cents`,
+      `, '[1]', 'ceiling', 2500000`,
+    )
+    expect(
+      database
+        .prepare(
+          `SELECT claim_mode, claim_ceiling_seconds, claim_ceiling_cents
+             FROM recurring_invoices`,
+        )
+        .get(),
+    ).toEqual({ claim_mode: 'ceiling', claim_ceiling_seconds: null, claim_ceiling_cents: 2_500_000 })
   })
 })

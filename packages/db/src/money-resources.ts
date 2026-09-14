@@ -371,12 +371,16 @@ export interface RecurringInvoiceResource {
    * How much of the period the band takes (#707).
    *
    * `all` takes every unbilled hour on those projects up to the issue date.
-   * `ceiling` takes the oldest hours up to `claim_ceiling_seconds` and leaves
+   * `ceiling` takes the oldest hours up to whichever of
+   * `claim_ceiling_seconds` (tracked duration) or `claim_ceiling_cents`
+   * (billable value at list) is set -- exactly one is, and only for a
+   * `ceiling` claim -- and leaves
    * the rest to be billed as ordinary time and materials.
    */
   claim_mode: 'all' | 'ceiling'
   /** Set exactly when the mode is `ceiling`; the schema refuses either alone. */
   claim_ceiling_seconds: number | null
+  claim_ceiling_cents: number | null
   created_at: string
   updated_at: string
 }
@@ -398,6 +402,7 @@ export interface RecurringInvoiceInput {
   /** Defaults to `all`, which is the behaviour every band had before #707. */
   claimMode?: 'all' | 'ceiling'
   claimCeilingSeconds?: number | null
+  claimCeilingCents?: number | null
   occurredAt: string
 }
 
@@ -973,6 +978,7 @@ export type CompleteRecurringOutcome =
 const recurringSelect = `SELECT id, client_id, subject_template, notes_template,
   every_n_months, day_of_month, next_issue_on, amount_config,
   can_draw_from_retainer_id, claims_project_ids, claim_mode, claim_ceiling_seconds,
+  claim_ceiling_cents,
   created_at, updated_at
   FROM recurring_invoices
   WHERE definition_status = 'complete'`
@@ -2079,6 +2085,7 @@ export class MoneyResourceRepository {
         claims_project_ids: input.claimsProjectIds,
         claim_mode: input.claimMode ?? 'all',
         claim_ceiling_seconds: input.claimCeilingSeconds ?? null,
+        claim_ceiling_cents: input.claimCeilingCents ?? null,
       },
     })
     const expected = {
@@ -2101,6 +2108,7 @@ export class MoneyResourceRepository {
       claims_project_ids: input.claimsProjectIds,
       claim_mode: input.claimMode ?? 'all',
       claim_ceiling_seconds: input.claimCeilingSeconds ?? null,
+      claim_ceiling_cents: input.claimCeilingCents ?? null,
       created_at: input.occurredAt,
       updated_at: input.occurredAt,
     }
@@ -2111,8 +2119,9 @@ export class MoneyResourceRepository {
             id, client_id, definition_status, subject_template, notes_template,
             every_n_months, day_of_month, next_issue_on, amount_config,
             can_draw_from_retainer_id, claims_project_ids,
-            claim_mode, claim_ceiling_seconds, created_at, updated_at
-          ) VALUES (?, ?, 'complete', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            claim_mode, claim_ceiling_seconds, claim_ceiling_cents,
+            created_at, updated_at
+          ) VALUES (?, ?, 'complete', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           params: [
             input.resourceId,
             input.clientId,
@@ -2126,6 +2135,7 @@ export class MoneyResourceRepository {
             input.claimsProjectIds === null ? null : JSON.stringify(input.claimsProjectIds),
             input.claimMode ?? 'all',
             input.claimCeilingSeconds ?? null,
+            input.claimCeilingCents ?? null,
             input.occurredAt,
             input.occurredAt,
           ],
@@ -2177,6 +2187,7 @@ export class MoneyResourceRepository {
       text: `UPDATE recurring_invoices SET client_id = ?, subject_template = ?,
         notes_template = ?, every_n_months = ?, day_of_month = ?, next_issue_on = ?,
         amount_config = ?, can_draw_from_retainer_id = ?, claims_project_ids = ?,
+        claim_mode = ?, claim_ceiling_seconds = ?, claim_ceiling_cents = ?,
         updated_at = ?
         WHERE id = ? AND definition_status = 'complete'`,
       params: [
@@ -2189,6 +2200,9 @@ export class MoneyResourceRepository {
         JSON.stringify(input.amountConfig),
         input.canDrawFromRetainerId,
         input.claimsProjectIds === null ? null : JSON.stringify(input.claimsProjectIds),
+        input.claimMode ?? 'all',
+        input.claimCeilingSeconds ?? null,
+        input.claimCeilingCents ?? null,
         input.occurredAt,
         id,
       ],
@@ -2308,6 +2322,7 @@ export class MoneyResourceRepository {
         text: `UPDATE recurring_invoices SET client_id = ?, subject_template = ?,
           notes_template = ?, every_n_months = ?, day_of_month = ?, next_issue_on = ?,
           amount_config = ?, can_draw_from_retainer_id = ?, claims_project_ids = ?,
+          claim_mode = ?, claim_ceiling_seconds = ?, claim_ceiling_cents = ?,
           updated_at = ?, definition_status = 'complete'
           WHERE id = ? AND definition_status = 'incomplete'`,
         params: [
@@ -2320,6 +2335,9 @@ export class MoneyResourceRepository {
           amountConfig,
           input.canDrawFromRetainerId,
           input.claimsProjectIds === null ? null : JSON.stringify(input.claimsProjectIds),
+          input.claimMode ?? 'all',
+          input.claimCeilingSeconds ?? null,
+          input.claimCeilingCents ?? null,
           input.occurredAt,
           id,
         ],
@@ -2344,6 +2362,26 @@ export class MoneyResourceRepository {
       for (const projectId of input.claimsProjectIds) {
         assertPositiveId(projectId, 'claimsProjectIds')
       }
+    }
+    // The schema refuses these combinations too; saying so here means the
+    // caller hears which rule they broke rather than a constraint name.
+    const ceilings = [input.claimCeilingSeconds, input.claimCeilingCents].filter(
+      (value) => value !== undefined && value !== null,
+    )
+    if ((input.claimMode ?? 'all') === 'ceiling') {
+      if (input.claimsProjectIds === null) {
+        throw new TypeError('a ceiling claim must name the projects it claims from')
+      }
+      if (ceilings.length !== 1) {
+        throw new TypeError('a ceiling claim needs exactly one ceiling, in time or in money')
+      }
+      for (const ceiling of ceilings) {
+        if (!Number.isInteger(ceiling) || ceiling <= 0) {
+          throw new TypeError('a ceiling must be a positive whole number')
+        }
+      }
+    } else if (ceilings.length > 0) {
+      throw new TypeError('only a ceiling claim may carry a ceiling')
     }
     if (input.subjectTemplate.trim().length === 0) {
       throw new TypeError('subjectTemplate must be non-empty')

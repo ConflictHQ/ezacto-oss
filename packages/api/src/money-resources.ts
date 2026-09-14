@@ -226,6 +226,18 @@ interface RecurringInput {
    * it -- so they stop reading as uninvoiced and cannot be billed twice.
    */
   claimsProjectIds: readonly number[] | null;
+  /**
+   * How much of the period the band takes (#707).
+   *
+   * `all` claims every unbilled hour on those projects. `ceiling` claims the
+   * oldest hours up to a limit and leaves the overflow to be billed as
+   * ordinary time and materials -- the limit being either a duration in
+   * `claimCeilingSeconds` or billable value at list in `claimCeilingCents`,
+   * exactly one of which is set.
+   */
+  claimMode: "all" | "ceiling";
+  claimCeilingSeconds: number | null;
+  claimCeilingCents: number | null;
   occurredAt: string;
 }
 
@@ -2910,6 +2922,75 @@ const claimsValue = (
   return [...new Set(ids)];
 };
 
+/**
+ * How much of the period a band takes, and in which unit (#707).
+ *
+ * The store and the schema both refuse the ambiguous combinations. Reading
+ * them here as well is what turns a constraint failure into a field error the
+ * caller can act on, naming the field they got wrong rather than a trigger.
+ */
+const claimValues = (
+  body: Record<string, unknown>,
+  errors: FieldError[],
+): {
+  claimMode: "all" | "ceiling";
+  claimCeilingSeconds: number | null;
+  claimCeilingCents: number | null;
+} => {
+  const rawMode = body["claim_mode"];
+  const mode =
+    rawMode === undefined || rawMode === null
+      ? "all"
+      : rawMode === "all" || rawMode === "ceiling"
+        ? rawMode
+        : null;
+  if (mode === null) {
+    errors.push({
+      field: "claim_mode",
+      code: "invalid",
+      message: 'claim_mode must be "all" or "ceiling".',
+    });
+  }
+  const seconds =
+    integerValue(body, "claim_ceiling_seconds", errors, {
+      nullable: true,
+      minimum: 1,
+    }) ?? null;
+  const cents =
+    integerValue(body, "claim_ceiling_cents", errors, {
+      nullable: true,
+      minimum: 1,
+    }) ?? null;
+  const stated = [seconds, cents].filter((value) => value !== null).length;
+  if (mode === "ceiling" && stated !== 1) {
+    errors.push({
+      field: "claim_ceiling_seconds",
+      code: "invalid",
+      message:
+        "A ceiling claim needs exactly one ceiling: claim_ceiling_seconds for a duration, or claim_ceiling_cents for billable value at list.",
+    });
+  }
+  if (mode === "all" && stated > 0) {
+    errors.push({
+      field: "claim_mode",
+      code: "invalid",
+      message: "Only a ceiling claim may carry a ceiling.",
+    });
+  }
+  if (mode === "ceiling" && body["claims_project_ids"] == null) {
+    errors.push({
+      field: "claims_project_ids",
+      code: "invalid",
+      message: "A ceiling claim must name the projects it claims from.",
+    });
+  }
+  return {
+    claimMode: mode ?? "all",
+    claimCeilingSeconds: seconds,
+    claimCeilingCents: cents,
+  };
+};
+
 const parseRecurring = (
   body: JsonObject,
   occurredAt: string,
@@ -2924,6 +3005,9 @@ const parseRecurring = (
     "amount_config",
     "can_draw_from_retainer_id",
     "claims_project_ids",
+    "claim_mode",
+    "claim_ceiling_seconds",
+    "claim_ceiling_cents",
   ]);
   const errors = unknownFieldErrors(body, allowed);
   const amountConfig = body.amount_config;
@@ -2961,6 +3045,7 @@ const parseRecurring = (
         minimum: 1,
       }) ?? null,
     claimsProjectIds: claimsValue(body, errors),
+    ...claimValues(body, errors),
     occurredAt,
   };
   assertFields(errors);
@@ -2974,6 +3059,9 @@ const parseRecurring = (
     amountConfig: value.amountConfig as unknown as RecurringAmountConfig,
     canDrawFromRetainerId: value.canDrawFromRetainerId,
     claimsProjectIds: value.claimsProjectIds,
+    claimMode: value.claimMode,
+    claimCeilingSeconds: value.claimCeilingSeconds,
+    claimCeilingCents: value.claimCeilingCents,
     occurredAt: value.occurredAt,
   };
 };

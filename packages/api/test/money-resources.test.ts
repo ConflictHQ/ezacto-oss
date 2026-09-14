@@ -3113,6 +3113,120 @@ for (const [runtime, factory] of factories) {
       }
     });
 
+    /**
+     * Issue 707. The band that claims everything is one deal; a band that
+     * covers a capacity or a budget and leaves the overflow as ordinary time
+     * and materials is another. Both are reachable here or neither is, and the
+     * combinations that would read as something they are not are refused with
+     * a field error rather than a constraint failure.
+     */
+    it("[money] stores a band ceiling, in time or in money, and hands it back", async () => {
+      const test = await setup();
+      const band = (extra: Record<string, unknown>) => ({
+        client_id: 1,
+        subject_template: "Banded team",
+        notes_template: "",
+        every_n_months: 1,
+        day_of_month: 10,
+        next_issue_on: "2026-10-10",
+        amount_config: {
+          schema_version: 1,
+          type: "fixed_lines",
+          line_items: [
+            {
+              kind: "Service",
+              description: null,
+              quantity: 1,
+              unit_price_cents: 9_368_500,
+              taxed: false,
+              taxed2: false,
+              project_id: null,
+            },
+          ],
+        },
+        can_draw_from_retainer_id: null,
+        claims_project_ids: [1],
+        ...extra,
+      });
+      const hours = await test.request(
+        "/api/v1/recurring-invoices",
+        jsonRequest(
+          "POST",
+          band({ claim_mode: "ceiling", claim_ceiling_seconds: 1_440_000 }),
+          "ceiling-hours",
+        ),
+      );
+      expect(hours.status).toBe(201);
+      expect(await responseData<Record<string, unknown>>(hours)).toMatchObject({
+        claim_mode: "ceiling",
+        claim_ceiling_seconds: 1_440_000,
+        claim_ceiling_cents: null,
+      });
+      const money = await test.request(
+        "/api/v1/recurring-invoices",
+        jsonRequest(
+          "POST",
+          band({ claim_mode: "ceiling", claim_ceiling_cents: 9_368_500 }),
+          "ceiling-money",
+        ),
+      );
+      expect(money.status).toBe(201);
+      expect(await responseData<Record<string, unknown>>(money)).toMatchObject({
+        claim_mode: "ceiling",
+        claim_ceiling_seconds: null,
+        claim_ceiling_cents: 9_368_500,
+      });
+    });
+
+    it("[money] refuses a ceiling that is ambiguous, absent, or on a band that claims nothing", async () => {
+      const test = await setup();
+      const band = (extra: Record<string, unknown>) => ({
+        client_id: 1,
+        subject_template: "Banded team",
+        notes_template: "",
+        every_n_months: 1,
+        day_of_month: 10,
+        next_issue_on: "2026-10-10",
+        amount_config: {
+          schema_version: 1,
+          type: "fixed_lines",
+          line_items: [
+            {
+              kind: "Service",
+              description: null,
+              quantity: 1,
+              unit_price_cents: 9_368_500,
+              taxed: false,
+              taxed2: false,
+              project_id: null,
+            },
+          ],
+        },
+        can_draw_from_retainer_id: null,
+        claims_project_ids: [1],
+        ...extra,
+      });
+      const refused: readonly [string, Record<string, unknown>][] = [
+        // Two numbers answering one question.
+        ["both", { claim_mode: "ceiling", claim_ceiling_seconds: 1_440_000, claim_ceiling_cents: 9_368_500 }],
+        // A ceiling that claims nothing while reading as a band that claims all.
+        ["neither", { claim_mode: "ceiling" }],
+        // A number nothing applies is a number somebody later assumes applied.
+        ["orphan", { claim_ceiling_cents: 9_368_500 }],
+        // A ceiling with no projects has nothing to be a ceiling on.
+        ["unclaimed", { claim_mode: "ceiling", claim_ceiling_cents: 9_368_500, claims_project_ids: null }],
+        ["mode", { claim_mode: "some", claim_ceiling_cents: 9_368_500 }],
+        ["zero", { claim_mode: "ceiling", claim_ceiling_cents: 0 }],
+      ];
+      for (const [name, extra] of refused) {
+        const response = await test.request(
+          "/api/v1/recurring-invoices",
+          jsonRequest("POST", band(extra), `ceiling-bad-${name}`),
+        );
+        expect(response.status, name).toBe(422);
+      }
+    });
+
     it("[api] validates recurring definitions and exposes complete CRUD", async () => {
       const test = await setup();
       const input = {

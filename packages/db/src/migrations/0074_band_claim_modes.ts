@@ -12,18 +12,34 @@
 // run as unbanded, it leaves hours reading as uninvoiced that nobody will bill.
 // Neither is an error anybody sees.
 //
-// ## The ceiling is time, not money
+// ## The ceiling is time or money, and the unit is explicit
 //
-// A band already carries a money amount -- what the client is charged -- so a
-// second money figure on the same definition would be two numbers in the same
-// unit meaning different things, and the one a reader reaches for first would
-// be whichever they saw last. Time is unambiguous beside it, and it is what a
-// team band actually sells: a capacity promise for the period.
+// Both contracts get written. "The band covers 400 hours" is a capacity
+// promise; "the band covers work worth up to X at list" is a budget. They are
+// different deals and neither is a rounding of the other.
 //
-// A money ceiling ("the band covers work worth up to X at list") is a coherent
-// different deal, and adding it later is a nullable column beside this one plus
-// a rule that at most one is set. It is deliberately not built on a guess about
-// whether anybody writes that contract.
+// The risk in carrying a money ceiling is that a definition then holds two
+// money figures -- what the client is charged, and what the band covers -- and
+// a reader reaches for whichever they saw last. That is answered by making the
+// unit explicit and refusing anything ambiguous: exactly one of the two columns
+// is set, never both, never neither, and never either without a ceiling mode.
+//
+// A money ceiling measures billable value at list -- rounded seconds times the
+// billable rate -- which is the same figure `foregone_billable_cents` records,
+// so the ceiling and the absorbed value agree by construction rather than by
+// two implementations happening to match.
+//
+// ## An unpriced hour stops a money ceiling rather than passing through it
+//
+// An entry with no billable rate contributes nothing to a running money total,
+// so a naive money ceiling would claim past it forever and a project of
+// unpriced work would be claimed whole however small the ceiling. That is the
+// same class of mistake as counting a missing rate as zero cost: the figure
+// that decides looks smaller precisely where the data is least trustworthy.
+//
+// So the claim stops at the first unpriced entry. The band takes what it can
+// price and the rest stays billable, which is visible and correctable, rather
+// than absorbing work nobody can value.
 //
 // ## Ordering
 //
@@ -41,18 +57,25 @@ export const bandClaimModesMigration = [
     CHECK (claim_mode IN ('all', 'ceiling'))`,
   `ALTER TABLE recurring_invoices ADD COLUMN claim_ceiling_seconds INTEGER
     CHECK (claim_ceiling_seconds IS NULL OR claim_ceiling_seconds > 0)`,
+  `ALTER TABLE recurring_invoices ADD COLUMN claim_ceiling_cents INTEGER
+    CHECK (claim_ceiling_cents IS NULL OR claim_ceiling_cents > 0)`,
 
   // A ceiling with no number is a band that claims nothing and reads like one
   // that claims everything; a number with no ceiling is a value nothing applies.
   // Both are refused rather than interpreted.
   `CREATE TRIGGER recurring_invoices_claim_ceiling_insert
     BEFORE INSERT ON recurring_invoices
-    WHEN (NEW.claim_mode = 'ceiling') IS NOT (NEW.claim_ceiling_seconds IS NOT NULL)
-    BEGIN SELECT RAISE(ABORT, 'a ceiling claim needs a ceiling, and only a ceiling claim may carry one'); END`,
+    WHEN (NEW.claim_mode = 'ceiling') IS NOT (
+      (NEW.claim_ceiling_seconds IS NOT NULL) <> (NEW.claim_ceiling_cents IS NOT NULL)
+    )
+    BEGIN SELECT RAISE(ABORT, 'a ceiling claim needs exactly one ceiling, in time or in money'); END`,
   `CREATE TRIGGER recurring_invoices_claim_ceiling_update
-    BEFORE UPDATE OF claim_mode, claim_ceiling_seconds ON recurring_invoices
-    WHEN (NEW.claim_mode = 'ceiling') IS NOT (NEW.claim_ceiling_seconds IS NOT NULL)
-    BEGIN SELECT RAISE(ABORT, 'a ceiling claim needs a ceiling, and only a ceiling claim may carry one'); END`,
+    BEFORE UPDATE OF claim_mode, claim_ceiling_seconds, claim_ceiling_cents
+    ON recurring_invoices
+    WHEN (NEW.claim_mode = 'ceiling') IS NOT (
+      (NEW.claim_ceiling_seconds IS NOT NULL) <> (NEW.claim_ceiling_cents IS NOT NULL)
+    )
+    BEGIN SELECT RAISE(ABORT, 'a ceiling claim needs exactly one ceiling, in time or in money'); END`,
 
   // A claim mode on a definition that claims no projects is a setting with
   // nothing to apply to. Refused on the way in rather than left to read as a
