@@ -134,10 +134,12 @@ describe("a signed delivery (#543)", () => {
     expect(deliveries.claim).not.toHaveBeenCalled();
   });
 
-  it("[money] has no webhook at all until the key is configured", async () => {
-    // An unverifiable claim about money is not one to act on because a value
-    // was missing, and a route that cannot verify is better not mounted.
-    const bare = createWiseRuntime({
+  it("[money] answers the subscription ping before the key is configured", async () => {
+    // The deadlock the first version created: the route refused to exist
+    // without the signing key, and the key comes from a webhook page you
+    // cannot finish without an endpoint that answers. A deployment could never
+    // get from one state to the other.
+    const keyless = createWiseRuntime({
       config: { token: "t", profileId: undefined, webhookPublicKey: undefined },
       accounts: {
         listForUser: vi.fn(async () => []),
@@ -147,6 +149,58 @@ describe("a signed delivery (#543)", () => {
         detach: vi.fn(async () => false),
       },
       deliveries: port(),
+      now: () => NOW,
+    });
+    expect(keyless.webhook).toBeDefined();
+    expect(
+      await keyless.webhook!.receiveWebhook({
+        payload: SIGNED_BODY,
+        signature: null,
+        deliveryId: null,
+        isTest: true,
+      }),
+    ).toEqual({ accepted: true });
+  });
+
+  it("[money] still refuses a real delivery it cannot verify", async () => {
+    // Answering the ping is safe because a test does nothing. Everything that
+    // touches money stays behind the key.
+    const deliveries = port();
+    const keyless = createWiseRuntime({
+      config: { token: "t", profileId: undefined, webhookPublicKey: undefined },
+      accounts: {
+        listForUser: vi.fn(async () => []),
+        listForProvider: vi.fn(async () => []),
+        link: vi.fn(async () => ({ outcome: "unknown_user" as const })),
+        markVerified: vi.fn(async () => undefined),
+        detach: vi.fn(async () => false),
+      },
+      deliveries,
+      now: () => NOW,
+    });
+    expect(
+      await keyless.webhook!.receiveWebhook({
+        payload: SIGNED_BODY,
+        signature: SIGNATURE,
+        deliveryId: "d-1",
+        isTest: false,
+      }),
+    ).toEqual({ accepted: false });
+    expect(deliveries.claim).not.toHaveBeenCalled();
+  });
+
+  it("[money] has no webhook where deliveries cannot be recorded", async () => {
+    // An unverifiable claim about money is not one to act on because a value
+    // was missing, and a route that cannot verify is better not mounted.
+    const bare = createWiseRuntime({
+      config: { token: "t", profileId: undefined, webhookPublicKey: WISE_SANDBOX_WEBHOOK_PUBLIC_KEY },
+      accounts: {
+        listForUser: vi.fn(async () => []),
+        listForProvider: vi.fn(async () => []),
+        link: vi.fn(async () => ({ outcome: "unknown_user" as const })),
+        markVerified: vi.fn(async () => undefined),
+        detach: vi.fn(async () => false),
+      },
       now: () => NOW,
     });
     expect(bare.webhook).toBeUndefined();
