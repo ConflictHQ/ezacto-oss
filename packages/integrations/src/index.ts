@@ -208,7 +208,6 @@ export {
   type ProposedTimeEntry,
 } from './calendar/proposals.js'
 
-export * from './ecb/rates.js'
 
 export * from './wise/runtime.js'
 export * from './wise/webhook.js'
