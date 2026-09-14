@@ -401,6 +401,13 @@ export interface RecurringDefinitionFormValues {
   readonly claimMode: 'all' | 'ceiling'
   readonly claimCeilingUnit: 'time' | 'money'
   readonly claimCeiling: string
+  /**
+   * Whether the band absorbs every tracked hour on those projects or only the
+   * billable ones (#708). Under a fixed amount the client bought the period, so
+   * a firm that logs internal work against the client's project wants it
+   * counted against what the band paid for.
+   */
+  readonly claimScope: 'billable' | 'tracked'
   readonly importTime: boolean
   readonly timeSummary: string
   readonly importExpenses: boolean
@@ -641,20 +648,32 @@ const claimCeilingBody = (
   claim_mode: 'all' | 'ceiling'
   claim_ceiling_seconds: number | null
   claim_ceiling_cents: number | null
+  claim_scope: 'billable' | 'tracked'
 } => {
+  // A band that claims nothing carries none of these settings: the API refuses
+  // them on a definition with no projects, and a stale value left in a hidden
+  // box is not something the operator asked for.
+  const scope = values.claimsProjectIds.length === 0 ? 'billable' : values.claimScope
   if (values.claimsProjectIds.length === 0 || values.claimMode === 'all') {
-    return { claim_mode: 'all', claim_ceiling_seconds: null, claim_ceiling_cents: null }
+    return {
+      claim_mode: 'all',
+      claim_ceiling_seconds: null,
+      claim_ceiling_cents: null,
+      claim_scope: scope,
+    }
   }
   return values.claimCeilingUnit === 'money'
     ? {
         claim_mode: 'ceiling',
         claim_ceiling_seconds: null,
         claim_ceiling_cents: wholeNumberAbove(values.claimCeiling, 'Claims up to'),
+        claim_scope: scope,
       }
     : {
         claim_mode: 'ceiling',
         claim_ceiling_seconds: parseDurationSeconds(values.claimCeiling),
         claim_ceiling_cents: null,
+        claim_scope: scope,
       }
 }
 
@@ -708,6 +727,7 @@ export const recurringBlankFormValues = (): RecurringDefinitionFormValues => ({
   claimMode: 'all',
   claimCeilingUnit: 'time',
   claimCeiling: '',
+  claimScope: 'billable',
   importTime: true,
   timeSummary: 'project',
   importExpenses: false,
@@ -750,6 +770,7 @@ export const recurringFormValuesFromDefinition = (
         : definition.claim_ceiling_seconds === null
           ? ''
           : recurringDurationInput(definition.claim_ceiling_seconds),
+    claimScope: definition.claim_scope === 'tracked' ? ('tracked' as const) : ('billable' as const),
   }
   if (config.type === 'fixed_lines') {
     return {

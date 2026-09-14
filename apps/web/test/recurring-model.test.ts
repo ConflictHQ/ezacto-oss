@@ -64,6 +64,7 @@ const definition = (overrides: Partial<RecurringInvoice> = {}): RecurringInvoice
   claim_mode: 'all',
   claim_ceiling_seconds: null,
   claim_ceiling_cents: null,
+  claim_scope: 'billable',
   created_at: timestamp,
   updated_at: timestamp,
   ...overrides,
@@ -322,6 +323,7 @@ describe('recurring definition editor input', () => {
       claim_mode: 'all',
       claim_ceiling_seconds: null,
       claim_ceiling_cents: null,
+      claim_scope: 'billable',
     })
   })
 
@@ -601,6 +603,7 @@ describe('a banded engagement, from the form (#484)', () => {
       claim_mode: 'ceiling',
       claim_ceiling_seconds: 1_440_000,
       claim_ceiling_cents: null,
+      claim_scope: 'billable',
     })
     expect(
       recurringDefinitionInput(
@@ -634,6 +637,7 @@ describe('a banded engagement, from the form (#484)', () => {
       claim_mode: 'all',
       claim_ceiling_seconds: null,
       claim_ceiling_cents: null,
+      claim_scope: 'billable',
     })
   })
 
@@ -657,6 +661,28 @@ describe('a banded engagement, from the form (#484)', () => {
       claimCeilingUnit: 'money',
       claimCeiling: '9368500',
     })
+  })
+
+  it('[money] sends what the band counts, and reads it back', () => {
+    // #708. PATCH replaces the definition, so an editor that dropped this would
+    // silently narrow a band back to billable-only the next time somebody
+    // corrected an unrelated field.
+    expect(recurringDefinitionInput(banded({ claimScope: 'tracked' }) as never)).toMatchObject({
+      claim_scope: 'tracked',
+    })
+    expect(
+      recurringFormValuesFromDefinition(
+        definition({ claims_project_ids: [7], claim_scope: 'tracked' }),
+      ).claimScope,
+    ).toBe('tracked')
+  })
+
+  it('[money] drops a claim scope left behind on a definition that claims nothing', () => {
+    expect(
+      recurringDefinitionInput(
+        banded({ claimsProjectIds: [], claimScope: 'tracked' }) as never,
+      ).claim_scope,
+    ).toBe('billable')
   })
 
   it('[unit] renders a ceiling that is not whole hours as something it can read back', () => {

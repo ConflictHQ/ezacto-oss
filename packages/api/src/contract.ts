@@ -1782,11 +1782,23 @@ const reportOperations: ApiContractOperation[] = [
       query("client_id", integerSchema),
       query("project_id", integerSchema),
       // The Show control. Not a pair of booleans: billable-and-uninvoiced is
-      // one of the four answers, and two flags would also spell the two that
+      // one of the answers, and two flags would also spell the ones that
       // select nothing.
+      //
+      // `claimed` and `unclaimed` are the band question (#708) and are
+      // deliberately not about billable: a fixed amount buys the period, so an
+      // hour nobody ticked billable was absorbed by it all the same, and asking
+      // "what has this band not taken yet" through `uninvoiced` hides it.
       query("hours", {
         type: "string",
-        enum: ["all", "billable", "non_billable", "uninvoiced"],
+        enum: [
+          "all",
+          "billable",
+          "non_billable",
+          "uninvoiced",
+          "claimed",
+          "unclaimed",
+        ],
       }),
       // `entry` is one row per time entry with its id and notes; `day` (the
       // default) is the folded grain the report screen draws.
@@ -5688,6 +5700,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "claim_mode",
       "claim_ceiling_seconds",
       "claim_ceiling_cents",
+      "claim_scope",
       "created_at",
       "updated_at",
     ],
@@ -5728,6 +5741,15 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       claim_mode: { type: "string", enum: ["all", "ceiling"] },
       claim_ceiling_seconds: nullable({ type: "integer", minimum: 1 }),
       claim_ceiling_cents: nullable({ type: "integer", minimum: 1 }),
+      /**
+       * Whether the band absorbs every tracked hour on those projects or only
+       * the billable ones (#708). Under a fixed amount the client bought the
+       * period, so a firm that logs internal work against the client's project
+       * wants it counted against what the band paid for; one that keeps that
+       * work elsewhere does not. `billable` is what every definition did before
+       * the setting existed.
+       */
+      claim_scope: { type: "string", enum: ["billable", "tracked"] },
       created_at: timestampSchema,
       updated_at: timestampSchema,
     },
@@ -5812,6 +5834,15 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       claim_mode: { type: "string", enum: ["all", "ceiling"] },
       claim_ceiling_seconds: nullable({ type: "integer", minimum: 1 }),
       claim_ceiling_cents: nullable({ type: "integer", minimum: 1 }),
+      /**
+       * Whether the band absorbs every tracked hour on those projects or only
+       * the billable ones (#708). Under a fixed amount the client bought the
+       * period, so a firm that logs internal work against the client's project
+       * wants it counted against what the band paid for; one that keeps that
+       * work elsewhere does not. `billable` is what every definition did before
+       * the setting existed.
+       */
+      claim_scope: { type: "string", enum: ["billable", "tracked"] },
     },
     additionalProperties: false,
   },
@@ -5894,6 +5925,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "uninvoiced_billable_seconds",
       "time_entry_count",
       "entries_without_billable_rate",
+      "claimed",
     ],
     properties: {
       spent_date: dateSchema,
@@ -5920,8 +5952,16 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       // entry folded into the row carries no rate at all.
       billable_amount_cents: nullable(signedIntegerSchema),
       entries_without_billable_rate: { type: "integer", minimum: 0 },
+      // Whether an invoice has taken this work (#708). Part of the row's
+      // grain, not a summary of it: a day, task and person partly claimed
+      // folds into two rows, one of each, so grouping the table by it is the
+      // same re-fold as grouping it by project or person.
+      claimed: booleanSchema,
       // Present at `entry` grain only: the row is that one entry.
       time_entry_id: integerSchema,
+      // The invoice that claimed the entry, at `entry` grain. Null where
+      // nothing has.
+      invoice_id: nullable(integerSchema),
       notes: nullable(stringSchema),
     },
     additionalProperties: false,
@@ -5950,6 +5990,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "rounded_seconds",
       "billable_seconds",
       "uninvoiced_billable_seconds",
+      "claimed_seconds",
+      "unclaimed_seconds",
       "time_entry_count",
       "currencies",
       "rows",
@@ -5963,7 +6005,14 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       // built with, rather than the defaults.
       hours: {
         type: "string",
-        enum: ["all", "billable", "non_billable", "uninvoiced"],
+        enum: [
+          "all",
+          "billable",
+          "non_billable",
+          "uninvoiced",
+          "claimed",
+          "unclaimed",
+        ],
       },
       grain: { type: "string", enum: ["day", "entry"] },
       active_projects_only: booleanSchema,
@@ -5971,6 +6020,11 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       rounded_seconds: signedIntegerSchema,
       billable_seconds: signedIntegerSchema,
       uninvoiced_billable_seconds: signedIntegerSchema,
+      // Tracked seconds an invoice has taken, and tracked seconds still open
+      // (#708). Billable and non-billable alike, so these two add to `seconds`
+      // where `uninvoiced_billable_seconds` does not.
+      claimed_seconds: signedIntegerSchema,
+      unclaimed_seconds: signedIntegerSchema,
       time_entry_count: { type: "integer", minimum: 0 },
       currencies: {
         type: "array",

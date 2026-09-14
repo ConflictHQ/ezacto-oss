@@ -342,7 +342,20 @@ export interface ContractorCostReportRecord {
  * no invoice has claimed yet -- the figure the summary leads with -- and is a
  * narrower set than `billable` rather than another name for it.
  */
-export type DetailedTimeHours = 'all' | 'billable' | 'non_billable' | 'uninvoiced'
+/**
+ * `uninvoiced` is billable work nobody has charged for yet. `claimed` and
+ * `unclaimed` are the band question (#708) and deliberately say nothing about
+ * billable: under a fixed amount the client bought the period, so an hour
+ * somebody did not tick billable was absorbed by that amount all the same, and
+ * asking "what has this band not taken yet" through a billable filter hides it.
+ */
+export type DetailedTimeHours =
+  | 'all'
+  | 'billable'
+  | 'non_billable'
+  | 'uninvoiced'
+  | 'claimed'
+  | 'unclaimed'
 
 /**
  * `day` is the screen's grain: one line per date, task and person. `entry` is
@@ -414,8 +427,20 @@ export interface DetailedTimeRowRecord {
    */
   billableAmountCents: number | null
   entriesWithoutBillableRate: number
+  /**
+   * Whether an invoice has taken this work (#708).
+   *
+   * Part of the row's grain, not a summary of it: a day, task and person whose
+   * hours were partly claimed folds into two rows, one of each, so grouping the
+   * table by claimed-ness is the same browser re-fold as grouping it by project
+   * or person. Folded into one row it would be a boolean that is true of some
+   * of the hours, which is the ambiguity this answers.
+   */
+  claimed: boolean
   /** The entry behind the row at `entry` grain; null at `day` grain. */
   timeEntryId: number | null
+  /** The invoice that claimed the entry, at `entry` grain; null at `day`. */
+  invoiceId: number | null
   /** The entry's notes at `entry` grain; null at `day` grain. */
   notes: string | null
 }
@@ -436,6 +461,14 @@ export interface DetailedTimeReportRecord extends ReportDateRange {
   roundedSeconds: number
   billableSeconds: number
   uninvoicedBillableSeconds: number
+  /**
+   * Tracked seconds an invoice has taken, and tracked seconds still open
+   * (#708). Billable and non-billable alike, because a band absorbs the period
+   * rather than the billable part of it -- so these two add to `seconds` where
+   * `uninvoicedBillableSeconds` does not.
+   */
+  claimedSeconds: number
+  unclaimedSeconds: number
   timeEntryCount: number
   currencies: readonly DetailedTimeCurrencyRecord[]
   rows: readonly DetailedTimeRowRecord[]
@@ -2072,6 +2105,8 @@ const detailedTimeHoursFilter = (hours: DetailedTimeHours) => {
   if (hours === 'billable') return sql`entry.billable = 1`
   if (hours === 'non_billable') return sql`entry.billable = 0`
   if (hours === 'uninvoiced') return sql`entry.billable = 1 AND entry.invoice_id IS NULL`
+  if (hours === 'claimed') return sql`entry.invoice_id IS NOT NULL`
+  if (hours === 'unclaimed') return sql`entry.invoice_id IS NULL`
   return sql`1`
 }
 
@@ -2163,11 +2198,15 @@ const detailedTimeReport = async (
   let roundedSeconds = 0
   let billableSeconds = 0
   let uninvoicedBillableSeconds = 0
+  let claimedSeconds = 0
+  let unclaimedSeconds = 0
   for (const row of rows) {
     const key =
       grain === 'entry'
         ? `entry|${row.timeEntryId}`
-        : `${row.spentDate}|${row.projectId}|${row.taskId}|${row.userId}`
+        : `${row.spentDate}|${row.projectId}|${row.taskId}|${row.userId}|${
+            row.invoiceId === null ? 'open' : 'claimed'
+          }`
     const line: DetailedTimeRowRecord = lines.get(key) ?? {
       spentDate: row.spentDate,
       clientId: row.clientId,
@@ -2188,7 +2227,9 @@ const detailedTimeReport = async (
       timeEntryCount: 0,
       billableAmountCents: 0,
       entriesWithoutBillableRate: 0,
+      claimed: row.invoiceId !== null,
       timeEntryId: grain === 'entry' ? row.timeEntryId : null,
+      invoiceId: grain === 'entry' ? row.invoiceId : null,
       notes: grain === 'entry' ? row.notes : null,
     }
     line.seconds = checkedAdd(line.seconds, row.seconds, 'detailed time seconds')
@@ -2204,6 +2245,11 @@ const detailedTimeReport = async (
       row.roundedSeconds,
       'detailed time rounded seconds',
     )
+    if (row.invoiceId === null) {
+      unclaimedSeconds = checkedAdd(unclaimedSeconds, row.seconds, 'detailed time unclaimed')
+    } else {
+      claimedSeconds = checkedAdd(claimedSeconds, row.seconds, 'detailed time claimed')
+    }
     if (row.billable === 1) {
       line.billableSeconds = checkedAdd(
         line.billableSeconds,
@@ -2270,6 +2316,8 @@ const detailedTimeReport = async (
       roundedSeconds,
       billableSeconds,
       uninvoicedBillableSeconds,
+      claimedSeconds,
+      unclaimedSeconds,
       timeEntryCount: rows.length,
       currencies: [...currencies.values()].sort((left, right) =>
         left.currency.localeCompare(right.currency),

@@ -104,6 +104,11 @@ interface StoredDefinition {
   claimMode: string | null
   claimCeilingSeconds: number | null
   claimCeilingCents: number | null
+  /**
+   * Whether the band absorbs every tracked hour or only the billable ones
+   * (#708). `billable` is what every definition did before the setting existed.
+   */
+  claimScope: string | null
   canDrawFromRetainerId: number | null
 }
 
@@ -370,7 +375,7 @@ export const createRecurringInvoiceEngine = (
           attachment_policy AS "attachmentPolicy",
           claims_project_ids AS "claimsProjectIds",
           claim_mode AS "claimMode", claim_ceiling_seconds AS "claimCeilingSeconds",
-          claim_ceiling_cents AS "claimCeilingCents",
+          claim_ceiling_cents AS "claimCeilingCents", claim_scope AS "claimScope",
           can_draw_from_retainer_id AS "canDrawFromRetainerId"
         FROM recurring_invoices WHERE id = ?`,
       params: [definitionId],
@@ -711,7 +716,11 @@ export const createRecurringInvoiceEngine = (
     // no such guess and cannot strand anything.
     if (definition.claimsProjectIds !== null) {
       // What a band may take, before any ceiling narrows it.
-      const eligible = `invoice_id IS NULL AND billable = 1
+      // Under a fixed amount the client bought the period, so a band set to
+      // claim tracked time takes the non-billable hours too (#708): leaving
+      // them out makes the engagement look cheaper to deliver than it was.
+      const scoped = definition.claimScope === 'tracked' ? '' : 'AND billable = 1'
+      const eligible = `invoice_id IS NULL ${scoped}
             AND timer_started_at IS NULL
             AND NOT (started_time IS NOT NULL AND ended_time IS NULL)
             AND spent_date <= ?
@@ -756,7 +765,11 @@ export const createRecurringInvoiceEngine = (
                   // ceiling. The band stops there instead. The rest stays
                   // billable, which is visible and correctable, where silently
                   // absorbing work nobody can value is neither.
-                  blocked: 'billable_rate_cents IS NULL',
+                  // Only a *billable* entry with no rate is missing data. A
+                  // non-billable one is worth zero at list by definition, which
+                  // is a fact rather than a gap, so it passes through
+                  // contributing nothing instead of stopping the claim.
+                  blocked: 'billable = 1 AND billable_rate_cents IS NULL',
                   limit: definition.claimCeilingCents,
                 }
               : null

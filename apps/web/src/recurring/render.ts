@@ -133,6 +133,10 @@ export const renderRecurringPage = (view?: string): string => `
           <button type="button" data-recurring-editor-add-line>Add a line</button>
           <label>Covers the time on <span class="hint">Optional. A banded team: the amount stays the same and these projects' hours are claimed by it rather than billed.</span><select multiple size="4" data-recurring-editor-claims></select></label>
           <p class="hint">Leave this empty for an ordinary fixed invoice, which ignores tracked time entirely. Choosing projects makes the hours stop reading as uninvoiced, so they cannot be billed a second time, and records what the flat rate absorbed.</p>
+          <label>Counts<select data-recurring-editor-claim-scope>
+            <option value="billable">Billable hours only</option>
+            <option value="tracked">Every hour tracked on those projects</option>
+          </select><span class="hint">Under a flat amount the client bought the period. Count every tracked hour if internal work is logged against the client's project, or the band reads as cheaper to deliver than it was.</span></label>
           <label>Claims<select data-recurring-editor-claim-mode>
             <option value="all">Every uninvoiced hour on those projects</option>
             <option value="ceiling">Up to a limit, then bill the rest as usual</option>

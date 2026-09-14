@@ -3178,6 +3178,66 @@ for (const [runtime, factory] of factories) {
       });
     });
 
+    it("[money] stores what a band counts, and defaults it to billable hours", async () => {
+      // #708. Under a fixed amount the client bought the period, so a firm that
+      // logs internal work against the client's project needs those hours
+      // counted or the band reads as cheaper to deliver than it was. The
+      // default stays billable-only, which is what every definition did before.
+      const test = await setup();
+      const band = (extra: Record<string, unknown>) => ({
+        client_id: 1,
+        subject_template: "Banded team",
+        notes_template: "",
+        every_n_months: 1,
+        day_of_month: 10,
+        next_issue_on: "2026-10-10",
+        amount_config: {
+          schema_version: 1,
+          type: "fixed_lines",
+          line_items: [
+            {
+              kind: "Service",
+              description: null,
+              quantity: 1,
+              unit_price_cents: 9_368_500,
+              taxed: false,
+              taxed2: false,
+              project_id: null,
+            },
+          ],
+        },
+        can_draw_from_retainer_id: null,
+        claims_project_ids: [1],
+        ...extra,
+      });
+      const tracked = await test.request(
+        "/api/v1/recurring-invoices",
+        jsonRequest("POST", band({ claim_scope: "tracked" }), "scope-tracked"),
+      );
+      expect(tracked.status).toBe(201);
+      expect(await responseData<Record<string, unknown>>(tracked)).toMatchObject({
+        claim_scope: "tracked",
+      });
+      const plain = await test.request(
+        "/api/v1/recurring-invoices",
+        jsonRequest("POST", band({}), "scope-default"),
+      );
+      expect(plain.status).toBe(201);
+      expect(await responseData<Record<string, unknown>>(plain)).toMatchObject({
+        claim_scope: "billable",
+      });
+      for (const [name, extra] of [
+        ["unknown", { claim_scope: "everything" }],
+        ["unclaimed", { claim_scope: "tracked", claims_project_ids: null }],
+      ] as const) {
+        const refused = await test.request(
+          "/api/v1/recurring-invoices",
+          jsonRequest("POST", band(extra), `scope-bad-${name}`),
+        );
+        expect(refused.status, name).toBe(422);
+      }
+    });
+
     it("[money] refuses a ceiling that is ambiguous, absent, or on a band that claims nothing", async () => {
       const test = await setup();
       const band = (extra: Record<string, unknown>) => ({

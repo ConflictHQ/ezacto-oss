@@ -146,6 +146,18 @@ describe('storing what a band claims', () => {
     })
   })
 
+  it('[money] writes the claim scope and carries it through an edit', async () => {
+    const repository = await fixture()
+    const created = await repository.createRecurring(terms({ claimScope: 'tracked' }) as never)
+    expect(created).toMatchObject({ claim_scope: 'tracked' })
+    expect(
+      await repository.updateRecurring(created.id, terms({ dayOfMonth: 12 }) as never),
+    ).toMatchObject({ day_of_month: 12, claim_scope: 'billable' })
+    expect(
+      await repository.updateRecurring(created.id, terms({ claimScope: 'tracked' }) as never),
+    ).toMatchObject({ claim_scope: 'tracked' })
+  })
+
   it('[money] refuses the combinations that would read as something else', async () => {
     const repository = await fixture()
     const refused: readonly [string, Record<string, unknown>][] = [
@@ -155,6 +167,7 @@ describe('storing what a band claims', () => {
       ['unclaimed', { claimMode: 'ceiling', claimCeilingCents: 9_368_500, claimsProjectIds: null }],
       ['zero', { claimMode: 'ceiling', claimCeilingCents: 0 }],
       ['fractional', { claimMode: 'ceiling', claimCeilingSeconds: 1.5 }],
+      ['scope-unclaimed', { claimScope: 'tracked', claimsProjectIds: null }],
     ]
     for (const [name, extra] of refused) {
       await expect(

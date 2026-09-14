@@ -58,6 +58,8 @@ const reports: ReportReader = {
       roundedSeconds: 0,
       billableSeconds: 0,
       uninvoicedBillableSeconds: 0,
+      claimedSeconds: 0,
+      unclaimedSeconds: 0,
       timeEntryCount: 0,
       currencies: [],
       rows: [],

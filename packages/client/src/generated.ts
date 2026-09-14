@@ -1798,6 +1798,7 @@ export type RecurringInvoice = {
   "claim_mode": "all" | "ceiling";
   "claim_ceiling_seconds": number | null;
   "claim_ceiling_cents": number | null;
+  "claim_scope": "billable" | "tracked";
   "created_at": string;
   "updated_at": string;
 };
@@ -1841,6 +1842,7 @@ export type RecurringInvoiceInput = {
   "claim_mode"?: "all" | "ceiling";
   "claim_ceiling_seconds"?: number | null;
   "claim_ceiling_cents"?: number | null;
+  "claim_scope"?: "billable" | "tracked";
 };
 
 export type MyHoursProject = {
@@ -1892,7 +1894,9 @@ export type DetailedTimeRow = {
   "time_entry_count": number;
   "billable_amount_cents"?: number | null;
   "entries_without_billable_rate": number;
+  "claimed": boolean;
   "time_entry_id"?: number;
+  "invoice_id"?: number | null;
   "notes"?: string | null;
 };
 
@@ -1907,13 +1911,15 @@ export type DetailedTimeReport = {
   "to": string;
   "client_id": number | null;
   "project_id": number | null;
-  "hours": "all" | "billable" | "non_billable" | "uninvoiced";
+  "hours": "all" | "billable" | "non_billable" | "uninvoiced" | "claimed" | "unclaimed";
   "grain": "day" | "entry";
   "active_projects_only": boolean;
   "seconds": number;
   "rounded_seconds": number;
   "billable_seconds": number;
   "uninvoiced_billable_seconds": number;
+  "claimed_seconds": number;
+  "unclaimed_seconds": number;
   "time_entry_count": number;
   "currencies": Array<DetailedTimeCurrencyTotal>;
   "rows": Array<DetailedTimeRow>;
@@ -4310,7 +4316,7 @@ export class EzactoClient {
     });
   }
 
-  async getDetailedTimeReport(args: { query: { "from": string; "to": string; "client_id"?: number; "project_id"?: number; "hours"?: "all" | "billable" | "non_billable" | "uninvoiced"; "grain"?: "day" | "entry"; "active_projects_only"?: boolean }; signal?: AbortSignal; headers?: HeadersInit }): Promise<DetailedTimeReportEnvelope> {
+  async getDetailedTimeReport(args: { query: { "from": string; "to": string; "client_id"?: number; "project_id"?: number; "hours"?: "all" | "billable" | "non_billable" | "uninvoiced" | "claimed" | "unclaimed"; "grain"?: "day" | "entry"; "active_projects_only"?: boolean }; signal?: AbortSignal; headers?: HeadersInit }): Promise<DetailedTimeReportEnvelope> {
     const headers = new Headers(args.headers);
 
     return this.request<DetailedTimeReportEnvelope>("GET", "/api/v1/reports/detailed-time", {
