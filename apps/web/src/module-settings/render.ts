@@ -112,7 +112,7 @@ export const renderModuleSettingsPage = (view?: string): string => `
  * offers a tab that answers 403.
  */
 const renderSettingsTabs = (
-  current: 'user' | 'company' | 'activity' | 'templates' | 'roles',
+  current: 'user' | 'company' | 'activity' | 'templates' | 'roles' | 'deliveries',
 ): string =>
   `<nav class="tabstrip settings-tabs" aria-label="Settings" data-settings-tabs>` +
   `<a href="/settings/user"${current === 'user' ? ' aria-current="page"' : ''}>You</a>` +
@@ -126,6 +126,9 @@ const renderSettingsTabs = (
   // Behind the same gate: a role is a fact about people, and the list of them
   // is account-wide configuration rather than daily work.
   `<a href="/settings/roles" data-settings-roles-tab hidden${current === 'roles' ? ' aria-current="page"' : ''}>Roles</a>` +
+  // Behind the same gate: what a client was sent, and whether it arrived, is
+  // account-wide and names recipients.
+  `<a href="/settings/deliveries" data-settings-deliveries-tab hidden${current === 'deliveries' ? ' aria-current="page"' : ''}>Deliveries</a>` +
   `</nav>`
 
 /**
@@ -158,6 +161,67 @@ export const renderActivityLogPage = (view?: string): string => `
     </div>
     <p class="form-result module-settings-status" data-activity-log-status role="status" aria-live="polite">Loading activity…</p>
     <div data-activity-log-list></div>
+  </main>
+
+`
+
+/**
+ * What was sent, and what became of it (issue 485).
+ *
+ * Both tables already existed as endpoints and neither had a screen, which made
+ * "did that invoice reach the client" a question answerable only with an API
+ * token and a terminal. That is the same shape as the retainer and recurring
+ * receipts on issue 485 -- a thing an operator had to go around the product to do --
+ * except it applies to every invoice rather than to one retainer.
+ *
+ * Two tables rather than one, because they answer different questions and fail
+ * differently. The email log is what the provider was asked to send and what it
+ * said back; the outbox is our own delivery of an event to a subscriber, which
+ * is the thing that can be retried. Merging them would put one Retry button
+ * beside rows where it means nothing.
+ */
+export const renderDeliveriesPage = (view?: string): string => `
+  <main class="app-content module-settings-workspace page--grid" data-deliveries-page${view === 'settings-deliveries' ? '' : ' hidden'}>
+    <header class="context-row module-settings-header">
+      <div><p class="eyebrow">Settings</p><h1>Deliveries</h1></div>
+    </header>
+    ${renderSettingsTabs('deliveries')}
+    <p class="module-settings-intro">What this instance sent, and what became of it. Email is what the provider was asked to send; deliveries are events sent to a subscriber, and a failed one can be tried again.</p>
+
+    <section class="deliveries-section">
+      <h2>Email</h2>
+      <div class="activity-log-toolbar">
+        <label for="ez-email-log-status-filter">Status
+          <select id="ez-email-log-status-filter" data-email-log-status-filter>
+            <option value="" selected>Every status</option>
+            <option value="queued">Queued</option>
+            <option value="sent">Sent</option>
+            <option value="failed">Failed</option>
+            <option value="bounced">Bounced</option>
+            <option value="complained">Complained</option>
+          </select>
+        </label>
+      </div>
+      <p class="form-result module-settings-status" data-email-log-status role="status" aria-live="polite">Loading email…</p>
+      <div data-email-log-list></div>
+    </section>
+
+    <section class="deliveries-section">
+      <h2>Event deliveries</h2>
+      <div class="activity-log-toolbar">
+        <label for="ez-outbox-status-filter">Status
+          <select id="ez-outbox-status-filter" data-outbox-status-filter>
+            <option value="" selected>Every status</option>
+            <option value="pending">Pending</option>
+            <option value="processing">Processing</option>
+            <option value="delivered">Delivered</option>
+            <option value="failed">Failed</option>
+          </select>
+        </label>
+      </div>
+      <p class="form-result module-settings-status" data-outbox-status role="status" aria-live="polite">Loading deliveries…</p>
+      <div data-outbox-list></div>
+    </section>
   </main>
 
 `
