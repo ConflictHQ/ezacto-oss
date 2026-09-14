@@ -304,7 +304,13 @@ export interface RuntimeServices {
    * keys, for the same reason as QuickBooks above.
    */
   wise?: WiseRuntime["service"]
-  /** Deliveries Wise pushes. Outside the authenticated surface; see the route. */
+  /**
+   * Deliveries Wise pushes. Outside the authenticated surface; see the route.
+   *
+   * Present as soon as Wise is configured at all, before the signing key is,
+   * because the key comes from a webhook page that cannot be finished without
+   * an endpoint answering. Unverifiable deliveries are still refused.
+   */
   wiseWebhook?: NonNullable<WiseRuntime["webhook"]>
   stripe?: StripeService
   invoiceTimeClaims?: InvoiceTimeClaimService

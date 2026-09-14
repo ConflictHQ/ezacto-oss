@@ -207,18 +207,46 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
     deliveryId: string | null;
     isTest: boolean;
   }): Promise<{ accepted: boolean }> => {
-    if (deliveries === undefined || webhookPublicKey === null) return { accepted: false };
+    if (deliveries === undefined) return { accepted: false };
+
+    /**
+     * The subscription ping, answered before the key is required.
+     *
+     * This is the deadlock the first version created: the route refused to
+     * exist without the signing key, and the key comes from a webhook page you
+     * cannot finish without an endpoint that answers. A deployment could never
+     * get from one state to the other.
+     *
+     * Answering it unverified is safe because a test does nothing. Nothing is
+     * parsed, nothing is claimed, nothing is written -- the worst an attacker
+     * achieves by setting the header is a 200 from an endpoint. Every path that
+     * touches money is below this line and still requires the key.
+     */
+    if (input.isTest) {
+      // Before a key exists, accepted unverified -- that is the whole of the
+      // bootstrap, and a test does nothing whoever sent it.
+      if (webhookPublicKey === null) return { accepted: true };
+      // Once one exists, held to it like everything else, so a subscription
+      // cannot be proved to a configured deployment by a forgery.
+      return {
+        accepted: await verifyWiseSignature({
+          body: input.payload,
+          signature: input.signature,
+          publicKeyPem: webhookPublicKey,
+        }),
+      };
+    }
+
+    // Everything else is a claim about money, and an unverifiable claim is
+    // refused. A deployment that has not configured the key can complete a
+    // subscription and still not be told anything it would act on.
+    if (webhookPublicKey === null) return { accepted: false };
     const verified = await verifyWiseSignature({
       body: input.payload,
       signature: input.signature,
       publicKeyPem: webhookPublicKey,
     });
     if (!verified) return { accepted: false };
-
-    // Wise's ping when a subscription is created. Signed, so it proves the
-    // endpoint and the key agree, which is the only thing it is for. Accepted
-    // and not recorded: a test is not a fact about anybody's money.
-    if (input.isTest) return { accepted: true };
 
     const event = parseWiseEvent(input.payload);
     // Signed by Wise and unreadable by us. Accepted, because a retry of
@@ -282,9 +310,10 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
   };
 
   return {
-    ...(deliveries === undefined || webhookPublicKey === null
-      ? {}
-      : { webhook: { receiveWebhook } }),
+    // Mounted wherever deliveries can be recorded, key or no key. Without one
+    // it answers the subscription ping and refuses everything else, which is
+    // what lets a deployment get the key in the first place.
+    ...(deliveries === undefined ? {} : { webhook: { receiveWebhook } }),
     service: {
       configured: () => token !== null,
 
