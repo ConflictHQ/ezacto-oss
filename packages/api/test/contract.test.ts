@@ -171,6 +171,9 @@ const documentedApp = () =>
         onboardRecipient: async () => {
           throw new Error("not used by the contract fixture");
         },
+        shareWiseProfile: async () => {
+          throw new Error("not used by the contract fixture");
+        },
         unlink: async () => false,
       });
       installEmailLogRoutes(api, emailLog);

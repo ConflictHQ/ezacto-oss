@@ -346,3 +346,108 @@ describe("onboarding somebody we have never paid (#543)", () => {
     expect(await wise.service.onboardRecipient(input)).toEqual({ outcome: "not_configured" });
   });
 });
+
+describe("a contractor sharing their own Wise account (#543)", () => {
+  const CONTACT = { contactId: "00000000-0000-4000-8000-000000000001", name: "R. Adeyemi" };
+
+  /** Profiles, and the contact lookup, told apart by path. */
+  const shareTransport = (contactStatus = 200) =>
+    vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      void init
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("/contacts")) {
+        return new Response(
+          JSON.stringify(
+            contactStatus === 200
+              ? CONTACT
+              : { errors: [{ code: "request.not.valid", message: "not discoverable" }] },
+          ),
+          { status: contactStatus, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify(url.includes("/v2/profiles") ? PROFILES : RECIPIENTS), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+  const sharing = (accounts?: WisePayoutAccountPort, contactStatus = 200) =>
+    runtime({
+      accounts: accounts ?? accountPort(),
+      fetch: shareTransport(contactStatus) as unknown as typeof fetch,
+    });
+
+  const input = {
+    userId: 7,
+    identifier: "@theirtag",
+    currency: "USD",
+    linkedByUserId: 7,
+  };
+
+  it("[money] stores the contact id, which is what survives them changing bank", async () => {
+    const { wise, accounts } = sharing();
+    expect(await wise.service.shareWiseProfile(input)).toEqual({
+      outcome: "linked",
+      contact: { id: CONTACT.contactId, name: "R. Adeyemi" },
+    });
+    expect(accounts.link).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 7,
+        provider: "wise",
+        externalId: CONTACT.contactId,
+        // A contact id and a recipient account id are different id spaces.
+        // Stored without saying which, a payout has to guess.
+        kind: "contact",
+      }),
+    );
+    // Wise resolved the identifier itself, so this is the provider's fact
+    // rather than a claim somebody typed.
+    expect(accounts.markVerified).toHaveBeenCalledWith(77, NOW.toISOString());
+  });
+
+  it("[unit] says not discoverable rather than failing, and links nothing", async () => {
+    const { wise, accounts } = sharing(undefined, 422);
+    expect(await wise.service.shareWiseProfile(input)).toEqual({ outcome: "not_discoverable" });
+    expect(accounts.link).not.toHaveBeenCalled();
+  });
+
+  it("[money] refuses a second destination before it asks Wise anything", async () => {
+    const { wise, call } = sharing(
+      accountPort({
+        listForUser: vi.fn(async () => [
+          { id: 12, provider: "wise", externalId: "701234567", verifiedAt: NOW.toISOString() },
+        ]),
+      }),
+    );
+    expect(await wise.service.shareWiseProfile(input)).toEqual({ outcome: "already_linked" });
+    const lookups = (call as ReturnType<typeof shareTransport>).mock.calls.filter(([url]) =>
+      String(url).includes("/contacts"),
+    );
+    expect(lookups).toHaveLength(0);
+  });
+
+  it("[money] says when the tag belongs to somebody already being paid", async () => {
+    // Two people on one destination means one is paid for the other's work.
+    const { wise } = sharing(
+      accountPort({ link: vi.fn(async () => ({ outcome: "external_id_taken" as const })) }),
+    );
+    expect(await wise.service.shareWiseProfile(input)).toEqual({ outcome: "recipient_taken" });
+  });
+
+  it("[security] sends the identifier and nothing about anybody's bank", async () => {
+    const { wise, call } = sharing();
+    await wise.service.shareWiseProfile(input);
+    const lookup = (call as ReturnType<typeof shareTransport>).mock.calls.find(([url]) =>
+      String(url).includes("/contacts"),
+    );
+    expect(JSON.parse(String(lookup?.[1]?.body))).toEqual({
+      identifier: "@theirtag",
+      targetCurrency: "USD",
+    });
+  });
+
+  it("[unit] says so rather than looking anything up where there is no token", async () => {
+    const { wise } = runtime({ token: undefined });
+    expect(await wise.service.shareWiseProfile(input)).toEqual({ outcome: "not_configured" });
+  });
+});

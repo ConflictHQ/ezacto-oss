@@ -320,6 +320,7 @@ export {
   type WiseLinkRefusal,
   type WiseOnboardOutcome,
   type WiseRecipientView,
+  type WiseShareOutcome,
   type WiseService,
   type WiseWebhookService,
 } from './wise.js'

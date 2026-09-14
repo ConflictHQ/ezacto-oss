@@ -21,7 +21,12 @@
  * of this module.
  */
 
-import { choosePayingProfile, createWiseClient, type WiseRecipient } from "./client.js";
+import {
+  choosePayingProfile,
+  createWiseClient,
+  type WiseContact,
+  type WiseRecipient,
+} from "./client.js";
 import {
   parseWiseEvent,
   payoutOutcomeFor,
@@ -64,6 +69,19 @@ export type WiseOnboardOutcome =
   | { outcome: "already_linked" }
   | { outcome: "not_configured" };
 
+/**
+ * Somebody telling us where to pay them, in the one detail they have to share.
+ *
+ * `not_discoverable` is the ordinary refusal: a mistyped Wisetag, or a profile
+ * whose owner has discoverability switched off. It is the person's to fix, and
+ * it is not the same event as Wise being unreachable.
+ */
+export type WiseShareOutcome =
+  | { outcome: "linked"; contact: WiseContact }
+  | { outcome: "not_discoverable" }
+  | { outcome: WiseLinkRefusal }
+  | { outcome: "not_configured" };
+
 /** The payout log, as this runtime needs it. */
 export interface WisePayoutAccountPort {
   listForUser(
@@ -78,6 +96,8 @@ export interface WisePayoutAccountPort {
     userId: number;
     provider: "wise";
     externalId: string;
+    /** Which id space `externalId` lives in. Absent means a recipient account. */
+    kind?: "account" | "contact";
     linkedByUserId: number;
     now: string;
   }): Promise<
@@ -188,6 +208,21 @@ export interface WiseRuntime {
       currency: string;
       linkedByUserId: number;
     }): Promise<WiseOnboardOutcome>;
+    /**
+     * Points a person at their own Wise profile, found by what they shared.
+     *
+     * A Wisetag, or the email or phone on their Wise account. Nothing is
+     * collected afterwards and no bank details pass through here: Wise already
+     * holds theirs, and resolves the contact to an account when a payout is
+     * quoted -- so the destination survives them changing bank, which a stored
+     * account number would not.
+     */
+    shareWiseProfile(input: {
+      userId: number;
+      identifier: string;
+      currency: string;
+      linkedByUserId: number;
+    }): Promise<WiseShareOutcome>;
     unlink(accountId: number): Promise<boolean>;
   };
 }
@@ -439,6 +474,44 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
         // means here, exactly as it does for a recipient linked from the list.
         await accounts.markVerified(linked.account.id, now);
         return { outcome: "linked", recipient };
+      },
+
+      shareWiseProfile: async ({ userId, identifier, currency, linkedByUserId }) => {
+        const profile = await payingProfile();
+        if (client === null || profile === null) return { outcome: "not_configured" };
+
+        // Asked before Wise is, because a second destination for somebody who
+        // already has one is the question we can answer without a round trip.
+        const existing = await accounts.listForUser(userId);
+        if (existing.some((account) => account.provider === "wise")) {
+          return { outcome: "already_linked" };
+        }
+
+        const found = await client.findContact({
+          profileId: profile.id,
+          identifier,
+          targetCurrency: currency,
+        });
+        if (found.outcome !== "found") return { outcome: "not_discoverable" };
+
+        const now = instant();
+        const linked = await accounts.link({
+          userId,
+          provider: "wise",
+          externalId: found.contact.id,
+          // A contact id, not a recipient account id. They are different id
+          // spaces and telling them apart by shape is a guess with a payout
+          // attached to it.
+          kind: "contact",
+          linkedByUserId,
+          now,
+        });
+        if (linked.outcome !== "linked") return { outcome: refusalFor(linked.outcome) };
+        // Wise resolved the identifier to a profile, so the id is the
+        // provider's own fact rather than a claim somebody typed -- which is
+        // exactly what verified means everywhere else in this store.
+        await accounts.markVerified(linked.account.id, now);
+        return { outcome: "linked", contact: found.contact };
       },
 
       unlink: async (accountId) => accounts.detach(accountId, instant()),

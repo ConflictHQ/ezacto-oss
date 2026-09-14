@@ -102,6 +102,34 @@ export interface CreateEmailRecipientInput {
   readonly currency: string
 }
 
+/**
+ * A Wise profile somebody shared with us, found by an identifier they chose.
+ *
+ * This is the whole of what a contractor has to hand over: their Wisetag, or
+ * the email or phone on their Wise account. No bank details, not even to Wise
+ * -- they already gave Wise those. `name` is Wise's own answer for who that
+ * identifier belongs to, which is the thing to show back before anyone
+ * confirms: a mistyped tag that resolves resolves to somebody else.
+ */
+export interface WiseContact {
+  /** A UUID, and a different id space from a recipient account's. */
+  readonly id: string
+  readonly name: string | null
+}
+
+export type WiseContactOutcome =
+  | { readonly outcome: 'found'; readonly contact: WiseContact }
+  /** Wise's own answer: no such profile, or it is not discoverable. */
+  | { readonly outcome: 'not_discoverable' }
+
+export interface FindContactInput {
+  readonly profileId: string
+  /** A Wisetag, or the email or phone number on their Wise account. */
+  readonly identifier: string
+  /** What they would be paid in; Wise checks the profile can receive it. */
+  readonly targetCurrency: string
+}
+
 export interface WiseClient {
   /** Every profile the token can act for. The call that proves a token works. */
   profiles(): Promise<readonly WiseProfileSummary[]>
@@ -120,7 +148,30 @@ export interface WiseClient {
    * ends up on a screen because of what it is called.
    */
   createEmailRecipient(input: Readonly<CreateEmailRecipientInput>): Promise<WiseRecipient>
+  /**
+   * Finds a discoverable Wise profile by an identifier and adds it as a contact.
+   *
+   * The best answer to "how does a contractor tell us where to pay them", and
+   * better than an email recipient in two ways. Nothing has to be collected
+   * afterwards -- they already have a Wise account, which is what being
+   * discoverable means. And the id it returns is resolved to an account at the
+   * moment a payout is quoted, so it still works after they change bank.
+   *
+   * Not discoverable is an outcome rather than an error. It is the ordinary
+   * case -- a mistyped tag, or a profile whose owner has discoverability off --
+   * and the person who typed it is the one who can fix it.
+   */
+  findContact(input: Readonly<FindContactInput>): Promise<WiseContactOutcome>
 }
+
+/**
+ * The version Wise documents the contacts endpoint under.
+ *
+ * Dated rather than `v2`, which answers identically today: the dated path is
+ * the one in the reference, and an undocumented alias is a poor thing to hang
+ * a payout destination on.
+ */
+export const WISE_CONTACTS_API_VERSION = '2026Q3'
 
 export interface WiseClientOptions {
   readonly token: string
@@ -155,7 +206,11 @@ const recipientOf = (entry: unknown): WiseRecipient => {
 export const createWiseClient = (options: Readonly<WiseClientOptions>): WiseClient => {
   const call = options.fetchImplementation ?? fetch
 
-  const request = async (path: string, body?: unknown): Promise<unknown> => {
+  /** The call itself, with the status kept: some refusals are answers. */
+  const send = async (
+    path: string,
+    body?: unknown,
+  ): Promise<{ status: number; parsed: unknown }> => {
     const response = await call(`${WISE_API_BASE}${path}`, {
       ...(body === undefined
         ? {}
@@ -166,13 +221,26 @@ export const createWiseClient = (options: Readonly<WiseClientOptions>): WiseClie
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
       },
     })
-    if (!response.ok) {
+    const raw = await response.text()
+    let parsed: unknown = null
+    try {
+      parsed = JSON.parse(quoteIds(raw)) as unknown
+    } catch {
+      // Wise answered with something that is not JSON. `parsed` stays null and
+      // the status is what the caller goes on, which is all it could do anyway.
+    }
+    return { status: response.status, parsed }
+  }
+
+  const request = async (path: string, body?: unknown): Promise<unknown> => {
+    const { status, parsed } = await send(path, body)
+    if (status < 200 || status >= 300) {
       // The status is carried because 401 and 403 mean different things to an
       // operator: a token that is wrong, and a token that is right but not
       // permitted. "Wise refused" alone sends them to the wrong place.
-      throw new WiseApiError(`Wise refused ${path} (${String(response.status)})`, response.status)
+      throw new WiseApiError(`Wise refused ${path} (${String(status)})`, status)
     }
-    return JSON.parse(quoteIds(await response.text())) as unknown
+    return parsed
   }
 
   return {
@@ -224,6 +292,32 @@ export const createWiseClient = (options: Readonly<WiseClientOptions>): WiseClie
         details: { email },
       })
       return recipientOf(created)
+    },
+
+    findContact: async (input) => {
+      const identifier = input.identifier.trim()
+      if (identifier === '') {
+        throw new WiseApiError('a contact needs an identifier to look up', 400)
+      }
+      const { status, parsed } = await send(
+        `/${WISE_CONTACTS_API_VERSION}/profiles/${encodeURIComponent(input.profileId)}` +
+          `/contacts?isDirectIdentifierCreation=true`,
+        { identifier, targetCurrency: input.targetCurrency.toUpperCase() },
+      )
+      // Wise's answer for a tag that matches nobody, and for a profile whose
+      // owner has discoverability switched off. Both are the person's to fix,
+      // so neither is an error here.
+      if (status === 422) return { outcome: 'not_discoverable' }
+      if (status < 200 || status >= 300) {
+        throw new WiseApiError(`Wise refused the contact lookup (${String(status)})`, status)
+      }
+      const body = asObject(parsed)
+      const id = text(body.contactId)
+      if (id === null) throw new WiseApiError('Wise returned a contact with no id', status)
+      // `name` only. A contact also carries `display.details`, which holds the
+      // routing and account numbers in plain text; it is not on the type, so it
+      // cannot reach a screen, a log or a row through here.
+      return { outcome: 'found', contact: { id, name: text(body.name) } }
     },
   }
 }

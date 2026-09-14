@@ -56,6 +56,24 @@ export type WiseLinkOutcome =
   | { outcome: 'linked'; recipient: WiseRecipientView }
   | { outcome: WiseLinkRefusal }
 
+export interface WiseContactView {
+  id: string
+  name: string | null
+}
+
+/**
+ * Somebody telling us where to pay them.
+ *
+ * `not_discoverable` is the ordinary refusal -- a mistyped Wisetag, or a Wise
+ * profile whose owner has discoverability switched off. Both are theirs to fix,
+ * and neither is this deployment failing at something.
+ */
+export type WiseShareOutcome =
+  | { outcome: 'linked'; contact: WiseContactView }
+  | { outcome: 'not_discoverable' }
+  | { outcome: WiseLinkRefusal }
+  | { outcome: 'not_configured' }
+
 export type WiseOnboardOutcome =
   | { outcome: 'linked'; recipient: WiseRecipientView }
   | { outcome: 'created_not_linked'; recipient: WiseRecipientView; refusal: WiseLinkRefusal }
@@ -78,6 +96,12 @@ export interface WiseService {
     currency: string
     linkedByUserId: number
   }): Promise<WiseOnboardOutcome>
+  shareWiseProfile(input: {
+    userId: number
+    identifier: string
+    currency: string
+    linkedByUserId: number
+  }): Promise<WiseShareOutcome>
   unlink(accountId: number): Promise<boolean>
 }
 
@@ -95,6 +119,26 @@ const assertMoneyWriter = <Bindings extends object>(
     })
   }
   return { userId: principal.userId }
+}
+
+/**
+ * Setting where *you* are paid, which is a different decision from setting
+ * where somebody else is.
+ *
+ * Choosing another person's destination is the organisation's money going
+ * somewhere the organisation chose, so it stays with the people who raise
+ * invoices. Choosing your own is telling us your own Wisetag, and the whole
+ * point of asking for one is that the person who has it can supply it. Who did
+ * it is recorded either way -- a destination with no author is one nobody can
+ * be asked about.
+ */
+const assertMayDestineFor = <Bindings extends object>(
+  context: Parameters<typeof requireSessionPrincipal<Bindings>>[0],
+  userId: number,
+): { userId: number } => {
+  const principal = requireSessionPrincipal(context)
+  if (principal.userId === userId) return { userId: principal.userId }
+  return assertMoneyWriter(context)
 }
 
 const requireConfigured = (service: Readonly<WiseService>): void => {
@@ -308,6 +352,95 @@ export const installWiseRoutes = <Bindings extends object>(
     }
     return context.json(
       { data: { user_id: userId, recipient: serializeRecipient(result.recipient) } },
+      201,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
+  /**
+   * A person telling us where to pay them, in the one detail they have to share.
+   *
+   * A Wisetag, or the email or phone on their Wise account. Wise resolves it to
+   * a profile and we store that contact id; no bank details pass through here,
+   * nothing has to be collected afterwards, and the destination still resolves
+   * after they change bank -- which a stored account number would not.
+   */
+  api.post('/integrations/wise/contacts', async (context) => {
+    const body = await readObjectBody(context)
+    const userId = Number(body['user_id'])
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      throw validationError([
+        { field: 'user_id', code: 'invalid', message: 'user_id must be a positive integer.' },
+      ])
+    }
+    const { userId: linkedByUserId } = assertMayDestineFor(context, userId)
+    requireConfigured(service)
+    const identifier = typeof body['identifier'] === 'string' ? body['identifier'].trim() : ''
+    const currency = typeof body['currency'] === 'string' ? body['currency'].trim() : ''
+    const problems: { field: string; code: string; message: string }[] = []
+    if (identifier === '') {
+      problems.push({
+        field: 'identifier',
+        code: 'invalid',
+        message: 'identifier is required: a Wisetag, or the email or phone on their Wise account.',
+      })
+    }
+    if (!/^[A-Za-z]{3}$/u.test(currency)) {
+      problems.push({
+        field: 'currency',
+        code: 'invalid',
+        message: 'currency must be a three-letter code.',
+      })
+    }
+    if (problems.length > 0) throw validationError(problems)
+
+    const result = await service.shareWiseProfile({
+      userId,
+      identifier,
+      currency,
+      linkedByUserId,
+    })
+    if (result.outcome === 'not_configured') {
+      throw new ApiError({
+        status: 503,
+        code: 'service_unavailable',
+        message: 'Wise is not configured for this deployment. An API token is required.',
+      })
+    }
+    if (result.outcome === 'not_discoverable') {
+      // 422 on the field they typed: this is nearly always a typo, or a Wise
+      // profile whose owner has discoverability switched off, and both are
+      // fixed where the value was entered rather than anywhere near here.
+      throw validationError([
+        {
+          field: 'identifier',
+          code: 'not_discoverable',
+          message: 'Wise has no discoverable profile with that identifier.',
+        },
+      ])
+    }
+    if (result.outcome !== 'linked') {
+      const refusal = LINK_REFUSALS[result.outcome]
+      if ('field' in refusal) {
+        throw validationError([
+          { field: 'identifier', code: result.outcome, message: refusal.message },
+        ])
+      }
+      throw new ApiError({
+        status: refusal.status,
+        code: result.outcome,
+        message: refusal.message,
+      })
+    }
+    return context.json(
+      {
+        data: {
+          user_id: userId,
+          // Wise's own answer for who that identifier belongs to. Shown back
+          // because a mistyped tag that resolves resolves to somebody else.
+          contact: { id: result.contact.id, name: result.contact.name },
+        },
+      },
       201,
       { 'cache-control': 'no-store' },
     )

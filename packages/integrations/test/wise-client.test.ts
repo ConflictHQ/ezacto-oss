@@ -236,3 +236,80 @@ describe("onboarding somebody we have never paid (#543)", () => {
     expect(call).not.toHaveBeenCalled();
   });
 });
+
+describe("a contractor sharing their own Wise account (#543)", () => {
+  // Read back from the live API: the response is these two fields and nothing
+  // else, and the refusal really does arrive as a 422 with this message.
+  const FOUND = JSON.stringify({
+    contactId: "00000000-0000-4000-8000-000000000001",
+    name: "R. Adeyemi",
+  });
+  const NOT_DISCOVERABLE = JSON.stringify({
+    errors: [
+      {
+        code: "request.not.valid",
+        message: "The recipient you are looking for is not on Wise or is not discoverable.",
+        arguments: [],
+      },
+    ],
+  });
+
+  const lookup = { profileId: "22239672", identifier: "@theirtag", targetCurrency: "usd" };
+
+  it("[unit] asks Wise who a Wisetag belongs to, and keeps the answer", async () => {
+    const { wise, call } = client(FOUND);
+    const result = await wise.findContact(lookup);
+    const [url, init] = call.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(
+      "https://api.wise.com/2026Q3/profiles/22239672/contacts?isDirectIdentifierCreation=true",
+    );
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({
+      identifier: "@theirtag",
+      targetCurrency: "USD",
+    });
+    expect(result).toEqual({
+      outcome: "found",
+      contact: { id: "00000000-0000-4000-8000-000000000001", name: "R. Adeyemi" },
+    });
+  });
+
+  it("[unit] treats not-discoverable as an answer, not a failure", async () => {
+    // The ordinary case: a mistyped tag, or somebody who has discoverability
+    // switched off. Throwing would send an operator to look at our token.
+    const { wise } = client(NOT_DISCOVERABLE, 422);
+    expect(await wise.findContact(lookup)).toEqual({ outcome: "not_discoverable" });
+  });
+
+  it("[unit] still raises where the token itself is the problem", async () => {
+    const { wise } = client("nope", 403);
+    await expect(wise.findContact(lookup)).rejects.toThrow(/403/u);
+  });
+
+  it("[security] carries the id and the name, and nothing else Wise offers", async () => {
+    // A Wise contact also carries `display.details`, which holds the routing
+    // and account numbers in plain text. None of it is on the type.
+    const { wise } = client(
+      JSON.stringify({
+        contactId: "00000000-0000-4000-8000-000000000001",
+        name: "R. Adeyemi",
+        display: {
+          details: [
+            { label: "Routing number", value: "051405515" },
+            { label: "Account number", value: "3029673658" },
+          ],
+        },
+      }),
+    );
+    const result = await wise.findContact(lookup);
+    const serialised = JSON.stringify(result);
+    expect(serialised).not.toContain("3029673658");
+    expect(serialised).not.toContain("051405515");
+  });
+
+  it("[unit] refuses an empty identifier here rather than asking Wise about it", async () => {
+    const { wise, call } = client(FOUND);
+    await expect(wise.findContact({ ...lookup, identifier: "   " })).rejects.toThrow(/identifier/u);
+    expect(call).not.toHaveBeenCalled();
+  });
+});
