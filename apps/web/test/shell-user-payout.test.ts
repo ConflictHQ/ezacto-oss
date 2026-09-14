@@ -1,7 +1,9 @@
 /** @vitest-environment happy-dom */
 
 import { describe, expect, it, vi } from 'vitest'
+import type { ApiToken } from '@conflict-hq/ezacto-client'
 import {
+  EzactoApiError,
   browserApi,
   mountShell,
   renderBrowserShell,
@@ -174,5 +176,139 @@ describe('your payout destination in your own settings', () => {
     await mountShell(browserApi())
 
     expect(document.querySelector<HTMLElement>('[data-settings-payout]')!.hidden).toBe(true)
+  })
+})
+
+/**
+ * API tokens, on the page that is yours (issue 485).
+ *
+ * The endpoints shipped and no control reached them, so issuing a token was a
+ * terminal job. They are scoped to the acting user by the routes themselves.
+ */
+describe('your API tokens in your own settings', () => {
+  const token = (overrides: Partial<ApiToken> = {}): ApiToken => ({
+    id: 5,
+    name: 'Laptop CLI',
+    scopes: ['time_entries:read'] as ApiToken['scopes'],
+    token_hint: 'ez_live_…9f2c',
+    created_at: '2026-09-13T12:00:00.000Z',
+    last_used_at: null,
+    expires_at: null,
+    revoked_at: null,
+    ...overrides,
+  })
+
+  const tokenApi = (overrides: Record<string, unknown> = {}) => ({
+    ...browserApi(),
+    listApiTokens: vi.fn(async () => [token()]),
+    createApiToken: vi.fn(async () => ({ ...token({ id: 6 }), token: 'ez_live_secret_value' })),
+    revokeApiToken: vi.fn(async () => undefined),
+    ...overrides,
+  })
+
+  const form = (): HTMLFormElement =>
+    document.querySelector<HTMLFormElement>('[data-settings-token-form]')!
+
+  it('[security] lists the hint and never the token itself', async () => {
+    // The value is stored hashed. A screen that could print it again would
+    // mean it was recoverable, which is the property the hash exists to deny.
+    renderBrowserShell({ view: 'settings-user' })
+    await mountShell(tokenApi())
+
+    const table = document.querySelector<HTMLElement>('[data-settings-tokens-table]')!
+    await vi.waitFor(() => expect(table.hidden).toBe(false))
+    expect(table.textContent).toContain('ez_live_…9f2c')
+    expect(table.textContent).toContain('Laptop CLI')
+    // Never used is said, not left blank: an empty cell reads as a loading bug,
+    // and an unused token is the one worth revoking.
+    expect(table.textContent).toContain('Never')
+  })
+
+  it('[security] shows a new token once, and says that is the only time', async () => {
+    renderBrowserShell({ view: 'settings-user' })
+    const createApiToken = vi.fn(async () => ({
+      ...token({ id: 6 }),
+      token: 'ez_live_secret_value',
+    }))
+    await mountShell(tokenApi({ createApiToken }))
+
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLElement>('[data-settings-tokens]')!.hidden).toBe(false),
+    )
+    ;(form().elements.namedItem('name') as HTMLInputElement).value = 'Laptop CLI'
+    const scope = form().querySelector<HTMLInputElement>('input[value="time_entries:read"]')!
+    scope.checked = true
+    form().dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() => expect(createApiToken).toHaveBeenCalledTimes(1))
+    const issued = document.querySelector<HTMLElement>('[data-settings-token-issued]')!
+    await vi.waitFor(() => expect(issued.hidden).toBe(false))
+    expect(issued.textContent).toContain('ez_live_secret_value')
+    expect(issued.textContent).toContain('only time')
+  })
+
+  it('refuses to ask for a token with no scopes rather than letting the server say no', async () => {
+    renderBrowserShell({ view: 'settings-user' })
+    const createApiToken = vi.fn()
+    await mountShell(tokenApi({ createApiToken }))
+
+    await vi.waitFor(() => expect(form().hidden).toBe(false))
+    ;(form().elements.namedItem('name') as HTMLInputElement).value = 'Nameless scope set'
+    form().dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    expect(createApiToken).not.toHaveBeenCalled()
+    expect(
+      document.querySelector<HTMLElement>('[data-settings-token-result]')!.textContent,
+    ).toContain('at least one scope')
+  })
+
+  it('[security] says which limit was hit when a profile cannot grant a scope', async () => {
+    // "The token could not be issued" would send somebody to check their
+    // spelling for a permission they do not have.
+    renderBrowserShell({ view: 'settings-user' })
+    await mountShell(
+      tokenApi({
+        createApiToken: vi.fn(async () => {
+          throw new EzactoApiError(403, { error: { code: 'profile_forbidden' } }, null)
+        }),
+      }),
+    )
+
+    await vi.waitFor(() => expect(form().hidden).toBe(false))
+    ;(form().elements.namedItem('name') as HTMLInputElement).value = 'Too much'
+    form().querySelector<HTMLInputElement>('input[value="reports:read"]')!.checked = true
+    form().dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector<HTMLElement>('[data-settings-token-result]')!.textContent,
+      ).toContain('cannot grant'),
+    )
+    expect(document.querySelector<HTMLElement>('[data-settings-token-issued]')!.hidden).toBe(true)
+  })
+
+  it('leaves a revoked token off the list rather than showing it as live', async () => {
+    renderBrowserShell({ view: 'settings-user' })
+    await mountShell(
+      tokenApi({
+        listApiTokens: vi.fn(async () => [
+          token({ revoked_at: '2026-09-13T13:00:00.000Z' }),
+        ]),
+      }),
+    )
+
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector<HTMLElement>('[data-settings-tokens-status]')!.textContent,
+      ).toContain('no API tokens'),
+    )
+    expect(document.querySelector<HTMLElement>('[data-settings-tokens-table]')!.hidden).toBe(true)
+  })
+
+  it('stays out of the way in a build without the token endpoints', async () => {
+    renderBrowserShell({ view: 'settings-user' })
+    await mountShell(browserApi())
+
+    expect(document.querySelector<HTMLElement>('[data-settings-tokens]')!.hidden).toBe(true)
   })
 })

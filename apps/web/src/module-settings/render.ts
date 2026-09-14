@@ -120,6 +120,26 @@ export const renderModuleSettingsPage = (view?: string): string => `
         <button class="primary-action" type="submit" data-settings-payout-submit>Save payout destination</button>
       </form>
     </section>
+    <section class="settings-tokens" data-settings-tokens aria-labelledby="settings-tokens-heading" hidden>
+      <h2 id="settings-tokens-heading">API tokens</h2>
+      <p class="hint">Tokens act as you, with only the scopes you tick, and they are how the CLI and anything else outside this app signs in. Issuing one has been a terminal job until now.</p>
+      <p class="form-result" data-settings-tokens-status role="status" aria-live="polite">Loading your API tokens…</p>
+      <div class="settings-table" data-settings-tokens-table hidden></div>
+      <form class="team-person-form" data-settings-token-form>
+        <label for="ez-settings-token-name">Name<input id="ez-settings-token-name" name="name" autocomplete="off" maxlength="120" placeholder="Laptop CLI" required aria-describedby="settings-token-name-hint"></label>
+        <p class="hint" id="settings-token-name-hint">What it is for, so a token you find later can be revoked without guessing.</p>
+        <label for="ez-settings-token-expires">Expires<input id="ez-settings-token-expires" name="expires_at" type="date" aria-describedby="settings-token-expiry-hint"></label>
+        <p class="hint" id="settings-token-expiry-hint">Optional. A token with no expiry is one nobody ever has to come back to, which is also one nobody notices is still live.</p>
+        <fieldset><legend>Scopes</legend><div class="team-option-grid"><label class="team-check"><input type="checkbox" name="scopes" value="time_entries:read">Read time</label><label class="team-check"><input type="checkbox" name="scopes" value="time_entries:write">Write time</label><label class="team-check"><input type="checkbox" name="scopes" value="projects:read">Read projects</label><label class="team-check"><input type="checkbox" name="scopes" value="projects:write">Write projects</label><label class="team-check"><input type="checkbox" name="scopes" value="clients:read">Read clients</label><label class="team-check"><input type="checkbox" name="scopes" value="clients:write">Write clients</label><label class="team-check"><input type="checkbox" name="scopes" value="invoices:read">Read invoices</label><label class="team-check"><input type="checkbox" name="scopes" value="invoices:write">Write invoices</label><label class="team-check"><input type="checkbox" name="scopes" value="expenses:read">Read expenses</label><label class="team-check"><input type="checkbox" name="scopes" value="expenses:write">Write expenses</label><label class="team-check"><input type="checkbox" name="scopes" value="team:read">Read team</label><label class="team-check"><input type="checkbox" name="scopes" value="schedule:read">Read schedule</label><label class="team-check"><input type="checkbox" name="scopes" value="schedule:write">Write schedule</label><label class="team-check"><input type="checkbox" name="scopes" value="reports:read">Read reports</label></div></fieldset>
+        <p class="form-result" data-settings-token-result role="status" aria-live="polite"></p>
+        <button class="primary-action" type="submit" data-settings-token-submit>Issue token</button>
+      </form>
+      <div class="settings-token-issued" data-settings-token-issued hidden>
+        <h3>Copy this now</h3>
+        <p class="hint">This is the only time the token is shown. It is stored hashed, so nobody — including this instance — can read it back.</p>
+        <code data-settings-token-value></code>
+      </div>
+    </section>
     <section class="settings-density" aria-labelledby="settings-density-heading">
       <h2 id="settings-density-heading">Row density</h2>
       <p class="hint">How much of a table fits on your screen. This is yours and this machine's — nobody else's view changes, and the company setting beside it is unaffected.</p>
