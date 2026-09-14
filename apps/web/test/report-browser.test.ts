@@ -1666,6 +1666,8 @@ describe('Reports Stage 1 browser controller', () => {
           currency: 'USD',
           rounded_seconds: 144_000,
           cost_cents: 400_000,
+          cost_rate_cents: null,
+          cost_rate_is_mixed: false,
           entries_without_rate: 0,
         },
         {
@@ -1676,6 +1678,8 @@ describe('Reports Stage 1 browser controller', () => {
           currency: 'USD',
           rounded_seconds: 36_000,
           cost_cents: null,
+          cost_rate_cents: null,
+          cost_rate_is_mixed: false,
           entries_without_rate: 3,
         },
         {
@@ -1686,6 +1690,8 @@ describe('Reports Stage 1 browser controller', () => {
           currency: 'EUR',
           rounded_seconds: 7_200,
           cost_cents: 20_000,
+          cost_rate_cents: null,
+          cost_rate_is_mixed: false,
           entries_without_rate: 0,
         },
       ],

@@ -5893,6 +5893,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "currency",
       "rounded_seconds",
       "cost_cents",
+      "cost_rate_cents",
+      "cost_rate_is_mixed",
       "entries_without_rate",
     ],
     properties: {
@@ -5908,6 +5910,13 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       // Null when any entry in the row has no cost rate. A number that silently
       // omitted those hours would look payable and underpay.
       cost_cents: nullable(signedIntegerSchema),
+      // The rate the cost was worked out at, where there is a single one. Null
+      // in two different situations, which is why the flag sits beside it
+      // rather than a sentinel doing double duty: the rate moved inside the
+      // period, or there never was one. A payroll run pastes a rate into
+      // another system, and an average nobody agreed to is not an answer.
+      cost_rate_cents: nullable(signedIntegerSchema),
+      cost_rate_is_mixed: { type: "boolean" },
       entries_without_rate: { type: "integer", minimum: 0 },
     },
     additionalProperties: false,

@@ -1991,6 +1991,8 @@ export type ContractorCostRow = {
   "currency": string;
   "rounded_seconds": number;
   "cost_cents": number | null;
+  "cost_rate_cents": number | null;
+  "cost_rate_is_mixed": boolean;
   "entries_without_rate": number;
 };
 

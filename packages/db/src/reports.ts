@@ -307,6 +307,18 @@ export interface ContractorCostRow {
   /** Null when any entry in the row has no cost rate -- see the note below. */
   costCents: number | null
   entriesWithoutRate: number
+  /**
+   * The rate this cost was worked out at, where there is a single one.
+   *
+   * Null in two different situations, which is why `costRateIsMixed` exists
+   * beside it rather than a sentinel doing double duty: either the rate changed
+   * inside the period, or there was never one. A payroll run pastes a rate into
+   * another system, and "which rate" is not a question a row should leave open
+   * by showing an average nobody agreed to.
+   */
+  costRateCents: number | null
+  /** The rate moved inside the period. `costRateCents` is then not stateable. */
+  costRateIsMixed: boolean
 }
 
 export interface ContractorCostReportRecord {
@@ -1586,13 +1598,26 @@ const contractorCostReport = async (
       roundedSeconds: 0,
       costCents: 0,
       entriesWithoutRate: 0,
+      costRateCents: null,
+      costRateIsMixed: false,
     }
     existing.roundedSeconds += row.roundedSeconds
     if (row.costRateCents === null) {
       existing.entriesWithoutRate += 1
       existing.costCents = null
-    } else if (existing.costCents !== null) {
-      existing.costCents += trackedAmountCents(row.roundedSeconds, row.costRateCents)
+    } else {
+      // The first rate seen becomes the row's; a second, different one makes it
+      // mixed and clears it. Averaging would produce a number nobody agreed to
+      // and that no payroll system should be handed.
+      if (existing.costRateCents === null && !existing.costRateIsMixed) {
+        existing.costRateCents = row.costRateCents
+      } else if (existing.costRateCents !== row.costRateCents) {
+        existing.costRateIsMixed = true
+        existing.costRateCents = null
+      }
+      if (existing.costCents !== null) {
+        existing.costCents += trackedAmountCents(row.roundedSeconds, row.costRateCents)
+      }
     }
     grouped.set(key, existing)
   }

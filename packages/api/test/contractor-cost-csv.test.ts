@@ -21,6 +21,8 @@ const report = {
       currency: 'USD',
       roundedSeconds: 180_000,
       costCents: 500_000,
+      costRateCents: 10_000,
+      costRateIsMixed: false,
       entriesWithoutRate: 0,
     },
     {
@@ -33,6 +35,10 @@ const report = {
       currency: 'USD',
       roundedSeconds: 3_600,
       costCents: null,
+      // The rate moved inside the period as well as an entry lacking one, so
+      // this row exercises both nulls at once.
+      costRateCents: null,
+      costRateIsMixed: true,
       entriesWithoutRate: 2,
     },
   ],
@@ -72,10 +78,10 @@ describe('the payroll run as a file', () => {
     )
     const lines = body.trimEnd().split('\n')
     expect(lines[0]).toBe(
-      'user_id,name,payroll_email,is_contractor,currency,hours,cost_cents,entries_without_rate',
+      'user_id,name,payroll_email,is_contractor,currency,hours,cost_cents,cost_rate_cents,entries_without_rate',
     )
     // 180000 seconds is 50 hours.
-    expect(lines[1]).toBe('1,R. Adeyemi,r.adeyemi@example.test,true,USD,50.00,500000,0')
+    expect(lines[1]).toBe('1,R. Adeyemi,r.adeyemi@example.test,true,USD,50.00,500000,10000,0')
   })
 
   it('[money] leaves the cost empty when it could not be worked out', async () => {
@@ -83,7 +89,10 @@ describe('the payroll run as a file', () => {
     // number, and a zero reads as "this person costs nothing".
     const { body } = await csv('from=2026-08-01&to=2026-08-31&format=csv')
     const row = body.trimEnd().split('\n')[2]!
-    expect(row.endsWith(',,2')).toBe(true)
+    // Empty cost, then "mixed" rather than a blank rate: a rate that moved
+    // inside the period is distinguishable from one that was never set, and
+    // only one of those is somebody's mistake.
+    expect(row.endsWith(',,mixed,2')).toBe(true)
     expect(row).not.toContain('0.00,0,')
   })
 

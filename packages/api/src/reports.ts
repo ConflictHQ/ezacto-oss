@@ -30,6 +30,16 @@ export interface ContractorCostRowRecord {
   roundedSeconds: number;
   /** Null when any entry in the row has no cost rate. */
   costCents: number | null;
+  /**
+   * The rate the cost was worked out at, where there is a single one.
+   *
+   * Null in two different situations -- the rate moved inside the period, or
+   * there never was one -- which is why the flag sits beside it rather than a
+   * sentinel doing double duty. A payroll run pastes a rate into another
+   * system, and an average nobody agreed to is not an answer.
+   */
+  costRateCents: number | null;
+  costRateIsMixed: boolean;
   entriesWithoutRate: number;
 }
 
@@ -565,6 +575,7 @@ const CONTRACTOR_COST_COLUMNS = [
   "currency",
   "hours",
   "cost_cents",
+  "cost_rate_cents",
   "entries_without_rate",
 ] as const;
 
@@ -594,6 +605,10 @@ const contractorCostCsv = (report: Readonly<ContractorCostReportRecord>): string
         csvCell(row.currency),
         csvCell((Math.round((row.roundedSeconds / 3600) * 100) / 100).toFixed(2)),
         csvCell(row.costCents),
+        // "mixed" rather than a blank, so a rate that moved inside the period
+        // is distinguishable from one that was never set. Both are blank in
+        // `cost_rate_cents`, and only one of them is somebody's mistake.
+        csvCell(row.costRateIsMixed ? "mixed" : row.costRateCents),
         csvCell(row.entriesWithoutRate),
       ].join(","),
     );
@@ -613,6 +628,8 @@ const serializeContractorCost = (report: Readonly<ContractorCostReportRecord>) =
     currency: row.currency,
     rounded_seconds: row.roundedSeconds,
     cost_cents: row.costCents,
+    cost_rate_cents: row.costRateCents,
+    cost_rate_is_mixed: row.costRateIsMixed,
     entries_without_rate: row.entriesWithoutRate,
   })),
 });
