@@ -6,6 +6,20 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const sourcePath = resolve(root, 'theme-tokens.json')
 const cssPath = resolve(root, 'generated', 'themes.css')
 const manifestPath = resolve(root, 'src', 'generated', 'theme-manifest.ts')
+/**
+ * The palette, flat, for the surfaces that cannot import TypeScript or CSS.
+ *
+ * Issue 666: one brand, five surfaces, and twenty-five files of hand-written
+ * hex outside the one place built to hold it. Mobile, the website, the portal
+ * and the extension each copied colours by eye because there was nothing to
+ * read -- the source carries a `contract` and per-theme metadata, and the two
+ * existing outputs are a stylesheet and a TS module.
+ *
+ * So this is the boring shape on purpose: slot name to value, one level deep,
+ * no comments and no structure to interpret. A file anything with a JSON parser
+ * can consume without knowing what a slot is.
+ */
+const palettePath = resolve(root, 'generated', 'theme-palette.json')
 const check = process.argv.includes('--check')
 
 const slots = [
@@ -127,7 +141,31 @@ const compile = (source) => {
     '} as const',
     '',
   ].join('\n')
-  return { css, manifest }
+  /**
+   * Emitted per theme rather than only for the default, because a surface that
+   * hard-codes "the default theme" is the copying this is meant to end -- one
+   * level further along.
+   *
+   * `label` and `tier` are dropped: they describe the theme to an operator and
+   * mean nothing to a stylesheet. Everything else is carried as written, so a
+   * consumer comparing its own hex against this is comparing like with like.
+   */
+  const palette = {
+    $generated: 'apps/web/scripts/compile-theme-tokens.mjs -- do not edit',
+    $source: 'apps/web/theme-tokens.json',
+    default_theme: source.default_theme,
+    contract: { slots, fonts, scalars },
+    themes: Object.fromEntries(
+      Object.entries(source.themes).map(([name, theme]) => [
+        name,
+        Object.fromEntries(
+          [...slots, ...fonts, ...scalars].map((key) => [key, theme[key]]),
+        ),
+      ]),
+    ),
+  }
+
+  return { css, manifest, palette: `${JSON.stringify(palette, null, 2)}\n` }
 }
 
 const source = JSON.parse(await readFile(sourcePath, 'utf8'))
@@ -146,4 +184,5 @@ const emit = async (path, expected) => {
 await Promise.all([
   emit(cssPath, generated.css),
   emit(manifestPath, generated.manifest),
+  emit(palettePath, generated.palette),
 ])
