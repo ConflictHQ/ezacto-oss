@@ -53,6 +53,7 @@ export const renderClientDirectoryPages = (view?: string): string => `
           <input type="checkbox" data-client-bill-delivery data-client-write data-auth-action disabled>Send this client's invoices through BILL
         </label>
         <p class="form-result" data-client-delivery-result role="status" aria-live="polite"></p>
+      </section>
       <section class="client-360" data-client-360 aria-labelledby="client-360-heading" hidden>
         <header><div><p class="eyebrow">Money</p><h2 id="client-360-heading">This client and everyone under it</h2></div><a data-client-360-report href="/reports?report=client-rollup">Open the rollup report</a></header>
         <p class="hint" data-client-360-scope>—</p>
