@@ -1712,6 +1712,16 @@ const reportOperations: ApiContractOperation[] = [
   },
   {
     method: "get",
+    path: "/api/v1/reports/month-end",
+    operationId: "getMonthEndManifest",
+    summary: "What a month-end pack would send, before anybody sends it",
+    tag: "reports",
+    responseStatus: 200,
+    responseSchema: "MonthEndManifestEnvelope",
+    parameters: [...requiredReportRange],
+  },
+  {
+    method: "get",
     path: "/api/v1/reports/banded-months",
     operationId: "getBandedMonthReport",
     summary: "What a banded month was worth at full rates, against what it charged",
@@ -6244,6 +6254,45 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
    * A band below cost is losing money and a band near list is barely a band,
    * and neither is visible from the invoice on its own.
    */
+  MonthEndItem: {
+    type: "object",
+    required: ["subject_type", "subject_id", "description", "amount_cents", "currency", "target"],
+    properties: {
+      subject_type: stringSchema,
+      subject_id: integerSchema,
+      description: stringSchema,
+      amount_cents: nullable(signedIntegerSchema),
+      currency: nullable(stringSchema),
+      // Where it would go. Null is an item with nowhere to send it, which is a
+      // different problem from one that has not been sent.
+      target: nullable(stringSchema),
+    },
+    additionalProperties: false,
+  },
+  MonthEndExclusion: {
+    type: "object",
+    required: ["invoice_id", "number", "reason"],
+    properties: {
+      invoice_id: integerSchema,
+      number: stringSchema,
+      reason: stringSchema,
+    },
+    additionalProperties: false,
+  },
+  MonthEndManifest: {
+    type: "object",
+    required: ["period_start", "period_end", "items", "excluded"],
+    properties: {
+      period_start: dateSchema,
+      period_end: dateSchema,
+      items: { type: "array", items: { $ref: "#/components/schemas/MonthEndItem" } },
+      // Beside the items rather than dropped: a pack of nine where eleven were
+      // expected is a question about the other two.
+      excluded: { type: "array", items: { $ref: "#/components/schemas/MonthEndExclusion" } },
+    },
+    additionalProperties: false,
+  },
+  MonthEndManifestEnvelope: envelope("MonthEndManifest"),
   BandedMonthRow: {
     type: "object",
     required: [

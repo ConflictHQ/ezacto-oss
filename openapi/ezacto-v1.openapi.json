@@ -13669,6 +13669,84 @@
         ]
       }
     },
+    "/api/v1/reports/month-end": {
+      "get": {
+        "operationId": "getMonthEndManifest",
+        "summary": "What a month-end pack would send, before anybody sends it",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MonthEndManifestEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/reports/month-end",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/reports/banded-months": {
       "get": {
         "operationId": "getBandedMonthReport",
@@ -29258,6 +29336,129 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/DetailedExpenseReport"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MonthEndItem": {
+        "type": "object",
+        "required": [
+          "subject_type",
+          "subject_id",
+          "description",
+          "amount_cents",
+          "currency",
+          "target"
+        ],
+        "properties": {
+          "subject_type": {
+            "type": "string"
+          },
+          "subject_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "description": {
+            "type": "string"
+          },
+          "amount_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "MonthEndExclusion": {
+        "type": "object",
+        "required": [
+          "invoice_id",
+          "number",
+          "reason"
+        ],
+        "properties": {
+          "invoice_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "number": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MonthEndManifest": {
+        "type": "object",
+        "required": [
+          "period_start",
+          "period_end",
+          "items",
+          "excluded"
+        ],
+        "properties": {
+          "period_start": {
+            "type": "string",
+            "format": "date"
+          },
+          "period_end": {
+            "type": "string",
+            "format": "date"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MonthEndItem"
+            }
+          },
+          "excluded": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MonthEndExclusion"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "MonthEndManifestEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/MonthEndManifest"
           },
           "links": {
             "$ref": "#/components/schemas/Links"

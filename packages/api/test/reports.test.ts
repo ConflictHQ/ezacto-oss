@@ -904,6 +904,88 @@ for (const [runtime, factory] of factories) {
       }
     });
 
+    it("[money] names what the pack leaves out, not just what it would send", async () => {
+      // The half that matters. An operator looking at a pack of one where they
+      // expected two needs the other one named and the reason given, because
+      // next month is when they can fix it (#58). A previous draft of this test
+      // asserted only that `excluded` was an array, which an empty fixture
+      // satisfies and a serializer that dropped the field entirely also would.
+      harness = await factory();
+      await harness.run(
+        `INSERT INTO invoices
+          (id, client_id, number, currency, issue_date, due_date, payment_terms,
+           state, amount_cents, due_amount_cents, created_at, updated_at)
+         VALUES
+           (930, 1, 'T-930', 'USD', '2026-08-20', '2026-09-19', 'net_30',
+             'open', 10000, 10000, ?, ?),
+           (931, 1, 'T-931', 'USD', '2026-08-21', '2026-09-20', 'net_30',
+             'draft', 20000, 20000, ?, ?)`,
+        [now, now, now, now],
+      );
+      // A recipient, so the open invoice has somewhere to go. Without one it is
+      // excluded too -- for a different reason -- and the positive half of this
+      // test would be asserting over an empty pack.
+      await harness.run(
+        `INSERT INTO contacts
+          (id, client_id, first_name, last_name, email, invoice_recipient_status,
+           created_at, updated_at)
+         VALUES (940, 1, 'Billing', 'Contact', 'billing@example.test', 'recipient', ?, ?)`,
+        [now, now],
+      );
+
+      const response = await harness.request(
+        "/reports/month-end?from=2026-08-01&to=2026-08-31",
+      );
+      expect(response.status, await response.clone().text()).toBe(200);
+      const body = (await response.json()) as {
+        data: {
+          period_start: string;
+          period_end: string;
+          items: { subject_id: number }[];
+          excluded: { invoice_id: number; number: string; reason: string }[];
+        };
+      };
+      expect(body.data.period_start).toBe("2026-08-01");
+      expect(body.data.period_end).toBe("2026-08-31");
+
+      // A draft has not been sent, so it is not something a month-end pack can
+      // send again -- but it is exactly what somebody expected to see in it.
+      const excludedIds = body.data.excluded.map((row) => row.invoice_id);
+      expect(excludedIds, "the draft was dropped rather than explained").toContain(931);
+      const draft = body.data.excluded.find((row) => row.invoice_id === 931)!;
+      expect(draft.number).toBe("T-931");
+      expect(draft.reason, "an exclusion with no reason is not an answer").not.toBe("");
+      // And the open one is in the pack, which is the other half of the same
+      // claim: a serializer that named every item `0` would satisfy the
+      // exclusion assertion above on its own.
+      const packed = body.data.items.map((item) => item.subject_id);
+      expect(packed, "the open invoice is not in the pack").toContain(930);
+      expect(packed, "a draft cannot be sent again").not.toContain(931);
+    });
+
+    it("[security] refuses the month-end pack to anyone outside the reporting profiles", async () => {
+      // `reports:read` is exactly accounting, executive manager and
+      // administrator, and all three also pass the billable-money check the
+      // route makes -- so that check refuses nobody today and this asserts what
+      // the scope does. Both are kept: the day a profile gets reports without
+      // billable money, the route that refuses is the one that stays right.
+      harness = await factory();
+      for (const profile of ["member", "project_manager", "people_admin"] as const) {
+        const refused = await harness.request(
+          "/reports/month-end?from=2026-08-01&to=2026-08-31",
+          profile,
+        );
+        expect(refused.status, `${profile} reached the month-end pack`).toBe(403);
+      }
+      // Accounting raises the invoices, and this is the list of invoices to
+      // send. Refusing them here would be refusing them their own job.
+      const allowed = await harness.request(
+        "/reports/month-end?from=2026-08-01&to=2026-08-31",
+        "accounting",
+      );
+      expect(allowed.status, await allowed.clone().text()).toBe(200);
+    });
+
     it("[security] serves the banded month report on the cost authority alone", async () => {
       // Every row states a cost, and a figure derived from the cost is the cost
       // rearranged -- so this is refused wherever the cost itself is.

@@ -2099,6 +2099,33 @@ export type DetailedExpenseReportEnvelope = {
   "links": Links;
 };
 
+export type MonthEndItem = {
+  "subject_type": string;
+  "subject_id": number;
+  "description": string;
+  "amount_cents": number | null;
+  "currency": string | null;
+  "target": string | null;
+};
+
+export type MonthEndExclusion = {
+  "invoice_id": number;
+  "number": string;
+  "reason": string;
+};
+
+export type MonthEndManifest = {
+  "period_start": string;
+  "period_end": string;
+  "items": Array<MonthEndItem>;
+  "excluded": Array<MonthEndExclusion>;
+};
+
+export type MonthEndManifestEnvelope = {
+  "data": MonthEndManifest;
+  "links": Links;
+};
+
 export type BandedMonthRow = {
   "month": string;
   "project_id": number;
@@ -4221,6 +4248,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<ContractorCostReportEnvelope>("GET", "/api/v1/reports/contractor", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getMonthEndManifest(args: { query: { "from": string; "to": string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<MonthEndManifestEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<MonthEndManifestEnvelope>("GET", "/api/v1/reports/month-end", {
       query: args.query,
       signal: args.signal,
       headers,

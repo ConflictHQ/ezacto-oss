@@ -8,6 +8,7 @@ import { sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
+import { monthEndManifest, type MonthEndManifest } from './month-end-manifest.js'
 
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
 
@@ -528,6 +529,17 @@ interface BandedMonthQueryRow {
 export interface ReportRepository {
   contractorCost(range: Readonly<ReportDateRange>): Promise<ContractorCostReportRecord>
   bandedMonths(range: Readonly<ReportDateRange>): Promise<BandedMonthReportRecord>
+  /**
+   * What a month-end pack would send, before anybody sends it.
+   *
+   * A preview: nothing is proposed or created by reading it. The pack exists to
+   * be checked and confirmed, and a screen that could only run it would be a
+   * button with no way to see what the button does.
+   */
+  monthEndManifest(input: {
+    periodStart: string
+    periodEnd: string
+  }): Promise<MonthEndManifest>
   profitability(range: Readonly<ReportDateRange>): Promise<ProfitabilityReportRecord>
   detailedTime(filter: Readonly<DetailedTimeFilter>): Promise<DetailedTimeReportResult>
   detailedExpense(
@@ -2684,6 +2696,7 @@ const bandedMonthReport = async (
 export const createReportRepository = (database: Database): ReportRepository => ({
   contractorCost: (range) => contractorCostReport(database, range),
   bandedMonths: (range) => bandedMonthReport(database, range),
+  monthEndManifest: (input) => monthEndManifest(database, input),
   profitability: (range) => profitabilityReport(database, range),
   detailedTime: (filter) => detailedTimeReport(database, filter),
   detailedExpense: (filter) => detailedExpenseReport(database, filter),
