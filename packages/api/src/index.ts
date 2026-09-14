@@ -318,6 +318,7 @@ export {
   type WiseConnectionStatus,
   type WiseLinkOutcome,
   type WiseLinkRefusal,
+  type WiseOnboardOutcome,
   type WiseRecipientView,
   type WiseService,
   type WiseWebhookService,

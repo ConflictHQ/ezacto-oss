@@ -50,6 +50,20 @@ export type WiseLinkOutcome =
   | { outcome: "linked"; recipient: WiseRecipient }
   | { outcome: WiseLinkRefusal };
 
+/**
+ * Onboarding somebody the organisation has never paid.
+ *
+ * `created_not_linked` is its own outcome rather than an error because the
+ * recipient really does exist at Wise by then. Reporting a plain failure would
+ * leave a destination sitting in the account that nobody here knows about; this
+ * names it, so the operator can link it from the list instead.
+ */
+export type WiseOnboardOutcome =
+  | { outcome: "linked"; recipient: WiseRecipient }
+  | { outcome: "created_not_linked"; recipient: WiseRecipient; refusal: WiseLinkRefusal }
+  | { outcome: "already_linked" }
+  | { outcome: "not_configured" };
+
 /** The payout log, as this runtime needs it. */
 export interface WisePayoutAccountPort {
   listForUser(
@@ -160,9 +174,32 @@ export interface WiseRuntime {
       recipientId: string;
       linkedByUserId: number;
     }): Promise<WiseLinkOutcome>;
+    /**
+     * Creates the destination and points a person at it, in one step.
+     *
+     * The contractor gives us the email address on their Wise account and
+     * nothing else. Wise collects the bank details from them directly, so no
+     * account number exists in this system to be logged, backed up or leaked.
+     */
+    onboardRecipient(input: {
+      userId: number;
+      email: string;
+      legalName: string;
+      currency: string;
+      linkedByUserId: number;
+    }): Promise<WiseOnboardOutcome>;
     unlink(accountId: number): Promise<boolean>;
   };
 }
+
+const refusalFor = (
+  outcome: "already_linked" | "external_id_taken" | "unknown_user",
+): WiseLinkRefusal =>
+  outcome === "external_id_taken"
+    ? "recipient_taken"
+    : outcome === "already_linked"
+      ? "already_linked"
+      : "unknown_user";
 
 export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRuntime => {
   const { config, accounts } = options;
@@ -364,16 +401,42 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
           linkedByUserId,
           now,
         });
-        if (linked.outcome !== "linked") {
-          return {
-            outcome:
-              linked.outcome === "external_id_taken"
-                ? "recipient_taken"
-                : linked.outcome === "already_linked"
-                  ? "already_linked"
-                  : "unknown_user",
-          };
+        if (linked.outcome !== "linked") return { outcome: refusalFor(linked.outcome) };
+        await accounts.markVerified(linked.account.id, now);
+        return { outcome: "linked", recipient };
+      },
+
+      onboardRecipient: async ({ userId, email, legalName, currency, linkedByUserId }) => {
+        const profile = await payingProfile();
+        if (client === null || profile === null) return { outcome: "not_configured" };
+
+        // Asked before anything is created at Wise. A second recipient for
+        // somebody who already has one is a destination nobody will ever pay,
+        // and it cannot be deleted from here once it exists.
+        const existing = await accounts.listForUser(userId);
+        if (existing.some((account) => account.provider === "wise")) {
+          return { outcome: "already_linked" };
         }
+
+        const recipient = await client.createEmailRecipient({
+          profileId: profile.id,
+          email,
+          legalName,
+          currency,
+        });
+        const now = instant();
+        const linked = await accounts.link({
+          userId,
+          provider: "wise",
+          externalId: recipient.id,
+          linkedByUserId,
+          now,
+        });
+        if (linked.outcome !== "linked") {
+          return { outcome: "created_not_linked", recipient, refusal: refusalFor(linked.outcome) };
+        }
+        // Wise made it, so Wise confirms it resolves; that is what verified
+        // means here, exactly as it does for a recipient linked from the list.
         await accounts.markVerified(linked.account.id, now);
         return { outcome: "linked", recipient };
       },

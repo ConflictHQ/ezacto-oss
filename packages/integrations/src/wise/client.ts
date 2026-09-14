@@ -93,11 +93,33 @@ export interface WiseRecipient {
   readonly ownedByUs: boolean
 }
 
+export interface CreateEmailRecipientInput {
+  readonly profileId: string
+  /** The address on the contractor's own Wise account. */
+  readonly email: string
+  /** As it should read on the payment. */
+  readonly legalName: string
+  readonly currency: string
+}
+
 export interface WiseClient {
   /** Every profile the token can act for. The call that proves a token works. */
   profiles(): Promise<readonly WiseProfileSummary[]>
   /** Everyone this profile can pay. */
   recipients(profileId: string): Promise<readonly WiseRecipient[]>
+  /**
+   * Creates a recipient we pay by email rather than by bank details.
+   *
+   * The reason this is the shape worth having: Wise then collects the account
+   * details from the contractor directly, and they never pass through here. We
+   * hold an email address and an id, and no account number exists in this
+   * system to be leaked, logged, or backed up.
+   *
+   * That is not theoretical. Wise returns a field called `accountSummary` whose
+   * value is a full account number, which is exactly the sort of thing that
+   * ends up on a screen because of what it is called.
+   */
+  createEmailRecipient(input: Readonly<CreateEmailRecipientInput>): Promise<WiseRecipient>
 }
 
 export interface WiseClientOptions {
@@ -105,14 +127,43 @@ export interface WiseClientOptions {
   readonly fetchImplementation?: typeof fetch
 }
 
+/**
+ * One recipient, carrying only what is safe to carry.
+ *
+ * `accountSummary` and `details.accountNumber` are both the full account
+ * number, and neither is on the type -- so neither can reach a screen, a log or
+ * a row through here.
+ */
+const recipientOf = (entry: unknown): WiseRecipient => {
+  const account = asObject(entry)
+  const id = text(account.id)
+  if (id === null) throw new WiseApiError('a Wise recipient carried no id', 200)
+  return {
+    id,
+    holderName: text(asObject(account.name).fullName) ?? text(account.accountHolderName),
+    currency: text(account.currency) ?? '',
+    type: text(account.type) ?? '',
+    // Deliberately `longAccountSummary`. `accountSummary` is the full account
+    // number, whatever the name suggests.
+    maskedSummary: text(account.longAccountSummary),
+    email: text(account.email) ?? text(asObject(account.details).email),
+    active: account.active !== false,
+    ownedByUs: account.ownedByCustomer === true,
+  }
+}
+
 export const createWiseClient = (options: Readonly<WiseClientOptions>): WiseClient => {
   const call = options.fetchImplementation ?? fetch
 
-  const request = async (path: string): Promise<unknown> => {
+  const request = async (path: string, body?: unknown): Promise<unknown> => {
     const response = await call(`${WISE_API_BASE}${path}`, {
+      ...(body === undefined
+        ? {}
+        : { method: 'POST', body: JSON.stringify(body) }),
       headers: {
         authorization: `Bearer ${options.token}`,
         accept: 'application/json',
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
       },
     })
     if (!response.ok) {
@@ -150,23 +201,29 @@ export const createWiseClient = (options: Readonly<WiseClientOptions>): WiseClie
       const body = await request(`/v2/accounts?profileId=${encodeURIComponent(profileId)}`)
       const items = Array.isArray(body) ? body : asObject(body).content
       if (!Array.isArray(items)) throw new WiseApiError('recipient response was not a list', 200)
-      return items.map((entry) => {
-        const account = asObject(entry)
-        const id = text(account.id)
-        if (id === null) throw new WiseApiError('a Wise recipient carried no id', 200)
-        return {
-          id,
-          holderName: text(asObject(account.name).fullName),
-          currency: text(account.currency) ?? '',
-          type: text(account.type) ?? '',
-          // Deliberately `longAccountSummary`. `accountSummary` is the full
-          // account number, whatever the name suggests.
-          maskedSummary: text(account.longAccountSummary),
-          email: text(account.email),
-          active: account.active !== false,
-          ownedByUs: account.ownedByCustomer === true,
-        }
+      return items.map(recipientOf)
+    },
+
+    createEmailRecipient: async (input) => {
+      const email = input.email.trim()
+      const legalName = input.legalName.trim()
+      // Refused here rather than at Wise, so the caller hears which field is
+      // wrong instead of a vendor validation error about `details.email`.
+      if (email === '' || !email.includes('@')) {
+        throw new WiseApiError('an email recipient needs an email address', 400)
+      }
+      if (legalName === '') {
+        throw new WiseApiError('an email recipient needs the name to pay', 400)
+      }
+      const created = await request('/v1/accounts', {
+        profile: input.profileId,
+        accountHolderName: legalName,
+        currency: input.currency.toUpperCase(),
+        // Wise's own word for "pay them by email and let them supply the rest".
+        type: 'email',
+        details: { email },
       })
+      return recipientOf(created)
     },
   }
 }

@@ -56,6 +56,12 @@ export type WiseLinkOutcome =
   | { outcome: 'linked'; recipient: WiseRecipientView }
   | { outcome: WiseLinkRefusal }
 
+export type WiseOnboardOutcome =
+  | { outcome: 'linked'; recipient: WiseRecipientView }
+  | { outcome: 'created_not_linked'; recipient: WiseRecipientView; refusal: WiseLinkRefusal }
+  | { outcome: 'already_linked' }
+  | { outcome: 'not_configured' }
+
 export interface WiseService {
   configured(): boolean
   readStatus(): Promise<WiseConnectionStatus | null>
@@ -65,6 +71,13 @@ export interface WiseService {
     recipientId: string
     linkedByUserId: number
   }): Promise<WiseLinkOutcome>
+  onboardRecipient(input: {
+    userId: number
+    email: string
+    legalName: string
+    currency: string
+    linkedByUserId: number
+  }): Promise<WiseOnboardOutcome>
   unlink(accountId: number): Promise<boolean>
 }
 
@@ -208,6 +221,89 @@ export const installWiseRoutes = <Bindings extends object>(
         status: refusal.status,
         code: result.outcome,
         message: refusal.message,
+      })
+    }
+    return context.json(
+      { data: { user_id: userId, recipient: serializeRecipient(result.recipient) } },
+      201,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
+  /**
+   * Onboards somebody the organisation has never paid.
+   *
+   * All we ask for is the email address on their Wise account. Wise collects
+   * the bank details from them directly, which is the point rather than a
+   * convenience: no account number ever exists here to be logged, backed up or
+   * leaked, and the request body has nowhere to put one.
+   */
+  api.post('/integrations/wise/recipients', async (context) => {
+    const { userId: linkedByUserId } = assertMoneyWriter(context)
+    requireConfigured(service)
+    const body = await readObjectBody(context)
+    const userId = Number(body['user_id'])
+    const email = typeof body['email'] === 'string' ? body['email'].trim() : ''
+    const legalName = typeof body['legal_name'] === 'string' ? body['legal_name'].trim() : ''
+    const currency = typeof body['currency'] === 'string' ? body['currency'].trim() : ''
+    const problems: { field: string; code: string; message: string }[] = []
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      problems.push({ field: 'user_id', code: 'invalid', message: 'user_id must be a positive integer.' })
+    }
+    if (email === '' || !email.includes('@')) {
+      problems.push({
+        field: 'email',
+        code: 'invalid',
+        // Named for what it has to be: the address Wise knows them by, not
+        // whatever address we happen to hold for them.
+        message: 'email must be the address on the contractor’s Wise account.',
+      })
+    }
+    if (legalName === '') {
+      problems.push({
+        field: 'legal_name',
+        code: 'invalid',
+        message: 'legal_name is required, and must match the name on their Wise account.',
+      })
+    }
+    if (!/^[A-Za-z]{3}$/u.test(currency)) {
+      problems.push({
+        field: 'currency',
+        code: 'invalid',
+        message: 'currency must be a three-letter code.',
+      })
+    }
+    if (problems.length > 0) throw validationError(problems)
+
+    const result = await service.onboardRecipient({
+      userId,
+      email,
+      legalName,
+      currency,
+      linkedByUserId,
+    })
+    if (result.outcome === 'not_configured') {
+      throw new ApiError({
+        status: 503,
+        code: 'service_unavailable',
+        message: 'Wise is not configured for this deployment. An API token is required.',
+      })
+    }
+    if (result.outcome === 'already_linked') {
+      throw new ApiError({
+        status: 409,
+        code: 'already_linked',
+        message: 'That person already has a Wise payout destination.',
+      })
+    }
+    if (result.outcome === 'created_not_linked') {
+      // The recipient exists at Wise by now and cannot be removed from here.
+      // Saying so, with its id, is the difference between a problem an operator
+      // can finish and a destination nobody knows about.
+      throw new ApiError({
+        status: 409,
+        code: 'created_not_linked',
+        message: `Wise created recipient ${result.recipient.id}, but it could not be linked (${result.refusal}). Link it from the recipient list.`,
       })
     }
     return context.json(

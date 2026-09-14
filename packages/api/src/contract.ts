@@ -1187,6 +1187,18 @@ const wiseOperations: ApiContractOperation[] = [
   },
   {
     method: "post",
+    path: "/api/v1/integrations/wise/recipients",
+    operationId: "onboardWiseRecipient",
+    summary: "Create a Wise destination from a contractor's email and link it",
+    tag: "integrations",
+    responseStatus: 201,
+    responseSchema: "WiseLinkEnvelope",
+    requestSchema: "WiseOnboardInput",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+  {
+    method: "post",
     path: "/api/v1/integrations/wise/recipients/link",
     operationId: "linkWiseRecipient",
     summary: "Point a person at the Wise destination they are paid through",
@@ -3129,6 +3141,24 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object",
     required: ["data"],
     properties: { data: { type: "array", items: reference("WiseRecipient") } },
+    additionalProperties: false,
+  },
+  /**
+   * Onboarding input, and the shape is the decision.
+   *
+   * An email address and a name, and nowhere at all to put an account number:
+   * Wise collects the bank details from the contractor directly, so none ever
+   * exists here to be logged, backed up or leaked.
+   */
+  WiseOnboardInput: {
+    type: "object",
+    required: ["user_id", "email", "legal_name", "currency"],
+    properties: {
+      user_id: { type: "integer" },
+      email: stringSchema,
+      legal_name: stringSchema,
+      currency: stringSchema,
+    },
     additionalProperties: false,
   },
   WiseLinkInput: {

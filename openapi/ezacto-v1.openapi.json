@@ -14972,6 +14972,69 @@
         },
         "x-ezacto-runtime-path": "/api/v1/integrations/wise/recipients",
         "x-ezacto-generate-client": true
+      },
+      "post": {
+        "operationId": "onboardWiseRecipient",
+        "summary": "Create a Wise destination from a contractor's email and link it",
+        "tags": [
+          "integrations"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WiseLinkEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/integrations/wise/recipients",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WiseOnboardInput"
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/integrations/wise/recipients/link": {
@@ -19632,6 +19695,30 @@
             "items": {
               "$ref": "#/components/schemas/WiseRecipient"
             }
+          }
+        },
+        "additionalProperties": false
+      },
+      "WiseOnboardInput": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "email",
+          "legal_name",
+          "currency"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "integer"
+          },
+          "email": {
+            "type": "string"
+          },
+          "legal_name": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
           }
         },
         "additionalProperties": false
