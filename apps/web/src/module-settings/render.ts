@@ -120,6 +120,36 @@ export const renderModuleSettingsPage = (view?: string): string => `
         <button class="primary-action" type="submit" data-settings-payout-submit>Save payout destination</button>
       </form>
     </section>
+    <section class="settings-two-factor" data-settings-2fa aria-labelledby="settings-2fa-heading" hidden>
+      <h2 id="settings-2fa-heading">Two-step sign-in</h2>
+      <p class="hint">A code from an authenticator app, on top of your password. Setting one up has been impossible from inside this app until now, which is awkward for an instance that can require it.</p>
+      <p class="form-result" data-settings-2fa-status role="status" aria-live="polite">Loading two-step sign-in…</p>
+      <dl class="settings-facts" data-settings-2fa-facts hidden></dl>
+      <button type="button" class="primary-action" data-settings-2fa-begin hidden>Set up two-step sign-in</button>
+      <div class="settings-2fa-enrolment" data-settings-2fa-enrolment hidden>
+        <h3>Add this to your authenticator</h3>
+        <p class="hint">Type the key in, or paste the setup link. Both describe the same secret.</p>
+        <dl class="settings-facts">
+          <div><dt>Key</dt><dd><code data-settings-2fa-secret></code></dd></div>
+          <div><dt>Setup link</dt><dd><code data-settings-2fa-uri></code></dd></div>
+        </dl>
+        <h3>Recovery codes</h3>
+        <p class="hint">Shown once, here. Each works exactly one time, and they are the only way back in if you lose the authenticator.</p>
+        <ul class="settings-2fa-recovery" data-settings-2fa-recovery></ul>
+        <form class="team-person-form" data-settings-2fa-confirm-form>
+          <label for="ez-settings-2fa-confirm">Code from the app<input id="ez-settings-2fa-confirm" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" required></label>
+          <p class="hint">Nothing changes about signing in until this code is accepted.</p>
+          <p class="form-result" data-settings-2fa-confirm-result role="status" aria-live="polite"></p>
+          <button class="primary-action" type="submit" data-settings-2fa-confirm-submit>Turn on two-step sign-in</button>
+        </form>
+      </div>
+      <form class="team-person-form" data-settings-2fa-disable-form hidden>
+        <label for="ez-settings-2fa-disable">Code from the app<input id="ez-settings-2fa-disable" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" required></label>
+        <p class="hint">Turning it off needs a current code, so a borrowed session cannot remove it.</p>
+        <p class="form-result" data-settings-2fa-disable-result role="status" aria-live="polite"></p>
+        <button class="danger-action" type="submit" data-settings-2fa-disable-submit>Turn off two-step sign-in</button>
+      </form>
+    </section>
     <section class="settings-tokens" data-settings-tokens aria-labelledby="settings-tokens-heading" hidden>
       <h2 id="settings-tokens-heading">API tokens</h2>
       <p class="hint">Tokens act as you, with only the scopes you tick, and they are how the CLI and anything else outside this app signs in. Issuing one has been a terminal job until now.</p>

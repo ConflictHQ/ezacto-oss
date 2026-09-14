@@ -28,6 +28,8 @@ import {
   type ApiToken,
   type CreateApiTokenInput,
   type IssuedApiToken,
+  type TwoFactorEnrolment,
+  type TwoFactorStatus,
 } from '@conflict-hq/ezacto-client'
 import type { InvoiceState } from '../invoices/model.js'
 import type { ActivityRow } from '../activity/browser.js'
@@ -100,6 +102,16 @@ export interface ShellApi
    * Yours alone: the routes scope every one of these to the acting user, so
    * this is a personal-settings surface rather than an administrative one.
    */
+  /**
+   * Two-step sign-in, for the person it protects (issue 485).
+   *
+   * An instance can require a second factor and nothing in the app could set
+   * one up, which left enrolment to a terminal.
+   */
+  getTwoFactorStatus?(signal?: AbortSignal): Promise<TwoFactorStatus>
+  beginTwoFactorEnrolment?(signal?: AbortSignal): Promise<TwoFactorEnrolment>
+  confirmTwoFactorEnrolment?(code: string, signal?: AbortSignal): Promise<TwoFactorStatus>
+  disableTwoFactor?(code: string, signal?: AbortSignal): Promise<TwoFactorStatus>
   listApiTokens?(signal?: AbortSignal): Promise<readonly ApiToken[]>
   createApiToken?(
     input: CreateApiTokenInput,
@@ -1148,6 +1160,13 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.getTeamPerson({ id, ...withSignal(signal) })).data,
   getTeamCatalog: async (signal) =>
     (await client.getTeamCatalog(withSignal(signal))).data,
+  getTwoFactorStatus: async (signal) => (await client.getTwoFactorStatus(withSignal(signal))).data,
+  beginTwoFactorEnrolment: async (signal) =>
+    (await client.beginTwoFactorEnrolment(withSignal(signal))).data,
+  confirmTwoFactorEnrolment: async (code, signal) =>
+    (await client.confirmTwoFactorEnrolment({ body: { code }, ...withSignal(signal) })).data,
+  disableTwoFactor: async (code, signal) =>
+    (await client.disableTwoFactor({ body: { code }, ...withSignal(signal) })).data,
   listApiTokens: async (signal) => (await client.listApiTokens(withSignal(signal))).data,
   createApiToken: async (input, signal) =>
     (await client.createApiToken({ body: input, ...withSignal(signal) })).data,
