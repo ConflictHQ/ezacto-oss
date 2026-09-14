@@ -907,7 +907,14 @@ export const createClientDirectoryController = (
       contacts = selectedContacts
       projects = selectedProjects
       renderDetail()
-      await refreshRollup(active, id)
+      // Not awaited, and not inside this try. The rollup reports its own
+      // failure on its own status line and offers its own retry; letting it
+      // throw in here instead reaches `presentFailure`, which hides the whole
+      // detail panel -- so a rollup the deployment cannot serve took the
+      // client's name, contacts and projects down with it. That is the
+      // opposite of what this function's own comment promises, and it is what
+      // the client-directory acceptance caught.
+      void refreshRollup(active, id)
     } catch (error) {
       active.presentFailure(error, () => {
         detailStatus.textContent = messageFor(error)

@@ -726,6 +726,16 @@ describe('Clients V1 browser controller', () => {
     expect(document.body.textContent).not.toContain('Saving the client was refused.')
   })
 
+  /**
+   * The rollup is deliberately not awaited by the detail load: a rollup the
+   * deployment cannot serve must not take the client's name and contacts down
+   * with it. So a test that reads its output has to let it settle first.
+   */
+  const settleRollup = async (): Promise<void> => {
+    for (let turn = 0; turn < 5; turn += 1) await Promise.resolve()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+
   it('[browser] rolls the three 360 figures up the subtree, one row per currency', async () => {
     // A parent node that is invoiced through its children is owed nothing on
     // its own row, so all three figures are asked for as a set of client ids.
@@ -734,6 +744,7 @@ describe('Clients V1 browser controller', () => {
     const controller = createClientDirectoryController(api)
 
     await controller.activate(administrator, new AbortController().signal, () => false)
+    await settleRollup()
 
     expect(api.listClientOpenInvoices).toHaveBeenCalledWith(
       [10, 11],
@@ -831,6 +842,7 @@ describe('Clients V1 browser controller', () => {
       new AbortController().signal,
       () => false,
     )
+    await settleRollup()
 
     expect(document.querySelector('[data-client-360-burn]')?.textContent).toBe('')
     expect(document.querySelector('[data-client-360-burn-note]')?.textContent).toContain(
