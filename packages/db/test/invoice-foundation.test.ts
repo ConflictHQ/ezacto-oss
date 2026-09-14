@@ -356,6 +356,9 @@ for (const [runtime, factory] of factories) {
         'use_as_expense',
         'created_at',
         'updated_at',
+        // Appended by 0071. The lineage a refresh compares against, distinct
+        // from `updated_at`, which a person moves by editing the row (#665).
+        'source_updated_at',
       ])
       expect(
         (await db.rows<{ name: string }>(`PRAGMA table_info(invoice_line_items)`)).map(
