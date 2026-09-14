@@ -30,11 +30,23 @@ export type PayoutProvider = 'deel' | 'wise'
 
 export const payoutProviders: readonly PayoutProvider[] = ['deel', 'wise']
 
+/**
+ * Which id space `external_id` lives in.
+ *
+ * `account` names bank details somebody gave the provider. `contact` names a
+ * discoverable Wise profile, found by its Wisetag, email or phone, which Wise
+ * resolves to an account when a payout is quoted -- so it survives the person
+ * changing bank, and nobody here ever sees their details. Both are opaque
+ * strings, and telling them apart by shape is a guess with a payout attached.
+ */
+export type PayoutDestinationKind = 'account' | 'contact'
+
 export interface PayoutAccountRecord {
   id: number
   userId: number
   provider: PayoutProvider
   externalId: string
+  kind: PayoutDestinationKind
   linkedByUserId: number
   linkedAt: string
   verifiedAt: string | null
@@ -45,6 +57,8 @@ export interface PayoutAccountLink {
   userId: number
   provider: PayoutProvider
   externalId: string
+  /** Defaults to `account`, which is what every id before #543 was. */
+  kind?: PayoutDestinationKind
   linkedByUserId: number
   now: string
 }
@@ -68,6 +82,7 @@ interface Row {
   user_id: number
   provider: PayoutProvider
   external_id: string
+  kind: PayoutDestinationKind
   linked_by_user_id: number
   linked_at: string
   verified_at: string | null
@@ -79,13 +94,14 @@ const record = (row: Row): PayoutAccountRecord => ({
   userId: row.user_id,
   provider: row.provider,
   externalId: row.external_id,
+  kind: row.kind,
   linkedByUserId: row.linked_by_user_id,
   linkedAt: row.linked_at,
   verifiedAt: row.verified_at,
   detachedAt: row.detached_at,
 })
 
-const columns = `id, user_id, provider, external_id, linked_by_user_id,
+const columns = `id, user_id, provider, external_id, kind, linked_by_user_id,
   linked_at, verified_at, detached_at`
 
 export interface PayoutAccountStore {
@@ -167,9 +183,10 @@ export const createPayoutAccountStore = (database: Database): PayoutAccountStore
 
     const inserted = await database.all<Row>(sql`
       INSERT INTO user_payout_accounts
-        (user_id, provider, external_id, linked_by_user_id, linked_at,
+        (user_id, provider, external_id, kind, linked_by_user_id, linked_at,
          created_at, updated_at)
       VALUES (${input.userId}, ${input.provider}, ${externalId},
+        ${input.kind ?? 'account'},
         ${input.linkedByUserId}, ${input.now}, ${input.now}, ${input.now})
       RETURNING ${sql.raw(columns)}`)
     const row = inserted[0]

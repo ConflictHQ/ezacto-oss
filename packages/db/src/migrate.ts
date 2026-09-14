@@ -73,6 +73,7 @@ import { oidcAppCodesMigration } from './migrations/0066_oidc_app_codes.js'
 import { scheduledActionsMigration } from './migrations/0067_scheduled_actions.js'
 import { runExecutionMigration } from './migrations/0068_run_execution.js'
 import { dropExchangeRatesMigration } from './migrations/0069_drop_exchange_rates.js'
+import { payoutDestinationKindMigration } from './migrations/0070_payout_destination_kind.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL, statements_sha256 TEXT
@@ -1489,6 +1490,7 @@ const migrations = [
   { id: '0067_scheduled_actions', statements: scheduledActionsMigration },
   { id: '0068_run_execution', statements: runExecutionMigration },
   { id: '0069_drop_exchange_rates', statements: dropExchangeRatesMigration },
+  { id: '0070_payout_destination_kind', statements: payoutDestinationKindMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

@@ -338,6 +338,22 @@ export type WiseOnboardInput = {
   "currency": string;
 };
 
+export type WiseContactInput = {
+  "user_id": number;
+  "identifier": string;
+  "currency": string;
+};
+
+export type WiseContactEnvelope = {
+  "data": {
+  "user_id": number;
+  "contact": {
+  "id": string;
+  "name": string | null;
+};
+};
+};
+
 export type WiseLinkInput = {
   "user_id": number;
   "recipient_id": string;
@@ -4315,6 +4331,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<WiseLinkEnvelope>("POST", "/api/v1/integrations/wise/recipients", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async shareWiseProfile(args: { body: WiseContactInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<WiseContactEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<WiseContactEnvelope>("POST", "/api/v1/integrations/wise/contacts", {
       body: args.body,
       signal: args.signal,
       headers,

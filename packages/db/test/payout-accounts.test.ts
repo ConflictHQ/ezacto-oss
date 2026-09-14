@@ -1,7 +1,8 @@
 import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createContainerDatabase } from '../src/adapters.js'
-import { migrateContainer } from '../src/migrate.js'
+import { migrateContainer, migrateContainerThrough } from '../src/migrate.js'
+import { payoutDestinationKindMigration } from '../src/migrations/0070_payout_destination_kind.js'
 import { createPayoutAccountStore, type PayoutAccountStore } from '../src/payout-accounts.js'
 
 const t = (minute: number): string =>
@@ -194,5 +195,88 @@ describe('reading a provider’s whole set, for an export', () => {
     await link(store, { provider: 'wise', externalId: 'wise-2' })
     expect((await store.listForProvider('deel')).map((a) => a.userId)).toEqual([2, 3])
     expect((await store.listForProvider('wise')).map((a) => a.externalId)).toEqual(['wise-2'])
+  })
+})
+
+describe('which id space the external id lives in (#543)', () => {
+  it('[db] defaults to an account, which is what every id before this was', async () => {
+    const { store } = await fixture()
+    const result = await link(store)
+    expect(result).toMatchObject({ outcome: 'linked', account: { kind: 'account' } })
+  })
+
+  it('[money] records a Wise contact as a contact, not as an account id', async () => {
+    // A contact id and a recipient account id are different id spaces. Stored
+    // without saying which, a payout has to guess from the shape of a string.
+    const { store } = await fixture()
+    const result = await link(store, {
+      provider: 'wise',
+      externalId: '00000000-0000-4000-8000-000000000001',
+      kind: 'contact',
+    })
+    expect(result).toMatchObject({ outcome: 'linked', account: { kind: 'contact' } })
+    expect((await store.listForUser(2)).map((account) => account.kind)).toEqual(['contact'])
+  })
+
+  it('[money] keeps one current destination per person, whichever kind it is', async () => {
+    // Holding a contact and a recipient account at once is two answers to
+    // "where does their money go", and there is no safe reading of that.
+    const { store } = await fixture()
+    await link(store, { provider: 'wise', externalId: 'wise-account-1' })
+    expect(
+      await link(store, { provider: 'wise', externalId: 'wise-contact-1', kind: 'contact' }),
+    ).toEqual({ outcome: 'already_linked' })
+  })
+
+  it('[db] holds the kind still, because it says how to read the id', async () => {
+    const { store, sqlite: database } = await fixture()
+    const linked = await link(store, { provider: 'wise', externalId: 'wise-1', kind: 'contact' })
+    const id = linked.outcome === 'linked' ? linked.account.id : 0
+    expect(() =>
+      database.prepare(`UPDATE user_payout_accounts SET kind = 'account' WHERE id = ?`).run(id),
+    ).toThrow(/identity is immutable/u)
+  })
+
+  it('[money] refuses a contact on a provider that has none', async () => {
+    // Only Wise has contacts. A Deel row claiming one is an id nothing can
+    // resolve, found at the moment somebody is owed money.
+    const { store, sqlite: database } = await fixture()
+    await link(store, { provider: 'wise', externalId: 'wise-1', kind: 'contact' })
+    expect(() =>
+      database
+        .prepare(
+          `INSERT INTO user_payout_accounts
+             (user_id, provider, external_id, kind, linked_by_user_id, linked_at,
+              created_at, updated_at)
+           VALUES (3, 'deel', 'deel-contact', 'contact', 1, ?, ?, ?)`,
+        )
+        .run(t(1), t(1), t(1)),
+    ).toThrow(/only Wise destinations can be a contact/u)
+  })
+})
+
+describe('what 0070 does to destinations that already exist', () => {
+  it('[db] calls every id that predates it an account, because that is what it is', async () => {
+    // The migrations apply lazily against a live database, so the question is
+    // what happens to rows written before the column existed -- not what a
+    // fresh one looks like.
+    const database = new BetterSqlite3(':memory:')
+    migrateContainerThrough(database, '0069_drop_exchange_rates')
+    sqlite = database
+    database.exec(`
+      INSERT INTO organizations (name, modules, created_at, updated_at)
+        VALUES ('Fixture', '{}', '${t(0)}', '${t(0)}');
+      INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
+        VALUES (1, 'Operator', 'One', 'administrator', '[]', '${t(0)}', '${t(0)}');
+      INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
+        VALUES (2, 'Contractor', 'Two', 'member', '[]', '${t(0)}', '${t(0)}');
+      INSERT INTO user_payout_accounts
+        (user_id, provider, external_id, linked_by_user_id, linked_at, created_at, updated_at)
+        VALUES (2, 'wise', '701234567', 1, '${t(1)}', '${t(1)}', '${t(1)}');
+    `)
+    for (const statement of payoutDestinationKindMigration) database.exec(statement)
+    expect(
+      database.prepare(`SELECT kind FROM user_payout_accounts WHERE user_id = 2`).get(),
+    ).toEqual({ kind: 'account' })
   })
 })

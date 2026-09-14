@@ -1199,6 +1199,18 @@ const wiseOperations: ApiContractOperation[] = [
   },
   {
     method: "post",
+    path: "/api/v1/integrations/wise/contacts",
+    operationId: "shareWiseProfile",
+    summary: "Point a person at their own Wise profile, found by a Wisetag",
+    tag: "integrations",
+    responseStatus: 201,
+    responseSchema: "WiseContactEnvelope",
+    requestSchema: "WiseContactInput",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+  {
+    method: "post",
     path: "/api/v1/integrations/wise/recipients/link",
     operationId: "linkWiseRecipient",
     summary: "Point a person at the Wise destination they are paid through",
@@ -3158,6 +3170,41 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       email: stringSchema,
       legal_name: stringSchema,
       currency: stringSchema,
+    },
+    additionalProperties: false,
+  },
+  /**
+   * The whole of what a person has to share to be paid: an identifier Wise
+   * already knows them by. No account number, anywhere, ever.
+   */
+  WiseContactInput: {
+    type: "object",
+    required: ["user_id", "identifier", "currency"],
+    properties: {
+      user_id: { type: "integer" },
+      identifier: stringSchema,
+      currency: stringSchema,
+    },
+    additionalProperties: false,
+  },
+  WiseContactEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["user_id", "contact"],
+        properties: {
+          user_id: { type: "integer" },
+          contact: {
+            type: "object",
+            required: ["id", "name"],
+            properties: { id: stringSchema, name: nullable(stringSchema) },
+            additionalProperties: false,
+          },
+        },
+        additionalProperties: false,
+      },
     },
     additionalProperties: false,
   },

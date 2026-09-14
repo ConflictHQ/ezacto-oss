@@ -39,6 +39,10 @@ const service = (overrides: Partial<WiseService> = {}): WiseService => ({
   listRecipients: vi.fn(async () => [recipient]),
   linkRecipient: vi.fn(async () => ({ outcome: 'linked' as const, recipient })),
   onboardRecipient: vi.fn(async () => ({ outcome: 'linked' as const, recipient })),
+  shareWiseProfile: vi.fn(async () => ({
+    outcome: 'linked' as const,
+    contact: { id: '00000000-0000-4000-8000-000000000001', name: 'R. Adeyemi' },
+  })),
   unlink: vi.fn(async () => true),
   ...overrides,
 })
@@ -308,5 +312,102 @@ describe('onboarding somebody we have never paid (#543)', () => {
     expect((await onboard(unconfigured, good)).status).toBe(503)
     expect(wise.onboardRecipient).not.toHaveBeenCalled()
     expect(unconfigured.onboardRecipient).not.toHaveBeenCalled()
+  })
+})
+
+describe('a person sharing their own Wise account (#543)', () => {
+  const share = (wise: WiseService, body: unknown, principal?: Principal) =>
+    app(wise, principal).request('/integrations/wise/contacts', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+
+  const good = { user_id: 7, identifier: '@theirtag', currency: 'USD' }
+
+  it('[api] takes a Wisetag and hands back who Wise says it belongs to', async () => {
+    const wise = service()
+    const response = await share(wise, good)
+    expect(response.status).toBe(201)
+    expect(await response.json()).toEqual({
+      data: {
+        user_id: 7,
+        // Shown back on purpose: a mistyped tag that resolves resolves to
+        // somebody else, and the name is the only thing that catches it.
+        contact: { id: '00000000-0000-4000-8000-000000000001', name: 'R. Adeyemi' },
+      },
+    })
+    expect(wise.shareWiseProfile).toHaveBeenCalledWith({
+      userId: 7,
+      identifier: '@theirtag',
+      currency: 'USD',
+      linkedByUserId: 1,
+    })
+  })
+
+  it('[auth] lets a person set their own destination without being accounting', async () => {
+    // The whole point of asking somebody for their Wisetag is that they are the
+    // one who has it.
+    const wise = service()
+    const response = await share(wise, { ...good, user_id: 9 }, { userId: 9, profile: 'member' })
+    expect(response.status).toBe(201)
+    expect(wise.shareWiseProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 9, linkedByUserId: 9 }),
+    )
+  })
+
+  it('[auth] refuses a member setting somebody else’s destination', async () => {
+    // Choosing where another person is paid is the organisation's money going
+    // where the organisation chose, and that stays with accounting.
+    const wise = service()
+    const response = await share(wise, good, { userId: 9, profile: 'member' })
+    expect(response.status).toBe(403)
+    expect(wise.shareWiseProfile).not.toHaveBeenCalled()
+  })
+
+  it('[auth] still lets accounting set it for somebody who never got round to it', async () => {
+    const wise = service()
+    const response = await share(wise, good, { userId: 3, profile: 'accounting' })
+    expect(response.status).toBe(201)
+    expect(wise.shareWiseProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 7, linkedByUserId: 3 }),
+    )
+  })
+
+  it('[api] puts a tag Wise cannot find back on the field that was typed', async () => {
+    const wise = service({
+      shareWiseProfile: vi.fn(async () => ({ outcome: 'not_discoverable' as const })),
+    })
+    const response = await share(wise, good)
+    expect(response.status).toBe(422)
+    const body = (await response.json()) as { error: { fields: { field: string; code: string }[] } }
+    expect(body.error.fields).toEqual([
+      expect.objectContaining({ field: 'identifier', code: 'not_discoverable' }),
+    ])
+  })
+
+  it('[api] names both bad fields at once and asks Wise nothing', async () => {
+    const wise = service()
+    const response = await share(wise, { user_id: 7, identifier: '  ', currency: 'dollars' })
+    expect(response.status).toBe(422)
+    const body = (await response.json()) as { error: { fields: { field: string }[] } }
+    expect(body.error.fields.map((problem) => problem.field).sort()).toEqual([
+      'currency',
+      'identifier',
+    ])
+    expect(wise.shareWiseProfile).not.toHaveBeenCalled()
+  })
+
+  it('[money] refuses a tag that is already somebody else’s destination', async () => {
+    const wise = service({
+      shareWiseProfile: vi.fn(async () => ({ outcome: 'recipient_taken' as const })),
+    })
+    expect((await share(wise, good)).status).toBe(409)
+  })
+
+  it('[api] says unconfigured rather than looking anything up', async () => {
+    const wise = service({ configured: vi.fn(() => false) })
+    expect((await share(wise, good)).status).toBe(503)
+    expect(wise.shareWiseProfile).not.toHaveBeenCalled()
   })
 })

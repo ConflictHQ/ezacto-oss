@@ -15037,6 +15037,71 @@
         }
       }
     },
+    "/api/v1/integrations/wise/contacts": {
+      "post": {
+        "operationId": "shareWiseProfile",
+        "summary": "Point a person at their own Wise profile, found by a Wisetag",
+        "tags": [
+          "integrations"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WiseContactEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/integrations/wise/contacts",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WiseContactInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/integrations/wise/recipients/link": {
       "post": {
         "operationId": "linkWiseRecipient",
@@ -19719,6 +19784,71 @@
           },
           "currency": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WiseContactInput": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "identifier",
+          "currency"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "integer"
+          },
+          "identifier": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WiseContactEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "user_id",
+              "contact"
+            ],
+            "properties": {
+              "user_id": {
+                "type": "integer"
+              },
+              "contact": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "name"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
           }
         },
         "additionalProperties": false
