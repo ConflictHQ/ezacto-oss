@@ -471,6 +471,12 @@ export interface BandedMonthRow {
   entriesWithoutBillableRate: number
   entriesWithoutCostRate: number
   /**
+   * Invoices that claimed this month's time in a different currency, and so are
+   * not in `billedCents`. Non-zero means the figure is partial, which is a
+   * different thing from low.
+   */
+  claimedInOtherCurrency: number
+  /**
    * What the invoices claiming this month's time actually charged, and what
    * they recorded as foregone. Null when no invoice has claimed any of it --
    * an unbilled month is not a band priced at zero.
@@ -491,6 +497,7 @@ interface BandedMonthQueryRow {
   projectName: string
   clientId: number
   clientName: string
+  currency: string
   roundedSeconds: number
   billableRateCents: number | null
   costRateCents: number | null
@@ -2514,10 +2521,25 @@ const bandedMonthReport = async (
   database: Database,
   range: Readonly<ReportDateRange>,
 ): Promise<BandedMonthReportRecord> => {
+  const organization = await database.all<{ currency: string }>(
+    sql`SELECT upper(currency) AS "currency" FROM organizations WHERE id = 1`,
+  )
+  const organizationCurrency = organization[0]?.currency
+  if (organizationCurrency === undefined) {
+    throw new Error('organization must exist before reports are read')
+  }
+
+  // The project's currency, not the organization's. Every other report in this
+  // file resolves it this way, and this one did not: it labelled every row with
+  // the organization default, so a client billed in another currency read as a
+  // figure in a currency nobody charged. The number was right and the unit was
+  // wrong, which is the worse of the two.
   const rows = await database.all<BandedMonthQueryRow>(sql`
     SELECT substr(entry.spent_date, 1, 7) AS "month",
       project.id AS "projectId", project.name AS "projectName",
       client.id AS "clientId", client.name AS "clientName",
+      upper(coalesce(project.billing_currency, client.currency, ${organizationCurrency}))
+        AS "currency",
       entry.rounded_seconds AS "roundedSeconds",
       entry.billable_rate_cents AS "billableRateCents",
       entry.cost_rate_cents AS "costRateCents",
@@ -2529,13 +2551,6 @@ const bandedMonthReport = async (
       AND entry.billable = 1
     ORDER BY substr(entry.spent_date, 1, 7), project.id, entry.id
   `)
-  const organization = await database.all<{ currency: string }>(
-    sql`SELECT upper(currency) AS "currency" FROM organizations WHERE id = 1`,
-  )
-  const currency = organization[0]?.currency
-  if (currency === undefined) {
-    throw new Error('organization must exist before reports are read')
-  }
 
   // What the invoices claiming this time charged, read once rather than per
   // row. An invoice can claim time across two months; its charge belongs to
@@ -2544,10 +2559,11 @@ const bandedMonthReport = async (
   // touched.
   const invoices = await database.all<{
     id: number
+    currency: string
     amountCents: number
     foregoneCents: number
   }>(sql`
-    SELECT id, amount_cents AS "amountCents",
+    SELECT id, upper(currency) AS "currency", amount_cents AS "amountCents",
       foregone_billable_cents AS "foregoneCents"
     FROM invoices
     WHERE id IN (
@@ -2567,7 +2583,7 @@ const bandedMonthReport = async (
         projectName: row.projectName,
         clientId: row.clientId,
         clientName: row.clientName,
-        currency,
+        currency: row.currency,
         roundedSeconds: 0,
         billableValueCents: 0,
         costValueCents: 0,
@@ -2575,6 +2591,7 @@ const bandedMonthReport = async (
         entriesWithoutCostRate: 0,
         billedCents: null,
         foregoneCents: null,
+        claimedInOtherCurrency: 0,
         claimed: new Set<number>(),
       }
       grouped.set(key, bucket)
@@ -2601,11 +2618,18 @@ const bandedMonthReport = async (
     from: range.from,
     to: range.to,
     rows: [...grouped.values()].map(({ claimed, ...bucket }) => {
-      const totals = [...claimed]
+      const claimedInvoices = [...claimed]
         .map((id) => invoiceById.get(id))
         .filter((invoice): invoice is NonNullable<typeof invoice> => invoice !== undefined)
+      // Only what was charged in this row's own currency. Adding an invoice
+      // raised in another one would invent an exchange rate this system does
+      // not hold -- the rule `contractorCostReport` already states and this
+      // report was quietly breaking. Excluded ones are counted rather than
+      // dropped, so a total that looks low says why.
+      const totals = claimedInvoices.filter((invoice) => invoice.currency === bucket.currency)
       return {
         ...bucket,
+        claimedInOtherCurrency: claimedInvoices.length - totals.length,
         // Null rather than zero when nothing has claimed the month: an unbilled
         // month is not a band priced at nothing.
         billedCents:
