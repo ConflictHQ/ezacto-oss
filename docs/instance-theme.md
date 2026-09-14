@@ -110,3 +110,40 @@ instance's colours, which is what it exists to put on the screen.
 An administrator session is required; an API token is refused. Changing how the
 whole instance looks is a decision a person makes, not something a script should
 carry.
+
+## The surfaces that do not read the tokens (#666)
+
+The shell reads `apps/web/theme-tokens.json`, compiled and contrast-checked.
+Nothing else did, which is the gap #666 measured: mobile, the website, the
+portal and the extension each carried hand-written hex, because there was
+nothing they could read. The compiler now also emits
+
+    apps/web/generated/theme-palette.json
+
+which is deliberately the dullest possible shape — slot name to value, one level
+deep, every theme rather than only the default. Anything with a JSON parser can
+consume it without knowing what a slot is. It is generated: edit
+`theme-tokens.json` and run `npm run theme:generate`, and `--check` fails a build
+that left it stale.
+
+### Stripe checkout is set in Stripe's dashboard, and does not match
+
+The checkout page cannot import anything; its branding lives in Stripe's own
+dashboard. Recorded here so nobody has to rediscover it from a screenshot:
+
+| | value | nearest token |
+| --- | --- | --- |
+| background | `#1d1d1d` | none — `ink` is `#14161A` |
+| accent | `#db394c` | none — `action` is `#16794A`, a green |
+
+Neither hex appears anywhere in the palette, and the accent is not merely a
+shade off: the checkout page is branded red where the product's action colour is
+green. This is a **client-facing** surface, so the divergence costs more than an
+internal one would — being a shade off reads as a different company, and being a
+different hue reads as a different company more loudly.
+
+Changing it is a decision rather than a fix, which is why this section records
+the state instead of resolving it: either the dashboard is moved onto `ink` and
+`action`, or the two values above are adopted as brand and the token file is
+wrong. What should not continue is both being true and neither being written
+down.
