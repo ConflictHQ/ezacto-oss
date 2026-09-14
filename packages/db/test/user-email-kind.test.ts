@@ -135,3 +135,89 @@ describe('what the schema holds a payroll address to', () => {
     ).toEqual({ n: 2 })
   })
 })
+
+/**
+ * Issue 280's remaining column: "cost rate, or `mixed` when it changed inside
+ * the period".
+ *
+ * The report knew the cost and the hours and never said which rate produced
+ * them. A payroll run pastes a rate into another system, so "which rate" is not
+ * a question the row should leave open.
+ */
+describe('the rate a payroll line was worked out at (#280)', () => {
+  const entry = (id: number, spentDate: string, seconds: number, rate: number | null) =>
+    sqlite!.exec(`
+      INSERT INTO time_entries (id, user_id, project_id, task_id, user_assignment_id,
+                                task_assignment_id, spent_date, seconds, seconds_without_timer,
+                                rounded_seconds, billable, cost_rate_cents, created_at, updated_at)
+        VALUES (${id}, 1, 1, 1, 1, 1, '${spentDate}', ${seconds}, ${seconds}, ${seconds}, 1,
+                ${rate === null ? 'NULL' : rate}, '${at}', '${at}')`)
+
+  const august = { from: '2026-08-01', to: '2026-08-31' }
+
+  it('[money] states the rate where it did not move', async () => {
+    const reports = await fixture()
+    entry(2, '2026-08-11', 3_600, 10_000)
+    const [row] = (await reports.contractorCost(august)).rows
+    expect(row).toMatchObject({
+      costRateCents: 10_000,
+      costRateIsMixed: false,
+      costCents: 20_000,
+    })
+  })
+
+  it('[money] says mixed rather than averaging a rate nobody agreed to', async () => {
+    const reports = await fixture()
+    // The fixture entry is at 100.00; this one is at 150.00.
+    entry(2, '2026-08-11', 3_600, 15_000)
+    const [row] = (await reports.contractorCost(august)).rows
+    // An average would read as a rate this person is paid, and they are not.
+    expect(row?.costRateCents).toBeNull()
+    expect(row?.costRateIsMixed).toBe(true)
+    // The cost is still exact -- each entry was costed at its own rate.
+    expect(row?.costCents).toBe(25_000)
+  })
+
+  it('[money] still names the rate when an entry simply has none', async () => {
+    // Not the same as the rate moving. The person is on one rate and an entry
+    // was logged without it, so "they are on 100.00 and one entry cannot be
+    // costed" is the useful answer -- more useful than a null that would read
+    // as though nobody knew what they were paid.
+    const reports = await fixture()
+    entry(2, '2026-08-11', 3_600, null)
+    const [row] = (await reports.contractorCost(august)).rows
+    expect(row).toMatchObject({
+      costRateCents: 10_000,
+      costRateIsMixed: false,
+      entriesWithoutRate: 1,
+      // The cost is still refused: a total that omitted those hours would look
+      // payable and underpay. The rate being knowable does not make it payable.
+      costCents: null,
+    })
+  })
+
+  it('[money] tells a moved rate apart from a missing one', async () => {
+    // Both are reasons a payroll line needs a person to look at it, and they
+    // need different people: one is a rate change to confirm, the other is an
+    // entry somebody forgot to rate.
+    const moved = await fixture()
+    entry(2, '2026-08-11', 3_600, 15_000)
+    const [movedRow] = (await moved.contractorCost(august)).rows
+    expect(movedRow).toMatchObject({ costRateIsMixed: true, entriesWithoutRate: 0 })
+
+    const missing = await fixture()
+    entry(2, '2026-08-11', 3_600, null)
+    const [missingRow] = (await missing.contractorCost(august)).rows
+    expect(missingRow).toMatchObject({ costRateIsMixed: false, entriesWithoutRate: 1 })
+  })
+
+  it('[money] stays mixed once it has moved, whatever follows', async () => {
+    const reports = await fixture()
+    entry(2, '2026-08-11', 3_600, 15_000)
+    // Back to the original rate. The period still contains two rates.
+    entry(3, '2026-08-12', 3_600, 10_000)
+    const [row] = (await reports.contractorCost(august)).rows
+    expect(row?.costRateIsMixed).toBe(true)
+    expect(row?.costRateCents).toBeNull()
+  })
+})

@@ -28267,6 +28267,8 @@
           "currency",
           "rounded_seconds",
           "cost_cents",
+          "cost_rate_cents",
+          "cost_rate_is_mixed",
           "entries_without_rate"
         ],
         "properties": {
@@ -28306,6 +28308,19 @@
                 "type": "null"
               }
             ]
+          },
+          "cost_rate_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cost_rate_is_mixed": {
+            "type": "boolean"
           },
           "entries_without_rate": {
             "type": "integer",
