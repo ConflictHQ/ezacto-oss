@@ -32,6 +32,13 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <div class="settings-table" data-settings-sender-identities hidden></div>
       <dl class="settings-facts" data-settings-email-reputation hidden></dl>
     </section>
+    <section class="settings-section" data-settings-section="payouts" data-settings-wise aria-labelledby="settings-wise-title" hidden>
+      <header><h2 id="settings-wise-title">Payouts</h2>
+      <p>Which Wise profile money leaves from, how many people it can currently pay, and whether Wise can tell this instance what became of a transfer. The token itself stays in the deployment; what is shown here is the state it produces.</p></header>
+      <p class="form-result" data-settings-wise-status role="status" aria-live="polite">Loading payout connection…</p>
+      <dl class="settings-facts" data-settings-wise-facts hidden></dl>
+      <p class="form-result settings-backup-alarm" data-settings-wise-alarm role="status" aria-live="polite" hidden></p>
+    </section>
     <section class="settings-section" data-settings-section="backup" aria-labelledby="settings-backup-title">
       <header><h2 id="settings-backup-title">Backups</h2>
       <p>When this instance last exported itself, and whether the last attempt worked. A backup nobody looks at is a backup nobody knows is broken, which is the state it stays in until it is needed.</p></header>

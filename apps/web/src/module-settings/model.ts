@@ -38,6 +38,25 @@ export type InstanceThemeView = {
   updated_at: string
 } | null
 
+/**
+ * What the payouts section shows.
+ *
+ * `webhooksVerifiable` is the one worth leading on. False is a connection that
+ * can send money and cannot be told what became of it -- Wise signs every
+ * delivery, and without the public key every one of them is refused. That is
+ * invisible from anywhere else: payouts still leave, and nothing ever says
+ * whether they landed.
+ */
+export interface WisePayoutConnection {
+  readonly configured: boolean
+  readonly connection: {
+    readonly profileId: string
+    readonly profileName: string | null
+    readonly payableRecipients: number
+    readonly webhooksVerifiable: boolean
+  } | null
+}
+
 export interface CompanySettingsApi {
   getTimeEntrySettings(signal?: AbortSignal): Promise<TimeEntrySettings>
   getTimeEntryNoteSettings(signal?: AbortSignal): Promise<TimeEntryNoteSettings>
@@ -52,6 +71,13 @@ export interface CompanySettingsApi {
    * backups are the operator's filesystem, where `RESTORE.md` is the contract.
    */
   getBackupStatus?(signal?: AbortSignal): Promise<BackupStatus>
+  /**
+   * The payout connection, as an operator meets it.
+   *
+   * Optional: a deployment without the Wise routes has no answer, and the
+   * section hides rather than showing an empty card.
+   */
+  getWiseConnection?(signal?: AbortSignal): Promise<WisePayoutConnection>
 
   /**
    * The QuickBooks connection. Optional for the same reason backups are: a
