@@ -74,6 +74,7 @@ const terms = (overrides: Record<string, unknown> = {}) => ({
   nextIssueOn: '2026-10-15',
   amountConfig: config,
   canDrawFromRetainerId: null,
+      claimsProjectIds: null,
   occurredAt: later,
   actorUserId: 1,
   ...overrides,

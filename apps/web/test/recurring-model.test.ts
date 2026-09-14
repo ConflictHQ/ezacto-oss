@@ -60,6 +60,7 @@ const definition = (overrides: Partial<RecurringInvoice> = {}): RecurringInvoice
     ],
   },
   can_draw_from_retainer_id: null,
+  claims_project_ids: null,
   created_at: timestamp,
   updated_at: timestamp,
   ...overrides,

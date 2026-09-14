@@ -5488,6 +5488,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "next_issue_on",
       "amount_config",
       "can_draw_from_retainer_id",
+      "claims_project_ids",
       "created_at",
       "updated_at",
     ],
@@ -5501,6 +5502,20 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       next_issue_on: dateSchema,
       amount_config: reference("RecurringAmountConfig"),
       can_draw_from_retainer_id: nullable(integerSchema),
+      /**
+       * The projects whose time this flat amount covers (#484).
+       *
+       * Null is the ordinary recurring invoice: a fixed amount that ignores
+       * tracked time. A non-empty list makes it a *banded* engagement -- the
+       * amount stays flat and the named projects' unbilled hours are claimed by
+       * it, so they stop reading as uninvoiced and cannot be billed twice.
+       *
+       * Without this field the whole model was unreachable: the engine has
+       * implemented it since 0060 and nothing could turn it on without a SQL
+       * statement, which is the same defect #485 catalogued as columns with no
+       * control.
+       */
+      claims_project_ids: nullable({ type: "array", items: integerSchema }),
       created_at: timestampSchema,
       updated_at: timestampSchema,
     },
@@ -5558,6 +5573,20 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       next_issue_on: dateSchema,
       amount_config: reference("RecurringAmountConfig"),
       can_draw_from_retainer_id: nullable(integerSchema),
+      /**
+       * The projects whose time this flat amount covers (#484).
+       *
+       * Null is the ordinary recurring invoice: a fixed amount that ignores
+       * tracked time. A non-empty list makes it a *banded* engagement -- the
+       * amount stays flat and the named projects' unbilled hours are claimed by
+       * it, so they stop reading as uninvoiced and cannot be billed twice.
+       *
+       * Without this field the whole model was unreachable: the engine has
+       * implemented it since 0060 and nothing could turn it on without a SQL
+       * statement, which is the same defect #485 catalogued as columns with no
+       * control.
+       */
+      claims_project_ids: nullable({ type: "array", items: integerSchema }),
     },
     additionalProperties: false,
   },

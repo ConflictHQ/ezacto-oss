@@ -27185,6 +27185,7 @@
           "next_issue_on",
           "amount_config",
           "can_draw_from_retainer_id",
+          "claims_project_ids",
           "created_at",
           "updated_at"
         ],
@@ -27224,6 +27225,20 @@
               {
                 "type": "integer",
                 "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "claims_project_ids": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                }
               },
               {
                 "type": "null"
@@ -27385,6 +27400,20 @@
               {
                 "type": "integer",
                 "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "claims_project_ids": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                }
               },
               {
                 "type": "null"
