@@ -76,6 +76,7 @@ const reports: ReportReader = {
     totals: [],
   }),
   // Not exercised here; present because ReportReader requires it.
+  monthEndManifest: async (input) => ({ periodStart: input.periodStart, periodEnd: input.periodEnd, items: [], excluded: [] }),
   bandedMonths: async (range) => ({ from: range.from, to: range.to, rows: [] }),
   profitability: async (range) => ({
     from: range.from,

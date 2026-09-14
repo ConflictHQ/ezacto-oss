@@ -100,6 +100,35 @@ export interface ProfitabilityReportRecord {
  * A band below cost is losing money and a band near list is barely a band, and
  * neither is visible from the invoice alone.
  */
+/**
+ * What a month-end pack would send, before anybody sends it.
+ *
+ * A preview rather than an action: the whole point of a pack is that somebody
+ * reads it and confirms, and a screen that could only run it would be a button
+ * with no way to check what the button does.
+ */
+export interface MonthEndItemRecord {
+  subjectType: string;
+  subjectId: number;
+  description: string;
+  amountCents?: number | null;
+  currency?: string | null;
+  target?: string | null;
+}
+
+export interface MonthEndExclusionRecord {
+  invoiceId: number;
+  number: string;
+  reason: string;
+}
+
+export interface MonthEndManifestRecord {
+  periodStart: string;
+  periodEnd: string;
+  items: readonly MonthEndItemRecord[];
+  excluded: readonly MonthEndExclusionRecord[];
+}
+
 export interface BandedMonthRowRecord {
   month: string;
   projectId: number;
@@ -416,6 +445,10 @@ export interface ReportReader {
   }): Promise<DetailedExpenseReportRecord>;
   profitability(range: Readonly<ReportDateRange>): Promise<ProfitabilityReportRecord>;
   bandedMonths(range: Readonly<ReportDateRange>): Promise<BandedMonthReportRecord>;
+  monthEndManifest(input: {
+    periodStart: string;
+    periodEnd: string;
+  }): Promise<MonthEndManifestRecord>;
   timeReport(range: Readonly<ReportDateRange>): Promise<TimeReportRecord>;
   detailedTime(filter: {
     from: string;
@@ -705,6 +738,29 @@ const serializeProfitability = (report: Readonly<ProfitabilityReportRecord>) => 
   previous_from: report.previousFrom,
   previous_to: report.previousTo,
   previous_totals: serializeProfitabilityTotals(report.previousTotals),
+});
+
+const serializeMonthEnd = (manifest: Readonly<MonthEndManifestRecord>) => ({
+  period_start: manifest.periodStart,
+  period_end: manifest.periodEnd,
+  items: manifest.items.map((item) => ({
+    subject_type: item.subjectType,
+    subject_id: item.subjectId,
+    description: item.description,
+    amount_cents: item.amountCents ?? null,
+    currency: item.currency ?? null,
+    // Where it would go. Null is an item with nowhere to send it, which is a
+    // different problem from an item that has not been sent.
+    target: item.target ?? null,
+  })),
+  // Carried beside the items rather than dropped: an operator looking at a
+  // pack of nine when they expected eleven needs to know which two, and what
+  // to do about it before next month.
+  excluded: manifest.excluded.map((exclusion) => ({
+    invoice_id: exclusion.invoiceId,
+    number: exclusion.number,
+    reason: exclusion.reason,
+  })),
 });
 
 const serializeBandedMonths = (report: Readonly<BandedMonthReportRecord>) => ({
@@ -1245,6 +1301,51 @@ export const installReportRoutes = <Bindings extends object>(
    * same reason: every row states a cost, and a figure derived from the cost is
    * the cost rearranged.
    */
+  /**
+   * The month-end pack, as a preview (issue 58).
+   *
+   * Nothing is created by reading it. The pack exists to be checked before it
+   * is run, and until now it could be computed and not seen.
+   */
+  api.get("/reports/month-end", async (context) => {
+    requireApiScope(context, "reports:read");
+    const principal = context.get("principal");
+    // Every item names an invoice and an amount, so this is the financial
+    // authority rather than the cost one: it states what would be billed, not
+    // what anybody costs.
+    //
+    // No profile reaches this branch today -- `reports:read` is exactly
+    // accounting, executive manager and administrator, and all three pass it.
+    // Written anyway, and said here rather than left to be found, for the same
+    // reason `serializeDetailedExpense` carries the identical branch: the day a
+    // profile is granted reports without billable money, the route that refuses
+    // is the one that stays right.
+    if (!canViewMoneyField(principal, "billable_rate")) {
+      throw new ApiError({
+        status: 403,
+        code: "profile_forbidden",
+        message: "The acting user profile cannot perform this operation.",
+      });
+    }
+    const parsed = rangeFrom(new URL(context.req.url), reportKeys);
+    assertFields(parsed.errors);
+    const manifest = await reports.monthEndManifest({
+      periodStart: parsed.range.from,
+      periodEnd: parsed.range.to,
+    });
+    return context.json(
+      {
+        data: serializeMonthEnd(manifest),
+        links: {
+          self:
+            new URL(context.req.url).pathname + new URL(context.req.url).search,
+        },
+      },
+      200,
+      { "cache-control": "no-store" },
+    );
+  });
+
   api.get("/reports/banded-months", async (context) => {
     requireApiScope(context, "reports:read");
     const principal = context.get("principal");
