@@ -415,6 +415,17 @@
   padding-top: 20px;
   border-top: 1px solid var(--ez-border);
 }
+.settings-payout form,
+.settings-payout-current {
+  display: grid;
+  gap: 12px;
+  max-width: 640px;
+}
+.settings-payout-current {
+  padding: 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+}
 .team-payout-current {
   max-width: 760px;
   margin-bottom: 28px;

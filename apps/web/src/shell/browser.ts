@@ -15,6 +15,11 @@ import { browserDensityStore, createDensityRuntime, type Density } from '../dens
 import { browserThemeStore, createThemeRuntime } from '../theme-preference.js'
 import { defaultTheme, themeManifest } from '../theme.js'
 import {
+  payoutFailure,
+  payoutSummary,
+  type PayoutDestinationState,
+} from '../payout.js'
+import {
   browserMoneyDisplayStore,
   createMoneyDisplayRuntime,
   moneyText,
@@ -1615,6 +1620,110 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
   }
 
+  /**
+   * Your own payout destination, on the one page that is yours (issues 421 and 543).
+   *
+   * The person page carries the same panel for accounting, but a member cannot
+   * read the team directory at all -- so without this, the person who actually
+   * has the Wisetag had nowhere to enter it and somebody else had to do it for
+   * them. Which is the opposite of asking them to share it.
+   */
+  const wireUserPayout = (identity: Readonly<Whoami>): void => {
+    const section = document.querySelector<HTMLElement>('[data-settings-payout]')
+    const read = api.getWisePayoutDestination
+    if (section === null || read === undefined) return
+    const status = required<HTMLElement>('[data-settings-payout-status]')
+    const unconfigured = required<HTMLElement>('[data-settings-payout-unconfigured]')
+    const current = required<HTMLElement>('[data-settings-payout-current]')
+    const summary = required<HTMLElement>('[data-settings-payout-summary]')
+    const unverified = required<HTMLElement>('[data-settings-payout-unverified]')
+    const remove = required<HTMLButtonElement>('[data-settings-payout-remove]')
+    const form = required<HTMLFormElement>('[data-settings-payout-form]')
+    const result = required<HTMLElement>('[data-settings-payout-result]')
+    const submit = required<HTMLButtonElement>('[data-settings-payout-submit]')
+    section.hidden = false
+
+    const paint = (state: PayoutDestinationState): void => {
+      unconfigured.hidden = state.configured
+      const destination = state.destination
+      current.hidden = destination === null
+      form.hidden = destination !== null || !state.configured
+      if (destination === null) {
+        status.textContent = state.configured
+          ? 'Nobody has been told where to pay you yet.'
+          : ''
+        return
+      }
+      status.textContent = ''
+      summary.textContent = payoutSummary(destination)
+      // Unverified means Wise never confirmed the identifier resolves, and
+      // paying against that is the failure the store exists to prevent.
+      unverified.hidden = destination.verifiedAt !== null
+    }
+
+    const reload = async (): Promise<void> => {
+      try {
+        paint(await read(identity.user_id))
+      } catch {
+        // Its own line, in its own section. A payout destination that will not
+        // load is not a reason to take the rest of the settings page down.
+        status.textContent = 'Your payout destination could not be loaded.'
+      }
+    }
+
+    const share = api.shareWiseProfile
+    form.addEventListener('submit', (event) => {
+      event.preventDefault()
+      if (share === undefined) return
+      const data = new FormData(form)
+      const identifier = String(data.get('identifier') ?? '').trim()
+      const currency = String(data.get('currency') ?? '').trim().toUpperCase()
+      if (identifier === '' || !/^[A-Za-z]{3}$/u.test(currency)) {
+        result.textContent = 'Enter your Wisetag, email or phone, and a three-letter currency.'
+        return
+      }
+      submit.disabled = true
+      result.textContent = 'Asking Wise…'
+      void (async () => {
+        try {
+          const shared = await share({ userId: identity.user_id, identifier, currency })
+          // Wise's own answer for whose profile that is. Shown back because a
+          // mistyped tag that resolves resolves to somebody else.
+          result.textContent =
+            shared.name === null
+              ? 'Payout destination saved.'
+              : `Payout destination saved: Wise says that is ${shared.name}.`
+          form.reset()
+          await reload()
+        } catch (error) {
+          result.textContent = payoutFailure(error)
+        } finally {
+          submit.disabled = false
+        }
+      })()
+    })
+
+    const detach = api.removeWisePayoutDestination
+    remove.addEventListener('click', () => {
+      if (detach === undefined) return
+      remove.disabled = true
+      result.textContent = 'Removing…'
+      void (async () => {
+        try {
+          await detach(identity.user_id)
+          result.textContent = 'Payout destination removed.'
+          await reload()
+        } catch (error) {
+          result.textContent = payoutFailure(error)
+        } finally {
+          remove.disabled = false
+        }
+      })()
+    })
+
+    void reload()
+  }
+
   const renderUserSettings = (identity: Readonly<Whoami>): void => {
     revealCompanySettings(identity)
     const facts = document.querySelector<HTMLElement>('[data-settings-user-facts]')
@@ -1639,6 +1748,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     )
     facts.hidden = false
     settingsStatus.textContent = ''
+    wireUserPayout(identity)
   }
 
   const handleSessionFailure = (
