@@ -55,10 +55,19 @@ describe('invoice subject names the invoice number', () => {
     // Verification and password-reset mail names no invoice, so the migration
     // must not have touched them -- a migration that rewrites more than it
     // claims is the one nobody reviews closely enough.
+    //
+    // Asserted on what those templates say rather than on their version
+    // number. The version was a proxy for "0046 did not touch this", and it
+    // stopped meaning that the moment another migration touched them for an
+    // unrelated reason -- 0072 gives every kind an HTML part. The claim here is
+    // about invoice wording, so that is what it reads.
     const auth = (await heads()).filter((t) => t.kind.startsWith('auth_'))
     expect(auth).toHaveLength(2)
     for (const template of auth) {
-      expect(template.version, template.kind).toBe(1)
+      for (const field of [template.subject, template.body]) {
+        expect(field, template.kind).not.toContain('%invoice_number%')
+        expect(field, template.kind).not.toContain('%invoice_id%')
+      }
     }
   }, 30_000)
 })
