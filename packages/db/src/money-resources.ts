@@ -367,6 +367,16 @@ export interface RecurringInvoiceResource {
    * reading as uninvoiced and cannot be billed twice.
    */
   claims_project_ids: readonly number[] | null
+  /**
+   * How much of the period the band takes (#707).
+   *
+   * `all` takes every unbilled hour on those projects up to the issue date.
+   * `ceiling` takes the oldest hours up to `claim_ceiling_seconds` and leaves
+   * the rest to be billed as ordinary time and materials.
+   */
+  claim_mode: 'all' | 'ceiling'
+  /** Set exactly when the mode is `ceiling`; the schema refuses either alone. */
+  claim_ceiling_seconds: number | null
   created_at: string
   updated_at: string
 }
@@ -385,6 +395,9 @@ export interface RecurringInvoiceInput {
   canDrawFromRetainerId: number | null
   /** See `claims_project_ids` above. Null for an ordinary definition. */
   claimsProjectIds: readonly number[] | null
+  /** Defaults to `all`, which is the behaviour every band had before #707. */
+  claimMode?: 'all' | 'ceiling'
+  claimCeilingSeconds?: number | null
   occurredAt: string
 }
 
@@ -959,7 +972,8 @@ export type CompleteRecurringOutcome =
 
 const recurringSelect = `SELECT id, client_id, subject_template, notes_template,
   every_n_months, day_of_month, next_issue_on, amount_config,
-  can_draw_from_retainer_id, claims_project_ids, created_at, updated_at
+  can_draw_from_retainer_id, claims_project_ids, claim_mode, claim_ceiling_seconds,
+  created_at, updated_at
   FROM recurring_invoices
   WHERE definition_status = 'complete'`
 
@@ -2061,8 +2075,10 @@ export class MoneyResourceRepository {
         can_draw_from_retainer_id: input.canDrawFromRetainerId,
         // In the fingerprint, or two definitions differing only in what they
         // claim would share a command identity and the second would replay as
-        // the first.
+        // the first. The mode and its ceiling are part of "what they claim".
         claims_project_ids: input.claimsProjectIds,
+        claim_mode: input.claimMode ?? 'all',
+        claim_ceiling_seconds: input.claimCeilingSeconds ?? null,
       },
     })
     const expected = {
@@ -2083,6 +2099,8 @@ export class MoneyResourceRepository {
       amount_config: input.amountConfig,
       can_draw_from_retainer_id: input.canDrawFromRetainerId,
       claims_project_ids: input.claimsProjectIds,
+      claim_mode: input.claimMode ?? 'all',
+      claim_ceiling_seconds: input.claimCeilingSeconds ?? null,
       created_at: input.occurredAt,
       updated_at: input.occurredAt,
     }
@@ -2092,8 +2110,9 @@ export class MoneyResourceRepository {
           text: `INSERT INTO recurring_invoices (
             id, client_id, definition_status, subject_template, notes_template,
             every_n_months, day_of_month, next_issue_on, amount_config,
-            can_draw_from_retainer_id, claims_project_ids, created_at, updated_at
-          ) VALUES (?, ?, 'complete', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            can_draw_from_retainer_id, claims_project_ids,
+            claim_mode, claim_ceiling_seconds, created_at, updated_at
+          ) VALUES (?, ?, 'complete', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           params: [
             input.resourceId,
             input.clientId,
@@ -2105,6 +2124,8 @@ export class MoneyResourceRepository {
             JSON.stringify(input.amountConfig),
             input.canDrawFromRetainerId,
             input.claimsProjectIds === null ? null : JSON.stringify(input.claimsProjectIds),
+            input.claimMode ?? 'all',
+            input.claimCeilingSeconds ?? null,
             input.occurredAt,
             input.occurredAt,
           ],

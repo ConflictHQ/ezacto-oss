@@ -92,6 +92,16 @@ interface StoredDefinition {
   attachmentPolicy: string | null
   /** JSON array of project ids whose unbilled time this flat amount consumes. */
   claimsProjectIds: string | null
+  /**
+   * How much of the period the band takes (#707).
+   *
+   * `all` is the #484 behaviour: every unbilled hour on those projects up to
+   * the issue date. `ceiling` takes the oldest hours up to
+   * `claimCeilingSeconds` and leaves the rest unbilled, to be billed as
+   * ordinary time and materials.
+   */
+  claimMode: string | null
+  claimCeilingSeconds: number | null
   canDrawFromRetainerId: number | null
 }
 
@@ -357,6 +367,7 @@ export const createRecurringInvoiceEngine = (
           next_issue_on AS "nextIssueOn", amount_config AS "amountConfig",
           attachment_policy AS "attachmentPolicy",
           claims_project_ids AS "claimsProjectIds",
+          claim_mode AS "claimMode", claim_ceiling_seconds AS "claimCeilingSeconds",
           can_draw_from_retainer_id AS "canDrawFromRetainerId"
         FROM recurring_invoices WHERE id = ?`,
       params: [definitionId],
@@ -696,29 +707,64 @@ export const createRecurringInvoiceEngine = (
     // week or leaves one stranded. "Whatever the band has not covered yet" needs
     // no such guess and cannot strand anything.
     if (definition.claimsProjectIds !== null) {
-      statements.push({
-        text: `UPDATE time_entries SET invoice_id = ?
-          WHERE invoice_id IS NULL AND billable = 1
+      // What a band may take, before any ceiling narrows it.
+      const eligible = `invoice_id IS NULL AND billable = 1
             AND timer_started_at IS NULL
             AND NOT (started_time IS NOT NULL AND ended_time IS NULL)
             AND spent_date <= ?
             AND project_id IN (
               SELECT CAST(member.value AS INTEGER) FROM json_each(?) member
-            )
-            AND EXISTS (
+            )`
+      const pending = `EXISTS (
               SELECT 1 FROM invoice_command_ledger command
               WHERE command.invoice_id = ? AND command.command_id = ?
                 AND command.command_kind = 'recurring.generate'
                 AND command.completed = 0
-            )`,
-        params: [
-          invoiceId,
-          issueDate,
-          definition.claimsProjectIds,
-          invoiceId,
-          commandId,
-        ],
-      })
+            )`
+      statements.push(
+        definition.claimMode === 'ceiling' && definition.claimCeilingSeconds !== null
+          ? {
+              // Oldest first, and only while the running total is still inside
+              // the ceiling. An entry that would straddle it is left out whole:
+              // half a time entry has one rate, one person and one approval
+              // state, and splitting one would invent a row nobody tracked.
+              //
+              // `ORDER BY spent_date, id` is the ordering that survives a
+              // re-run. Anything depending on insertion order would claim a
+              // different subset the second time, and a band whose claimed
+              // hours move between attempts is one nobody can reconcile.
+              text: `UPDATE time_entries SET invoice_id = ?
+          WHERE id IN (
+            SELECT id FROM (
+              SELECT id, sum(coalesce(rounded_seconds, seconds)) OVER (
+                ORDER BY spent_date, id ROWS UNBOUNDED PRECEDING
+              ) AS running
+              FROM time_entries WHERE ${eligible}
+            ) WHERE running <= ?
+          )
+            AND ${pending}`,
+              params: [
+                invoiceId,
+                issueDate,
+                definition.claimsProjectIds,
+                definition.claimCeilingSeconds,
+                invoiceId,
+                commandId,
+              ],
+            }
+          : {
+              text: `UPDATE time_entries SET invoice_id = ?
+          WHERE ${eligible}
+            AND ${pending}`,
+              params: [
+                invoiceId,
+                issueDate,
+                definition.claimsProjectIds,
+                invoiceId,
+                commandId,
+              ],
+            },
+      )
 
       // What the band absorbed: billable value delivered and never charged.
       // Deliberately not `written_off_cents` -- that is settlement, and this

@@ -932,6 +932,110 @@ for (const [runtime, factory] of factories) {
       expect(loose[0]!.n).toBe(0)
     })
 
+    it('[money] a ceiling claims the oldest hours and leaves the rest billable', async () => {
+      // The deal #707 describes: the band covers work up to a point and the
+      // rest is ordinary time and materials on the same project. 50 hours of
+      // ceiling against 75 tracked -- the first two entries fit, the third does
+      // not and stays billable rather than being absorbed.
+      database = await factory()
+      await seedDatabase(database)
+      await claimable(database, [
+        { seconds: 90_000, rateCents: 25_000, spentDate: '2026-08-05' },
+        { seconds: 90_000, rateCents: 25_000, spentDate: '2026-08-12' },
+        { seconds: 90_000, rateCents: 25_000, spentDate: '2026-08-19' },
+      ])
+      const definition = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({ nextIssueOn: '2026-09-10', dayOfMonth: 10 }),
+      )
+      await database.run(
+        `UPDATE recurring_invoices SET claims_project_ids = '[1]',
+           claim_mode = 'ceiling', claim_ceiling_seconds = 180000 WHERE id = ?`,
+        definition.id,
+      )
+
+      const result = await createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-09-10T10:00:00.000Z',
+      }).generate(definition.id, '2026-09-10', principal)
+
+      const claimed = await database.rows<{ spent_date: string }>(
+        `SELECT spent_date FROM time_entries WHERE invoice_id = ? ORDER BY spent_date`,
+        result.invoiceId,
+      )
+      expect(claimed.map((row) => row.spent_date)).toEqual(['2026-08-05', '2026-08-12'])
+      // The overflow is still billable work, not something the band swallowed.
+      const loose = await database.rows<{ spent_date: string }>(
+        `SELECT spent_date FROM time_entries WHERE invoice_id IS NULL`,
+      )
+      expect(loose.map((row) => row.spent_date)).toEqual(['2026-08-19'])
+    })
+
+    it('[money] leaves an entry that would straddle the ceiling out whole', async () => {
+      // Half a time entry has one rate, one person and one approval state.
+      // Splitting one would invent a row nobody tracked, so an entry that does
+      // not fit is left out entirely -- the band claims less than its ceiling.
+      database = await factory()
+      await seedDatabase(database)
+      await claimable(database, [
+        { seconds: 90_000, rateCents: 25_000, spentDate: '2026-08-05' },
+        { seconds: 90_000, rateCents: 25_000, spentDate: '2026-08-12' },
+      ])
+      const definition = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({ nextIssueOn: '2026-09-10', dayOfMonth: 10 }),
+      )
+      // 30 hours of ceiling against two 25-hour entries: the second overshoots.
+      await database.run(
+        `UPDATE recurring_invoices SET claims_project_ids = '[1]',
+           claim_mode = 'ceiling', claim_ceiling_seconds = 108000 WHERE id = ?`,
+        definition.id,
+      )
+
+      const result = await createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-09-10T10:00:00.000Z',
+      }).generate(definition.id, '2026-09-10', principal)
+
+      const claimed = await database.rows<{ n: number }>(
+        `SELECT count(*) AS n FROM time_entries WHERE invoice_id = ?`,
+        result.invoiceId,
+      )
+      expect(claimed[0]!.n).toBe(1)
+    })
+
+    it('[money] claims the same entries on a re-run, not a different subset', async () => {
+      // Oldest-first by spent date and id is the ordering that survives a
+      // retry. A band whose claimed hours move between attempts is one nobody
+      // can reconcile, so this pins the ordering rather than the count.
+      database = await factory()
+      await seedDatabase(database)
+      await claimable(database, [
+        { seconds: 90_000, rateCents: 25_000, spentDate: '2026-08-19' },
+        { seconds: 90_000, rateCents: 25_000, spentDate: '2026-08-05' },
+        { seconds: 90_000, rateCents: 25_000, spentDate: '2026-08-12' },
+      ])
+      const definition = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({ nextIssueOn: '2026-09-10', dayOfMonth: 10 }),
+      )
+      await database.run(
+        `UPDATE recurring_invoices SET claims_project_ids = '[1]',
+           claim_mode = 'ceiling', claim_ceiling_seconds = 180000 WHERE id = ?`,
+        definition.id,
+      )
+
+      const result = await createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-09-10T10:00:00.000Z',
+      }).generate(definition.id, '2026-09-10', principal)
+
+      // Seeded out of date order on purpose: the two earliest dates are taken,
+      // not the two lowest ids.
+      const claimed = await database.rows<{ spent_date: string }>(
+        `SELECT spent_date FROM time_entries WHERE invoice_id = ? ORDER BY spent_date`,
+        result.invoiceId,
+      )
+      expect(claimed.map((row) => row.spent_date)).toEqual(['2026-08-05', '2026-08-12'])
+    })
+
     it('[money] a definition that claims nothing behaves exactly as before', async () => {
       // The whole feature is inert until somebody names a project. Every existing
       // definition is this one.
