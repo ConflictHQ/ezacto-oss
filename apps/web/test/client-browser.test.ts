@@ -975,3 +975,71 @@ describe('billing a client through BILL (issue 542)', () => {
     ).not.toBe('')
   })
 })
+
+describe('putting a client in another currency (#522)', () => {
+  it('[money] loads the client’s currency into the form and saves it back', async () => {
+    // The one piece #522 called small and real: a column with no control that
+    // writes it means an operator cannot move a client to EUR without a
+    // terminal. Every report and every invoice groups on this value.
+    writeDocument()
+    const updateDirectoryClient = vi.fn(async (_id: number, input: Record<string, unknown>) => ({
+      ...child,
+      ...input,
+    }))
+    const controller = createClientDirectoryController({
+      listDirectoryClients: async () => page([parent, child]),
+      getDirectoryClient: async () => child,
+      listClientContacts: async () => page([contact]),
+      listClientProjects: async () => page([project]),
+      updateDirectoryClient,
+      createDirectoryClient: vi.fn(),
+      createClientContact: vi.fn(),
+      updateClientContact: vi.fn(),
+    })
+
+    await controller.activate(administrator, new AbortController().signal, () => false)
+    document.querySelector<HTMLButtonElement>('[data-client-edit]')!.click()
+    const form = document.querySelector<HTMLFormElement>('[data-client-form]')!
+    const currency = form.elements.namedItem('currency') as HTMLInputElement
+    // Populated, not blank: a form that opens empty and saves is a form that
+    // silently clears whatever was there.
+    expect(currency.value).toBe('USD')
+
+    currency.value = 'eur'
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() => expect(updateDirectoryClient).toHaveBeenCalledTimes(1))
+    // Upper-cased on the way out. Migration 0059 made the canonical form a
+    // check, and 'eur' fails it.
+    expect(updateDirectoryClient.mock.calls[0]![1]).toMatchObject({ currency: 'EUR' })
+  })
+
+  it('[money] leaves the currency alone rather than clearing it when blank', async () => {
+    // A client whose currency is not in the form's reach must keep the one it
+    // has. Sending null here would move every invoice it groups.
+    writeDocument()
+    const updateDirectoryClient = vi.fn(async (_id: number, input: Record<string, unknown>) => ({
+      ...child,
+      ...input,
+    }))
+    const controller = createClientDirectoryController({
+      listDirectoryClients: async () => page([parent, child]),
+      getDirectoryClient: async () => child,
+      listClientContacts: async () => page([contact]),
+      listClientProjects: async () => page([project]),
+      updateDirectoryClient,
+      createDirectoryClient: vi.fn(),
+      createClientContact: vi.fn(),
+      updateClientContact: vi.fn(),
+    })
+
+    await controller.activate(administrator, new AbortController().signal, () => false)
+    document.querySelector<HTMLButtonElement>('[data-client-edit]')!.click()
+    const form = document.querySelector<HTMLFormElement>('[data-client-form]')!
+    ;(form.elements.namedItem('currency') as HTMLInputElement).value = '   '
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() => expect(updateDirectoryClient).toHaveBeenCalledTimes(1))
+    expect(updateDirectoryClient.mock.calls[0]![1]).not.toHaveProperty('currency')
+  })
+})
