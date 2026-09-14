@@ -31,12 +31,35 @@ const isProxyAssertion = (error: unknown): error is Error =>
   error.name === 'AssertionError' &&
   error.message.includes(MINIFLARE_BARE_ASSERTION)
 
-const describeCall = (method: string, args: readonly unknown[]): string => {
+/**
+ * One call in the chain, kept unformatted.
+ *
+ * Deliberately not a string. Every statement in every D1 test passes through
+ * here, and normalising SQL that will almost always be discarded put a regex
+ * over the whole query text on the happy path -- enough, in the full suite, to
+ * push the two heaviest D1 tests past their timeout. The frame is two fields
+ * and the words are only spelled out when something actually failed.
+ */
+interface Frame {
+  readonly method: string
+  readonly args: readonly unknown[]
+}
+
+const describeFrame = ({ method, args }: Frame): string => {
   const first = args[0]
   const sql = typeof first === 'string' ? first.replace(/\s+/gu, ' ').trim() : null
   return sql === null
     ? method
     : `${method}(${sql.length > 120 ? `${sql.slice(0, 119)}…` : sql})`
+}
+
+const describeChain = (frames: readonly Frame[]): string => {
+  const [first, ...rest] = frames
+  if (first === undefined) return 'an unnamed call'
+  // The statement text arrives at `prepare` and the failure surfaces two calls
+  // later on `run`, so the first frame is spelled out in full and the rest are
+  // named. Without the chain this says `run()` and nothing about which query.
+  return [describeFrame(first), ...rest.map(({ method }) => method)].join(' → ')
 }
 
 const annotate = (error: Error, call: string): Error => {
@@ -55,34 +78,33 @@ const annotate = (error: Error, call: string): Error => {
  * Wraps `prepare` and the statement it returns, because those are where the
  * round trips are; everything else is passed straight through.
  */
-export const withD1Diagnostics = <T extends object>(database: T, inherited = ''): T =>
+export const withD1Diagnostics = <T extends object>(
+  database: T,
+  inherited: readonly Frame[] = [],
+): T =>
   new Proxy(database, {
     get(target, property, receiver) {
       const value = Reflect.get(target, property, receiver) as unknown
       if (typeof value !== 'function') return value
       const method = String(property)
       return (...args: unknown[]) => {
-        // The statement text arrives at `prepare` and the failure surfaces two
-        // calls later on `run`, so the description is carried down the chain.
-        // Without that this names `run()` and says nothing about which query.
-        const own = describeCall(method, args)
-        const call = inherited === '' ? own : `${inherited} → ${method}`
+        const frames = [...inherited, { method, args }]
         const run = (): unknown => (value as (...rest: unknown[]) => unknown).apply(target, args)
         try {
           const result = run()
           if (result instanceof Promise) {
             return result.catch((error: unknown) => {
-              throw isProxyAssertion(error) ? annotate(error, call) : error
+              throw isProxyAssertion(error) ? annotate(error, describeChain(frames)) : error
             })
           }
           // `prepare` and `bind` answer synchronously and return another stub,
           // so the wrap has to follow them or the failure lands unnamed on the
           // call after this one.
           return typeof result === 'object' && result !== null
-            ? withD1Diagnostics(result as object, call)
+            ? withD1Diagnostics(result as object, frames)
             : result
         } catch (error) {
-          throw isProxyAssertion(error) ? annotate(error, call) : error
+          throw isProxyAssertion(error) ? annotate(error, describeChain(frames)) : error
         }
       }
     },
