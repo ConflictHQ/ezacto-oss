@@ -558,4 +558,109 @@ describe('ez backup / restore / verify', () => {
     const verifyResult = await verifyBackup(backup.bundleDirectory)
     expect(verifyResult.valid).toBe(true)
   })
+
+  /**
+   * Issue 40's second acceptance: the drill result recorded as a first-class
+   * activity event.
+   *
+   * `backup.restored` has been a defined event type since the activity log was
+   * built, with nothing producing one. A backup nobody restored is a rumour,
+   * and a restore nobody recorded is the same rumour with the evidence
+   * overwritten -- a restore replaces the instance that would have remembered.
+   */
+  it('[api] writes backup.restored into the database it just restored', async () => {
+    // Its own source database rather than the shared fixture: other tests in
+    // this file count that fixture's tables against the manifest, and adding
+    // two would move their numbers. Editing the bundle afterwards is not an
+    // option either -- the restore verifies the manifest checksum first, which
+    // is the guard working.
+    const sourcePath = join(directory, 'announce-source.sqlite')
+    const source = new BetterSqlite3(sourcePath)
+    source.exec(`
+      CREATE TABLE event_outbox (
+        id TEXT PRIMARY KEY, aggregate_type TEXT NOT NULL, aggregate_id INTEGER NOT NULL,
+        aggregate_sequence INTEGER NOT NULL, event_type TEXT NOT NULL,
+        payload_json TEXT NOT NULL, occurred_at TEXT NOT NULL, available_at TEXT NOT NULL);
+      CREATE TABLE activity_log (
+        event_id TEXT PRIMARY KEY REFERENCES event_outbox(id), recorded_at TEXT NOT NULL)`)
+    source.close()
+
+    const backup = await createBackup({
+      databasePath: sourcePath,
+      outputDirectory: join(directory, 'announce-bundle'),
+      now: new Date('2026-08-30T12:00:00.000Z'),
+    })
+    const restoredDbPath = join(directory, 'announced.sqlite')
+    const result = await restoreBackup({
+      bundleDirectory: backup.bundleDirectory,
+      targetDatabasePath: restoredDbPath,
+      restoredAt: '2026-08-31T09:00:00.000Z',
+    })
+    expect(result.activityEventId).not.toBeNull()
+
+    const restored = new BetterSqlite3(restoredDbPath)
+    try {
+      const event = restored
+        .prepare(
+          `SELECT event_type, aggregate_type, occurred_at, payload_json
+             FROM event_outbox WHERE id = ?`,
+        )
+        .get(result.activityEventId) as {
+        event_type: string
+        aggregate_type: string
+        occurred_at: string
+        payload_json: string
+      }
+      expect(event.event_type).toBe('backup.restored')
+      expect(event.aggregate_type).toBe('backup_restore')
+      expect(event.occurred_at).toBe('2026-08-31T09:00:00.000Z')
+
+      const payload = JSON.parse(event.payload_json) as {
+        actor: { type: string }
+        backup_restore: { database_sha256: string }
+      }
+      // No actor id. A restore is run from a shell by whoever holds the bundle,
+      // and naming a user we never authenticated would credit the wrong person
+      // with replacing an entire instance.
+      expect(payload.actor).toEqual({ type: 'system' })
+      // The bundle it came from, so the row answers "restored from what".
+      expect(payload.backup_restore.database_sha256).toBe(backup.manifest.database_sha256)
+
+      // Selected into the activity log, not merely emitted: an event only a
+      // subscriber can see is not on the Activity screen, which is where
+      // somebody asks what happened to this instance.
+      expect(
+        restored
+          .prepare(`SELECT count(*) AS n FROM activity_log WHERE event_id = ?`)
+          .get(result.activityEventId),
+      ).toEqual({ n: 1 })
+    } finally {
+      restored.close()
+    }
+  })
+
+  it('[unit] restores a bundle whose database predates the activity log', async () => {
+    // A restore that succeeded and could not announce itself is still a
+    // restore. Failing here would leave a correctly restored database that the
+    // command reports as broken.
+    const backup = await createBackup({
+      databasePath,
+      attachmentDirectory,
+      outputDirectory: directory,
+      now: new Date('2026-08-30T12:00:00.000Z'),
+    })
+    const bundleDb = new BetterSqlite3(join(backup.bundleDirectory, 'db.sqlite'))
+    bundleDb.exec('DROP TABLE IF EXISTS activity_log; DROP TABLE IF EXISTS event_outbox')
+    bundleDb.close()
+
+    const target = join(directory, 'legacy.sqlite')
+    const result = await restoreBackup({
+      bundleDirectory: backup.bundleDirectory,
+      targetDatabasePath: target,
+      targetAttachmentDirectory: join(directory, 'legacy-attachments'),
+      restoredAt: '2026-08-31T09:00:00.000Z',
+    })
+    expect(result.activityEventId).toBeNull()
+    expect(result.tablesRestored).toBe(backup.manifest.tables.length)
+  })
 })

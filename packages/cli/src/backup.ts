@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   copyFile,
   mkdir,
@@ -296,12 +296,98 @@ export interface RestoreOptions {
   bundleDirectory: string
   targetDatabasePath: string
   targetAttachmentDirectory?: string | undefined
+  /** Injected so a test can state the instant rather than tolerate `now`. */
+  restoredAt?: string | undefined
+}
+
+/**
+ * Writes the restore into the restored instance's own activity log (issue 40).
+ *
+ * Synchronous and direct rather than through the capture helper in `@ezacto/db`:
+ * this package does not depend on that one, and the row it needs is two inserts
+ * -- the event, and the `activity_log` selection row that makes it visible on
+ * the Activity screen rather than only to a subscriber.
+ *
+ * Returns null rather than throwing where the bundle predates those tables. A
+ * restore that succeeded and could not be announced is still a restore, and
+ * failing here would leave a correctly restored database that the command
+ * reports as broken.
+ */
+const recordRestoreActivity = (
+  targetDatabasePath: string,
+  detail: {
+    manifest: BackupManifest
+    tablesRestored: number
+    totalRows: number
+    attachmentsRestored: number
+    restoredAt: string
+  },
+): string | null => {
+  const database = new BetterSqlite3(targetDatabasePath)
+  try {
+    const hasTables = database
+      .prepare(
+        `SELECT count(*) AS n FROM sqlite_master
+         WHERE type = 'table' AND name IN ('event_outbox', 'activity_log')`,
+      )
+      .get() as { n: number }
+    if (hasTables.n !== 2) return null
+
+    const eventId = randomUUID()
+    const payload = JSON.stringify({
+      schema_version: 1,
+      event_id: eventId,
+      event_type: 'backup.restored',
+      occurred_at: detail.restoredAt,
+      aggregate: { type: 'backup_restore', id: 1, sequence: 1 },
+      // No actor id. A restore is run from a shell by whoever holds the bundle,
+      // and naming a user id we did not authenticate would credit the wrong
+      // person for replacing an entire instance.
+      actor: { type: 'system' },
+      backup_restore: {
+        created_at: detail.manifest.created_at,
+        database_sha256: detail.manifest.database_sha256,
+        tables_restored: detail.tablesRestored,
+        total_rows: detail.totalRows,
+        attachments_restored: detail.attachmentsRestored,
+      },
+    })
+
+    database
+      .prepare(
+        `INSERT INTO event_outbox (
+           id, aggregate_type, aggregate_id, aggregate_sequence, event_type,
+           payload_json, occurred_at, available_at
+         )
+         SELECT ?, 'backup_restore', 1, coalesce(max(aggregate_sequence), 0) + 1,
+           'backup.restored', ?, ?, ?
+         FROM event_outbox WHERE aggregate_type = 'backup_restore' AND aggregate_id = 1`,
+      )
+      .run(eventId, payload, detail.restoredAt, detail.restoredAt)
+    database
+      .prepare(`INSERT INTO activity_log (event_id, recorded_at) VALUES (?, ?)`)
+      .run(eventId, detail.restoredAt)
+    return eventId
+  } finally {
+    database.close()
+  }
 }
 
 export interface RestoreResult {
   tablesRestored: number
   totalRows: number
   attachmentsRestored: number
+  /**
+   * The activity event id written into the restored database, or null where the
+   * bundle predates the activity log (issue 40).
+   *
+   * A restore is the one operation that replaces an instance wholesale, and it
+   * was the only one of its kind the log could not answer for: `backup.restored`
+   * has been a defined event type with nothing producing it. A backup nobody
+   * restored is a rumour, and a restore nobody recorded is the same rumour with
+   * the evidence overwritten.
+   */
+  activityEventId: string | null
 }
 
 /**
@@ -393,10 +479,22 @@ export const restoreBackup = async (
     }
   }
 
+  // Recorded into the database that was just restored, not the one it came
+  // from: the restored instance is the one that will be asked where it came
+  // from, and the source may not exist any more.
+  const activityEventId = recordRestoreActivity(options.targetDatabasePath, {
+    manifest,
+    tablesRestored: manifest.tables.length,
+    totalRows,
+    attachmentsRestored,
+    restoredAt: options.restoredAt ?? new Date().toISOString(),
+  })
+
   return {
     tablesRestored: manifest.tables.length,
     totalRows,
     attachmentsRestored,
+    activityEventId,
   }
 }
 
