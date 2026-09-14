@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
+import { asSnapshotSource, type SnapshotSource } from './snapshot-source.js'
 import { mkdir, open, readFile, readdir, rename, rm, stat } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { createInterface } from 'node:readline'
@@ -187,20 +188,27 @@ interface RawChunk {
   nextByteOffset: number
 }
 
+/**
+ * Reads a chunk of one resource, from wherever the snapshot lives (issue 409).
+ *
+ * Takes a source rather than a directory so a load can be driven from the
+ * platform against R2 instead of the operator's own disk. A string is still
+ * accepted and means the filesystem, which is why the loader's own call sites
+ * are unchanged -- widening this one function was the whole of it, because the
+ * byte offset it resumes from is the only thing either source has to honour.
+ */
 const rawChunkFrom = async (
-  snapshotDir: string,
+  snapshotDir: SnapshotSource | string,
   resource: string,
   byteOffset: number,
   rowOffset: number,
   limit: number,
 ): Promise<RawChunk> => {
-  const path = join(snapshotDir, 'raw', `${resource}.jsonl`)
+  const source = asSnapshotSource(snapshotDir)
+  const path = source.describe(resource)
   const rows: RawRow[] = []
   let nextByteOffset = byteOffset
-  const lines = createInterface({
-    input: createReadStream(path, byteOffset === 0 ? undefined : { start: byteOffset }),
-    crlfDelay: Infinity,
-  })
+  const lines = source.openRaw(resource, byteOffset)
   try {
     for await (const line of lines) {
       nextByteOffset += Buffer.byteLength(line, 'utf8') + 1
@@ -219,13 +227,15 @@ const rawChunkFrom = async (
       if (rows.length >= limit) break
     }
   } finally {
-    lines.close()
+    // Both sources are async iterables; closing is the iterator protocol's
+    // business, and a readline interface left open would hold the descriptor.
+    await lines[Symbol.asyncIterator]().return?.(undefined)
   }
   return { rows, nextByteOffset }
 }
 
 const findRawRowById = async (
-  snapshotDir: string,
+  snapshotDir: SnapshotSource | string,
   resource: string,
   total: number,
   targetId: number,
