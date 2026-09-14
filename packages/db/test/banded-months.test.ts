@@ -82,6 +82,18 @@ const band = (amountCents: number, foregoneCents: number) =>
       VALUES (900, 0, 'Service', 'Banded team', 1, ${amountCents}, ${amountCents},
               '${at}', '${at}')`)
 
+/** A second invoice, in a currency the band is not billed in. */
+const foreignBand = (amountCents: number) =>
+  sqlite!.exec(`
+    INSERT INTO invoices (id, client_id, number, currency, issue_date, due_date, state,
+                          foregone_billable_cents, created_at, updated_at)
+      VALUES (901, 1, '901', 'EUR', '2026-09-10', '2026-10-10', 'draft',
+              0, '${at}', '${at}');
+    INSERT INTO invoice_line_items (invoice_id, position, kind, description, quantity,
+                                    unit_price_cents, amount_cents, created_at, updated_at)
+      VALUES (901, 0, 'Service', 'Banded team', 1, ${amountCents}, ${amountCents},
+              '${at}', '${at}')`)
+
 const august = { from: '2026-08-01', to: '2026-08-31' }
 
 describe('what a banded month was worth', () => {
@@ -174,5 +186,72 @@ describe('what a banded month was worth', () => {
   it('[unit] answers an empty range with no rows rather than failing', async () => {
     const reports = await fixture()
     expect((await reports.bandedMonths(august)).rows).toEqual([])
+  })
+})
+
+/**
+ * Issue 522's second step: confirm the per-currency grouping holds everywhere
+ * money is summed. It did not hold here.
+ *
+ * Reports in this codebase group per currency and never across, because adding
+ * two currencies invents an exchange rate the system does not hold. This report
+ * was labelling every row with the *organization's* currency and summing every
+ * claiming invoice regardless of what it was raised in.
+ */
+describe('a band billed in a currency of its own (#522)', () => {
+  it('[money] labels the row with the project’s currency, not the organization’s', async () => {
+    const reports = await fixture()
+    // The client bills in EUR while the organization's default is USD.
+    sqlite!.exec(`UPDATE clients SET currency = 'EUR' WHERE id = 1`)
+    entry('2026-08-03', 3_600, 20_000, 8_000)
+    const [row] = (await reports.bandedMonths(august)).rows
+    // Previously 'USD': a figure in a currency nobody charged. The number was
+    // right and the unit was wrong, which is the worse of the two.
+    expect(row?.currency).toBe('EUR')
+  })
+
+  it('[money] prefers the project’s own billing currency over the client’s', async () => {
+    const reports = await fixture()
+    sqlite!.exec(`UPDATE clients SET currency = 'EUR' WHERE id = 1`)
+    sqlite!.exec(`UPDATE projects SET billing_currency = 'GBP' WHERE id = 1`)
+    entry('2026-08-03', 3_600, 20_000, 8_000)
+    const [row] = (await reports.bandedMonths(august)).rows
+    expect(row?.currency).toBe('GBP')
+  })
+
+  it('[money] never adds an invoice raised in another currency into the total', async () => {
+    const reports = await fixture()
+    band(500_000, 0)
+    foreignBand(900_000)
+    entry('2026-08-03', 3_600, 20_000, 8_000, 1, 900)
+    entry('2026-08-04', 3_600, 20_000, 8_000, 2, 901)
+    const [row] = (await reports.bandedMonths(august)).rows
+    // 500_000 alone. Adding the EUR invoice would have produced 1_400_000 --
+    // a number that looks right and is a sum of two different units.
+    expect(row?.billedCents).toBe(500_000)
+    // Counted rather than dropped, so a total that looks low says why.
+    expect(row?.claimedInOtherCurrency).toBe(1)
+  })
+
+  it('[money] reports nothing billed, not a wrong figure, when every claim is foreign', async () => {
+    const reports = await fixture()
+    foreignBand(900_000)
+    entry('2026-08-03', 3_600, 20_000, 8_000, 1, 901)
+    const [row] = (await reports.bandedMonths(august)).rows
+    expect(row?.billedCents).toBeNull()
+    expect(row?.claimedInOtherCurrency).toBe(1)
+  })
+
+  it('[money] leaves the ordinary single-currency case exactly as it was', async () => {
+    const reports = await fixture()
+    band(500_000, 120_000)
+    entry('2026-08-03', 3_600, 20_000, 8_000, 1, 900)
+    const [row] = (await reports.bandedMonths(august)).rows
+    expect(row).toMatchObject({
+      currency: 'USD',
+      billedCents: 500_000,
+      foregoneCents: 120_000,
+      claimedInOtherCurrency: 0,
+    })
   })
 })
