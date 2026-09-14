@@ -2512,6 +2512,60 @@ const validateReportPeriods = (periods: ChecksumReport['periods']): void => {
 }
 
 /**
+ * Which rows upstream deleted and this database still holds (issue 407).
+ *
+ * The decision on that issue is that a tombstone is a reconciliation gap and
+ * never an automatic delete: an upstream delete can name a row that invoices or
+ * time entries still reference, and there is no resource where removing it
+ * unattended is obviously safe. So this counts what is actually still here and
+ * names it, for a person to clear.
+ *
+ * Counted against the database rather than the manifest, which is the whole
+ * point of doing it here. `tombstoneChecks` below reports every tombstone sync
+ * recorded; most of those may name rows this database never loaded, and
+ * reporting those as a gap overstates the work by however many they are.
+ */
+const tombstonePresenceChecks = (
+  checks: Checks,
+  database: BetterSqlite3.Database,
+  manifest: Manifest,
+): void => {
+  for (const [resource, ids] of Object.entries(manifest.deleted_upstream ?? {})) {
+    if (ids.length === 0) continue
+    const mapping = RESOURCE_TABLES[resource]
+    // A resource with no table here is one reconciliation does not measure;
+    // saying nothing is better than counting rows in a table that is not the
+    // one the tombstones refer to.
+    if (mapping === undefined) continue
+    const present: number[] = []
+    for (const id of ids) {
+      const found = scalar<number>(
+        database,
+        `SELECT count(*) FROM ${mapping.table} WHERE harvest_id = ?`,
+        [id],
+      )
+      if (found > 0) present.push(id)
+    }
+    if (present.length === 0) continue
+    // The ids, not just the count. "Nine rows are stale" is a number; the nine
+    // harvest ids are the thing somebody can act on, and a person clearing this
+    // has nowhere else to get them -- the tombstones live in the manifest and
+    // the rows live in the database.
+    const named = present.slice(0, 20)
+    const suffix = present.length > named.length ? `, and ${String(present.length - named.length)} more` : ''
+    checks.note(
+      'B',
+      'upstream_deletion_present',
+      resource,
+      'gap',
+      `upstream deleted ${String(present.length)} row(s) this database still holds: ` +
+        `${named.join(', ')}${suffix}`,
+      MIGRATION_SPEC_GAP_CITATIONS.loadIsAddOnly,
+    )
+  }
+}
+
+/**
  * Says out loud that a refreshed load is add-only (issue 407).
  *
  * `sync` writes `deleted_upstream` tombstones, and `load` never reads them --
@@ -2744,6 +2798,7 @@ export const runReconcile = async (options: RunReconcileOptions): Promise<RunRec
       database.exec('BEGIN')
       databaseTransaction = true
       databasePreflight(checks, database, manifest, checksum, manifestSha256)
+      tombstonePresenceChecks(checks, database, manifest)
       monthlyChecks(checks, source, database)
       currencyFidelityChecks(checks, source, database)
       invoiceSourceChecks(checks, source, database)

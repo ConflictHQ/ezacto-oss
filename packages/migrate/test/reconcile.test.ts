@@ -803,6 +803,45 @@ describe('three-way reconciliation', () => {
     )
   })
 
+  it('[money] names the deleted rows this database still holds, and only those', async () => {
+    // The decision on 407: a tombstone is a gap for a person to clear, never an
+    // automatic delete. Which means the report has to say *which* rows, and has
+    // to count what is actually here -- a tombstone naming a row this database
+    // never loaded is not work anybody has to do, and counting it overstates
+    // the gap by however many there are.
+    const database = new BetterSqlite3(databasePath, { readonly: true })
+    const live = database
+      .prepare(`SELECT harvest_id FROM clients WHERE harvest_id IS NOT NULL ORDER BY id LIMIT 1`)
+      .get() as { harvest_id: number } | undefined
+    database.close()
+    expect(live, 'the fixture has no loaded client to tombstone').toBeDefined()
+
+    const manifest = await readManifest(snapshotDir)
+    // One row that is here, one that never was.
+    manifest.deleted_upstream = { clients: [live!.harvest_id, 999_000_111] }
+    await writeManifest(snapshotDir, manifest)
+
+    const result = await runReconcile({ snapshotDir, databasePath })
+    const named = result.report.gaps.find((gap) => gap.check === 'upstream_deletion_present')
+    expect(named, 'no variance was reported for a row that is still here').toBeDefined()
+    expect(named!.detail).toContain(String(live!.harvest_id))
+    // The one that was never loaded is not somebody's work.
+    expect(named!.detail).not.toContain('999000111')
+    expect(named!.detail).toContain('1 row(s)')
+  })
+
+  it('[unit] says nothing when every tombstone names a row this database never had', async () => {
+    // Silence is the right answer: there is nothing to clear.
+    const manifest = await readManifest(snapshotDir)
+    manifest.deleted_upstream = { clients: [999_000_111, 999_000_112] }
+    await writeManifest(snapshotDir, manifest)
+
+    const result = await runReconcile({ snapshotDir, databasePath })
+    expect(
+      result.report.gaps.filter((gap) => gap.check === 'upstream_deletion_present'),
+    ).toEqual([])
+  })
+
   it('[unit] says nothing about deletions when sync recorded none', async () => {
     // The ordinary case. A note on every run would be noise that trains
     // somebody to skim past the one that matters.
