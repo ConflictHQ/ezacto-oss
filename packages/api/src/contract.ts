@@ -1199,6 +1199,16 @@ const wiseOperations: ApiContractOperation[] = [
   },
   {
     method: "get",
+    path: "/api/v1/integrations/wise/proposals",
+    operationId: "listWisePayoutProposals",
+    summary: "People with no payout destination, and who at Wise they might be",
+    tag: "integrations",
+    responseStatus: 200,
+    responseSchema: "WiseProposalListEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "get",
     path: "/api/v1/integrations/wise/destinations/:userId",
     operationId: "getWisePayoutDestination",
     summary: "Where one person is currently paid, if anywhere",
@@ -3225,6 +3235,25 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         additionalProperties: false,
       },
     },
+    additionalProperties: false,
+  },
+  WiseProposal: {
+    type: "object",
+    required: ["user_id", "name", "payroll_email", "matches"],
+    properties: {
+      user_id: { type: "integer" },
+      name: stringSchema,
+      // Shown so whoever confirms can see what the guess was made on. A
+      // proposal nobody can check is just a silent join with extra steps.
+      payroll_email: nullable(stringSchema),
+      matches: { type: "array", items: reference("WiseRecipient") },
+    },
+    additionalProperties: false,
+  },
+  WiseProposalListEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: { type: "array", items: reference("WiseProposal") } },
     additionalProperties: false,
   },
   WiseContactInput: {

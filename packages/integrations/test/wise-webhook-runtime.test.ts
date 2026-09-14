@@ -82,6 +82,7 @@ const runtime = (
       accounts: {
         listForUser: vi.fn(async () => []),
         listForProvider: vi.fn(async () => []),
+  awaitingDestination: vi.fn(async () => []),
         link: vi.fn(async () => ({ outcome: "unknown_user" as const })),
         markVerified: vi.fn(async () => undefined),
         detach: vi.fn(async () => false),
@@ -144,6 +145,7 @@ describe("a signed delivery (#543)", () => {
       accounts: {
         listForUser: vi.fn(async () => []),
         listForProvider: vi.fn(async () => []),
+  awaitingDestination: vi.fn(async () => []),
         link: vi.fn(async () => ({ outcome: "unknown_user" as const })),
         markVerified: vi.fn(async () => undefined),
         detach: vi.fn(async () => false),
@@ -171,6 +173,7 @@ describe("a signed delivery (#543)", () => {
       accounts: {
         listForUser: vi.fn(async () => []),
         listForProvider: vi.fn(async () => []),
+  awaitingDestination: vi.fn(async () => []),
         link: vi.fn(async () => ({ outcome: "unknown_user" as const })),
         markVerified: vi.fn(async () => undefined),
         detach: vi.fn(async () => false),
@@ -197,6 +200,7 @@ describe("a signed delivery (#543)", () => {
       accounts: {
         listForUser: vi.fn(async () => []),
         listForProvider: vi.fn(async () => []),
+  awaitingDestination: vi.fn(async () => []),
         link: vi.fn(async () => ({ outcome: "unknown_user" as const })),
         markVerified: vi.fn(async () => undefined),
         detach: vi.fn(async () => false),

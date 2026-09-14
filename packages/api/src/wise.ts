@@ -71,6 +71,21 @@ export interface WiseDestinationView {
   verifiedAt: string | null
 }
 
+/**
+ * A pairing somebody should look at, never one this applies.
+ *
+ * Matching a person to a payout account by address is a guess, and the failure
+ * mode of a wrong guess is paying the wrong person (#421). So this route reads
+ * and suggests; storing it is the link call, made by a human who said yes,
+ * which is what leaves a name on the decision.
+ */
+export interface WiseProposalView {
+  userId: number
+  name: string
+  payrollEmail: string | null
+  matches: readonly WiseRecipientView[]
+}
+
 export interface WiseContactView {
   id: string
   name: string | null
@@ -117,6 +132,7 @@ export interface WiseService {
     currency: string
     linkedByUserId: number
   }): Promise<WiseShareOutcome>
+  proposeDestinations(): Promise<readonly WiseProposalView[]>
   readDestination(userId: number): Promise<WiseDestinationView | null>
   detachFor(userId: number): Promise<boolean>
   unlink(accountId: number): Promise<boolean>
@@ -241,6 +257,36 @@ export const installWiseRoutes = <Bindings extends object>(
     const recipients = await service.listRecipients()
     return context.json(
       { data: recipients.map(serializeRecipient) },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
+  /**
+   * Who has nowhere to be paid, and who at Wise they might be.
+   *
+   * The assist for the contractor who never gets round to sharing a Wisetag.
+   * Everyone without a destination is listed whether or not anything matched:
+   * the people nothing matches are the ones somebody has to chase, and leaving
+   * them out hides the work rather than finishing it.
+   *
+   * Nothing here is stored. Confirming a proposal is the link call below.
+   */
+  api.get('/integrations/wise/proposals', async (context) => {
+    assertMoneyWriter(context)
+    requireConfigured(service)
+    const proposals = await service.proposeDestinations()
+    return context.json(
+      {
+        data: proposals.map((proposal) => ({
+          user_id: proposal.userId,
+          name: proposal.name,
+          // The address the guess was made on, shown so whoever confirms can
+          // see what it was made on rather than trusting that it was made.
+          payroll_email: proposal.payrollEmail,
+          matches: proposal.matches.map(serializeRecipient),
+        })),
+      },
       200,
       { 'cache-control': 'no-store' },
     )

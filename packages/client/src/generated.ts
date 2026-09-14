@@ -351,6 +351,17 @@ export type WiseDestinationEnvelope = {
 };
 };
 
+export type WiseProposal = {
+  "user_id": number;
+  "name": string;
+  "payroll_email": string | null;
+  "matches": Array<WiseRecipient>;
+};
+
+export type WiseProposalListEnvelope = {
+  "data": Array<WiseProposal>;
+};
+
 export type WiseContactInput = {
   "user_id": number;
   "identifier": string;
@@ -4346,6 +4357,15 @@ export class EzactoClient {
 
     return this.request<WiseLinkEnvelope>("POST", "/api/v1/integrations/wise/recipients", {
       body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listWisePayoutProposals(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<WiseProposalListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<WiseProposalListEnvelope>("GET", "/api/v1/integrations/wise/proposals", {
       signal: args.signal,
       headers,
     });

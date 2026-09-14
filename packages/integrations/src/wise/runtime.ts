@@ -99,6 +99,26 @@ export interface WiseDestination {
   readonly verifiedAt: string | null;
 }
 
+/**
+ * A pairing somebody should look at, never one this applies.
+ *
+ * Issue 421 is explicit about why this is a proposal: matching on an address is
+ * a guess, and the failure mode of a wrong guess is paying the wrong person. A
+ * person with a work address and a personal one either fails to match or
+ * matches somebody else's record, and neither is visible from a bank statement.
+ *
+ * So this reads and suggests. Storing it is the existing link call, made by a
+ * human who said yes, which is what leaves a name on the decision.
+ */
+export interface WiseDestinationProposal {
+  readonly userId: number;
+  readonly name: string;
+  /** The address the match was made on. Null means there was nothing to match. */
+  readonly payrollEmail: string | null;
+  /** Wise recipients whose own email is that address. Usually none or one. */
+  readonly matches: readonly WiseRecipient[];
+}
+
 /** The payout log, as this runtime needs it. */
 export interface WisePayoutAccountPort {
   listForUser(
@@ -117,6 +137,10 @@ export interface WisePayoutAccountPort {
   listForProvider(
     provider: "wise",
   ): Promise<readonly { id: number; userId: number; externalId: string }[]>;
+  /** Active people with no current destination at this provider. */
+  awaitingDestination(
+    provider: "wise",
+  ): Promise<readonly { userId: number; name: string; payrollEmail: string | null }[]>;
   link(input: {
     userId: number;
     provider: "wise";
@@ -248,6 +272,16 @@ export interface WiseRuntime {
       currency: string;
       linkedByUserId: number;
     }): Promise<WiseShareOutcome>;
+    /**
+     * Who has nowhere to be paid, and who at Wise they might be.
+     *
+     * The assist for the contractor who never gets round to sharing a Wisetag:
+     * their address is matched against the recipients the organisation already
+     * holds, and an operator confirms. Everyone with no destination is listed
+     * whether or not anything matched -- the people nothing matches are the
+     * ones somebody has to chase, and leaving them out hides the work.
+     */
+    proposeDestinations(): Promise<readonly WiseDestinationProposal[]>;
     /** Where one person is currently paid, or nothing. */
     readDestination(userId: number): Promise<WiseDestination | null>;
     /**
@@ -547,6 +581,33 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
         // exactly what verified means everywhere else in this store.
         await accounts.markVerified(linked.account.id, now);
         return { outcome: "linked", contact: found.contact };
+      },
+
+      proposeDestinations: async () => {
+        const awaiting = await accounts.awaitingDestination("wise");
+        if (awaiting.length === 0) return [];
+        const recipients = await payableRecipients();
+        // Lower-cased on both sides and nowhere else. An address is a proposal
+        // here, so a case difference should not hide a match -- but it is never
+        // normalised into storage, where the provider's own id is the fact.
+        const byEmail = new Map<string, WiseRecipient[]>();
+        for (const recipient of recipients) {
+          const email = recipient.email?.trim().toLowerCase();
+          if (email === undefined || email === "") continue;
+          const existing = byEmail.get(email);
+          if (existing === undefined) byEmail.set(email, [recipient]);
+          else existing.push(recipient);
+        }
+        return awaiting.map((person) => {
+          const email = person.payrollEmail?.trim().toLowerCase();
+          return {
+            userId: person.userId,
+            name: person.name,
+            payrollEmail: person.payrollEmail,
+            matches:
+              email === undefined || email === "" ? [] : (byEmail.get(email) ?? []),
+          };
+        });
       },
 
       readDestination: async (userId) => {
