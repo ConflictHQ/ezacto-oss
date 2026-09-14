@@ -505,6 +505,7 @@ describe('Recurring workspace controller', () => {
           ],
         },
         can_draw_from_retainer_id: null,
+        claims_project_ids: null,
       },
       expect.any(String),
       expect.any(AbortSignal),

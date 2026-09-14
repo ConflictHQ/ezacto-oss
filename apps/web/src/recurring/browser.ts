@@ -199,6 +199,10 @@ export const createRecurringWorkspaceController = (
   const editorAddLine = required<HTMLButtonElement>('[data-recurring-editor-add-line]')
   const lineTemplate = required<HTMLTemplateElement>('[data-recurring-line-template]')
   const editorProjects = required<HTMLSelectElement>('[data-recurring-editor-projects]')
+  // The banded picker (#484). Beside the fixed lines rather than the import
+  // block, because it is the flat-amount case: these projects' hours are
+  // claimed by the amount, not priced into it.
+  const editorClaims = required<HTMLSelectElement>('[data-recurring-editor-claims]')
   const editorTimeOn = required<HTMLInputElement>('[data-recurring-editor-time-on]')
   const editorTimeSummary = required<HTMLSelectElement>('[data-recurring-editor-time-summary]')
   const editorExpensesOn = required<HTMLInputElement>('[data-recurring-editor-expenses-on]')
@@ -439,6 +443,9 @@ export const createRecurringWorkspaceController = (
     projectIds: [...editorProjects.options]
       .filter((item) => item.selected)
       .map((item) => item.value),
+    claimsProjectIds: [...editorClaims.options]
+      .filter((item) => item.selected)
+      .map((item) => item.value),
     importTime: editorTimeOn.checked,
     timeSummary: editorTimeSummary.value,
     importExpenses: editorExpensesOn.checked,
@@ -471,6 +478,15 @@ export const createRecurringWorkspaceController = (
         value: String(project.id),
       })),
       values.projectIds,
+      null,
+    )
+    fillOptions(
+      editorClaims,
+      projects.map((project) => ({
+        label: recurringProjectLabel(project.id, projects),
+        value: String(project.id),
+      })),
+      values.claimsProjectIds,
       null,
     )
     editorTimeOn.checked = values.importTime
