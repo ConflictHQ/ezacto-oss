@@ -852,6 +852,46 @@ for (const [runtime, factory] of factories) {
                WHERE command_id LIKE 'matrix-illegal-%') AS outbox`,
         ),
       ).toEqual([{ ledger: 0, outbox: 0 }])
+
+      /**
+       * Issue 7's acceptance, which nothing asserted: every state transition
+       * appears in the outbox EXACTLY once.
+       *
+       * The matrix above already drives every legal command, so the cheapest
+       * honest check is on the events it produced rather than a second
+       * lifecycle. Both halves matter and fail differently: a missing event is
+       * a subscriber that never hears something happened, and a duplicate is
+       * one that acts twice -- posting a receipt twice, thanking a client
+       * twice.
+       *
+       * Keyed on the command, because that is what a transition is here. A
+       * command that legally produces two events (a payment that also settles
+       * an invoice) is ordered rather than deduplicated, which `[inv-05]`
+       * covers separately.
+       */
+      const perCommand = await database.rows<{ command_id: string; events: number }>(
+        `SELECT command_id, count(*) AS events FROM event_outbox
+         WHERE command_id LIKE 'matrix-%' AND event_type LIKE 'invoice.%'
+         GROUP BY command_id ORDER BY command_id`,
+      )
+      // Twenty-one legal commands ran above. Stating the count rather than
+      // only "more than none" is what makes this catch an omission: filtering
+      // for `events !== 1` alone can only see commands that did emit, so a
+      // command that emitted nothing would slip past it entirely.
+      expect(perCommand).toHaveLength(21)
+      expect(perCommand.filter((row) => row.events !== 1)).toEqual([])
+
+      // And every legal command that ran reached the outbox. Counting the
+      // ledger rather than a written-down list, so a command added to the
+      // matrix later is covered without anyone remembering to extend this.
+      const [reach] = await database.rows<{ ledger: number; outbox: number }>(
+        `SELECT
+           (SELECT count(DISTINCT command_id) FROM invoice_command_ledger
+             WHERE command_id LIKE 'matrix-%' AND completed = 1) AS ledger,
+           (SELECT count(DISTINCT command_id) FROM event_outbox
+             WHERE command_id LIKE 'matrix-%') AS outbox`,
+      )
+      expect(reach?.outbox).toBe(reach?.ledger)
     })
 
     it('[unit] rolls back a late outbox collision and permits a clean retry', async () => {

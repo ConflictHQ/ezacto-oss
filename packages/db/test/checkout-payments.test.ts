@@ -120,6 +120,52 @@ describe('recording a payment a provider took (#595)', () => {
     ])
   })
 
+  /**
+   * Issue 102's acceptance is the whole chain -- webhook, payment recorded, paid
+   * state, outbox event -- "proven on fixtures". Three quarters of it was:
+   * nothing asserted the event, so a payment could be recorded and settle an
+   * invoice while every subscriber downstream heard nothing.
+   *
+   * That failure is quiet in exactly the wrong way. The money is right, the
+   * invoice reads paid, and the accounting mirror and the thank-you never fire.
+   */
+  it('[money] emits the outbox event a settled invoice owes its subscribers', async () => {
+    const { sqlite: database, orm } = await fixture()
+    await recordInvoicePayment(orm, checkout() as never)
+    const events = database
+      .prepare(
+        `SELECT event_type, aggregate_type, aggregate_id, aggregate_sequence
+         FROM event_outbox WHERE aggregate_type = 'invoice' AND aggregate_id = 1
+         ORDER BY aggregate_sequence`,
+      )
+      .all() as { event_type: string; aggregate_sequence: number }[]
+    expect(events.length).toBeGreaterThan(0)
+    expect(events.map((event) => event.event_type)).toContain('invoice.paid')
+    // Sequences are what a subscriber orders by, so they start at one and do
+    // not repeat -- an event at sequence zero would sort before the invoice
+    // existed.
+    expect(events.map((event) => event.aggregate_sequence)).toEqual(
+      events.map((_, index) => index + 1),
+    )
+  })
+
+  it('[money] emits it once however many times the provider tells us', async () => {
+    // The provider retries. A second event for the same payment would have the
+    // mirror post the receipt twice and the client thanked twice.
+    const { sqlite: database, orm } = await fixture()
+    await recordInvoicePayment(orm, checkout() as never)
+    await recordInvoicePayment(orm, checkout() as never)
+    expect(
+      database
+        .prepare(
+          `SELECT count(*) AS n FROM event_outbox
+           WHERE aggregate_type = 'invoice' AND aggregate_id = 1
+             AND event_type = 'invoice.paid'`,
+        )
+        .get(),
+    ).toEqual({ n: 1 })
+  })
+
   it('[security] goes through the command ledger, which the raw insert could not', async () => {
     // The defect this fixes: the QuickBooks mirror inserted directly and was
     // refused. The same insert is still refused; what changed is that there is
