@@ -1,6 +1,13 @@
 /** @vitest-environment happy-dom */
 
-import { EzactoApiError, type GeneralResource, type Whoami } from '@conflict-hq/ezacto-client'
+import {
+  EzactoApiError,
+  type ClientRollupReport,
+  type GeneralResource,
+  type Invoice,
+  type Retainer,
+  type Whoami,
+} from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import { createClientDirectoryController } from '../src/clients/browser.js'
 import type { ClientDirectoryApi } from '../src/clients/model.js'
@@ -84,6 +91,100 @@ const page = (data: readonly GeneralResource[]) => ({
   data,
   page: { next_cursor: null },
 })
+
+const pageOf = <Resource>(data: readonly Resource[]) => ({
+  data,
+  page: { next_cursor: null as string | null },
+})
+
+const openInvoice = (
+  id: number,
+  clientId: number,
+  currency: string,
+  dueCents: number,
+  dueDate: string,
+): Invoice =>
+  ({
+    id,
+    client_id: clientId,
+    currency,
+    state: 'open',
+    due_amount_cents: dueCents,
+    due_date: dueDate,
+  }) as unknown as Invoice
+
+const heldRetainer = (
+  id: number,
+  clientId: number | null,
+  denomination: Retainer['denomination'],
+  balance: number,
+): Retainer =>
+  ({
+    id,
+    client_id: clientId,
+    project_id: null,
+    denomination,
+    balance,
+    state: 'ongoing',
+  }) as unknown as Retainer
+
+const rollupReport = (): ClientRollupReport =>
+  ({
+    root_client_id: 10,
+    from: '2026-09-01',
+    to: '2026-09-09',
+    nodes: [
+      {
+        client_id: 10,
+        name: 'Parent Holding',
+        parent_client_id: null,
+        depth: 0,
+        direct: { currencies: [] },
+        rollup: {
+          currencies: [
+            { currency: 'USD', expense_cents: 20_000, cost_cents: 100_000 },
+            { currency: 'EUR', expense_cents: 5_000, cost_cents: 0 },
+          ],
+        },
+      },
+    ],
+  }) as unknown as ClientRollupReport
+
+const rollupApi = () => ({
+  // The child bills in euros: a retainer carries no currency of its own and
+  // borrows its client's, so this is the subtree that spans two of them.
+  listDirectoryClients: vi.fn(async () => page([{ ...child, currency: 'EUR' }, parent])),
+  getDirectoryClient: vi.fn(async () => parent),
+  listClientContacts: vi.fn(async () => page([])),
+  listClientProjects: vi.fn(async () => page([])),
+  listClientSubtree: vi.fn(async () => [
+    { ancestor_id: 10, descendant_id: 10, depth: 0 },
+    { ancestor_id: 10, descendant_id: 11, depth: 1 },
+  ]),
+  listClientOpenInvoices: vi.fn(async () =>
+    pageOf([
+      openInvoice(1, 10, 'USD', 30_000, '2020-01-31'),
+      openInvoice(2, 11, 'USD', 10_000, '2099-01-31'),
+      openInvoice(3, 11, 'EUR', 90_000, '2099-01-31'),
+    ]),
+  ),
+  listClientRetainers: vi.fn(async () =>
+    pageOf([
+      heldRetainer(1, 10, 'money', 250_000),
+      heldRetainer(2, 11, 'money', 400_000),
+      heldRetainer(3, 10, 'hours', 36_000),
+      heldRetainer(4, null, 'money', 999_999),
+    ]),
+  ),
+  getClientRollupReport: vi.fn(async () => rollupReport()),
+})
+
+const administrator: Whoami = {
+  user_id: 1,
+  profile: 'administrator',
+  manager_grants: [],
+  authentication: { kind: 'session' },
+}
 
 describe('Clients V1 browser controller', () => {
   it('[security #466] keeps ungranted manager edits operational without resetting invoice defaults', async () => {
@@ -623,6 +724,135 @@ describe('Clients V1 browser controller', () => {
       'Saving the client was refused.',
     )
     expect(document.body.textContent).not.toContain('Saving the client was refused.')
+  })
+
+  /**
+   * The rollup is deliberately not awaited by the detail load: a rollup the
+   * deployment cannot serve must not take the client's name and contacts down
+   * with it. So a test that reads its output has to let it settle first.
+   */
+  const settleRollup = async (): Promise<void> => {
+    for (let turn = 0; turn < 5; turn += 1) await Promise.resolve()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+
+  it('[browser] rolls the three 360 figures up the subtree, one row per currency', async () => {
+    // A parent node that is invoiced through its children is owed nothing on
+    // its own row, so all three figures are asked for as a set of client ids.
+    writeDocument('client-detail', '/clients/10')
+    const api = rollupApi()
+    const controller = createClientDirectoryController(api)
+
+    await controller.activate(administrator, new AbortController().signal, () => false)
+    await settleRollup()
+
+    expect(api.listClientOpenInvoices).toHaveBeenCalledWith(
+      [10, 11],
+      undefined,
+      expect.anything(),
+    )
+    expect(api.listClientRetainers).toHaveBeenCalledWith([10, 11], undefined, expect.anything())
+    expect(document.querySelector<HTMLElement>('[data-client-360]')?.hidden).toBe(false)
+    expect(document.querySelector('[data-client-360-scope]')?.textContent).toContain(
+      '2 clients',
+    )
+
+    const invoices = document.querySelector('[data-client-360-invoices]')!.textContent!
+    // Two currencies, two rows. $400.00 is USD's own total and never carries
+    // the euros; the blended $1,300.00 must not appear anywhere.
+    expect(invoices).toContain('$400.00')
+    expect(invoices).toContain('€900.00')
+    expect(invoices).toContain('$300.00')
+    expect(invoices).not.toContain('1,300.00')
+
+    const retainers = document.querySelector('[data-client-360-retainers]')!.textContent!
+    // Money and hours are separate rows in separate units, and the retainer
+    // with no client is nobody's balance.
+    expect(retainers).toContain('$2,500.00')
+    expect(retainers).toContain('€4,000.00')
+    expect(retainers).toContain('10 hours')
+    expect(retainers).not.toContain('9,999.99')
+
+    const burn = document.querySelector('[data-client-360-burn]')!.textContent!
+    expect(burn).toContain('$1,200.00')
+    expect(burn).toContain('€50.00')
+    // budget_burn_cents on the same payload adds those into 125,000 cents. A
+    // blended total is a wrong number that looks right, so it is never read.
+    expect(burn).not.toContain('1,250.00')
+    expect(
+      document.querySelector<HTMLElement>('[data-client-360-burn-note]')?.hidden,
+    ).toBe(false)
+    expect(
+      document.querySelector<HTMLAnchorElement>('[data-client-360-report]')?.getAttribute('href'),
+    ).toContain('report=client-rollup&from=')
+  })
+
+  it('[security] never asks for the 360 figures on behalf of a profile that may not read money', async () => {
+    // Not zeroed and not disabled: a member shown "nothing owed" is told
+    // something false about the business, and a 403 painted into the status
+    // line says nothing about why. The section is simply not there.
+    writeDocument('client-detail', '/clients/10')
+    const api = rollupApi()
+    const controller = createClientDirectoryController(api)
+
+    await controller.activate(
+      { user_id: 2, profile: 'member', manager_grants: [], authentication: { kind: 'session' } },
+      new AbortController().signal,
+      () => false,
+    )
+
+    expect(document.querySelector<HTMLElement>('[data-client-360]')?.hidden).toBe(true)
+    expect(api.listClientSubtree).not.toHaveBeenCalled()
+    expect(api.listClientOpenInvoices).not.toHaveBeenCalled()
+    expect(api.listClientRetainers).not.toHaveBeenCalled()
+    expect(api.getClientRollupReport).not.toHaveBeenCalled()
+    // The rest of the client page is unaffected -- clients:read is every
+    // profile, and the 360 is the only part that is not.
+    expect(document.querySelector<HTMLElement>('[data-client-detail]')?.hidden).toBe(false)
+  })
+
+  it('[browser] says burn is withheld rather than rendering it as nothing spent', async () => {
+    // cost_rate is administrator-only, so an accounting profile gets currency
+    // buckets with no cost_cents. An empty burn table there would read as "this
+    // subtree consumed nothing", which is a fact about the business that the
+    // server did not state.
+    writeDocument('client-detail', '/clients/10')
+    const api = rollupApi()
+    api.getClientRollupReport = vi.fn(
+      async () =>
+        ({
+          ...rollupReport(),
+          nodes: [
+            {
+              ...rollupReport().nodes[0]!,
+              rollup: { currencies: [{ currency: 'USD', expense_cents: 20_000 }] },
+            },
+          ],
+        }) as unknown as ClientRollupReport,
+    )
+    const controller = createClientDirectoryController(api)
+
+    await controller.activate(
+      {
+        user_id: 3,
+        profile: 'accounting',
+        manager_grants: [],
+        authentication: { kind: 'session' },
+      },
+      new AbortController().signal,
+      () => false,
+    )
+    await settleRollup()
+
+    expect(document.querySelector('[data-client-360-burn]')?.textContent).toBe('')
+    expect(document.querySelector('[data-client-360-burn-note]')?.textContent).toContain(
+      'administrator-only',
+    )
+    // The other two figures are unaffected: they are gated by invoices:read,
+    // which this profile holds.
+    expect(document.querySelector('[data-client-360-invoices]')?.textContent).toContain(
+      '$400.00',
+    )
   })
 })
 

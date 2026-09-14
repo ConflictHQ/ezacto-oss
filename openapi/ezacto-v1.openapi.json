@@ -9287,6 +9287,15 @@
               "type": "string",
               "pattern": "^(draft|open|paid|closed)(,(draft|open|paid|closed))*$"
             }
+          },
+          {
+            "name": "client_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(,[1-9][0-9]*)*$"
+            }
           }
         ]
       }
@@ -10933,6 +10942,15 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 200
+            }
+          },
+          {
+            "name": "client_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(,[1-9][0-9]*)*$"
             }
           }
         ]

@@ -326,6 +326,11 @@ const invoiceStates: readonly InvoiceState[] = ["draft", "open", "paid", "closed
 
 export interface InvoiceCursorWindow extends CursorWindow {
   states?: readonly InvoiceState[];
+  clientIds?: readonly number[];
+}
+
+export interface RetainerCursorWindow extends CursorWindow {
+  clientIds?: readonly number[];
 }
 
 /**
@@ -355,6 +360,39 @@ const invoiceStateFilter = (
       ]);
     }
     wanted.add(value as InvoiceState);
+  }
+  return [...wanted];
+};
+
+/**
+ * The `client_id` query parameter, read the same way `state` is: a
+ * comma-separated set, also accepted repeated, absent meaning every client.
+ *
+ * A set rather than one id because the caller this exists for is a client 360,
+ * which is a rollup over a subtree -- it holds every id in the tree at once, and
+ * one request per node would put a holding company's whole hierarchy on the
+ * wire one row at a time.
+ *
+ * Deduplicated for the same reason states are, and anything that is not a
+ * positive integer is rejected rather than dropped: an id silently discarded
+ * would widen the answer to a set the caller did not ask for, which on a money
+ * endpoint is another client's book.
+ */
+const clientIdFilter = (requestUrl: URL): readonly number[] | undefined => {
+  const raw = requestUrl.searchParams.getAll("client_id");
+  if (raw.length === 0) return undefined;
+  const wanted = new Set<number>();
+  for (const value of raw.flatMap((entry) => entry.split(","))) {
+    if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value))) {
+      throw validationError([
+        {
+          field: "client_id",
+          code: "invalid",
+          message: "client_id must be one or more positive integer client ids",
+        },
+      ]);
+    }
+    wanted.add(Number(value));
   }
   return [...wanted];
 };
@@ -452,7 +490,7 @@ interface MoneyResourceService {
       expectedPaymentUpdatedAt: string;
     },
   ): Promise<InvoiceCommandResult>;
-  listRetainers(window: CursorWindow): Promise<RetainerResource[]>;
+  listRetainers(window: RetainerCursorWindow): Promise<RetainerResource[]>;
   getRetainer(id: number): Promise<RetainerResource | null>;
   createRetainer(input: CreateRetainerInput): Promise<RetainerResource>;
   updateRetainer(
@@ -1259,6 +1297,7 @@ const installInvoiceReads = <Bindings extends object>(
     const principal = requireRead(context);
     const requestUrl = new URL(context.req.url);
     const states = invoiceStateFilter(requestUrl);
+    const clientIds = clientIdFilter(requestUrl);
     return context.json(
       await cursorPage({
         requestUrl,
@@ -1272,9 +1311,11 @@ const installInvoiceReads = <Bindings extends object>(
           // cursor mean something different on each page.
           highWatermark: () => options.service.highWatermark("invoices"),
           list: (window) =>
-            options.service.listInvoices(
-              states === undefined ? window : { ...window, states },
-            ),
+            options.service.listInvoices({
+              ...window,
+              ...(states === undefined ? {} : { states }),
+              ...(clientIds === undefined ? {} : { clientIds }),
+            }),
         },
       }),
     );
@@ -2562,15 +2603,23 @@ const installRetainers = <Bindings extends object>(
 ): void => {
   api.get("/retainers", async (context) => {
     const principal = requireRead(context);
+    const requestUrl = new URL(context.req.url);
+    const clientIds = clientIdFilter(requestUrl);
     return context.json(
       await cursorPage({
-        requestUrl: new URL(context.req.url),
+        requestUrl,
         cursorSigningKey: options.cursorSigningKey,
         viewer: principal,
         serializer: (value: Readonly<RetainerResource>) => ({ ...value }),
         source: {
+          // The watermark stays the whole collection's, as it does for
+          // invoices: it bounds the traversal against later inserts and is not
+          // a count of what matches.
           highWatermark: () => options.service.highWatermark("retainers"),
-          list: (window) => options.service.listRetainers(window),
+          list: (window) =>
+            options.service.listRetainers(
+              clientIds === undefined ? window : { ...window, clientIds },
+            ),
         },
       }),
     );
