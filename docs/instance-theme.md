@@ -142,8 +142,9 @@ green. This is a **client-facing** surface, so the divergence costs more than an
 internal one would — being a shade off reads as a different company, and being a
 different hue reads as a different company more loudly.
 
-Changing it is a decision rather than a fix, which is why this section records
-the state instead of resolving it: either the dashboard is moved onto `ink` and
-`action`, or the two values above are adopted as brand and the token file is
-wrong. What should not continue is both being true and neither being written
-down.
+**Decided: the dashboard moves onto the tokens.** Set the Stripe checkout
+background to `ink` and its accent to `action`, so the page a client pays on
+matches the product they are paying for. It is a dashboard change rather than a
+code one, which is why it is recorded here — nothing in this repo can enforce
+it, and the next person to compare the two needs to know which side was
+considered right.
