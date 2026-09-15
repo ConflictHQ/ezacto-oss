@@ -3,6 +3,7 @@ import type { QueuedEmailJob } from '@ezacto/mailer'
 import { createApp, type WorkerEnv } from './app.js'
 import { isDataRequest } from './data-request.js'
 import { workerBrandAssetSurface } from './brand-assets.js'
+import { workerSignInMethodSurface } from './sign-in-methods.js'
 import { workerInstanceThemeSurface } from './instance-theme.js'
 import { consumeCloudflareEmailBatch } from './email-queue.js'
 import { createAttachmentResolver } from './invoice-documents.js'
@@ -14,7 +15,12 @@ import {
   createWorkerMailProvider,
 } from './runtime.js'
 
-const publicApp = createApp(undefined, workerBrandAssetSurface, workerInstanceThemeSurface)
+const publicApp = createApp(
+  undefined,
+  workerBrandAssetSurface,
+  workerInstanceThemeSurface,
+  workerSignInMethodSurface,
+)
 
 /**
  * Loopback has no TLS to upgrade to. `wrangler dev`, the container runtime and
@@ -129,7 +135,12 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
       const services = await createRuntimeServices(env)
       return withStrictTransport(
         request,
-        await createApp(services, workerBrandAssetSurface, workerInstanceThemeSurface).fetch(
+        await createApp(
+          services,
+          workerBrandAssetSurface,
+          workerInstanceThemeSurface,
+          workerSignInMethodSurface,
+        ).fetch(
           request,
           env,
           executionContext,

@@ -75,6 +75,7 @@ import {
   type ModuleSettingsService,
   type SignInMethod,
   type SignInMethodService,
+  type SignInMethodState,
   type EmailConfigurationRouteOptions,
   type MagicLinkRouteOptions,
   type ActivityRecorder,
@@ -401,6 +402,13 @@ export const createApp = (
   services?: RuntimeServices,
   brandAssets?: BrandAssetSurface<AppEnv>,
   instanceTheme?: InstanceThemeSurface<AppEnv>,
+  /**
+   * How the shell learns which ways in are switched on when there are no
+   * services -- which is every HTML page load, since those are not data
+   * requests. Without it the card would keep offering a method the routes now
+   * refuse (issue 761).
+   */
+  signInMethods?: { read(env: AppEnv): Promise<readonly SignInMethodState[] | null> },
 ) => {
   const shellBrand = async (env: AppEnv) => {
     const stored = brandAssets === undefined ? [] : await brandAssets.list(env)
@@ -436,7 +444,7 @@ export const createApp = (
         ? Promise.resolve(null)
         : instanceTheme.read(env),
       services === undefined
-        ? Promise.resolve(null)
+        ? (signInMethods?.read(env) ?? Promise.resolve(null))
         : services.signInMethods.list(),
     ])
     const live = (method: SignInMethod): boolean =>

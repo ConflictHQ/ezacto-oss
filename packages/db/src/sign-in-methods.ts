@@ -41,8 +41,15 @@ interface RawRow {
   github: number | null
 }
 
-const nativeClient = (database: SignInMethodDatabase): NativeClient =>
-  (database as SignInMethodDatabase & { $client: NativeClient }).$client
+/**
+ * Either an ORM handle or the binding itself. The shell is rendered by a Worker
+ * path that has no services and must not import the container driver, so it
+ * hands the D1 binding straight in.
+ */
+const nativeClient = (database: SignInMethodDatabase | NativeClient): NativeClient =>
+  '$client' in database
+    ? (database as SignInMethodDatabase & { $client: NativeClient }).$client
+    : (database as NativeClient)
 
 const isD1Client = (client: NativeClient): client is D1Database => 'batch' in client
 
@@ -97,7 +104,7 @@ const usableSelect = `SELECT
 export class SignInMethodRepository {
   readonly #client: NativeClient
 
-  constructor(database: SignInMethodDatabase) {
+  constructor(database: SignInMethodDatabase | NativeClient) {
     this.#client = nativeClient(database)
   }
 
@@ -152,5 +159,5 @@ export class SignInMethodRepository {
 }
 
 export const createSignInMethodRepository = (
-  database: SignInMethodDatabase,
+  database: SignInMethodDatabase | NativeClient,
 ): SignInMethodRepository => new SignInMethodRepository(database)
