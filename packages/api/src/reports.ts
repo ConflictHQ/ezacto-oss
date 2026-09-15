@@ -130,7 +130,20 @@ export interface MonthEndManifestRecord {
 }
 
 export interface BandedMonthRowRecord {
-  month: string;
+  /**
+   * The billing cycle the work falls in, as the definition claiming the project
+   * defines it rather than the calendar (#709).
+   *
+   * Generation takes every unbilled hour with `spent_date <= issue_date`, so a
+   * cycle ends on an issue date and starts the day after the one before it: a
+   * band issuing on the 10th runs the 11th to the 10th, which is the window the
+   * invoice beside it actually covers. A band issuing on the 1st gets the same
+   * rule and so runs the 2nd to the 1st, not the calendar month.
+   *
+   * A project no definition claims keeps calendar months.
+   */
+  periodStart: string;
+  periodEnd: string;
   projectId: number;
   projectName: string;
   clientId: number;
@@ -791,7 +804,8 @@ const serializeBandedMonths = (report: Readonly<BandedMonthReportRecord>) => ({
   from: report.from,
   to: report.to,
   rows: report.rows.map((row) => ({
-    month: row.month,
+    period_start: row.periodStart,
+    period_end: row.periodEnd,
     project_id: row.projectId,
     project_name: row.projectName,
     client_id: row.clientId,

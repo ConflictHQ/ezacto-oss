@@ -2139,7 +2139,8 @@ export type MonthEndManifestEnvelope = {
 };
 
 export type BandedMonthRow = {
-  "month": string;
+  "period_start": string;
+  "period_end": string;
   "project_id": number;
   "project_name": string;
   "client_id": number;
