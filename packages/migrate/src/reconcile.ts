@@ -28,9 +28,10 @@ export type ReconciliationGapId =
   | 'migration-spec-7-sub-cent-unit-prices'
   | 'migration-spec-7-estimates-module-disabled'
   | 'migration-spec-7-duplicate-harvest-accounts'
-  // Not a documented spec gap like the others: a defect in the tooling, cited
-  // so the report names what is wrong rather than staying quiet about it.
+  // Not documented spec gaps like the others: defects in the tooling, cited so
+  // the report names what is wrong rather than staying quiet about it.
   | 'issue-407-load-is-add-only'
+  | 'issue-757-timezone-display-names'
 
 export interface ReconciliationGapCitation {
   id: ReconciliationGapId
