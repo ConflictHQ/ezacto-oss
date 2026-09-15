@@ -14,6 +14,13 @@ ACCESS_POLICY_AUD=
 OIDC_GOOGLE_CLIENT_ID=
 OIDC_GOOGLE_CLIENT_SECRET=
 
+# --- Native identity: Sign in with Apple (mobile app) ---
+# The expected audience of the Apple identity token the app posts to
+# POST /auth/apple: the iOS bundle identifier, optionally a web Services ID
+# beside it (whitespace or comma separated). Not a secret pair -- Apple signs
+# the token. Absent means the route answers 404.
+APPLE_CLIENT_ID=
+
 # --- Mailer seam: AWS SES HTTP API (D14 / issue #46) ---
 # Credentials are secrets. Prefer short-lived credentials plus a session token
 # where the deployment environment can rotate them. Never commit real values.

@@ -44,6 +44,13 @@ export const UNDOCUMENTED_ROUTES: readonly string[] = [
   'post /auth/magic-link',
   'get /auth/magic-link/verify',
   'post /auth/magic-link/exchange',
+  // Native Sign in with Apple. The mobile app posts an Apple identity token
+  // over raw fetch and gets the ordinary session back -- there is no redirect
+  // and no generated-client call, so like the magic-link and OIDC app handoffs
+  // it stays out of the generated client, and having no browser or client
+  // surface to document, out of the document too. Always mounted; answers 404
+  // until a deployment sets APPLE_CLIENT_ID.
+  'post /auth/apple',
 ]
 
 /**

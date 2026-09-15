@@ -152,6 +152,7 @@ export const readContainerConfig = (
     'OIDC_GOOGLE_CLIENT_SECRET',
     4_096,
   )
+  const appleClientId = optional(environment, 'APPLE_CLIENT_ID', 1_024)
   const bootstrapToken = optional(environment, 'EZACTO_BOOTSTRAP_TOKEN', 512)
   const magicLinkKey = optional(environment, 'MAGIC_LINK_SIGNING_KEY', 128)
   const stripeApiKey = optional(environment, 'STRIPE_API_KEY', 512)
@@ -202,6 +203,9 @@ export const readContainerConfig = (
     ...(googleClientSecret === undefined
       ? {}
       : { OIDC_GOOGLE_CLIENT_SECRET: googleClientSecret }),
+    ...(appleClientId === undefined
+      ? {}
+      : { APPLE_CLIENT_ID: appleClientId }),
     ...(bootstrapToken === undefined
       ? {}
       : { EZACTO_BOOTSTRAP_TOKEN: bootstrapToken }),

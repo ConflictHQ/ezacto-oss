@@ -71,6 +71,11 @@ export const deploySecretPayload = (environment) => {
       'OIDC_GOOGLE_CLIENT_ID and OIDC_GOOGLE_CLIENT_SECRET must be configured together',
     )
   }
+  // Native Sign in with Apple. A single value -- the expected audience of the
+  // identity token the app posts (its bundle id, optionally a web Services ID
+  // beside it). No secret pair: the token is signed by Apple, not by us.
+  // Rendered explicitly so removing it clears the Worker on the next deploy.
+  const appleClientId = optionalCredential(environment.APPLE_CLIENT_ID)
   const accessKeyId = optionalSesCredential(
     environment.AWS_ACCESS_KEY_ID,
     'AWS_ACCESS_KEY_ID',
@@ -156,6 +161,7 @@ export const deploySecretPayload = (environment) => {
     MAGIC_LINK_SIGNING_KEY: magicLink,
     OIDC_GOOGLE_CLIENT_ID: clientId,
     OIDC_GOOGLE_CLIENT_SECRET: clientSecret,
+    APPLE_CLIENT_ID: appleClientId,
     AWS_ACCESS_KEY_ID: accessKeyId,
     AWS_SECRET_ACCESS_KEY: secretAccessKey,
     AWS_SESSION_TOKEN: sessionToken,

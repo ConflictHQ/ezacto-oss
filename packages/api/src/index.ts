@@ -272,6 +272,21 @@ export {
   type UpdateTimesheetLockPolicySettings,
 } from './timesheet-lock-policy.js'
 export {
+  APPLE_ISSUER,
+  APPLE_JWKS_URI,
+  APPLE_PROVIDER_KEY,
+  assertValidAppleProviderConfig,
+  createAppleIdentityTokenVerifier,
+  installAppleRoutes,
+  type AppleAssertion,
+  type AppleFetch,
+  type AppleIdentityResolver,
+  type AppleIdentityTokenVerifier,
+  type AppleProviderConfig,
+  type AppleRouteOptions,
+  type AppleSessionIssuer,
+} from './apple.js'
+export {
   assertValidGitHubProviderConfig,
   GITHUB_PROVIDER_KEY,
   installGitHubRoutes,

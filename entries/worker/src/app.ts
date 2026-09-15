@@ -28,6 +28,7 @@ import {
   installGeneralResourceRoutes,
   installMagicLinkRoutes,
   installModuleSettingsRoutes,
+  installAppleRoutes,
   installSignInMethodRoutes,
   createSignInMethodPolicy,
   installGitHubRoutes,
@@ -79,6 +80,7 @@ import {
   type MagicLinkRouteOptions,
   type ActivityRecorder,
   type TwoFactorService,
+  type AppleProviderConfig,
   type GitHubProviderConfig,
   type MoneyResourceRouteOptions,
   type OidcIdentityResolver,
@@ -140,6 +142,13 @@ export type AppEnv = Env & {
   OIDC_GOOGLE_CLIENT_SECRET?: string
   GITHUB_CLIENT_ID?: string
   GITHUB_CLIENT_SECRET?: string
+  /**
+   * Native Sign in with Apple. The expected `aud` of the identity token the
+   * mobile app posts -- the iOS bundle identifier, and optionally a web
+   * Services ID beside it (whitespace or comma separated). Absent means the
+   * `/auth/apple` route is configured off and answers 404.
+   */
+  APPLE_CLIENT_ID?: string
   EZACTO_BOOTSTRAP_TOKEN?: string
   BRAND_NAME?: string
   BRAND_TAGLINE?: string
@@ -706,6 +715,15 @@ export const createApp = (
           policy: signInPolicy,
           clientKey: (request) =>
             request.headers.get('cf-connecting-ip') ?? 'unknown-client',
+        })
+        // Native Sign in with Apple. The app posts an Apple-signed identity
+        // token and gets the ordinary session back; it reuses the shared
+        // identity resolver and session issuer, so it needs no store of its
+        // own. Configured off (404) until APPLE_CLIENT_ID names an audience.
+        installAppleRoutes(app, {
+          identities: services.identities,
+          sessions: services.sessions,
+          provider: (env) => appleProvider(env),
         })
         installPasswordAuthRoutes(app, {
           service: services.passwordAuth,
@@ -1699,6 +1717,19 @@ export const githubProvider = (
     clientSecret,
     redirectOrigin: redirectOrigin(env),
   }
+}
+
+/**
+ * Native Sign in with Apple. Not an OAuth pair and not a redirect flow: the
+ * mobile app already holds an Apple-signed identity token, so the only thing
+ * a deployment supplies is the audience that token must carry -- the app's
+ * bundle identifier, optionally with a web Services ID beside it. Absent means
+ * the route stays configured off and answers 404.
+ */
+export const appleProvider = (env: AppEnv): AppleProviderConfig | null => {
+  const clientId = configuredCredential(env.APPLE_CLIENT_ID)
+  if (clientId === null) return null
+  return { clientId }
 }
 
 /**
